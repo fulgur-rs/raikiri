@@ -11,6 +11,8 @@
 //! Exactly one instance of each singleton exists, reachable only through
 //! `window`.
 
+pub(super) mod named;
+
 use boa_engine::native_function::NativeFunctionPointer;
 use boa_engine::object::{JsObject, ObjectInitializer};
 use boa_engine::property::{Attribute, PropertyDescriptor};
@@ -436,6 +438,7 @@ pub(crate) fn install(
     // `opener`: a plain writable `any` attribute (not `[Replaceable]`,
     // just an ordinary read/write property), default `null`.
     context.register_global_property(js_string!("opener"), JsValue::null(), replaceable_attr)?;
+    named::install(context)?;
     Ok(())
 }
 

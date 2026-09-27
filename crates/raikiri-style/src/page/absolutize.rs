@@ -843,6 +843,10 @@ pub(super) fn absolutize_in_page_context(
         }),
         // ── object-position ──────────────────────────────────────────────
         PropertyValue::ObjectPosition(v) => PropertyValue::ObjectPosition(basis.css_position(v)),
+        PropertyValue::TransformOrigin(position, z) => PropertyValue::TransformOrigin(
+            basis.css_position(position),
+            Length::Px(resolve_length(z, font_size, own_line_height, ctx).px()),
+        ),
         // ── opacity ───────────────────────────────────────────────────────
         PropertyValue::Opacity(o) => PropertyValue::Opacity(o.clamp(0.0, 1.0)),
         // ── overflow-x / overflow-y ──────────────────────────────────────────

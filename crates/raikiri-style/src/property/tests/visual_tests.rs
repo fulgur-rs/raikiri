@@ -3331,3 +3331,35 @@ fn filter_key_maps_to_filter_property_key() {
     let v = PropertyValue::Filter(empty_filter_list());
     assert_eq!(v.key(), PropertyKey::Filter);
 }
+
+#[test]
+fn transform_origin_accepts_axis_keywords_lengths_and_optional_z_length() {
+    for value in [
+        "0 0",
+        "101px 51px",
+        "50% 51px",
+        "101px 50%",
+        "left",
+        "top",
+        "center",
+        "top right",
+        "left 10px",
+        "20% bottom",
+        "left top 2em",
+        "center center -10px",
+    ] {
+        assert!(parse(value, "transform-origin").is_some(), "{value}");
+    }
+    for value in [
+        "",
+        "10px top left",
+        "right 10px bottom 20px",
+        "left top 10%",
+        "center center 1px 2px",
+        "bottom 10px",
+        "none",
+        "top bogus",
+    ] {
+        assert!(parse(value, "transform-origin").is_none(), "{value}");
+    }
+}

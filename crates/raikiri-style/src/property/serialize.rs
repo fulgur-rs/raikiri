@@ -508,6 +508,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Background(..)
         | PropertyValue::ObjectFit(..)
         | PropertyValue::ObjectPosition(..)
+        | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(..)
         | PropertyValue::Isolation(..)
         | PropertyValue::MixBlendMode(..)

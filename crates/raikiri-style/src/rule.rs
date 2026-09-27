@@ -436,6 +436,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         // (shorthand を持たない standalone property)。
         | PropertyValue::ObjectFit(_)
         | PropertyValue::ObjectPosition(_)
+        | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(_)
         // isolation / mix-blend-mode (CSS Compositing and Blending Level 1
         // §3.4.2/§3.4.1) — same shape as object-fit/opacity above.

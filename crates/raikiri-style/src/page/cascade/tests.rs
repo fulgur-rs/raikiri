@@ -3520,6 +3520,10 @@ property_key_samples! {
     // both `Start` and `End` (distinct edges), same convention as
     // `BackgroundPosition` above; type itself (`CssPosition`) is
     // reused verbatim.
+    TransformOrigin => PropertyValue::TransformOrigin(CssPosition {
+        horizontal: CssPositionOffset::Start(Length::Em(2.0)),
+        vertical: CssPositionOffset::Start(Length::Rem(1.0)),
+    }, Length::Em(1.0)),
     ObjectPosition => PropertyValue::ObjectPosition(CssPosition {
         horizontal: CssPositionOffset::Start(Length::Em(2.0)),
         vertical: CssPositionOffset::End(Length::Rem(1.0)),
@@ -3780,7 +3784,7 @@ macro_rules! property_value_variant_registry {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
                 "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
                 "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
-                "BorderRadiusInherit", "GridArea", "Grid"].len();
+                "BorderRadiusInherit", "GridArea", "Grid", "TransformOrigin"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
@@ -3793,6 +3797,7 @@ macro_rules! property_value_variant_registry {
                     PropertyValue::BorderRadiusInherit => "BorderRadiusInherit",
                     PropertyValue::GridArea(_) => "GridArea",
                     PropertyValue::Grid(_) => "Grid",
+                    PropertyValue::TransformOrigin(..) => "TransformOrigin",
                     $(PropertyValue::$variant(_) => stringify!($variant),)+
                 }
             }
@@ -4877,6 +4882,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `object-position` stores a `<length-percentage>` per
             // edge/offset — same shape as `background-position` above (both
             // reuse `CssPosition`).
+            PropertyValue::TransformOrigin(pos, z) => {
+                let offset = |o| match o {
+                    CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                };
+                offset(pos.horizontal).or_else(|| offset(pos.vertical)).or_else(|| length(*z))
+            }
             PropertyValue::ObjectPosition(pos) => {
                 fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
                     match o {

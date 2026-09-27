@@ -438,6 +438,56 @@ fn parse_position_branch2_vertical(input: &mut Parser<'_, '_>) -> Option<CssPosi
     parse_position_branch2_axis(input, "top", "bottom")
 }
 
+// spec: https://www.w3.org/TR/css-transforms-1/#transform-origin-property
+// Unlike background-position, origin permits at most two axis values followed
+// by a Z length. Edge-offset positions are not part of this grammar.
+pub(super) fn parse_transform_origin(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let (position, two_axes) = input
+        .try_parse(|input| {
+            let position = parse_position_branch2(input)
+                .ok_or_else(|| input.new_custom_error::<(), ()>(()))?;
+            Ok::<_, ParseError<'_, ()>>((position, true))
+        })
+        .or_else(|_| {
+            input.try_parse(|input| {
+                let vertical = match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                    "top" => 0.0,
+                    "center" => 50.0,
+                    "bottom" => 100.0,
+                    _ => return Err(input.new_custom_error::<(), ()>(())),
+                };
+                let horizontal = match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                    "left" => 0.0,
+                    "center" => 50.0,
+                    "right" => 100.0,
+                    _ => return Err(input.new_custom_error::<(), ()>(())),
+                };
+                Ok((
+                    CssPosition {
+                        horizontal: CssPositionOffset::Start(Length::Percent(horizontal)),
+                        vertical: CssPositionOffset::Start(Length::Percent(vertical)),
+                    },
+                    true,
+                ))
+            })
+        })
+        .or_else(|_| {
+            input
+                .try_parse(parse_position_branch1_res)
+                .map(|position| (position, false))
+        })
+        .ok()?;
+    let z = if input.is_exhausted() {
+        Length::Px(0.0)
+    } else if two_axes {
+        super::common::parse_length_allow_negative(input)?
+    } else {
+        return None;
+    };
+    input.expect_exhausted().ok()?;
+    Some(PropertyValue::TransformOrigin(position, z))
+}
+
 /// `<position>` grammar ([`CssPosition`] doc) の 2nd alternative — 厳密に
 /// horizontal → vertical の順で 2 token を読む (keyword 並び替え不可、
 /// branch3 と違い `&&` ではなく単純な連接)。

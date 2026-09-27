@@ -8062,3 +8062,31 @@ fn hyphenate_limit_chars_calc_and_variable_values_resolve_to_integer() {
         HyphenateLimitCharsValue::Integer(3)
     );
 }
+
+#[test]
+fn transform_origin_absolutizes_own_font_lengths_and_resets_in_children() {
+    use crate::resolve::{ComputedCssPositionOffset, ComputedLengthPercentage};
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("font-size:20px;transform-origin:2em 25% -1em"),
+    );
+    let child = doc.push_element(parent, "div", None);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    assert_eq!(
+        result.computed[parent].transform_origin.horizontal,
+        ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(40.0))
+    );
+    assert_eq!(
+        result.computed[parent].transform_origin.vertical,
+        ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(25.0))
+    );
+    assert_eq!(result.computed[parent].transform_origin_z.px(), -20.0);
+    assert_eq!(
+        result.computed[child].transform_origin,
+        ComputedValues::initial().transform_origin
+    );
+    assert_eq!(result.computed[child].transform_origin_z.px(), 0.0);
+}

@@ -8909,6 +8909,9 @@ pub enum PropertyValue {
     /// `Vec` と同じ convention)。末尾に追加 (1:1 disjoint な新 field、
     /// [`PropertyKey`] doc の判断規則)。
     Transform(Arc<Vec<TransformFunction>>),
+    /// Origin on the border box plus a Z length (CSS Transforms 1 §5).
+    /// Z is retained for computed values; the painter currently uses 2D transforms.
+    TransformOrigin(CssPosition, Length),
     /// `filter` — **non-inherited**、initial: `none` (CSS Filter Effects
     /// Level 1 §5 [`FilterFunction`] doc 参照)。`Transform` と同じ
     /// 空-list-means-none convention ([`empty_filter_list`])。末尾に追加
@@ -9493,6 +9496,7 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     Transform,
+    TransformOrigin,
     Filter,
     // line-break (CSS Text 3 §5.2、semantics on PropertyValue::LineBreak).
     LineBreak,
@@ -9813,6 +9817,7 @@ impl PropertyValue {
             PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
             PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
             PropertyValue::Transform(_) => PropertyKey::Transform,
+            PropertyValue::TransformOrigin(..) => PropertyKey::TransformOrigin,
             PropertyValue::Filter(_) => PropertyKey::Filter,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
@@ -11025,6 +11030,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "mask-image" => PropertyKey::MaskImage,
         "clip-path" => PropertyKey::ClipPath,
         "transform" => PropertyKey::Transform,
+        "transform-origin" => PropertyKey::TransformOrigin,
         "filter" => PropertyKey::Filter,
         _ => return None,
     })

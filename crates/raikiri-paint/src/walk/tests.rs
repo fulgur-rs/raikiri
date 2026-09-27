@@ -1445,3 +1445,347 @@ fn margin_row_paints_fixed_width_background() {
         1
     );
 }
+
+fn transformed_box_scene(transform: &str, origin: &str) -> Scene {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    document.append_element(Some(body), "div", Style::default(), Some(format!(
+        "display:block;position:absolute;left:10px;top:20px;width:100px;height:50px;background:green;transform:{transform};transform-origin:{origin}"
+    )));
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).unwrap();
+    raikiri_dom::layout_single_page(
+        &mut document,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    scene
+}
+
+#[test]
+fn css_transforms_move_painted_box_corners_about_the_authored_origin() {
+    // Hand-derived points for the border box (10,20)..(110,70).
+    // Omitting a matrix function, reversing composition, or ignoring the
+    // authored origin changes these painted corner positions.
+    for (transform, origin, first, opposite) in [
+        ("skew(45deg, 0deg)", "0 0", (10., 20.), (160., 70.)),
+        ("skewX(45deg)", "0 0", (10., 20.), (160., 70.)),
+        ("skewY(45deg)", "0 0", (10., 20.), (110., 170.)),
+        ("scale(2, 3)", "0 0", (10., 20.), (210., 170.)),
+        ("scaleX(2)", "0 0", (10., 20.), (210., 70.)),
+        ("scaleY(3)", "0 0", (10., 20.), (110., 170.)),
+        ("rotate(90deg)", "0 0", (10., 20.), (-40., 120.)),
+        ("rotate(90deg)", "50% 50%", (85., -5.), (35., 95.)),
+        ("rotate(90deg)", "right bottom", (160., -30.), (110., 70.)),
+        ("matrix(1, 0, 1, 1, 5, 7)", "0 0", (15., 27.), (165., 77.)),
+        (
+            "translate(10px, 5px) scale(2)",
+            "0 0",
+            (20., 25.),
+            (220., 125.),
+        ),
+        (
+            "scale(2) translate(10px, 5px)",
+            "0 0",
+            (30., 30.),
+            (230., 130.),
+        ),
+        (
+            "scale(2) translateX(10%) translateY(20%)",
+            "0 0",
+            (30., 40.),
+            (230., 140.),
+        ),
+    ] {
+        let scene = transformed_box_scene(transform, origin);
+        let fill = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .next_back()
+            .unwrap();
+        let bbox = kurbo::Shape::bounding_box(&fill.shape);
+        for (point, expected) in [
+            (bbox.origin(), first),
+            (Point::new(bbox.x1, bbox.y1), opposite),
+        ] {
+            let actual = fill.transform * point;
+            assert!(
+                (actual.x - expected.0).abs() < 1e-5 && (actual.y - expected.1).abs() < 1e-5,
+                "{transform} / {origin}: {actual:?} != {expected:?}"
+            );
+        }
+    }
+}
+
+fn transform_markup_scene(markup: &str) -> Scene {
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    scene
+}
+
+#[test]
+fn transformed_opacity_group_keeps_its_clip_in_page_coordinates() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:900px;top:0;width:100px;height:100px;background:green;opacity:.5;transform:matrix(1,0,0,1,-900,0)'></div>",
+    );
+    let clip = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::PushLayer(layer) => Some(layer),
+            _ => None,
+        })
+        .unwrap();
+    let bounds = kurbo::Shape::bounding_box(&clip.clip);
+    assert_eq!(clip.transform * bounds.origin(), Point::new(0.0, 0.0));
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = &rgba[(10 * 800 + 10) * 4..(10 * 800 + 10) * 4 + 4];
+    // The backend quantizes half coverage to bytes; either rounding is valid.
+    for (actual, expected) in pixel.iter().zip([128u8, 192, 128, 255]) {
+        assert!(actual.abs_diff(expected) <= 1);
+    }
+}
+
+#[test]
+fn non_replaced_inline_ignores_own_transform_and_retains_ancestor_matrix() {
+    for display in ["inline", "inline-block"] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0'><span style='display:{display};transform:scale(0)'>TEXT</span></div>"
+        ));
+        let glyph = scene.commands.iter().find_map(|command| match command {
+            RenderCommand::GlyphRun(glyph) => Some(glyph),
+            _ => None,
+        });
+        if display == "inline" {
+            let coeffs = glyph
+                .expect("non-replaced inline text must remain visible")
+                .transform
+                .as_coeffs();
+            assert_eq!(&coeffs[..4], &[2.0, 0.0, 0.0, 2.0]);
+        } else {
+            assert!(
+                glyph.is_none(),
+                "singular inline-block transform hides text"
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_transforms_cover_descendant_glyphs_and_overflow_without_leaking_to_siblings() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:10px;top:20px;width:100px;height:50px;overflow:hidden;transform:scale(2);transform-origin:0 0'><div style='position:absolute;left:5px;top:7px;width:10px;height:8px;background:blue;transform:rotate(90deg);transform-origin:0 0'>TEXT</div></div><div style='position:absolute;left:300px;top:0;width:10px;height:10px;background:red'></div>",
+    );
+    let fills: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(fill),
+            _ => None,
+        })
+        .collect();
+    let blue = fills[fills.len() - 2];
+    let bbox = kurbo::Shape::bounding_box(&blue.shape);
+    let first = blue.transform * bbox.origin();
+    let opposite = blue.transform * Point::new(bbox.x1, bbox.y1);
+    assert!((first.x - 20.0).abs() < 1e-5 && (first.y - 34.0).abs() < 1e-5);
+    assert!((opposite.x - 4.0).abs() < 1e-5 && (opposite.y - 54.0).abs() < 1e-5);
+    assert_eq!(fills.last().unwrap().transform, Affine::IDENTITY);
+    let clip = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(clip),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(&clip.transform.as_coeffs()[..4], &[2.0, 0.0, 0.0, 2.0]);
+    let glyph = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::GlyphRun(glyph) => Some(glyph),
+            _ => None,
+        })
+        .unwrap();
+    let coeffs = glyph.transform.as_coeffs();
+    for (actual, expected) in coeffs[..4].iter().zip([0.0, 2.0, -2.0, 0.0]) {
+        assert!((actual - expected).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn transformed_text_and_image_fallback_keep_page_content_clips_untransformed() {
+    let scene = transform_markup_scene(
+        "<style>@page { margin-left:200px; margin-right:200px }</style><body style='margin:0'><div style='width:100px;height:50px;background:green;transform:scale(2);transform-origin:0 0'>TEXT<img style='display:block;width:10px;height:10px' src='green-100.png'></div>",
+    );
+    let clips: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(clip),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        clips.len() >= 3,
+        "background, glyph and fallback page clips must be exercised"
+    );
+    for clip in clips {
+        assert_eq!(clip.transform, Affine::IDENTITY);
+    }
+    assert!(
+        scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+    );
+}
+
+#[test]
+fn replaced_inline_image_composes_own_and_ancestor_transform() {
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 4,
+                height: 4,
+                rgba: [0u8, 128, 0, 255].repeat(16),
+            }))
+        }
+    }
+    let mut parsed = raikiri_html::parse("<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0'><img src='https://example.test/green.png' style='width:10px;height:10px;transform:scale(3);transform-origin:0 0'></div>".as_bytes(), &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None }).unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    let warnings = crate::paint_single_page_with_images_and_warnings(
+        &mut scene,
+        &parsed.dom,
+        &cascade,
+        PageBox::A4,
+        &Pixels,
+    );
+    assert!(warnings.is_empty());
+    let image = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)) => {
+                Some(fill)
+            }
+            _ => None,
+        })
+        .unwrap();
+    // 4 source pixels map to 10 CSS pixels, then scale by 3 and 2.
+    assert_eq!(&image.transform.as_coeffs()[..4], &[15.0, 0.0, 0.0, 15.0]);
+}
+
+#[test]
+fn quarter_turn_preserves_axis_aligned_pixel_edges() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><style>body {margin:0} div {width:100px;height:100px;background:green;transform:rotate(90deg);transform-origin:50px 50px}</style><div></div>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    for y in 0..100 {
+        for x in 0..100 {
+            let index = (y * 800 + x) * 4;
+            assert_eq!(&rgba[index..index + 4], &[0, 128, 0, 255]);
+        }
+    }
+}
+
+#[test]
+fn quarter_turn_uses_the_painted_border_box_at_fractional_layout_origin() {
+    let raster = |markup| {
+        let scene = transform_markup_scene(markup);
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            800,
+            600,
+        )
+    };
+    let actual = raster(
+        "<!DOCTYPE html><style>body {margin:0} #outer {position:absolute;top:50.2px;left:0;width:100px;height:100px;background:red} #inner {width:100px;height:100px;background:green;transform:rotate(90deg);transform-origin:50px 50px}</style><div id='outer'><div id='inner'></div></div>",
+    );
+    let expected = raster(
+        "<!DOCTYPE html><style>body {margin:0} div {position:absolute;top:50.2px;left:0;width:100px;height:100px;background:green}</style><div></div>",
+    );
+    assert!(actual == expected);
+}
+
+#[test]
+fn fractional_transform_origins_and_percentage_translation_share_painted_bounds() {
+    for (origin, expected) in [
+        ("0 0", (0.0, 0.0)),
+        ("50% 50%", (-50.5, -5.5)),
+        ("right bottom", (-101.0, -11.0)),
+    ] {
+        let mut document = Document::new();
+        document.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some(format!("transform:scale(2);transform-origin:{origin}")),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).unwrap();
+        let matrix = element_transform(&cascade.computed[1], 0.4, 0.4, 100.2, 10.4);
+        let actual = matrix * Point::new(0.0, 0.0);
+        assert_eq!(actual, Point::new(expected.0, expected.1));
+    }
+    let mut document = Document::new();
+    document.append_element(
+        Some(0),
+        "div",
+        Style::default(),
+        Some("transform:scale(1) translate(100%,100%);transform-origin:0 0"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).unwrap();
+    let actual =
+        element_transform(&cascade.computed[1], 0.4, 0.4, 100.2, 10.4) * Point::new(0.0, 0.0);
+    assert_eq!(actual, Point::new(101.0, 11.0));
+}

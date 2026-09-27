@@ -62,8 +62,8 @@ fn viewport_override_replaces_important_inline_dimensions() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" style="color:green!important;width:100px!important;height:100px!important"><style>svg { width:100px!important;height:100px!important }</style><rect width="100" height="100" fill="#ff0000"/></svg>"##;
     let resized = super::with_root_viewport_size(
         std::str::from_utf8(source).expect("SVG is UTF-8"),
-        200,
-        100,
+        200.0,
+        100.0,
     )
     .expect("viewport override succeeds");
     let tree = super::parse_tree(&resized).expect("adjusted SVG parses");
@@ -674,4 +674,64 @@ fn svg_error_is_std_error() {
     assert_error::<SvgError>();
     let err: &dyn std::error::Error = &SvgError::InvalidViewport;
     assert!(err.source().is_none());
+}
+
+#[test]
+fn fractional_viewport_keeps_percentage_geometry_on_the_css_pixel_grid() {
+    let svg=SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg"><rect x="50%" width="1" height="10" fill="red"/></svg>"#).unwrap();
+    let image = svg
+        .rasterize_at_css_pixel_scale(
+            SvgViewport {
+                width: 5.2,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!((image.width, image.height), (6, 10));
+    // x=2.6..3.6 crosses pixels 2 and 3. Allocating ceil(5.2) pixels must
+    // not change the percentage basis to 6 or stretch the drawing to it.
+    let alpha = |x| image.rgba[(5 * image.width as usize + x) * 4 + 3];
+    assert!(alpha(2) > 0, "percentage geometry must start at x=2.6");
+    assert!(alpha(3) > 0);
+    assert_eq!(alpha(4), 0);
+}
+
+#[test]
+fn fractional_image_rasterization_keeps_the_full_buffer_mapping() {
+    let svg=SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg"><rect x="50%" width="1" height="100%" fill="green"/></svg>"#).unwrap();
+    let fractional = svg
+        .rasterize(
+            SvgViewport {
+                width: 5.2,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let integer = svg
+        .rasterize(
+            SvgViewport {
+                width: 6.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(fractional.rgba, integer.rgba);
+    assert_eq!((fractional.width, fractional.height), (6, 10));
+    let css = svg
+        .rasterize_at_css_pixel_scale(
+            SvgViewport {
+                width: 5.2,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_ne!(css.rgba, fractional.rgba);
 }

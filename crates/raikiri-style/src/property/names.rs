@@ -224,6 +224,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "text-wrap-style",
         "top",
         "transform",
+        "transform-origin",
         "unicode-bidi",
         "vertical-align",
         "visibility",

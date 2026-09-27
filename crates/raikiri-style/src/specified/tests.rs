@@ -494,6 +494,8 @@ fn parent_fixture() -> ComputedValues {
         // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
         // 両方 non-inherited なので initial (`none` = 空 list) と
         // 異なる値にしておく。
+        transform_origin: ComputedValues::initial().transform_origin,
+        transform_origin_z: crate::resolve::ComputedLength(0.0),
         transform: Arc::new(vec![crate::resolve::ComputedTransformFunction::TranslateX(
             crate::resolve::ComputedLengthPercentage::Px(48.0),
         )]),

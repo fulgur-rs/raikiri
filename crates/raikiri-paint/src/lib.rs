@@ -22,6 +22,7 @@ use raikiri_traits::PageBox;
 
 pub mod border;
 mod text;
+mod transform;
 mod walk;
 
 /// 単一 A4 (or 指定 PageBox) ページに Document + CascadeResult を paint する。
@@ -40,7 +41,7 @@ mod walk;
 /// - Scrollbar painting for `overflow: scroll` / `auto` — descendants are
 ///   clipped, but scrollbar geometry and painting remain out of scope.
 /// - z-index / stacking context
-/// - CSS transform (rotate/scale/skew)
+/// - CSS 3D transforms
 /// - DPI scaling (`paint_single_page_scaled` 別関数で将来拡張予定)
 ///
 /// # Panics

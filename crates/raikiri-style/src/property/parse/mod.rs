@@ -1018,6 +1018,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `background-position`'s `parse_bg_position` accepts
         // (`parse_position_branch3_strict` doc's "Why" section).
         "object-position" => parse_position_strict(input).map(PropertyValue::ObjectPosition),
+        "transform-origin" => parse_transform_origin(input),
         // CSS Color 4 §3.3
         // <https://www.w3.org/TR/css-color-4/#transparency>. Value:
         // `<opacity-value> = <number> | <percentage>`. The parsed number is
