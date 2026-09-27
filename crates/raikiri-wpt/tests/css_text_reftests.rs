@@ -578,3 +578,26 @@ fn script_tag_lowercase_overrides_turkish_casing_exact() {
         result.mismatched_pixels
     );
 }
+
+/// Basic `overflow-wrap: break-word` wraps a long Ahem token inside its box.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn overflow_wrap_basic_break_word_exact() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/css-text/overflow-wrap/overflow-wrap-001.html");
+    let pairs =
+        discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pair");
+    assert_eq!(pairs.len(), 1);
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair_with_images(&pairs[0], config).expect("run WPT pair with Ahem font");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "outcome={:?}, mismatches={}",
+        result.outcome,
+        result.mismatched_pixels
+    );
+}
