@@ -5203,6 +5203,51 @@ pub(crate) fn preshape_text(
         tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
     }
 
+    // The in-flow inline `<wbr>` under `word-space-transform: space` becomes
+    // an advance-bearing inline item. The element has no Text node to shape;
+    // measuring its own font's space keeps the following run in place without
+    // changing the authored DOM or manufacturing a text node.  This is the
+    // single-line spacing subset, not general `<wbr>` wrapping behavior.
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].tag_name() != Some("wbr") || !doc.nodes[idx].is_in_document() {
+            continue;
+        }
+        let cv = &cascade.computed[idx];
+        if cv.display != DisplayValue::Inline
+            || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+            || cv.word_space_transform != WordSpaceTransform::Space
+        {
+            continue;
+        }
+        let family = cv
+            .font_family
+            .iter()
+            .map(|family| family.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        // A full-width text transform also applies to the space that
+        // replaces `<wbr>`; measure the same glyph as an inserted U+200B.
+        let space = if text_transform_has_full_width(cv.text_transform) {
+            "\u{3000}"
+        } else {
+            " "
+        };
+        let advance = probe_text_full_width(
+            fonts,
+            layout_cx,
+            space,
+            TextProbeStyle {
+                family_str: &family,
+                font_size_px: cv.font_size.px(),
+                font_weight: cv.font_weight,
+                font_style: cv.font_style,
+                letter_spacing: cv.letter_spacing.px(),
+                word_spacing: cv.word_spacing.px(),
+            },
+        );
+        doc.nodes[idx].style.size.width = Dimension::length(advance);
+    }
+
     // Shared parent map for simple pre-block eligibility and whitespace
     // boundary trimming (the arena has no stored parent pointers).
     let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
@@ -5378,6 +5423,12 @@ pub(crate) fn preshape_text(
         let start = line_start_pos(doc, cascade, &parent_of, idx);
         let trim_end = trail_trim(doc, cascade, &parent_of, idx);
         let mut text = collapse_ws(&text, cv.white_space, start, trim_end).into_owned();
+        // The explicit separator is inserted after phase-one white-space
+        // collapse, so it does not merge with adjacent authored spaces. Keep
+        // the DOM text unchanged; the inserted space is shaped by Parley.
+        if cv.word_space_transform == WordSpaceTransform::Space {
+            text = text.replace(ZERO_WIDTH_SPACE, " ");
+        }
         // CSS text transforms run on the post-collapse text. In particular,
         // `full-width` must see only the surviving U+0020 space; applying it
         // before whitespace collapsing would turn every source space into
