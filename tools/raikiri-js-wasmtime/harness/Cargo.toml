@@ -1,0 +1,10 @@
+[package]
+workspace = ".."
+name = "raikiri-js-wasmtime-harness"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+boa_engine = { version = "=0.22.0", default-features = false }
+raikiri-js = { path = "../../../crates/raikiri-js" }

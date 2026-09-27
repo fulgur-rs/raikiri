@@ -7,7 +7,17 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = ["js-native"]
+js-native = []
+js-wasmtime = ["dep:raikiri-js-wasmtime-host", "dep:raikiri-js-wasmtime-protocol"]
+
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+raikiri-js-wasmtime-host = { path = "../../tools/raikiri-js-wasmtime/host", optional = true }
+raikiri-js-wasmtime-protocol = { path = "../../tools/raikiri-js-wasmtime/protocol", optional = true }
+raikiri-js-wasmtime-harness = { path = "../../tools/raikiri-js-wasmtime/harness" }
 raikiri             = { workspace = true }
 blitz-dom           = { workspace = true, features = ["floats"] }
 blitz-html          = { workspace = true }

@@ -10,6 +10,7 @@
 //!     --wpt-root target/wpt
 //! ```
 
+use raikiri_wpt::testharness_results::{ResultRecord, extract_output, write_results};
 use std::env;
 use std::fs;
 use std::io;
@@ -42,7 +43,7 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let raw_args: Vec<String> = env::args().collect();
+    let mut raw_args: Vec<String> = env::args().collect();
     if raw_args
         .iter()
         .skip(1)
@@ -51,7 +52,9 @@ fn run() -> Result<(), String> {
         println!("{}", usage());
         return Ok(());
     }
+    let results_path = extract_output(&mut raw_args)?;
     let args = parse_args(&raw_args[1..])?;
+    let mut records = Vec::new();
 
     let mut paths = Vec::new();
     collect_files(&args.wpt_root.join("css"), &args.wpt_root, &mut paths).map_err(|e| {
@@ -79,6 +82,7 @@ fn run() -> Result<(), String> {
         }
         match run_parsing_invalid_file(&args.wpt_root, path) {
             Ok(outcome) => {
+                records.push(ResultRecord::new(&test_id, &outcome.outcomes, None));
                 total_files += 1;
                 total_assertions += outcome.total();
                 total_assertions_passed += outcome.passed();
@@ -102,6 +106,7 @@ fn run() -> Result<(), String> {
             }
             Err(ParsingFileError::NoParsingTestCalls) => continue,
             Err(e) => {
+                records.push(ResultRecord::new(&test_id, &[], Some(e.to_string())));
                 total_files += 1;
                 println!("ERROR {test_id}: {e}");
             }
@@ -112,6 +117,7 @@ fn run() -> Result<(), String> {
         "-- {total_pass_files}/{total_files} files all-pass, \
          {total_assertions_passed}/{total_assertions} assertions pass --"
     );
+    write_results(results_path.as_deref(), &records)?;
     Ok(())
 }
 
@@ -138,7 +144,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: run-parsing-invalid [OPTIONS]\n\n  --wpt-root PATH      WPT checkout (default: target/wpt)\n  --path-prefix PATH  Only run files whose path starts with this string\n\nReport-only: never writes to any expectations file."
+    "Usage: run-parsing-invalid [OPTIONS]\n\n  --wpt-root PATH      WPT checkout (default: target/wpt)\n  --path-prefix PATH  Only run files whose path starts with this string\n  --results-json PATH  Write every named assertion and page error\n\nReport-only: never writes to any expectations file."
 }
 
 fn collect_files(directory: &Path, root: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {

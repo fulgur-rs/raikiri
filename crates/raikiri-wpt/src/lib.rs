@@ -24,3 +24,5 @@ pub mod wptrunner_browser;
 pub use print::{PrintRenderError, render_print_url};
 pub use screen::{ScreenRenderError, render_screen_url};
 pub use wpt_host_resolver::{WptHostResolver, WptHostResolverError};
+
+pub mod testharness_results;

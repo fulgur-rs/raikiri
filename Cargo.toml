@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["tools/raikiri-js-wasmtime"]
 members = [
     "crates/raikiri-traits",
     "crates/raikiri-svg",

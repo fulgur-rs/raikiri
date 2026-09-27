@@ -44,6 +44,64 @@ fn run_fake(body: &str) -> Result<Vec<TestOutcome>, PageError> {
     run_testharness_page(Path::new("css/t/page.html"), dir.path())
 }
 
+#[test]
+fn nonfinite_harness_status_is_a_harness_error() {
+    for status in ["NaN", "Infinity", "-Infinity"] {
+        let result = run_fake(&format!(
+            "<script>report([{{name:'done',status:0,message:''}}],{{status:{status},message:'bad status'}});</script>"
+        ));
+        assert_eq!(result, Err(PageError::Harness("ERROR: bad status".into())));
+    }
+}
+
+#[test]
+fn clean_abort_outranks_delivered_nonfinite_harness_status() {
+    let result = run_fake(
+        "<script>window.addEventListener('load', function(){\
+         __callbacks[0]([{name:'done',status:0,message:''}],{status:NaN,message:'bad status'});\
+         (function f(){f();})();\
+         });</script>",
+    );
+    assert_eq!(
+        result,
+        Err(PageError::Aborted(Abort::Recursion.to_string()))
+    );
+}
+
+#[test]
+fn clean_abort_outranks_oversized_final_document_transfer() {
+    let result = run_fake(
+        "<script>document.body.appendChild(document.createTextNode('\\0'.repeat(3000000)));\
+         setTimeout(function(){},40000);</script>",
+    );
+    assert_eq!(
+        result,
+        Err(PageError::Aborted(Abort::VirtualTime.to_string()))
+    );
+}
+
+#[test]
+fn clean_abort_outranks_oversized_result_transfer() {
+    let result = run_fake(
+        "<script>report([{name:'\\0'.repeat(3000000),status:0,message:''}],{status:0});\
+         window.addEventListener('load',function(){(function f(){f();})();});</script>",
+    );
+    assert_eq!(
+        result,
+        Err(PageError::Aborted(Abort::Recursion.to_string()))
+    );
+}
+
+#[cfg(feature = "js-wasmtime")]
+#[test]
+fn oversized_final_document_without_abort_remains_a_host_error() {
+    let result = run_fake(
+        "<script>document.body.appendChild(document.createTextNode('\\0'.repeat(3000000)));\
+         report([{name:'done',status:0,message:''}],{status:0});</script>",
+    );
+    assert!(matches!(result, Err(PageError::Host(message)) if message.contains("transport cap")));
+}
+
 fn outcome(name: &str, passed: bool, message: &str) -> TestOutcome {
     TestOutcome {
         name: name.to_owned(),
@@ -581,4 +639,57 @@ fn a_throwing_preamble_stops_the_page_as_a_preamble_error() {
     // A page that cannot be set up is still a host error, preamble or not.
     let missing = run_testharness_page_with_preamble(Path::new("missing.html"), dir.path(), "");
     assert!(matches!(missing, Err(PageError::Host(_))), "{missing:?}");
+}
+
+#[test]
+fn repeated_flush_preserves_detached_template_and_namespaced_identity() {
+    let outcomes = run_fake(r#"<script>
+        try {
+        var box = document.createElement('div');
+        box.style.width = '37px';
+        document.body.appendChild(box);
+        var detached = document.createElement('span');
+        detached.textContent = 'detached';
+        var template = document.createElement('template');
+        template.innerHTML = '<span>template text</span>';
+        document.body.appendChild(template);
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('value', 'kept');
+        var sheet = document.createElement('style');
+        sheet.textContent = 'div::before { content: "derived"; }';
+        document.head.appendChild(sheet);
+        var width1 = box.getBoundingClientRect().width;
+        box.style.color = 'red';
+        var width2 = box.getBoundingClientRect().width;
+        report([
+          {name:'repeat geometry',status:width1 === width2 && width2 === 37 ? 0 : 1},
+          {name:'detached identity',status:detached.textContent === 'detached' && detached.parentNode === null ? 0 : 1},
+          {name:'template identity',status:template.innerHTML === '<span>template text</span>' && template.childNodes.length === 0 ? 0 : 1},
+          {name:'element namespace and attributes',status:svg.namespaceURI === 'http://www.w3.org/2000/svg' && svg.getAttribute('value') === 'kept' ? 0 : 1}
+        ],{status:0});
+        } catch (error) { report([{name:"setup failure",status:1,message:String(error)}],{status:0}); }
+    </script>"#).unwrap();
+    assert!(outcomes.iter().all(|t| t.passed), "{outcomes:?}");
+    assert_eq!(outcomes.len(), 4);
+}
+
+#[cfg(feature = "js-wasmtime")]
+#[test]
+fn native_flush_snapshot_preserves_template_and_namespaced_metadata() {
+    use raikiri_js::runtime::DocumentHost;
+    let dir = page_root(
+        FAKE_HARNESS,
+        r#"<style>div::before {content:'generated'}</style><div>text</div><template><span>inert</span></template><svg xmlns:x="urn:test" x:attr="kept"></svg>"#,
+    );
+    let mut host = prepare_host(Path::new("css/t/page.html"), dir.path()).unwrap();
+    host.document_mut()
+        .create_detached_element("detached")
+        .unwrap();
+    let before = host.document().logical_snapshot();
+    host.flush().unwrap();
+    assert_eq!(host.document().logical_snapshot(), before);
+    *host.document_mut() =
+        raikiri_dom::Document::from_logical_snapshot(before.clone(), 1000).unwrap();
+    host.flush().unwrap();
+    assert_eq!(host.document().logical_snapshot(), before);
 }
