@@ -20,3 +20,6 @@ pub(crate) fn read_real_testharness_js() -> String {
     let path = real_testharness_js_path();
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
+
+#[cfg(test)]
+mod tests;
