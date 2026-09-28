@@ -3420,6 +3420,66 @@ fn text_transform_maps_case_width_kana_and_language_tailoring() {
 }
 
 #[test]
+fn full_width_maps_unicode_wide_and_narrow_compatibility_forms() {
+    for (narrow, wide) in [
+        (' ', '\u{3000}'),
+        ('!', '\u{FF01}'),
+        ('~', '\u{FF5E}'),
+        ('\u{A2}', '\u{FFE0}'),
+        ('\u{AF}', '\u{FFE3}'),
+        ('\u{2985}', '\u{FF5F}'),
+        ('\u{FF61}', '\u{3002}'),
+        ('\u{FF76}', '\u{30AB}'),
+        ('\u{FF9E}', '\u{3099}'),
+        ('\u{FFA1}', '\u{3131}'),
+        ('\u{FFE8}', '\u{2502}'),
+        ('\u{FFEE}', '\u{25CB}'),
+    ] {
+        assert_eq!(full_width_char(narrow), wide, "narrow={narrow:?}");
+        assert_eq!(full_width_char(wide), wide, "wide={wide:?}");
+    }
+    assert_eq!(full_width_char('漢'), '漢');
+    assert_eq!(
+        apply_text_transform("A ｶﾞ ¢", TextTransform::FullWidth, ""),
+        "Ａ　カ\u{3099}　￠"
+    );
+}
+
+#[test]
+fn full_width_covers_all_non_ascii_unicode_compatibility_pairs() {
+    // Unicode 14.0 UCD mappings: inverted <wide> and direct <narrow>.
+    // Keep expected pairs independent of the match arm order.
+    let mappings = concat!(
+        "A2:FFE0 A3:FFE1 A5:FFE5 A6:FFE4 AC:FFE2 AF:FFE3 20A9:FFE6 ",
+        "2985:FF5F 2986:FF60 FF61:3002 FF62:300C FF63:300D FF64:3001 FF65:30FB ",
+        "FF66:30F2 FF67:30A1 FF68:30A3 FF69:30A5 FF6A:30A7 FF6B:30A9 FF6C:30E3 ",
+        "FF6D:30E5 FF6E:30E7 FF6F:30C3 FF70:30FC FF71:30A2 FF72:30A4 FF73:30A6 ",
+        "FF74:30A8 FF75:30AA FF76:30AB FF77:30AD FF78:30AF FF79:30B1 FF7A:30B3 ",
+        "FF7B:30B5 FF7C:30B7 FF7D:30B9 FF7E:30BB FF7F:30BD FF80:30BF FF81:30C1 ",
+        "FF82:30C4 FF83:30C6 FF84:30C8 FF85:30CA FF86:30CB FF87:30CC FF88:30CD ",
+        "FF89:30CE FF8A:30CF FF8B:30D2 FF8C:30D5 FF8D:30D8 FF8E:30DB FF8F:30DE ",
+        "FF90:30DF FF91:30E0 FF92:30E1 FF93:30E2 FF94:30E4 FF95:30E6 FF96:30E8 ",
+        "FF97:30E9 FF98:30EA FF99:30EB FF9A:30EC FF9B:30ED FF9C:30EF FF9D:30F3 ",
+        "FF9E:3099 FF9F:309A FFA0:3164 FFA1:3131 FFA2:3132 FFA3:3133 FFA4:3134 ",
+        "FFA5:3135 FFA6:3136 FFA7:3137 FFA8:3138 FFA9:3139 FFAA:313A FFAB:313B ",
+        "FFAC:313C FFAD:313D FFAE:313E FFAF:313F FFB0:3140 FFB1:3141 FFB2:3142 ",
+        "FFB3:3143 FFB4:3144 FFB5:3145 FFB6:3146 FFB7:3147 FFB8:3148 FFB9:3149 ",
+        "FFBA:314A FFBB:314B FFBC:314C FFBD:314D FFBE:314E FFC2:314F FFC3:3150 ",
+        "FFC4:3151 FFC5:3152 FFC6:3153 FFC7:3154 FFCA:3155 FFCB:3156 FFCC:3157 ",
+        "FFCD:3158 FFCE:3159 FFCF:315A FFD2:315B FFD3:315C FFD4:315D FFD5:315E ",
+        "FFD6:315F FFD7:3160 FFDA:3161 FFDB:3162 FFDC:3163 FFE8:2502 FFE9:2190 ",
+        "FFEA:2191 FFEB:2192 FFEC:2193 FFED:25A0 FFEE:25CB ",
+    );
+    let pairs = mappings.split_ascii_whitespace().collect::<Vec<_>>();
+    assert_eq!(pairs.len(), 131);
+    for pair in pairs {
+        let (from, to) = pair.split_once(':').expect("source:target mapping");
+        let parse = |hex| char::from_u32(u32::from_str_radix(hex, 16).unwrap()).unwrap();
+        assert_eq!(full_width_char(parse(from)), parse(to), "{pair}");
+    }
+}
+
+#[test]
 fn text_autospace_boxes_insert_expected_boundary_advances() {
     use raikiri_style::property::{TextAutospace, TextAutospaceMode};
 

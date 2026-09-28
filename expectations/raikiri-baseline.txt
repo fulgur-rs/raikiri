@@ -1606,3 +1606,5 @@ css/css-text/text-autospace/text-autospace-supplementary-ideograph.html
 css/css-text/text-transform/text-transform-fullwidth-006.html
 # --- css-text text-transform full-width preserved spaces Ahem exact 800x600 PASS-only (+1) ---
 css/css-text/text-transform/text-transform-fullwidth-007.html
+# --- css-text text-transform Unicode wide/narrow compatibility mapping exact 800x600 PASS-only (+1) ---
+css/css-text/text-transform/text-transform-fullwidth-010.html

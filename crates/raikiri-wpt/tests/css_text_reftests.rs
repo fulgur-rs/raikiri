@@ -915,3 +915,26 @@ fn text_transform_fullwidth_preserved_spaces_ahem_exact() {
         result.mismatched_pixels
     );
 }
+
+/// Unicode wide/narrow compatibility forms use their full-width mappings.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_transform_fullwidth_unicode_mapping_exact() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/css-text/text-transform/text-transform-fullwidth-010.html");
+    let pairs =
+        discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pair");
+    assert_eq!(pairs.len(), 1);
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair(&pairs[0], config).expect("run WPT pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "outcome={:?}, mismatches={}",
+        result.outcome,
+        result.mismatched_pixels
+    );
+}
