@@ -2102,3 +2102,134 @@ fn get_colspan_huge_value_clamps_to_1000_not_one() {
     assert_eq!(colspan_of(Some("70000")), 1000);
     assert_eq!(colspan_of(Some("100000")), 1000);
 }
+
+#[test]
+fn fixed_auto_width_shrink_wraps_to_content() {
+    // CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
+    // automatic layout algorithm; §17.5.2: such a table does not fill its
+    // containing block. One 50px cell must shrink-wrap, not fill A4.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; table-layout: fixed"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = doc.append_element(
+        Some(tr),
+        "td",
+        Style::default(),
+        Some("display: table-cell"),
+    );
+    doc.append_element(
+        Some(td),
+        "div",
+        Style::default(),
+        Some("width: 50px; height: 10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    let table_layout = doc.nodes[table].unrounded_layout;
+    assert!(
+        (table_layout.size.width - 50.0).abs() < 2.0,
+        "fixed+auto table should shrink-wrap to 50px content, got {}",
+        table_layout.size.width
+    );
+}
+
+#[test]
+fn fixed_specified_width_fills_to_specified_width() {
+    // CSS 2.1 §17.5.2.1: a fixed-layout table with an explicit width uses
+    // that width as the distribution basis. Guards on the auto fallback
+    // must not change this path.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; table-layout: fixed; width: 400px"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = doc.append_element(
+        Some(tr),
+        "td",
+        Style::default(),
+        Some("display: table-cell"),
+    );
+    doc.append_element(
+        Some(td),
+        "div",
+        Style::default(),
+        Some("width: 50px; height: 10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    let table_layout = doc.nodes[table].unrounded_layout;
+    assert!(
+        (table_layout.size.width - 400.0).abs() < 2.0,
+        "fixed+400px table should fill to 400px, got {}",
+        table_layout.size.width
+    );
+}
+
+#[test]
+fn auto_width_shrink_wraps_to_content_baseline() {
+    // Baseline: auto layout with no specified width shrink-wraps
+    // (CSS 2.1 §17.5.2.2). Fixed+auto must match this after the fix.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; table-layout: auto"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = doc.append_element(
+        Some(tr),
+        "td",
+        Style::default(),
+        Some("display: table-cell"),
+    );
+    doc.append_element(
+        Some(td),
+        "div",
+        Style::default(),
+        Some("width: 50px; height: 10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    let table_layout = doc.nodes[table].unrounded_layout;
+    assert!(
+        (table_layout.size.width - 50.0).abs() < 2.0,
+        "auto+auto table should shrink-wrap to 50px content, got {}",
+        table_layout.size.width
+    );
+}

@@ -358,22 +358,21 @@ pub fn compute_table_layout(
         inputs.parent_size.width,
     );
     // In fixed mode an unresolvable specified width (auto, or % of an
-    // indefinite container) falls back to the auto algorithm below.
-    // Auto layout resolves columns against the SPECIFIED width only
-    // (`None` when auto): with `known_dimensions.width = None` the resolver
-    // takes its cap branch (preferred size capped by the definite
-    // container) instead of stretch-to-fill. A specified width keeps the
-    // previous basis (`effective_known`, the taffy-resolved outer width —
-    // subtracting insets recovers the content box). Fixed layout keeps the
-    // previous behavior (container width as distribution basis).
+    // indefinite container) falls back to the auto algorithm below
+    // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
+    // automatic layout algorithm; §17.5.2: such a table does not fill its
+    // containing block).
+    // Both auto and fixed+auto resolve columns against the SPECIFIED width
+    // only (`None` when auto): with `known_dimensions.width = None` the
+    // resolver takes its cap branch (preferred size capped by the definite
+    // container, §17.5.2.2) instead of stretch-to-fill. A specified width
+    // keeps the previous basis (`effective_known`, the taffy-resolved outer
+    // width — subtracting insets recovers the content box).
     let inputs_for_columns = LayoutInput {
         known_dimensions: Size {
-            width: match table_layout {
-                TableLayoutValue::Fixed => effective_known.width,
-                _ => match specified_width {
-                    Some(_) => effective_known.width,
-                    None => None,
-                },
+            width: match specified_width {
+                Some(_) => effective_known.width,
+                None => None,
             },
             height: effective_known.height,
         },
@@ -485,9 +484,9 @@ pub fn compute_table_layout(
         }
         x
     };
-    // Auto tables without a specified width size to content
-    // (shrink-wrap); specified widths (and fixed layout) keep the previous
-    // fill basis.
+    // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
+    // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
+    // width keeps the fill basis.
     let table_width_basis = if abspos_table && specified_width.is_none() {
         // An auto-width absolutely positioned table uses the containing block's
         // available width for this table-layout path.  Taffy's shrink-to-fit
@@ -499,12 +498,9 @@ pub fn compute_table_layout(
     } else if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
         specified_width.or(effective_known.width)
     } else {
-        match table_layout {
-            TableLayoutValue::Fixed => effective_known.width,
-            _ => match specified_width {
-                Some(_) => effective_known.width,
-                None => None,
-            },
+        match specified_width {
+            Some(_) => effective_known.width,
+            None => None,
         }
     };
     let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32;
