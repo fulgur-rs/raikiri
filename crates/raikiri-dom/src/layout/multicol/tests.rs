@@ -842,3 +842,95 @@ fn vertical_fallback_preserves_explicit_physical_min_height() {
         );
     }
 }
+
+fn multicol_gap_fixture_metrics(style_attr: &str) -> MulticolMetrics {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(Some(body), "div", Style::default(), Some(style_attr));
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            if child < parent_of.len() {
+                parent_of[child] = Some(parent);
+            }
+        }
+    }
+    multicol_metrics_for_node(&cascade, &parent_of, container, 800.0).expect("multicol metrics")
+}
+
+#[test]
+fn multicol_metrics_resolves_normal_gap_to_one_em_with_default_font_size() {
+    // CSS Multi-column Layout Module Level 1 section 5 Column Gaps and Rules
+    // https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
+    // gives column-gap normal a used value of 1em on a multicol container.
+    // The default font size is 16px, so the gap is 16.0 and two columns in
+    // a 200px container are (200 - 16) / 2 = 92px wide.
+    let metrics = multicol_gap_fixture_metrics("display:block;column-count:2;width:200px");
+    assert!(
+        (metrics.column_gap - 16.0).abs() < 0.01,
+        "gap={:?}",
+        metrics
+    );
+    assert_eq!(metrics.column_count, 2);
+    assert!(
+        (metrics.column_width - 92.0).abs() < 0.01,
+        "metrics={:?}",
+        metrics
+    );
+}
+
+#[test]
+fn multicol_metrics_resolves_normal_gap_against_the_container_font_size() {
+    // Same spec section as above: 1em means the container own computed
+    // font size, so font-size:32px gives a 32px gap and
+    // (200 - 32) / 2 = 84px columns.
+    let metrics =
+        multicol_gap_fixture_metrics("display:block;column-count:2;width:200px;font-size:32px");
+    assert!(
+        (metrics.column_gap - 32.0).abs() < 0.01,
+        "metrics={:?}",
+        metrics
+    );
+    assert_eq!(metrics.column_count, 2);
+    assert!(
+        (metrics.column_width - 84.0).abs() < 0.01,
+        "metrics={:?}",
+        metrics
+    );
+}
+
+#[test]
+fn multicol_metrics_keeps_explicit_length_and_percentage_gaps() {
+    // Length and percentage arms are unchanged by the normal fix: 20px stays
+    // 20px, and 10 percent of a 200px container resolves to 20px. Both give
+    // (200 - 20) / 2 = 90px columns.
+    let length =
+        multicol_gap_fixture_metrics("display:block;column-count:2;width:200px;column-gap:20px");
+    assert!(
+        (length.column_gap - 20.0).abs() < 0.01,
+        "metrics={:?}",
+        length
+    );
+    assert!(
+        (length.column_width - 90.0).abs() < 0.01,
+        "metrics={:?}",
+        length
+    );
+    let percent =
+        multicol_gap_fixture_metrics("display:block;column-count:2;width:200px;column-gap:10%");
+    assert!(
+        (percent.column_gap - 20.0).abs() < 0.01,
+        "metrics={:?}",
+        percent
+    );
+    assert!(
+        (percent.column_width - 90.0).abs() < 0.01,
+        "metrics={:?}",
+        percent
+    );
+}

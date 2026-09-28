@@ -13,9 +13,19 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
     if count.is_none() && width.is_none() {
         return None;
     }
+    // Same 1em rule as the foundational multicol metrics path. CSS
+    // Multi-column Layout Module Level 1 section 5 Column Gaps and Rules
+    // https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
+    // resolves column-gap normal on a multicol container to 1em of the
+    // container font size. Flex and grid keep normal as 0 in their own bridge.
     let (gap, gap_percent) = match cv.column_gap {
         ComputedLengthPercentageOrNormal::Px(value) if value.is_finite() => (value.max(0.0), None),
         ComputedLengthPercentageOrNormal::Percent(value) if value.is_finite() => (0.0, Some(value)),
+        ComputedLengthPercentageOrNormal::Normal => {
+            let em = cv.font_size.px();
+            let resolved = if em.is_finite() { em.max(0.0) } else { 0.0 };
+            (resolved, None)
+        }
         _ => (0.0, None),
     };
     Some(MulticolStyle {
