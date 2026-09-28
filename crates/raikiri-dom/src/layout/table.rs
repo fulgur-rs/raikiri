@@ -884,19 +884,29 @@ fn collect_cells_in_row(
     *n_cols = (*n_cols).max(col);
 }
 
+/// Cell `colspan` per WHATWG HTML 4.9.12.1 ("Forming a table", "Cells" step):
+/// a missing attribute, a parse failure, or a zero value defaults to 1,
+/// and values greater than 1000 clamp to 1000 (mirroring the `colSpan`
+/// IDL `ReflectRange=(1, 1000)`).
+///
+/// Note: the full "rules for parsing non-negative integers" tolerance
+/// (surrounding whitespace, trailing junk) is intentionally not implemented;
+/// the value must parse as a plain unsigned integer, anything else falls
+/// back to 1.
 fn get_colspan(doc: &Document, node_id: usize) -> u16 {
     if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
         for a in &data.attributes {
             if a.namespace.is_none()
                 && a.local.as_str() == "colspan"
-                && let Ok(v) = a.value.parse::<u16>()
+                && let Ok(v) = a.value.parse::<u32>()
             {
-                return v.max(1);
+                // Parse wide (u32) so huge values (e.g. "100000", which
+                // overflows u16) clamp to 1000 instead of failing to parse
+                // and falling back to 1.
+                return v.clamp(1, 1000) as u16;
             }
         }
     }
-    // Also check html attribute via ElementData retrieval alternative: try parsing int, clamp to at least 1, huge values clamp to reasonable?
-    // spec allows up to 1000; we clamp to 1000 for safety.
     1
 }
 
