@@ -1,10 +1,10 @@
 //! fulgur PageStream migration implementation — raikiri PageScene based replacement for blitz_adapter.
 //!
 //! `blitz_adapter::parse_and_layout` (screen-first blitz pipeline: parse → style → layout → paint)
-//! を raikiri の streaming pipeline (`plan` / `render_streaming` / `render_batch`) 相当へ
-//! 段階的に置換するための最小実装。現時点の raikiri は single-page `layout_single_page`
-//! + `PageScene` まで実装済みで `plan`/`render_streaming` は 未実装のため、本モジュールは
-//!   その single-page path を `PageFragment`/`PageStream` の将来 shape に見立ててラップする。
+//! is gradually replaced by the equivalent raikiri streaming pipeline
+//! (`plan` / `render_streaming` / `render_batch`). Raikiri currently supports
+//! `layout_single_page` and `PageScene`, but not `plan` or `render_streaming`, so this module
+//! wraps the single-page path in the future `PageFragment`/`PageStream` shape.
 //!
 //! # Architecture
 //!
@@ -18,10 +18,10 @@
 //!
 //! # Viewport → PageBox mapping
 //!
-//! `Viewport::window_size` (physical px) を `Viewport::scale()` (hidpi * zoom) で割って
-//! CSS px の `PageBox` に変換する。`window_size == (0,0)` または `scale == 0` の場合は
-//! `PageBox::A4` にフォールバック ( fulgur が viewport 未設定時に A4 相当でレイアウトする
-//! 挙動に合わせる )。
+//! Divide `Viewport::window_size` (physical px) by `Viewport::scale()` (hidpi * zoom)
+//! to obtain a `PageBox` in CSS px. When `window_size == (0,0)` or `scale == 0`,
+//! fall back to `PageBox::A4`, matching fulgur's A4-equivalent layout when
+//! the viewport is not configured.
 
 use raikiri::{FontContext, PageBox, PageScene, build_cascaded, build_page_scene_for_page_named};
 use raikiri_html::{ParseOptions, parse as html_parse};
@@ -29,12 +29,12 @@ use raikiri_traits::RenderError;
 
 use crate::shell::Viewport;
 
-/// Single-page `PageStream` compatibility wrapper — `Vec<PageScene>` を streaming iterator 風にラップする.
+/// Single-page `PageStream` compatibility wrapper: wraps `Vec<PageScene>` as a streaming iterator.
 ///
-/// 将来の `PageStream` は `PageFragment` を逐次 `RenderSink::accept_page` へ流す
-/// streaming state machine だが、現時点の実装 は single-pass で全ページを先に確定して
-/// `Vec` に保持する ( single page のみをサポートする `layout_single_page` の制約に由来 )。
-/// Consumer は `pages()` / `into_pages()` / `Iterator` 経由で page を取得できる。
+/// A future `PageStream` will pass each `PageFragment` to `RenderSink::accept_page`
+/// through a streaming state machine. The current single-pass implementation instead
+/// stores all pages in a `Vec` (because `layout_single_page` supports only one page).
+/// Consumers can obtain pages via `pages()`, `into_pages()`, or `Iterator`.
 #[derive(Debug, Default)]
 pub struct RaikiriPageStream {
     pages: Vec<PageScene>,
@@ -42,11 +42,11 @@ pub struct RaikiriPageStream {
 }
 
 impl RaikiriPageStream {
-    /// `html` を parse → cascade → layout し `PageScene` の stream を生成する。
+    /// Parse, cascade, and lay out `html` to produce a stream of `PageScene` values.
     ///
-    /// `viewport` が `Some` かつ `window_size != (0,0)` の場合は viewport から
-    /// `PageBox` を導出する ( `window_size / scale` )。`None` またはゼロサイズの
-    /// 場合は `PageBox::A4` を使用する。
+    /// If `viewport` is `Some` and `window_size != (0,0)`, derive the
+    /// `PageBox` from the viewport (`window_size / scale`). If `viewport` is `None`
+    /// or has zero size, use `PageBox::A4`.
     pub fn from_html(html: &str, viewport: Option<Viewport>) -> Result<Self, RenderError> {
         let page_box = viewport
             .as_ref()
@@ -92,9 +92,9 @@ impl Iterator for RaikiriPageStream {
     }
 }
 
-/// Viewport → PageBox 変換 ( physical px / scale → CSS px )。
+/// Convert a viewport to a PageBox (physical px / scale → CSS px).
 ///
-/// `window_size == (0,0)` または `scale == 0.0` の場合は `PageBox::A4` を返す。
+/// Return `PageBox::A4` when `window_size == (0,0)` or `scale == 0.0`.
 pub fn viewport_to_page_box(viewport: &Viewport) -> PageBox {
     let (w, h) = viewport.window_size;
     if w == 0 || h == 0 {
@@ -209,14 +209,14 @@ fn layout_page_render_data(html: &str, page_box: PageBox) -> Result<PageRenderDa
     })
 }
 
-/// `html` を `PageBox` でレイアウトし、ページごとの `PageScene` を生成する。
+/// Lay out `html` within `PageBox` and produce a `PageScene` for each page.
 ///
-/// 既存の single-page caller は先頭 scene を使える。複数ページ caller は
-/// returned vector を順番に処理する。
+/// Existing single-page callers can use the first scene. Multi-page callers can
+/// process the returned vector in order.
 ///
 /// # Errors
-/// - `RenderError::Parse` — HTML parse 失敗
-/// - `RenderError::Layout` — layout 失敗 ( body 欠落 / taffy error / parley shape error )
+/// - `RenderError::Parse` — HTML parsing failed.
+/// - `RenderError::Layout` — layout failed (missing body, taffy error, or parley shaping error).
 pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScene>, RenderError> {
     Ok(layout_page_render_data(html, page_box)?
         .pages
@@ -242,18 +242,18 @@ pub fn html_to_png_pages_via_page_stream(
         .collect())
 }
 
-/// `blitz_adapter::parse_and_layout` 相当を raikiri で置換する 実装関数。
+/// Raikiri implementation replacing `blitz_adapter::parse_and_layout`.
 ///
-/// `html` と `viewport` から `Vec<PageScene>` を得る最短経路。fulgur 側は
-/// 本関数を `blitz_adapter::parse_and_layout` の代替として呼び出せる
-/// ( 戻り値型のみ `Vec<Document>` / `blitz_dom::Document` から `Vec<PageScene>`
-/// へ変わるが、viewport からの PageBox 導出・フォント解決等の integration logic は
-/// 本関数内で完結するため call-site の変更は最小 )。
+/// The shortest path from `html` and `viewport` to `Vec<PageScene>`. Fulgur can
+/// call this function instead of `blitz_adapter::parse_and_layout`.
+/// Only the return type changes from `Vec<Document>` / `blitz_dom::Document`
+/// to `Vec<PageScene>`; viewport-to-PageBox mapping, font resolution, and other
+/// integration logic stay here, minimizing changes at the call site.
 ///
-/// 将来 `PageFragment` ( `raikiri_traits::PageFragment` ) が populate された際、
-/// 本関数は `Vec<PageScene>` から `Vec<PageFragment>` への thin map に
-/// 昇格する。現時点の `PageFragment` は empty value のため、
-/// PageScene を直接返す方が visual verification に有用である。
+/// When `PageFragment` (`raikiri_traits::PageFragment`) is populated in the future,
+/// this function can become a thin map from `Vec<PageScene>` to `Vec<PageFragment>`.
+/// For now, `PageFragment` is empty, so returning PageScene directly is more useful
+/// for visual verification.
 ///
 /// # Example
 /// ```rust
@@ -269,14 +269,14 @@ pub fn parse_and_layout_with_raikiri(
     RaikiriPageStream::from_html(html, viewport).map(|s| s.into_pages())
 }
 
-/// `PageScene::rasterize` を使って `PageScene` を PNG bytes に変換する helper。
+/// Convert `PageScene` to PNG bytes using `PageScene::rasterize`.
 ///
-/// `html_to_page_scenes` が生成した `PageScene` から visual verification 用
-/// PNG を得る最短経路。`PageScene` が保持する `PageDrawables` 自体は現時点
-/// で paint に直接消費されない ( `rasterize` は `dom` + `cascade` を thread して
-/// `raikiri_paint::paint_single_page` を verbatim call する ) が、PNG 出力
-/// は byte-identical に保証される ( `raikiri` crate の `PageScene::rasterize`
-/// doc 参照 )。
+/// The shortest path to a visual-verification PNG from a `PageScene` produced by
+/// `html_to_page_scenes`. The `PageDrawables` stored in `PageScene` are not yet
+/// consumed directly by paint (`rasterize` passes `dom` and `cascade` to
+/// `raikiri_paint::paint_single_page` verbatim), but the PNG output is guaranteed
+/// to be byte-identical (see the `PageScene::rasterize` docs in the `raikiri` crate).
+///
 pub fn html_to_png_via_page_stream(html: &str, page_box: PageBox) -> Result<Vec<u8>, RenderError> {
     let opts = ParseOptions {
         extra_stylesheets: &[],

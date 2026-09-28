@@ -128,51 +128,51 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
     }
 }
 
-/// 単一 A4 (or 指定 PageBox) ページに Document を layout する。
+/// Lay out a Document on one A4 page (or the specified PageBox).
 ///
-/// # 変更 (in-place)
-/// - Node.text_layout を全 `None` にクリア (re-entrance safety)
-/// - `apply_computed_to_style` で computed → taffy::Style bridge (現時点では no-op)
-/// - `preshape_text` で全 Text node を parley shape、Node.text_layout に格納
-/// - `apply_page_content_box_to_body` で body.style.size = page content box
-/// - `compute_root_layout` で taffy 計算、Node.unrounded_layout に書き込む
+/// # In-place changes
+/// - Clear every Node.text_layout to `None` (re-entrance safety)
+/// - Bridge computed values to taffy::Style with `apply_computed_to_style` (currently a no-op)
+/// - Shape every Text node with `preshape_text` and store it in Node.text_layout
+/// - Set body.style.size to the page content box with `apply_page_content_box_to_body`
+/// - Run taffy with `compute_root_layout` and store results in Node.unrounded_layout
 ///
 /// # Errors
-/// - `LayoutError::Internal` — `<body>` element が見つからない (fragment
-///   parse は現行実装では非対応) / taffy internal
+/// - `LayoutError::Internal` — no `<body>` element found (fragment parses
+///   are not supported yet) or an internal taffy error
 ///
-///   parley shape (`preshape_text`) は **失敗しない**
-///   (同関数の doc 参照)。
+///   parley shaping (`preshape_text`) **cannot fail**
+///   (see the documentation for that function).
 ///
-/// # Non-goals (現時点)
-/// - 同じ Document で複数回呼ぶことは safe (text_layout を毎回 clear) だが、
-///   incremental (差分だけ再走) は将来追加予定
-/// - Consumer からの PageBox 上書きは将来の per-page PageBox 対応で扱う
-/// - Fragment parse (no `<body>`) support は将来追加予定
-/// # API 互換性
+/// # Current non-goals
+/// - Calling this repeatedly on one Document is safe (text_layout is cleared
+///   each time), but incremental recomputation is planned for later.
+/// - Consumer PageBox overrides will be handled by future per-page PageBox support.
+/// - Fragment parses (without `<body>`) will be supported later.
+/// # API compatibility
 ///
-/// この signature は以前の 3-arg `(document, cascade, page_box)` から
-/// 4-arg `(document, cascade, page_box, font_ctx)` に **意図的に breaking
-/// change** された (choice β)。α (dual API: 既存 3-arg +
-/// 新規 `_with_fonts`) との trade-off の末、raikiri-dom 内 caller が全て
-/// in-repo (12 箇所 = production 1 + test 11) であり、内部 DI の explicit
-/// 化と signature 統一の方が長期保守で優れると判断した。
+/// The signature deliberately changed from three arguments
+/// `(document, cascade, page_box)` to four arguments
+/// `(document, cascade, page_box, font_ctx)` (breaking change, choice β).
+/// After weighing choice α (dual API: old three-argument API plus
+/// a new `_with_fonts`), all raikiri-dom callers proved to be in-repo
+/// (12 sites: one production, 11 tests). Explicit internal DI and a unified signature are easier to maintain long-term.
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
     mut font_ctx: FontContext,
 ) -> Result<(), LayoutError> {
-    // observation-side entry で
-    // membership を sync する — `mark_in_document_flags` は flags_dirty=false
-    // なら idempotent no-op なので、既に sink.finish() 経由で sync 済の場合は
-    // 事実上 free。post-parse mutation (`Document::append_*` 等) の後で cascade
-    // を skip して直接 layout する consumer に対する safety net。
+    // At this observation-side entry point,
+    // synchronize membership. `mark_in_document_flags` is an idempotent no-op
+    // when flags_dirty=false, so this is effectively free after sink.finish().
+    // It protects consumers that skip cascade and call layout directly after
+    // post-parse mutation (`Document::append_*`, etc.).
     //
-    // Contract note: cascade は `&D: Dom` を取り mutation 不可なので、cascade
-    // 呼び出し側で sync せざるを得ない (parse.finish() 経由でしか自動 sync
-    // されない)。layout はここで sync することで少なくとも layout/paint 段に
-    // stale bit を持ち込まないことを保証する。
+    // Contract: cascade takes `&D: Dom` and cannot mutate, so its caller must
+    // synchronize flags (automatic synchronization occurs only through parse.finish()).
+    // Layout synchronizes here to ensure that stale flags never reach at least
+    // the layout / paint stages.
     document.mark_in_document_flags();
     crate::image_resolve::resolve_inline_svg_intrinsic_sizes(document);
     if document.layout_cascade_generation != Some(cascade.generation()) {
@@ -205,7 +205,7 @@ pub fn layout_single_page(
     document.fragment_tree.clear();
     document.fragmentation_stack.clear();
 
-    // Step 1: ComputedValues → taffy::Style bridge (現時点では no-op site)
+    // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
     apply_computed_to_style(document, cascade);
 
     // Step 2: resolve the paper/content split before shaping.  Text wrapping
@@ -219,8 +219,8 @@ pub fn layout_single_page(
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
 
     // Step 2b: pre-shape all text with parley
-    // font_ctx は呼び出し側が構築 (system font 経路なら FontContext::new()、
-    // VRT なら raikiri_dom::fonts::build_wpt_font_ctx で 確認済み)
+    // The caller constructs font_ctx (FontContext::new() for system fonts,
+    // or raikiri_dom::fonts::build_wpt_font_ctx for verified VRT fonts).
     let mut layout_cx = LayoutContext::<()>::new();
     prepare_ch_box_values_before_taffy(document, cascade, &mut font_ctx, &mut layout_cx);
     preshape_text(
@@ -276,7 +276,7 @@ pub fn layout_single_page(
         }
     }
 
-    // Step 4: body.style.size は紙面ではなく page content box へ強制セット。
+    // Step 4: force body.style.size to the page content box, not the full paper size.
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
     // Taffy's static-position absolute fallback does not account for a
@@ -296,17 +296,17 @@ pub fn layout_single_page(
     );
     realign_inline_replaced_children(document, cascade); // cov:ignore: resource-enabled ignored WPT path.
     realign_single_empty_inline_block_indent(document, cascade);
-    // Step 5a: taffy 確定幅基準の text 再配置 (`text-align: center` 等)。
-    // glyph offset のみを変え、box geometry は変えないため invariant 検査の前後
-    // どちらでもよいが、確定幅を読む側として compute 直後に置く。
+    // Step 5a: realign text using taffy’s final width (`text-align: center`, etc.).
+    // This changes only glyph offsets, not box geometry, so it could run before or
+    // after invariant checks; put it immediately after compute to use the final width.
     realign_grid_abspos_static_positions(document, cascade);
     realign_text_after_layout(document, cascade, &mut font_ctx, &mut layout_cx);
-    // Step 5b: 親子 geometry の意味的 invariant を検査し、破れている subtree
-    // を決定的 fallback (ゼロ) に倒す。Step 5 の内部
-    // (`set_unrounded_layout` 経由の `sanitize_taffy_layout`) が保証するのは
-    // finiteness だけなので、その一段上のレイヤーとしてここに置く —
-    // `enforce_layout_invariants`'s doc 参照。`document.layout_warnings` へ
-    // 積む event は Step 1/2 と同じ buffer で、Step 6 がまとめて drain する。
+    // Step 5b: check semantic parent-child geometry invariants and replace
+    // any invalid subtree with the deterministic fallback (zero). Step 5
+    // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only
+    // finite values. This check therefore sits one layer above it; see the
+    // `enforce_layout_invariants` documentation. Events enter the same
+    // `document.layout_warnings` buffer as Steps 1 / 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
 
     // Step 6: replay buffered LayoutWarn events.
@@ -895,10 +895,10 @@ pub fn layout_pages(
     layout_pages_with_page_steps(document, cascade, page_box, font_ctx, &[])
 }
 
-/// [`layout_pages`] と同一だが、先に `resolver` で `<img>` の intrinsic
-/// サイズを解決する。解決結果は同じ `Document` に保存されるため、ページ
-/// 分割後の通常のレイアウト処理と paint 時の pixel source が同じ画像を
-/// 参照できる。
+/// Like [`layout_pages`], but first use `resolver` to resolve the intrinsic
+/// size of `<img>` elements. The result is stored in the same `Document`,
+/// so normal layout after pagination and the paint pixel source can refer
+/// to the same image.
 pub fn layout_pages_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -930,8 +930,8 @@ pub fn layout_pages_with_resolver_and_base_url(
     layout_pages(document, cascade, page_box, font_ctx)
 }
 
-/// [`layout_pages_with_page_geometry`] と同一だが、先に `resolver` で
-/// `<img>` の intrinsic サイズを解決する。
+/// Like [`layout_pages_with_page_geometry`], but first use `resolver` to
+/// resolve the intrinsic sizes of `<img>` elements.
 pub fn layout_pages_with_page_geometry_and_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -2114,26 +2114,26 @@ pub fn layout_pages_with_page_geometry(
         .collect())
 }
 
-/// [`layout_single_page`] と同一だが、`<img>` 等 replaced element の
-/// intrinsic size を `resolver` 経由で解決してから layout する。
+/// Like [`layout_single_page`], but first resolve intrinsic sizes of
+/// replaced elements such as `<img>` through `resolver`.
 ///
 /// # Errors
-/// [`layout_single_page`] と同じ、加えて `LayoutError::Resolver` はこの
-/// 関数固有 — `resolver.resolve()` が `Err` を返した時点で pre-pass を
-/// 打ち切り、その error を `LayoutError::Resolver` に包んで返す (taffy
-/// layout 自体は走らない)。`ReplacedResolver` の契約上 `Err` は常に
-/// terminal であり、placeholder への degrade は Consumer が
-/// `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })` として表現する
-/// — 詳細は `crate::image_resolve::resolve_images` の doc 参照。
+/// As for [`layout_single_page`], plus this function’s own
+/// `LayoutError::Resolver`: abort the pre-pass as soon as `resolver.resolve()`
+/// returns `Err`, wrap that error in `LayoutError::Resolver`, and return
+/// without running taffy layout. The `ReplacedResolver` contract makes `Err`
+/// terminal; consumers request placeholder degradation by returning
+/// `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })` instead.
+/// See the documentation for `crate::image_resolve::resolve_images`.
 ///
-/// # 実行順 (load-bearing)
-/// `resolve_images` の前に [`Document::mark_in_document_flags`] を呼ぶ。
-/// `resolve_images` は inert subtree (`<template>` 子孫等) の `<img>` を
-/// membership flag で skip するので、flag が stale だと本来 fetch すべきで
-/// ない URL に対して実 fetch が走ってしまう。[`layout_single_page`] 内でも
-/// 同じ sync が走るが、そちらは本 pre-pass より**後**なので間に合わない。
-/// `mark_in_document_flags` は `flags_dirty == false` のとき O(1) no-op
-/// なので、二重呼び出しの実コストは無い。
+/// # Execution order (essential)
+/// Call [`Document::mark_in_document_flags`] before `resolve_images`.
+/// `resolve_images` skips `<img>` in inert subtrees (such as descendants of
+/// `<template>`) using membership flags. If flags are stale, it may fetch a URL
+/// that should not be fetched. [`layout_single_page`] synchronizes flags too,
+/// but only **after** this pre-pass, which would be too late.
+/// `mark_in_document_flags` is O(1) when `flags_dirty == false`,
+/// so calling it twice has no meaningful cost.
 pub fn layout_single_page_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -2155,7 +2155,7 @@ pub fn layout_single_page_with_resolver_and_base_url(
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<(), LayoutError> {
-    // See "# 実行順" above — this must precede `resolve_images`, whose
+    // See “Execution order” above — this must precede `resolve_images`, whose
     // membership gate reads the flags this refreshes.
     document.mark_in_document_flags();
     match base_url {

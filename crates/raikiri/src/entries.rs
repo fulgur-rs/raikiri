@@ -1,118 +1,112 @@
-//! [`PageDrawables`](crate::PageDrawables) の per-attribute map に格納される
-//! entry 型群 (struct-of-arrays element)。
+//! Entry types stored in [`PageDrawables`](crate::PageDrawables)
+//! per-attribute maps (elements of a struct of arrays).
 //!
 //! # Landing history
 //!
-//! 当初は pub type surface のみ landing (全 struct `{}` 空)。その後
-//! (narrowed scope — `raikiri_paint::paint_single_page` rework は
-//! 別途分離) で fulgur reference shape と照合しつつ minimal field を追加した。
+//! Initially, only public types landed, with every struct empty (`{}`).
+//! Minimal fields were added later using Fulgur as a shape reference. The
+//! proposed rewrite of `raikiri_paint::paint_single_page` was separated out.
 //!
-//! 実際に [`build_page_scene`](crate::page_scene::build_page_scene) から
-//! instance が construct され `PageDrawables` へ insert されるのは
-//! [`BlockEntry`] (post-layout Element node) と [`ParagraphEntry`] (post-
-//! layout Text node) の 2 型のみ。他 9 型は fulgur shape に合わせた field は
-//! 追加したが、raikiri に対応する pipeline stage (image decode / table
-//! layout / list-item marker layout / CSS transform / multicol / PDF
-//! bookmark・tag・link-span) がまだ存在しないため常に `Default::default()`
-//! のまま — 一度も construct されない。詳細な理由は各 struct doc を参照。
+//! [`build_page_scene`](crate::page_scene::build_page_scene) currently
+//! constructs and inserts only two types into PageDrawables: [`BlockEntry`]
+//! for post-layout Element nodes and [`ParagraphEntry`] for post-layout Text
+//! nodes. The other nine have reference-shaped fields, but no corresponding
+//! raikiri pipeline stage (image decoding, table/list-marker layout, CSS
+//! transforms, multicolumn, PDF bookmarks/tags, or link spans). They remain
+//! unconstructed, not merely populated with defaults. Each struct documents
+//! its specific reason.
 //!
-//! # Field type 方針
+//! # Field-type policy
 //!
-//! crate-topology 判断 (`PageDrawables`/entries を raikiri-traits へ
-//! relocate する案も検討対象) がどの案に転んでもこれまでの作業をやり直さず
-//! に済むよう、各 struct の field 型は
-//! **raikiri-style / taffy / parley の型を直接参照しない** — `f32` / `bool` /
-//! `u8` tuple / `Option<String>` / [`NodeId`] / `Vec<NodeId>` のみを使う。
-//! 理由: raikiri-traits は raikiri-style に依存していない (原則5 独立実装
-//! 境界とは別の、純粋な dependency-graph 制約) ため、これらの型を relocate
-//! 先の crate が新たに引き込む必要が生じるのを避ける。`ComputedValues` の
-//! 値は populate 時に primitive へ変換して埋める。
+//! Field types avoid **direct raikiri-style, taffy, or parley types**, using
+//! only `f32`, `bool`, `u8` tuples, `Option<String>`, [`NodeId`], and
+//! `Vec<NodeId>`. This avoids redoing the work if a future crate-topology
+//! decision moves PageDrawables/entries to raikiri-traits. Raikiri-traits
+//! does not depend on raikiri-style (a dependency-graph constraint distinct
+//! from the principle-5 independent-implementation boundary), so moving
+//! entries should not force it to import these types. Convert ComputedValues
+//! to primitives when populating entries.
 //!
-//! `opacity` (CSS property) は `raikiri_style::ComputedValues` にまだ存在
-//! しない (`visibility` / `overflow` も同様)。これらの field は CSS 初期値
-//! (`opacity: 1`、`visibility: visible`、descendant-clip 対象 0 件) を
-//! hardcode している — これは「未実装だから嘘の値」ではなく「該当
-//! property が cascade に存在しない = 常に初期値」を正しく反映した値で
-//! ある。cascade がこれらの property を持つようになった時点で、対応する
-//! field は hardcode 定数をやめて実 lookup に切り替える。
+//! `raikiri_style::ComputedValues` does not yet include CSS `opacity`,
+//! `visibility`, or `overflow`. Their fields therefore use CSS initial
+//! values (`opacity: 1`, `visibility: visible`, zero clipped descendants).
+//! These are not invented placeholder values: without those cascade
+//! properties, the initial values always apply. Switch to real lookups when
+//! the cascade gains the properties.
 //!
-//! Numeric な長さ系 field は [`crate::page_scene::Pt`] (= `f32` alias) を
-//! 再利用する。名前は "Pt" (PDF point) だが、[`crate::page_scene::build_page_scene`] は CSS px
-//! 値をそのまま詰める既存の known unit mismatch ([`crate::page_scene`] module doc 参照)
-//! に本 entry 群も従う — 新たに別種の known unit mismatch を作らないための意図的な
-//! 選択。
+//! Numeric length fields reuse [`crate::page_scene::Pt`] (an `f32` alias).
+//! Despite the name "Pt" (PDF points),
+//! [`crate::page_scene::build_page_scene`] currently fills it with CSS px;
+//! see the existing unit mismatch in the [`crate::page_scene`] module docs.
+//! Entries intentionally follow that convention rather than introduce a
+//! second, different mismatch.
 //!
-//! `#[non_exhaustive]` を全 struct に付与しているため、future field 追加は
-//! **semver-non-breaking** に行える (consumer は literal `BlockEntry { .. }`
-//! を書けない → 追加 field で consumer が compile fail しない)。
+//! Every struct is `#[non_exhaustive]`, so adding fields is semver-compatible:
+//! consumers cannot construct `BlockEntry { .. }` literals whose compilation
+//! would break when fields are added.
 
 use crate::page_scene::Pt;
 use raikiri_traits::NodeId;
 
-/// Block box (background / border / opacity / anchor id 等) の per-node
-/// paint state。
+/// Per-node paint state for a block box (background, border, opacity,
+/// anchor ID, etc.).
 ///
-/// Fulgur drawables.rs:142-177 の `BlockEntry` shape (`style` / `opacity` /
-/// `visible` / `id` / `layout_size` / `clip_descendants` /
-/// `opacity_descendants`) を reference に、raikiri で実際に取得できる
-/// minimal field を選定。
+/// The Fulgur `BlockEntry` shape (drawables.rs:142-177) has `style`,
+/// `opacity`, `visible`, `id`, `layout_size`, `clip_descendants`, and
+/// `opacity_descendants`. Only fields actually available in raikiri were
+/// selected.
 ///
-/// `build_page_scene` (crate::page_scene) が post-layout
-/// Element node ごとに construct し `PageDrawables::block_styles` へ insert
-/// する — この段階で populate される 2 型のうちの 1 つ (もう 1 つは
-/// [`ParagraphEntry`])。
+/// `build_page_scene` (crate::page_scene) constructs this for each post-layout
+/// Element and inserts it into `PageDrawables::block_styles`. This is one of
+/// the two populated types; the other is [`ParagraphEntry`].
 ///
-/// # `style` を bundle 型にしなかった理由
+/// # Why `style` is not a bundled type
 ///
-/// Fulgur は `style: BlockStyle` (background / border / box-shadow をまとめた
-/// 専用 paint-primitive 型) を持つが、raikiri には対応する bundle 型が無い。
-/// 新設すると umbrella pub surface (新規 `pub use`) が増え、item 4 の
-/// topology 判断が確定するまで型を固めたくない (module doc の field type
-/// 方針参照)。代わりに background-color / border-width をこの struct へ
-/// 直接 flatten した。
+/// Fulgur's `style: BlockStyle` bundles background, border, and box shadow
+/// in a dedicated paint-primitive type. Raikiri has no such bundle. Adding
+/// one would expand the umbrella's public surface before the item-4 topology
+/// decision is settled (see the module field-type policy). Background color
+/// and border widths are therefore flattened into this struct.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct BlockEntry {
-    /// `background-color` の (r, g, b, a)。`raikiri_style::CssColor` を
-    /// primitive tuple に変換したもの (module doc の field type 方針、
-    /// `CssColor` 型は直接持たない)。
+    /// `background-color` as (r, g, b, a), converted from
+    /// `raikiri_style::CssColor` to a primitive tuple rather than keeping
+    /// the type directly (see the module field-type policy).
     pub background_color: (u8, u8, u8, u8),
-    /// `border-{top,right,bottom,left}-width` の computed px 値
-    /// (CSS shorthand と同じ top/right/bottom/left 順)。CSS の computed 層は
-    /// `border-style: none` の場合に width を 0 へ強制する (CSS Backgrounds 3
-    /// §3.3) ため、`0.0` は「border が実質無い」ことも正しく表現する。
-    /// border-style (`solid` 等) と border-color は primitive へ安全に
-    /// flatten する型が無いため未収録 (gap、paint が実際に消費する段階で
-    /// 追加を検討)。
+    /// Computed `border-{top,right,bottom,left}-width` in px, in CSS
+    /// shorthand order. The CSS computed layer forces width to zero when
+    /// `border-style: none` (CSS Backgrounds 3 §3.3), so `0.0` also correctly
+    /// describes an effectively absent border. Border style (`solid`, etc.)
+    /// and color are omitted because they cannot yet be safely flattened to
+    /// primitives; reconsider when paint consumes these fields.
     pub border_widths: (Pt, Pt, Pt, Pt),
-    /// `opacity`。property が cascade に無いため常に CSS 初期値 `1.0`
-    /// (module doc参照)。
+    /// `opacity`: always the CSS initial value `1.0` because the property
+    /// is absent from the cascade (see module docs).
     pub opacity: f32,
-    /// `visibility`。同上の理由で常に `true` (= visible)。
+    /// `visibility`: always `true` (= visible) for the same reason.
     pub visible: bool,
-    /// `id` attribute ([`raikiri_traits::Element::id`] 経由)。空文字列は
-    /// `None` (trait 既定 contract に一致)。
+    /// The `id` attribute via [`raikiri_traits::Element::id`]. An empty ID
+    /// returns `None`, as required by the trait contract.
     pub id: Option<String>,
-    /// Taffy が計算した border-box size (module doc の unit 注記どおり
-    /// CSS px)。post-layout Element には常に存在するため実質常に `Some` —
-    /// fulgur の "fallback to fragment" semantics 用の `Option` shape のみ
-    /// 形式的に踏襲する。
+    /// Taffy's computed border-box size in CSS px (see module unit note).
+    /// Post-layout Elements always have this size in practice. The `Option`
+    /// merely follows Fulgur's "fallback to fragment" shape.
     pub layout_size: Option<(Pt, Pt)>,
-    /// Overflow-clip scope 内の descendant [`NodeId`]。`overflow` property が
-    /// cascade に無いため clip する要素は存在せず、常に空 (「未実装だから
-    /// 空」ではなく「clip という概念が cascade に存在しないので対象 0 件」
-    /// の正しい反映)。
+    /// Descendant [`NodeId`] values in an overflow-clip scope. Always
+    /// empty because cascade has no `overflow` property and hence no
+    /// elements to clip; this represents zero applicable elements, not
+    /// a missing implementation disguised as an empty list.
     pub clip_descendants: Vec<NodeId>,
-    /// Opacity-group scope 内の descendant [`NodeId`]。同上の理由で常に空。
+    /// Descendant [`NodeId`] values in an opacity-group scope; also always empty.
     pub opacity_descendants: Vec<NodeId>,
 }
 
 impl Default for BlockEntry {
     fn default() -> Self {
-        // `#[derive(Default)]` だと `opacity: 0.0` (= 完全透明) /
-        // `visible: false` になり、CSS 初期値 (opacity:1, visible) と逆の
-        // 意味になってしまうため手書き (advisor 指摘の "silently dead-wrong
-        // data" 回避)。
+        // Derived Default would give opacity: 0.0 (fully transparent) and
+        // visible: false, the opposite of the CSS initial values (1, visible).
+        // Implement Default manually to avoid silently incorrect data.
         Self {
             background_color: (0, 0, 0, 0),
             border_widths: (0.0, 0.0, 0.0, 0.0),
@@ -126,42 +120,42 @@ impl Default for BlockEntry {
     }
 }
 
-/// Paragraph (shaped inline text lines) の per-node paint state。
+/// Per-node paint state for a paragraph (shaped inline text lines).
 ///
-/// Fulgur drawables.rs:183-191 の `ParagraphEntry` shape (`lines` /
-/// `opacity` / `visible` / `id`) を reference に、raikiri の現状の text model
-/// (inline formatting context 未実装、[`raikiri_dom::Node::text_layout`] が
-/// Text node 自身に付く — `crates/raikiri-paint/src/walk.rs` module doc
-/// 参照) に合わせて minimal field を選定。
+/// Use Fulgur's `ParagraphEntry` shape (drawables.rs:183-191: `lines`,
+/// `opacity`, `visible`, `id`) but select minimal fields compatible with
+/// raikiri's current text model. There is no inline formatting context:
+/// [`raikiri_dom::Node::text_layout`] belongs to the Text node itself (see
+/// `crates/raikiri-paint/src/walk.rs` module docs).
 ///
-/// `build_page_scene` (crate::page_scene) が post-layout
-/// Text node ごとに construct し `PageDrawables::paragraphs` へ insert する。
+/// `build_page_scene` (crate::page_scene) constructs this for every
+/// post-layout Text node and inserts it into `PageDrawables::paragraphs`.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ParagraphEntry {
-    /// Shaped line 数 (`parley::Layout::lines().count()`)。実 glyph run /
-    /// position データ (fulgur の `Vec<ShapedLine>`) は `parley::Layout<()>`
-    /// 型そのものであり、raikiri-style/parley に依存しない field 型方針
-    /// (module doc参照) の対象外のため保持しない — paint は引き続き
-    /// [`raikiri_dom::Node::text_layout`] から直接読む。この field は数だけの
-    /// lightweight summary。
+    /// Number of shaped lines (`parley::Layout::lines().count()`). The actual
+    /// glyph-run positions (Fulgur's `Vec<ShapedLine>`) live in
+    /// `parley::Layout<()>`, which is deliberately excluded by the module's
+    /// field-type policy. Paint still reads [`raikiri_dom::Node::text_layout`]
+    /// directly; this field is only a lightweight count.
     pub line_count: usize,
-    /// `opacity`。[`BlockEntry::opacity`] と同じ理由で常に CSS 初期値
-    /// `1.0`。
+    /// `opacity`: always the CSS initial value `1.0`, for the same reason
+    /// as [`BlockEntry::opacity`].
     pub opacity: f32,
-    /// `visibility`。[`BlockEntry::visible`] と同じ理由で常に `true`。
+    /// `visibility`: always `true`, as for [`BlockEntry::visible`].
     pub visible: bool,
-    /// Anchor id (`id="..."` on the inline root)。現状の per-node 粒度は
-    /// Text node 自身であり、inline root (親 Element、例: `<p id="...">`) の
-    /// id を引くには `build_page_scene` の DFS stack に parent element id を
-    /// thread する変更が要る。現時点ではその変更を持ち込まず常に `None`
-    /// (documented gap、id-anchored hyperlink 解決は将来の領域)。
+    /// Anchor ID (`id="..."` on the inline root). The current per-node
+    /// granularity is the Text node; reading an ID from its parent Element
+    /// (e.g. `<p id="...">`) would require threading the parent ID through
+    /// the `build_page_scene` DFS stack. That change is deferred, so this
+    /// remains `None`; resolving ID-anchored links is future work.
     pub id: Option<String>,
 }
 
 impl Default for ParagraphEntry {
     fn default() -> Self {
-        // BlockEntry と同じ理由 (opacity/visible の CSS 初期値) で手書き。
+        // Manual Default for the same CSS opacity/visibility initial-value
+        // reason as BlockEntry.
         Self {
             line_count: 0,
             opacity: 1.0,
@@ -171,30 +165,30 @@ impl Default for ParagraphEntry {
     }
 }
 
-/// Raster image (jpg / png / gif etc.) の per-node paint state。
+/// Per-node raster-image (jpg, png, gif, etc.) paint state.
 ///
-/// Fulgur drawables.rs:205-213 の `ImageEntry` shape (`image_data` /
-/// `format` / `width` / `height` / `opacity` / `visible`) が reference。
-/// raikiri には image decode pipeline が存在しない (`<img>` の byte 取得・
-/// format 判定・raster decode のいずれも未実装) ため `image_data` /
-/// `format` は保持しない — 型を用意しても常に空/ダミーの construct しか
-/// できず「populate 詐称」になるため (task の field-type conservatism 指示)。
-/// `width` / `height` / `opacity` / `visible` のみ shape を保持する。
+/// Fulgur's `ImageEntry` shape (drawables.rs:205-213) includes `image_data`,
+/// `format`, `width`, `height`, `opacity`, and `visible`. Raikiri lacks an
+/// image-decoding pipeline (fetching `<img>` bytes, identifying the format,
+/// and decoding raster pixels), so `image_data` and `format` are excluded.
+/// Including fields that could only contain dummy data would falsely imply
+/// they were populated, contrary to the field-type conservatism constraint.
+/// Only width, height, opacity, and visibility retain the reference shape.
 ///
-/// **未 populate**: `build_page_scene` (crate::page_scene)
-/// はこの型の instance を一度も construct しない (現状
-/// [`BlockEntry`] / [`ParagraphEntry`] の 2 型のみ populate、他 9 型は
-/// 「fulgur shape 由来の field 追加」のみがこれまでの scope)。
+/// **Not populated:** `build_page_scene` (crate::page_scene) never constructs
+/// this type. It currently populates only [`BlockEntry`] and
+/// [`ParagraphEntry`]; the other nine types only gained reference-shaped
+/// fields.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ImageEntry {
-    /// Display width (module doc の unit 注記どおり CSS px)。
+    /// Display width in CSS px, per the module unit note.
     pub width: Pt,
-    /// Display height (CSS px)。
+    /// Display height (CSS px).
     pub height: Pt,
-    /// `opacity`。常に CSS 初期値 `1.0` ([`BlockEntry::opacity`] 参照)。
+    /// `opacity`: always CSS initial value `1.0` (see [`BlockEntry::opacity`]).
     pub opacity: f32,
-    /// `visibility`。常に `true` ([`BlockEntry::visible`] 参照)。
+    /// `visibility`: always `true` (see [`BlockEntry::visible`]).
     pub visible: bool,
 }
 
@@ -209,24 +203,25 @@ impl Default for ImageEntry {
     }
 }
 
-/// SVG image の per-node paint state。
+/// Per-node SVG image paint state.
 ///
-/// Fulgur drawables.rs:225-232 の `SvgEntry` shape (`tree` / `width` /
-/// `height` / `opacity` / `visible`) が reference。raikiri は SVG parse /
-/// render pipeline (`usvg` 相当) を持たないため `tree` は保持しない (理由は
-/// [`ImageEntry`] doc参照)。
+/// Fulgur's `SvgEntry` shape (drawables.rs:225-232) includes `tree`, `width`,
+/// `height`, `opacity`, and `visible`. Raikiri has no SVG parsing/rendering
+/// pipeline equivalent to `usvg`, so `tree` is omitted (see [`ImageEntry`]
+/// docs).
 ///
-/// **未 populate**: [`ImageEntry`] と同じ理由で一度も construct されない。
+/// **Not populated:** Never constructed, for the same reason as
+/// [`ImageEntry`].
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct SvgEntry {
-    /// Display width (CSS px)。
+    /// Display width (CSS px).
     pub width: Pt,
-    /// Display height (CSS px)。
+    /// Display height (CSS px).
     pub height: Pt,
-    /// `opacity`。常に CSS 初期値 `1.0`。
+    /// `opacity`: always CSS initial value `1.0`.
     pub opacity: f32,
-    /// `visibility`。常に `true`。
+    /// `visibility`: always `true`.
     pub visible: bool,
 }
 
@@ -241,44 +236,42 @@ impl Default for SvgEntry {
     }
 }
 
-/// Table (outer frame の background / border) の per-node paint state。
+/// Per-node paint state for the outer table frame (background, border).
 ///
-/// Fulgur drawables.rs:243-257 の `TableEntry` shape (`style` / `opacity` /
-/// `visible` / `id` / `layout_size` / `width` / `cached_height` /
-/// `clip_descendants`) が reference。field 型の選定は [`BlockEntry`] と同じ
-/// 方針 (`style` を flatten、opacity/visible は CSS 初期値、
-/// clip_descendants は overflow property 不在のため常に空)。
+/// Fulgur's `TableEntry` shape (drawables.rs:243-257) includes `style`,
+/// `opacity`, `visible`, `id`, `layout_size`, `width`, `cached_height`, and
+/// `clip_descendants`. As for [`BlockEntry`], style is flattened, opacity and
+/// visibility use CSS initial values, and clipping stays empty because
+/// cascade has no overflow property.
 ///
-/// **未 populate**: raikiri-dom に table-specific layout algorithm が無く
-/// (`<table>` は他 Element と同じ generic block layout を通る)、
-/// `build_page_scene` は `<table>` tag を特別扱いしていない — 常に
-/// [`BlockEntry`] として `block_styles` に入る。本 struct は fulgur shape に
-/// 合わせた field を用意するのみで、実 table layout が着地するまで一度も
-/// construct されない。
+/// **Not populated:** raikiri-dom has no table-specific layout algorithm;
+/// `<table>` uses generic block layout like other Elements.
+/// `build_page_scene` treats it as [`BlockEntry`] in `block_styles`. This
+/// struct only prepares reference-shaped fields and is never constructed
+/// until real table layout lands.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct TableEntry {
-    /// `background-color` (r, g, b, a)。[`BlockEntry::background_color`]
-    /// 参照。
+    /// `background-color` (r, g, b, a); see [`BlockEntry::background_color`].
     pub background_color: (u8, u8, u8, u8),
-    /// Border width 4 side。[`BlockEntry::border_widths`] 参照。
+    /// Four border widths; see [`BlockEntry::border_widths`].
     pub border_widths: (Pt, Pt, Pt, Pt),
-    /// `opacity`。常に CSS 初期値 `1.0`。
+    /// `opacity`: always CSS initial value `1.0`.
     pub opacity: f32,
-    /// `visibility`。常に `true`。
+    /// `visibility`: always `true`.
     pub visible: bool,
-    /// `id` attribute。
+    /// `id` attribute.
     pub id: Option<String>,
-    /// Taffy border-box size (CSS px)。[`BlockEntry::layout_size`] 参照。
+    /// Taffy border-box size in CSS px; see [`BlockEntry::layout_size`].
     pub layout_size: Option<(Pt, Pt)>,
-    /// Table 全体幅。fulgur は multi-page header 継続幅算出に使うが raikiri
-    /// は multi-page table 未対応 (single page 前提)。
+    /// Total table width. Fulgur uses this to calculate continued header
+    /// widths across pages; raikiri assumes a single page for tables.
     pub width: Pt,
-    /// Table 全体高さ (fulgur "cached" — raikiri では毎回 layout から取れる
-    /// ため cache という意味は無いが shape を揃えるため同名を保持)。
+    /// Total table height. Fulgur calls it "cached", but raikiri can obtain
+    /// it from layout every time and retains the name only to match the shape.
     pub cached_height: Pt,
-    /// Overflow-clip descendant。[`BlockEntry::clip_descendants`] と同じ
-    /// 理由で常に空。
+    /// Overflow-clipped descendants. Always empty for the same reason as
+    /// [`BlockEntry::clip_descendants`].
     pub clip_descendants: Vec<NodeId>,
 }
 
@@ -298,27 +291,27 @@ impl Default for TableEntry {
     }
 }
 
-/// List item marker (text / image / none) の per-node paint state。
+/// Per-node paint state for a list-item marker (text, image, or none).
 ///
-/// Fulgur drawables.rs:271-299 の `ListItemEntry` / `ListItemMarker` shape
-/// (`marker` / `marker_line_height` / `opacity` / `visible`) が reference。
-/// `marker` (Text/Image/None の 3-variant enum、shaped line や image data を
-/// 抱える) は raikiri に list-item marker rendering が無いため保持しない —
-/// 新 enum を興すと item 4 の topology 判断前に型を固定してしまう (module
-/// doc の field type 方針参照)。
+/// Fulgur's `ListItemEntry` / `ListItemMarker` shape (drawables.rs:271-299)
+/// includes `marker`, `marker_line_height`, `opacity`, and `visible`.
+/// `marker` is a Text/Image/None enum containing shaped lines or image data.
+/// Raikiri cannot render list-item markers yet; introducing an enum now
+/// would prematurely fix its shape before the item-4 topology decision
+/// (see the module field-type policy).
 ///
-/// **未 populate**: raikiri-dom は `<li>` の marker box を生成しない
-/// (generic block layout のみ)。`build_page_scene` は `<li>` を特別扱いせず
-/// 常に [`BlockEntry`] として扱う。marker layout が着地するまで一度も
-/// construct されない。
+/// **Not populated:** raikiri-dom does not build marker boxes for `<li>`;
+/// it only uses generic block layout. `build_page_scene` treats `<li>` as
+/// [`BlockEntry`] until marker layout exists, so this type is never
+/// constructed.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ListItemEntry {
-    /// Marker の line-height (image marker の垂直中央揃えに使う想定)。
+    /// Marker line height, intended to vertically center image markers.
     pub marker_line_height: Pt,
-    /// `opacity`。常に CSS 初期値 `1.0`。
+    /// `opacity`: always CSS initial value `1.0`.
     pub opacity: f32,
-    /// `visibility`。常に `true`。
+    /// `visibility`: always `true`.
     pub visible: bool,
 }
 
@@ -332,32 +325,32 @@ impl Default for ListItemEntry {
     }
 }
 
-/// CSS transform (matrix + origin + descendants scope) の per-node state。
+/// Per-node CSS transform state (matrix, origin, descendant scope).
 ///
-/// Fulgur drawables.rs:392-405 の `TransformEntry` shape (`matrix` /
-/// `origin` / `descendants`) が reference。`raikiri_style::ComputedValues`
-/// に `transform` property が無いため常に identity/空で、一度も construct
-/// されない (transform CSS support 未着手)。
+/// Fulgur's `TransformEntry` shape (drawables.rs:392-405) includes `matrix`,
+/// `origin`, and `descendants`. `raikiri_style::ComputedValues` has no
+/// `transform` property, so entries stay identity/empty and are never
+/// constructed; CSS transform support has not landed.
 ///
-/// `matrix` は 2D affine を `[a, b, c, d, e, f]` (row-major、fulgur の
-/// `Affine2D` 相当) の生 array で保持する — 新型を興さず module doc の
-/// field type 方針を守る。
+/// Store the 2D affine `matrix` as a raw `[a, b, c, d, e, f]` array
+/// (row-major, like Fulgur's `Affine2D`) rather than adding a new type, in
+/// accordance with the module field-type policy.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct TransformEntry {
-    /// 2D affine matrix `[a, b, c, d, e, f]`。
+    /// 2D affine matrix `[a, b, c, d, e, f]`.
     pub matrix: [f32; 6],
-    /// Transform origin。
+    /// Transform origin.
     pub origin: (Pt, Pt),
-    /// Transform scope 内の descendant [`NodeId`]。`transform` property が
-    /// cascade に無いため常に空。
+    /// Descendant [`NodeId`] values in transform scope. Always empty
+    /// because the cascade has no `transform` property.
     pub descendants: Vec<NodeId>,
 }
 
 impl Default for TransformEntry {
     fn default() -> Self {
-        // `#[derive(Default)]` の全 0 matrix は非可逆な退化 affine になる
-        // ため、identity (`[1,0,0,1,0,0]`) を明示する手書き Default。
+        // A derived Default produces an all-zero, singular affine matrix;
+        // implement Default manually with identity `[1,0,0,1,0,0]`.
         Self {
             matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
             origin: (0.0, 0.0),
@@ -366,63 +359,61 @@ impl Default for TransformEntry {
     }
 }
 
-/// Multicol の column-rule 描画 spec と per-column-group geometry。
+/// Multicolumn column-rule paint spec and per-column-group geometry.
 ///
-/// Fulgur drawables.rs:316-340 の `MulticolRuleEntry` / `ColumnRuleGeometry`
-/// shape が reference。`raikiri_style::ComputedValues` に `column-count` /
-/// `column-rule` 等 multicol property が一切無いため、fulgur の
-/// `ColumnRuleSpec` / `Vec<ColumnRuleGeometry>` に相当する型は興さず
-/// (module doc の field type 方針)、shape を示す最小 field のみ置く。常に
-/// 空で construct されない。
+/// Fulgur's `MulticolRuleEntry` / `ColumnRuleGeometry` shape
+/// (drawables.rs:316-340) is the reference. ComputedValues has no
+/// `column-count`, `column-rule`, or other multicolumn property, so avoid
+/// introducing a Fulgur-like `ColumnRuleSpec` or
+/// `Vec<ColumnRuleGeometry>` (per the module field-type policy). Keep only
+/// minimal shape fields; entries remain empty and unconstructed.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct MulticolRuleEntry {
-    /// Balance 対象の column 数。multicol property が cascade に無いため
-    /// 常に `0`。
+    /// Number of columns to balance; always `0` because the cascade has
+    /// no multicolumn properties.
     pub column_count: u32,
 }
 
-/// Bookmark anchor (PDF bookmark tree の source) の per-node state。
+/// Per-node bookmark anchor (source of a PDF bookmark tree).
 ///
-/// Fulgur drawables.rs:409-413 の `BookmarkAnchorEntry` shape (`level` /
-/// `label`) が reference。raikiri は PDF bookmark tree 生成の author 指定
-/// 手段 (どの element を bookmark にするかを決める CSS/API) を持たないため
-/// 常に construct されない — field 自体は primitive (`u8` / `String`) なので
-/// そのまま採用する。
+/// Fulgur's `BookmarkAnchorEntry` shape (drawables.rs:409-413) has `level`
+/// and `label`. Raikiri has no author-controlled CSS/API for choosing
+/// bookmarked elements, so no entries are constructed. The primitive
+/// `u8` and `String` fields still match the reference shape.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct BookmarkAnchorEntry {
-    /// Bookmark tree 上の深さ (0-based)。
+    /// Zero-based depth in the bookmark tree.
     pub level: u8,
-    /// Bookmark label 文字列。
+    /// Bookmark label text.
     pub label: String,
 }
 
-/// Paragraph 内 glyph run 上に張る hyperlink target span。
+/// Hyperlink target span over a glyph run in a paragraph.
 ///
-/// Fulgur drawables.rs:418-419 の `LinkSpanEntry` shape が reference —
-/// fulgur 自体もこの entry を "PR 3 target" (未実装、unit struct のまま) と
-/// しており、raikiri 側で先行して field を追加する reference 元が無い。
-/// raikiri でも同様に空のまま保つ (fulgur の実装が先行した時点で shape を
-/// 再確認する)。
+/// Fulgur's `LinkSpanEntry` (drawables.rs:418-419) is itself still a unit
+/// struct and marked as a "PR 3 target". There is no implemented reference
+/// shape for raikiri to follow. Leave this entry empty until Fulgur adds
+/// its fields, then reassess the shape.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct LinkSpanEntry {}
 
-/// Tagged-PDF semantics (tag / parent / alt_text 等) の per-node state。
+/// Per-node tagged-PDF state (tag, parent, alt_text, etc.).
 ///
-/// Fulgur tagging.rs:57 の `SemanticEntry` shape が reference。raikiri は
-/// tagged-PDF 生成 (構造 tag 分類・tag tree 組み立て) を一切実装していない
-/// ため常に construct されない。Field は primitive (`Option<String>` /
-/// `Option<NodeId>`) のみで shape を示す。
+/// Fulgur's `SemanticEntry` shape (tagging.rs:57) is the reference.
+/// Raikiri does not create tagged PDFs or assemble structural tag trees,
+/// so this type is never constructed. Its primitive `Option<String>` and
+/// `Option<NodeId>` fields only indicate the intended shape.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct SemanticEntry {
-    /// PDF structure tag 名 (例: `"P"`, `"H1"`)。
+    /// PDF structure tag name, e.g. `"P"` or `"H1"`.
     pub tag: Option<String>,
-    /// Tag tree 上の親 [`NodeId`]。
+    /// Parent [`NodeId`] in the tag tree.
     pub parent: Option<NodeId>,
-    /// Alt text (image 等の代替テキスト)。
+    /// Alternative text for an image or similar content.
     pub alt_text: Option<String>,
 }
 

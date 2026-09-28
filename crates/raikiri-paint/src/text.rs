@@ -1,15 +1,15 @@
-//! Text glyph and decoration draw — parley Layout の GlyphRun を
-//! anyrender::draw_glyphs に pipeし、CSS Text Decoration Level 3 の
-//! line/style/color を CSS の描画順に描画する。
+//! Draw text glyphs and decorations: pass parley Layout GlyphRuns to
+//! anyrender::draw_glyphs, then draw CSS Text Decoration Level 3
+//! line/style/color in CSS painting order.
 //!
-//! Pre-shape 済 `parley::Layout<()>` を `Node::text_layout()` accessor
-//! (`NodeData::Text(TextData)` 経由) から取得する design に依拠。paint は
-//! line iteration + GlyphRun.positioned_glyphs()
-//! を per-run 変換 (parley::Glyph → anyrender::Glyph) して scene に送る。
+//! Relies on pre-shaped `parley::Layout<()>` from the `Node::text_layout()` accessor
+//! (via `NodeData::Text(TextData)`). Paint iterates lines, calls
+//! GlyphRun.positioned_glyphs(), and converts glyphs per run
+//! (parley::Glyph → anyrender::Glyph) before adding them to the scene.
 //!
-//! 座標系: parley Layout origin (0,0) 左上、positioned_glyphs() が line 内
-//! offset + baseline を stored directly。anyrender transform は text node の絶対座標
-//! への平行移動のみで済む (baseline / offset 加算不要)。
+//! Coordinates: the parley Layout origin (0,0) is top-left; positioned_glyphs()
+//! stores the line offset and baseline directly. The anyrender transform only
+//! translates to the text node's absolute coordinates (no baseline/offset addition).
 
 use std::sync::Arc;
 
@@ -345,19 +345,19 @@ pub(crate) fn draw_text_node(
         abs_y,
         shift_y,
     } = position;
-    // Text node の pre-shape 結果を取得。preshape_text が empty text で None を返す
-    // ので、None = "empty text" の signal、silent return。
+    // Get the text node's pre-shaped result. preshape_text returns None for empty text,
+    // so None signals "empty text"; return silently.
     let Some(text_layout) = node.text_layout() else {
         return;
     };
 
-    // Text node の brush = cascade で親から inherit された color (現状 color property のみ対応)。
-    // ComputedValues.color は Text node 位置にも populate 済 (inheritance walk 経由)。
+    // Text node brush = color inherited from its parent by cascading (only color is supported).
+    // ComputedValues.color is populated at text nodes too (via the inheritance walk).
     let cv = &cascade.computed[node_id];
     let brush = css_color_to_peniko(cv.color);
 
-    // parley positioned_glyphs() は line 内 offset + baseline を stored directly するので
-    // scene transform は text node の絶対座標への平行移動のみ。Multicolumn
+    // parley positioned_glyphs() stores the line offset and baseline directly, so
+    // the scene transform only translates to the text node's absolute coordinates. Multicolumn
     // fragments normalize the first selected line back to the fragmentainer top.
     // cov:ignore: fragment collection is exercised by the ignored foundation WPT run.
     let has_multicol_fragments = node.multicol_fragments().is_some();
@@ -1168,7 +1168,7 @@ fn text_align_last_delta(
     desired_offset - metrics.offset
 }
 
-/// parley::Glyph → anyrender::Glyph の変換 (別 crate の型境界を跨ぐための copy)。
+/// Convert parley::Glyph to anyrender::Glyph (copying across crate type boundaries).
 fn to_anyrender_glyph(g: ParleyGlyph) -> AnyrenderGlyph {
     AnyrenderGlyph {
         id: g.id,
@@ -1177,10 +1177,10 @@ fn to_anyrender_glyph(g: ParleyGlyph) -> AnyrenderGlyph {
     }
 }
 
-/// raikiri-style の CssColor (r/g/b/a: u8) → peniko::Color。
+/// Convert raikiri-style CssColor (r/g/b/a: u8) to peniko::Color.
 ///
-/// 将来 `peniko::AlphaColor` へ昇格する move に備えて helper を切り出しておく
-/// (今は 1 line だが grep しやすい)。
+/// Keep this helper separate for a future move to `peniko::AlphaColor`
+/// (it is one line today but easier to find this way).
 fn css_color_to_peniko(c: CssColor) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)
 }

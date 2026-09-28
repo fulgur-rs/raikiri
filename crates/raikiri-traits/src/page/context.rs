@@ -73,7 +73,7 @@ use crate::dom::Symbol;
 // ── CounterStack ─────────────────────────────────────────────────────────
 
 /// Nested-scope stack for one named counter (design §7.2's `CounterStack`,
-/// "stack で nested scope 対応" — CSS Lists 3 §4
+/// "support nested scopes with a stack" — CSS Lists 3 §4
 /// <https://www.w3.org/TR/css-lists-3/#auto-numbering>).
 ///
 /// Each `counter-reset` on a descendant element establishes a *new* counter
@@ -144,7 +144,7 @@ impl CounterStack {
     /// rendered counter value jumping to `i32::MIN`). `i32::saturating_add`
     /// clamps to `i32::MAX`/`i32::MIN` instead, matching the "fail-closed,
     /// not fail-silent-wrong" discipline this crate already applies
-    /// elsewhere (原則3). A second, lower-severity finding (unbounded frame
+    /// elsewhere (principle 3). A second, lower-severity finding (unbounded frame
     /// growth via unbounded nested `counter-reset`) is tracked separately,
     /// gated behind that same not-yet-built driver — no fix needed here.
     pub fn increment(&mut self, delta: i32) {
@@ -340,7 +340,7 @@ impl NamedStringState {
 /// "couldn't resolve" once collapsed to the same `Some("")`. Returning
 /// `None` here so the whole directive is skipped (see
 /// [`PageContext::apply_directive`]'s `StringSet` arm) preserves the same
-/// fail-closed discipline (原則3) the pre-promotion dom-local mirror's
+/// fail-closed discipline (principle 3) the pre-promotion dom-local mirror's
 /// `Option<StringSnapshot>` deferral already established — this promotion
 /// narrows *which* content-lists resolve (the `Named`-counter-style half of
 /// that old gap is fixed, since `format_counter` is reachable now), it does

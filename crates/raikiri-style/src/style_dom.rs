@@ -1,4 +1,4 @@
-//! Style-owned DOM abstraction — 独立実装 decoupling of raikiri-style from
+//! Style-owned DOM abstraction — independently decouples raikiri-style from
 //! raikiri-traits (a two-part decoupling — Phase A introduced this trait
 //! surface, Phase B dropped the Cargo dependency on raikiri-traits entirely).
 //!
@@ -81,14 +81,14 @@ pub enum StyleQuirksMode {
 /// DOM node kind — mirror of `raikiri_traits::NodeKind` for the style-owned
 /// trait surface (Phase B decoupling).
 ///
-/// 後から `Comment` / `ProcessingInstruction` /
-/// `DocumentFragment` を追加。`#[non_exhaustive]` により変更は non-breaking。
+/// `Comment` / `ProcessingInstruction` / `DocumentFragment` were added
+/// later. `#[non_exhaustive]` makes such additions non-breaking.
 ///
 /// Two-way invariant ([`StyleNode::kind`] / [`StyleNode::as_element`]):
-/// `kind() == StyleNodeKind::Element` iff `as_element().is_some()`。追加された
-/// 3 variant はすべて `as_element() == None`。cascade / rule-tree walk は
-/// `StyleNodeKind::Element` のみ処理し、他 kind は skip する契約なので、新
-/// variant は自動的に non-styling (cascade は 触らない) となる。
+/// `kind() == StyleNodeKind::Element` iff `as_element().is_some()`.
+/// All three added variants return `as_element() == None`. The cascade /
+/// rule-tree walk processes only `StyleNodeKind::Element` and skips other
+/// kinds, so new variants are non-styling by default (the cascade ignores them).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StyleNodeKind {
@@ -98,15 +98,15 @@ pub enum StyleNodeKind {
     Text,
     /// Document root (virtual node at arena index 0 by contract).
     Document,
-    /// Comment node (`<!-- ... -->`)。cascade は skip する (Element でない)。
-    /// 後から追加。
+    /// Comment node (`<!-- ... -->`). The cascade skips it (not an Element).
+    /// Added after the initial node kinds.
     Comment,
-    /// Processing instruction node (`<?target data?>`)。cascade は skip する。
-    /// 後から追加。
+    /// Processing instruction node (`<?target data?>`). The cascade skips it.
+    /// Added after the initial node kinds.
     ProcessingInstruction,
-    /// Document fragment root (`<template>` contents 等)。detached subtree の
-    /// virtual root、Document root から reachable でない。cascade は
-    /// `is_in_document()` gate で skip する。後から追加。
+    /// Document fragment root (for `<template>` contents, etc.). The virtual
+    /// root of a detached subtree, unreachable from the Document root. The
+    /// cascade skips it through the `is_in_document()` gate. Added later.
     DocumentFragment,
 }
 

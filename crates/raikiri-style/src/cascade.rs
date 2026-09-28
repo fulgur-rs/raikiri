@@ -1,30 +1,31 @@
-//! CSS cascade + inheritance walk。
+//! CSS cascade and inheritance walk.
 //!
-//! 2 phase:
-//! 1. per-node "cascaded values" 決定 — matching rule + inline style の候補集合から
-//!    specificity + !important + source order で winner を選択
-//! 2. inheritance walk — top-down DFS で親の computed value を継承 + 自 node の
-//!    cascaded value で override
+//! Two phases:
+//! 1. Determine per-node "cascaded values": select winners from matching rules
+//!    and inline styles by specificity, !important, and source order.
+//! 2. Inheritance walk: use top-down DFS to inherit the parent's computed values,
+//!    then override them with the node's own cascaded values.
 //!
-//! # inheritance walk 内部の 4 段階
+//! # Four stages inside the inheritance walk
 //!
-//! 上記 phase 2 の per-node 処理は、さらに 4 段に分かれる (順に phase 1 /
-//! 2 / 2.5 / 3 と呼ぶ):
+//! Each node's processing in phase 2 above has four further stages (named
+//! phases 1 / 2 / 2.5 / 3, in order):
 //!
-//! - **phase 1: winner の staging** — 親の [`ComputedValues`] から
-//!   [`crate::specified::SpecifiedValues`] を seed し、その node の全 winner を `apply_value` で
-//!   適用する。この段では length は specified 表現のまま。
-//! - **phase 2: font-size の絶対化** — **親の** computed font-size 基準。
-//! - **phase 2.5: line-height の絶対化** — 自 node の (今確定した) font-size
-//!   基準。`lh`/`rlh` の自己参照基準の非対称は
-//!   [`crate::resolve::resolve_line_height`] doc が canonical。
-//! - **phase 3: 残り全 length の絶対化** — **自 node の** computed font-size /
-//!   line-height 基準。
+//! - **phase 1: stage winners** — seed [`crate::specified::SpecifiedValues`] from
+//!   the parent's [`ComputedValues`] and apply all the node's winners with
+//!   `apply_value`. Lengths remain in specified form here.
+//! - **phase 2: absolutize font-size** — relative to the **parent's** computed font-size.
+//! - **phase 2.5: absolutize line-height** — relative to the node's **own**
+//!   (now determined) font-size. See the canonical [`crate::resolve::resolve_line_height`]
+//!   documentation for the asymmetry of the `lh`/`rlh` self-reference basis.
+//! - **phase 3: absolutize all remaining lengths** — relative to the node's
+//!   **own** computed font-size / line-height.
 //!
-//! 2 / 2.5 / 3 は [`crate::specified::SpecifiedValues::finalize`] に閉じている。分離が必要な理由は
-//! [`crate::specified`] の module doc を参照 (`padding: 2em` の基準となる
-//! `font-size` はその node の**全** winner を適用し終えるまで確定しないため、
-//! winner 適用の途中で絶対化することはできない)。
+//! Phases 2 / 2.5 / 3 are encapsulated in [`crate::specified::SpecifiedValues::finalize`].
+//! See the [`crate::specified`] module docs for why these stages must be separate:
+//! the `font-size` that serves as the basis for `padding: 2em` is not known until
+//! **all** the node's winners have been applied, so lengths cannot be absolutized
+//! while winners are being applied.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,20 +42,21 @@ use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
 static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-/// Cascade 結果。
+/// Cascade result.
 ///
-/// 将来の GCPM (paged media generated content) static-side 実装では、per-node
-/// ComputedValues 内で content / string_set / running_templates を保持する
-/// canonical taxonomy に落ち着く見込みで、CascadeResult-level の
-/// `gcpm_directives` / `running_templates` は下流 (raikiri-dom) で
-/// per-document に concatenate される責務に移る。`#[non_exhaustive]` は将来
-/// field 追加のために維持。
+/// The future static-side GCPM (paged media generated content) implementation
+/// is expected to store content / string_set / running_templates in per-node
+/// ComputedValues as the canonical taxonomy. Responsibility for concatenating
+/// CascadeResult-level `gcpm_directives` / `running_templates` per document
+/// would move downstream to raikiri-dom. Keep `#[non_exhaustive]` for future
+/// field additions.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct CascadeResult {
     generation: u64,
-    /// Per-node computed values (NodeId.0 as usize で index)。
-    /// Element / Text / Document 全 kind に populate、範囲外は panic (caller 責任)。
+    /// Per-node computed values (indexed by NodeId.0 as usize).
+    /// Populated for Element / Text / Document kinds; out-of-range access
+    /// panics and is the caller's responsibility.
     pub computed: Vec<ComputedValues>,
     /// Per-node flags indicating whether the cascade had an explicit
     /// `opacity` declaration for that node. Inline SVG painting uses this to
@@ -167,11 +169,11 @@ impl CascadeResult {
     }
 }
 
-/// DOM + RuleTree から per-node ComputedValues を produce。
+/// Produce per-node ComputedValues from the DOM and RuleTree.
 ///
-/// 現時点では常に `Ok` を返す (invalid CSS は既に build_rule_tree 段で silently
-/// drop されており、cascade は construct され得ない)。`Result` signature は
-/// 将来 fail-hard mode 用に維持。
+/// Currently always returns `Ok` (invalid CSS is silently dropped during
+/// build_rule_tree, so cascade errors cannot arise). Keep the `Result`
+/// signature for a future fail-hard mode.
 ///
 /// # Example
 ///
@@ -214,7 +216,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
 ) -> Result<CascadeResult, CascadeError> {
     let mut cascaded = CascadedArena::new();
 
-    // Phase 1: per-node cascaded values を収集
+    // Phase 1: collect per-node cascaded values.
     collect_cascaded_with_media_context(
         dom,
         dom.root_id(),
@@ -245,16 +247,17 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         })
         .collect::<Vec<_>>();
 
-    // Phase 2: inheritance walk。
+    // Phase 2: inheritance walk.
     //
-    // computed を Dom::node_count() で pre-allocate する。resolve_inheritance の
-    // DFS は root reachable な node のみを訪問するため、detached / unreachable
-    // node (foster-parenting transient、strip 後の孤児 node 等) には entry を
-    // 作らない。しかし `computed.len() == document.node_count()` という contract
-    // は arena 全体を要求する (`raikiri-dom::layout::preshape_text` /
-    // `raikiri-paint::text::draw_text_node` が node_id で `computed[idx]` に
-    // 直接 index する)。事前に initial() で埋めておき、DFS で visited slot を
-    // 上書きする実装。
+    // Preallocate computed to Dom::node_count(). resolve_inheritance's DFS
+    // visits only nodes reachable from the root, so detached / unreachable
+    // nodes (foster-parenting transients, orphans after stripping, etc.) do
+    // not get entries from the walk. But the contract
+    // `computed.len() == document.node_count()` covers the entire arena:
+    // `raikiri-dom::layout::preshape_text` and
+    // `raikiri-paint::text::draw_text_node` index `computed[idx]` directly by
+    // node_id. Fill with initial() in advance, then overwrite visited slots
+    // during DFS.
     let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
     let mut non_ua_margin_sides = vec![Sides::all(false); dom.node_count()];
     let mut authored_writing_modes = vec![None; dom.node_count()];

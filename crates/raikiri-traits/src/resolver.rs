@@ -1,27 +1,27 @@
 //! Replaced-element resolver trait + resolve types.
 //!
-//! Consumer が `<img>`, `<object>`, `<embed>`, `<svg>` 等の replaced element の
-//! intrinsic size を返す trait。size 決定 だけを扱う (fetch は Consumer 側)。
+//! Consumer-provided trait returning intrinsic sizes for replaced elements such as
+//! `<img>`, `<object>`, `<embed>`, and `<svg>`. Only sizing is handled; the consumer fetches.
 
 use url::Url;
 
 use crate::net::NetworkError;
 
-/// Replaced element の intrinsic size を resolve する Consumer 側 trait。
+/// Consumer-side trait for resolving intrinsic sizes of replaced elements.
 ///
-/// - req に含まれる URL の scheme / host / size 等の検証は Consumer 責任。
-///   集中的に policy を効かせたい場合は `raikiri-net::SandboxedResolver` で wrap
-///   (Finding #6 対応、§10 参照)。
-/// - round 4 review #3 対応: `Err` は常に terminal (`RenderError::Resolver`)。
-///   Consumer 側 fallback は `Ok(ResolvedIntrinsic { intrinsic, disposition:
-///   Fallback { .. } })` として返し、raikiri は disposition を見て
-///   `RenderSummary.warnings` に自動記録する。
+/// - The consumer validates the URL scheme, host, size, etc. in req.
+///   Wrap in `raikiri-net::SandboxedResolver` to apply a centralized policy
+///   (Finding #6, §10).
+/// - Round 4 review #3: `Err` is always terminal (`RenderError::Resolver`).
+///   Return a consumer-side fallback as `Ok(ResolvedIntrinsic { intrinsic, disposition:
+///   Fallback { .. } })`; raikiri inspects the disposition and automatically
+///   records it in `RenderSummary.warnings`.
 pub trait ReplacedResolver {
-    /// 1 replaced element の resolve。
+    /// Resolve one replaced element.
     fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError>;
 }
 
-/// Intrinsic size。
+/// Intrinsic size.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct IntrinsicBox {
@@ -50,35 +50,35 @@ impl IntrinsicBox {
     }
 }
 
-/// Resolver からの正常 return 型。
+/// Successful return type from the resolver.
 #[derive(Debug, Clone)]
 pub struct ResolvedIntrinsic {
-    /// Intrinsic size + metadata。
+    /// Intrinsic size and metadata.
     pub intrinsic: IntrinsicBox,
-    /// Resolve disposition (`Ok` / `Fallback`)。
+    /// Resolve disposition (`Ok` / `Fallback`).
     pub disposition: ResolveDisposition,
 }
 
-/// Resolve 成功 / fallback の分類。
+/// Classification of successful resolution or fallback.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ResolveDisposition {
-    /// 通常の resolve 成功。
+    /// Normal successful resolution.
     Ok,
-    /// Consumer が意図的に fallback を選択 (image not found → placeholder 等)。
-    /// raikiri は `WarningKind::ResolverFallback` として
-    /// `RenderSummary.warnings` に記録する。
+    /// Consumer intentionally chose a fallback (such as a placeholder for a missing image).
+    /// Raikiri records this as `WarningKind::ResolverFallback` in
+    /// `RenderSummary.warnings`.
     Fallback {
-        /// 人間可読な fallback 理由。
+        /// Human-readable reason for the fallback.
         reason: String,
     },
 }
 
-/// Resolve 対象 element の詳細 (borrowed reference)。
+/// Details of the element being resolved (borrowed reference).
 ///
-/// `element_kind`/`hint_size`/`attributes` は本 crate の `<img>` PNG-only
-/// スコープでは不要なため未追加 (YAGNI) — 将来 `<object>`/`<svg>` 等に
-/// 対応する際に populate する。
+/// `element_kind`/`hint_size`/`attributes` are unnecessary for this crate's
+/// PNG-only `<img>` scope (YAGNI); populate them in the future when supporting
+/// `<object>`, `<svg>`, etc.
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct ResolverRequest<'a> {
@@ -97,13 +97,13 @@ impl<'a> ResolverRequest<'a> {
     }
 }
 
-/// Resolver 層 error。
+/// Resolver-layer error.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ResolverError {
-    /// Byte 取得に失敗した (`NetworkProvider::fetch` が `Err` を返した)。
+    /// Failed to fetch bytes (`NetworkProvider::fetch` returned `Err`).
     Network(NetworkError),
-    /// 取得した byte 列のデコードに失敗した (不正な PNG 等)。
+    /// Failed to decode the fetched bytes (such as an invalid PNG).
     Decode(String),
 }
 

@@ -1,10 +1,10 @@
 //! Per-node computed CSS values.
 //!
-//! Cascade + inheritance walk が populate。将来 ComputedValues → taffy::Style
-//! + paint 用色情報の抽出 layer が入る予定。
+//! Populated by the cascade and inheritance walk. A future layer will extract
+//! `taffy::Style` and paint color information from `ComputedValues`.
 //!
-//! 現サポート property の一覧と inherited / non-inherited 分類は
-//! [`ComputedValues`] 定義の field doc comment を参照。
+//! For supported properties and their inheritance behavior, see the field
+//! documentation on [`ComputedValues`].
 
 use std::collections::HashMap;
 use std::fmt;
@@ -46,12 +46,12 @@ use crate::resolve::{
     empty_computed_transform_list, initial_computed_grid_auto_track_list,
 };
 
-/// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
+/// Pixel value corresponding to the CSS initial `font-size` value (`medium`).
 ///
-/// CSS Fonts 4 §2.5 "Font size: the font-size property"
-/// (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>) は "Initial: medium"
-/// と規定し、`medium` の実 px は UA 依存。本実装は browser default の 16px を
-/// 採る。
+/// CSS Fonts 4 §2.5, "Font size: the font-size property"
+/// (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>), specifies "Initial:
+/// medium" but leaves the actual pixel size of `medium` to the user agent.
+/// This implementation uses the browser default of 16px.
 ///
 pub(crate) const INITIAL_FONT_SIZE_PX: f32 = 16.0;
 
@@ -206,24 +206,24 @@ pub(crate) fn empty_custom_properties() -> Arc<CustomPropertyEnvironment> {
         .clone()
 }
 
-/// `position: running(<custom-ident>)` により登録された template の cascade-time seed。
+/// Cascade-time seed for a template registered by `position: running(<custom-ident>)`.
 ///
-/// CSS GCPM 3 §1.2.1 "The running() value"
-/// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>: `position: running(name)`
-/// された element は body flow から除去、`@page` margin box の
-/// `content: element(name)` から参照される。
+/// CSS GCPM 3 §1.2.1, "The running() value"
+/// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>: an element with
+/// `position: running(name)` is removed from the body flow and can be referenced
+/// by `content: element(name)` in an `@page` margin box.
 ///
-/// 本 struct は design doc §7.3 の **2-tier キャッシュ** の static side seed —
-/// cascade で per-node に `name` を捕捉し、下流 (raikiri-dom) 側が subtree_root /
-/// pre-cascaded style / dynamic flags を association する
-/// (`ParsedRunningTemplate` — 本 crate は leaf、DOM node identity を持たない)。
+/// This struct is the static-side seed for the **two-tier cache** in design doc
+/// §7.3. The cascade captures `name` per node; downstream `raikiri-dom` then
+/// associates the subtree root, pre-cascaded style, and dynamic flags
+/// (`ParsedRunningTemplate`). This crate is a leaf and has no DOM node identity.
 ///
-/// `#[non_exhaustive]` により future field (e.g. `alternative_hint` 等の per-name
-/// override) を non-breaking で追加可能。
+/// `#[non_exhaustive]` allows future fields, such as a per-name override of
+/// `alternative_hint`, to be added without breaking callers.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunningTemplate {
-    /// `running(<name>)` の name (case-preserved smol str)。
+    /// The case-preserved smol-str name in `running(<name>)`.
     pub name: SmolStr,
 }
 
@@ -258,240 +258,240 @@ pub struct ChLengthProvenance {
     pub font: ChFontKey,
 }
 
-/// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
+/// Per-node computed style. See the field documentation below for supported
+/// properties and their inheritance behavior (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position;
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
-/// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear)。
+/// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear).
 ///
-/// # 層
+/// # Layers
 ///
-/// 本 struct が保持するのは **computed value 層**の値だけである。length を運ぶ
-/// field は [`crate::resolve`] の `Computed*` 型で、`em` / `rem` / `pt` は既に
-/// px へ絶対化されている (CSS Cascade 5 §7.2
-/// <https://www.w3.org/TR/css-cascade-5/#inheriting> が「inheritance が運ぶのは
-/// computed value である」と規定するため、この絶対化は inheritance より前に
-/// 済んでいなければならない)。`<percentage>` は property ごとに扱いが異なる —
-/// 各 field doc を参照。
+/// This struct stores only **computed values**. Fields carrying lengths use
+/// `Computed*` types from [`crate::resolve`]; `em`, `rem`, and `pt` have already
+/// been converted to absolute px. CSS Cascade 5 §7.2
+/// <https://www.w3.org/TR/css-cascade-5/#inheriting> specifies that inheritance
+/// carries computed values, so conversion must precede inheritance. Treatment
+/// of `<percentage>` varies by property; see each field's documentation.
 ///
-/// 絶対化前の staging 表現は [`crate::specified::SpecifiedValues`]。cascade
-/// winner の適用はそちらに対して行い、[`SpecifiedValues::finalize`] が本 struct
-/// を produce する。
+/// The staging representation before conversion is
+/// [`crate::specified::SpecifiedValues`]. Cascade winners are applied there;
+/// [`SpecifiedValues::finalize`] produces this struct.
 ///
 /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
 ///
-/// `#[non_exhaustive]` により future property の追加が non-breaking。
+/// `#[non_exhaustive]` allows new properties without breaking callers.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedValues {
-    /// `color`。inherited、initial: opaque black。
+    /// `color`. Inherited; initial: opaque black.
     pub color: CssColor,
-    /// `background-color`。**non-inherited**、initial: `transparent`
-    /// (= [`CssColor::TRANSPARENT`])。CSS Backgrounds 3 §2.2 "Base Color:
+    /// `background-color`. **Not inherited**; initial: `transparent`
+    /// (= [`CssColor::TRANSPARENT`]). CSS Backgrounds 3 §2.2, "Base Color:
     /// the background-color property"
-    /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>。
+    /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>.
     pub background_color: CssColor,
-    /// `font-family` — 優先順位順。inherited。CSS Fonts 4 §2.1
-    /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> の spec 上の
-    /// initial は "depends on user agent" — spec は具体的な family name を
-    /// 規定しない ([`crate::property::initial_font_family`] doc 参照)。
-    /// 本実装は generic family `[FontFamilyName::generic("serif")]` を採る。
+    /// `font-family`, in priority order. Inherited. CSS Fonts 4 §2.1
+    /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> specifies an initial
+    /// value of "depends on user agent" rather than a particular family name
+    /// (see [`crate::property::initial_font_family`]). This implementation uses
+    /// the generic family `[FontFamilyName::generic("serif")]`.
     ///
     pub font_family: Arc<Vec<FontFamilyName>>,
-    /// `font-size`。**inherited**、initial: 16px (spec は `medium`、実 px は
-    /// UA 依存)。CSS Fonts 4 §2.5 "Font size: the font-size property"
-    /// <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> は
-    /// "Computed value: an absolute length" と規定する。
+    /// `font-size`. **Inherited**; initial: 16px (the spec says `medium`, whose
+    /// actual pixel size depends on the user agent). CSS Fonts 4 §2.5, "Font
+    /// size: the font-size property"
+    /// <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> specifies
+    /// "Computed value: an absolute length".
     ///
-    /// 型は [`ComputedLength`] — `em` (親基準) / `rem` (root 基準) / `<percentage>`
-    /// (親基準) / `pt` は cascade の phase 2
-    /// ([`crate::resolve::resolve_font_size`]) で px へ絶対化済み。
+    /// Its [`ComputedLength`] type contains absolute px: `em` (relative to the
+    /// parent), `rem` (relative to the root), `<percentage>` (relative to the
+    /// parent), and `pt` are converted in cascade phase 2 by
+    /// [`crate::resolve::resolve_font_size`].
     pub font_size: ComputedLength,
-    /// `font-weight`。inherited、initial: 400.0 (normal)。
+    /// `font-weight`. Inherited; initial: 400.0 (normal).
     ///
-    /// **常に resolve 済みの absolute weight** (`[1, 1000]`)。specified value 側の
-    /// `bolder` / `lighter` sentinel ([`crate::property::FontWeightValue`]) は
-    /// [`crate::cascade::apply_value`] が親の computed weight と CSS Fonts 4 §2.2
-    /// の table から絶対値に解決してから書き込むため、この field に relative
-    /// keyword が残ることはない。これは spec とも一致する — §2.2 の property
-    /// table は `Computed value: a number, see below` と規定し、§2.2.1
-    /// "Relative Weights" が "Specified values of `bolder` and `lighter`
-    /// indicate weights relative to the weight of the parent element. The
-    /// computed weight is calculated based on the inherited `font-weight`
-    /// value" と規定している
-    /// (<https://www.w3.org/TR/css-fonts-4/#relative-weights>)。
+    /// **Always a resolved absolute weight** in `[1, 1000]`. The specified-value
+    /// `bolder` / `lighter` sentinels ([`crate::property::FontWeightValue`]) are
+    /// resolved by [`crate::cascade::apply_value`] against the parent's computed
+    /// weight and the CSS Fonts 4 §2.2 table before this field is written. No
+    /// relative keyword remains here. The §2.2 property table specifies
+    /// "Computed value: a number, see below"; §2.2.1, "Relative Weights", says
+    /// "Specified values of `bolder` and `lighter` indicate weights relative
+    /// to the weight of the parent element. The computed weight is calculated
+    /// based on the inherited `font-weight` value"
+    /// (<https://www.w3.org/TR/css-fonts-4/#relative-weights>).
     ///
-    /// 型は `f32` (旧 `u16` から格上げ) — §2.2.2 "Missing
-    /// weights" <https://www.w3.org/TR/css-fonts-4/#missing-weights> "Fractional
-    /// weights are valid" どおり computed value の fractional 精度を保持する。
-    /// `u16` だった当時は整数化のため round-half-away-from-zero を要し、その丸めが
-    /// §2.2.1 relative-weight table の行選択を変える 2 次被害を伴う既知
-    /// divergence だった (本 field の型変更で解消)。
+    /// The `f32` type (formerly `u16`) preserves fractional computed weights,
+    /// as required by §2.2.2, "Missing weights"
+    /// <https://www.w3.org/TR/css-fonts-4/#missing-weights>: "Fractional weights
+    /// are valid". The former `u16` representation required round-half-away-
+    /// from-zero conversion, which could also change the chosen row of the
+    /// §2.2.1 relative-weight table. Changing this field's type removed that
+    /// known divergence.
     ///
-    /// `raikiri-dom` の layout はこの field を直接 `parley::FontWeight::new(f32)`
-    /// に渡す (キャスト不要) —
-    /// **渡す直前** に `sanitize_font_weight` (`crates/raikiri-dom/src/
-    /// layout.rs`) が sink 境界 guard を掛ける。
+    /// The `raikiri-dom` layout passes this field directly to
+    /// `parley::FontWeight::new(f32)` without a cast. Immediately before that
+    /// call, `sanitize_font_weight` (`crates/raikiri-dom/src/layout.rs`) guards
+    /// the sink boundary.
     ///
-    /// # `[1, 1000]` / finite は caller が維持する contract (本 field 自体に guard なし)
+    /// # Caller contract: finite and within `[1, 1000]` (no field-level guard)
     ///
-    /// 本 struct の field は全て `pub` であり、cascade を経由せず直接
-    /// `ComputedValues { font_weight: ..., .. }` を構築することを妨げない
-    /// (例: [`crate::page::cascade_page`] の継承元 root 引数)。`u16` だった頃は
-    /// 非有限値がそもそも型で構成不可能だったが、`f32` 化
-    /// でこの保証は「型」から「呼び出し元の値検証」に変わった — cascade を
-    /// 経由する通常経路は `parse_font_weight` (private、
-    /// [`crate::property::FontWeightValue`] の doc 参照) の `[1, 1000]` range
-    /// guard により常に finite だが、直接構築はその guard を経ない。
-    /// `NaN` / `±Inf` が渡った場合の [`crate::cascade::resolve_relative_weight`]
-    /// (`bolder`/`lighter` 解決) の挙動は同関数の doc で characterize 済み。
+    /// Every field of this struct is `pub`, so callers can construct
+    /// `ComputedValues { font_weight: ..., .. }` without going through the
+    /// cascade (for example, the inherited root argument to
+    /// [`crate::page::cascade_page`]). The old `u16` type could not represent
+    /// non-finite values. With `f32`, validation shifts from the type to the
+    /// caller. The normal cascade path is always finite because
+    /// `parse_font_weight` (private; see [`crate::property::FontWeightValue`])
+    /// enforces `[1, 1000]`, but direct construction bypasses that guard. The
+    /// behavior of [`crate::cascade::resolve_relative_weight`] (which resolves
+    /// `bolder` / `lighter`) for `NaN` / `±Inf` is documented on that function.
     ///
-    /// **本 field / `resolve_relative_weight` のどちらにも guard は追加しない**
-    /// (guard は sink 境界に置く、resolve/computed 層の public surface は
-    /// sanitize しない、という設計判断による — carve-out 2)。
-    /// この field を直接読む他の consumer (raikiri-dom 以外、例:
-    /// umbrella 経由の外部 consumer) は自分の sink 境界で同様の guard を
-    /// 持つ責務を負う (同じ carve-out 2 の理屈)。
+    /// **Neither this field nor `resolve_relative_weight` adds a guard.** The
+    /// design puts guards at sink boundaries rather than sanitizing the public
+    /// resolve/computed layer (carve-out 2). Other direct consumers of this
+    /// field, including external consumers through the umbrella crate, must
+    /// guard their own sink boundaries for the same reason.
     pub font_weight: f32,
-    /// `line-height`。**inherited**、initial: [`ComputedLineHeight::Normal`]。
-    /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
-    /// <https://www.w3.org/TR/css-inline-3/#line-height-property>。
+    /// `line-height`. **Inherited**; initial: [`ComputedLineHeight::Normal`].
+    /// CSS Inline 3 §5.1, "Line Spacing: the line-height property"
+    /// <https://www.w3.org/TR/css-inline-3/#line-height-property>.
     ///
-    /// spec の "Computed value: the specified keyword, a number, or a computed
-    /// `<length>` value" に 1:1 対応する 3 variant
-    /// ([`ComputedLineHeight`])。**computed 層に percentage は存在しない** —
-    /// `<percentage>` は宣言要素の computed font-size に対して cascade の
-    /// phase 3 で絶対化される (§5.1 "Percentages: computed relative to 1em")。
+    /// The three variants of [`ComputedLineHeight`] directly correspond to the
+    /// spec's "Computed value: the specified keyword, a number, or a computed
+    /// `<length>` value". **The computed layer contains no percentages**:
+    /// `<percentage>` is resolved against the declaring element's computed font
+    /// size in cascade phase 3 (§5.1, "Percentages: computed relative to 1em").
     ///
-    /// [`ComputedLineHeight::Number`] (unitless multiplier) は computed 層でも
-    /// number のまま残る。これは §5.1 の "child inherits the specified value"
-    /// special behavior に対応し、child の font-size で再乗算する責務を下流
-    /// (paint) に残す。逆に
-    /// [`ComputedLineHeight::Length`] は宣言要素で確定した px であり、
-    /// child は**再解決せずそのまま継承する**。
+    /// [`ComputedLineHeight::Number`] remains a unitless multiplier in the
+    /// computed layer. This matches the §5.1 special behavior "child inherits
+    /// the specified value" and leaves multiplication by the child's font size
+    /// to downstream paint. By contrast, [`ComputedLineHeight::Length`] is px
+    /// fixed at the declaring element, which children **inherit unchanged**.
     pub line_height: ComputedLineHeight,
-    /// `display`。**non-inherited**、initial: `DisplayValue::Inline`
-    /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>)。
-    /// 現状 18 keyword (`block` / `inline` / `inline-block` / `none` / `flex`
-    /// / `grid` / `list-item` / `contents` / `table` / `inline-table`
-    /// / `table-row-group` / `table-header-group` / `table-footer-group`
-    /// / `table-row` / `table-column-group` / `table-column` / `table-cell`
-    /// / `table-caption` — 詳細は [`DisplayValue`] doc)。
+    /// `display`. **Not inherited**; initial: `DisplayValue::Inline`
+    /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>).
+    /// Currently supports 18 keywords (`block` / `inline` / `inline-block` /
+    /// `none` / `flex` / `grid` / `list-item` / `contents` / `table` /
+    /// `inline-table` / `table-row-group` / `table-header-group` /
+    /// `table-footer-group` / `table-row` / `table-column-group` /
+    /// `table-column` / `table-cell` / `table-caption`; see [`DisplayValue`]).
     pub display: DisplayValue,
-    /// `list-style-type`。**inherited**、initial: `disc` (CSS Lists 3 §3.1)。
+    /// `list-style-type`. **Inherited**; initial: `disc` (CSS Lists 3 §3.1).
     pub list_style_type: ListStyleType,
-    /// `list-style-position`。**inherited**、initial: `outside` (CSS Lists 3 §3.2)。
+    /// `list-style-position`. **Inherited**; initial: `outside` (CSS Lists 3 §3.2).
     pub list_style_position: ListStylePosition,
-    /// `list-style-image`。**inherited**、initial: `none` (CSS Lists 3 §3.3)。
+    /// `list-style-image`. **Inherited**; initial: `none` (CSS Lists 3 §3.3).
     pub list_style_image: BackgroundImage,
-    /// `counter-reset`。**non-inherited**。spec initial は `none`
-    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>)、
-    /// 本 impl はそれを空 list で表現する。
-    /// counter-name + initial value pairs。counter tree の実 resolve に向けた
-    /// pre-work であり、resolve 本体は将来別途実装する。
+    /// `counter-reset`. **Not inherited**. The spec's initial value is `none`
+    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>),
+    /// represented here by an empty list. Holds counter-name / initial-value
+    /// pairs in preparation for resolving the counter tree; actual resolution
+    /// will be implemented separately.
     ///
-    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
-    /// `value.clone()`、`apply_value` move) と inheritance walk clone
-    /// (`resolve_inheritance` の stack push + `out[idx] = computed.clone()`) が
-    /// **shallow (Arc reference-count increment)** になる。
-    /// `* { counter-reset: c0 c1 ... cN }` × M element の O(N × M) memory
-    /// blow-up を単一 heap slot 共有で塞ぐ (security-relevant な DoS 対策、
-    /// Content/StringSet と同 pattern の踏襲)。`Arc<Vec<T>>: Deref<Target = Vec<T>>`
-    /// により downstream の `.iter()` / `.len()` / `.is_empty()` は既存 pattern
-    /// そのままで通る (dom/paint consumer 波及 0)。
+    /// Wrapping in [`Arc<Vec<..>>`] makes cascade winner cloning (`value.clone()`
+    /// during `apply_winners` drain; move in `apply_value`) and inheritance-walk
+    /// cloning (stack push in `resolve_inheritance`, then
+    /// `out[idx] = computed.clone()`) **shallow (Arc reference-count increments)**.
+    /// Sharing one heap allocation prevents O(N × M) memory growth for
+    /// `* { counter-reset: c0 c1 ... cN }` across M elements, a security-relevant
+    /// DoS defense following the Content/StringSet pattern. Because
+    /// `Arc<Vec<T>>: Deref<Target = Vec<T>>`, downstream `.iter()`, `.len()`, and
+    /// `.is_empty()` calls remain unchanged (no dom/paint consumer changes).
     pub counter_reset: Arc<Vec<(SmolStr, i32)>>,
-    /// `counter-increment`。**non-inherited**。spec initial は `none`
-    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)、
-    /// 本 impl はそれを空 list で表現する。
-    /// counter-name + increment pairs。counter tree の実 resolve に向けた
-    /// pre-work であり、resolve 本体は将来別途実装する。
+    /// `counter-increment`. **Not inherited**. The spec's initial value is
+    /// `none` (CSS Lists 3 §4.2
+    /// <https://www.w3.org/TR/css-lists-3/#increment-set>), represented here
+    /// by an empty list. Holds counter-name / increment pairs in preparation
+    /// for resolving the counter tree; actual resolution comes later.
     ///
-    /// [`Arc<Vec<..>>`] wrap は [`Self::counter_reset`] と同 rationale。
+    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as [`Self::counter_reset`].
     pub counter_increment: Arc<Vec<(SmolStr, i32)>>,
-    /// `counter-set`。**non-inherited**。spec initial は `none`
-    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>)、
-    /// 本 impl はそれを空 list で表現する。
-    /// counter-name + value pairs。counter tree の実 resolve に向けた
-    /// pre-work であり、resolve 本体は将来別途実装する。
+    /// `counter-set`. **Not inherited**. The spec's initial value is `none`
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#increment-set>),
+    /// represented here by an empty list. Holds counter-name / value pairs in
+    /// preparation for resolving the counter tree; actual resolution comes later.
     ///
-    /// [`Arc<Vec<..>>`] wrap は [`Self::counter_reset`] と同 rationale。
+    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as [`Self::counter_reset`].
     pub counter_set: Arc<Vec<(SmolStr, i32)>>,
-    /// `content` の resolved 中間表現。**non-inherited**。spec initial は
-    /// `normal` (CSS Content 3 §1 propdef-content "Initial: normal") で、本 impl
-    /// は `normal` を空 list、明示的な `none` を
-    /// [`ContentComponent::None`] sentinel として表現する。pseudo-element
-    /// consumers can therefore suppress an explicit `content: none` declaration.
-    /// 将来の GCPM directive emit に向けた pre-work。
-    /// 下流 (raikiri-dom) が `raikiri_traits::ContentValueItem` に mapping する
-    /// (raikiri-style は raikiri-traits に依存しない leaf crate、counter-* の
-    /// wire-through pattern を踏襲)。
+    /// Resolved intermediate representation of `content`. **Not inherited**.
+    /// The spec's initial value is `normal` (CSS Content 3 §1 propdef-content,
+    /// "Initial: normal"). Here `normal` is an empty list, while explicit `none`
+    /// is a [`ContentComponent::None`] sentinel. Pseudo-element consumers can
+    /// therefore suppress an explicit `content: none` declaration. This is
+    /// groundwork for emitting future GCPM directives. Downstream `raikiri-dom`
+    /// maps it to `raikiri_traits::ContentValueItem`: `raikiri-style` is a leaf
+    /// crate with no dependency on `raikiri-traits`, following the counter-*
+    /// wire-through pattern.
     /// See <https://www.w3.org/TR/css-content-3/#content-property>.
     ///
-    /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
-    /// `value.clone()`、`apply_value` move) と inheritance walk clone
-    /// (`resolve_inheritance` の stack push + `out[idx] = computed.clone()`) が
-    /// **shallow (Arc reference-count increment)** になる。
-    /// `* { content: "<large>" }` × N element の O(N × M) memory blow-up
-    /// を単一 heap slot 共有で塞ぐ (security-relevant な DoS 対策)。
-    /// `Arc<Vec<T>>: Deref<Target = Vec<T>>` により downstream の `.iter()` /
-    /// `.len()` / `.is_empty()` は既存 pattern そのままで通る (dom/paint
-    /// consumer 波及 0)。
+    /// The [`Arc<Vec<..>>`] wrapper makes cascade winner cloning (`value.clone()`
+    /// during `apply_winners` drain; move in `apply_value`) and inheritance-walk
+    /// cloning (stack push in `resolve_inheritance`, then
+    /// `out[idx] = computed.clone()`) **shallow (Arc reference-count increments)**.
+    /// Sharing one heap allocation prevents O(N × M) memory growth for
+    /// `* { content: "<large>" }` across N elements, a security-relevant DoS
+    /// defense. Because `Arc<Vec<T>>: Deref<Target = Vec<T>>`, downstream
+    /// `.iter()`, `.len()`, and `.is_empty()` calls remain unchanged (no
+    /// dom/paint consumer changes).
     pub content: Arc<Vec<ContentComponent>>,
-    /// `string-set` の parse 結果 — `(name, content-list)` entry の列。
-    /// **non-inherited**。spec initial は `none` (CSS GCPM 3 §1.1.1
-    /// propdef-string-set "Initial: none")、本 impl はそれを空 list で表現する。
-    /// 名前解決と runtime `string()` 参照は下流 (raikiri-dom) 責務。
-    /// See <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>.
+    /// Parsed `string-set` entries as `(name, content-list)` pairs.
+    /// **Not inherited**. The spec's initial value is `none` (CSS GCPM 3 §1.1.1,
+    /// propdef-string-set, "Initial: none"), represented here by an empty list.
+    /// Downstream `raikiri-dom` handles name resolution and runtime `string()`
+    /// references. See <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>.
     ///
-    /// [`Arc<Vec<..>>`] wrap は [`Self::content`] と同 rationale
-    /// (`* { string-set: name "<large>" }` × N element の同種 DoS 経路を塞ぐ)。
+    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as [`Self::content`]:
+    /// it prevents a similar DoS path for `* { string-set: name "<large>" }`
+    /// across N elements.
     pub string_set: Arc<Vec<(SmolStr, Vec<ContentComponent>)>>,
-    /// `position: running(<custom-ident>)` の seed。**non-inherited**。spec
-    /// initial は `position: static` (running() seed 無し、CSS GCPM 3 §1.2.1
-    /// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>)、本 impl はそれを
-    /// 空 list で表現する。
+    /// Seed for `position: running(<custom-ident>)`. **Not inherited**. The
+    /// spec's initial `position: static` has no running() seed (CSS GCPM 3
+    /// §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>), represented
+    /// here by an empty list.
     ///
-    /// 本 field は **per-node で常に 0 または 1 要素** (`position` は spec 上
-    /// 単一値の property、element は最大 1 つの `running(name)` しか持たない):
-    /// - `position: static` / 他 keyword / rule 無し → empty
+    /// This field always has **zero or one entry per node**: `position` is a
+    /// single-valued property, so an element can have at most one `running(name)`:
+    /// - `position: static`, another keyword, or no rule → empty
     /// - `position: running(name)` → `[RunningTemplate { name }]`
     ///
-    /// `Vec` shape を採るのは `content` / `string_set` と同じ
-    /// SmolStr wire-through pattern の踏襲 (原則 1 前例主義)。下流 (raikiri-dom)
-    /// が per-document `Vec<RunningTemplate>` を組み立てる際に per-node seed を
-    /// concatenate する。design doc §7.3 の 2-tier キャッシュ static side に相当。
+    /// The `Vec` shape follows the SmolStr wire-through pattern used by
+    /// `content` / `string_set` (reuse of an established precedent). Downstream
+    /// `raikiri-dom` concatenates these per-node seeds when building a
+    /// per-document `Vec<RunningTemplate>`. This is the static side of the
+    /// two-tier cache described in design doc §7.3.
     pub running_templates: Vec<RunningTemplate>,
     /// `position` — **non-inherited**, initial: `static` (CSS Positioned Layout Module Level 3 §3).
     pub position: PositionValue,
-    /// `text-align`。**inherited**、initial: [`TextAlign::Start`]
-    /// (CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
-    /// <https://www.w3.org/TR/css-text-3/#text-align-property>)。
+    /// `text-align`. **Inherited**; initial: [`TextAlign::Start`]
+    /// (CSS Text 3 §6.1, "Text Alignment: the text-align shorthand"
+    /// <https://www.w3.org/TR/css-text-3/#text-align-property>).
     ///
-    /// spec 上 shorthand (text-align-all + text-align-last の 2 longhand を set)
-    /// だが、現状は **shorthand as single field** convention (margin
-    /// `Sides<T>` / content-normal-none-as-empty-list precedent) を踏襲して単一
-    /// field に保持 (longhand 分離 §6.2 / §6.3 は将来 defer)。詳細は
-    /// [`TextAlign`] doc-comment。
+    /// The spec defines a shorthand that sets the `text-align-all` and
+    /// `text-align-last` longhands. For now, this uses the **shorthand as one
+    /// field** convention (as with margin `Sides<T>` and the empty-list
+    /// representation of content `normal` / `none`); splitting the longhands
+    /// from §6.2 / §6.3 is deferred. See [`TextAlign`].
     ///
-    /// sibling field: [`color`](Self::color) / [`font_family`](Self::font_family) /
-    /// [`font_size`](Self::font_size) / [`font_weight`](Self::font_weight) と同じ
-    /// **inherited** 系 — `inherit_from` の inherited block に配置し親から by-value
-    /// copy (`TextAlign` は `Copy`)。
+    /// Like sibling fields [`color`](Self::color) /
+    /// [`font_family`](Self::font_family) / [`font_size`](Self::font_size) /
+    /// [`font_weight`](Self::font_weight), this is **inherited**. It belongs in
+    /// the inherited block of `inherit_from` and copies the parent's value
+    /// (`TextAlign` is `Copy`).
     ///
-    /// **`MatchParent` が本 field の値として観測されることは無い** —
-    /// cascade winner が `match-parent` でも、computed 層に届く前に
-    /// [`crate::property::resolve_text_align_match_parent`] が親の
-    /// [`Self::text_align`] + [`Self::direction`] を使って `Left` / `Right` /
-    /// (親値のコピー) に解決する。解決は 2 箇所 — element 経路
-    /// ([`crate::specified::SpecifiedValues::finalize`] /
-    /// `finalize_as_root`) と page 経路
-    /// ([`crate::cascade::resolve_against_inherited`]) — から同じ関数へ
-    /// funnel する。
+    /// **`MatchParent` never appears as this field's value.** Even when the
+    /// cascade winner is `match-parent`, before reaching the computed layer
+    /// [`crate::property::resolve_text_align_match_parent`] resolves it using
+    /// the parent's [`Self::text_align`] and [`Self::direction`] to `Left`,
+    /// `Right`, or a copy of the parent's value. Both the element path
+    /// ([`crate::specified::SpecifiedValues::finalize`] / `finalize_as_root`)
+    /// and page path ([`crate::cascade::resolve_against_inherited`]) use that
+    /// same resolver.
     pub text_align: TextAlign,
     /// `hanging-punctuation`. **inherited**, initial `none` (CSS Text 3
     /// §8.2.1). The consumer currently uses the `first` subset.
     pub hanging_punctuation: HangingPunctuation,
-    /// `text-autospace` (CSS Text 4)。**inherited**、initial: `normal`。
+    /// `text-autospace` (CSS Text 4). **Inherited**; initial: `normal`.
     /// The keyword/flag set is preserved for the inline text layout consumer.
     pub text_autospace: TextAutospace,
     /// `word-space-transform` (CSS Text 4). **Inherited**, initial `none`;
@@ -503,49 +503,52 @@ pub struct ComputedValues {
     /// computed value is the specified keyword. The value is data-only and
     /// does not enable text-spacing layout or rendering behavior.
     pub text_spacing_trim: TextSpacingTrim,
-    /// `text-justify` (CSS Text 3 §6.2)。**inherited**、initial: `auto`。
-    /// keyword のため computed = specified (by-value copy、`Copy`)。
-    /// `distribute` は legacy 値として受理し parley 側では `Justify` と
-    /// 同扱い (parley に inter-word/inter-character/distribute の区別無し)。
+    /// `text-justify` (CSS Text 3 §6.2). **Inherited**; initial: `auto`.
+    /// This keyword's computed value equals its specified value (copied by
+    /// value; `Copy`). Legacy `distribute` is accepted and treated like
+    /// `Justify` by Parley, which does not distinguish inter-word,
+    /// inter-character, and distribute justification.
     pub text_justify: TextJustify,
-    /// `text-align-last` (CSS Text 3 §6.1)。**inherited**、initial: `auto`。
-    /// keyword のため computed = specified (by-value copy、`Copy`)。
-    /// `auto` の解決 (`justify`→`start`、他は `text-align` 値通り) は
-    /// consumer (raikiri-dom realign) 側で行う — cascade 層に
-    /// `text-align` との結合解決を持ち込まない。
+    /// `text-align-last` (CSS Text 3 §6.1). **Inherited**; initial: `auto`.
+    /// This keyword's computed value equals its specified value (copied by
+    /// value; `Copy`). The consumer (`raikiri-dom` realignment) resolves `auto`
+    /// (`justify` → `start`; otherwise follow `text-align`) rather than
+    /// coupling the two properties in the cascade layer.
     pub text_align_last: TextAlignLast,
-    /// `direction`。**inherited**、initial: [`Direction::Ltr`]
-    /// (CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction
-    /// property" <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
-    /// Computed value = specified value (相対解決なし、[`Direction`] doc 参照)。
+    /// `direction`. **Inherited**; initial: [`Direction::Ltr`]
+    /// (CSS Writing Modes 4 §2.1, "Specifying Directionality: the direction
+    /// property" <https://www.w3.org/TR/css-writing-modes-4/#direction>).
+    /// The computed value equals the specified value (no relative resolution;
+    /// see [`Direction`]).
     ///
-    /// sibling field: [`text_align`](Self::text_align) と同じ **inherited** 系 —
-    /// `inherit_from` の inherited block に配置し親から by-value copy
-    /// (`Direction` は `Copy`)。
+    /// Like sibling [`text_align`](Self::text_align), this is **inherited**.
+    /// It belongs in the inherited block of `inherit_from` and copies the
+    /// parent's value (`Direction` is `Copy`).
     ///
-    /// 追加理由: [`text_align`](Self::text_align) の
-    /// `match-parent` 解決 (CSS Text 3 §6.1) が親の computed `direction` を
-    /// 要求する。property 自体は CSS Paged Media 3 Appendix A
-    /// page-property-list <https://www.w3.org/TR/css-page-3/#page-property-list>
-    /// にも独立に載っており、`@page` context でも意味を持つ。
+    /// It was added because resolving [`text_align`](Self::text_align)
+    /// `match-parent` (CSS Text 3 §6.1) requires the parent's computed
+    /// `direction`. This property also appears independently in CSS Paged
+    /// Media 3 Appendix A's page-property list
+    /// <https://www.w3.org/TR/css-page-3/#page-property-list>, so it matters
+    /// in `@page` contexts too.
     pub direction: Direction,
-    /// `writing-mode`。**inherited**、initial: [`WritingMode::HorizontalTb`]
-    /// (CSS Writing Modes 4 §3.2 "Block Flow Direction: the writing-mode
-    /// property" <https://www.w3.org/TR/css-writing-modes-4/#propdef-writing-mode>)。
+    /// `writing-mode`. **Inherited**; initial: [`WritingMode::HorizontalTb`]
+    /// (CSS Writing Modes 4 §3.2, "Block Flow Direction: the writing-mode
+    /// property" <https://www.w3.org/TR/css-writing-modes-4/#propdef-writing-mode>).
     ///
-    /// sibling field: [`direction`](Self::direction) と同じ **inherited** 系 —
-    /// `inherit_from` の inherited block に配置し親から by-value copy
-    /// (`WritingMode` は `Copy`)。
+    /// Like sibling [`direction`](Self::direction), this is **inherited**.
+    /// It belongs in the inherited block of `inherit_from` and copies the
+    /// parent's value (`WritingMode` is `Copy`).
     ///
-    /// [`direction`](Self::direction) の field doc が引用する CSS Paged Media 3
-    /// Appendix A page-property-list <https://www.w3.org/TR/css-page-3/#page-property-list>
-    /// に、`writing-mode` 自体は **載っていない**。ただし
-    /// [`crate::page::PageCascadeResult::declarations`] doc の「Appendix A は
-    /// 床であって天井ではない」節が挙げる他の property 群 (`overflow-x`/
-    /// `overflow-y` / `DisplayValue` / `PositionValue` / `box-sizing` /
-    /// `counter-reset`/`counter-increment` / `content` / `string-set`) と
-    /// 同じ扱いで、raikiri は `writing-mode` も意図的に `@page` context へ
-    /// 拡張配線している ([`WritingMode`] doc の同節参照)。
+    /// CSS Paged Media 3 Appendix A's page-property list, cited by
+    /// [`direction`](Self::direction), does **not** include `writing-mode`
+    /// <https://www.w3.org/TR/css-page-3/#page-property-list>. Nevertheless,
+    /// Raikiri deliberately wires `writing-mode` into the `@page` context like
+    /// the other properties noted in the "Appendix A is a floor, not a ceiling"
+    /// section of [`crate::page::PageCascadeResult::declarations`]:
+    /// `overflow-x` / `overflow-y` / `DisplayValue` / `PositionValue` /
+    /// `box-sizing` / `counter-reset` / `counter-increment` / `content` /
+    /// `string-set` (see the same section in [`WritingMode`]).
     ///
     /// This renderer-facing field remains [`WritingMode::HorizontalTb`] because
     /// vertical writing-mode layout is not implemented. The CSS computed keyword
@@ -560,7 +563,7 @@ pub struct ComputedValues {
     /// `ruby-position` — inherited annotation placement.
     pub ruby_position: RubyPosition,
     /// `text-indent` — first-line indentation of a block container.
-    /// **inherited**、initial: [`ComputedTextIndent::Px`]`(0.0)` (CSS
+    /// **Inherited**; initial: [`ComputedTextIndent::Px`]`(0.0)` (CSS
     /// Text 3 §8.1 "First Line Indentation: the text-indent property"
     /// <https://www.w3.org/TR/css-text-3/#text-indent-property>: "Initial:
     /// 0", "Applies to: block containers", "Inherited: yes", "Percentages:
@@ -591,32 +594,34 @@ pub struct ComputedValues {
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag. Inherited, initial `false`.
     pub text_indent_each_line: bool,
-    /// `padding` — 4-side box-model padding。**non-inherited**、initial:
-    /// `Sides::all(ComputedLengthPercentage::Px(0.0))` — CSS Box 3 §4.1
-    /// <https://www.w3.org/TR/css-box-3/#padding-physical> initial "0"。
+    /// `padding`: four-sided box-model padding. **Not inherited**; initial:
+    /// `Sides::all(ComputedLengthPercentage::Px(0.0))` (CSS Box 3 §4.1
+    /// <https://www.w3.org/TR/css-box-3/#padding-physical>, initial "0").
     ///
     /// - Physical longhands: [`padding-top`](https://www.w3.org/TR/css-box-3/#propdef-padding-top) /
-    ///   `padding-right` / `padding-bottom` / `padding-left`。
-    /// - Shorthand: [`padding` (§4.2)](https://www.w3.org/TR/css-box-3/#padding-shorthand)。
+    ///   `padding-right` / `padding-bottom` / `padding-left`.
+    /// - Shorthand: [`padding` (§4.2)](https://www.w3.org/TR/css-box-3/#padding-shorthand).
     ///
-    /// Value grammar: `<length-percentage [0,∞]>` — non-negative constraint は
-    /// parse-time enforce ([`crate::property::PropertyValue::PaddingTop`] doc 参照)。
-    /// "Computed value: a computed `<length-percentage>` value" のとおり
-    /// `Px` / `Percent` の 2 形態 ([`ComputedLengthPercentage`]) を取る。
-    /// **`<percentage>` は computed 層に残る** — 参照値 (containing block width)
-    /// が used value 層でしか決まらないため (CSS Cascade 5 §4.5
-    /// <https://www.w3.org/TR/css-cascade-5/#used>、raikiri では taffy 委譲)。
+    /// Grammar: `<length-percentage [0,∞]>`. Non-negativity is enforced when
+    /// parsing (see [`crate::property::PropertyValue::PaddingTop`]). As required
+    /// by "Computed value: a computed `<length-percentage>` value", this uses
+    /// [`ComputedLengthPercentage`] in its `Px` or `Percent` form.
+    /// **`<percentage>` survives into the computed layer** because its basis
+    /// (containing-block width) is known only at the used-value layer (CSS
+    /// Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>); in Raikiri,
+    /// this is delegated to Taffy.
     pub padding: Sides<ComputedLengthPercentage>,
     /// Authored `ch` provenance for each padding side.
     pub padding_ch: Sides<Option<ChLengthProvenance>>,
-    /// `margin` 4-side quad (top / right / bottom / left)。**non-inherited**、
-    /// initial: `0` on each side (`Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))`).
+    /// `margin`: four-sided box-model margin (top / right / bottom / left).
+    /// **Not inherited**; initial: `0` on each side
+    /// (`Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))`).
     ///
-    /// Author CSS の box model 中核 property。`em` / `rem` / `pt` は cascade の
-    /// phase 3 で px に絶対化済み。`<percentage>` と `auto` は computed 層に残り
-    /// (spec "Computed value: the keyword `auto` or a computed
-    /// `<length-percentage>` value")、containing block に対する解決と余白分配は
-    /// used value 層 = 下流 (taffy) の責務。
+    /// A core author-CSS box-model property. Cascade phase 3 converts `em`,
+    /// `rem`, and `pt` to px. `<percentage>` and `auto` remain at the computed
+    /// layer (the spec says "Computed value: the keyword `auto` or a computed
+    /// `<length-percentage>` value"). Resolving against the containing block
+    /// and distributing free space are used-value tasks for downstream Taffy.
     ///
     /// # Primary sources (§ title + anchor)
     ///
@@ -630,48 +635,46 @@ pub struct ComputedValues {
     pub margin: Sides<ComputedLengthPercentageOrAuto>,
     /// Authored `ch` provenance for each margin side.
     pub margin_ch: Sides<Option<ChLengthProvenance>>,
-    /// `border` — 4-side box-model border (width / style / color × 4 side)。
-    /// **non-inherited**、initial: 各 side が `width` =
-    /// [`ComputedLength::ZERO`] / `style` = [`BorderStyle::None`] / `color` =
-    /// [`BorderColor::CurrentColor`] (`width` / `style` は crate 内部 field、
-    /// consumer からは [`ComputedBorder::width`] / [`ComputedBorder::style`]
-    /// accessor 経由で読む)。
+    /// `border`: four-sided box-model border (width / style / color × 4 sides).
+    /// **Not inherited**; each side initially has width [`ComputedLength::ZERO`],
+    /// style [`BorderStyle::None`], and color [`BorderColor::CurrentColor`].
+    /// Width and style are crate-internal fields; consumers read them through
+    /// [`ComputedBorder::width`] / [`ComputedBorder::style`] accessors.
     ///
-    /// specified の initial は width = `medium` (= 3px) だが、**computed 層では
-    /// 0px** になる — CSS Backgrounds 3 §3.3
-    /// <https://www.w3.org/TR/css-backgrounds-3/#border-width> の propdef が
+    /// The specified initial width is `medium` (3px), but at the **computed
+    /// layer it is 0px**: CSS Backgrounds 3 §3.3
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-width> specifies
     /// "Computed value: absolute length, snapped as a border width; zero if the
-    /// border style is `none` or `hidden`" と規定し、initial の border-style が
-    /// `none` であるため ([`crate::resolve::resolve_border`] が gate する)。
+    /// border style is `none` or `hidden`". The initial border style is `none`,
+    /// so [`crate::resolve::resolve_border`] gates the width to zero.
     ///
     /// - Physical longhands: [`border-top-width`](https://www.w3.org/TR/css-backgrounds-3/#border-width) /
-    ///   `border-top-style` / `border-top-color` × 4 side。
-    /// - Shorthand: [`border` (§3.4)](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)。
+    ///   `border-top-style` / `border-top-color` × 4 sides.
+    /// - Shorthand: [`border` (§3.4)](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands).
     ///
     /// # Value semantics
     ///
-    /// - `Sides<ComputedBorder>: Copy` により per-node write は bit-copy
-    ///   (ComputedBorder は f32/enum/BorderColor payload の POD 集合)。
-    /// - `width` は [`ComputedLength`] (px)。`<percentage>` は spec grammar に
-    ///   含まれないため computed 層でも length のみで足りる
-    ///   ([`crate::property::PropertyValue::BorderTopWidth`] doc 参照)。
-    /// - `color` は cascade static side で [`BorderColor`] enum として保持し、
-    ///   spec `currentcolor` keyword vs. 明示 `<color>` の specified-value
-    ///   distinction を preserve する (CSS Backgrounds 3 §3.1
-    ///   <https://www.w3.org/TR/css-backgrounds-3/#border-color> initial:
-    ///   currentcolor)。used-value resolution (currentcolor → 同 node の
-    ///   computed `color` property lookup、CSS Color 3 §4.4) は paint scope
-    ///   責務。
+    /// - `Sides<ComputedBorder>: Copy` makes each per-node write a bitwise copy
+    ///   (`ComputedBorder` contains only f32/enum/BorderColor payloads).
+    /// - `width` is a [`ComputedLength`] in px. Since `<percentage>` is not in
+    ///   the spec grammar, a length suffices even at the computed layer
+    ///   (see [`crate::property::PropertyValue::BorderTopWidth`]).
+    /// - `color` stays a [`BorderColor`] enum on the static cascade side, retaining
+    ///   the specified-value distinction between the spec's `currentcolor`
+    ///   keyword and an explicit `<color>` (CSS Backgrounds 3 §3.1
+    ///   <https://www.w3.org/TR/css-backgrounds-3/#border-color>, initial:
+    ///   currentcolor). Resolving the used value (currentcolor → the same
+    ///   node's computed `color` property, CSS Color 3 §4.4) belongs to paint.
     ///
     /// # Non-goals
     ///
-    /// - `border-image-*` sub-property (source/slice/width/outset/repeat) は
-    ///   未着手、shorthand `border:` も border-image を reset しない
-    ///   (spec deviation 明示、future 統合 task で対応)。
-    /// - `border-{top,right,bottom,left}` 4-side single-side shorthand (例:
-    ///   `border-top: 1px solid red`) は現状未対応、future 追加。
-    /// - `currentcolor` の cascade-side enum 保持は解消済み。
-    ///   used-value resolution (paint scope) は defer。
+    /// - `border-image-*` subproperties (source/slice/width/outset/repeat)
+    ///   are not implemented; `border:` does not reset border-image either
+    ///   (an explicit spec deviation to address in future integration work).
+    /// - The four single-side `border-{top,right,bottom,left}` shorthands (for
+    ///   example, `border-top: 1px solid red`) are not supported yet.
+    /// - Retaining `currentcolor` as an enum in the cascade is complete;
+    ///   used-value resolution in paint is deferred.
     ///
     /// # Primary sources
     ///
@@ -679,60 +682,60 @@ pub struct ComputedValues {
     ///   [`border-width`](https://www.w3.org/TR/css-backgrounds-3/#border-width) /
     ///   [`border-style`](https://www.w3.org/TR/css-backgrounds-3/#border-style) /
     ///   [`border-color`](https://www.w3.org/TR/css-backgrounds-3/#border-color) /
-    ///   [`border shorthand`](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands)。
+    ///   [`border shorthand`](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands).
     pub border: Sides<ComputedBorder>,
-    /// `border-radius` の four-corner computed lengths。**non-inherited**、
-    /// initial は全 corner `0px`。percentage/elliptical form は specified
-    /// parser の scope 外。
+    /// Computed lengths at the four `border-radius` corners. **Not inherited**;
+    /// initial: `0px` at every corner. Percentages and elliptical forms are
+    /// outside the specified parser's scope.
     pub border_radius: ComputedBorderRadius,
-    /// `box-shadow` の computed shadow list。**non-inherited**、initial は
-    /// empty list (`none`)。描画そのものは paint 層の責務。
+    /// Computed `box-shadow` list. **Not inherited**; initial: empty list
+    /// (`none`). Painting the shadows is the paint layer's responsibility.
     pub box_shadow: Arc<Vec<ComputedBoxShadowItem>>,
-    /// `outline` の computed width/style/color。**non-inherited**、initial は
-    /// `0px` / `none` / `invert`。outline は box model 寸法へ影響しない。
-    /// specified width の `medium` は style が visible の場合だけ computed width に
-    /// 反映される。
+    /// Computed width/style/color for `outline`. **Not inherited**; initial:
+    /// `0px` / `none` / `invert`. Outlines do not affect box-model dimensions.
+    /// Specified `medium` width contributes to computed width only if the
+    /// outline style is visible.
     pub outline: ComputedOutline,
-    /// `outline-offset` の computed length。**non-inherited**、initial は `0px`
-    /// (CSS UI 3 §4.5 <https://www.w3.org/TR/css-ui-3/#outline-offset>)。
-    /// 負値は border edge より内側への inset を示す。
+    /// Computed length for `outline-offset`. **Not inherited**; initial: `0px`
+    /// (CSS UI 3 §4.5 <https://www.w3.org/TR/css-ui-3/#outline-offset>).
+    /// A negative value insets the outline within the border edge.
     pub outline_offset: ComputedLength,
-    /// `width` — preferred physical horizontal size (writing-mode neutral な
-    /// physical property、vertical writing mode では block axis に対応)。
-    /// **non-inherited**、initial: [`ComputedLengthPercentageOrAuto::Auto`] (CSS Sizing 3 §3.1.1
-    /// "Preferred Size Properties"
-    /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
+    /// `width`: preferred physical horizontal size (a writing-mode-neutral
+    /// physical property corresponding to the block axis in vertical writing modes).
+    /// **Not inherited**; initial: [`ComputedLengthPercentageOrAuto::Auto`]
+    /// (CSS Sizing 3 §3.1.1, "Preferred Size Properties"
+    /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>).
     ///
-    /// spec value grammar は `auto | <length-percentage [0,∞]> | min-content |
-    /// max-content | fit-content(<length-percentage>)` だが、現状は
-    /// `auto` + non-negative `<length-percentage>` のみ受理する (min-content /
-    /// max-content / fit-content() は未着手)。
-    /// 負値は spec grammar `[0,∞]` violation として parse-time drop
-    /// ([`crate::property::PropertyValue::Width`] doc + `parse_width` 参照)。
+    /// The spec grammar is `auto | <length-percentage [0,∞]> | min-content |
+    /// max-content | fit-content(<length-percentage>)`, but currently only
+    /// `auto` and non-negative `<length-percentage>` are accepted. The other
+    /// options are not implemented. Negative values violate `[0,∞]` and are
+    /// discarded at parse time (see [`crate::property::PropertyValue::Width`]
+    /// and `parse_width`).
     ///
-    /// spec の "Computed value: as specified, with `<length-percentage>` values
-    /// computed" のとおり、length は px へ絶対化され percentage は残る
-    /// ([`ComputedLengthPercentageOrAuto`]、margin と同型)。`Auto` は CSS
-    /// Sizing 3 の automatic size calculation (containing block width から
-    /// margin/border/padding を差し引いた値を used-value に採る) として下流
-    /// layout で解決する — margin `auto` の余白分配とは意味が異なる。
+    /// As specified by "Computed value: as specified, with `<length-percentage>`
+    /// values computed", lengths become absolute px while percentages remain
+    /// ([`ComputedLengthPercentageOrAuto`], also used by margin). Downstream
+    /// layout resolves `Auto` through CSS Sizing 3 automatic sizing: the used
+    /// size is the containing-block width minus margin, border, and padding.
+    /// This differs from distributing free space for `margin: auto`.
     pub width: ComputedLengthPercentageOrAuto,
     /// Authored `ch` provenance for the preferred width.
     pub width_ch: Option<ChLengthProvenance>,
-    /// `height` — preferred vertical size。**non-inherited**、initial:
-    /// `ComputedLengthPercentageOrAuto::Auto` (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
-    /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>、
-    /// spec 明記 "Initial: auto", "Inherited: no")。
+    /// `height`: preferred vertical size. **Not inherited**; initial:
+    /// `ComputedLengthPercentageOrAuto::Auto` (CSS Sizing 3 §3.1.1, "Preferred
+    /// Size Properties" <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>;
+    /// the spec explicitly says "Initial: auto", "Inherited: no").
     ///
-    /// 現状は `auto` + 非負
-    /// `<length-percentage>` の 2 分岐のみ受理 — `min-content` / `max-content`
-    /// / `fit-content(<length-percentage>)` は spec-valid だが未サポートとして
-    /// parser 段で silent drop
-    /// (`parse_height` doc 参照)。
+    /// Currently accepts only `auto` and non-negative `<length-percentage>`.
+    /// The spec also permits `min-content`, `max-content`, and
+    /// `fit-content(<length-percentage>)`, but the parser silently drops these
+    /// unsupported values (see `parse_height`).
     ///
-    /// [`ComputedLengthPercentageOrAuto`] は sibling [`Self::width`] と同 shape を
-    /// reuse (sibling field、payload 型は共通)。percentage の containing block 換算と
-    /// `Auto` の実 layout 高さ計算は used value 層 = 下流 (taffy) 責務。
+    /// [`ComputedLengthPercentageOrAuto`] reuses the same shape and payload
+    /// type as sibling [`Self::width`]. Resolving percentages against the
+    /// containing block and computing the actual layout height of `Auto`
+    /// belong to downstream Taffy at the used-value layer.
     ///
     /// # Primary source
     ///
@@ -759,33 +762,32 @@ pub struct ComputedValues {
     /// its fragmentation behavior from a physical `min-height` declaration.
     /// The used value is already mapped into `min_width`/`min_height`.
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
-    /// `top`。**non-inherited**、initial: `auto`.
+    /// `top`. **Not inherited**; initial: `auto`.
     pub top: ComputedLengthPercentageOrAuto,
-    /// `right`。**non-inherited**、initial: `auto`.
+    /// `right`. **Not inherited**; initial: `auto`.
     pub right: ComputedLengthPercentageOrAuto,
-    /// `bottom`。**non-inherited**、initial: `auto`.
+    /// `bottom`. **Not inherited**; initial: `auto`.
     pub bottom: ComputedLengthPercentageOrAuto,
-    /// `left`。**non-inherited**、initial: `auto`.
+    /// `left`. **Not inherited**; initial: `auto`.
     pub left: ComputedLengthPercentageOrAuto,
-    /// `box-sizing`。**non-inherited**、initial: [`BoxSizing::ContentBox`]
-    /// (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
-    /// <https://www.w3.org/TR/css-sizing-3/#box-sizing>、"Initial: `content-box`"
-    /// / "Inherited: no")。computed value = specified keyword。
+    /// `box-sizing`. **Not inherited**; initial: [`BoxSizing::ContentBox`]
+    /// (CSS Sizing 3 §3.3, "Box Edges for Sizing: the box-sizing property"
+    /// <https://www.w3.org/TR/css-sizing-3/#box-sizing>, "Initial: `content-box`"
+    /// / "Inherited: no"). The computed value is the specified keyword.
     ///
-    /// spec note (§3.3): "The definition of the box-sizing property in this
-    /// module supersedes the one in [CSS-UI-3]" — CSS-UI-3 の box-sizing
-    /// 定義は本 module により supersede されるため、css-sizing-3 が authoritative
-    /// source。
+    /// The spec notes in §3.3 that "The definition of the box-sizing property
+    /// in this module supersedes the one in [CSS-UI-3]". CSS Sizing 3 is thus
+    /// the authoritative source, not CSS UI 3.
     ///
-    /// sibling field: [`display`](Self::display) / [`background_color`](Self::background_color)
-    /// と同じ **non-inherited** 系 — `inherit_from` の non-inherited block に
-    /// 配置し initial 値を直接指定 (親からコピーしない)。
+    /// Like [`display`](Self::display) and
+    /// [`background_color`](Self::background_color), this is **not inherited**:
+    /// `inherit_from` sets the initial value rather than copying the parent.
     ///
-    /// # Downstream handoff (future scope、style-scope confined)
+    /// # Downstream handoff (future scope, confined to style)
     ///
-    /// 本 field は cascade static side seed のみ保持し、
-    /// `apply_computed_to_style` bridge (dom scope、`taffy::Style::box_sizing`
-    /// への翻訳) は future cross-scope task に defer (Non-goals)。
+    /// This field holds only the static cascade-side seed. Translating it to
+    /// `taffy::Style::box_sizing` in the dom-scope `apply_computed_to_style`
+    /// bridge is deferred to a future cross-scope task (non-goal).
     pub box_sizing: BoxSizing,
     /// `overflow-x` + `overflow-y`. **non-inherited**, initial:
     /// [`OverflowXY::both`]`(`[`OverflowValue::Visible`]`)` (CSS Overflow
@@ -996,9 +998,8 @@ pub struct ComputedValues {
     /// "Capitalization: the font-variant-caps property"
     /// <https://www.w3.org/TR/css-fonts-3/#font-variant-caps-prop>,
     /// "Initial: normal" / "Inherited: yes"). Computed value = specified
-    /// keyword — see [`FontVariantCaps`] doc's "7 keyword の意味" section
-    /// (all 7 property keywords implemented) and its "Scope carving"
-    /// section (the `font-variant` shorthand is not).
+    /// keyword. See [`FontVariantCaps`] for the seven supported keywords and
+    /// the scope limit excluding the `font-variant` shorthand.
     pub font_variant_caps: FontVariantCaps,
     /// `text-transform`. **inherited**, initial: [`TextTransform::None`]
     /// (CSS Text 4 property definition:
@@ -1422,9 +1423,9 @@ pub struct ComputedValues {
     /// `justify-items`. **non-inherited**, initial:
     /// [`SelfAlignmentValue::Normal`] (CSS Box Alignment Module Level 3 §7.1
     /// <https://www.w3.org/TR/css-align-3/#propdef-justify-items>,
-    /// "Inherited: no" — [`crate::property::PropertyValue::JustifyItems`]
-    /// doc's "legacy は未対応" section explains why this crate's initial
-    /// differs from the spec's literal `legacy`). Computed value =
+    /// "Inherited: no". The "legacy is unsupported" section of
+    /// [`crate::property::PropertyValue::JustifyItems`] explains why this
+    /// crate's initial value differs from the spec's literal `legacy`). Computed value =
     /// specified keyword(s).
     pub justify_items: SelfAlignmentValue,
     /// `justify-self`. **non-inherited**, initial: [`AlignSelfValue::Auto`]
@@ -1737,43 +1738,42 @@ impl ComputedValues {
             .map(|value| value.to_string())
     }
 
-    /// CSS spec に沿った initial value。cascade で何も matching しなかった root
-    /// node と、inheritance chain の terminate に使う。
+    /// Initial values according to the CSS spec. Used for a root node with no
+    /// matching cascade declarations and to terminate the inheritance chain.
     pub fn initial() -> Self {
         Self {
             color: CssColor::BLACK,
-            // CSS Backgrounds 3 §2.2: background-color initial は `transparent`。
+            // CSS Backgrounds 3 §2.2: initial background-color is `transparent`.
             background_color: CssColor::TRANSPARENT,
-            // shared Arc slot — per-node allocation 回避 (`initial_font_family`
-            // doc 参照)。
+            // Shared Arc slot avoids a per-node allocation (see the
+            // documentation for `initial_font_family`).
             font_family: initial_font_family(),
             font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
             font_weight: 400.0,
-            // CSS Inline 3 §5.1: line-height initial は `normal` (font metrics
-            // ascent+descent 相当を paint 側で resolve)。
+            // CSS Inline 3 §5.1: initial line-height is `normal`; paint resolves
+            // it using font metrics equivalent to ascent + descent.
             line_height: ComputedLineHeight::Normal,
             display: DisplayValue::Inline,
             list_style_type: ListStyleType::Disc,
             list_style_position: ListStylePosition::Outside,
             list_style_image: BackgroundImage::None,
-            // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl は
-            // 空 list で表現する (anchor は field doc 参照)。
-            // shared empty Arc slot — per-node allocation 回避
-            // (property.rs `empty_counter_entries` doc 参照)。
+            // CSS Lists 3 §4: the spec initializes counter-* to `none`, here
+            // represented by an empty list (see the field documentation).
+            // A shared empty Arc avoids per-node allocations (see the
+            // documentation for `empty_counter_entries` in property.rs).
             counter_reset: empty_counter_entries(),
             counter_increment: empty_counter_entries(),
             counter_set: empty_counter_entries(),
-            // CSS Content 3 §1: content の spec initial は `normal`。本 impl は下流に
-            // とって「no generated content」= 空 list で表現する。
-            // shared empty Arc slot — per-node allocation 回避
-            // (property.rs `empty_content_list` doc 参照)。
+            // CSS Content 3 §1: the spec initializes content to `normal`. Here
+            // an empty list means "no generated content" to downstream code.
+            // A shared empty Arc avoids per-node allocations (see the
+            // documentation for `empty_content_list` in property.rs).
             content: empty_content_list(),
-            // CSS GCPM 3 §1.1.1: string-set の spec initial は `none`。本 impl は
-            // それを空 list で表現する。
-            // same shared-empty-Arc pattern。
+            // CSS GCPM 3 §1.1.1: the spec initializes string-set to `none`,
+            // represented here by an empty list. Use the same shared-empty-Arc pattern.
             string_set: empty_string_set_entries(),
-            // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
-            // (position の initial は `static`、running(name) 無し)。
+            // CSS GCPM 3 §1.2.1: the initial position is `static`, so there
+            // is no running(name) seed; the initial list is empty.
             running_templates: Vec::new(),
             position: PositionValue::Static,
             // CSS Text 3 §6.1: text-align initial is `start`
@@ -1790,7 +1790,7 @@ impl ComputedValues {
             text_justify: TextJustify::Auto,
             // CSS Text 3 §6.1: text-align-last initial is `auto`.
             text_align_last: TextAlignLast::Auto,
-            // CSS Writing Modes 4 §2.1: direction initial is `ltr`。
+            // CSS Writing Modes 4 §2.1: initial direction is `ltr`.
             direction: Direction::Ltr,
             // CSS Writing Modes 4 §3.2: writing-mode initial is
             // `horizontal-tb` (`WritingMode` doc's Non-goal section — the
@@ -1798,33 +1798,32 @@ impl ComputedValues {
             writing_mode: WritingMode::HorizontalTb,
             cssom_writing_mode: WritingMode::HorizontalTb,
             ruby_position: RubyPosition::Over,
-            // CSS Text 3 §8.1: text-indent initial is `0`。
+            // CSS Text 3 §8.1: initial text-indent is `0`.
             text_indent: ComputedTextIndent::Px(0.0),
             text_indent_ch_factor: None,
             text_indent_ch_font: None,
             text_indent_ch_inherited: false,
             text_indent_hanging: false,
             text_indent_each_line: false,
-            // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
+            // CSS Box 3 §4.1: initial padding is 0 on all four sides.
             padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
             padding_ch: Sides::all(None),
-            // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
-            // で全 4 side に spread)。
+            // CSS Box 3 §3.1: the physical margin-* properties initially have
+            // value `0`, spread to all four sides by `Sides::all(0)`.
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(0.0)),
             margin_ch: Sides::all(None),
-            // CSS Backgrounds 3 §3.3/§3.2/§3.1: border initial は各 side で
-            // style=none、color=`currentcolor` keyword
-            // (`BorderColor::CurrentColor`、`CssColor::BLACK` placeholder から
-            // enum variant へ格上げ、CSS Backgrounds 3 §3.1 initial 契約
-            // fidelity — 上の margin 行の CSS Box 3 §3.1 とは別 spec の同番号
-            // なので注意)。
+            // CSS Backgrounds 3 §3.3/§3.2/§3.1: on every side, the initial
+            // border style is none and the color is the `currentcolor` keyword.
+            // `BorderColor::CurrentColor` replaced a `CssColor::BLACK` placeholder
+            // to match the CSS Backgrounds 3 §3.1 initial-value contract. Do not
+            // confuse this §3.1 with the CSS Box 3 §3.1 margin rule above.
             //
-            // width は specified では `medium` (3px) だが **computed 層では 0px** —
-            // §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width> の
-            // "Computed value: … zero if the border style is `none` or `hidden`"
-            // による (gate 実装は
-            // `crate::resolve::resolve_border`)。specified 側の initial は
-            // `crate::specified::SpecifiedValues::initial` が持つ。
+            // The specified width is `medium` (3px), but the **computed width
+            // is 0px**: §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
+            // says "Computed value: … zero if the border style is `none` or
+            // `hidden`". The gate is `crate::resolve::resolve_border`; the
+            // specified initial value lives in
+            // `crate::specified::SpecifiedValues::initial`.
             border: Sides::all(ComputedBorder {
                 width: ComputedLength::ZERO,
                 style: BorderStyle::None,
@@ -1842,12 +1841,12 @@ impl ComputedValues {
                 style: OutlineStyle::None,
                 color: OutlineColor::Invert,
             },
-            // CSS UI 3 §4.5: outline-offset initial は `0`.
+            // CSS UI 3 §4.5: initial outline-offset is `0`.
             outline_offset: ComputedLength::ZERO,
-            // CSS Sizing 3 §3.1.1: width initial は `auto`。
+            // CSS Sizing 3 §3.1.1: initial width is `auto`.
             width: ComputedLengthPercentageOrAuto::Auto,
             width_ch: None,
-            // CSS Sizing 3 §3.1.1: height initial は `auto`。
+            // CSS Sizing 3 §3.1.1: initial height is `auto`.
             height: ComputedLengthPercentageOrAuto::Auto,
             height_ch: None,
             max_width: ComputedLengthPercentageOrAuto::Auto,
@@ -1859,14 +1858,13 @@ impl ComputedValues {
             right: ComputedLengthPercentageOrAuto::Auto,
             bottom: ComputedLengthPercentageOrAuto::Auto,
             left: ComputedLengthPercentageOrAuto::Auto,
-            // CSS Sizing 3 §3.3: box-sizing initial は `content-box`.
+            // CSS Sizing 3 §3.3: initial box-sizing is `content-box`.
             box_sizing: BoxSizing::ContentBox,
-            // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は `visible`。
-            // 両 axis が `visible` なので cross-axis
-            // coupling (`resolve_overflow`) は initial state では no-op。
+            // CSS Overflow 3 §3.1: both overflow axes initially are `visible`,
+            // so cross-axis coupling (`resolve_overflow`) is a no-op initially.
             overflow: OverflowXY::both(OverflowValue::Visible),
-            // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3: initial は
-            // それぞれ `none` / `solid` / `currentcolor`。
+            // CSS Text Decoration 3 §2.1/§2.2/§2.3: initial values are
+            // `none`, `solid`, and `currentcolor`, respectively.
             text_decoration_line: TextDecorationLine::NONE,
             text_decoration_style: TextDecorationStyle::Solid,
             text_decoration_color: TextDecorationColor::CurrentColor,
@@ -1889,9 +1887,9 @@ impl ComputedValues {
             },
             text_emphasis_style: TextEmphasisStyle::None,
             text_emphasis_color: TextDecorationColor::CurrentColor,
-            // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
+            // CSS 2.1 §10.8.1: initial vertical-align is `baseline`.
             vertical_align: VerticalAlign::Baseline,
-            // CSS Fonts 4 §2.4: font-style initial は `normal`。
+            // CSS Fonts 4 §2.4: initial font-style is `normal`.
             font_style: FontStyle::Normal,
             font_kerning: FontKerning::Auto,
             font_optical_sizing: FontOpticalSizing::Auto,
@@ -1904,10 +1902,9 @@ impl ComputedValues {
             font_variant_numeric: FontVariantNumeric::initial(),
             font_variant_east_asian: FontVariantEastAsian::initial(),
             font_variation_settings: FontVariationSettings::Normal,
-            // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
-            // `normal`。
+            // CSS Fonts 3 §6.6: initial font-variant-caps is `normal`.
             font_variant_caps: FontVariantCaps::Normal,
-            // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
+            // CSS Text 3 §2.1: initial text-transform is `none`.
             text_transform: TextTransform::None,
             // CSS Writing Modes 3 §9.1: text-combine-upright initial is `none`.
             text_combine_upright: TextCombineUpright::None,
@@ -1915,18 +1912,18 @@ impl ComputedValues {
             text_orientation: TextOrientation::Mixed,
             // CSS Writing Modes 3 §2.2: unicode-bidi initial is `normal`.
             unicode_bidi: UnicodeBidi::Normal,
-            // CSS Display 3 §4: visibility initial は `visible`。
+            // CSS Display 3 §4: initial visibility is `visible`.
             visibility: Visibility::Visible,
-            // CSS2 §9.9.1: z-index initial は `auto`。
+            // CSS2 §9.9.1: initial z-index is `auto`.
             z_index: ZIndexValue::Auto,
-            // CSS Text 3 §5.1: word-break initial は `normal`。
+            // CSS Text 3 §5.1: initial word-break is `normal`.
             word_break: WordBreak::Normal,
             // CSS Text 3 §5.3: line-break initial is `auto`.
             line_break: LineBreak::Auto,
-            // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
+            // CSS Text 3 §5.4: initial overflow-wrap is `normal`.
             overflow_wrap: OverflowWrap::Normal,
-            // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
-            // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
+            // CSS Text 3 §7.2 / §7.1: initial `normal` letter-spacing and
+            // word-spacing compute to `0` (`ComputedLength::ZERO`).
             letter_spacing: ComputedLength::ZERO,
             letter_spacing_computed: ComputedLetterSpacing::Px(0.0),
             letter_spacing_ch_factor: None,
@@ -1935,99 +1932,93 @@ impl ComputedValues {
             word_spacing_computed: ComputedWordSpacing::Px(0.0),
             word_spacing_ch_factor: None,
             word_spacing_ch_font: None,
-            // CSS Text Module Level 3 §4.2: tab-size initial は `8`.
+            // CSS Text 3 §4.2: initial tab-size is `8`.
             tab_size: ComputedTabSize::Number(8.0),
-            // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
-            // break-after / break-inside initial は共に `auto`。
+            // CSS Fragmentation 3 §3.1 / §3.2: break-before, break-after,
+            // and break-inside all initially are `auto`.
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
-            // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
+            // CSS2 §9.5.1 / §9.5.2: float and clear both initially are `none`.
             float: FloatValue::None,
             clear: ClearValue::None,
-            // CSS Text 3 §3: white-space initial は `normal`。
+            // CSS Text 3 §3: initial white-space is `normal`.
             white_space: WhiteSpace::Normal,
             // CSS Text 4: white-space-collapse initial is `collapse`.
             white_space_collapse: WhiteSpaceCollapse::Collapse,
             text_wrap: TextWrapMode::Wrap,
             text_wrap_style: TextWrapStyle::Auto,
-            // CSS Text 3 §5.3: hyphens initial は `manual`。
+            // CSS Text 3 §5.3: initial hyphens is `manual`.
             hyphens: Hyphens::Manual,
             // CSS Text 4: hyphenate-character initial is `auto`.
             hyphenate_character: HyphenateCharacter::Auto,
             // CSS Text 4: hyphenate-limit-chars initial is `auto`.
             hyphenate_limit_chars: HyphenateLimitChars::INITIAL,
-            // CSS Flexible Box Layout Module Level 1 §5.1: flex-direction
-            // initial は `row`。
+            // CSS Flexbox 1 §5.1: initial flex-direction is `row`.
             flex_direction: FlexDirectionValue::Row,
-            // CSS Flexible Box Layout Module Level 1 §5.2: flex-wrap initial
-            // は `nowrap`。
+            // CSS Flexbox 1 §5.2: initial flex-wrap is `nowrap`.
             flex_wrap: FlexWrapValue::NoWrap,
-            // CSS Flexible Box Layout Module Level 1 §7.2.1/§7.2.2:
-            // flex-grow initial は `0`、flex-shrink initial は `1`。
+            // CSS Flexbox 1 §7.2.1/§7.2.2: initial flex-grow is `0`;
+            // initial flex-shrink is `1`.
             flex_grow: 0.0,
             flex_shrink: 1.0,
-            // CSS Flexible Box Layout Module Level 1 §7.2.3: flex-basis
-            // initial は `auto`。
+            // CSS Flexbox 1 §7.2.3: initial flex-basis is `auto`.
             flex_basis: ComputedFlexBasis::Auto,
-            // CSS Flexible Box Layout Module Level 1 §4.2: order initial
-            // は `0`。
+            // CSS Flexbox 1 §4.2: initial order is `0`.
             order: 0,
-            // CSS Box Alignment Module Level 3 §5.1: justify-content /
-            // align-content initial は `normal`。
+            // CSS Box Alignment 3 §5.1: justify-content and align-content
+            // both initially are `normal`.
             justify_content: ContentAlignmentValue::Normal,
             align_content: ContentAlignmentValue::Normal,
-            // CSS Box Alignment Module Level 3 §7.2: align-items initial は
-            // `normal`。
+            // CSS Box Alignment 3 §7.2: initial align-items is `normal`.
             align_items: SelfAlignmentValue::Normal,
-            // CSS Box Alignment Module Level 3 §6.2: align-self initial は
-            // `auto`。
+            // CSS Box Alignment 3 §6.2: initial align-self is `auto`.
             align_self: AlignSelfValue::Auto,
-            // CSS Box Alignment Module Level 3 §8.1: row-gap / column-gap
-            // initial は `normal`。
+            // CSS Box Alignment 3 §8.1: row-gap and column-gap
+            // both initially are `normal`.
             row_gap: ComputedLengthPercentageOrNormal::Normal,
             column_gap: ComputedLengthPercentageOrNormal::Normal,
-            // CSS Content 3 §2.4.1: quotes の spec initial は "depends on
-            // user agent"、本 impl は 独立実装方針によりそれを空 list で
-            // 表現する (`none` と同じ shared empty Arc slot、`Self::quotes`
-            // field doc / `empty_quotes_entries` doc 参照)。
+            // CSS Content 3 §2.4.1 leaves the initial quotes value to the
+            // user agent. This independent implementation represents it with an
+            // empty list (the same shared empty Arc slot as `none`; see the
+            // documentation for `Self::quotes` and `empty_quotes_entries`).
             quotes: empty_quotes_entries(),
             quotes_auto: true,
-            // CSS Text Decoration Module Level 3 §4: text-shadow initial
-            // は `none` — shared empty Arc slot
-            // (`empty_computed_text_shadow_list` doc 参照)。
+            // CSS Text Decoration 3 §4: initial text-shadow is `none`,
+            // using a shared empty Arc slot (see the documentation for
+            // `empty_computed_text_shadow_list`).
             text_shadow: empty_computed_text_shadow_list(),
-            // CSS Grid Layout Module Level 1 §7.2/§7.3: grid-template-*
-            // initial は共に `none`。
+            // CSS Grid Layout 1 §7.2/§7.3: both grid-template-* properties
+            // initially are `none`.
             grid_template_columns: ComputedGridTemplateTracks::None,
             grid_template_rows: ComputedGridTemplateTracks::None,
             grid_template_areas: GridTemplateAreasValue::None,
-            // CSS Grid Layout Module Level 1 §7.6: grid-auto-columns /
-            // grid-auto-rows initial は `auto`。
+            // CSS Grid Layout 1 §7.6: grid-auto-columns and grid-auto-rows
+            // both initially are `auto`.
             grid_auto_columns: initial_computed_grid_auto_track_list(),
             grid_auto_rows: initial_computed_grid_auto_track_list(),
-            // CSS Grid Layout Module Level 1 §7.7: grid-auto-flow initial は
-            // `row`。
+            // CSS Grid Layout 1 §7.7: initial grid-auto-flow is `row`.
             grid_auto_flow: GridAutoFlowValue::Row,
-            // CSS Grid Layout Module Level 1 §8.3: grid-row-start/-end /
-            // grid-column-start/-end initial は共に `auto`。
+            // CSS Grid Layout 1 §8.3: grid-row-start/-end and
+            // grid-column-start/-end all initially are `auto`.
             grid_row_start: GridLineValue::Auto,
             grid_row_end: GridLineValue::Auto,
             grid_column_start: GridLineValue::Auto,
             grid_column_end: GridLineValue::Auto,
-            // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
-            // justify-self initial (`crate::property::PropertyValue::JustifyItems`
-            // doc の "legacy は未対応" 節参照、justify-self は `auto`)。
+            // CSS Box Alignment 3 §7.1/§6.1: initial justify-items and
+            // justify-self (see the "legacy is unsupported" section in the
+            // documentation for `crate::property::PropertyValue::JustifyItems`;
+            // justify-self initially is `auto`).
             justify_items: SelfAlignmentValue::Normal,
             justify_self: AlignSelfValue::Auto,
-            // CSS Fragmentation Module Level 3 §3.3: orphans / widows
-            // initial は共に `2`。
+            // CSS Fragmentation 3 §3.3: orphans and widows both initially
+            // are `2`.
             orphans: 2,
             widows: 2,
-            // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9 —
-            // spec initial values (`Self::background_repeat` 等の field doc
-            // に spec 根拠あり; `background_clip`/`background_origin` は
-            // initial が異なる点に注意)。
+            // CSS Backgrounds and Borders 3 §2.4–§2.9: spec initial
+            // values (see the field documentation for `Self::background_repeat`
+            // and others; `background_clip` and `background_origin` have
+            // different initial values).
             background_repeat: BackgroundRepeat {
                 x: BackgroundRepeatKeyword::Repeat,
                 y: BackgroundRepeatKeyword::Repeat,
@@ -2045,34 +2036,32 @@ impl ComputedValues {
                 )),
                 vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(0.0)),
             },
-            // CSS Backgrounds and Borders 3 §2.3: background-image initial
-            // は `none`。
+            // CSS Backgrounds and Borders 3 §2.3: initial background-image
+            // is `none`.
             background_image: BackgroundImage::None,
-            // CSS Images Module Level 3 §5.1: object-fit initial は `fill`。
+            // CSS Images 3 §5.1: initial object-fit is `fill`.
             object_fit: ObjectFit::Fill,
-            // CSS Images Module Level 3 §5.2: object-position initial は
-            // `50% 50%` — `background_position` の `0% 0%` とは異なる点に
-            // 注意。
+            // CSS Images 3 §5.2: initial object-position is `50% 50%`,
+            // unlike the `0% 0%` initial background-position.
             object_position: ComputedCssPosition {
                 horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
                     50.0,
                 )),
                 vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
             },
-            // CSS Color 4 §3.3: opacity initial は `1`。
+            // CSS Color 4 §3.3: initial opacity is `1`.
             opacity: 1.0,
-            // CSS Compositing and Blending Level 1 §3.4.2: isolation
-            // initial は `auto`。
+            // CSS Compositing and Blending 1 §3.4.2: initial isolation
+            // is `auto`.
             isolation: Isolation::Auto,
-            // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode
-            // initial は `normal`。
+            // CSS Compositing and Blending 1 §3.4.1: initial
+            // mix-blend-mode is `normal`.
             mix_blend_mode: MixBlendMode::Normal,
-            // CSS Masking Level 1 §7.1: mask-image initial は `none`。
+            // CSS Masking 1 §7.1: initial mask-image is `none`.
             mask_image: MaskImage::None,
-            // CSS Masking Level 1 §5.1: clip-path initial は `none`。
+            // CSS Masking 1 §5.1: initial clip-path is `none`.
             clip_path: ClipPath::None,
-            // CSS Transforms Level 1 §4: transform initial は `none`
-            // (空 list)。
+            // CSS Transforms 1 §4: initial transform is `none` (empty list).
             transform: empty_computed_transform_list(),
             transform_origin: ComputedCssPosition {
                 horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
@@ -2081,26 +2070,26 @@ impl ComputedValues {
                 vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
             },
             transform_origin_z: ComputedLength(0.0),
-            // CSS Filter Effects Level 1 §5: filter initial は `none`
-            // (空 list)。
+            // CSS Filter Effects Level 1 §5: initial filter is `none`
+            // (an empty list).
             filter: empty_filter_list(),
-            // CSS Tables 3 §4: table-layout initial は `auto`
-            // (non-inherited)。
+            // CSS Tables 3 §4: initial table-layout is `auto`
+            // (not inherited).
             table_layout: TableLayoutValue::Auto,
-            // CSS Tables 3 §6: border-collapse initial は `separate`
-            // (inherited — root seed 用)。
+            // CSS Tables 3 §6: initial border-collapse is `separate`
+            // (inherited; used to seed the root).
             border_collapse: BorderCollapseValue::Separate,
-            // CSS Tables 3 §6.1: border-spacing initial は `0`
-            // (inherited — root seed 用、両軸 0px)。
+            // CSS Tables 3 §6.1: initial border-spacing is `0`
+            // (inherited; seeds the root at 0px on both axes).
             border_spacing: ComputedBorderSpacing {
                 horizontal: ComputedLength::ZERO,
                 vertical: ComputedLength::ZERO,
             },
-            // CSS Tables 3 §7: caption-side initial は `top`
-            // (inherited — root seed 用)。
+            // CSS Tables 3 §7: initial caption-side is `top`
+            // (inherited; used to seed the root).
             caption_side: CaptionSideValue::Top,
-            // CSS Tables 3 §8: empty-cells initial は `show`
-            // (inherited — root seed 用)。
+            // CSS Tables 3 §8: initial empty-cells is `show`
+            // (inherited; used to seed the root).
             empty_cells: EmptyCellsValue::Show,
             // CSS Multi-column Layout 1: both longhands initially `auto`.
             column_count: ColumnCountValue::Auto,
@@ -2110,17 +2099,16 @@ impl ComputedValues {
         }
     }
 
-    /// 親 node の computed values から child node の「declaration が 1 つも無い
-    /// 場合の computed values」を生成する。
+    /// Construct a child's computed values when it has no declarations, using
+    /// the parent's computed values.
     ///
-    /// - **inherited** property は親からコピー
-    /// - **non-inherited** property は `initial()` と同じ値を保持
+    /// - Copy **inherited** properties from the parent.
+    /// - Keep **non-inherited** properties at their `initial()` values.
     ///
-    /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
-    /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
+    /// The field documentation on [`Self`] is the canonical source for each
+    /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout).
     ///
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation. Inherited fields are copied from the parent's computed

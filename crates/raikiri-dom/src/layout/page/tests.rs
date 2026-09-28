@@ -5,7 +5,7 @@ use taffy::Style;
 
 fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     // <html><head></head><body><p style="color:red">Hi</p></body></html>
-    // 相当 (parser の代わりに手動構築、raikiri-html 統合は将来 umbrella が担当)
+    // Equivalent to parsing (built manually instead; future umbrella integration handles raikiri-html).
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -191,7 +191,7 @@ fn page_auto_margins_preserve_negative_remainder() {
 
 #[test]
 fn find_body_returns_none_when_absent() {
-    // Fragment 相当: <p> を Document root 直下に append、<body> なし
+    // Fragment equivalent: append <p> directly under the Document root, with no <body>.
     let mut doc = Document::new();
     let _p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
     assert_eq!(find_body(&doc), None);
@@ -199,8 +199,8 @@ fn find_body_returns_none_when_absent() {
 
 #[test]
 fn find_body_iterative_no_stack_overflow_on_deep_dom() {
-    // 5000 深さで stack overflow を起こさず None を返す。
-    // cascade §deep_nesting_5000_cascade_no_overflow と同水準の regression check。
+    // Return None at depth 5000 without stack overflow.
+    // Regression check at the same depth as cascade §deep_nesting_5000_cascade_no_overflow.
     let mut doc = Document::new();
     let mut parent = 0usize;
     for _ in 0..5000 {
@@ -211,8 +211,8 @@ fn find_body_iterative_no_stack_overflow_on_deep_dom() {
 
 #[test]
 fn find_body_returns_first_body_in_document_order() {
-    // 2 個の <body> がある病理的なケースでは最初の document order の <body> を返す
-    // (html5ever は 1 個しか作らない想定だが、defensive contract を pin)
+    // For the pathological case of two <body> elements, return the first in document order
+    // (html5ever should create only one, but pin the defensive contract).
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body1 = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -289,7 +289,7 @@ fn layout_single_page_hello_world_produces_body_at_page_width() {
     use raikiri_traits::PageBox;
     let (mut doc, cr) = hello_world_doc();
     layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-    // body の layout size.width が A4 幅 (793.7008) と一致
+    // The body layout size.width matches the A4 width (793.7008).
     let body_id = find_body(&doc).expect("body exists");
     let body_size = doc.nodes[body_id].unrounded_layout.size;
     assert!(
@@ -312,9 +312,9 @@ fn layout_single_page_can_be_called_multiple_times() {
     let body_id = find_body(&doc).expect("body exists");
     let first_size = doc.nodes[body_id].unrounded_layout.size;
 
-    // 2 回目呼び出し — text_layout の re-entrance clear と layout の再走が
-    // 同じ結果を返すことを check (将来 incremental optimization が silent
-    // regression を起こしても検出できる)
+    // Second call — check that clearing text_layout for re-entry and rerunning layout
+    // produce the same result (detect a silent regression from future incremental
+    // optimizations).
     layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("second call Ok");
     let second_size = doc.nodes[body_id].unrounded_layout.size;
 

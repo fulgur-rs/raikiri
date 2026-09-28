@@ -4,65 +4,65 @@ use raikiri_dom::Document;
 use raikiri_traits::{NetworkProvider, RenderWarning};
 use url::Url;
 
-/// Parse phase の出力。cascade 前の DOM + inline/external stylesheet source
-/// 集約結果 + parse warnings。
+/// The output of the parse phase: the pre-cascade DOM, collected inline/external
+/// stylesheet sources, and parse warnings.
 ///
-/// `stylesheet_sources` には `<head>` 内および `<head>` 外の `<style>` element
-/// の text content と、`<head>` 内 `<link rel="stylesheet">` を
-/// `ParseOptions::network` 経由で fetch した CSS text が Author stylesheet として
-/// 集約される (`TreeSink::finish()` 後に parse 層が fetch するため Sink は I/O を持たない)。
-/// Head の source を先に保ち、head 外の inline style は document order で後続する。
-/// Inline と external source はこの projection 順で並ぶ。Inline、extra、
-/// 外部 stylesheet の leading `@import` は、利用可能な provider で出現位置に
-/// 展開される。解決不能、循環、深度制限、または resource limit に該当する
-/// import は元の at-rule のまま残り、parse 全体は継続する。
-/// `warnings` は html5ever tokenizer 由来の非致命 parse error を
-/// [`raikiri_traits::WarningKind::HtmlParseError`] variant で、stylesheet の fetch
-/// 失敗を [`raikiri_traits::WarningKind::NetworkFallback`] /
-/// [`raikiri_traits::WarningKind::PolicyWarning`] variant で保持する。
+/// `stylesheet_sources` collects the text of `<style>` elements inside and outside
+/// `<head>`, plus CSS text fetched from `<head>` links with `rel="stylesheet"`
+/// via `ParseOptions::network`, all as Author stylesheets.
+/// The parse layer fetches these after `TreeSink::finish()`, so the sink performs no I/O.
+/// Head sources come first; inline styles outside the head follow in document order.
+/// Inline and external sources retain this projection order. Leading `@import` rules
+/// in inline, extra, and external stylesheets are expanded in place when a provider
+/// is available. Imports that cannot be resolved, form cycles, or hit depth or
+/// resource limits remain as original at-rules, and parsing continues.
+/// `warnings` stores nonfatal html5ever tokenizer parse errors as
+/// [`raikiri_traits::WarningKind::HtmlParseError`] and stylesheet fetch
+/// failures as [`raikiri_traits::WarningKind::NetworkFallback`] or
+/// [`raikiri_traits::WarningKind::PolicyWarning`].
 #[derive(Debug)]
 pub struct UncascadedDocument {
-    /// DOM tree (raikiri-dom arena)。
+    /// DOM tree (raikiri-dom arena).
     pub dom: Document,
-    /// `<head>` 内外の `<style>` element の text content と、`<head>` 内で
-    /// fetch に成功した `<link rel="stylesheet">` の CSS text。head の source
-    /// を先に保ち、head 外の inline style は document order で後続する。
-    /// Author origin として cascade に統合される想定 (raikiri umbrella crate の
-    /// `build_cascaded` が消費)。
+    /// CSS text from `<style>` elements inside and outside `<head>`, and successfully
+    /// fetched `<link rel="stylesheet">` elements inside `<head>`. Head sources come
+    /// first; inline styles outside the head follow in document order.
+    /// The raikiri umbrella crate cascades them as Author-origin stylesheets via
+    /// `build_cascaded`.
     pub stylesheet_sources: Vec<String>,
-    /// html5ever が報告した非致命 parse error を warning として保持。
-    /// 上位の orchestrator (raikiri umbrella crate) が `Document` を経由し
-    /// `RenderSummary.warnings` に merge する想定。
+    /// Nonfatal html5ever parse errors, retained as warnings.
+    /// The higher-level orchestrator (the raikiri umbrella crate) merges them into
+    /// `RenderSummary.warnings` through `Document`.
     pub warnings: Vec<RenderWarning>,
-    /// HTML5 quirks mode 判定 (html5ever の QuirksMode をミラーした
-    /// raikiri-native enum)。cascade が selector 挙動 / 特別ルールで
-    /// 参照する予定。
+    /// HTML5 quirks mode, using a raikiri-native enum that mirrors html5ever's
+    /// `QuirksMode`. The cascade may use this for selector behavior and special
+    /// rules.
     pub quirks_mode: raikiri_traits::QuirksMode,
 }
 
-/// Parse に渡す option 群。
+/// Options passed to the parse phase.
 ///
-/// `extra_stylesheets` は `parse_with_sink` が `Document::add_stylesheet`
-/// (`StylesheetKind::User`) 経由で消費する。Inline、extra、外部 stylesheet の
-/// leading `@import` も `network` がある場合はここで解決される。`network` /
-/// `base_url` は `parse_with_sink` が `<head>` 内 `<link rel="stylesheet">` と
-/// stylesheet 内 `@import` の fetch / relative URL 解決に消費する
-/// (`parse.rs::fetch_external_stylesheets`)。fetch を試みて失敗した import は
-/// warning を記録する。base 不在や unsafe URL などで request を作れない import、
-/// さらに循環・深度/resource limit に該当する import は opaque な at-rule として
-/// 残し、parse を継続する。Replaced element
-/// (`<img>` 等) の外部 resource fetch はこの task の scope 外、引き続き未消費。
+/// `parse_with_sink` consumes `extra_stylesheets` via `Document::add_stylesheet`
+/// with `StylesheetKind::User`. It resolves leading `@import` rules in inline,
+/// extra, and external stylesheets when `network` is available. It also uses
+/// `network` and `base_url` to fetch `<head>` links with `rel="stylesheet"` and
+/// resolve relative URLs in stylesheet `@import` rules
+/// (`parse.rs::fetch_external_stylesheets`). Failed fetches record a warning.
+/// Imports for which no request can be made (such as a missing base or unsafe URL),
+/// or which hit cycle, depth, or resource limits, remain opaque at-rules while
+/// parsing continues. Fetching external resources for replaced elements
+/// (such as `<img>`) remains outside this task's scope and is not yet implemented.
 pub struct ParseOptions<'a> {
-    /// Consumer が cascade 時に追加供給する CSS 文字列列 (fulgur の内部 UA CSS 等)。
+    /// CSS strings supplied by the consumer for cascading (such as fulgur's internal UA CSS).
     pub extra_stylesheets: &'a [&'a str],
-    /// Replaced element や `<link rel="stylesheet">` 等の外部 resource
-    /// fetch に用いる provider。`None` の場合 `<link rel="stylesheet">` は
-    /// fetch されず無視される (外部 stylesheet 機能は opt-in)。
-    /// Replaced element の fetch はこの provider を受け取るのみで
-    /// まだ未消費 (scope 外)。
+    /// Provider used to fetch external resources such as replaced elements and
+    /// `<link rel="stylesheet">`. With `None`, stylesheet links are not fetched
+    /// and are ignored (external stylesheets are opt-in).
+    /// The provider is accepted for replaced elements, but fetching them is not yet
+    /// implemented (outside this scope).
     pub network: Option<&'a dyn NetworkProvider>,
-    /// Relative URL の resolution base。`<link rel="stylesheet" href="...">`
-    /// が相対 URL の場合の解決に使う (`Url::join`)。`None` かつ `href` が
-    /// 相対 URL の場合、その `<link>` は解決不能として fetch されない。
+    /// Base for resolving relative URLs. Relative `<link rel="stylesheet" href="...">`
+    /// URLs are resolved with `Url::join`. If `base_url` is `None` and `href` is
+    /// relative, the link cannot be resolved and is not fetched.
     pub base_url: Option<Url>,
 }

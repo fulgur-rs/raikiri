@@ -534,12 +534,12 @@ fn geometry_differs(left: PageFragmentPageGeometry, right: PageFragmentPageGeome
         || left.orientation != right.orientation
 }
 
-/// Plan mode (dry-run: parse+cascade+layout planning のみ、PaintedBox 構築なし)。
+/// Plan mode (dry run: parse, cascade, and plan layout without building PaintedBox).
 ///
-/// **Unavailable implementation**: 常に `Err(RenderError::Unimplemented { feature: "plan", .. })` を
-/// 返す。本実装は pagination 完了後。
+/// **Unavailable implementation**: always returns `Err(RenderError::Unimplemented { feature: "plan", .. })`.
+/// This implementation follows after pagination is complete.
 ///
-/// spec §L1075 の signature 準拠。
+/// Signature conforms to spec §L1075.
 pub fn plan(
     _doc: &HtmlDocument,
     _defaults: PageDefaults,

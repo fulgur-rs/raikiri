@@ -1,8 +1,8 @@
 //! Render error taxonomy + status + summary types.
 //!
-//! `RenderError` は terminal error (rendering が停止した場所を表す)。Consumer
-//! 側 fallback は `Ok(fallback)` を返すことで表現し、raikiri は
-//! `RenderSummary.warnings` に記録する (Finding #1 新 review 対応)。
+//! `RenderError` is terminal: it marks where rendering stopped. Consumer
+//! fallbacks are represented by returning `Ok(fallback)`, and raikiri
+//! records them in `RenderSummary.warnings` (Finding #1, new review).
 
 use url::Url;
 
@@ -20,46 +20,46 @@ use crate::resolver::ResolverError;
 // re-export in `crates/raikiri/src/lib.rs`) are unchanged.
 pub use raikiri_style::CascadeError;
 
-/// Terminal render error。すべての variant は "rendering がそこで停止した" を意味。
+/// Terminal render error. Every variant means rendering stopped at that point.
 ///
-/// Finding #10 対応 (構造化 error taxonomy)。round 4 review #1 対応で
-/// `LimitExceeded` に統一。
+/// Finding #10 (structured error taxonomy). Round 4 review #1 unified
+/// limit errors as `LimitExceeded`.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum RenderError {
-    /// HTML parse エラー。
+    /// HTML parse error.
     Parse(ParseError),
-    /// CSS parse / cascade エラー。
+    /// CSS parse / cascade error.
     Cascade(CascadeError),
-    /// Layout エラー。
+    /// Layout error.
     Layout(LayoutError),
-    /// Consumer の resolver が Err を返した。
+    /// A consumer resolver returned Err.
     Resolver(ResolverError),
-    /// Consumer の network が Err を返した。
+    /// A consumer network provider returned Err.
     Network(NetworkError),
-    /// Resource policy 違反。
+    /// Resource policy violation.
     ///
-    /// `NetworkError::PolicyViolation` と同じ理由 (`PolicyViolation` が大きい)
-    /// で Box で保持する。
+    /// Boxed for the same reason as `NetworkError::PolicyViolation`
+    /// (`PolicyViolation` is large).
     Policy(Box<PolicyViolation>),
-    /// `RenderLimits` の各種 limit 超過 (fail-fast、round 4 review #1 対応で
-    /// 旧 `PageLimitExceeded` を `kind: Pages` で吸収)。
+    /// Exceeded a `RenderLimits` limit (fail-fast; round 4 review #1
+    /// subsumed the former `PageLimitExceeded` under `kind: Pages`).
     LimitExceeded {
-        /// どの limit を超過したか。
+        /// Which limit was exceeded.
         kind: LimitKind,
-        /// 設定された limit 値。
+        /// Configured limit.
         limit: u64,
-        /// 観測された実 value。
+        /// Observed value.
         actual: u64,
     },
-    /// Consumer の sink method (accept_page / finish_render) が Err を返した。
+    /// A consumer sink method (accept_page / finish_render) returned Err.
     Sink(std::io::Error),
-    /// Config 不整合 (BatchConfig.initial_registry が不正 等)。
+    /// Inconsistent configuration (such as invalid BatchConfig.initial_registry).
     Configuration(String),
-    /// target-* が `max_target_iterations` 内に収束しなかった (round 6 review #5
-    /// 対応、Consumer が `ExhaustionPolicy::Error` を選択した場合のみ発生)。
+    /// target-* failed to converge within `max_target_iterations` (round 6 review #5;
+    /// only when the consumer selects `ExhaustionPolicy::Error`).
     TargetDidNotConverge {
-        /// 実行された iteration 数。
+        /// Number of iterations performed.
         iterations: u32,
     },
     /// Page geometry kept changing after the bounded scheduled layout passes.
@@ -70,17 +70,17 @@ pub enum RenderError {
         /// Number of scheduled layout passes attempted.
         iterations: u32,
     },
-    /// その他 `std::io::Error` 系。
+    /// Other `std::io::Error`-family error.
     Io(std::io::Error),
 
-    /// 利用できない API への call。実装完了時にこの variant は
-    /// **削除される** (breaking change として release notes に明記)。Consumer
-    /// は API が未実装の期間のみ pattern match し、実装完了時に arm 削除でよい。
-    /// `feature` は呼ばれた unimplemented API の識別 (`"plan"`, `"render_streaming"` 等)。
+    /// Call to an unavailable API. This variant will be **removed** when the
+    /// implementation is complete (documented as a breaking change in release notes).
+    /// Consumers need match it only while the API is unimplemented; afterwards
+    /// they can remove the arm. `feature` identifies the API (`"plan"`, `"render_streaming"`, etc.).
     Unimplemented {
-        /// unimplemented API の名前。
+        /// Name of the unimplemented API.
         feature: &'static str,
-        /// Consumer 向け migration hint。
+        /// Migration hint for consumers.
         migration_hint: &'static str,
     },
 }
@@ -169,133 +169,133 @@ impl From<LayoutError> for RenderError {
     }
 }
 
-/// Limit exceeded の分類 (round 4 review #1 対応)。
+/// Classification of exceeded limits (round 4 review #1).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitKind {
-    /// `max_document_pages` 超過。
+    /// Exceeded `max_document_pages`.
     Pages,
-    /// `max_dom_nodes` 超過。
+    /// Exceeded `max_dom_nodes`.
     DomNodes,
-    /// `max_target_slots` 超過。
+    /// Exceeded `max_target_slots`.
     TargetSlots,
-    /// `max_layout_buffer_entries` 超過。
+    /// Exceeded `max_layout_buffer_entries`.
     LayoutBufferEntries,
-    /// `max_aggregate_bytes` 超過 (post-parse の approximate memory footprint、
-    /// DOM node arena / cascade table 等の合計)。
+    /// Exceeded `max_aggregate_bytes` (approximate post-parse memory footprint,
+    /// including DOM node arena, cascade table, etc.).
     AggregateBytes,
-    /// `max_input_bytes` 超過。
+    /// Exceeded `max_input_bytes`.
     ///
-    /// [`AggregateBytes`](Self::AggregateBytes) との semantic 分離: `InputBytes`
-    /// は **parse-time** の raw input byte stream を check する fail-closed 早期
-    /// 返却用 (`parse_html_with_limits` が read 段階で enforce)。`AggregateBytes`
-    /// は **post-parse** の approximate memory footprint。ゆえに attacker が
-    /// 巨大 HTML を送りつけて OOM を誘発する DoS 対策としては `InputBytes` の
-    /// 方が直接的。
+    /// Semantic distinction from [`AggregateBytes`](Self::AggregateBytes):
+    /// `InputBytes` checks the **parse-time** raw input byte stream, allowing
+    /// fail-closed early return (`parse_html_with_limits` enforces it when reading).
+    /// `AggregateBytes` measures approximate **post-parse** memory usage.
+    /// Thus `InputBytes` more directly prevents an attacker from inducing OOM
+    /// by sending huge HTML.
     InputBytes,
 }
 
-/// AbortSignal による graceful shutdown を error と別カテゴリで表現。
-/// `render_*` は `Result<RenderStatus, RenderError>` を返す。
+/// Represent graceful shutdown by AbortSignal separately from errors.
+/// `render_*` returns `Result<RenderStatus, RenderError>`.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum RenderStatus {
-    /// 全ページ emit 完了、`finish_render` も成功。
+    /// All pages emitted and `finish_render` succeeded.
     Completed(RenderSummary),
-    /// AbortSignal による中断。直前まで emit 済み、`finish_render` は呼ばれない。
+    /// Interrupted by AbortSignal. Pages emitted so far remain; `finish_render` is not called.
     Aborted {
-        /// 中断前に commit されたページ数。
+        /// Number of pages committed before interruption.
         partial_pages: u32,
     },
 }
 
-/// Render 完了 summary (Finding #4 completion protocol)。
+/// Render completion summary (Finding #4 completion protocol).
 #[derive(Debug, Clone)]
 pub struct RenderSummary {
-    /// 総ページ数。
+    /// Total number of pages.
     pub total_pages: u32,
-    /// target-* の最終 registry (Consumer が patch table の base に利用)。
+    /// Final target-* registry (used by the consumer as a patch-table base).
     pub target_registry: TargetRegistry,
-    /// 未解決 target list。
+    /// List of unresolved targets.
     pub unresolved_targets: Vec<UnresolvedTarget>,
-    /// emit 済み target slot list。
+    /// List of emitted target slots.
     pub emitted_target_slots: Vec<EmittedSlotInfo>,
-    /// hint と actual の乖離を検知した項目 (Finding #5 対応、Consumer 収束判定用)。
+    /// Items whose hints differ from actual values (Finding #5; used by consumers to decide convergence).
     pub target_discrepancies: Vec<TargetDiscrepancy>,
-    /// Consumer's fallback usage / policy violation 等の警告 (Finding #1 新 review 対応)。
+    /// Warnings about consumer fallback usage, policy violations, etc. (Finding #1, new review).
     pub warnings: Vec<RenderWarning>,
 }
 
-/// Render 警告 (fallback usage / policy warning / unresolved target 等)。
+/// Render warning (fallback usage / policy warning / unresolved target, etc.).
 #[derive(Debug, Clone)]
 pub struct RenderWarning {
-    /// 警告 kind。
+    /// Warning kind.
     pub kind: WarningKind,
-    /// 関連 DOM node (option、element-level warning に付く)。
+    /// Related DOM node (optional, on element-level warnings).
     pub node_id: Option<NodeId>,
-    /// 人間可読な詳細。
+    /// Human-readable details.
     pub details: String,
 }
 
-/// 警告 kind。§4 の 5 base variant + 追加された `HtmlParseError`。
+/// Warning kind. The five base variants in §4 plus `HtmlParseError`.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum WarningKind {
-    /// Consumer の resolver が fallback を返した (`Ok(fallback_intrinsic)`)。
+    /// A consumer resolver returned a fallback (`Ok(fallback_intrinsic)`).
     ResolverFallback {
-        /// 対象 fragment id。
+        /// Target fragment ID.
         fragment_id: Symbol,
     },
-    /// この URL の resource について、意図した完全な fetch が得られず degrade
-    /// した。二種類の disposition を一つの variant に包含する:
+    /// The intended complete fetch for this URL was unavailable, so the resource
+    /// was degraded. One variant covers two dispositions:
     ///
-    /// - Consumer の network provider が明示的に代替 content を返した場合
-    ///   (`ResolverFallback` と同様の Ok-disposition。ただし
-    ///   `NetworkProvider::fetch` の戻り値には現時点で disposition channel
-    ///   が無く、この経路は未使用)。
-    /// - fetch 自体が `Err` になり (timeout / I/O error / HTTP error 等)、
-    ///   呼び出し側がそれを fatal にせず該当 resource なしで処理を継続した
-    ///   場合。この場合 content は一切適用されていない。
+    /// - A consumer network provider explicitly returned replacement content
+    ///   (an Ok disposition, as for `ResolverFallback`; however,
+    ///   `NetworkProvider::fetch` has no disposition channel yet, so
+    ///   this route is currently unused).
+    /// - The fetch returned `Err` (timeout / I/O / HTTP error, etc.),
+    ///   and the caller continued without the resource rather than failing.
+    ///   In this case, no content was applied.
     ///
-    /// 現時点の実装で実際に生成されるのは Err-disposition のみ
-    /// (Ok-disposition は channel 自体が未実装のため到達不能)。それでも
-    /// **consumer はこの variant だけから「何らかの content が適用された」
-    /// と推論してはならない**。ただし `RenderWarning::details` は人間可読な
-    /// 自由記述であり、disposition を判別するための構造化された contract
-    /// ではない — 現状 details に "fetch failed" 等 Err らしく読める文字列
-    /// が入っているのは呼び出し側 (`raikiri-html`) が手で書いているからに
-    /// 過ぎず、この variant 自体が保証する形式ではない。将来
-    /// Ok-disposition が実装されこの variant から両方の disposition が
-    /// 実際に生成されるようになる時点で、判別手段 (details を構造化した
-    /// contract にする、または別 variant に分離する) を別途設計する必要が
-    /// ある。
+    /// Current implementations produce only the Err disposition;
+    /// the Ok disposition is unreachable until its channel is implemented.
+    /// Nevertheless, **consumers must not infer from this variant alone
+    /// that any content was applied**. `RenderWarning::details` is free-form
+    /// human-readable text, not a structured disposition contract.
+    /// Its current "fetch failed"-like text is written manually by the caller
+    /// (`raikiri-html`) and is not guaranteed by this variant. Once the
+    /// Ok disposition is implemented and both forms can be produced,
+    /// a way to distinguish them must be designed separately (either
+    /// structure the details as a contract or split the variants).
+    ///
+    /// The warning does not encode which disposition occurred.
     NetworkFallback {
-        /// 対象 URL。
+        /// Target URL.
         url: Url,
     },
-    /// Policy violation を Consumer の on_violation が Warn 扱いにした。
+    /// Consumer `on_violation` treated a policy violation as Warn.
     PolicyWarning {
-        /// 発火した違反。
+        /// Triggered violation.
         violation: PolicyViolation,
     },
-    /// target-* 参照先が見つからず fallback_text で描画された。
+    /// A target-* reference was not found and rendered as fallback_text.
     UnresolvedTarget {
-        /// 対象 fragment id。
+        /// Target fragment ID.
         fragment_id: Symbol,
     },
-    /// target-* が `max_target_iterations` 内に収束しなかったが、Consumer が
-    /// `ExhaustionPolicy::BestEffort` を選択したため best-effort render された
-    /// (round 6 review #5 対応)。
+    /// target-* did not converge within `max_target_iterations`, but the consumer
+    /// selected `ExhaustionPolicy::BestEffort` and rendered best-effort
+    /// (round 6 review #5).
     TargetConvergenceExhausted {
-        /// 尽くした iteration 数。
+        /// Number of exhausted iterations.
         iterations: u32,
     },
-    /// html5ever tokenizer が非致命 parse error を報告した (malformed HTML を
-    /// recover した場合等)。Stylo/blitz と同じ責務境界: raikiri-html 内で
-    /// warning に降格し、rendering は継続する。orchestrator が Document →
-    /// `RenderSummary.warnings` に merge する。
+    /// The html5ever tokenizer reported a non-fatal parse error (for example,
+    /// while recovering malformed HTML). Following Stylo/blitz responsibility
+    /// boundaries, raikiri-html downgrades it to a warning and continues rendering.
+    /// The orchestrator merges Document warnings into `RenderSummary.warnings`.
     HtmlParseError {
-        /// html5ever が返した診断メッセージ (Cow<'static, str> を String 化)。
+        /// Diagnostic message returned by html5ever (Cow<'static, str> converted to String).
         message: String,
     },
     /// A resource could not be used, but rendering continued with a fallback.
@@ -317,115 +317,115 @@ pub enum WarningKind {
     },
 }
 
-/// Consumer の convergence loop が `max_target_iterations` を尽くしたときの挙動
-/// (round 6 review #5 対応、silent 続行を禁じる)。
+/// Behavior when the consumer convergence loop exhausts `max_target_iterations`
+/// (round 6 review #5; disallows silently continuing).
 ///
-/// Consumer 側 iteration に関する契約なので、raikiri の `plan()` / `render_*`
-/// API 内では消費されない (Consumer が自身の loop で参照する)。
+/// This contract concerns consumer-side iteration; raikiri's `plan()` / `render_*`
+/// APIs do not consume it (consumers use it in their own loops).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ExhaustionPolicy {
-    /// 未収束を error として上流に返す (保守的 default)。
+    /// Return non-convergence upstream as an error (conservative default).
     #[default]
     Error,
-    /// 最後の registry で render、`WarningKind::TargetConvergenceExhausted` を
-    /// 必ず `summary.warnings` に記録。
+    /// Render using the last registry and always record
+    /// `WarningKind::TargetConvergenceExhausted` in `summary.warnings`.
     BestEffort,
 }
 
-/// 未解決 target の詳細 (Finding #4 completion protocol)。
+/// Details of an unresolved target (Finding #4 completion protocol).
 #[derive(Debug, Clone)]
 pub struct UnresolvedTarget {
-    /// slot 一意識別子。
+    /// Unique slot identifier.
     pub slot_id: TargetSlotId,
-    /// 未解決の fragment id。
+    /// Unresolved fragment ID.
     pub fragment_id: Symbol,
-    /// 未解決の理由。
+    /// Reason it remains unresolved.
     pub reason: UnresolvedReason,
 }
 
-/// UnresolvedTarget の理由 (Finding #4)。
+/// Reason an UnresolvedTarget remains unresolved (Finding #4).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedReason {
-    /// fragment id がどこにも定義されていない。
+    /// Fragment ID has no definition anywhere.
     NotFound,
-    /// Consumer 側 policy でエラー扱い。
+    /// Treated as an error by consumer policy.
     ConsumerRejected,
-    // ConvergenceFailed は削除 (raikiri 内 iteration しないため、Finding #5)
+    // ConvergenceFailed removed (raikiri does not iterate internally; Finding #5).
 }
 
-/// emit 済み target slot の詳細。
+/// Details of an emitted target slot.
 #[derive(Debug, Clone)]
 pub struct EmittedSlotInfo {
-    /// slot 一意識別子。
+    /// Unique slot identifier.
     pub slot_id: TargetSlotId,
-    /// 対象 fragment id。
+    /// Target fragment ID.
     pub fragment_id: Symbol,
-    /// target 種別。
+    /// Target kind.
     pub kind: TargetKind,
 }
 
-/// slot の一意識別子 (Consumer が patch table の key に使う)。
+/// Unique slot identifier (used as a key in the consumer patch table).
 ///
-/// (page_index, sequence) は decode 順で unique、byte-identical 保証あり
-/// (Finding #4 completion protocol)。
+/// `(page_index, sequence)` is unique in decode order and guarantees
+/// byte-identical identifiers (Finding #4 completion protocol).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TargetSlotId {
-    /// このページの 0-indexed page number。
+    /// Zero-indexed page number of this page.
     pub page_index: u32,
-    /// ページ内での通し番号 (target-* 出現順、0-indexed)。
+    /// Sequential number within the page (target-* occurrence order, zero-indexed).
     pub sequence: u32,
 }
 
-/// target-* の種別 (target-counter / target-text / target-string 等)。
+/// Kind of target-* (target-counter / target-text / target-string, etc.).
 ///
-/// target-* 対応時に variant を populate。現時点では uninhabited。
+/// Populate variants as target-* support is implemented. Currently uninhabited.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetKind {
-    // 将来 populate 予定:
+    // Populate later:
     //   Counter,
     //   Text,
     //   String,
     //   Element,
 }
 
-/// hint と actual の乖離を検知した項目 (Consumer 収束判定用、Finding #5)。
+/// Item whose hint differs from its actual value (consumer convergence; Finding #5).
 #[derive(Debug, Clone)]
 pub struct TargetDiscrepancy {
-    /// 対象 fragment id。
+    /// Target fragment ID.
     pub fragment_id: Symbol,
-    /// hint 段階で予告された page (無い場合は None)。
+    /// Page predicted at the hint stage (`None` if absent).
     pub hinted_page: Option<u32>,
-    /// 実 render での page。
+    /// Page in the actual render.
     pub actual_page: u32,
-    /// hint 段階のテキスト content (無い場合は None)。
+    /// Text content at the hint stage (`None` if absent).
     pub hinted_text: Option<String>,
-    /// 実 render のテキスト content。
+    /// Text content in the actual render.
     pub actual_text: String,
 }
 
-/// HTML parse 段階の terminal error (raikiri-html crate 内で発生)。
+/// Terminal error during HTML parsing (originates in raikiri-html).
 ///
-/// **Stylo/blitz と同じ責務境界**: html5ever tokenizer 由来の non-fatal
-/// parse error (recoverable な malformed HTML) は raikiri-html 内で
-/// [`RenderWarning`] として summary に集約し、この enum には含めない。
-/// この enum の variant は rendering を halt させる真の terminal error のみ。
+/// **Same responsibility boundary as Stylo/blitz**: non-fatal tokenizer
+/// parse errors (recoverable malformed HTML) become [`RenderWarning`]s
+/// aggregated into the summary inside raikiri-html; this enum excludes them.
+/// Its variants are genuine terminal errors that halt rendering.
 ///
-/// `Io` / `Encoding` の 2 variant を populate 済み。html5ever 固有の
-/// error variant は raikiri-html 側で crate-private に扱い、必要になった
-/// 時点で `#[non_exhaustive]` の恩恵で追加する。
+/// `Io` / `Encoding` are populated. html5ever-specific error variants
+/// remain crate-private in raikiri-html and can be added here when needed
+/// using `#[non_exhaustive]`.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ParseError {
-    /// Input source (`std::io::Read`) からの read 失敗。
+    /// Failed to read from the input source (`std::io::Read`).
     Io(std::io::Error),
-    /// Byte stream → text の変換に失敗 (encoding label 検出 or 変換 error)。
+    /// Failed to convert byte stream to text (encoding label detection or conversion error).
     Encoding {
-        /// 検出または指定された encoding label (例: "utf-8", "shift_jis")。
+        /// Detected or specified encoding label (for example, "utf-8" or "shift_jis").
         label: String,
-        /// 失敗理由の人間可読な description。
+        /// Human-readable description of the failure.
         reason: String,
     },
 }
@@ -461,22 +461,22 @@ impl From<std::io::Error> for ParseError {
 // (Stylo pattern — style owns its cascade error taxonomy). The re-export at
 // the top of this file preserves the `raikiri_traits::CascadeError` name path.
 
-/// Layout 段階の terminal error (raikiri-dom + taffy が発生源)。
+/// Terminal layout error (originates in raikiri-dom + taffy).
 ///
-/// **同じ責務境界**: taffy 固有 error 型は raikiri-dom 内部に閉じ込め、
-/// この enum は raikiri-dom が明示的に fail-hard を選択した場合の signal のみ。
+/// **Same responsibility boundary**: taffy-specific error types remain
+/// internal to raikiri-dom; this enum signals only its explicit fail-hard cases.
 ///
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum LayoutError {
-    /// raikiri-dom 内で回復不能な内部 error が発生した (taffy internal
-    /// error 等)。詳細メッセージは raikiri-dom 内部で log + message として構成。
+    /// An unrecoverable internal error occurred in raikiri-dom (such as a taffy
+    /// internal error). raikiri-dom constructs the detailed logged message.
     Internal {
-        /// 人間可読な失敗詳細 (raikiri-dom 内部で構成)。
+        /// Human-readable failure details (constructed by raikiri-dom).
         message: String,
     },
-    /// `<img>` 等 replaced element の resolve が失敗した
-    /// (`ReplacedResolver::resolve` が `Err` を返した)。
+    /// Failed to resolve a replaced element such as `<img>`
+    /// (`ReplacedResolver::resolve` returned `Err`).
     Resolver(ResolverError),
 }
 

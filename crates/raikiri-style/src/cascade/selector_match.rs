@@ -15,63 +15,59 @@ use super::collect::{Specificity, specificity_of};
 use super::lang::lang_pseudo_matches;
 use super::resolve_directionality;
 
-/// 1 compound selector 分 — `iter` が次の combinator に達する (または
-/// selector 全体の終端に達する) まで — を `elem` 単体に対して判定する。
+/// Matches one compound selector against `elem`, stopping when `iter` reaches the
+/// next combinator or the end of the selector.
 ///
-/// [`match_complex_selector_list`] が右端 compound を `elem` 自身に対して
-/// 判定する最初の 1 手と、combinator 越しの祖先/兄弟候補判定
-/// ([`match_combinator_chain`] / [`match_from_element`] — descendant/child
-/// 越しの祖先判定と、NextSibling/LaterSibling 越しの兄弟判定は同じ関数に
-/// 統合されている) の両方がこの関数を共有する — 元々の
-/// `match_simple_selectors` 本体をそのまま抽出しただけで、per-component の
-/// 判定ロジック自体に変更は無い。
+/// Both the initial rightmost-compound check in [`match_complex_selector_list`]
+/// and candidate checks across combinators ([`match_combinator_chain`] /
+/// [`match_from_element`]) use this function. Ancestor checks for descendant/child
+/// combinators and sibling checks for NextSibling/LaterSibling share this helper.
+/// It extracts the former `match_simple_selectors` body without changing any
+/// per-component matching logic.
 ///
-/// `iter: &mut SelectorIter` を `for component in iter` で回すと、
-/// `selectors` crate 自身の contract (`Selector::iter` の doc, verbatim:
+/// Iterating `iter: &mut SelectorIter` with `for component in iter` stops
+/// at a combinator by the `selectors` crate's own contract (`Selector::iter`
+/// documentation, verbatim:
 /// "Returns an iterator over this selector in matching order
 /// (right-to-left). When a combinator is reached, the iterator will return
 /// None, and next_sequence() may be called to continue to the next
-/// sequence.") により、combinator に達した時点で自動的にループが終わる —
-/// `Component::Combinator` 自体がこの for ループの中に component として
-/// 出てくることは無い (`SelectorIter::next()` が combinator を internal
-/// state に退避して `None` を返す)。呼び出し側は本関数が `false` を返した
-/// 場合と「compound は全部一致したが、まだ combinator が続く」場合を
-/// 区別する必要があり、後者は呼び出し側が `iter.next_sequence()` で判定する
-/// (本関数の戻り値だけでは分からない — 「compound 内で不一致は無かった」を
-/// `true` で表すのみ)。
+/// sequence."). `Component::Combinator` never appears as a component in this
+/// loop: `SelectorIter::next()` stores the combinator internally and returns
+/// `None`. The caller must distinguish a `false` result from a successful
+/// compound followed by another combinator. It calls `iter.next_sequence()`
+/// for the latter case; `true` only means no component of this compound failed.
 ///
-/// Returns: この 1 compound 内の全 component が match すれば true。
-/// - `Component::LocalName(name)` — `elem.tag_name()` と eq_ignore_ascii_case で判定
-/// - `Component::ExplicitUniversalType` — 常に match
-/// - `Component::ID` — `elem.id()` と一致比較 (CSS Selectors L4
-///   <https://www.w3.org/TR/selectors-4/#id-selectors>、verbatim: "When
+/// Returns `true` if every component in this compound matches:
+/// - `Component::LocalName(name)` — compare `elem.tag_name()` with
+///   `eq_ignore_ascii_case`.
+/// - `Component::ExplicitUniversalType` — always matches.
+/// - `Component::ID` — compare with `elem.id()` (CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#id-selectors>, verbatim: "When
 ///   matching against a document which is in quirks mode, IDs must be
 ///   matched ASCII case-insensitively; ID selectors are otherwise
-///   case-sensitive")。`quirks_mode` 引数が
-///   [`StyleQuirksMode::Quirks`] のときのみ `eq_ignore_ascii_case`、それ以外
-///   ([`StyleQuirksMode::NoQuirks`] / [`StyleQuirksMode::LimitedQuirks`]) は
-///   厳密一致 ("limited-quirks" は DOM Standard上
-///   "quirks mode" と別 dfn、fold の対象外)
-/// - `Component::Class` — `elem.has_class()` / `elem.has_class_ascii_case_insensitive()`
-///   (CSS Selectors L4 <https://www.w3.org/TR/selectors-4/#class-html>、
-///   verbatim: "When matching against a document which is in quirks mode,
-///   class names must be matched ASCII case-insensitively; class selectors
-///   are otherwise case-sensitive")。ID と同じ `quirks_mode` 分岐。
-///   both variants share the same HTML-spec ASCII
-///   whitespace tokenisation — [`StyleElement::has_class`] の doc 参照
+///   case-sensitive"). Use `eq_ignore_ascii_case` only when `quirks_mode` is
+///   [`StyleQuirksMode::Quirks`]; [`StyleQuirksMode::NoQuirks`] and
+///   [`StyleQuirksMode::LimitedQuirks`] use exact matching. "Limited-quirks"
+///   has a distinct DOM Standard definition from "quirks mode" and is not folded.
+/// - `Component::Class` — `elem.has_class()` /
+///   `elem.has_class_ascii_case_insensitive()` (CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#class-html>, verbatim: "When matching
+///   against a document which is in quirks mode, class names must be matched
+///   ASCII case-insensitively; class selectors are otherwise case-sensitive").
+///   Use the same `quirks_mode` branch as for IDs. Both variants share the same
+///   HTML-spec ASCII whitespace tokenisation; see [`StyleElement::has_class`].
 /// - `Component::AttributeInNoNamespaceExists` / `Component::AttributeInNoNamespace`
-///   — `elem.attr()` (CSS Selectors L4
-///   <https://www.w3.org/TR/selectors-4/#attribute-selectors>)。存在チェック
-///   形態 (`[foo]`) の lookup key は element の namespace に応じて
-///   `local_name` / `local_name_lower` を選ぶ (詳細は該当 match arm の
-///   コメント)。値付き形態の case-sensitivity 解決は
-///   [`resolve_case_sensitivity`] 参照
+///   — use `elem.attr()` (CSS Selectors L4
+///   <https://www.w3.org/TR/selectors-4/#attribute-selectors>). For an existence
+///   selector (`[foo]`), choose the `local_name` or `local_name_lower` lookup key
+///   according to the element's namespace (see the relevant match arm).
+///   For selectors with values, see [`resolve_case_sensitivity`].
 /// - `Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_))`
-///   — [`super::lang::language_range_matches`] /
-///   [`resolve_directionality`] 経由、`dom` + `ancestors` (自身の祖先 chain)
-///   を使って ancestor-inherited な effective language / directionality を
-///   解決する。`PseudoClass::Hover` / `PseudoClass::Active` はこの arm 内で
-///   引き続き `false` (dynamic pseudo-class の対応は本実装の scope 外のまま)。
+///   — resolve inherited effective language or directionality through
+///   [`super::lang::language_range_matches`] / [`resolve_directionality`]
+///   using `dom` and `ancestors` (the element's ancestor chain). This arm still
+///   returns `false` for `PseudoClass::Hover` / `PseudoClass::Active`; dynamic
+///   pseudo-classes remain outside the scope of this implementation.
 /// - `Component::Root` (`:root`, CSS Selectors L4
 ///   §13.1 <https://www.w3.org/TR/selectors-4/#the-root-pseudo>) — matches
 ///   iff `ancestors.is_empty()`. The matcher passes `ancestors`
@@ -124,15 +120,17 @@ use super::resolve_directionality;
 ///   `S` using the same complex-selector matcher as a stylesheet selector;
 ///   only matching children contribute to the 1-based position.
 ///
-/// `Component::RelativeSelectorAnchor` is only true when the enclosing
-/// `:has()` matcher supplies the corresponding subject id; an anchor cannot
-/// match in an ordinary stylesheet selector. 他の component (namespace 付き属性 selector = 常に `Component::AttributeOther`、
-/// または非小文字 local name **かつ値付き**の属性 selector = 同じく
-/// `Component::AttributeOther` — 非小文字でも値なしの存在チェック形態は
-/// namespace 無指定なら `AttributeInNoNamespaceExists` のまま、詳細は
-/// `ruletree.rs` `is_supported_selector_list` のコメント) は
-/// `is_supported_selector_list` が rule tree 構築時点で drop 済のはずだが、
-/// safety net として引き続き match fail する。
+/// `Component::RelativeSelectorAnchor` matches only when the enclosing
+/// `:has()` matcher supplies the subject id; an anchor cannot match in an
+/// ordinary stylesheet selector. Other components include namespace-qualified
+/// attribute selectors (always `Component::AttributeOther`) and valued
+/// attribute selectors with non-lowercase local names (also
+/// `Component::AttributeOther`; an unvalued existence selector with a
+/// non-lowercase name remains `AttributeInNoNamespaceExists` if it has no
+/// explicit namespace; see the comment on `is_supported_selector_list` in
+/// `ruletree.rs`). The `is_supported_selector_list` gate should already have
+/// dropped these components when building the rule tree, but they still fail
+/// matching as a safety net.
 #[allow(clippy::too_many_arguments)] // one component-matching entry point threading element identity, quirks mode, and two independent optional binding contexts (`:has()` anchor, `:scope` element)
 pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     dom: &D,
@@ -149,14 +147,14 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     for component in iter {
         let component_matches = match component {
             Component::LocalName(local) => {
-                // local.name は Atom (raikiri-style::Atom)、tag_name 文字列と比較
+                // `local.name` is an Atom (`raikiri-style::Atom`); compare it to the tag name.
                 elem.tag_name().eq_ignore_ascii_case(local.name.0.as_str())
             }
             Component::ExplicitUniversalType
             | Component::ExplicitAnyNamespace
             | Component::ExplicitNoNamespace
             | Component::DefaultNamespace(_) => {
-                // 常に match / namespace は現時点では常に true 扱い
+                // Always match; namespaces are currently treated as always matching.
                 true
             }
             // CSS Selectors L4 id-selectors / class-html (verbatim
@@ -218,18 +216,14 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 value,
                 case_sensitivity,
             } => match elem.attr(local_name.0.as_str()) {
-                // `local_name` を直に使ってよい理由 (この with-value arm
-                // 限定 — 上の `AttributeInNoNamespaceExists` arm とは
-                // 対比的に element の namespace を問わない): `selectors`
-                // crate の parser (`AttributeInNoNamespace` を作る分岐) は
-                // *selector 自身の* local name が既に ASCII-lowercase な
-                // 場合にのみこの variant を選ぶ — 非小文字は
-                // `Component::AttributeOther` に回る
-                // (`is_supported_selector_list` が drop する)。この
-                // lowercase 保証は selector の parse 時点で決まり、
-                // どの element (HTML/foreign 問わず) に対して matching
-                // するかに依存しないため、上の Exists arm と違って
-                // namespace 分岐は不要。
+                // Using `local_name` directly is safe only in this with-value arm; unlike
+                // the `AttributeInNoNamespaceExists` arm above, the element's namespace does
+                // not matter. The `selectors` crate parser chooses `AttributeInNoNamespace`
+                // only when the *selector's own* local name is already ASCII-lowercase.
+                // Other names become `Component::AttributeOther` and are dropped by
+                // `is_supported_selector_list`. This lowercase guarantee comes from parsing
+                // the selector, independent of whether the matched element is HTML or foreign,
+                // so no namespace branch is needed here.
                 Some(attr_value) => {
                     let case = resolve_case_sensitivity(*case_sensitivity, elem);
                     operator.eval_str(attr_value, value.0.as_str(), case)
@@ -243,12 +237,11 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 crate::PseudoClass::Dir(dir) => {
                     resolve_directionality(dom, elem, elem_id, ancestors) == *dir
                 }
-                // `:hover` / `:active` — dynamic pseudo-class は本実装の
-                // scope 外のまま。`is_supported_selector_list` が rule tree 構築時点で
-                // drop する契約 (`ruletree::tests::pseudo_class_selector_still_dropped`
-                // で pin) だが、`match_complex_selector_list_rejects_unsupported_component_via_safety_net`
-                // がこの関数を直接呼んで safety net を確認する — 同じ姿勢を
-                // 維持。
+                // `:hover` and `:active` remain unsupported dynamic pseudo-classes.
+                // `is_supported_selector_list` drops them when building the rule tree (pinned
+                // by `ruletree::tests::pseudo_class_selector_still_dropped`). The test
+                // `match_complex_selector_list_rejects_unsupported_component_via_safety_net`
+                // invokes this function directly to check the defensive failure.
                 crate::PseudoClass::Hover | crate::PseudoClass::Active => false,
             },
             Component::Root => ancestors.is_empty(),
@@ -330,8 +323,8 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
             }
             Component::RelativeSelectorAnchor => relative_anchor == Some(elem_id),
             _ => {
-                // 他 component (AttributeOther) は ruletree build 段で
-                // drop 済のはずだが safety net で match fail
+                // Other components (`AttributeOther`) should have been dropped during
+                // rule-tree construction, but fail matching here as a safety net.
                 false
             }
         };
@@ -441,8 +434,8 @@ pub(crate) struct SiblingMatchContext<'a> {
 /// — same source, verbatim: "an+b−1 siblings with the same expanded
 /// element name". "Expanded element name" is tag name **and** namespace;
 /// this crate's `compound_matches` already treats namespace matching as
-/// always-true (`Component::DefaultNamespace(_) => true`, "常に
-/// match / namespace は現時点では常に true 扱い") for the equivalent
+/// always-true (`Component::DefaultNamespace(_) => true`, "namespaces
+/// currently always match") for the equivalent
 /// selector-vs-element case, so restricting this sibling-vs-sibling
 /// comparison to `tag_name` equality inherits that existing scope
 /// simplification rather than introducing a new one. Plain `==` (not
@@ -640,56 +633,55 @@ fn matches_nth_position(
     }
 }
 
-/// `elem` (と、combinator を跨ぐ場合は `ancestors` で表される祖先 element 列
-/// / `elem_id` から辿る兄弟 element 列) と selector list を突き合わせる
-/// トップレベル matcher。
+/// Matches a selector list against `elem` (and, for combinators, ancestor
+/// elements in `ancestors` or preceding siblings found from `elem_id`).
 ///
-/// # Combinator 対応
+/// # Combinator support
 ///
-/// 当初は single-element (compound-only) matching のみで、combinator を
-/// 含む selector は `ruletree.rs` `is_supported_selector_list` の gate で
-/// rule tree に乗る前に drop されていた。その後 descendant (space, CSS
+/// Initially only single-element (compound-only) matching was supported, and
+/// the `is_supported_selector_list` gate in `ruletree.rs` dropped selectors
+/// with combinators before they reached the rule tree. Descendant (space, CSS
 /// Selectors L4 <https://www.w3.org/TR/selectors-4/#descendant-combinators>)
-/// と child (`>`, <https://www.w3.org/TR/selectors-4/#child-combinators>)
-/// の 2 combinator を追加し、続けて adjacent sibling (`+`,
-/// <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>) と
+/// and child (`>`, <https://www.w3.org/TR/selectors-4/#child-combinators>) were
+/// added first. Adjacent sibling (`+`,
+/// <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>) and
 /// general sibling (`~`,
-/// <https://www.w3.org/TR/selectors-4/#general-sibling-combinators>) を追加
-/// した (4 combinator 全対応、詳細は [`match_combinator_chain`] doc)。complex
-/// selector の一般的な match 条件は CSSWG Editor's Draft
-/// <https://drafts.csswg.org/selectors-4/#complex> (verbatim — provenance の詳細は [`match_combinator_chain`] doc の
-/// note 参照) の記述: "A given element ... is said to match a complex
-/// selector when it matches the final compound selector ... in the
+/// <https://www.w3.org/TR/selectors-4/#general-sibling-combinators>) followed.
+/// All four combinators are supported; see [`match_combinator_chain`]. The
+/// CSSWG Editor's Draft <https://drafts.csswg.org/selectors-4/#complex>
+/// describes matching a complex selector (verbatim; see the provenance note
+/// in [`match_combinator_chain`]): "A given element ... is said to match a
+/// complex selector when it matches the final compound selector ... in the
 /// sequence, and every preceding unit of the sequence also matches an
 /// element ..., with the correct relationship between consecutive units as
-/// expressed by the combinators separating them" — 本関数はこれを右 (elem
-/// 自身) から左 (祖先/兄弟) への
-/// `Selector::iter`/`SelectorIter::next_sequence` の反復として実装する:
+/// expressed by the combinators separating them". This function implements
+/// that rule right-to-left, from `elem` to ancestors or siblings, by iterating
+/// with `Selector::iter` and `SelectorIter::next_sequence`:
 ///
-/// 1. 一番右の compound を `elem` 自身に対して [`compound_matches`] で判定。
-/// 2. 不一致ならこの selector は不一致、次の selector へ。
-/// 3. 一致すれば `iter.next_sequence()` で次の combinator を見る:
-///    - `None` (もう combinator が無い) → selector 全体が一致。
-///    - `Some(combinator)` → [`match_combinator_chain`] に委譲、combinator
-///      の意味 (child = 直近の親のみ、descendant = いずれかの祖先、
-///      next-sibling = 直前の兄弟のみ、later-sibling = それ以前のいずれかの
-///      兄弟) に沿って次の compound を判定する。
+/// 1. Check the rightmost compound against `elem` with [`compound_matches`].
+/// 2. If it fails, move to the next selector.
+/// 3. Otherwise, inspect the next combinator with `iter.next_sequence()`:
+///    - `None` means the entire selector matches.
+///    - `Some(combinator)` delegates to [`match_combinator_chain`], which checks
+///      the next compound against the immediate parent (child), any ancestor
+///      (descendant), the immediate preceding sibling (next-sibling), or any
+///      preceding sibling (later-sibling).
 ///
-/// `ancestors` は root 側が先頭、直近の親が末尾の順 (`ancestors.last()` ==
-/// `elem` の親) — [`super::collect::collect_cascaded`] の DFS 訪問順から構築される
-/// (同関数の doc 参照)。`elem_id` は `elem` 自身の id — sibling combinator
-/// が「`elem` の親の子リストの中で `elem` より前にいる
-/// のは誰か」を [`StyleDom::child_ids`] から直接求める際の探索終端として
-/// 導入され ([`match_combinator_chain`] の `NextSibling`/`LaterSibling` arm
-/// 参照)、その後 [`compound_matches`] 自身にも渡すよう
-/// 拡張された — `:root`/`:empty`/`:nth-child()` 等の構造的 pseudo-class が
-/// `dom`/`elem_id`/`ancestors.last()` (= `elem` の親) を必要とするため、
-/// `elem` の借用値だけでは表現できない情報として渡す。
+/// `ancestors` runs from the root to the immediate parent (`ancestors.last()`
+/// is `elem`'s parent), following the DFS order of
+/// [`super::collect::collect_cascaded`] (see its documentation). `elem_id` is
+/// the id of `elem`. Sibling combinators use it as the stopping point when
+/// searching [`StyleDom::child_ids`] for children before `elem` (see the
+/// `NextSibling`/`LaterSibling` arms of [`match_combinator_chain`]). It is
+/// also passed to [`compound_matches`]: structural pseudo-classes such as
+/// `:root`, `:empty`, and `:nth-child()` need `dom`, `elem_id`, and
+/// `ancestors.last()` (the parent), which the borrowed `elem` alone cannot
+/// provide.
 ///
-/// Returns: matching した selector の最大 specificity。1 つも match しなければ None。
-/// `specificity_of` は selector 全体 (combinator を跨いだ複合 selector) に
-/// 対する値 — combinator 追加後もこの呼び出しに変更は無い (`selectors`
-/// crate 自身が selector 全体から算出する)。
+/// Returns the greatest specificity of any matching selector, or `None` if
+/// none matches. `specificity_of` computes specificity for the whole complex
+/// selector, across combinators; adding combinators did not change this call
+/// because the `selectors` crate computes it from the complete selector.
 pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     list: &SelectorList<RaikiriSelectorImpl>,
     dom: &D,
@@ -1058,30 +1050,29 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
     matches.then_some(pseudo)
 }
 
-/// [`match_complex_selector_list`] が右端 compound を `elem` に対して
-/// マッチさせたあと、残りの combinator + compound 列を `ancestors`
-/// (祖先チェーン) / `current_id` から辿る兄弟列のどちらかを遡って判定する。
+/// After [`match_complex_selector_list`] matches the rightmost compound
+/// against `elem`, check the remaining combinator/compound sequence by walking
+/// back through `ancestors` or preceding siblings found from `current_id`.
 ///
 /// - [`Combinator::Child`] (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#child-combinators>, verbatim: "A
 ///   child combinator describes a childhood relationship between two
-///   elements") — 候補は `ancestors` の末尾 (直近の親) **1 つだけ**。それが
-///   次の compound に一致し、かつ (さらに左に combinator が続くなら) その
-///   親のそのまた祖先から続きが一致すれば全体一致。バックトラックは無い —
-///   `>` は「直近の親」を一意に指すため。
+///   elements") — try exactly one candidate: the last entry in `ancestors`
+///   (the immediate parent). It must match the next compound; if more
+///   combinators remain to the left, the rest must match from that parent's
+///   ancestors. No backtracking is needed: `>` uniquely identifies the parent.
 /// - [`Combinator::Descendant`] (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#descendant-combinators>, verbatim:
 ///   "A selector of the form A B represents an element B that is an
-///   arbitrary descendant of some ancestor element A") — `ancestors` を
-///   直近の親から根に向かって 1 つずつ試し、次の compound が一致した候補を
-///   見つけたら、その候補を起点にさらに左の残りを再帰的に判定する。1 候補で
-///   残りの判定まで失敗した場合、次の (さらに外側の) 祖先で再試行する —
-///   `iter.clone()` (`selectors::parser::SelectorIter` は `Clone`) で候補
-///   ごとに独立した iterator コピーを使う。CSSWG Editor's Draft
-///   <https://drafts.csswg.org/selectors-4/#complex> の complex selector
-///   定義の「(match の条件は) 各 unit が対応する combinator の関係を
-///   満たしながら何らかの element に一致すること」という再帰的な定義を
-///   そのまま素直に実装したもの。
+///   arbitrary descendant of some ancestor element A") — try each ancestor
+///   from the immediate parent toward the root. For a candidate that matches
+///   the next compound, continue matching the remaining sequence from that
+///   candidate. If the rest fails, retry with the next, more distant ancestor.
+///   `iter.clone()` gives each candidate an independent iterator copy
+///   (`selectors::parser::SelectorIter` implements `Clone`). This follows the
+///   CSSWG Editor's Draft <https://drafts.csswg.org/selectors-4/#complex>
+///   definition of complex matching: each unit matches some element while
+///   adjacent units satisfy their combinator relationship.
 ///
 ///   The retry is required when a descendant combinator is followed by a
 ///   child combinator: each candidate may have a different immediate parent.
@@ -1095,58 +1086,55 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 ///   represented by the first compound selector immediately precedes the
 ///   element represented by the second one. Non-element nodes (e.g. text
 ///   between elements) are ignored when considering the adjacency of
-///   elements.") — 候補は `current_id` の親 (`ancestors.last()`、無ければ
-///   [`StyleDom::root_id`]、下記 note 参照) の子リストの中で `current_id`
-///   の**直前**の element 1 つだけ ([`immediate_preceding_sibling`])。
-///   バックトラックは無い — `+` は「直前の兄弟」を一意に指すため
-///   ([`Combinator::Child`] と同じ形)。
+///   elements.") — try only the element immediately before `current_id` in
+///   the child list of its parent (`ancestors.last()`, or
+///   [`StyleDom::root_id`] when absent; see the note below), obtained through
+///   [`immediate_preceding_sibling`]. There is no backtracking: `+` identifies
+///   exactly one preceding sibling, as [`Combinator::Child`] does for parents.
 /// - [`Combinator::LaterSibling`] (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#general-sibling-combinators> §14.4,
 ///   verbatim: "The elements represented by the two compound selectors
 ///   share the same parent in the document tree and the element
 ///   represented by the first compound selector precedes (not necessarily
-///   immediately) the element represented by the second one.") —
-///   `current_id` の親の子リストを先頭から順に試し、`current_id` に達したら
-///   打ち切る。一致する候補が見つかり次第、その候補を起点にさらに左の残りを
-///   再帰的に判定する ([`Combinator::Descendant`] と同じ「単一の直線を
-///   バックトラックする」形 — 兄弟リストも分岐が無いため、探索順序は正しさに
-///   影響しない。ここでは `child_ids` が返す自然な順序 (先頭 = 最も遠い兄弟)
-///   のまま辿る)。
+///   immediately) the element represented by the second one.") — try the
+///   parent's children from the beginning, stopping at `current_id`. When a
+///   candidate matches, continue checking the sequence to its left from
+///   there. As with [`Combinator::Descendant`], retry candidates along a
+///   single linear list. Sibling lists do not branch, so search order cannot
+///   affect correctness; this uses the natural `child_ids` order (earliest
+///   sibling first).
 ///
-/// # 親の解決: `ancestors.last()` の空スライス fallback
+/// # Resolving the parent when `ancestors.last()` is empty
 ///
-/// `ancestor_path` は **Element kind の node のみ**を積む
-/// ([`super::collect::collect_cascaded`] doc 参照) ので、`current_id` の親が
-/// [`StyleNodeKind::Document`] root 自身であるとき (= document 直下の
-/// element、`<html>` 等) `ancestors` は空になる — `Child`/`Descendant` は
-/// この場合を「親が compound に一致し得ない」= 不一致として正しく扱う
-/// (`ancestors.split_last() => None`) が、sibling combinator は**親自身を
-/// compound と照合するわけではなく**、[`StyleDom::child_ids`] の lookup key
-/// として親の id が要るだけ — root であっても兄弟は実在しうる (`<h2>` と
-/// `<p>` が両方 document 直下の兄弟、という acceptance のケースそのもの)。
-/// そのため `NextSibling`/`LaterSibling` の 2 arm だけ `ancestors.last()` が
-/// `None` のとき [`StyleDom::root_id`] にフォールバックする — `Child`/
-/// `Descendant` 側はこのフォールバックを持たない (持ってはならない — root は
-/// 決して compound に一致しない)。
+/// `ancestor_path` contains only nodes of `Element` kind (see
+/// [`super::collect::collect_cascaded`]). If `current_id`'s parent is the
+/// [`StyleNodeKind::Document`] root itself, as with an element directly under
+/// the document (`<html>`, for example), `ancestors` is empty. `Child` and
+/// `Descendant` correctly treat this as no parent capable of matching a
+/// compound (`ancestors.split_last() => None`). A sibling combinator does not
+/// match the parent against a compound; it only needs the parent id as the
+/// lookup key for [`StyleDom::child_ids`]. Even under the root, siblings can
+/// exist: `<h2>` and `<p>` can both be direct document children, as in the
+/// acceptance test. Only the `NextSibling`/`LaterSibling` arms therefore fall
+/// back to [`StyleDom::root_id`] when `ancestors.last()` is `None`. `Child` and
+/// `Descendant` must not fall back: the root never matches a compound.
 ///
-/// 他 combinator ([`Combinator::PseudoElement`] / [`Combinator::SlotAssignment`]
-/// / [`Combinator::Part`]) はこの関数の対応範囲外。うち
-/// [`Combinator::SlotAssignment`]/[`Combinator::Part`] は引き続き
-/// pseudo-element 専用の combinator で、本 crate の `parse_selector_list`
-/// (`RaikiriSelectorImpl`) が対応する `::slotted()`/`::part()` 構文自体を
-/// `parse_slotted`/`parse_part` 未 override のため parse error にする
-/// (`ruletree.rs` `is_supported_selector` doc 参照) ので、この crate 内で
-/// 生成された `SelectorList` から到達することは無い。
-/// [`Combinator::PseudoElement`] (`::before`/`::after`) は事情が異なる —
-/// 今はもう parse error ではなく、`SelectorList` に普通に乗って rule tree
-/// にも残る (`ruletree.rs` `is_supported_selector` が受理する) が、
-/// [`super::collect::collect_cascaded`] が [`selector_matches_pseudo_element`] という
-/// 独立した matcher へ**この関数を経由させる前に**振り分けるため、
-/// [`match_combinator_chain`] のどちらの呼び出し元 ([`selector_matches`] /
-/// [`match_from_element`] 自身の再帰) もこの combinator を渡すことは無い。
-/// [`compound_matches`] の `_ => false` safety net と
-/// 同じ姿勢で、いずれの combinator も (到達すれば) ここでは match fail 扱い
-/// にする。
+/// Other combinators ([`Combinator::PseudoElement`] /
+/// [`Combinator::SlotAssignment`] / [`Combinator::Part`]) are outside this
+/// function's supported set. [`Combinator::SlotAssignment`] and
+/// [`Combinator::Part`] remain pseudo-element-only combinators. This crate's
+/// `parse_selector_list` (`RaikiriSelectorImpl`) rejects their `::slotted()`
+/// and `::part()` syntax because `parse_slotted` and `parse_part` are not
+/// overridden (see the `is_supported_selector` doc in `ruletree.rs`). Thus a
+/// `SelectorList` produced by this crate cannot reach them.
+/// [`Combinator::PseudoElement`] (`::before`/`::after`) differs: it now parses,
+/// enters a `SelectorList`, and survives the `is_supported_selector` rule-tree
+/// gate. But [`super::collect::collect_cascaded`] dispatches to a separate
+/// matcher, [`selector_matches_pseudo_element`], *before* this function. Neither
+/// caller of [`match_combinator_chain`] ([`selector_matches`] or the explicit
+/// continuation of [`match_from_element`]) passes it this combinator. As with
+/// the `_ => false` safety net in [`compound_matches`], reaching any of these
+/// combinators here fails matching.
 ///
 /// # Implementation: explicit `Vec` stack, not native recursion
 ///
@@ -1170,11 +1158,10 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// (`return true`) without draining the stack; only exhausting the
 /// outermost choice point's candidates yields an overall `false`.
 ///
-/// The word "再帰的に" ("recursively") in the per-combinator prose above
-/// describes the *logical* structure of the search — CSS complex selectors
-/// are themselves defined recursively (CSSWG ED `#complex`, cited above) —
-/// not this function's implementation technique; that logical recursion is
-/// realized here as the explicit stack's push/pop, never the native call
+/// The "continue matching" descriptions above refer to the *logical*
+/// structure of the search: CSS complex selectors are themselves defined
+/// recursively (CSSWG ED `#complex`, cited above). The implementation uses
+/// explicit stack push/pop for that logical recursion, never the native call
 /// stack.
 ///
 /// # Memoization: bounding backtracking to polynomial time
@@ -1541,7 +1528,7 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
 /// [`match_combinator_chain`]'s pre-fix per-combinator candidate-generation
 /// logic exactly — this function does no matching
 /// itself, only candidate enumeration setup. The `_ => ..` safety-net arm
-/// (unsupported combinators, see this module's "他 combinator" doc note)
+/// (unsupported combinators, see this module's "Other combinators" doc note)
 /// yields an already-exhausted `Child(None)` cursor, the same "no candidate
 /// ever succeeds" outcome the pre-fix `_ => false` arm produced.
 fn pending_candidates_for<'a, D: StyleDom + 'a>(
@@ -1595,7 +1582,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
         //     at most one `Component::PseudoElement`/`Combinator::
         //     PseudoElement` pair (see that function's doc), so it cannot
         //     appear a second time further down the chain either.
-        // See this module's "他 combinator" doc note, above
+        // See this module's "Other combinators" doc note, above
         // `match_combinator_chain`, for the fuller argument. Yields an
         // already-exhausted `Child(None)` cursor — same "no candidate ever
         // succeeds" outcome the pre-fix `_ => false` arm produced.
@@ -1603,29 +1590,29 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
     }
 }
 
-/// `parent_id`'s direct children (document order) が `Element` kind かつ
-/// [`StyleNode::is_in_document`] であるかを判定する共有述語。
-/// [`immediate_preceding_sibling`] と [`match_combinator_chain`] の
-/// `LaterSibling` arm の両方から使う — [`super::collect::collect_cascaded`] が
-/// `ancestor_path` に積む前に行う `!node.is_in_document() => continue` gate
-/// (同関数の doc 参照) と同じ基準を、sibling 側の候補選定でも揃えるための
-/// 抽出 — 揃えないと `<template>` 子孫のような
-/// inert element が sibling combinator の候補として拾われてしまう。
+/// Shared predicate: whether a direct child of `parent_id` (in document
+/// order) is an `Element` that satisfies [`StyleNode::is_in_document`].
+/// Both [`immediate_preceding_sibling`] and the `LaterSibling` arm of
+/// [`match_combinator_chain`] use it. The sibling candidate filter must use
+/// the same criterion as the `!node.is_in_document() => continue` gate before
+/// [`super::collect::collect_cascaded`] pushes onto `ancestor_path` (see that
+/// function's documentation). Otherwise an inert element, such as a
+/// `<template>` descendant, could become a sibling-combinator candidate.
 fn is_in_document_element<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
     dom.node(id)
         .is_some_and(|node| node.is_in_document() && node.kind() == StyleNodeKind::Element)
 }
 
-/// `parent_id` の直接の子のうち、`current_id` の**直前**にいる element の id
-/// ([`Combinator::NextSibling`] 用)。[`StyleDom::child_ids`] を先頭から 1
-/// パス走査し、`current_id` に達した時点でそれまでに見た最後の element
-/// candidate を返す — 割り当ては行わない (`Vec` 不使用、他 helper と
-/// 同じ「使い捨て `Vec` を経由しない」方針を踏襲)。
+/// Returns the element id immediately preceding `current_id` among the
+/// direct children of `parent_id` (for [`Combinator::NextSibling`]). Scan
+/// [`StyleDom::child_ids`] once from the start; upon reaching `current_id`,
+/// return the last element candidate seen. This does not allocate a `Vec`,
+/// following the other helpers' policy of avoiding disposable vectors.
 ///
-/// Non-element node (text 等) は候補から除外 — CSS Selectors L4
-/// next-sibling combinator 自身の verbatim: "Non-element nodes (e.g. text
+/// Exclude non-element nodes (such as text), as CSS Selectors L4 says of the
+/// next-sibling combinator (verbatim): "Non-element nodes (e.g. text
 /// between elements) are ignored when considering the adjacency of
-/// elements" (<https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>)。
+/// elements" (<https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>).
 fn immediate_preceding_sibling<D: StyleDom>(
     dom: &D,
     parent_id: StyleNodeId,
@@ -1651,16 +1638,15 @@ fn immediate_preceding_sibling<D: StyleDom>(
     None
 }
 
-/// `elem_id` の element を解決し、[`compound_matches`] で `iter` が指す
-/// compound をそれに対して判定する。祖先候補 (`Child`/`Descendant`) と
-/// 兄弟候補 (`NextSibling`/`LaterSibling`) の両方がこの 1 つの関数を共有する
-/// — 「id を解決して compound を照合する」というロジック自体は候補がどちらの
-/// combinator 由来かに依存しない (`ancestors` は
-/// 兄弟ジャンプでは不変のまま引き継がれる — 兄弟は親を共有するため — ことが
-/// この共有を成立させる。祖先ジャンプでは従来通り `split_last`/バックトラック
-/// で truncate 済みの残り `ancestors` を渡す)。旧名 `match_from_ancestor`
-/// — 兄弟候補にも使われるようになったため
-/// `match_from_element` に rename。
+/// Resolve the element identified by `elem_id` and match the compound at
+/// `iter` against it using [`compound_matches`]. Ancestor (`Child` /
+/// `Descendant`) and sibling (`NextSibling` / `LaterSibling`) candidates share
+/// this helper: resolving an id and checking a compound does not depend on
+/// the combinator that produced the candidate. Sibling jumps keep the same
+/// `ancestors` because siblings have the same parent; ancestor jumps pass the
+/// remaining `ancestors` after `split_last` or backtracking truncates it.
+/// Formerly named `match_from_ancestor`, it was renamed `match_from_element`
+/// when sibling candidates began using it too.
 ///
 /// Compound matching returns the advanced iterator to
 /// [`match_combinator_chain`], which drives the remaining selector with an
@@ -1670,9 +1656,9 @@ fn immediate_preceding_sibling<D: StyleDom>(
 /// The element is resolved from its [`StyleNodeId`] for each candidate; the
 /// same helper serves ancestor and sibling combinators.
 ///
-/// Returns: compound が一致すれば、その後の compound を指す `iter` を
-/// `Some` で返す (呼び出し側がさらに左へ進めるかどうかを判断する)。
-/// 一致しなければ `None`。
+/// Returns `Some` with `iter` advanced beyond the matching compound so the
+/// caller can check any remaining compounds to the left, or `None` if the
+/// compound does not match.
 fn match_from_element<'s, D: StyleDom>(
     dom: &D,
     elem_id: StyleNodeId,
@@ -1747,32 +1733,31 @@ fn match_from_element<'s, D: StyleDom>(
 // (document root).
 // ---------------------------------------------------------------------------
 
-/// `Component::AttributeInNoNamespace`'s `ParsedCaseSensitivity` (spec-only,
-/// "language depends on this" placeholder for the
-/// `AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument` case) を、実際に
-/// `AttrSelectorOperator::eval_str` へ渡せる `CaseSensitivity` へ解決する。
+/// Resolve `Component::AttributeInNoNamespace`'s `ParsedCaseSensitivity`
+/// (a spec-level "language depends on this" placeholder for the
+/// `AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument` case) to a
+/// `CaseSensitivity` suitable for `AttrSelectorOperator::eval_str`.
 ///
-/// upstream `selectors::matching::to_unconditional_case_sensitivity` と同じ
-/// 3-way 分岐を model 化しているが、その関数は tree-walk 込みの重い
-/// `selectors::Element` trait を要求するため呼べない (raikiri の
-/// `StyleElement` は single-element matching 用の縮小 trait —
-/// `wall/traits` を跨がない private helper として
-/// 再実装)。raikiri は現時点で HTML document のみ対象 (XML/XHTML 未対応) の
-/// ため「in html document」は常に true 扱い。「is html element」は
-/// [`StyleElement::namespace_uri`] の既存 contract
-/// (style_dom.rs: "HTML default namespace returns None (optimized path)") を
-/// 代理指標として使う — SVG 等 non-HTML namespace の element は
-/// case-sensitive 側に倒す。
+/// This models the same three-way branch as upstream
+/// `selectors::matching::to_unconditional_case_sensitivity`, but cannot call
+/// that function: it requires the full tree-walking `selectors::Element`
+/// trait, while raikiri's `StyleElement` is a reduced trait for single-element
+/// matching. This private helper reimplements the branch without crossing
+/// the `wall/traits` boundary. Raikiri currently supports only HTML documents
+/// (not XML/XHTML), so "in html document" is always true. It uses the existing
+/// [`StyleElement::namespace_uri`] contract (style_dom.rs: "HTML default
+/// namespace returns None (optimized path)") as a proxy for "is html
+/// element"; SVG and other non-HTML namespaces remain case-sensitive.
 ///
-/// # 「in html document」は quirks-mode と別軸
+/// # "In html document" differs from quirks mode
 ///
-/// ここでの "in html document" は CSS Selectors L4 §3.7/§6.3 が定める
-/// document-**language** (HTML vs XML) 軸であり、id/class matching が使う
-/// quirks-mode 軸 (`StyleQuirksMode`、CSS Selectors L4 §6.6/§6.7) とは
-/// spec 上別概念 — 混同しないこと。raikiri-html は HTML5 tree builder のみで
-/// XML document を生成する経路が無いため、この軸は現状 unconditionally true
-/// で正しい。XML document parsing が入るときに、document-language 信号を
-/// この関数へ渡す配線が必要になる。
+/// Here, "in html document" concerns the document **language** (HTML versus
+/// XML) under CSS Selectors L4 §3.7/§6.3. This differs from the quirks-mode
+/// axis (`StyleQuirksMode`, CSS Selectors L4 §6.6/§6.7) used for id/class
+/// matching. Do not conflate them. `raikiri-html` uses only an HTML5 tree
+/// builder and cannot produce an XML document, so this axis is currently
+/// unconditionally true. XML document parsing would require passing the
+/// document language to this function.
 fn resolve_case_sensitivity<E: StyleElement>(
     parsed: ParsedCaseSensitivity,
     elem: &E,

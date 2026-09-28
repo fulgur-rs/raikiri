@@ -214,7 +214,7 @@ fn type_selector_beats_universal() {
 
 #[test]
 fn important_beats_normal_across_specificity() {
-    // universal !important が type normal に勝つ
+    // A universal !important declaration beats a normal type-selector declaration.
     let cv = cascade_doc("p { color: red } * { color: blue !important }", "p", None);
     assert_eq!(cv.color, BLUE);
 }
@@ -227,7 +227,7 @@ fn source_order_tiebreak_later_wins() {
 
 #[test]
 fn later_duplicate_in_same_rule_wins() {
-    // 同一 rule 内で同じ property が 2 回 — CSS Cascading L4 §6.1 "Order of
+    // Duplicate properties in one rule: CSS Cascading L4 §6.1 "Order of
     // Appearance" <https://www.w3.org/TR/css-cascade-4/#cascade-sort>:
     // "The last declaration in document order wins."
     let cv = cascade_doc("p { color: red; color: blue }", "p", None);
@@ -236,7 +236,7 @@ fn later_duplicate_in_same_rule_wins() {
 
 #[test]
 fn later_duplicate_in_inline_wins() {
-    // inline style 内で同じ property が 2 回 — 同様に後方が勝つ。
+    // In an inline style with duplicate properties, the later one also wins.
     let cv = cascade_doc("", "p", Some("color: red; color: blue"));
     assert_eq!(cv.color, BLUE);
 }
@@ -261,8 +261,8 @@ fn winner_does_not_leak_into_next_sibling() {
         r.computed[span].background_color, initial.background_color,
         "span に p の background-color winner が漏れた"
     );
-    // 親 <div> は initial の 400。CSS Fonts 4 §2.2.1 の表で
-    // 350 <= 400 < 550 → bolder = 700。二重適用なら 900 になる。
+    // Parent <div> has the initial weight 400. Per the CSS Fonts 4 §2.2.1 table,
+    // 350 <= 400 < 550 gives bolder = 700. Applying it twice would give 900.
     assert_eq!(
         r.computed[span].font_weight, 700.0,
         "font-weight: bolder が 2 回適用された (slot leak による二重 drain)"
@@ -359,7 +359,7 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
 
 #[test]
 fn ua_display_block_applied_when_no_author_rule() {
-    // UA CSS のみで <p> の display が Block になる
+    // UA CSS alone makes <p> display as Block.
     let cv = cascade_with_ua("p { display: block }", "", "p", None);
     assert_eq!(cv.display, DisplayValue::Block);
 }
@@ -373,7 +373,7 @@ fn author_display_inline_overrides_ua_block() {
 
 #[test]
 fn important_ua_beats_important_author_display() {
-    // Important UA > Important Author (!important 反転、`cascade_rank`
+    // Important UA > Important Author (!important reverses origin order; `cascade_rank`
     // doc has the exact values)
     let cv = cascade_with_ua(
         "p { display: block !important }",

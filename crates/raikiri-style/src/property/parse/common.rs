@@ -262,18 +262,18 @@ pub(super) fn next_numeric_stable<'i, 't>(
     })
 }
 
-/// `<length>` / `<length-percentage>` の共通 parser。1 token を consume する。
+/// Shared parser for `<length>` / `<length-percentage>`. Consumes one token.
 ///
 /// Grammar reference: CSS Values 4 §6 <https://www.w3.org/TR/css-values-4/#lengths>
 /// / §5.5 <https://www.w3.org/TR/css-values-4/#percentages>.
 ///
 /// # Mode selector
 ///
-/// `allow_percentage` は `%` (`Token::Percentage`) token の受理有無のみを
-/// 分岐する — dimension unit (`px` 等) の受理集合は分岐に依存しない (下の
-/// `Token::Dimension` match arm 参照、両 mode で同一集合を受理する)。
-/// - `false` → `<length>` mode: `%` を受理しない。
-/// - `true` → `<length-percentage>` mode: `%` も受理する。
+/// `allow_percentage` only controls whether `%` (`Token::Percentage`) tokens
+/// are accepted. Both modes accept the same dimension units (`px`, etc.; see
+/// the `Token::Dimension` match arm below).
+/// - `false` → `<length>` mode: rejects `%`.
+/// - `true` → `<length-percentage>` mode: accepts `%` too.
 ///
 /// The `Token::Dimension` match below is the source of truth for supported
 /// units; unsupported units are rejected.
@@ -283,80 +283,79 @@ pub(super) fn next_numeric_stable<'i, 't>(
 /// CSS Values 3 §5 "Distance Units: the `<length>` type"
 /// <https://www.w3.org/TR/css-values-3/#lengths> verbatim: "For zero lengths
 /// the unit identifier is optional (i.e. can be syntactically represented as the
-/// `<number>` 0)." — bare `0` (Token::Number, value == 0.0) を [`Length::Px`]
-/// `(0.0)` として受理する (mode 非依存: `<length>` / `<length-percentage>` 両方)。
-/// 非零 unitless number (`5`, `-1` etc.) は grammar 上 `<length>` にならないため
-/// 引き続き drop する (`== 0.0` guard で判定)。
+/// `<number>` 0)." — accept bare `0` (Token::Number, value == 0.0) as
+/// [`Length::Px`] `(0.0)` in both `<length>` and `<length-percentage>` modes.
+/// Nonzero unitless numbers (`5`, `-1`, etc.) cannot match `<length>` and are
+/// still dropped (checked by the `== 0.0` guard).
 ///
-/// 同 spec §5 clause 2: "if a 0 could be parsed as either a `<number>` or a
-/// `<length>` in a property (such as line-height), it must parse as a `<number>`"
-/// — [`parse_line_height`](super::text::parse_line_height) は本 helper より先に `expect_number` branch を試すため
-/// 該当分岐は `LineHeight::Number(0.0)` を返し、本 helper 経由の `Length::Px(0.0)`
-/// には落ちない (spec-required disambiguation)。
+/// The same spec's §5 clause 2 says: "if a 0 could be parsed as either a
+/// `<number>` or a `<length>` in a property (such as line-height), it must parse
+/// as a `<number>`". [`parse_line_height`](super::text::parse_line_height) tries
+/// the `expect_number` branch before this helper, so it returns
+/// `LineHeight::Number(0.0)`, not this helper's `Length::Px(0.0)` (the
+/// disambiguation required by the spec).
 ///
 /// # Sign / range
 ///
-/// 本 helper は sign / range check を行わない — property ごとに要件が異なるため
-/// (padding は non-negative、margin は negative 許容、etc.)。caller 側で
-/// post-filter する ([`parse_font_size`](super::text::parse_font_size) は **全 [`Length`] variant** の payload に
-/// 対して `>= 0.0` を確認する)。
+/// This helper does not check signs or ranges: each property has different
+/// requirements (padding is non-negative; margin permits negatives, etc.).
+/// Callers post-filter the result. For example,
+/// [`parse_font_size`](super::text::parse_font_size) checks `>= 0.0` on the
+/// payload of **every [`Length`] variant**.
 ///
-/// # `allow_percentage=true` の caller
+/// # Callers with `allow_percentage=true`
 ///
-/// forward-provisioning として導入した mode だが、現在は 7 caller が使用する:
+/// Originally added for forward provisioning, this mode now has seven callers:
 /// [`parse_margin_side`](super::box_model::parse_margin_side) / [`parse_padding_side`](super::box_model::parse_padding_side) / [`parse_width`](super::box_model::parse_width) /
 /// [`parse_height`](super::box_model::parse_height) / [`parse_line_height`](super::text::parse_line_height) / [`parse_font_size`](super::text::parse_font_size) /
-/// [`parse_text_indent`](super::text::parse_text_indent)。いずれも
-/// grammar が spec で `<length-percentage>` を含む
-/// (`font-size` は元は `<length>` 限定だったが後に拡張)。共通 helper 化により
-/// 重複 dimension unit dispatch を回避している。
+/// [`parse_text_indent`](super::text::parse_text_indent). Each property's spec
+/// grammar includes `<length-percentage>` (`font-size` was originally limited
+/// to `<length>` and later expanded). Sharing this helper avoids duplicate
+/// dimension-unit dispatch.
 ///
-/// `allow_percentage=false` (= `<length>` mode) の spacing 以外の caller は
-/// [`parse_border_width_side`](super::box_model::parse_border_width_side) — CSS
-/// Backgrounds 3 §3.3 の `<line-width>` grammar が `<percentage>` を含まない。
+/// Apart from spacing, the caller with `allow_percentage=false` (`<length>`
+/// mode) is [`parse_border_width_side`](super::box_model::parse_border_width_side):
+/// CSS Backgrounds 3 §3.3's `<line-width>` grammar excludes `<percentage>`.
 /// The text-spacing parsers that accept percentages call this helper with
 /// `allow_percentage=true`.
 ///
 /// # Percentage overflow
 ///
-/// `Token::Percentage.unit_value` は f64→f32 変換済 (cssparser 0.37
-/// tokenizer が `value / 100.0` を emit) だが、[`Length::Percent`] は
-/// authored number (`50%` → `50.0`) を保持する設計のため、本 helper 側で
-/// `unit_value * 100.0` の逆変換を行う。`unit_value` 自体が f32 有限範囲に
-/// 収まっていても (例 `1e40%` → cssparser 側は `1e38` で有限)、この
-/// ×100.0 の逆変換それ自体が f32 overflow を起こしうる (`1e38 * 100.0` は
-/// f32 の有限範囲 `3.4028235e38` を超えて `+Inf`)。CSS Values 4 §5 "Range
-/// Checking and Precision for Numeric Types"
-/// <https://www.w3.org/TR/css-values-4/#numeric-types> の "it must be
-/// converted to the closest value supported by the implementation" に従い、
-/// `±Inf` になった場合のみ、符号を保持しつつ `f32::MAX` へ寄せる。
+/// `Token::Percentage.unit_value` is already converted from f64 to f32
+/// (cssparser 0.37's tokenizer emits `value / 100.0`). [`Length::Percent`]
+/// stores the authored number (`50%` → `50.0`), so this helper converts it
+/// back with `unit_value * 100.0`. Even when `unit_value` fits in finite f32
+/// (e.g. `1e40%` becomes a finite `1e38` in cssparser), this conversion can
+/// overflow f32 (`1e38 * 100.0` exceeds its finite maximum `3.4028235e38`
+/// and becomes `+Inf`). CSS Values 4 §5 "Range Checking and Precision for
+/// Numeric Types" <https://www.w3.org/TR/css-values-4/#numeric-types> says
+/// "it must be converted to the closest value supported by the
+/// implementation". Only when the result is `±Inf`, saturate it to
+/// `f32::MAX` while retaining its sign.
 ///
-/// 既存の sink-guard precedent (「guard は sink 境界に
-/// 置く、parse/resolve 層には置かない」) はここには適用しない —
-/// 本件は guard ではなく変換の正確さの問題
-/// (specified 層の値そのものが CSS Values 4 §5 の要求から外れている)
-/// であり、precedent とは別軸。`raikiri-dom::layout::sanitize_finite`
-/// (resolve 後の geometry に対する sink guard) は本変更後も引き続き必要。
+/// The existing sink-guard precedent ("put guards at sink boundaries, not
+/// in parse/resolve layers") does not apply here. This is about conversion
+/// accuracy, not a guard: the specified value itself would violate CSS
+/// Values 4 §5. The sink guard `raikiri-dom::layout::sanitize_finite`
+/// (for geometry after resolution) remains necessary after this change.
 ///
-/// **`NaN` はこの saturation の対象外**。`is_finite()` は `NaN` に対しても
-/// `false` を返すため、当初の実装は `NaN` も `±f32::MAX` へ saturate して
-/// いたが、それは誤り: 例えば `0e999%` は cssparser の tokenizer が計算する
-/// `0.0 * 10^999` (`f64::powf` が `+Inf` を返す) の中間結果としては `NaN`
-/// になるが、**真の数学的値は 0** の入力であり、"closest value" は
-/// `f32::MAX` ではなく `0.0` である。この関数が呼ぶ `next_numeric_stable`
-/// (module doc 冒頭「Numeric-token NaN stabilization」節参照) がまさに
-/// この class を token 取得の時点で訂正するため、通常の parse では
-/// `unit_value` がこの arm に `NaN` のまま届くことはもう無く、`0e999%` は
-/// この saturation 分岐を経由せずそのまま `Length::Percent(0.0)` になる。
-/// それでも `NaN` を saturate 対象から除外する条件分岐 (`is_infinite()`
-/// 限定) 自体は defense-in-depth として残す —
-/// `sanitize_finite` (`raikiri-dom/src/layout.rs`) が `NaN` を既に `0.0`
-/// として扱う既存の sink 契約と整合するため、`next_numeric_stable` の
-/// recovery が (再 parse 失敗などで) 効かなかった残余の `NaN` も
-/// `f32::MAX` へ寄せず無変換で通す。`is_infinite()` の saturation 自体は
-/// `1e40%` のような正真正銘の magnitude overflow に対して引き続き
-/// 必要 (module doc の「同じ collapse は逆方向にも起こりうる」とは別の、
-/// 通常の overflow class)。
+/// **`NaN` is not subject to this saturation.** Since `is_finite()` also
+/// returns `false` for `NaN`, the original implementation saturated NaN to
+/// `±f32::MAX`. That was wrong: for example, `0e999%` can produce `NaN` as
+/// an intermediate result of cssparser's tokenizer computing `0.0 * 10^999`
+/// (`f64::powf` returns `+Inf`), but its **true mathematical value is 0**;
+/// the "closest value" is `0.0`, not `f32::MAX`. This function calls
+/// `next_numeric_stable` (see "Numeric-token NaN stabilization" at the start
+/// of the module docs), which corrects exactly this class on token acquisition.
+/// Normally `unit_value` therefore no longer reaches this arm as `NaN`, and
+/// `0e999%` becomes `Length::Percent(0.0)` without entering saturation.
+/// Keep the `is_infinite()`-only condition as defense in depth: the existing
+/// sink contract of `sanitize_finite` (`raikiri-dom/src/layout.rs`) already
+/// treats `NaN` as `0.0`. Any residual `NaN` after failed recovery by
+/// `next_numeric_stable` (e.g. re-parsing fails) must pass through unchanged,
+/// not be moved to `f32::MAX`. Saturation via `is_infinite()` is still needed
+/// for true magnitude overflows such as `1e40%` (ordinary overflow, unlike
+/// the opposite-direction collapse described in the module docs).
 pub(crate) fn parse_length_value(
     input: &mut Parser<'_, '_>,
     allow_percentage: bool,
@@ -368,9 +367,9 @@ pub(crate) fn parse_length_value(
             "rem" => Some(Length::Rem(*value)),
             "pt" => Some(Length::Pt(*value)),
             // Additional font-relative units (CSS Values 4 §6.1.1).
-            // `ex`/`ch`/`ic` の real-metric variant は
-            // style 層に font metrics が無いため常に spec fallback を使う
-            // (`Length::Ex` / `Length::Ch` / `Length::Ic` の doc 参照)。
+            // The real-metric variants of `ex`/`ch`/`ic` always use their spec
+            // fallbacks because the style layer has no font metrics (see the
+            // `Length::Ex` / `Length::Ch` / `Length::Ic` docs).
             "ex" => Some(Length::Ex(*value)),
             "rex" => Some(Length::Rex(*value)),
             "ch" => Some(Length::Ch(*value)),
@@ -378,8 +377,8 @@ pub(crate) fn parse_length_value(
             "ic" => Some(Length::Ic(*value)),
             "ric" => Some(Length::Ric(*value)),
             // Additional absolute units (CSS Values 4 §6.2).
-            // `unit` は `to_ascii_lowercase()` 済 —
-            // `Q` トークンも `"q"` として届く。
+            // `unit` has already been converted with `to_ascii_lowercase()`:
+            // even a `Q` token arrives as `"q"`.
             "cm" => Some(Length::Cm(*value)),
             "mm" => Some(Length::Mm(*value)),
             "q" => Some(Length::Q(*value)),
@@ -388,27 +387,26 @@ pub(crate) fn parse_length_value(
             // `lh` / `rlh` (CSS Values 4 §6.1.1).
             // Accepted generally here for every consumer, `font-size` included
             // (moved out of `parse_font_size`'s former
-            // post-filter — see that function's doc "`lh` / `rlh` は受理し、
-            // 親基準で解決する" section for the self-reference resolution).
+            // post-filter — see that function's doc section on accepting
+            // "`lh` / `rlh`" and resolving them against the parent).
             "lh" => Some(Length::Lh(*value)),
             "rlh" => Some(Length::Rlh(*value)),
-            // (b) 非対応 — viewport-relative unit (`vw`/`vh`/…) と
-            // `cap`/`rcap` は未対応、silent drop。両者とも specified 層だけ
-            // では正しく resolve できない (viewport size / font ascent が
-            // style 層に存在しない) ため follow-up task へ切り出し済。
+            // (b) Unsupported: viewport-relative units (`vw`/`vh`/…) and
+            // `cap`/`rcap` are silently dropped. Neither can be resolved using
+            // only the specified layer (the style layer lacks viewport size
+            // and font ascent), so this work is tracked in a follow-up task.
             //
-            // この arm はそれ以外の全 unrecognized unit (例:
-            // container-query unit `cqw`/`cqh`/`cqi`/`cqb`/`cqmin`/`cqmax` —
-            // CSS Contain 3 §6 <https://www.w3.org/TR/css-contain-3/#container-lengths>、
-            // container size も viewport size 同様 style 層に存在しない)
-            // も等しく drop する。本 comment が「未対応 unit の一覧」の
-            // canonical source になった以上、この一覧を書き足す形の
-            // 重複記述はしないこと。
+            // This arm also drops every other unrecognized unit, such as
+            // container-query units `cqw`/`cqh`/`cqi`/`cqb`/`cqmin`/`cqmax`
+            // (CSS Contain 3 §6 <https://www.w3.org/TR/css-contain-3/#container-lengths>;
+            // the style layer also lacks container size, as with viewport size).
+            // This comment is the canonical list of unsupported units; do not
+            // repeat this list elsewhere just to extend it.
             _ => None,
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
-            // authored-number 逆変換 + overflow saturation: 上の
-            // "# Percentage overflow" section 参照。
+            // Authored-number reverse conversion and overflow saturation:
+            // see "# Percentage overflow" above.
             let percent = *unit_value * 100.0;
             Some(Length::Percent(if percent.is_infinite() {
                 f32::MAX.copysign(percent)
@@ -416,7 +414,7 @@ pub(crate) fn parse_length_value(
                 percent
             }))
         }
-        // CSS Values 3 §5 unitless-zero clause (doc "# Unitless zero" 参照)。
+        // CSS Values 3 §5 unitless-zero clause (see "# Unitless zero" above).
         Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
         _ => None,
     }
@@ -459,35 +457,38 @@ pub(crate) fn parse_length_allow_negative(input: &mut Parser<'_, '_>) -> Option<
 }
 
 /// `<custom-ident>` (CSS Values 4 §4.2
-/// <https://www.w3.org/TR/css-values-4/#custom-idents>): CSS-wide keyword と
-/// `default` を除いた任意 ident。case-preserving、smol str で保持。
+/// <https://www.w3.org/TR/css-values-4/#custom-idents>): any identifier except
+/// CSS-wide keywords and `default`. Preserve case and store it as a smol str.
 ///
-/// `none` はここでは除外しない。spec verbatim: "Specifications using
+/// Do not exclude `none` here. The spec says: "Specifications using
 /// `<custom-ident>` must specify clearly what other keywords are excluded
-/// from `<custom-ident>`, if any…" と述べるとおり、より狭い grammar
-/// (`<counter-name>` 等) の追加除外は個別の predicate (例
-/// [`is_reserved_counter_name`](super::content::is_reserved_counter_name)) 側の責務。[`is_reserved_custom_ident`] の
-/// docstring も参照。
+/// from `<custom-ident>`, if any…". Extra exclusions for narrower grammars
+/// (such as `<counter-name>`) belong to separate predicates (for example,
+/// [`is_reserved_counter_name`](super::content::is_reserved_counter_name)).
+/// See also the [`is_reserved_custom_ident`] docs.
 ///
-/// **呼び出し元は当初 3 箇所**: `string()` の name 引数 ([`parse_string_fn`](super::content::parse_string_fn))、
-/// `target-counter()` / `target-counters()` の第 2 引数
-/// ([`parse_target_counter_fn`](super::content::parse_target_counter_fn) / [`parse_target_counters_fn`](super::content::parse_target_counters_fn))。いずれも spec 上
-/// `<custom-ident>` を取り `none` は valid。
+/// **Originally three callers**: the name argument of `string()`
+/// ([`parse_string_fn`](super::content::parse_string_fn)) and the second
+/// arguments of `target-counter()` / `target-counters()`
+/// ([`parse_target_counter_fn`](super::content::parse_target_counter_fn) / [`parse_target_counters_fn`](super::content::parse_target_counters_fn)).
+/// All take `<custom-ident>` per the spec, where `none` is valid.
 ///
-/// 後に `pub(crate)` に広げ、`counter_style` module が
-/// `<counter-style-name>` (CSS Counter Styles L3 §3
-/// <https://www.w3.org/TR/css-counter-styles-3/#typedef-counter-style-name> —
-/// `<custom-ident>` に `none` 追加除外を足した production、`<symbol>` の
-/// `<custom-ident>` alternative 等) の base として同じ CSS-wide keyword 除外
-/// list を再利用する 4 箇所目の呼び出し元になった (`is_reserved_custom_ident`
-/// の list を二重管理しないため — 本 crate の drift 回避規約、
-/// [`crate::page::PageCascadeResult::declarations`] doc 同旨)。
+/// This was later widened to `pub(crate)`. The `counter_style` module became
+/// a fourth caller, reusing the same CSS-wide-keyword exclusion list as the
+/// base for `<counter-style-name>` (CSS Counter Styles L3 §3
+/// <https://www.w3.org/TR/css-counter-styles-3/#typedef-counter-style-name>,
+/// which excludes `none` from `<custom-ident>`), the `<custom-ident>`
+/// alternative of `<symbol>`, and similar productions. This avoids maintaining
+/// two copies of the `is_reserved_custom_ident` list (the same drift-avoidance
+/// rule described in the [`crate::page::PageCascadeResult::declarations`] docs).
 ///
-/// `<counter-name>` を取る `counter()` / `counters()` および counter-* property は
-/// **本関数を経由しない** — [`parse_counter_name`](super::content::parse_counter_name) / [`parse_counter_property`](super::content::parse_counter_property) が
-/// [`is_reserved_counter_name`](super::content::is_reserved_counter_name) で `none` を追加除外する。したがって本関数に
-/// `none` 除外を足してはならない (足すと `target-counter(url(#a), none)` と
-/// `string(none)` を spec に反して reject する)。
+/// `counter()` / `counters()` and counter-* properties, which take
+/// `<counter-name>`, **do not call this function**. Instead,
+/// [`parse_counter_name`](super::content::parse_counter_name) /
+/// [`parse_counter_property`](super::content::parse_counter_property) use
+/// [`is_reserved_counter_name`](super::content::is_reserved_counter_name) to
+/// exclude `none` as well. Do not exclude `none` here: doing so would reject
+/// `target-counter(url(#a), none)` and `string(none)` contrary to the spec.
 pub(crate) fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     let ident = input.expect_ident().ok()?.clone();
     if is_reserved_custom_ident(&ident) {
@@ -497,23 +498,25 @@ pub(crate) fn parse_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> 
     }
 }
 
-/// `<custom-ident>` 除外リスト (CSS Values 4 §4.2
-/// <https://www.w3.org/TR/css-values-4/#custom-idents>)。
+/// Exclusion list for `<custom-ident>` (CSS Values 4 §4.2
+/// <https://www.w3.org/TR/css-values-4/#custom-idents>).
 ///
-/// CSS-wide keyword (`inherit` / `initial` / `unset` / `revert` /
-/// `revert-layer`) と `default` のみを弾く。`none` はここでは除外せず、
-/// より狭い grammar (`<counter-name>` 等) の追加除外は個別の predicate
-/// (例 [`is_reserved_counter_name`](super::content::is_reserved_counter_name)) で行う。case-insensitive 比較。
+/// Reject only CSS-wide keywords (`inherit` / `initial` / `unset` / `revert` /
+/// `revert-layer`) and `default`. Do not exclude `none` here; add exclusions
+/// for narrower grammars such as `<counter-name>` in separate predicates
+/// (for example [`is_reserved_counter_name`](super::content::is_reserved_counter_name)).
+/// Compare case-insensitively.
 ///
-/// `pub(crate)`: `counter_style` module が
-/// `<counter-style-name>` 系 production (rule name / `fallback` / `system:
-/// extends`) の除外 predicate を組み立てる際にこの base list を再利用する
-/// ([`parse_custom_ident`] の doc 参照)。
+/// `pub(crate)` lets the `counter_style` module reuse this base list while
+/// constructing exclusion predicates for `<counter-style-name>` productions
+/// (rule name / `fallback` / `system: extends`). See the
+/// [`parse_custom_ident`] docs.
 ///
-/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**CSS-wide
-/// keyword の実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
-/// が説明する「property value としては未実装」claim
-/// とは別の話なので混同しないこと。
+/// This permanent exclusion comes from CSS Values 4 §4.2 and is
+/// **independent of whether CSS-wide keywords are implemented**. Do not
+/// confuse it with the separate claim that CSS-wide keywords are not yet
+/// implemented as property values in the "CSS-wide keywords" section of
+/// the [`PropertyValue`] docs.
 pub(crate) fn is_reserved_custom_ident(ident: &str) -> bool {
     matches!(
         ident.to_ascii_lowercase().as_str(),
@@ -573,10 +576,10 @@ pub(super) fn parse_shadow_length_reject_nan_res<'i>(
     parse_shadow_length_reject_nan(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `<length-percentage [0,∞]>` — [`parse_length_percentage_res`](super::visual::parse_length_percentage_res) に
-/// non-negative filter ([`Length::payload`] による `[0,∞]` pattern) を足した
-/// もの。`radial-gradient()`のellipse 2-radii form
-/// (`<length-percentage [0,∞]>{2}`、[`RadialSize::Ellipse`]) が使う。
+/// `<length-percentage [0,∞]>`: [`parse_length_percentage_res`](super::visual::parse_length_percentage_res)
+/// plus a non-negative filter (`[0,∞]` via [`Length::payload`]). Used by
+/// the two-radii ellipse form of `radial-gradient()`
+/// (`<length-percentage [0,∞]>{2}`, [`RadialSize::Ellipse`]).
 pub(super) fn parse_non_negative_length_percentage_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {

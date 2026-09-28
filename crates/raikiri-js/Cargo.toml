@@ -22,7 +22,7 @@ boa_gc = "0.22"
 
 [features]
 # Off by default: native builds and tests never need it. Exists so the
-# 原則5 (Pure Rust / WASM must) wasm32-unknown-unknown check has something
+# Principle 5 (Pure Rust / WASM requirement) wasm32-unknown-unknown check has something
 # to enable — boa_engine's own `js` feature is required for that target
 # (see getrandom's wasm backend requirement), verified via:
 #   rustup target add wasm32-unknown-unknown

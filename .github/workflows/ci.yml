@@ -1,13 +1,12 @@
 name: CI
 
-# `on:` に paths-ignore を付けると、docs/.beads/*.md-only の push・PR では
-# ワークフロー自体がキューされず check run が一切 post されない。branch
-# protection でこの job を required status check にすると、そうした PR は
-# 判定待ちのまま永久に merge 不可になる (GitHub Actions の既知の footgun)。
-# そのため trigger 側の paths-ignore は使わず、常にワークフローを起動した
-# 上で `changes` job が実際の diff を見て `ci` job の `if:` を切り替える。
-# job が `if:` で skip された場合は check run が "skipped" (=成功扱い) で
-# post されるため、required status check でも正しく通過する。
+# Adding `paths-ignore` to `on:` would prevent docs/.beads/*.md-only pushes
+# and PRs from queuing this workflow, so they would never post a check run.
+# If branch protection requires this job, those PRs would wait forever and
+# could not merge (a known GitHub Actions pitfall). Instead, always start
+# the workflow; the `changes` job inspects the diff and sets `ci`'s `if:`.
+# A job skipped by `if:` posts a "skipped" check run, which counts as success
+# for the required status check.
 
 on:
   push:
@@ -62,12 +61,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Free disk space on the runner
-        # boa_engine (raikiri-js) を追加した際に "No space left on device" で
-        # fmt+test+clippy job が落ちた (他の同時期の CI run は全て成功、この
-        # PR の branch だけ失敗、ローカル再現なし → runner のプリインストール
-        # 済みツール群込みのディスク使用量が上限に近く、依存 tree 追加分で
-        # 溢れたと判断)。Android SDK / .NET / Haskell 等の未使用ツールを削除
-        # して空き容量を確保する。
+        # Adding boa_engine (raikiri-js) made the fmt+test+clippy job fail with
+        # "No space left on device". Other contemporaneous CI runs passed,
+        # only this PR branch failed, and the failure did not reproduce locally.
+        # The runner was likely near its disk limit with preinstalled tools,
+        # and the larger dependency tree pushed it over. Remove unused Android
+        # SDK, .NET, Haskell, and other tools to reclaim space.
         uses: jlumbroso/free-disk-space@v2.0.0
         with:
           preinstalled-runtimes: false
@@ -79,20 +78,19 @@ jobs:
           swap-storage: false
 
       - name: Setup Rust toolchain
-        # rustup が rust-toolchain.toml (1.91.0 + rustfmt + clippy) を尊重、
-        # first cargo 呼び出し前に explicit install する。dtolnay/rust-toolchain
-        # の explicit version は two sources of truth 化を招くため使わない。
-        # rustup ≥ 1.28 で `show` の implicit install が消えたため `|| rustup
-        # toolchain install` を fallback として付ける (idempotent、pre-1.28 でも
-        # 無害)。
+        # Respect rust-toolchain.toml (1.91.0 + rustfmt + clippy) and install
+        # before the first cargo call. An explicit version in dtolnay/rust-toolchain
+        # would create two sources of truth. Since rustup 1.28, `show` no longer
+        # installs implicitly; fall back to `rustup toolchain install` (idempotent
+        # and harmless with older rustup versions).
         run: rustup show active-toolchain || rustup toolchain install
 
       - name: Install system dependencies
-        # yeslogic-fontconfig-sys (fontique/parley 依存) が libfontconfig / pkg-config
-        # を必要とする。ubuntu-latest には fontconfig ランタイムはあるが `-dev`
-        # ヘッダーが無いため build script が pkg-config で失敗する (initial CI run
-        # で観測)。macOS/Windows job を追加する時は fontconfig の platform 別 install
-        # をここに拡張する。
+        # yeslogic-fontconfig-sys (used by fontique/parley) needs libfontconfig
+        # and pkg-config. ubuntu-latest has the fontconfig runtime but not the
+        # development headers, so the build script failed at pkg-config in the
+        # initial CI run. Add platform-specific installation if macOS/Windows
+        # jobs are introduced.
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Cache cargo registry + target
@@ -102,35 +100,36 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Orphan tests.rs lint
-        # scripts/gate.sh §8.1(b) と同一コマンド。Rust toolchain 不要な純粋な
-        # python3 static check だが、他の cheap lint と同じ job に置く。
+        # Same command as scripts/gate.sh §8.1(b). This Python static check
+        # needs no Rust toolchain, but runs in the same job as other cheap lints.
         run: scripts/orphan-tests-lint.sh
 
       - name: Test (workspace, locked)
-        # lib + integration + doctest + bin unittests を全カバー。yps landing 済の
-        # validate_expectations_bin.rs (assert_cmd 経由の bin end-to-end) と全 crate
-        # の doctest が含まれる。raikiri-vrt の image-compare integration は m1.10
-        # reference harness 完了後に追加、その時は #[ignore] / feature flag で opt-in
-        # (default CI では skip、ondemand で走らせる) を検討する。--locked で
-        # Cargo.lock drift を弾く。
+        # Cover library, integration, doctest, and binary unit tests, including
+        # validate_expectations_bin.rs (end-to-end via assert_cmd, landed in yps)
+        # and every crate's doctests. Add raikiri-vrt image-compare integration
+        # after the m1.10 reference harness; consider opting in with #[ignore]
+        # or a feature flag so default CI skips it and it runs on demand.
+        # --locked rejects Cargo.lock drift.
         run: cargo test --workspace --locked
 
       - name: Clippy (all targets, deny warnings)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Rustdoc (private items, deny warnings)
-        # scripts/gate.sh §8.1(b) と同一コマンド。CI に無かったため、曖昧な
-        # intra-doc link (`crate::parse` が fn と mod の両方に解決) が CI green
-        # のまま main に入り、以降の全 branch の gate を FAIL させた。job 名は
-        # required status check に使われうるため変えず、step として追加する。
+        # Same command as scripts/gate.sh §8.1(b). Without this in CI, an
+        # ambiguous intra-doc link (`crate::parse` resolves to both a function
+        # and a module) reached main despite green CI and broke every branch's
+        # gate. Keep the job name because it may be a required status check;
+        # add the check as a step instead.
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --document-private-items --locked
 
-      # raikiri-net の `http-ureq` feature (UreqHttpProvider) は default off で、
-      # workspace 内のどの crate も有効化しないため、上の workspace 単位の
-      # test / clippy / doc では一切 compile されない。scripts/gate.sh と同一
-      # コマンドで feature を明示して個別に回す。
+      # raikiri-net's `http-ureq` feature (UreqHttpProvider) is off by default;
+      # no workspace crate enables it. The workspace test/clippy/doc steps
+      # above therefore never compile it. Enable it explicitly in separate
+      # commands matching scripts/gate.sh.
       - name: Test (raikiri-net, http-ureq feature)
         run: cargo test -p raikiri-net --features http-ureq --locked
 
@@ -178,9 +177,9 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # `--features raikiri-net/http-ureq`: 上の test job と同じく、default off
-      # の UreqHttpProvider (http_provider / http_resolver) を coverage 対象に
-      # 含めるため明示的に有効化する。他 crate の挙動には影響しない。
+      # `--features raikiri-net/http-ureq` explicitly includes the default-off
+      # UreqHttpProvider (http_provider / http_resolver) in coverage, as in
+      # the test job above. It does not affect other crates.
       - name: Generate LCOV report
         run: cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --output-path lcov.info
 

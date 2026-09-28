@@ -7,41 +7,41 @@ use crate::property::types::*;
 
 use super::common::*;
 
-/// `<color>` を parse する。
+/// Parse `<color>`.
 ///
-/// cssparser 0.37 は (0.36 までと異なり) 汎用 `Color` enum / `Color::parse` を
-/// 提供しない — それは別 crate `cssparser-color` 側に移った。ここでは
-/// 各 form の parse を自前 (独立実装) で組み立て、hex / named / rgb() /
-/// color() / lab() / lch() / oklab() / oklch() / color-mix() をカバーする:
+/// Unlike earlier versions (through 0.36), cssparser 0.37 no longer provides
+/// a general `Color` enum or `Color::parse`; these moved to the separate
+/// `cssparser-color` crate. This independent parser handles hex, named colors,
+/// rgb(), color(), lab(), lch(), oklab(), oklch(), and color-mix():
 ///
-/// - **Hex** (`#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`) は
-///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.2 準拠の 独立実装 実装。
-///   `Token::Hash` / `Token::IDHash` の payload は leading `#` を含まないため
-///   そのまま渡す。
-/// - **Named color** は `parse_named_color` (140+ CSS Color L3 keyword table を
-///   再実装しない方針のため cssparser の table を暫定利用)。
-/// - **`rgb()` / `rgba()` function form** は [`parse_rgb_function`] で
-///   `parse_nested_block` 経由の手動 parse。
+/// - **Hex** (`#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`) calls
+///   [`CssColor::from_hex`], an independent implementation of CSS Color 4 §5.2.
+///   The `Token::Hash` / `Token::IDHash` payload does not include the leading `#`,
+///   so it can be passed through unchanged.
+/// - **Named color** uses `parse_named_color` from cssparser for now rather than
+///   reimplementing its table of 140+ CSS Color L3 keywords.
+/// - **`rgb()` / `rgba()` function form** is parsed manually by
+///   [`parse_rgb_function`] through `parse_nested_block`.
 ///
-/// `transparent` keyword は CSS Color 4 §6.3 "The transparent keyword"
-/// <https://www.w3.org/TR/css-color-4/#transparent-color> で
-/// `rgba(0, 0, 0, 0)` の shorthand と規定される — `parse_named_color` の
-/// (r, g, b) は alpha を返さないため、Ident arm 手前で明示 branch して
-/// [`CssColor::TRANSPARENT`] を返す。
+/// CSS Color 4 §6.3 "The transparent keyword"
+/// <https://www.w3.org/TR/css-color-4/#transparent-color> defines `transparent`
+/// as shorthand for `rgba(0, 0, 0, 0)`. Because `parse_named_color` returns only
+/// (r, g, b), a branch before the Ident arm explicitly returns
+/// [`CssColor::TRANSPARENT`].
 ///
-/// `from` を先頭に置く CSS Color 5 の relative color syntax は、origin と
-/// channel/math grammar を検証する。cascade context を持たないため、解決値は
-/// origin color の bounded approximation を保持し、`var()` origin は deferred
-/// value として後段へ渡す。
+/// CSS Color 5 relative color syntax, starting with `from`, validates the
+/// origin and channel/math grammar. With no cascade context, the resolved value
+/// retains a bounded approximation of the origin color, while `var()` origins
+/// pass through as deferred values.
 ///
-/// Modern color syntax の `none`（missing component）は構文上受理し、bounded
-/// model では一時的に zero component として扱う。missing-component の
-/// carry-forward と computed-value serialization は後段の未実装範囲である。
-/// Lab/OKLab の lightness が black/white boundary にある場合は conversion 側で
-/// a/b や chroma にかかわらず boundary color へ固定する。それ以外の
-/// out-of-gamut は 8-bit sRGB への bounded approximation であり、CSS Color 4 の
-/// 完全な gamut mapping は未対応である。`color-mix()` の interpolation では、
-/// Lab-family の座標を sRGB へ先に clip せず、指定空間での計算後にだけ変換する。
+/// Modern color syntax accepts `none` (a missing component) syntactically and
+/// temporarily treats it as zero in the bounded model. Carrying missing
+/// components forward and computed-value serialization remain unimplemented.
+/// For Lab/OKLab lightness at the black/white boundary, conversion fixes the
+/// result to the boundary color regardless of a/b or chroma. Other out-of-gamut
+/// colors use a bounded 8-bit sRGB approximation; full CSS Color 4 gamut
+/// mapping is not supported. `color-mix()` interpolates Lab-family coordinates
+/// in the chosen space before conversion, rather than first clipping to sRGB.
 pub(crate) fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
     parse_color_float(input, 0).map(ParsedColor::to_css_color)
 }
@@ -711,59 +711,59 @@ fn parse_relative_color_after_from<'i>(
 }
 
 /// `<color-space>` (CSS Color 4 §13.2 "Color Space for Interpolation"
-/// <https://www.w3.org/TR/css-color-4/#color-interpolation-method>)。
-/// `color-mix()`では、bounded sRGB modelへ変換できる interpolation-space
-/// identifiers も構文上受理する。`hsl`/`hwb` は円筒座標で補間して sRGB へ戻し、
-/// wide-gamut identifiers は既存の bounded sRGB fallback を使う。Gradient
-/// callers は CSS Images 側の実装範囲を保つため、`hsl`/`hwb` と wide-gamut
-/// spaces を別途拒否する。
+/// <https://www.w3.org/TR/css-color-4/#color-interpolation-method>).
+/// `color-mix()` also accepts interpolation-space identifiers that can be
+/// converted to the bounded sRGB model. `hsl`/`hwb` interpolate in cylindrical
+/// coordinates and convert back to sRGB. Wide-gamut identifiers use the
+/// existing bounded sRGB fallback. Gradient callers separately reject
+/// `hsl`/`hwb` and wide-gamut spaces to preserve the CSS Images scope.
 ///
-/// `color-mix()` (本 type の元々の用途、[`parse_mix_color_space`]) と
-/// CSS Images 4 gradient function 群の `in <color-space>
-/// <hue-interpolation-method>?` 節 ([`GradientColorInterpolation`]、
-/// [`parse_gradient_color_interpolation`](super::visual::parse_gradient_color_interpolation)) で共有する — 両 host syntax が
-/// 同じ exported `<color-space>` production を参照するため、1 つの enum で
-/// 両方を賄う。
+/// This type is shared by `color-mix()` (its original use, through
+/// [`parse_mix_color_space`]) and the CSS Images 4 gradient functions' `in <color-space>
+/// <hue-interpolation-method>?` clause ([`GradientColorInterpolation`],
+/// [`parse_gradient_color_interpolation`](super::visual::parse_gradient_color_interpolation)).
+/// Both host syntaxes refer to the same exported `<color-space>` production,
+/// so one enum serves both.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MixColorSpace {
-    /// `srgb` — gamma-encoded sRGB。CSS の legacy default interpolation
-    /// space。
+    /// `srgb` — gamma-encoded sRGB, the legacy default interpolation space in CSS.
     Srgb,
-    /// `srgb-linear` — linear-light sRGB。
+    /// `srgb-linear` — linear-light sRGB.
     SrgbLinear,
-    /// `hsl` — cylindrical HSL coordinates with hue interpolation。
+    /// `hsl` — cylindrical HSL coordinates with hue interpolation.
     Hsl,
-    /// `hwb` — cylindrical HWB coordinates with hue interpolation。
+    /// `hwb` — cylindrical HWB coordinates with hue interpolation.
     Hwb,
-    /// `lab` — CIE Lab (rectangular)。
+    /// `lab` — CIE Lab (rectangular).
     Lab,
-    /// `lch` — CIE LCH (polar、[`HueInterpolationMethod`] を受理)。
+    /// `lch` — CIE LCH (polar; accepts [`HueInterpolationMethod`]).
     Lch,
-    /// `oklab` — Oklab (rectangular)。
+    /// `oklab` — Oklab (rectangular).
     Oklab,
-    /// `oklch` — Oklch (polar、[`HueInterpolationMethod`] を受理)。
+    /// `oklch` — Oklch (polar; accepts [`HueInterpolationMethod`]).
     Oklch,
 }
 
 /// `<hue-interpolation-method>` (CSS Color 4 §13.2
 /// <https://www.w3.org/TR/css-color-4/#color-interpolation-method>) —
-/// `[ shorter | longer | increasing | decreasing ] hue`。polar な
-/// [`MixColorSpace`] (`Lch`/`Oklch`) に対してのみ意味を持ち、それ以外では
-/// caller が reject する ([`parse_color_mix_function`]、
-/// [`parse_gradient_color_interpolation`](super::visual::parse_gradient_color_interpolation))。`color-mix()` と gradient の
-/// `<color-interpolation-method>` で共有する理由は [`MixColorSpace`] と同じ。
+/// `[ shorter | longer | increasing | decreasing ] hue`. This applies only to
+/// polar [`MixColorSpace`] variants (`Lch`/`Oklch`); callers reject it otherwise
+/// ([`parse_color_mix_function`],
+/// [`parse_gradient_color_interpolation`](super::visual::parse_gradient_color_interpolation)).
+/// The same `<color-interpolation-method>` is shared between `color-mix()` and
+/// gradients for the reason documented on [`MixColorSpace`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HueInterpolationMethod {
-    /// `shorter hue` — 短い方の弧で補間する。省略時のこの production 自体の
-    /// default。
+    /// `shorter hue` — interpolate along the shorter arc; the default for
+    /// this production when omitted.
     Shorter,
-    /// `longer hue` — 長い方の弧で補間する。
+    /// `longer hue` — interpolate along the longer arc.
     Longer,
-    /// `increasing hue` — hue 角度が単調増加する方向で補間する。
+    /// `increasing hue` — interpolate in the direction of monotonically increasing hue angles.
     Increasing,
-    /// `decreasing hue` — hue 角度が単調減少する方向で補間する。
+    /// `decreasing hue` — interpolate in the direction of monotonically decreasing hue angles.
     Decreasing,
 }
 
@@ -1294,14 +1294,13 @@ fn parse_color_mix_stop<'i>(
     Ok((color, leading_percentage.or(trailing_percentage)))
 }
 
-/// `in <color-space> <hue-interpolation-method>?` (CSS Color 4 §13.2
-/// "Color Space for Interpolation" — [`MixColorSpace`] doc参照) の共通
-/// parse + validation。`<hue-interpolation-method>` は polar な
-/// `<color-space>` にのみ許され、省略時は
-/// [`HueInterpolationMethod::Shorter`]がdefault。`allow_hsl_hwb` は
-/// `color-mix()` では true、gradient の
-/// `<color-interpolation-method>` ([`parse_gradient_color_interpolation`](super::visual::parse_gradient_color_interpolation))
-/// では false とし、host grammar の実装範囲を保つ。
+/// Shared parser and validator for `in <color-space> <hue-interpolation-method>?`
+/// (CSS Color 4 §13.2 "Color Space for Interpolation"; see [`MixColorSpace`]).
+/// `<hue-interpolation-method>` is allowed only for polar `<color-space>` values;
+/// omission defaults to [`HueInterpolationMethod::Shorter`]. `allow_hsl_hwb` is
+/// true for `color-mix()` and false for the gradients'
+/// `<color-interpolation-method>` ([`parse_gradient_color_interpolation`](super::visual::parse_gradient_color_interpolation)),
+/// preserving each host grammar's implemented scope.
 pub(super) fn parse_color_interpolation_method<'i>(
     input: &mut Parser<'i, '_>,
     allow_hsl_hwb: bool,
@@ -2125,11 +2124,11 @@ fn linear_srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// `rgb()` / `rgba()` legacy comma syntax の中身 (関数呼び出しの括弧内) を
-/// parse する。`parse_nested_block` の caller 側で `rgb(` / `rgba(` の function
-/// token は既に consume 済み。`rgb` / `rgba` の function name は spec 上 alias
-/// (CSS Color 4 §5.1: "rgb() and rgba() are now aliases for each other")
-/// — alpha 省略は両者で許容し、name-based branching は行わない。
+/// Parse the contents of the legacy comma syntax for `rgb()` / `rgba()`
+/// (inside the function's parentheses). The caller of `parse_nested_block` has
+/// already consumed the `rgb(` / `rgba(` function token. CSS Color 4 §5.1 says
+/// "rgb() and rgba() are now aliases for each other", so both allow omitted
+/// alpha and neither branches on the function name.
 ///
 /// # Grammar (CSS Color 4 §5.1)
 ///
@@ -2142,26 +2141,26 @@ fn linear_srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
 /// alpha-value        = <number> | <percentage>
 /// ```
 ///
-/// legacy form の 3 channel は **all-number** or **all-percentage** の同一種で
-/// なければならず、mix (`rgb(255, 50%, 0)`) は spec-invalid (§5.1:
+/// The three legacy channels must be **all-number** or **all-percentage**;
+/// mixed forms such as `rgb(255, 50%, 0)` are invalid (§5.1:
 /// "In the legacy form, the color channels can only be either all `<number>`s
-/// or all `<percentage>`s — mixing types isn't allowed.")。
+/// or all `<percentage>`s — mixing types isn't allowed.").
 ///
 /// # Clamping
 ///
 /// §5.1: "Values outside these ranges are not invalid, but are clamped to the
-/// ranges defined here at parsed-value time" — 負値 / >255 (number) や
-/// 100% 超も spec-valid、clamp only。
+/// ranges defined here at parsed-value time". Negative numbers, numbers above
+/// 255, and percentages above 100% remain valid and are only clamped.
 ///
-/// - `<number>` 0..=255 → `clamp_channel` で `i32.clamp(0, 255)` を 0..=1 に
-///   正規化
-/// - `<percentage>` 0%..=100% → `expect_percentage` は `0%`→0.0 / `100%`→1.0
-///   の unit_value を返すため、そのまま normalized f32 として保持
-/// - `<alpha-value>` は `<number>` 0..=1 または `<percentage>` 0%..=100% —
-///   どちらも clamp 後に normalized f32 として保持
+/// - `<number>` 0..=255 is normalized to 0..=1 by `clamp_channel` using
+///   `i32.clamp(0, 255)`.
+/// - `<percentage>` 0%..=100% is kept as normalized f32 because
+///   `expect_percentage` returns unit_value (`0%`→0.0 / `100%`→1.0).
+/// - `<alpha-value>` accepts `<number>` 0..=1 or `<percentage>` 0%..=100%;
+///   either is clamped and kept as normalized f32.
 ///
-/// Legacy parser は color-mix() の endpoint を保持できるよう normalized f32 を返し、
-/// property value へ落とす時だけ [`rgb_f32_to_css_color`] で u8 化する。
+/// The legacy parser returns normalized f32 to preserve color-mix() endpoints;
+/// only converting to a property value produces u8 through [`rgb_f32_to_css_color`].
 ///
 /// # Notes
 ///
@@ -2205,8 +2204,8 @@ pub(super) fn parse_rgb_function<'i>(
     let g = parse_rgb_channel(input, is_pct)?;
     input.expect_comma()?;
     let b = parse_rgb_channel(input, is_pct)?;
-    // 4 番目 comma がある場合のみ alpha を parse。無ければ opaque (a=255)。
-    // `rgba(...)` name 側で alpha 必須にしない (spec §5.1 alias 規定)。
+    // Parse alpha only if there is a fourth comma; otherwise use opaque (a=255).
+    // Do not require alpha for `rgba(...)` (the aliases in spec §5.1).
     let a = if input.try_parse(|i| i.expect_comma()).is_ok() {
         parse_alpha_value(input)?
     } else {
@@ -2270,10 +2269,10 @@ fn parse_modern_rgb_function<'i>(
     ))
 }
 
-/// legacy rgb() の 2 番目 / 3 番目 channel を parse する。1 番目 channel で
-/// 決定した `is_pct` kind に沿って `<number>` / `<percentage>` のどちらかを
-/// hard-expect し、mix (`rgb(255, 50%, 0)` / `rgb(50%, 255, 0)`) は Err で
-/// 弾く (spec §5.1: "mixing types isn't allowed")。
+/// Parse the second or third legacy rgb() channel. Expect either `<number>`
+/// or `<percentage>` according to `is_pct`, determined by the first channel;
+/// reject mixed forms (`rgb(255, 50%, 0)` / `rgb(50%, 255, 0)`) with Err
+/// (spec §5.1: "mixing types isn't allowed").
 fn parse_rgb_channel<'i>(
     input: &mut Parser<'i, '_>,
     is_pct: bool,
@@ -2295,15 +2294,14 @@ fn parse_rgb_channel<'i>(
     }
 }
 
-/// `<alpha-value>` (CSS Color 4 §5.1 grammar: `<number> | <percentage>`)。
-/// `<number>` は 0..=1、`<percentage>` は 0%..=100% で、どちらも clamp 後
-/// normalized f32 に mapping する (`expect_percentage` の unit_value は既に
-/// 0..=1 化されているため同一 formula)。
+/// `<alpha-value>` (CSS Color 4 §5.1 grammar: `<number> | <percentage>`).
+/// Both `<number>` 0..=1 and `<percentage>` 0%..=100% map to normalized f32
+/// after clamping (`expect_percentage` already returns unit_value in 0..=1).
 ///
-/// try_parse で percentage を先行させる — `<percentage>` は Token::Percentage、
-/// `<number>` は Token::Number で orthogonal だが、percentage-first は
-/// [`parse_rgb_function`] の 1 番目 channel と対称の順序 (mix reject と同じ
-/// pattern で読める)。
+/// Try percentage first with try_parse. `<percentage>` is Token::Percentage and
+/// `<number>` is Token::Number, so they are orthogonal, but percentage-first
+/// matches the order of the first channel in [`parse_rgb_function`] (and its
+/// mixed-type rejection pattern).
 pub(super) fn parse_alpha_value<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
     if let Ok((_, value)) =
         input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))

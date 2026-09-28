@@ -29,7 +29,7 @@
 # Exit status: 0 if every applicable check passed (or §8.1.4 judged the
 # whole thing non-applicable), non-zero otherwise. Output is intentionally
 # verbose — it is itself the gate record (`N passed`, scan output, etc.)
-# gate.md's 記録義務 requires quoting verbatim.
+# gate.md's record-keeping requirement requires quoting verbatim.
 
 set -euo pipefail
 
@@ -97,7 +97,7 @@ FAIL=0
 # gitlinks, symlink retargets — --no-renames handles the common rename case
 # mechanically; the remaining "path doesn't encode content" cases are not
 # mechanically enumerable and are left to the caller per §8.1.4's own
-# "判定手法の適用限界" clause — this script only automates condition (1)).
+# "limits of the verification method" clause — this script only automates condition (1)).
 #
 # The pattern below also has to catch files that are not source code by
 # extension but do get compiled into the binary as a literal string or byte
@@ -248,7 +248,7 @@ else
     FAIL=1
   fi
   # Sum "N passed" across every test runner's "test result:" summary line —
-  # gate.md 記録義務: this is the sum the record must cite, not any single
+  # gate.md record-keeping requirement: this is the sum the record must cite, not any single
   # test runner's line and not the normal run's "N ignored" figure.
   IGNORED_N=$(echo "$IGNORED_OUTPUT" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')
   echo "N passed (summed across all test-runner summary lines): $IGNORED_N"
@@ -269,7 +269,7 @@ fi
 echo
 
 echo "-- §8.1(b) scripts/orphan-tests-lint.sh --"
-# Catches a tests.rs split (AGENTS.md "unit test は tests.rs に分離する") that
+# Catches a tests.rs split (AGENTS.md "move unit tests to tests.rs") that
 # forgot its `mod tests;` declaration — rustc silently never compiles such a
 # file (no warning, no error) and coverage stays green because the file was
 # never in the coverage report to begin with. See

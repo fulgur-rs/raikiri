@@ -1,6 +1,6 @@
-//! crate-internal test helper。`StyleDom` / `StyleNode` / `StyleElement` を
-//! 最小実装した builder-style mock。raikiri-dom crate への test 依存を回避し、
-//! raikiri-style を standalone に unit test できるようにする。
+//! Crate-internal test helper. A builder-style mock with minimal implementations
+//! of `StyleDom` / `StyleNode` / `StyleElement`. Avoids a test dependency on
+//! raikiri-dom so raikiri-style can be unit-tested on its own.
 //!
 
 use crate::style_dom::{
@@ -31,7 +31,7 @@ pub(crate) struct TestNode {
 
 impl TestDoc {
     pub(crate) fn new() -> Self {
-        // index 0 = Document root。
+        // Index 0 is the Document root.
         Self {
             nodes: vec![TestNode {
                 kind: StyleNodeKind::Document,
@@ -47,7 +47,7 @@ impl TestDoc {
         }
     }
 
-    /// Element を追加。parent は既存 index。
+    /// Add an element. `parent` must be an existing index.
     pub(crate) fn push_element(
         &mut self,
         parent: usize,
@@ -208,7 +208,7 @@ impl StyleDom for TestDoc {
     }
 
     fn node_count(&self) -> usize {
-        // cascade が out.resize() の pre-allocation で消費する。
+        // The cascade uses this to preallocate with out.resize().
         self.nodes.len()
     }
 

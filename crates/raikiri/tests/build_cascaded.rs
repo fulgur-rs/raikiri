@@ -1,7 +1,7 @@
-//! raikiri umbrella integration tests。
+//! Integration tests for the raikiri umbrella crate.
 //!
-//! Consumer が `use raikiri::…;` のみで parse → build_cascaded → display 判定を
-//! 完結できることを verify する。
+//! Verify that a consumer can parse, call build_cascaded, and inspect
+//! display values using only `use raikiri::…;`.
 
 use raikiri::{
     DisplayValue, Dom, Element, MediaContext, Node, NodeId, NodeKind, PageBox, PageContextQuery,
@@ -18,13 +18,13 @@ fn parse_html(source: &str) -> raikiri::UncascadedDocument {
     parse(source.as_bytes(), &opts).expect("parse")
 }
 
-/// DOM を root から iterative DFS walk して最初に見つかった tag 一致の
-/// Element の NodeId を返す。
+/// Return the NodeId of the first element with the matching tag in a
+/// depth-first traversal from the DOM root.
 ///
-/// 深いネストで stack overflow しないよう explicit `Vec` stack で iterative
-/// (raikiri-style::ruletree::walk_and_collect と同 pattern)。
-/// stack は LIFO なので、pre-order (sibling 間 document order) を保つため
-/// children を reverse push する。
+/// Use an explicit `Vec` stack to avoid stack overflow in deeply nested
+/// documents (as in raikiri-style::ruletree::walk_and_collect). Because the
+/// stack is LIFO, push children in reverse to preserve preorder and sibling
+/// document order.
 fn find_by_tag<D: Dom>(dom: &D, tag: &str) -> Option<NodeId> {
     let mut stack: Vec<NodeId> = vec![dom.root_id()];
     while let Some(id) = stack.pop() {
@@ -108,18 +108,16 @@ fn page_first_selector_reaches_umbrella_page_cascade() {
 
 #[test]
 fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
-    // Acceptance: <article><h2>...</h2><p>...</p>
-    // </article> が block box として render される (article 自体が inline化
-    // して子要素と混線しない)。article を含む、同じ UA CSS 追加を受けた 11
-    // 要素すべてを real parse → build_cascaded パイプラインで直接検証する —
-    // `crates/raikiri-html/src/lib.rs` の
-    // `minimal_ua_css_covers_required_display_block_selectors` は
-    // `MINIMAL_UA_CSS` の生テキストを走査するだけで実際に cssparser で
-    // parse されるとは限らない (comment 構文の誤りなどを検出できない)。
-    // この test は cascade まで通した computed value を見るので非-vacuous。
-    // hgroup 追加 (article/aside/nav/section と同じ
-    // §sections-and-headings (15.3.6) selector group の一員、当初の
-    // scope からは漏れていた)。
+    // Acceptance: <article><h2>...</h2><p>...</p></article> must render
+    // as a block box, not become inline and intermingle with its children.
+    // Check all 11 elements covered by the same UA CSS addition, including
+    // article, through real parse → build_cascaded execution. The
+    // `minimal_ua_css_covers_required_display_block_selectors` test in
+    // `crates/raikiri-html/src/lib.rs` only scans raw `MINIMAL_UA_CSS` text;
+    // it cannot catch CSS parser failures (e.g., malformed comments).
+    // Inspecting computed values after cascade makes this test non-vacuous.
+    // Include hgroup: it belongs to the same §sections-and-headings (15.3.6)
+    // selector group as article/aside/nav/section but was missed initially.
     for tag in [
         "article",
         "section",
@@ -149,9 +147,9 @@ fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
 
 #[test]
 fn list_elements_use_list_item_display_via_ua_css() {
-    // Acceptance: <ul><li>...</li><li>...</li></ul> の各 list item が
-    // `display: list-item` になり、ol/ul 自身は display: block になる。
-    // Cascade まで通した computed value を見るので非-vacuous。
+    // Acceptance: each list item in <ul><li>...</li><li>...</li></ul>
+    // has `display: list-item`, while ol/ul themselves have display: block.
+    // Checking computed values after cascade makes this non-vacuous.
     for tag in ["ol", "ul", "li"] {
         let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
         let doc = parse_html(&html);
@@ -173,10 +171,9 @@ fn list_elements_use_list_item_display_via_ua_css() {
 
 #[test]
 fn li_list_item_display_stacks_siblings_as_boxes() {
-    // Acceptance の literal fixture を直接再現: <ul><li>A</li><li>B</li></ul>
-    // の2つの <li> が両方とも display: list-item であることを、tag 走査ではなく
-    // 実際の親子構造 (ul の child_ids) 経由で確認する — 1つ目の <li> だけを
-    // 見る find_by_tag では2つ目の <li> の取りこぼしを検出できないため。
+    // Reproduce the literal acceptance fixture <ul><li>A</li><li>B</li></ul>.
+    // Check both li children through ul.child_ids, not a tag scan: find_by_tag
+    // would inspect only the first li and miss a regression in the second.
     let doc = parse_html("<html><body><ul><li>A</li><li>B</li></ul></body></html>");
     let result = build_cascaded(&doc);
 
@@ -211,7 +208,7 @@ fn li_list_item_display_stacks_siblings_as_boxes() {
 
 #[test]
 fn author_inline_style_overrides_ua_display_block() {
-    // NB: cascade は class/id selector を drop するので inline style を使う
+    // NB: cascade drops class/id selectors, so use inline style.
     let doc = parse_html("<html><body><p style=\"display:inline\">Hi</p></body></html>");
     let result = build_cascaded(&doc);
 
@@ -226,8 +223,8 @@ fn author_inline_style_overrides_ua_display_block() {
 
 #[test]
 fn dom_style_element_author_rule_overrides_ua() {
-    // 明示的な <style> Author rule が UA を上回ることを verify。
-    // cascade は type selector のみサポートするため p{...} を使う。
+    // Verify that an explicit author <style> rule overrides UA CSS.
+    // Cascade supports only type selectors, so use p{...}.
     let html = "<html><head><style>p { display: inline }</style></head>\
                 <body><p>Hi</p></body></html>";
     let doc = parse_html(html);
@@ -272,10 +269,10 @@ fn lang_pseudo_class_inherits_from_html_lang_attribute_through_real_parse_pipeli
 
 #[test]
 fn extra_stylesheets_user_rule_overrides_ua_via_umbrella() {
-    // Consumer が opts.extra_stylesheets 経由で渡した CSS が User origin として
-    // build_cascaded 経路に到達することを verify (parse 時 Document.stylesheets
-    // に User kind として push される、Author retag から分離済み)。normal User
-    // (rank 1) は normal UserAgent (rank 0) より強いため UA CSS を上書きする。
+    // Verify that CSS supplied in opts.extra_stylesheets reaches
+    // build_cascaded with User origin. Parsing pushes it into
+    // Document.stylesheets as User, without retagging it as Author.
+    // Normal User (rank 1) outranks normal UserAgent (rank 0).
     let extra: &[&str] = &["p { display: inline }"];
     let opts = raikiri::ParseOptions {
         extra_stylesheets: extra,
@@ -292,9 +289,9 @@ fn extra_stylesheets_user_rule_overrides_ua_via_umbrella() {
 
 #[test]
 fn style_inside_template_element_does_not_affect_cascade() {
-    // <template> は spec 上 inert。内部の <style> は cascade に流れず、
-    // <p> は UA CSS のみで `display: block` を取る。
-    // (raikiri-html/src/sink.rs:315-318 の invariant を umbrella surface で検証)
+    // <template> is inert by specification. Its <style> does not enter
+    // cascade, so <p> gets only UA CSS (`display: block`). This checks the
+    // invariant in raikiri-html/src/sink.rs:315-318 through the umbrella API.
     let html = "<html><head><template><style>p { display: inline }</style></template></head>\
                 <body><p>Hi</p></body></html>";
     let doc = parse_html(html);
@@ -311,20 +308,18 @@ fn style_inside_template_element_does_not_affect_cascade() {
 
 #[test]
 fn user_important_beats_normal_ua_via_umbrella() {
-    // CSS Cascading L4 §6.1 "Cascade Sorting Order"
-    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and
-    // Importance 段 (`!important` による反転は §6.3
-    // <https://www.w3.org/TR/css-cascade-4/#importance>)。raikiri-style の full
-    // cascade_rank ordering (4-tier 化、8-arm total):
+    // CSS Cascading L4 §6.1 "Cascade Sorting Order" describes Origin and
+    // Importance (<https://www.w3.org/TR/css-cascade-4/#cascade-sort>);
+    // §6.3 reverses origins for `!important`
+    // (<https://www.w3.org/TR/css-cascade-4/#importance>). The complete
+    // raikiri-style cascade_rank order (four tiers, eight arms) is:
     //   Normal UA(0) < Normal User(1) < Normal Hint(2) < Normal Author(3) <
-    //   Important Author(4) < Important Hint(5) < Important User(6) < Important UA(7)。
-    // bundled UA CSS (minimal.css) は !important を含まないため、
-    // Important UA との反転検証は本 test では直接行えない。
-    // ここで verify するのは "Important User が Normal UA を破る" leg で、これは
-    // umbrella の StylesheetKind → Origin map (extra_stylesheets → `Origin::User`) が
-    // 正しく機能していることを end-to-end で確認する最小
-    // case。extra_stylesheets で渡す (parse 時 User kind として Document に注入
-    // される、Author retag から分離済み)。
+    //   Important Author(4) < Important Hint(5) < Important User(6) < Important UA(7).
+    // Bundled UA CSS (minimal.css) has no !important rules, so this test
+    // cannot directly verify the reversal against Important UA. Instead,
+    // verify that Important User beats Normal UA end to end, including the
+    // umbrella StylesheetKind → Origin map (extra_stylesheets → `Origin::User`).
+    // Parsing inserts extra_stylesheets with User kind, not retagged Author.
     let extra: &[&str] = &["p { display: inline !important }"];
     let opts = raikiri::ParseOptions {
         extra_stylesheets: extra,
@@ -337,10 +332,10 @@ fn user_important_beats_normal_ua_via_umbrella() {
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
 
-    // NB: この test 段階では bundled UA CSS は !important を含まない (minimal.css)。
-    // User !important があると User が勝つ (Normal UA 0 < ... < Important User 6)。
-    // したがって p の display は inline になる。この test は "Important User > Normal UA"
-    // の origin-rank ordering が umbrella integration 越しに保存されることを confirm する。
+    // Bundled minimal.css has no !important rules at this stage. User
+    // !important therefore wins (Normal UA 0 < ... < Important User 6), and
+    // p becomes inline. This pins Important User > Normal UA origin ranking
+    // through umbrella integration.
     assert_eq!(
         display,
         DisplayValue::Inline,
@@ -350,19 +345,19 @@ fn user_important_beats_normal_ua_via_umbrella() {
 
 #[test]
 fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
-    // AC #6 の "Consumer が use raikiri::…; で完結" 契約を name-resolution level で証明。
-    // raikiri crate から直接名指し可能な全型を actual use する: value 型 (CssColor / Length /
-    // Atom)、Document (UncascadedDocument.dom の型)、NetworkProvider (ParseOptions.network の
-    // 型)、Url (ParseOptions.base_url の型)。sub-crate を direct dep せずに ParseOptions を
-    // 完全構築、ComputedValues field を型付き binding できることを compile-time で verify。
+    // Prove AC #6 (consumers need only use raikiri::…) at name-resolution
+    // level. Actually use exported value types (CssColor / Length / Atom),
+    // Document (UncascadedDocument.dom), NetworkProvider (ParseOptions.network),
+    // and Url (ParseOptions.base_url). Build ParseOptions and bind typed
+    // ComputedValues fields without direct sub-crate dependencies.
     use raikiri::{
         ComputedLength, CssColor, Document, FontFamilyKind, FontFamilyName, Length,
         NetworkProvider, ParseOptions, PropertyValue, Url, build_cascaded, parse,
     };
 
-    // NetworkProvider trait を dyn 経由で名指し可能なことを compile-time で確認。
+    // Compile-check that NetworkProvider can be named through dyn.
     let _network: Option<&dyn NetworkProvider> = None;
-    // Url を parse できることを確認 (base_url に渡す想定)。
+    // Parse a Url for use as base_url.
     let base = Url::parse("https://example.com/").expect("url parse");
     let opts = ParseOptions {
         extra_stylesheets: &[],
@@ -371,19 +366,19 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     };
 
     let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
-    // UncascadedDocument.dom: Document を明示 type annotation で受ける (Document re-export 確認)。
+    // Annotate UncascadedDocument.dom as Document to verify its re-export.
     let _dom: &Document = &doc.dom;
 
     let result = build_cascaded(&doc);
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let computed = &result.computed[p_id.0 as usize];
 
-    // ComputedValues field を型付き binding で受け、value 型が名指しできることを verify。
+    // Bind a ComputedValues field with an explicit exported value type.
     let _color: CssColor = computed.color;
-    // `font_size` は computed 層の `ComputedLength`。
+    // `font_size` uses the computed-layer `ComputedLength`.
     let _font_size: ComputedLength = computed.font_size;
-    // specified 層の `Length` は `PropertyValue` の payload 型として引き続き
-    // Consumer から名指しできる必要がある (umbrella re-export list の rationale)。
+    // The specified-layer `Length` remains nameable by consumers as a
+    // `PropertyValue` payload; that motivates its umbrella re-export.
     let _specified_font_size: PropertyValue = PropertyValue::FontSize(Length::Px(12.0));
     // ComputedValues retains both each family's text and whether it is a
     // generic keyword or a named family.
@@ -398,39 +393,36 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
 
 #[test]
 fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
-    // `PropertyValue` の Sides<T> 系 payload
-    // (Padding/Margin/Border) と LineHeight を umbrella から型付きで名指し
-    // できることを compile-time で証明する。既存の
-    // `PropertyValue::FontSize(Length::Px(12.0))` で入れた「実際に construct
-    // して確認する」形と同じ shape を、直接 construct できる 3 variant
-    // (Padding/Margin/LineHeight) には踏襲する。
+    // Compile-check typed umbrella access to Sides<T> payloads of
+    // `PropertyValue` (Padding/Margin/Border) and to LineHeight. As with
+    // `PropertyValue::FontSize(Length::Px(12.0))`, actually construct each
+    // directly constructible variant (Padding/Margin/LineHeight), rather
+    // than checking only its type.
     use raikiri::{
         Border, BorderColor, BorderStyle, CssColor, Length, LengthOrAuto, LineHeight,
         PropertyValue, Sides,
     };
 
-    // `Padding(Sides<Length>)` — `Sides<T>` / `Length` はどちらも re-export 済みで
-    // struct-literal 制約なく直接 construct できる。
+    // `Padding(Sides<Length>)`: both `Sides<T>` and `Length` are re-exported
+    // and can be constructed directly without a struct-literal restriction.
     let _specified_padding: PropertyValue = PropertyValue::Padding(Sides::all(Length::Px(4.0)));
 
-    // `Margin(Sides<LengthOrAuto>)` — `LengthOrAuto` も同様に直接 construct 可能。
+    // `Margin(Sides<LengthOrAuto>)`: LengthOrAuto is also constructible directly.
     let _specified_margin: PropertyValue =
         PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(8.0))));
 
-    // `LineHeight(LineHeight)` — `LineHeight` enum は `#[non_exhaustive]` だが、
-    // 既存 variant の construct 自体は (`Length` 同様) 外部 crate から可能。
+    // `LineHeight(LineHeight)`: the enum is `#[non_exhaustive]`, but its
+    // existing variants can still be constructed externally, like `Length`.
     let _specified_line_height: PropertyValue = PropertyValue::LineHeight(LineHeight::Normal);
 
-    // `Border(Sides<Border>)` — 以前は `Border` struct
-    // 自体が `#[non_exhaustive]` のため raikiri crate から `Border { .. }`
-    // struct-literal 構築ができず (E0639)、tuple-variant constructor を fn
-    // pointer に coerce する形で型だけ check していた (値そのものは作れなかった)。
-    // `Border::new()` (= `Self::default()`) の追加で、
-    // FontSize/Padding/Margin/LineHeight と同じ「実際に値を construct する」
-    // 形に揃った。全 field が `pub` なので `Border::new()` の後に non-initial
-    // 値へ mutation することも確認する (`BorderStyle` / `BorderColor` も
-    // 同時期に umbrella re-export に追加、その2型も型付きで construct できる
-    // ことを合わせて check する)。
+    // `Border(Sides<Border>)`: previously, Border was a `#[non_exhaustive]`
+    // struct, so external construction via `Border { .. }` failed (E0639).
+    // Only the type could be checked by coercing the tuple-variant constructor
+    // to a function pointer; no value could be built. With `Border::new()`
+    // (= `Self::default()`), test actual construction as for FontSize,
+    // Padding, Margin, and LineHeight. Also mutate its public fields away
+    // from initial values, and construct the umbrella-re-exported
+    // `BorderStyle` and `BorderColor` types added at the same time.
     let mut border = Border::new();
     assert_eq!(
         border.width,
@@ -452,12 +444,12 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
 
 #[test]
 fn umbrella_re_exports_cover_computed_sides_container_fields() {
-    // 最初に re-export した Computed* 5 型は leaf 型に
-    // 過ぎず、`ComputedValues.padding` / `.margin` / `.border` の実 field 型
-    // `Sides<Computed*>` は `Sides<T>` 自体が re-export されていなかったため
-    // 名指しできなかった (`crates/raikiri-style/src/
-    // computed.rs` の field 定義で実測)。後続の `Sides` 追加でこの 3 field も
-    // 型付きで受けられることを、実際の cascade 出力を使って verify する。
+    // The first five re-exported Computed* types were only leaf types.
+    // `ComputedValues.padding`, `.margin`, and `.border` actually use
+    // `Sides<Computed*>`, which could not be named until `Sides<T>` was
+    // re-exported (see field definitions in crates/raikiri-style/src/
+    // computed.rs). Verify typed access to those three fields using real
+    // cascade output after the later `Sides` addition.
     use raikiri::{
         ComputedBorder, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ParseOptions,
         Sides, build_cascaded, parse,
@@ -480,12 +472,12 @@ fn umbrella_re_exports_cover_computed_sides_container_fields() {
 
 #[test]
 fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
-    // NetworkProvider trait を implement する downstream consumer が
-    // sub-crate direct dep なしで完結できることを compile-time で verify。
-    // fetch() の param / return / error 3 型 + Bytes + Url + auxiliary
-    // (Method / Body / HeaderMap / ResourceKind) を全て raikiri から import して
-    // struct 実装。round-trip 動作までは要求しない (fetch 内で NetworkError::Aborted 即返却)
-    // — 目的は trait impl の name resolution 完結性の証明。
+    // Compile-check that a downstream NetworkProvider implementation needs
+    // no direct sub-crate dependencies. Import all three fetch() signature
+    // types (parameter, return, error), Bytes, Url, and supporting Method,
+    // Body, HeaderMap, and ResourceKind through raikiri. No round trip is
+    // required (fetch immediately returns NetworkError::Aborted); the point
+    // is complete name resolution for the trait implementation.
     use raikiri::{
         Bytes, FetchOutcome, FetchedResource, NetworkError, NetworkProvider, Request, Url,
     };
@@ -494,11 +486,11 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
 
     impl NetworkProvider for DummyProvider {
         fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-            // Request field を全て read できることを compile-time で確認 (unused でも OK)。
+            // Read every Request field to compile-check access (even if unused).
             let _url: &Url = &request.url;
             let _kind = request.kind;
 
-            // FetchedResource を Bytes / Url ベースで construct できることを confirm。
+            // Construct FetchedResource using Bytes and Url.
             Ok(FetchOutcome::Body(FetchedResource {
                 bytes: Bytes::from_static(b""),
                 content_type: None,
@@ -508,23 +500,21 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
         }
     }
 
-    // dyn dispatch で trait object 化 (`ParseOptions.network` の型と互換性を verify)。
+    // Convert to a dyn trait object compatible with ParseOptions.network.
     let provider: &dyn NetworkProvider = &DummyProvider;
     let _network: Option<&dyn NetworkProvider> = Some(provider);
 }
 
 #[test]
 fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade() {
-    // <link rel="stylesheet" href="..."> の
-    // 検出→fetch (NetworkProvider::fetch, ResourceKind::ExternalStylesheet)
-    // →CSS text 化までは raikiri-html 単体 unit test 済み。この umbrella
-    // test はその先 — raikiri-html が `UncascadedDocument.stylesheet_sources`
-    // に積んだ fetch 結果を、raikiri crate 側の `build_cascaded` が本当に
-    // Author stylesheet として RuleTree に統合し、computed style まで届く
-    // ことを、本物の parse → build_cascaded pipeline で end-to-end 検証する
-    // (img_width_height_html_attributes_reach_computed_style_through_real_parse_path
-    // と同じ理由: static reading だけでは「本当に繋がっているか」は確認
-    // できない)。
+    // raikiri-html unit tests cover detection and fetching of
+    // <link rel="stylesheet" href="..."> via NetworkProvider::fetch and
+    // ResourceKind::ExternalStylesheet, then conversion to CSS text. This
+    // umbrella test checks the next step: real parse → build_cascaded must
+    // take the fetched data in `UncascadedDocument.stylesheet_sources`, add
+    // it as an Author stylesheet to RuleTree, and produce computed styles.
+    // As with img_width_height_html_attributes_reach_computed_style_through_real_parse_path,
+    // reading the code alone cannot prove that the stages are wired up.
     use raikiri::{
         Bytes, DisplayValue, FetchOutcome, FetchedResource, NetworkError, NetworkProvider,
         ParseOptions, Request, Url, build_cascaded, parse,
@@ -552,8 +542,8 @@ fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade()
     let html = br#"<html><head><link rel="stylesheet" href="a.css"></head><body><div>Hi</div></body></html>"#;
     let doc = parse(&html[..], &opts).expect("parse");
 
-    // Fetch した CSS text が Author stylesheet として届いていることを、
-    // raikiri-html 側の契約 (stylesheet_sources) でも確認する。
+    // Also inspect raikiri-html's stylesheet_sources contract to verify
+    // that fetched CSS arrives as an Author stylesheet.
     assert_eq!(
         doc.stylesheet_sources,
         vec![String::from("div { display: none }")],
@@ -718,18 +708,17 @@ fn body_style_element_reaches_umbrella_cascade() {
 }
 #[test]
 fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path() {
-    // raikiri-style crate 内 (`crate::cascade::
-    // push_img_dimension_hints`) の実装だけで足りる、という scope-narrowing
-    // 判定の根拠は
-    // `crates/raikiri-html/src/sink.rs::wire_side_tables` が null-namespace
-    // 属性を汎用的に `Node.attributes` へ配線済み、という **static code
-    // reading** だった (実行して確かめてはいない)。この umbrella test は
-    // raikiri-style 単体の unit test (`TestDoc` — テスト自身が属性を注入する
-    // mock) では検証できない箇所、すなわち「本物の html5ever TreeSink
+    // The initial scope reduction assumed that implementation in
+    // raikiri-style (`crate::cascade::
+    // push_img_dimension_hints`) sufficed because static code inspection
+    // found generic null-namespace attribute wiring into `Node.attributes`
+    // in `crates/raikiri-html/src/sink.rs::wire_side_tables`. This wiring
+    // had not been executed. Unlike raikiri-style's `TestDoc` unit test
+    // (where the mock injects its own attributes), this umbrella test
+    // supplies runtime evidence for the real html5ever TreeSink
     // (`RaikiriTreeSink`) → `Document.set_element_attributes` →
-    // `ElementRef::attr()` → `StyleElement::attr()`」という配線の
-    // **実行時**証拠を、raikiri crate 公開 API のみを使って与える
-    // ("consumer は `use raikiri::…;` のみで完結" contract と同じ形)。
+    // `ElementRef::attr()` → `StyleElement::attr()` path, using only public
+    // raikiri APIs as an external consumer would.
     let doc = parse_html(r#"<html><body><img src="x.png" width="100" height="50"></body></html>"#);
     let result = build_cascaded(&doc);
 
@@ -749,10 +738,10 @@ fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path
 
 #[test]
 fn img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_parse_path() {
-    // 上と同じ real-path 証拠を、cascade-origin の主張 (「Author CSS で
-    // 上書き可能」) 側でも取る — `<style>` 由来の Author-origin 宣言が
-    // `raikiri::build_cascaded` の source_order 解決 (`stylesheet_kind_to_origin`
-    // 含む実 origin 配線) を経由してもなお hint に勝つことを確認する。
+    // Also prove through the real path that Author CSS can override the
+    // hint. An Author-origin declaration from `<style>` must beat the hint
+    // after passing through `raikiri::build_cascaded` source_order resolution,
+    // including `stylesheet_kind_to_origin` wiring.
     let html = r#"<html><head><style>img { width: 30px }</style></head>
                   <body><img src="x.png" width="100"></body></html>"#;
     let doc = parse_html(html);
@@ -819,19 +808,17 @@ fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrell
 
 #[test]
 fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
-    // Acceptance: <hr> が水平線として render される。
-    // HTML Living Standard §the-hr-element-2 (15.3.11) は `hr { color: gray;
+    // Acceptance: <hr> renders as a horizontal rule. HTML Living Standard
+    // §the-hr-element-2 (15.3.11) specifies `hr { color: gray;
     // border-style: inset; border-width: 1px;
-    // margin-block: 0.5em; margin-inline: auto; overflow: hidden; }` を
-    // 規定し、`display: block` は別の §flow-content-3 (15.3.3) flow-content
-    // group 側から来る。raikiri-style には border-style / border-width の
-    // 独立 multi-side property、margin-block / margin-inline logical
-    // property のいずれも実装がない (overflow property 自体は
-    // 実装済み — 詳細は minimal.css のコメント参照)
-    // — 本 test は「minimal.css が実際に宣言
-    // している *置換後* の rule」の cascade 出力を check する (border
-    // shorthand + margin shorthand + color)。spec 原文
-    // そのものを check しているわけではない点に注意。
+    // margin-block: 0.5em; margin-inline: auto; overflow: hidden; }`.
+    // `display: block` comes from the separate §flow-content-3 (15.3.3)
+    // group. raikiri-style lacks independent multisided border-style and
+    // border-width properties and logical margin-block/margin-inline
+    // properties. It does support overflow; see the minimal.css comments.
+    // This test checks the cascade output of the substitute rules actually
+    // declared in minimal.css (border and margin shorthands plus color),
+    // not the literal specification rule.
     //
     // NB: `computed.overflow` (raikiri-style `OverflowValue`/`OverflowXY`)
     // is deliberately **not** asserted here — this
@@ -844,11 +831,10 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
     // added; `OverflowValue`/`OverflowXY` would be
     // the same shape of follow-up, but deciding the umbrella's public
     // surface is out of scope here).
-    // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
-    // `list_elements_use_list_item_display_via_ua_css` と同様、実 parse ->
-    // build_cascaded を通すので非-vacuous (raikiri-html::lib の textual
-    // scan は rule 文字列の存在しか確認せず、cssparser が実際に accept
-    // するかどうかは見ていない)。
+    // Like `sectioning_and_grouping_elements_are_display_block_via_ua_css`
+    // and `list_elements_use_list_item_display_via_ua_css`, this test uses
+    // real parse → build_cascaded, not a textual scan in raikiri-html::lib:
+    // a scan cannot prove that cssparser accepts the rule.
     let doc = parse_html("<html><body><hr></body></html>");
     let result = build_cascaded(&doc);
 
@@ -861,11 +847,10 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
         "<hr> should be display: block from the flow-content UA CSS group"
     );
 
-    // color: gray は decorative ではなく load-bearing — 下の `border`
-    // shorthand は color component を省略しており currentcolor に
-    // default するため、border を spec 通り gray に塗らせているのは
-    // 実質この color 宣言。省略すると、この hr が本来 inherit するはずの
-    // 別の `color` で border が塗られてしまう。
+    // color: gray is necessary, not decorative. The `border` shorthand
+    // below omits color and defaults to currentcolor. This declaration
+    // makes the border gray as specified; without it, the hr might inherit
+    // a different color for its border.
     assert_eq!(
         computed.color,
         raikiri::CssColor {
@@ -877,11 +862,10 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
         "<hr> color should resolve to CSS named color `gray`"
     );
 
-    // border-style: inset + border-width: 1px を 4 side 全てに — `border:
-    // 1px inset` shorthand 経由の置換 (raikiri-style には独立の
-    // border-style/border-width property がない)。top だけでなく 4 side
-    // 全てを検査することで、shorthand の `Sides::all` fan-out が実際に
-    // 起きたことを確認する。
+    // Replace border-style: inset plus border-width: 1px on every side
+    // with the `border: 1px inset` shorthand (raikiri-style lacks separate
+    // border-style/border-width properties). Check all four sides, not just
+    // top, to prove the `Sides::all` shorthand expansion happened.
     for (side_name, side) in [
         ("top", &computed.border.top),
         ("right", &computed.border.right),
@@ -906,10 +890,10 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
         );
     }
 
-    // margin-block: 0.5em の fallback (margin shorthand 経由で
-    // margin-top/margin-bottom 物理 longhand に展開される — raikiri-style
-    // には margin-block logical property がない)。0.5em は inherit
-    // された (UA-default の) 16px font-size 基準で解決される。
+    // Fallback for margin-block: 0.5em, expanded by the margin shorthand
+    // to physical margin-top/margin-bottom longhands; raikiri-style has no
+    // logical margin-block property. Resolve 0.5em against the inherited
+    // UA-default 16px font size.
     assert_eq!(
         computed.margin.top,
         raikiri::ComputedLengthPercentageOrAuto::Px(8.0),
@@ -923,9 +907,9 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
          fallback"
     );
 
-    // margin-inline: auto の fallback (margin shorthand 経由で
-    // margin-left/margin-right 物理 longhand に展開される —
-    // raikiri-style には margin-inline logical property がない)。
+    // Fallback for margin-inline: auto, expanded by the margin shorthand
+    // to physical margin-left/margin-right longhands; raikiri-style has no
+    // logical margin-inline property.
     assert_eq!(
         computed.margin.left,
         raikiri::ComputedLengthPercentageOrAuto::Auto,

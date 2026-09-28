@@ -1,10 +1,10 @@
 //! Taffy layout trait implementations on Document.
 //!
-//! 初期スパイク実装 (`taffy-layout-modes`) の SpikeTree pattern を production
-//! 化したもの。実装内容は prototype と同等:
+//! Production adaptation of the SpikeTree pattern from the original
+//! `taffy-layout-modes` spike, equivalent in scope to that prototype:
 //! - `TraversePartialTree`: children iterator
 //! - `CacheTree`: per-node cache getter / setter
-//! - `LayoutPartialTree`: display に応じて block / flexbox / grid をdispatch
+//! - `LayoutPartialTree`: dispatch block / flexbox / grid based on display
 //! - `LayoutBlockContainer / LayoutFlexboxContainer / LayoutGridContainer`:
 //!   style getter marker impls
 
@@ -40,14 +40,14 @@ fn leaf_intrinsic_size(
         })
 }
 
-/// Taffy child iterator。raw arena children から `is_in_document() == false`
-/// (`<template>` descendants など) を filter する。
+/// Taffy child iterator: filter nodes with `is_in_document() == false`
+/// (such as `<template>` descendants) from the raw arena children.
 ///
-/// Taffy の layout tree = web spec の "flat tree" なので、layout traversal
-/// では template contents を "存在しない" ものとして扱う必要がある (paint 側で
-/// skip しても layout 側で size / position が計算されると sibling の位置に
-/// 影響してしまう)。`raikiri_traits::Dom::child_ids` は raw children を返す
-/// 契約なので、そちらは変更せず、taffy 経路でのみ filter する。
+/// The taffy layout tree is the web-spec “flat tree,” so layout must treat
+/// template contents as nonexistent. Skipping them only at paint time would
+/// still let their layout sizes / positions shift sibling positions.
+/// `raikiri_traits::Dom::child_ids` returns raw children by contract;
+/// filter only on the taffy path rather than changing that contract.
 pub struct TaffyChildIter<'a> {
     doc: &'a Document,
     parent: NodeId,
@@ -112,7 +112,7 @@ impl TraversePartialTree for Document {
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
-        // Filter に一致する必要あり (is_in_document children のみ数える)。
+        // Must match the filter: count only in-document children.
         TaffyChildIter::children(self, node_id)
             .iter()
             .filter(|&&c| TaffyChildIter::includes(self, node_id, c))
@@ -120,7 +120,7 @@ impl TraversePartialTree for Document {
     }
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
-        // Filtered index — child_ids iterator と同じ view で n 番目を返す。
+        // Filtered index: return the nth child in the same view as child_ids.
         let idx = TaffyChildIter::children(self, node_id)
             .iter()
             .copied()
@@ -160,28 +160,28 @@ impl LayoutPartialTree for Document {
         &self.nodes[usize::from(node_id)].style
     }
 
-    /// taffy が arena へ layout を書き戻す**唯一の**経路。
+    /// The **only** path by which taffy writes layout into the arena.
     ///
-    /// ここで [`crate::layout::sanitize_taffy_layout`] を通すことで
-    /// 「`Node.unrounded_layout` は決して非有限 f32 を含まない」を構造的に
-    /// 保証する。bridge 側の入力 guard
-    /// (`layout::sanitize_taffy`) だけでは nested percentage が used value 層で
-    /// 複利して非有限に戻るため閉じない — 理由と実測は
-    /// `layout::sanitize_taffy_layout` の doc を参照。
+    /// Passing through [`crate::layout::sanitize_taffy_layout`] here structurally
+    /// guarantees that `Node.unrounded_layout` contains no non-finite f32 values.
+    /// The input guard in the bridge (`layout::sanitize_taffy`) alone cannot
+    /// close the gap: nested percentages compound at the used-value layer
+    /// and can become non-finite again. See the documentation for
+    /// `layout::sanitize_taffy_layout` for the reasoning and measurements.
     ///
-    /// clamp が実際に発火した field は `self.layout_warnings` (owned buffer)
-    /// に積む。この trait method の signature は
-    /// `taffy` crate が固定しているため観測用の引数を追加できない —
-    /// `self` 経由で書ける owned buffer に積むことで signature を変えずに
-    /// 診断を残す。`layout_single_page` がパス終了時にこの buffer を drain
-    /// して observer-or-eprintln へ流す (詳細は
-    /// [`Document::layout_warnings`](crate::document::Document) の doc)。
+    /// Record fields actually clamped in `self.layout_warnings` (an owned buffer).
+    /// The `taffy` crate fixes this trait-method signature, so diagnostic
+    /// arguments cannot be added. Instead, write to the owned buffer through
+    /// `self` without changing the signature. At pass end, `layout_single_page`
+    /// drains the buffer to an observer or eprintln (see the documentation for
+    /// the diagnostics buffer below).
+    /// See [`Document::layout_warnings`](crate::document::Document).
     ///
-    /// RHS を先に `sanitized` へ束縛してから LHS へ代入する — `self.nodes[..]`
-    /// (IndexMut 経由) と `self.layout_warnings` という `self` の 2 つの
-    /// disjoint field を 1 文の代入式内で同時に borrow させないための意図的な
-    /// 分割 (borrowck を通すためだけでなく、evaluation order を明示して
-    /// 読み手に依存関係を隠さない狙いもある)。
+    /// Bind the RHS to `sanitized` before assigning the LHS. This deliberately
+    /// avoids borrowing two disjoint fields of `self` (`self.nodes[..]` via
+    /// IndexMut and `self.layout_warnings`) in the same assignment expression.
+    /// Besides satisfying borrowck, it makes evaluation order and dependencies
+    /// explicit to readers.
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
         let sanitized = crate::layout::sanitize_taffy_layout(layout, &mut self.layout_warnings);
         self.nodes[usize::from(node_id)].unrounded_layout = sanitized;
@@ -240,7 +240,7 @@ impl Document {
             let idx = usize::from(node_id);
             // Table dispatch uses preserved DisplayValue (not taffy's collapsed Display::Block).
             // Taffy 0.12 has no table layout; we route to native table engine in parallel with
-            // Block/Flex/Grid (spec requirement: Display::Block/Flex/Grid並列).
+            // Block/Flex/Grid (spec requires parallel Display::Block/Flex/Grid handling).
             {
                 use crate::node::NodeFlags;
                 use raikiri_style::property::DisplayValue;
@@ -375,9 +375,9 @@ impl Document {
                             };
                             let leaf_intrinsic =
                                 leaf_intrinsic_size(&mut tree.nodes[idx], probe_width);
-                            // taffy が style から算出した known.width / .height が Some なら
-                            // それを優先 (explicit size)、None なら parley intrinsic / 画像
-                            // intrinsic を使う、両方無ければ 0。
+                            // If taffy derives Some known.width / .height from style, prefer
+                            // that explicit size; otherwise use parley or image intrinsic sizes;
+                            // if neither is available, use zero.
                             Size {
                                 width: known
                                     .width
@@ -734,38 +734,38 @@ impl LayoutGridContainer for Document {
     }
 }
 
-// SAFETY: taffy の `calc` feature が enable の場合、`Style::Dimension` は
-// `CompactLength` 経由で `*const ()` (caller-owned calc expression arena
-// pointer) を保持する。Raw pointer は !Send のため `Style: !Send`、そこから
-// `Document: !Send` が導出される。
+// SAFETY: with taffy’s `calc` feature enabled, `Style::Dimension` holds
+// a `*const ()` (pointer to a caller-owned calc expression arena) through
+// `CompactLength`. Raw pointers are !Send, making `Style: !Send` and thus
+// `Document: !Send`.
 //
 // **Invariant (self-contained arena approach)**:
-// raikiri-dom 内で `Style` を保持する任意の型 (Document、将来追加予定の
-// LayoutBuffer 等) に格納される全 `CompactLength::calc(ptr)` の `ptr` は、
-// 同じ Document が own する calc arena (将来 raikiri-dom 内に追加予定) を
-// 指す。この invariant が守られる限り、Document 全体を別 thread へ move
-// しても pointer target が follow するため validity は保たれる。
+// Every type holding `Style` within raikiri-dom (Document, a future
+// LayoutBuffer, etc.) stores `CompactLength::calc(ptr)` pointers into
+// the calc arena owned by the same Document (to be added in raikiri-dom).
+// As long as this invariant holds, moving the Document to another thread
+// moves the pointer targets with it, preserving validity.
 //
-// **Sync は付けない**: raikiri の (将来実装予定の) parallel layout 経路
-// (16 margin box slot + column-count 並列化) は `Arc<GcpmSnapshot>`
-// (owned deep copy、design doc
-// §5.4.1) 又は `&Style` の read-only borrow 経由で動作。`&Document` を
-// 複数 thread から同時 read する path は無いため Sync は不要。blitz-dom は
-// stylo parallel style traversal のため `unsafe impl Sync for Node` を追加
-// しているが、raikiri は stylo 非依存で該当 path なし。
+// **Do not implement Sync**: raikiri’s planned parallel layout path
+// (16 margin-box slots and parallel column-count computation) uses
+// an `Arc<GcpmSnapshot>` (owned deep copy; design doc
+// §5.4.1) or a read-only `&Style` borrow. No path reads `&Document`
+// concurrently across threads, so Sync is unnecessary. blitz-dom added
+// `unsafe impl Sync for Node` for stylo’s parallel style traversal,
+// but raikiri does not depend on stylo and has no such path.
 //
-// **Precedent**: blitz-dom `Node` にも同種の `unsafe impl Send` があり
-// (`blitz-dom-0.3.0-beta.1/src/node/node.rs:136`、無注釈)、taffy + calc
-// feature 上で確立された pattern。ただし blitz は stylo `Arc<ComputedValues>`
-// chain が calc data を own する外部 arena モデル、raikiri は self-contained
-// arena モデルで invariant の依存対象が異なる。
+// **Precedent**: blitz-dom `Node` has a similar `unsafe impl Send`
+// (`blitz-dom-0.3.0-beta.1/src/node/node.rs:136`, without annotation),
+// an established taffy + calc pattern. However, blitz uses an external
+// arena model where the stylo `Arc<ComputedValues>` chain owns calc data;
+// raikiri uses a self-contained arena model with different invariants.
 //
-// **Current state**: calc pointer を populate する path は不在 (Node.style は
-// `length(px)` / `percent` / `auto` のみ)。将来 sandboxed resolver で CSS
-// calc() を実装する際、calc arena を raikiri-dom 側に配置し、
-// `CompactLength::calc(...)` の唯一の callsite が arena allocation と同一
-// site に閉じるよう API を絞る (structural enforcement)。calc() 実装前に
-// 混入を防ぐ custom lint (`raikiri-lints::no_calc_construction`、design
-// §5.4.1) を raikiri-dom crate に導入する予定。
+// **Current state**: no path populates calc pointers (Node.style only uses
+// `length(px)` / `percent` / `auto`). When CSS calc() is implemented with
+// the future sandboxed resolver, place the calc arena in raikiri-dom and
+// restrict the API so the sole `CompactLength::calc(...)` call site also
+// allocates the arena entry (structural enforcement). Before calc()
+// is implemented, add a custom lint (`raikiri-lints::no_calc_construction`,
+// design §5.4.1) to raikiri-dom to prevent unexpected construction.
 #[allow(unsafe_code)]
 unsafe impl Send for Document {}

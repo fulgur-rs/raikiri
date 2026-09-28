@@ -92,14 +92,14 @@ pub(super) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
     Some(val)
 }
 
-/// `visibility: <ident>` を parse する (CSS Display 3 §4
-/// <https://www.w3.org/TR/css-display-3/#visibility>)。
+/// Parse `visibility: <ident>` (CSS Display 3 §4
+/// <https://www.w3.org/TR/css-display-3/#visibility>).
 ///
-/// Value grammar (spec verbatim): `visible | hidden | collapse`。全 3
-/// keyword を受理する ([`Visibility`] doc の Scope carving 節参照 —
-/// `collapse` の formatting-context 固有な space-saving 効果は未実装だが、
-/// keyword 自体は spec-valid として受理する)。ASCII case-insensitive で
-/// ident を比較する ([`parse_font_style`] と同 flavor)。
+/// Value grammar (verbatim from the spec): `visible | hidden | collapse`. Accept all three
+/// keywords (see the Scope carving section of [`Visibility`] —
+/// the formatting-context-specific space-saving behavior of `collapse` is not implemented,
+/// but the keyword itself is accepted as spec-valid). Compare identifiers
+/// ASCII case-insensitively (as in [`parse_font_style`]).
 pub(super) fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -110,63 +110,63 @@ pub(super) fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility>
     }
 }
 
-/// CSS `<url>` value type (CSS Values and Units 4 §4.4
-/// <https://www.w3.org/TR/css-values-4/#urls>) を一般 property value として
-/// 受理する共通 helper。
+/// Shared parser for the CSS `<url>` value type (CSS Values and Units 4 §4.4
+/// <https://www.w3.org/TR/css-values-4/#urls>) as a general property value.
+/// Accepts only the forms described below.
 ///
-/// Grammar: `<url> = <url()> | <src()>`、
-/// `<url()> = url( <string> <url-modifier>* ) | <url-token>`。本 helper は
-/// `<url()>` の 2 形式のみを受理する — unquoted `url(foo.png)` (tokenizer が
-/// 生成する `<url-token>`) と、quoted `url("foo.png")` (tokenizer は quote を
-/// 見て `url` を function token として切り出し、nested block 内の
-/// `<string-token>` を読む)。`<url-modifier>*` (`crossorigin()` 等、§4.4.1) を
-/// 伴う `url()` は nested block が `<string>` 単体で exhaust しないため
-/// 全体が reject される — cssparser の block-exhaustion 制約
-/// (`Parser::parse_nested_block` は closure が block を完全消費しないと Err)
-/// によるもので、意図的な未対応。`<src()>` は別理由で未対応 —
-/// `expect_url()` は function token 名を `url` に限定するため、`src(...)` は
-/// そもそも function token としてすら認識されず reject される
-/// (block-exhaustion 制約とは無関係)。
+/// Grammar: `<url> = <url()> | <src()>`.
+/// `<url()> = url( <string> <url-modifier>* ) | <url-token>`. This helper accepts
+/// only the two `<url()>` forms: unquoted `url(foo.png)` (which the tokenizer
+/// produces as a `<url-token>`) and quoted `url("foo.png")` (the tokenizer sees the quote,
+/// recognizes `url` as a function token, and reads a
+/// `<string-token>` in the nested block). A `url()` with `<url-modifier>*`
+/// (such as `crossorigin()`, §4.4.1) is rejected because the nested block is
+/// not exhausted by `<string>` alone. This is an intentional unsupported case
+/// caused by cssparser's block-exhaustion rule
+/// (`Parser::parse_nested_block` returns Err unless its closure consumes the block).
+/// `<src()>` is unsupported for a different reason: `expect_url()` only recognizes
+/// function tokens named `url`, so it does not even recognize `src(...)` as a
+/// valid function token here (independent of block exhaustion).
 ///
-/// 一般 property value としての `<url>` はこの 2 形式のみで、bare
-/// `<string>` (quote だけで `url()` wrapper を伴わない形) は含まない — spec
-/// 本文が `"Some CSS contexts (such as @import) also allow a <url> to be
-/// represented by a bare <string>, without the function wrapper"` と明記する
-/// 通り、bare string 受理は `@import` 等の特定 context に限定された legacy
-/// 挙動であり、一般 property の `<url>` value type には及ばない。
-/// (`[ <string> | <url> ]` を独立した alternative として明示的に持つ property
-/// は [`parse_target_url`](super::content::parse_target_url) のように呼び出し側で `<string>` を別途扱う。)
+/// For a general property value, `<url>` includes only these two forms; it excludes a bare
+/// `<string>` without a `url()` wrapper. The spec explicitly says
+/// `"Some CSS contexts (such as @import) also allow a <url> to be
+/// represented by a bare <string>, without the function wrapper"`;
+/// thus accepting a bare string is legacy behavior limited to contexts such as `@import`,
+/// not the general property's `<url>` value type.
+/// (Properties with an explicit `[ <string> | <url> ]` alternative,
+/// such as [`parse_target_url`](super::content::parse_target_url), handle `<string>` separately at the call site.)
 ///
-/// CSS-wide keyword (`inherit` 等の bare ident) はこの grammar のどの形にも
-/// 一致しないため cssparser の `expect_url` が Err を返し、本 helper も
-/// `None` を返す — 呼び出し元の `parse_value` 規約 (`None` で declaration
-/// 全体を drop) と自然に合致する。
-// `pub(crate)` ではなく plain `fn`: 呼び出し元 (`parse_background_image`) は
-// property.rs 内に実装されており、外部 module からの呼び出し元は無い —
-// 外部呼び出し元が実際に landing した時点で
-// `parse_non_negative_length`/`parse_length_allow_negative` (このファイル内、
-// 外部呼び出し元を doc に明記した precedent) と同様の `pub(crate)` + doc
-// justification へ拡張する。
+/// A CSS-wide keyword (a bare identifier such as `inherit`) matches no form of this grammar,
+/// so cssparser's `expect_url` returns Err and this helper returns
+/// `None`. That fits the caller's `parse_value` convention:
+/// `None` drops the entire declaration.
+// Use plain `fn`, not `pub(crate)`: the caller (`parse_background_image`) is
+// implemented in property.rs, and no other module calls this helper.
+// Only widen visibility when a caller from another module actually lands, as with
+// `parse_non_negative_length`/`parse_length_allow_negative` (precedents in this file
+// whose docs explicitly name their outside callers); then add `pub(crate)` with
+// a doc justification.
 pub(crate) fn parse_url_value(input: &mut Parser<'_, '_>) -> Option<String> {
     input.expect_url().ok().map(|s| s.as_ref().to_string())
 }
 
-/// `<length-percentage>` — sign 制限なし ([`parse_length_value`] with
-/// `allow_percentage=true`、`Result` wrapper for `try_parse` callers)。
-/// [`CssPosition`] の offset (負値も spec-valid、[`parse_position_horizontal_edge`]
-/// 等の doc 参照) が使う。
+/// `<length-percentage>` with no sign restriction ([`parse_length_value`] with
+/// `allow_percentage=true`, wrapped in `Result` for `try_parse` callers).
+/// Used for [`CssPosition`] offsets, where negative values are spec-valid (see the docs for
+/// [`parse_position_horizontal_edge`] and related functions).
 pub(super) fn parse_length_percentage_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {
     parse_length_value(input, true).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// [`CssPositionOffset::End`] の `Percent` payload を、等価な
-/// [`CssPositionOffset::Start`] へ畳む ([`CssPositionOffset`] doc の
-/// 「なぜ 2 variant か」節)。`right 30%` (`End(Percent(30.0))`) は
-/// `Start(Percent(70.0))` と完全に等価な値なので、常に `Start` 側へ
-/// 正規化して代表形を 1 つに保つ — `End` が生き残るのは percentage で
-/// 表現できない offset (`right 10px` 等) に限られる。
+/// Fold a `Percent` payload of [`CssPositionOffset::End`] into the equivalent
+/// [`CssPositionOffset::Start`] (see the "Why two variants?" section in the
+/// [`CssPositionOffset`] docs). `right 30%` (`End(Percent(30.0))`) is exactly
+/// identical to `Start(Percent(70.0))`, so normalize to `Start` to keep one
+/// canonical representation. `End` survives only for offsets that cannot be
+/// represented as percentages (such as `right 10px`).
 fn normalize_css_position_offset(offset: CssPositionOffset) -> CssPositionOffset {
     match offset {
         CssPositionOffset::End(Length::Percent(p)) => {
@@ -187,10 +187,10 @@ fn css_position_center() -> CssPositionOffset {
     CssPositionOffset::Start(Length::Percent(50.0))
 }
 
-/// `<position>` grammar ([`CssPosition`] doc) の edge + optional offset
-/// を読む共通ヘルパー。`start_kw` (`left`/`top`) は [`CssPositionOffset::Start`]、
-/// `end_kw` (`right`/`bottom`) は [`CssPositionOffset::End`] にマップする。
-/// 戻り値の 2nd 要素の意味は [`parse_position_horizontal_edge`] doc 参照。
+/// Shared helper for reading an edge with an optional offset in the `<position>`
+/// grammar (see [`CssPosition`]). Map `start_kw` (`left`/`top`) to [`CssPositionOffset::Start`]
+/// and `end_kw` (`right`/`bottom`) to [`CssPositionOffset::End`].
+/// See the [`parse_position_horizontal_edge`] docs for the second return value.
 fn parse_position_edge(
     input: &mut Parser<'_, '_>,
     start_kw: &str,
@@ -214,33 +214,33 @@ fn parse_position_edge(
     None
 }
 
-/// `<position>` grammar ([`CssPosition`] doc) の `[ left | right ]
-/// <length-percentage>?` alternative — horizontal 軸の edge keyword を
-/// optional offset とともに読む。offset 省略時は edge そのもの (offset
-/// `0`) を返す。`left`/`right` どちらにもマッチしなければ `None`
-/// (token は消費しない)。
+/// The `[ left | right ] <length-percentage>?` alternative of the `<position>`
+/// grammar (see [`CssPosition`]): read a horizontal edge keyword
+/// with an optional offset. With no offset, return the edge itself (offset
+/// `0`). If neither `left` nor `right` matches, return `None`
+/// without consuming a token.
 ///
-/// 戻り値の 2nd 要素は「`<length-percentage>` token が実際に authored
-/// されていたか (offset 省略時の暗黙 `0` ではない)」— [`parse_position_branch3`]
-/// (`<bg-position>` 用、`background-position` が使う) はこれを無視するが、
-/// [`parse_position_branch3_strict`] (plain `<position>` 用、`object-position`
-/// が使う) はこれを使って 3-value 形式 (offset がどちらか片方の軸にだけ
-/// authored されている状態、`<position>` doc の Grammar 節参照) を検出・
-/// reject する。
+/// The second return value says whether a `<length-percentage>` token was actually
+/// authored, rather than supplying an implicit `0` for a missing offset. [`parse_position_branch3`]
+/// (for `<bg-position>`, used by `background-position`) ignores it, but
+/// [`parse_position_branch3_strict`] (for plain `<position>`, used by `object-position`)
+/// uses it to detect the three-value form, where only one axis has an
+/// authored offset (see the Grammar section of the `<position>` docs), and
+/// reject it.
 fn parse_position_horizontal_edge(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
     parse_position_edge(input, "left", "right")
 }
 
-/// [`parse_position_horizontal_edge`] の vertical 軸版 (`top`/`bottom`) —
-/// 戻り値の 2nd 要素の意味は同関数の doc 参照。
+/// Vertical-axis counterpart to [`parse_position_horizontal_edge`] (`top`/`bottom`).
+/// See that function's docs for the meaning of the second return value.
 fn parse_position_vertical_edge(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
     parse_position_edge(input, "top", "bottom")
 }
 
-/// `center | [ left | right ] <length-percentage>?` — horizontal 軸の
-/// branch-3 group ([`parse_position_branch3`] doc)。`center` は
-/// offset を持たないため 2nd 要素は常に `false`
-/// ([`parse_position_horizontal_edge`] doc参照)。
+/// `center | [ left | right ] <length-percentage>?`: the horizontal-axis
+/// branch-three group (see [`parse_position_branch3`]). `center` has
+/// no offset, so the second return value is always `false`
+/// (see [`parse_position_horizontal_edge`]).
 fn parse_position_horizontal_group(
     input: &mut Parser<'_, '_>,
 ) -> Option<(CssPositionOffset, bool)> {
@@ -253,7 +253,7 @@ fn parse_position_horizontal_group(
     parse_position_horizontal_edge(input)
 }
 
-/// [`parse_position_horizontal_group`] の vertical 軸版。
+/// Vertical-axis counterpart to [`parse_position_horizontal_group`].
 fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
     if input
         .try_parse(|i| i.expect_ident_matching("center"))
@@ -264,10 +264,10 @@ fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<(CssPosit
     parse_position_vertical_edge(input)
 }
 
-/// [`parse_position_branch3`] と [`parse_position_branch3_strict`] の共通コア —
-/// `<position>` 3rd alternative の構造を一度だけ記述し、offset 有無
-/// (`bool` 2 つ) を呼び出し元へ返す。`center` は常に offset なし (`false`)
-/// ([`parse_position_horizontal_group`] doc 参照)。
+/// Shared core of [`parse_position_branch3`] and [`parse_position_branch3_strict`]:
+/// describe the third `<position>` alternative once and return whether each axis
+/// has an offset (two `bool` values). `center` never has an offset (`false`)
+/// (see [`parse_position_horizontal_group`]).
 fn parse_position_branch3_core(input: &mut Parser<'_, '_>) -> Option<(CssPosition, bool, bool)> {
     if let Some((horizontal, h_offset)) = parse_position_horizontal_edge(input) {
         let (vertical, v_offset) = parse_position_vertical_group(input)?;
@@ -333,57 +333,57 @@ fn parse_position_branch3_core(input: &mut Parser<'_, '_>) -> Option<(CssPositio
     None
 }
 
-/// `<position>` grammar ([`CssPosition`] doc) の 3rd alternative —
+/// The third `<position>` grammar alternative (see [`CssPosition`]):
 /// `[ center | [ left | right ] <length-percentage>? ] && [ center | [ top |
-/// bottom ] <length-percentage>? ]`。`&&` は両 group が (任意順で) 必須
-/// なことを意味する — 一方の group しか読めなければ (呼び出し元が
-/// `input.try_parse` で包む前提の) `None` を返し、消費した token は
-/// 呼び出し元の rewind に委ねる。
+/// bottom ] <length-percentage>? ]`. Both `&&` groups are required
+/// in either order. If only one group can be read, return `None`
+/// (the caller wraps this in `input.try_parse`) and let it rewind
+/// the consumed tokens.
 ///
-/// 1 個目の token は horizontal-exclusive (`left`/`right`) → vertical-exclusive
-/// (`top`/`bottom`) → ambiguous `center` の順で試す。`center` は両 group に
-/// 属し得るため、どちらの軸に属するかは 2 個目の token (もう片方の
-/// group) を見て初めて決まる。
+/// Try the first token as horizontal-only (`left`/`right`), then vertical-only
+/// (`top`/`bottom`), then ambiguous `center`. Because `center` may belong
+/// to either group, its axis is determined only after reading the second
+/// token (the other group).
 ///
-/// これは `<bg-position>` (CSS Backgrounds 3 §2.6) の 3rd alternative
-/// そのもの — 各 group の `<length-percentage>?` を独立に optional として
-/// 扱う (offset がどちらか片方の軸にだけ authored される 3-value 形式を
-/// 受理する)。plain `<position>` (CSS Values 4 §8.3) 向けにはこの中間形を
-/// reject する [`parse_position_branch3_strict`] を使うこと —
-/// `background-position` (`<bg-position>` を要求) はこちら、
-/// `object-position` (`<position>` を要求) はあちら、という使い分けが
-/// [`CssPosition`] の Grammar 節の canonical な説明。
+/// This is exactly the third alternative of `<bg-position>` (CSS Backgrounds 3 §2.6):
+/// each group has its own `<length-percentage>?`, allowing an independently
+/// optional offset on one axis of a three-value form. For plain
+/// `<position>` (CSS Values 4 §8.3), instead use
+/// Use [`parse_position_branch3_strict`] to reject this intermediate form —
+/// `background-position` uses `<bg-position>`;
+/// `object-position` uses `<position>`. This distinction
+/// [`CssPosition`].
 fn parse_position_branch3(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let (position, _, _) = parse_position_branch3_core(input)?;
     Some(position)
 }
 
-/// [`parse_position_branch3`] の plain-`<position>` 版 —
-/// 唯一の違いは、horizontal/vertical 両 group の `<length-percentage>`
-/// offset **有無が一致しない場合 (3-value 形式) を reject** する点。
+/// Plain-`<position>` variant of [`parse_position_branch3`].
+/// Its only difference: reject cases where the horizontal and vertical groups
+/// **disagree about the presence of a `<length-percentage>` offset** (the three-value form).
 ///
 /// # Why
 ///
-/// CSS Values 4 §8.3 の `<position>` 自体には「offset がどちらか片方の
-/// 軸にだけ authored される」中間形が存在しない — その 4th alternative
-/// (`<position-four>`、MDN "`<position>` CSS type" の formal syntax 参照)
-/// は `[[left|right] <length-percentage>] && [[top|bottom]
-/// <length-percentage>]` であり、offset は `?` ではなく両軸とも必須。
-/// offset を一切伴わない bare keyword pair は 2nd alternative
-/// (`<position-two>` の `&&` 形) が別途カバーする。つまり有効な組み合わせは
-/// 「両軸とも offset あり (4-value)」か「両軸とも offset なし」のみで、
-/// 「片方だけ offset」は常に invalid。
+/// CSS Values 4 §8.3 has no intermediate `<position>` form where an offset
+/// is authored on only one axis. Its fourth alternative
+/// (`<position-four>`; see the formal syntax on MDN's "`<position>` CSS type")
+/// is `[[left|right] <length-percentage>] && [[top|bottom]
+/// <length-percentage>]`: offsets are required on both axes, not optional (`?`).
+/// The second alternative separately covers a bare keyword pair with no offsets
+/// (the `&&` form of `<position-two>`). Thus the valid cases are either
+/// offsets on both axes (four values), or offsets on neither axis;
+/// one offset alone is always invalid.
 ///
-/// `<bg-position>` (CSS Backgrounds 3 §2.6、`background-position` 用) は
-/// この制約を持たない — 3-value 形式 ("For 3-value productions (which are
-/// not valid in `<position>`)" と同 spec が明記) を明示的に許すのが
-/// `<bg-position>` の `<position>` に対する拡張そのもの。`object-position`
-/// (CSS Images 3 §5.2、Value: `<position>`) はこの拡張を持たないため、
-/// [`parse_position_branch3`] をそのまま再利用すると `right 10px center`
-/// のような 3-value 入力を誤って受理してしまう — token を過不足なく
-/// 消費してしまう (leftover が残らない) ため、呼び出し元の
-/// `expect_exhausted` による leftover 検出でも捕捉できない。本関数は
-/// それを防ぐための、offset 有無の対称性チェックを追加した sibling。
+/// `<bg-position>` (CSS Backgrounds 3 §2.6, for `background-position`)
+/// has no such restriction. It explicitly allows the three-value form (the spec says
+/// "For 3-value productions (which are not valid in `<position>`)"),
+/// which is precisely how `<bg-position>` extends `<position>`. `object-position`
+/// (CSS Images 3 §5.2, Value: `<position>`) lacks that extension;
+/// reusing [`parse_position_branch3`] unchanged would wrongly accept a
+/// three-value input such as `right 10px center`. It consumes every token,
+/// leaving no leftover for the caller's `expect_exhausted` check to detect.
+/// This sibling checks whether offsets are present symmetrically on both axes
+/// to prevent that mistake.
 pub(crate) fn parse_position_branch3_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let (position, h_offset, v_offset) = parse_position_branch3_core(input)?;
     if h_offset != v_offset {
@@ -392,13 +392,13 @@ pub(crate) fn parse_position_branch3_strict(input: &mut Parser<'_, '_>) -> Optio
     Some(position)
 }
 
-/// `[ <start_kw> | center | <end_kw> | <length-percentage> ]` — `<position>`
-/// grammar ([`CssPosition`] doc) の 2nd alternative の axis 共通ヘルパー。
-/// `start_kw` は `Start(0%)` (`left`/`top`)、`end_kw` は `Start(100%)`
-/// (`right`/`bottom`) にマップする。bare `<length-percentage>` はこの
-/// alternative でのみ受理される (branch3 の group はどちらも bare LP を
-/// 単独では受理しない) — edge keyword が無いぶん offset ではなく「値そのもの」
-/// として `Start` に格納する。
+/// `[ <start_kw> | center | <end_kw> | <length-percentage> ]`: `<position>`
+/// grammar second alternative (see [`CssPosition`]); shared axis helper.
+/// Map `start_kw` (`left`/`top`) to `Start(0%)` and `end_kw`
+/// (`right`/`bottom`) to `Start(100%)`. A bare `<length-percentage>` is accepted
+/// only in this alternative: neither branch-three group accepts a bare length-percentage
+/// alone. With no edge keyword, it is the value itself, not an offset,
+/// and is stored as `Start`.
 fn parse_position_branch2_axis(
     input: &mut Parser<'_, '_>,
     start_kw: &str,
@@ -423,16 +423,16 @@ fn parse_position_branch2_axis(
     Some(CssPositionOffset::Start(lp))
 }
 
-/// `[ left | center | right | <length-percentage> ]` — `<position>` grammar
-/// ([`CssPosition`] doc) の 2nd alternative の horizontal 側。bare
-/// `<length-percentage>` はこの alternative でのみ受理される (branch3 の
-/// group はどちらも bare LP を単独では受理しない) — edge keyword が無い
-/// ぶん offset ではなく「値そのもの」として `Start` に格納する。
+/// `[ left | center | right | <length-percentage> ]`: `<position>` grammar
+/// second alternative, horizontal side (see [`CssPosition`]). A bare
+/// `<length-percentage>` is accepted only here: neither branch-three
+/// group accepts a bare length-percentage alone. With no edge keyword, it is
+/// the value itself rather than an offset, and is stored as `Start`.
 fn parse_position_branch2_horizontal(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
     parse_position_branch2_axis(input, "left", "right")
 }
 
-/// [`parse_position_branch2_horizontal`] の vertical 側
+/// Vertical side of [`parse_position_branch2_horizontal`]
 /// (`[ top | center | bottom | <length-percentage> ]`).
 fn parse_position_branch2_vertical(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
     parse_position_branch2_axis(input, "top", "bottom")
@@ -488,9 +488,9 @@ pub(super) fn parse_transform_origin(input: &mut Parser<'_, '_>) -> Option<Prope
     Some(PropertyValue::TransformOrigin(position, z))
 }
 
-/// `<position>` grammar ([`CssPosition`] doc) の 2nd alternative — 厳密に
-/// horizontal → vertical の順で 2 token を読む (keyword 並び替え不可、
-/// branch3 と違い `&&` ではなく単純な連接)。
+/// The second alternative of the `<position>` grammar (see [`CssPosition`]): read
+/// exactly two tokens, horizontal then vertical. Keyword reordering is forbidden;
+/// unlike branch three, this is simple concatenation, not `&&`.
 fn parse_position_branch2(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let horizontal = parse_position_branch2_horizontal(input)?;
     let vertical = parse_position_branch2_vertical(input)?;
@@ -500,11 +500,11 @@ fn parse_position_branch2(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     })
 }
 
-/// `<position>` grammar ([`CssPosition`] doc) の 1st alternative — 単一
-/// keyword または単一 `<length-percentage>`。指定されなかった軸は
-/// `center` (50%) になる (spec 明示なし、`background-position` (CSS
-/// Backgrounds 3 §2.6) の "if only one value is specified, the second
-/// value is assumed to be center" 相当を汎用 `<position>` 型として保持)。
+/// The first alternative of the `<position>` grammar (see [`CssPosition`]): a single
+/// keyword or a single `<length-percentage>`. The unspecified axis becomes
+/// `center` (50%). Although not explicit in this spec, this follows the
+/// `background-position` rule (CSS Backgrounds 3 §2.6): "if only one value is specified, the second
+/// value is assumed to be center", represented by the general `<position>` type.
 fn parse_position_branch1(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     if input
         .try_parse(|i| i.expect_ident_matching("center"))
@@ -552,46 +552,46 @@ fn parse_position_branch1(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     })
 }
 
-/// `<position>` value type を parse する ([`CssPosition`] doc の grammar
-/// 参照)。
+/// Parse the `<position>` value type (see the [`CssPosition`] grammar).
+/// # Alternative order: third → second → first (reverse of grammar order)
 ///
-/// # Alternative の試行順序 — 3rd → 2nd → 1st (grammar 記載順とは逆)
+/// The three alternatives can overlap, so their trial order affects the result.
 ///
-/// 3 alternative は互いに重なりうるため、試す順序が結果を左右する。
-/// **3rd (edge 並び替え可) を最初に試す**理由 — 3rd の失敗が「安全に
-/// rewind する」ことを保証するメカニズムの説明:
+/// **Try the third alternative first (reorderable edges).** Its failure safely
+/// rewinds the parser for this reason:
+/// Consider `left 10px`. The third alternative greedily assigns `left` to the
 ///
-/// `left 10px` を例にとる。3rd alternative は horizontal group に `left`
-/// を、続けて optional offset `10px` を貪欲に割り当てる — その結果
-/// vertical group に残す token が無くなり (`&&` は両 group 必須)、3rd
-/// alternative 全体が失敗して丸ごと rewind する (この入力に限れば 2nd を
-/// 先に試しても `[left|center|right|<LP>]` が `left` を、
-/// `[top|center|bottom|<LP>]` が残りの `10px` を bare
-/// `<length-percentage>` として消費し、同じ horizontal = `left` (0%)、
-/// vertical = `10px` に到達するため、この特定の入力だけでは順序は
-/// 結果を左右しない — 3rd が「余計に消費してから失敗する」ことはあっても
-/// 「誤った値で成功する」ことは無い、という下記の safety-invariant の
-/// 具体例として引いている)。順序が真に結果を左右するのは `top left` の
-/// ような keyword 並び替え入力 (2nd は horizontal→vertical の固定順しか
-/// 受理しないため `top` を horizontal 側で reject し、3rd の `&&`
-/// (任意順) でしか解釈できない) や、`bottom 10px right 20px` のような
-/// 3-4 value edge-offset 入力 (2nd は高々 2 token しか消費しないため
-/// leftover が残り `expect_exhausted` で丸ごと drop される) である。
+/// horizontal group, followed by the optional offset `10px`. This leaves
+/// no token for the vertical group (`&&` requires both), so the entire third
+/// alternative fails and rewinds. For this particular input, trying the second
+/// alternative first would also read `left` with `[left|center|right|<LP>]`
+/// and then consume `10px` with `[top|center|bottom|<LP>]` as a bare
+/// `<length-percentage>`, yielding the same horizontal value `left` (0%) and
+/// vertical value `10px`. Thus this input alone does not depend on trial order:
+/// it illustrates the safety invariant below. The third alternative can consume
+/// extra tokens before failing but cannot succeed with the wrong result.
+/// Order really matters for reordered keywords such as `top left`:
+/// the second alternative requires horizontal→vertical and rejects `top`
+/// as horizontal; only the third alternative's order-independent `&&` can
+/// interpret it. It also matters for the edge-offset forms, especially
+/// three- or four-value input
+/// such as `bottom 10px right 20px`: the second alternative consumes at most
+/// two tokens and would leave a remainder that `expect_exhausted` drops.
 ///
-/// 同じ理由で 2nd は 1st より先: 1st は token を 1 個しか消費しないため、
-/// 2 token 以上の入力 (`0px 20px` 等) に対して 2nd を先に試さないと
-/// 2 個目の value が leftover として残り、呼び出し元の `expect_exhausted`
-/// (`rule.rs`) が declaration ごと drop してしまう。
+/// For the same reason, try the second alternative before the first: the first
+/// consumes only one token. Without trying the second first, an input with
+/// at least two tokens (such as `0px 20px`) would leave the second value,
+/// and the caller's `expect_exhausted` (`rule.rs`) would drop the declaration.
 ///
-/// この順序が「3rd が prefix だけ食って leftover を残す」場合でも安全な
-/// 理由: 2nd は高々 2 token、1st は高々 1 token しか消費できないため、
-/// 同じ開始位置から 2nd/1st が 3rd より **多くの** token を消費して
-/// leftover をゼロにできることは無い — 3rd が成功した時点でそれが
-/// 常に「最も leftover が少ない (またはゼロの)」alternative になる。
+/// This order is safe even if the third alternative only consumes a prefix and
+/// leaves tokens behind: the second consumes at most two tokens and the first
+/// at most one. Starting from the same position, neither can consume **more**
+/// tokens than a successful third alternative and reduce leftovers to zero.
+/// Once the third succeeds, it always leaves the fewest (possibly zero) tokens.
 ///
-/// 各 alternative は `input.try_parse` で包まれた `Option`-returning
-/// helper (`parse_position_branch3` 等) として実装し、途中まで token を
-/// 消費して失敗しても呼び出し元の `try_parse` が丸ごと rewind する。
+/// Wrap each `Option`-returning helper (`parse_position_branch3` and the others)
+/// in `input.try_parse`. If a helper consumes tokens before failing, the caller's
+/// `try_parse` rewinds the entire attempted alternative.
 fn parse_position_branch3_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<CssPosition, ParseError<'i, ()>> {
@@ -610,10 +610,10 @@ fn parse_position_branch1_res<'i>(
     parse_position_branch1(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `<bg-position>` (CSS Backgrounds 3 §2.6) value type を parse する — plain `<position>` (CSS Values 4 §8.3) の superset で、3-value edge-offset 形式を許す。`background-position` / `background` shorthand の position 部分 / gradient の `at <position>` 等がこの grammar を使う。素の `<position>` (3-value 形式を reject) は sibling の [`parse_position_strict`] を使うこと。
+/// Parse `<bg-position>` (CSS Backgrounds 3 §2.6), a superset of plain `<position>` (CSS Values 4 §8.3) that permits three-value edge-offset forms. Used by `background-position`, the position component of the `background` shorthand, and gradient `at <position>` clauses. For plain `<position>` (which rejects three-value forms), use the sibling [`parse_position_strict`].
 ///
-/// 3 alternative ([`parse_position_branch3`] / [`parse_position_branch2`] / [`parse_position_branch1`])
-/// を 3rd → 2nd → 1st の順で試す (詳細は [`parse_position_branch3_res`] の alternative 順序 doc 参照)。
+/// Try three alternatives ([`parse_position_branch3`] / [`parse_position_branch2`] / [`parse_position_branch1`])
+/// in third → second → first order (see the alternative-order docs on [`parse_position_branch3_res`]).
 pub fn parse_bg_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let position = input
         .try_parse(parse_position_branch3_res)
@@ -629,16 +629,16 @@ fn parse_position_branch3_strict_res<'i>(
     parse_position_branch3_strict(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// plain `<position>` (CSS Values 4 §8.3) value type を parse する —
-/// [`parse_bg_position`] (`<bg-position>`、`background-position` 用) の
-/// sibling。`object-position` (CSS Images 3 §5.2、Value: `<position>`) が
-/// 使う。
+/// Parse the plain `<position>` value type (CSS Values 4 §8.3),
+/// a sibling of [`parse_bg_position`] (for `<bg-position>` and `background-position`).
+/// `object-position` (CSS Images 3 §5.2, Value: `<position>`) uses this parser.
+/// Only the third alternative differs.
 ///
-/// 差分は 3rd alternative だけ — [`parse_position_branch3`] の代わりに
-/// [`parse_position_branch3_strict`] を試す (3-value edge-offset 形式を
-/// reject する、同関数 doc の "Why" 節参照)。2nd/1st alternative
-/// ([`parse_position_branch2`]/[`parse_position_branch1`]) はどちらの
-/// grammar でも同一なので共有する。
+/// Replace [`parse_position_branch3`] with [`parse_position_branch3_strict`]
+/// to reject the three-value edge-offset form (see that function's "Why" section).
+/// The second and first alternatives ([`parse_position_branch2`]/[`parse_position_branch1`])
+/// are identical for both grammars; the two parsers share them.
+///
 pub fn parse_position_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let position = input
         .try_parse(parse_position_branch3_strict_res)
@@ -648,13 +648,13 @@ pub fn parse_position_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> 
     Some(normalize_css_position(position))
 }
 
-/// `background-image: <bg-image>` を parse する ([`BackgroundImage`] doc の
-/// grammar 参照: `<image> | none`、`<image> = <url> | <gradient>`)。
+/// Parse `background-image: <bg-image>` (see the [`BackgroundImage`] docs for the
+/// grammar: `<image> | none`, with `<image> = <url> | <gradient>`).
 ///
-/// `none` keyword を先に試し、次に `<gradient>` function を試す
-/// (`<url>` 側 [`parse_url_value`] はどの function token にも一致しないため
-/// 順序自体は結果を左右しないが、他の keyword-vs-function alternative を持つ
-/// sibling parser — [`parse_position`](super::box_model::parse_position) 等 — と並びを揃える)。
+/// Try the `none` keyword before a `<gradient>` function.
+/// The order does not affect the result: [`parse_url_value`] for `<url>` cannot
+/// match any function token. It does match the order used by sibling parsers
+/// with keyword-versus-function alternatives, such as [`parse_position`](super::box_model::parse_position).
 pub(super) fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(BackgroundImage::None);
@@ -665,21 +665,21 @@ pub(super) fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<Backg
     parse_url_value(input).map(BackgroundImage::Url)
 }
 
-/// `mask-image: <mask-reference>` (single layer — [`MaskImage`] doc の
-/// scope carving 節参照) を parse する。
+/// Parse `mask-image: <mask-reference>` (one layer; see the scope carving
+/// section of the [`MaskImage`] docs).
 ///
-/// grammar shape (`none | <image> | <mask-source>`、`<image> = <url> |
-/// <gradient>`、`<mask-source> = <url>`) は [`parse_background_image`]'s
-/// `<bg-image> = <url> | <gradient>` と concrete syntax レベルで一致する
-/// ([`MaskImage`] doc の「`<mask-source>` と `<image>` の `url`
-/// alternative は同じ具象構文」節) — [`BackgroundImage`] への alias により
-/// body も共有する。
+/// Its grammar (`none | <image> | <mask-source>`, with `<image> = <url> |
+/// <gradient>` and `<mask-source> = <url>`) has the same concrete syntax as
+/// [`parse_background_image`]'s `<bg-image> = <url> | <gradient>`
+/// (see the [`MaskImage`] section "The `url` alternatives of `<mask-source>` and `<image>`
+/// have the same concrete syntax"). Aliasing [`BackgroundImage`] allows
+/// both to share the parser body.
 pub(crate) fn parse_mask_image(input: &mut Parser<'_, '_>) -> Option<MaskImage> {
     parse_background_image(input)
 }
 
-/// `<geometry-box>` を parse する ([`GeometryBox`] doc の grammar 参照: 7
-/// keyword)。
+/// Parse `<geometry-box>` (see the [`GeometryBox`] grammar: seven
+/// keywords).
 fn parse_geometry_box(input: &mut Parser<'_, '_>) -> Option<GeometryBox> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -695,12 +695,12 @@ fn parse_geometry_box(input: &mut Parser<'_, '_>) -> Option<GeometryBox> {
 }
 
 /// `clip-path: <clip-source> | [ <basic-shape> || <geometry-box> ] | none`
-/// ([`ClipPath`] doc参照) を parse する。
+/// (see the [`ClipPath`] docs).
 ///
 /// `none` → `<clip-source>` (`<url>`) → `[ <basic-shape> || <geometry-box> ]`
-/// の順で試す。最後の `[ … || … ]` は either order (shape before box or box
-/// before shape) を許すため、両順を試す。`basic-shape` function token と
-/// geometry-box ident は互いに排他的なので試行順は結果を左右しない。
+/// Try them in that order. The final `[ … || … ]` accepts either ordering
+/// (shape before box or box before shape), so try both. `basic-shape` function
+/// tokens and geometry-box identifiers are mutually exclusive; order does not affect the result.
 pub(super) fn parse_clip_path(input: &mut Parser<'_, '_>) -> Option<ClipPath> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(ClipPath::None);
@@ -1062,8 +1062,8 @@ fn parse_path_shape(input: &mut Parser<'_, '_>) -> Option<PathShape> {
 /// *reason a guard is needed at all* here is `transform`-specific: this
 /// crate's `Length`-typed box fields (`width`/`margin`/etc.) can go
 /// unguarded because `raikiri-dom::layout::sanitize_finite` normalizes
-/// NaN at the one sink that consumes them ([`Length`] doc's "型は層を
-/// 表明しない" note describes that pipeline); `transform`'s
+/// NaN at its single consuming sink (the [`Length`] docs' "The type does not
+/// express its layer" note describes this pipeline); `transform`'s
 /// `f32`/[`Length`]/[`Angle`] payloads have no such downstream sink (no
 /// paint-side consumer exists yet at all), so nothing else in this
 /// crate's pipeline will ever normalize a NaN that slips past this
@@ -1241,12 +1241,12 @@ fn parse_skew_y_args<'i>(
         .ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `<transform-function>` (CSS Transforms Level 1 §9.1、[`TransformFunction`]
-/// doc参照) の 1 function を function-token 名で dispatch する
-/// ([`parse_gradient`] と同じ pattern)。3D function 名
-/// (`translate3d`/`rotate3d`/`matrix3d`/`perspective` 等、§10) は
-/// unrecognized name として `_` arm に落ち reject する
-/// ([`TransformFunction`] doc の Non-goal 節参照)。
+/// Dispatch one `<transform-function>` (CSS Transforms Level 1 §9.1; see
+/// [`TransformFunction`]) by its function-token name
+/// (the same pattern as [`parse_gradient`]). Three-dimensional function names
+/// (such as `translate3d`/`rotate3d`/`matrix3d`/`perspective`, §10) fall
+/// through to the `_` arm as unrecognized and are rejected
+/// (see the Non-goal section of [`TransformFunction`]).
 pub(crate) fn parse_transform_function<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<TransformFunction, ParseError<'i, ()>> {
@@ -1270,14 +1270,14 @@ pub(crate) fn parse_transform_function<'i>(
     }
 }
 
-/// `transform: none | <transform-list>` (CSS Transforms Level 1 §4、
+/// Parse `transform: none | <transform-list>` (CSS Transforms Level 1 §4;
 /// `<transform-list> = <transform-function>[+]`
 /// <https://www.w3.org/TR/css-transforms-1/#typedef-transform-list> —
-/// **whitespace**-separated, not comma-separated, one or more) を parse
-/// する。[`parse_text_decoration_line`]'s `||` loop と同じ「`try_parse` が
-/// 失敗するまで繰り返す」shape — cssparser の `Parser::next`/`try_parse` は
-/// token 間の whitespace を自動 skip するため、明示的な separator handling
-/// は不要。
+/// **whitespace**-separated, not comma-separated, one or more) values.
+/// Repeat until `try_parse` fails, as in the `||` loop of
+/// [`parse_text_decoration_line`]. cssparser's `Parser::next`/`try_parse`
+/// automatically skip whitespace between tokens, so explicit separator handling
+/// is unnecessary.
 pub(super) fn parse_transform(input: &mut Parser<'_, '_>) -> Option<Vec<TransformFunction>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
@@ -1404,7 +1404,7 @@ fn parse_sepia_args<'i>(input: &mut Parser<'i, '_>) -> Result<FilterFunction, Pa
 /// radius" — grammar-identical to `text-shadow`'s own `<shadow>` syntax
 /// (no spread, no inset), so [`parse_drop_shadow_item`] reuses the item grammar
 /// while keeping the filter path's existing plain-length behavior
-/// ([`FilterFunction::DropShadow`] doc参照). Its offset-x/offset-y still go
+/// (see [`FilterFunction::DropShadow`]). Its offset-x/offset-y still go
 /// through [`parse_shadow_length_reject_nan`]'s `!is_nan()` guard.
 pub(crate) fn parse_drop_shadow_args<'i>(
     input: &mut Parser<'i, '_>,
@@ -1413,10 +1413,10 @@ pub(crate) fn parse_drop_shadow_args<'i>(
     Ok(FilterFunction::DropShadow(item))
 }
 
-/// `<filter-function>` (CSS Filter Effects Level 1 §6、[`FilterFunction`]
-/// doc参照) の 1 function を function-token 名で dispatch する — `<url>`
-/// alternative は含まない ([`parse_filter`] が別途試す、`url` という
-/// function 名はここでは未知 name として reject される)。
+/// Dispatch one `<filter-function>` (CSS Filter Effects Level 1 §6; see
+/// [`FilterFunction`]) by its function-token name. Do not include the `<url>`
+/// alternative ([`parse_filter`] tries it separately); a function named `url`
+/// is treated as unknown and rejected here.
 fn parse_filter_function<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FilterFunction, ParseError<'i, ()>> {
@@ -1439,14 +1439,14 @@ fn parse_filter_function<'i>(
     }
 }
 
-/// `filter: none | <filter-value-list>` (CSS Filter Effects Level 1 §5、
+/// Parse `filter: none | <filter-value-list>` (CSS Filter Effects Level 1 §5;
 /// `<filter-value-list> = [ <filter-function> | <url> ]+` —
-/// **whitespace**-separated, not comma-separated, one or more) を parse
-/// する。[`parse_transform`] と同じ loop shape だが、各要素で
-/// [`parse_filter_function`] (named function) を先に試し、失敗したら
-/// [`parse_url_value`] (`<url>` alternative) を試す 2-way fallback
-/// ([`parse_background_image`] の gradient-then-url 順序と同じ理由 —
-/// 互いに排他的な token shape なので試行順は結果を左右しない)。
+/// **whitespace**-separated, not comma-separated, one or more values).
+/// Like [`parse_transform`], loop over elements. First try
+/// [`parse_filter_function`] (a named function); if it fails, try
+/// [`parse_url_value`] (the `<url>` alternative) as a two-way fallback.
+/// As with the gradient-then-URL ordering of [`parse_background_image`],
+/// these token shapes are mutually exclusive, so order does not affect the result.
 pub(super) fn parse_filter(input: &mut Parser<'_, '_>) -> Option<Vec<FilterFunction>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
@@ -1468,10 +1468,10 @@ pub(super) fn parse_filter(input: &mut Parser<'_, '_>) -> Option<Vec<FilterFunct
     (!functions.is_empty()).then_some(functions)
 }
 
-/// `<gradient>` (CSS Images 4 §3 — [`Gradient`] doc参照) の 6 function 名を
-/// dispatch する。function token の名前を見てから対応する
-/// `parse_*_gradient_body` を `parse_nested_block` で呼ぶ — `color-mix()`
-/// 等の他 function dispatch ([`parse_color_float`] の match) と同じ形。
+/// Dispatch the six `<gradient>` function names (CSS Images 4 §3; see [`Gradient`]).
+/// Read the function-token name, then call the corresponding
+/// `parse_*_gradient_body` via `parse_nested_block`, following the same shape
+/// as other function dispatch (such as `color-mix()` in [`parse_color_float`]).
 fn parse_gradient<'i>(input: &mut Parser<'i, '_>) -> Result<Gradient, ParseError<'i, ()>> {
     let name = match input.next()?.clone() {
         Token::Function(name) => name,
@@ -1500,21 +1500,21 @@ fn parse_gradient<'i>(input: &mut Parser<'i, '_>) -> Result<Gradient, ParseError
     }
 }
 
-/// `<angle> | <zero>` (CSS Values 4 §7.1、[`Angle`] doc参照)。bare `0` のみ
-/// unitless を許す — CSS Values 4 §7.1 が明記する通り、`<angle>` 自体は
-/// 一般には unitless zero を許さない ("For legacy reasons, some uses of
-/// `<angle>` allow a bare 0 to mean 0deg. This is not true in general")。
-/// この crate が呼び出し元 (`linear-gradient()` の `[ <angle> | <zero> | to
-/// <side-or-corner> ]`、`conic-gradient()` の `from [ <angle> | <zero> ]`、
-/// いずれも CSS Images 4 §3) の grammar に明示的な `<zero>` alternative を
-/// 持つ「legacy な用法」に該当するため、bare `0` を受理する
-/// (`<length-percentage>` の unitless-zero — [`parse_length_value`]の
-/// "Unitless zero" 節 — とは別の、angle 固有の根拠)。単位変換
-/// (grad/rad/turn → deg) の overflow saturation は同関数の "Percentage
-/// overflow" 節と同じ方針 (`is_infinite()` の場合のみ符号を保持して
-/// `f32::MAX` へ寄せる、`NaN` は無変換)。token 取得は `next_numeric_stable`
-/// 経由 (module doc 冒頭「Numeric-token NaN stabilization」節参照) — 通常の
-/// parse では `value` に `0e999deg` 由来の `NaN` が届くことはもう無い。
+/// `<angle> | <zero>` (CSS Values 4 §7.1; see [`Angle`]). Allow only a bare
+/// `0` without units. CSS Values 4 §7.1 says `<angle>` itself does not generally
+/// allow a unitless zero: "For legacy reasons, some uses of
+/// `<angle>` allow a bare 0 to mean 0deg. This is not true in general".
+/// Our callers (`linear-gradient()` with `[ <angle> | <zero> | to
+/// <side-or-corner> ]`, and `conic-gradient()` with `from [ <angle> | <zero> ]`;
+/// both in CSS Images 4 §3) have an explicit `<zero>` grammar alternative,
+/// so they are among those legacy uses and accept a bare `0`.
+/// This is an angle-specific reason, distinct from the unitless-zero rule for
+/// `<length-percentage>` (see "Unitless zero" in [`parse_length_value`]). For
+/// unit conversion (grad/rad/turn → deg), saturate overflow just as in its
+/// "Percentage overflow" section: only `is_infinite()` values keep their sign
+/// and move to `f32::MAX`; do not convert `NaN`. Read tokens via
+/// `next_numeric_stable` (see "Numeric-token NaN stabilization" in the module docs):
+/// a normal parse no longer passes `NaN` from `0e999deg` into `value`.
 fn parse_angle<'i>(input: &mut Parser<'i, '_>) -> Result<Angle, ParseError<'i, ()>> {
     match next_numeric_stable(input)? {
         Token::Number { value, .. } => {
@@ -1543,8 +1543,8 @@ fn parse_angle<'i>(input: &mut Parser<'i, '_>) -> Result<Angle, ParseError<'i, (
     }
 }
 
-/// `<angle-percentage>` ([`AnglePercentage`] doc参照) — `conic-gradient()`
-/// の angular color stop position。
+/// `<angle-percentage>` (see [`AnglePercentage`]) for the angular color stop
+/// position of `conic-gradient()`.
 fn parse_angle_percentage<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<AnglePercentage, ParseError<'i, ()>> {
@@ -1554,11 +1554,11 @@ fn parse_angle_percentage<'i>(
     parse_angle(input).map(AnglePercentage::Angle)
 }
 
-/// `<percentage>` token を authored number (`50%` → `50.0`) へ変換する —
-/// [`parse_length_value`] の `Token::Percentage` arm と同じ overflow
-/// saturation 方針 (`unit_value * 100.0` の逆変換が `±Inf` になった場合のみ
-/// 符号を保持して `f32::MAX` へ寄せる、同関数の "Percentage overflow" 節
-/// 参照)。
+/// Convert a `<percentage>` token to an authored number (`50%` → `50.0`).
+/// Follow the overflow-saturation policy of the `Token::Percentage` arm of
+/// [`parse_length_value`]: only when reversing `unit_value * 100.0` produces
+/// `±Inf`, preserve its sign and saturate at `f32::MAX` (see that function's
+/// "Percentage overflow" section).
 fn parse_percent_number<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
     let unit_value = expect_percentage_stable(input)?;
     let percent = unit_value * 100.0;
@@ -1570,9 +1570,9 @@ fn parse_percent_number<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseErro
 }
 
 /// `in <color-space> <hue-interpolation-method>?` ([`GradientColorInterpolation`]
-/// doc参照) — parse + validation は `parse_color_mix_function`と共有する
-/// [`parse_color_interpolation_method`] に委譲し、ここでは結果 tuple を
-/// [`GradientColorInterpolation`] へ組み立てるだけ。
+/// docs). Delegate parsing and validation to [`parse_color_interpolation_method`],
+/// shared with `parse_color_mix_function`, then assemble the returned tuple
+/// into [`GradientColorInterpolation`].
 pub(crate) fn parse_gradient_color_interpolation<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorInterpolation, ParseError<'i, ()>> {
@@ -1583,10 +1583,10 @@ pub(crate) fn parse_gradient_color_interpolation<'i>(
     })
 }
 
-/// [`GradientColorInterpolation`] の spec-mandated default — `in ...` 節
-/// 省略時、CSS Images 4 §3.5.2 "Coloring the Gradient Line" "the color
+/// Spec-mandated default for [`GradientColorInterpolation`] when `in ...` is
+/// omitted: CSS Images 4 §3.5.2, "Coloring the Gradient Line", says "the color
 /// space used for gradient interpolation is the default interpolation
-/// color space, Oklab"。
+/// color space, Oklab".
 fn default_gradient_color_interpolation() -> GradientColorInterpolation {
     GradientColorInterpolation {
         color_space: MixColorSpace::Oklab,
@@ -1594,15 +1594,15 @@ fn default_gradient_color_interpolation() -> GradientColorInterpolation {
     }
 }
 
-/// `at <position>` ([`CssPosition`] doc参照) — `radial-gradient()` /
-/// `conic-gradient()` 共通。
+/// `at <position>` (see [`CssPosition`]), shared by `radial-gradient()` and
+/// `conic-gradient()`.
 fn parse_at_position<'i>(input: &mut Parser<'i, '_>) -> Result<CssPosition, ParseError<'i, ()>> {
     input.expect_ident_matching("at")?;
     parse_bg_position(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `<position>` の spec-mandated default (`center`、[`css_position_center`]
-/// を両軸に適用)。
+/// Spec-mandated default for `<position>`: `center` on both axes, by applying
+/// [`css_position_center`] to each axis.
 fn default_center_position() -> CssPosition {
     CssPosition {
         horizontal: css_position_center(),
@@ -1610,9 +1610,9 @@ fn default_center_position() -> CssPosition {
     }
 }
 
-/// `<color>` を持つ gradient stop の color ([`GradientStopColor`] doc参照)
-/// — `currentcolor` keyword を先取りしてから [`parse_color`] へ委譲する
-/// ([`parse_text_shadow_color`] と同じ shape)。
+/// Color of a gradient stop with `<color>` (see [`GradientStopColor`]):
+/// handle the `currentcolor` keyword before delegating to [`parse_color`],
+/// as in [`parse_text_shadow_color`].
 fn parse_gradient_stop_color(input: &mut Parser<'_, '_>) -> Option<GradientStopColor> {
     if input
         .try_parse(|i| i.expect_ident_matching("currentcolor"))
@@ -1624,7 +1624,7 @@ fn parse_gradient_stop_color(input: &mut Parser<'_, '_>) -> Option<GradientStopC
 }
 
 /// `<linear-color-stop> = <color> <length-percentage>?`
-/// ([`GradientColorStop`] doc参照)。
+/// (see [`GradientColorStop`]).
 fn parse_gradient_color_stop<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorStop, ParseError<'i, ()>> {
@@ -1633,8 +1633,8 @@ fn parse_gradient_color_stop<'i>(
     Ok(GradientColorStop { color, position })
 }
 
-/// `<color-stop-list>` ([`GradientColorStop`] doc の scope carving 節 —
-/// hint 無し、2 個以上必須)。`linear-gradient()`/`radial-gradient()` 共通。
+/// `<color-stop-list>` (see the scope carving in [`GradientColorStop`]:
+/// no hints, at least two stops). Shared by `linear-gradient()` and `radial-gradient()`.
 fn parse_gradient_color_stop_list<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Vec<GradientColorStop>, ParseError<'i, ()>> {
@@ -1645,8 +1645,8 @@ fn parse_gradient_color_stop_list<'i>(
     Ok(stops)
 }
 
-/// `<angular-color-stop> = <color> <color-stop-angle>?` の 1-value 版
-/// ([`AngularColorStop`] doc参照)。
+/// One-value version of `<angular-color-stop> = <color> <color-stop-angle>?`
+/// (see [`AngularColorStop`]).
 fn parse_angular_color_stop<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<AngularColorStop, ParseError<'i, ()>> {
@@ -1655,8 +1655,8 @@ fn parse_angular_color_stop<'i>(
     Ok(AngularColorStop { color, position })
 }
 
-/// `<angular-color-stop-list>` — [`parse_gradient_color_stop_list`]の
-/// conic 版 (同じ scope carving、同じ 2 個以上 minimum)。
+/// `<angular-color-stop-list>`: conic version of [`parse_gradient_color_stop_list`]
+/// (with the same scope carving and the same two-stop minimum).
 fn parse_angular_color_stop_list<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Vec<AngularColorStop>, ParseError<'i, ()>> {
@@ -1667,9 +1667,9 @@ fn parse_angular_color_stop_list<'i>(
     Ok(stops)
 }
 
-/// [`LinearGradientDirection`]の spec-mandated default (`to bottom`、CSS
+/// Spec-mandated default for [`LinearGradientDirection`]: `to bottom` (CSS
 /// Images 4 §3.1 "If the first argument to the function is omitted, it
-/// defaults to to bottom")。
+/// defaults to to bottom").
 fn default_linear_gradient_direction() -> LinearGradientDirection {
     LinearGradientDirection::Side(SideOrCorner {
         horizontal: None,
@@ -1677,8 +1677,8 @@ fn default_linear_gradient_direction() -> LinearGradientDirection {
     })
 }
 
-/// `to <side-or-corner>` の `to` 抜きの部分、または `<angle>` — どちらか
-/// ([`LinearGradientDirection`] doc の 2 alternative)。
+/// Either `<angle>` or the part of `to <side-or-corner>` after `to`
+/// (the two alternatives in the [`LinearGradientDirection`] docs).
 fn parse_linear_gradient_direction<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<LinearGradientDirection, ParseError<'i, ()>> {
@@ -1689,7 +1689,7 @@ fn parse_linear_gradient_direction<'i>(
 }
 
 /// `<side-or-corner> = [left | right] || [top | bottom]`
-/// ([`SideOrCorner`] doc参照) — [`parse_outline`](super::box_model::parse_outline)等と同じ any-order loop。
+/// (see [`SideOrCorner`]); an any-order loop as in [`parse_outline`](super::box_model::parse_outline).
 fn parse_side_or_corner<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<SideOrCorner, ParseError<'i, ()>> {
@@ -1739,13 +1739,13 @@ fn parse_vertical_side<'i>(input: &mut Parser<'i, '_>) -> Result<VerticalSide, P
     }
 }
 
-/// `linear-gradient()`/`repeating-linear-gradient()` の nested block body
-/// ([`LinearGradient`] doc の grammar 参照)。`direction`/`interpolation` は
-/// `||` (any order, both optional) — 見つかった場合のみ、続く
-/// `<color-stop-list>` の前に comma が要る (grammar の trailing `,` は
-/// `[...]?` group の**外**にあるので、group が空なら comma も現れない —
-/// `linear-gradient(red, blue)` に direction/interpolation が無いのと同じ
-/// 理由)。
+/// Nested-block body of `linear-gradient()`/`repeating-linear-gradient()`
+/// (see the [`LinearGradient`] grammar). `direction` and `interpolation` are
+/// optional and may appear in either order (`||`). Only when either is present
+/// must a comma precede the following `<color-stop-list>`: the trailing `,` is
+/// **outside** the `[...]?` group in the grammar, so an absent group has no comma.
+/// That is why `linear-gradient(red, blue)` has neither direction nor interpolation
+/// and needs no comma before its first stop.
 fn parse_linear_gradient_body<'i>(
     input: &mut Parser<'i, '_>,
     repeating: bool,
@@ -1801,30 +1801,30 @@ fn parse_radial_extent<'i>(input: &mut Parser<'i, '_>) -> Result<RadialExtent, P
     }
 }
 
-/// [`RadialSize`]の authored form — [`resolve_radial_shape_and_size`] が
-/// (省略された `shape` と合わせて) 最終的な `(RadialShape, RadialSize)` へ
-/// 解決する前の中間表現。`Circle`/`Ellipse` は [`RadialSize`]と同じ意味だが
-/// まだ `shape` との整合性を確認していない。
+/// Authored form of [`RadialSize`]: an intermediate representation before
+/// [`resolve_radial_shape_and_size`] combines it with the possibly omitted `shape`
+/// and produces the final `(RadialShape, RadialSize)`. `Circle`/`Ellipse` have
+/// the same meanings as in [`RadialSize`], but compatibility with `shape` is not yet checked.
 enum RadialSizeAuthored {
     Extent(RadialExtent),
     Circle(Length),
     Ellipse(Length, Length),
 }
 
-/// [`parse_radial_shape_size_position_group`] の戻り値 shape — clippy
-/// `type_complexity` を避けるための alias (意味論的な新型ではない)。
+/// Return-value shape of [`parse_radial_shape_size_position_group`]: an alias
+/// avoiding clippy's `type_complexity` lint, not a new semantic type.
 type RadialShapeSizePositionGroup = (
     Option<RadialShape>,
     Option<RadialSizeAuthored>,
     Option<CssPosition>,
 );
 
-/// `<radial-size>` (CSS Images 3 §3.2.1 baseline grammar、[`RadialSize`]
-/// doc参照)。2 つの `<length-percentage [0,∞]>` (ellipse form) を先に試す —
-/// 単一 token しか無い入力では 2 個目の parse が失敗して丸ごと rewind し、
-/// 単一 `<length [0,∞]>` (circle form) へ自然に fall back する
-/// ([`parse_bg_position`]の alternative 順序 doc と同じ「安全な rewind」
-/// 構造)。
+/// `<radial-size>` (CSS Images 3 §3.2.1 baseline grammar; see
+/// [`RadialSize`]). Try two `<length-percentage [0,∞]>` values (ellipse form) first.
+/// With just one token, parsing the second fails and rewinds the whole attempt,
+/// allowing a natural fallback to one `<length [0,∞]>` (circle form).
+/// This is the same "safe rewind" pattern as the alternative-order docs for
+/// [`parse_bg_position`].
 fn parse_radial_size<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<RadialSizeAuthored, ParseError<'i, ()>> {
@@ -1846,9 +1846,9 @@ fn parse_two_non_negative_length_percentages<'i>(
     Ok((a, b))
 }
 
-/// 省略された `shape`/`size` を CSS Images 3 §3.2.1 の規則で解決する —
-/// [`RadialShape`]/[`RadialSize`]のペア doc参照。無効な組み合わせ
-/// (`circle` + ellipse-only size、`ellipse` + circle-only size) は `None`。
+/// Resolve omitted `shape`/`size` under CSS Images 3 §3.2.1; see the
+/// paired docs for [`RadialShape`]/[`RadialSize`]. Return `None` for incompatible
+/// combinations (`circle` with ellipse-only size, `ellipse` with circle-only size).
 fn resolve_radial_shape_and_size(
     shape: Option<RadialShape>,
     size: Option<RadialSizeAuthored>,
@@ -1882,15 +1882,15 @@ fn resolve_radial_shape_and_size(
     }
 }
 
-/// `[ <radial-shape> || <radial-size> ]? [ at <position> ]?` — spec の
-/// juxtaposition (space 区切り) が示す通り、`shape`/`size` は互いに
-/// any-order (内側 `||`) だが、`at <position>` はこのグループ全体の
-/// **後**にしか現れない (順序固定)。`shape`/`size`/`position` のいずれも
-/// 無ければ `Err` を返す — [`parse_radial_gradient_body`]側の outer `||`
-/// loop が「このグループを 1 要素として `<color-interpolation-method>`
-/// と任意順に読む」ために、空マッチと「何も無かった」を区別する必要が
-/// あるため (`try_parse` が空マッチを毎回成功として返すと、outer loop の
-/// 2 巡目以降でこのグループを再試行できなくなる)。
+/// `[ <radial-shape> || <radial-size> ]? [ at <position> ]?`: the spec's
+/// juxtaposition (space-separated) means `shape` and `size` may appear in
+/// either order (the inner `||`), but `at <position>` can only appear
+/// **after** their entire group (fixed order). If all of `shape`, `size`, and
+/// `position` are absent, return `Err`. The outer `||` loop in
+/// [`parse_radial_gradient_body`] treats this group as one item to read in
+/// either order with `<color-interpolation-method>`, and must distinguish an
+/// empty match from no match. If `try_parse` always succeeds on an empty match,
+/// the outer loop cannot retry this group on its second iteration or later.
 fn parse_radial_shape_size_position_group<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<RadialShapeSizePositionGroup, ParseError<'i, ()>> {
@@ -1918,16 +1918,16 @@ fn parse_radial_shape_size_position_group<'i>(
     Ok((shape, size, position))
 }
 
-/// `radial-gradient()`/`repeating-radial-gradient()` の nested block body
-/// ([`RadialGradient`] doc の grammar 参照)。Grammar `[ [ [ <radial-shape>
+/// Nested-block body of `radial-gradient()`/`repeating-radial-gradient()`
+/// (see the [`RadialGradient`] grammar): `[ [ [ <radial-shape>
 /// || <radial-size> ]? [ at <position> ]? ] || <color-interpolation-method>
-/// ]?` の外側 `||` (shape/size/position グループと
-/// `<color-interpolation-method>` の間) を any-order loop で読む —
-/// グループ内部の順序制約 ([`parse_radial_shape_size_position_group`]
-/// doc参照) は [`parse_linear_gradient_body`]の 2-slot 構造と異なりグループ
-/// 自体が 1 slot になっている点に注意 (`shape`/`size`/`position` を outer
-/// loop の独立した slot にすると `at center circle` のような spec-invalid
-/// な順序 — position が shape/size より前 — まで受理してしまう)。
+/// ]?`. Read the outer `||` (between the shape/size/position group
+/// and `<color-interpolation-method>`) in an any-order loop.
+/// The ordering constraint inside the group (see [`parse_radial_shape_size_position_group`])
+/// requires one slot, unlike the two-slot [`parse_linear_gradient_body`].
+/// If `shape`, `size`, and `position` were independent outer-loop slots,
+/// the parser would accept spec-invalid orderings such as `at center circle`,
+/// where position precedes shape/size.
 fn parse_radial_gradient_body<'i>(
     input: &mut Parser<'i, '_>,
     repeating: bool,
@@ -1973,10 +1973,10 @@ fn parse_conic_from_angle<'i>(input: &mut Parser<'i, '_>) -> Result<Angle, Parse
 }
 
 /// `[ from [ <angle> | <zero> ] ]? [ at <position> ]?` —
-/// [`parse_radial_shape_size_position_group`]の conic 版。spec の
-/// juxtaposition により `from <angle>` は `at <position>` より必ず先
-/// (こちらは shape/size 側と違い、先頭要素自体が単一 component なので
-/// 内側に `||` は無い)。空マッチと区別するための `Err` fallback も同型。
+/// Conic counterpart of [`parse_radial_shape_size_position_group`]. Spec
+/// grammar juxtaposition requires `from <angle>` before `at <position>`.
+/// Unlike the shape/size case, the first element is just one component, so
+/// there is no inner `||`. The `Err` fallback likewise distinguishes an empty match.
 fn parse_conic_from_position_group<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<(Option<Angle>, Option<CssPosition>), ParseError<'i, ()>> {
@@ -1988,12 +1988,12 @@ fn parse_conic_from_position_group<'i>(
     Ok((angle, position))
 }
 
-/// `conic-gradient()`/`repeating-conic-gradient()` の nested block body
-/// ([`ConicGradient`] doc の grammar 参照)。外側 `||` (`from`/`at`
-/// グループと `<color-interpolation-method>` の間) を any-order loop で
-/// 読む — [`parse_radial_gradient_body`]と同じ「グループを 1 slot として
-/// 扱う」構造 (`at center from 45deg` のような spec-invalid な逆順を
-/// 拒否するのに必要、[`parse_conic_from_position_group`] doc参照)。
+/// Nested-block body of `conic-gradient()`/`repeating-conic-gradient()`
+/// (see the [`ConicGradient`] grammar). Read the outer `||` (between the `from`/`at`
+/// group and `<color-interpolation-method>`) in an any-order loop,
+/// just as [`parse_radial_gradient_body`] reads its group as one slot.
+/// This rejects spec-invalid reversed orderings such as `at center from 45deg`
+/// (see [`parse_conic_from_position_group`]).
 fn parse_conic_gradient_body<'i>(
     input: &mut Parser<'i, '_>,
     repeating: bool,
@@ -2030,9 +2030,9 @@ fn parse_conic_gradient_body<'i>(
     })
 }
 
-/// `<repeat-style>` の 1 keyword を parse する ([`BackgroundRepeatKeyword`]
-/// doc の grammar 参照)。`repeat-x`/`repeat-y` はここでは扱わない
-/// ([`parse_background_repeat`] が別途 top-level alternative として処理)。
+/// Parse one `<repeat-style>` keyword (see the [`BackgroundRepeatKeyword`]
+/// grammar). Do not handle `repeat-x`/`repeat-y` here:
+/// [`parse_background_repeat`] handles them as separate top-level alternatives.
 fn parse_background_repeat_keyword(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeatKeyword> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -2050,14 +2050,14 @@ fn parse_background_repeat_keyword_res<'i>(
     parse_background_repeat_keyword(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `background-repeat: <repeat-style>` を parse する ([`BackgroundRepeat`]
-/// doc の grammar 参照: `repeat-x | repeat-y | [repeat | space | round |
-/// no-repeat]{1,2}`)。
+/// Parse `background-repeat: <repeat-style>` (see the [`BackgroundRepeat`]
+/// grammar: `repeat-x | repeat-y | [repeat | space | round |
+/// no-repeat]{1,2}`).
 ///
-/// `repeat-x`/`repeat-y` は 2-keyword form の shorthand として先に試す
-/// (spec computed value: `repeat-x` = `repeat no-repeat`、`repeat-y` =
-/// `no-repeat repeat`)。1 keyword のみ指定時は両軸に同じ値を適用する
-/// (`repeat` = `repeat repeat` 等)。
+/// Try `repeat-x`/`repeat-y` first as shorthand for their two-keyword forms
+/// (the spec's computed value: `repeat-x` = `repeat no-repeat`, `repeat-y` =
+/// `no-repeat repeat`). When only one keyword is specified, apply it to both axes
+/// (for example, `repeat` = `repeat repeat`).
 pub(crate) fn parse_background_repeat(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeat> {
     if input
         .try_parse(|i| i.expect_ident_matching("repeat-x"))
@@ -2088,8 +2088,8 @@ pub(crate) fn parse_background_repeat(input: &mut Parser<'_, '_>) -> Option<Back
     })
 }
 
-/// `background-attachment: <attachment>` を parse する
-/// ([`BackgroundAttachment`] doc の grammar 参照: `scroll | fixed | local`)。
+/// Parse `background-attachment: <attachment>`
+/// (see the [`BackgroundAttachment`] grammar: `scroll | fixed | local`).
 pub(super) fn parse_background_attachment(
     input: &mut Parser<'_, '_>,
 ) -> Option<BackgroundAttachment> {
@@ -2102,8 +2102,8 @@ pub(super) fn parse_background_attachment(
     }
 }
 
-/// `object-fit: <fit>` を parse する ([`ObjectFit`] doc の grammar 参照:
-/// `fill | contain | cover | none | scale-down`)。
+/// Parse `object-fit: <fit>` (see the [`ObjectFit`] grammar:
+/// `fill | contain | cover | none | scale-down`).
 pub(super) fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -2116,8 +2116,8 @@ pub(super) fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> 
     }
 }
 
-/// `isolation: <isolation-mode>` を parse する ([`Isolation`] doc の grammar
-/// 参照: `auto | isolate`)。
+/// Parse `isolation: <isolation-mode>` (see the [`Isolation`]
+/// grammar: `auto | isolate`).
 pub(super) fn parse_isolation(input: &mut Parser<'_, '_>) -> Option<Isolation> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -2127,8 +2127,8 @@ pub(super) fn parse_isolation(input: &mut Parser<'_, '_>) -> Option<Isolation> {
     }
 }
 
-/// `mix-blend-mode: <blend-mode>` を parse する ([`MixBlendMode`] doc の
-/// grammar 参照: 16 keyword)。
+/// Parse `mix-blend-mode: <blend-mode>` (see the [`MixBlendMode`]
+/// grammar: 16 keywords).
 pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlendMode> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -2152,10 +2152,10 @@ pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlen
     }
 }
 
-/// `<visual-box>` を parse する ([`VisualBox`] doc の grammar 参照:
-/// `border-box | padding-box | content-box`)。`background-clip` /
-/// `background-origin` 共有 (initial value の違いは呼び出し元ではなく
-/// `specified.rs`/`computed.rs` 側で扱う)。
+/// Parse `<visual-box>` (see the [`VisualBox`] grammar:
+/// `border-box | padding-box | content-box`). Shared by `background-clip` and
+/// `background-origin`; differences in their initial values are handled in
+/// `specified.rs`/`computed.rs`, not by the caller.
 pub(super) fn parse_visual_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -2168,8 +2168,8 @@ pub(super) fn parse_visual_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> 
     }
 }
 
-/// `<bg-size>` の 1 軸分 — `<length-percentage [0,∞]> | auto`
-/// ([`parse_width`](super::box_model::parse_width) と同じ non-negative enforcement pattern)。
+/// One axis of `<bg-size>`: `<length-percentage [0,∞]> | auto`.
+/// Enforce non-negativity as in [`parse_width`](super::box_model::parse_width).
 fn parse_background_size_axis(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
@@ -2184,15 +2184,15 @@ fn parse_background_size_axis_res<'i>(
     parse_background_size_axis(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `background-size: <bg-size>` を parse する ([`BackgroundSize`] doc の
-/// grammar 参照: `[ <length-percentage [0,∞]> | auto ]{1,2} | cover |
-/// contain`)。
+/// Parse `background-size: <bg-size>` (see the [`BackgroundSize`]
+/// grammar: `[ <length-percentage [0,∞]> | auto ]{1,2} | cover |
+/// contain`).
 ///
-/// `cover`/`contain` は keyword 全体を占有するため axis run より先に試す。
-/// 2 個目の axis が省略された場合は **`auto`** (spec verbatim: "If only
-/// one value is given the second is assumed to be auto.") — 1 個目の
-/// 値を複製する [`parse_border_radius`](super::box_model::parse_border_radius) 系の fill 規則とは異なるので
-/// 流用しない。
+/// Try `cover`/`contain` before the axis values: each keyword takes the whole value.
+/// When the second axis is omitted, it defaults to **`auto`** (the spec says, "If only
+/// one value is given the second is assumed to be auto."). This differs from
+/// [`parse_border_radius`](super::box_model::parse_border_radius) and related fill rules, which copy the first value;
+/// do not reuse those rules here.
 pub(crate) fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
     if input
         .try_parse(|i| i.expect_ident_matching("cover"))
@@ -2239,46 +2239,46 @@ pub(crate) fn parse_background_position_and_size(
     Some((position, size))
 }
 
-/// `background` shorthand を parse する ([`BackgroundShorthand`] doc の
-/// grammar 節参照)。
+/// Parse the `background` shorthand (see the grammar section of the
+/// [`BackgroundShorthand`] docs).
 ///
 /// # `||` (any-order) grammar semantics
 ///
-/// [`parse_border_shorthand`](super::box_model::parse_border_shorthand) と同じ loop 構造: 各 unfilled slot を
-/// `try_parse` で順に試し、成功したら slot を埋めて loop 先頭に戻る。全 slot
-/// 満了、または未 match token に当たったら break — leftover は呼び出し元
-/// (`rule.rs` の declaration parser) の `expect_exhausted` が丸ごと drop する
-/// ([`BackgroundShorthand`] doc の「単一 layer のみ対応」節が、これを使って
-/// comma-separated 複数 layer を reject する仕組みを説明している)。
+/// Use the same loop as [`parse_border_shorthand`](super::box_model::parse_border_shorthand): try each
+/// unfilled slot with `try_parse`; on success, fill it and restart the loop.
+/// Stop when every slot is full or a token matches none. The caller's
+/// `expect_exhausted` in the `rule.rs` declaration parser drops leftover tokens.
+/// The "Single-layer support only" section of [`BackgroundShorthand`] explains
+/// how this rejects multiple comma-separated layers.
 ///
-/// 6 slot のうち `visual_boxes` だけ最大 2 回一致しうる — `<visual-box>` が
-/// grammar 上 2 回独立した `||` alternative として現れるため
-/// ([`BackgroundShorthand`] doc 参照)。`position_and_size` は
-/// [`parse_background_position_and_size`] 経由で 1 slot として扱う (spec の
-/// `<bg-position> [ / <bg-size> ]?` を単一の `||` alternative として)。
+/// Of the six slots, only `visual_boxes` can match twice: the grammar has
+/// two independent `||` alternatives for `<visual-box>`
+/// (see [`BackgroundShorthand`]). Treat `position_and_size` as one slot via
+/// [`parse_background_position_and_size`]: the spec's
+/// `<bg-position> [ / <bg-size> ]?` is a single `||` alternative.
 ///
-/// 各 slot の token 集合は互いに素 (image は `none`/`url()`/gradient
-/// function、position は方向 keyword/length、repeat-style/attachment/
-/// visual-box はそれぞれ固有 keyword 集合、color は named color/hex/function)
-/// なので、slot を試す順序自体は結果を左右しない —
-/// [`parse_border_shorthand`](super::box_model::parse_border_shorthand) doc の同旨コメント参照。
+/// The token sets of all slots are disjoint: image uses `none`/`url()`/gradient
+/// functions, position uses directional keywords or lengths, repeat-style,
+/// attachment, and visual-box each use their own keywords, and color uses named
+/// colors, hex, or functions. Thus slot trial order cannot affect the result;
+/// see the same point in the [`parse_border_shorthand`](super::box_model::parse_border_shorthand) docs.
 ///
 /// # At least 1 component required
 ///
 /// spec CSS Values 4 §2.2 `||` semantics: "one or more of them must occur,
-/// in any order." — 0 component (空 `background:` や未知 keyword のみ) は
-/// `None` = declaration drop ([`parse_border_shorthand`](super::box_model::parse_border_shorthand) と同じ契約)。
+/// in any order." Zero components (an empty `background:` or only unknown keywords)
+/// return `None`, dropping the declaration (as in [`parse_border_shorthand`](super::box_model::parse_border_shorthand)).
 ///
-/// # Initial value fill (省略成分)
+/// # Initial value fill (omitted components)
 ///
-/// [`BackgroundShorthand`] doc の「Initial value fill」節参照。`visual_boxes`
-/// の 0/1/2 occurrence による origin/clip 割り当ては spec §2.10 verbatim
+/// See the "Initial value fill" section of [`BackgroundShorthand`]. How the
+/// 0/1/2 occurrences of `visual_boxes` set origin/clip follows spec §2.10:
 /// ("If one `<visual-box>` value is present then it sets both
 /// background-origin and background-clip to that value. If two values are
 /// present, then the first sets background-origin and the second
-/// background-clip.") — 0 個の場合は 2 longhand それぞれの spec initial
-/// (origin: padding-box、clip: border-box) を使う点が 1 個の場合と異なる
-/// (1 個の場合は両方その値になるため、0 個の場合だけ非対称)。
+/// background-clip.") With zero occurrences, use each longhand's spec initial value:
+/// origin is padding-box and clip is border-box. This differs from one occurrence,
+/// which sets both to that value; only the zero case is asymmetric.
 pub(crate) fn parse_background_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<BackgroundShorthand> {
@@ -2342,10 +2342,10 @@ pub(crate) fn parse_background_shorthand(
             continue;
         }
 
-        // どの unfilled slot にも match しなかった → 埋まっている slot に
-        // 対する 2 回目の指定 (`visual_boxes` は 3 回目)、comma (複数 layer)、
-        // または未知 token。break で loop 終了、caller の `expect_exhausted`
-        // が leftover を drop する (`parse_border_shorthand` と同じ契約)。
+        // No unfilled slot matched: the token is a second value for a filled slot
+        // (a third for `visual_boxes`), a comma (multiple layers), or an unknown token.
+        // Break the loop and let the caller's `expect_exhausted` drop the leftover
+        // (as in `parse_border_shorthand`).
         break;
     }
 

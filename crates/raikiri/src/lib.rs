@@ -1,13 +1,13 @@
 //! raikiri — umbrella facade, re-exports, and internal dogfooding APIs.
 //!
-//! umbrella-facade slice。Consumer が単一 `raikiri` crate だけを dep に
-//! 追加すれば HTML parse → cascade された ComputedValues まで得られるように
-//! sub-crate から必要な type / trait / function を re-export する。document
-//! parse / cascade orchestration / page-streaming render の entry point は
-//! `raikiri-html` にあり、本 crate はそれを re-export するだけである。ページ
-//! 出力については `PageScene` / `PageDrawables` を dogfooding / validation 用に
-//! 提供するが、外部 consumer 向け contract の中心は `raikiri-html` /
-//! `raikiri-dom` にある。
+//! Consumers can depend on the single `raikiri` crate for HTML parsing and
+//! cascaded ComputedValues. This facade re-exports the necessary types,
+//! traits, and functions from sub-crates. Document parsing, cascade
+//! orchestration, and page-stream rendering originate in `raikiri-html`;
+//! this crate only re-exports their entry points. It also supplies PageScene
+//! and PageDrawables for internal dogfooding and validation, while the main
+//! contract for external page-output consumers lives in `raikiri-html` and
+//! `raikiri-dom`.
 //!
 //! # Example
 //!
@@ -40,11 +40,11 @@ mod html_to_png;
 pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_resolver};
 
 // ── PageScene + PageDrawables dogfooding surface ───────
-// 実装 body は placeholder (empty struct + Default) から段階的に拡張中。
-// これは raikiri crate 内の dogfooding / validation 用 pub type surface であり、
-// fulgur-facing page output contract は raikiri-dom を中心に定義する。
-// `NodeId` は既存 `raikiri_traits::NodeId` (re-export 済み) を再利用し
-// PageScene と Document 間で node identity を統一する。
+// Implementation is growing incrementally from placeholder structs (empty
+// structs plus Default). These public types serve raikiri's internal
+// dogfooding/validation, not Fulgur's page-output contract, which centers
+// on raikiri-dom. Reusing the re-exported `raikiri_traits::NodeId` gives
+// PageScene and Document the same node identity.
 mod page_scene;
 pub use page_scene::{
     Fragment, Orientation, PageMetadata, PageScene, Pt, build_page_scene,
@@ -61,21 +61,21 @@ pub use entries::{
 };
 
 // ── VRT font check API ────────────────────────────────────────────────────
-// External consumer が `raikiri` 単独 dep で pinned `FontContext` を build
-// できるように、`html_to_png_with_fonts` の依存型を umbrella 経由で公開。
-// これが無いと consumer は raikiri-dom / parley を direct dep しなければ
-// ならず、実装 crate 依存が漏れる。
+// Re-export the types used by `html_to_png_with_fonts` so an external consumer
+// can build a pinned `FontContext` with only a `raikiri` dependency. Otherwise
+// it would require direct raikiri-dom/parley dependencies and expose the
+// implementation crates.
 pub use parley::FontContext;
 pub use raikiri_dom::{FontError, PageMargins, PageSlice, build_wpt_font_ctx, first_page_name};
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
-// Network API (Request / FetchedResource / NetworkError / Method / Body /
-// HeaderMap / AbortSignal / AbortController / ResourceKind) は `NetworkProvider`
-// を Consumer 側で implement する際に必須 (fetch signature の param / return type)。
-// これらを揃えて re-export することで sub-crate 直接 dep 不要にする。
+// A consumer implementing `NetworkProvider` needs Request, FetchedResource,
+// NetworkError, Method, Body, HeaderMap, AbortSignal, AbortController, and
+// ResourceKind in the fetch signature. Re-export them together to avoid
+// direct sub-crate dependencies.
 #[rustfmt::skip]
 pub use raikiri_traits::{
-    // ── 既存 ──
+    // ── existing ──
     AbortController, AbortSignal, Body, CascadeError, ConsumerPropertyEvent,
     ConsumerPropertyObserver, ConsumerPropertyValue, DecodedImage, Dom, Element, FetchOutcome,
     FetchedResource, HeaderMap, ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, Method,
@@ -83,7 +83,7 @@ pub use raikiri_traits::{
     Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
     Request, ResourceKind, StylesheetKind, WarningKind,
 
-    // ── error / status 系 ──
+    // ── errors / status ──
     RenderStatus, RenderSummary, LimitKind, UnresolvedTarget, UnresolvedReason,
     EmittedSlotInfo, TargetSlotId, TargetKind, TargetDiscrepancy, ExhaustionPolicy,
 
@@ -110,7 +110,7 @@ pub use raikiri_traits::{
     PaintResource, PaintResourceBundle, PaintResourceId, PaintResourceKind, PaintShadow,
     PaintTransform,
 
-    // ── traits (Consumer が implement) ──
+    // ── traits implemented by consumers ──
     PageEventObserver, PagePaintSink, RenderSink, ReplacedResolver, ResourcePolicy,
 
     // ── strategy traits ──
@@ -118,14 +118,14 @@ pub use raikiri_traits::{
     ReflowAction, ContainerOverflowFallback, DirtyDeadline,
     ProbeContext, TargetRequest, ResolvedTarget,
 
-    // ── resolver 補助 ──
+    // ── resolver helpers ──
     IntrinsicBox, ResolvedIntrinsic, ResolveDisposition,
     ResolverRequest, ResolverError,
 
-    // ── policy 補助 ──
+    // ── policy helpers ──
     PolicyViolation, ViolationType,
 
-    // ── layout 補助 ──
+    // ── layout helpers ──
     LayoutError,
 
     // ── symbol ──
@@ -135,118 +135,115 @@ pub use raikiri_traits::{
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
 pub use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, UncascadedDocument, parse};
 
-// ── raikiri-dom: Document (raikiri-html::UncascadedDocument.dom の実体型) ──
-// Consumer が `&raikiri::Document` を名指しで受けたい場合に必要。
+// ── raikiri-dom: Document (the type of raikiri-html::UncascadedDocument.dom) ──
+// Consumers need this to name `&raikiri::Document` explicitly.
 pub use raikiri_dom::Document;
 
-// ── raikiri-style: cascade pipeline output + value 型 ──────────────────
-// ComputedValues field の型は Consumer が読み書きに直接名指しするため、value 系も
-// re-export する。
+// ── raikiri-style: cascade pipeline output and value types ─────────────
+// Consumers name the types of ComputedValues fields to read and write them,
+// so the value types are also re-exported.
 //
-// `ComputedValues` の length 系 field が **computed value 層**の型になったため、
-// `Computed*` 5 型を追加した。これらは computed 層の leaf 型である
-// (`ComputedBorder` のみ width/style/color の 3-field struct で scalar ではない):
+// After ComputedValues' length fields moved to **computed-value types**, five
+// Computed* types were added. They are computed-layer leaf types (except
+// ComputedBorder, a width/style/color struct rather than a scalar):
 //
-// - `ComputedLength`                  — `font_size` / `ComputedBorder::width()`
-// - `ComputedLengthPercentage`        — `padding` の各 side の leaf 型
-// - `ComputedLengthPercentageOrAuto`  — `margin` の各 side / `width` / `height` の leaf 型
-// - `ComputedLineHeight`              — `line_height`
-// - `ComputedBorder`                  — `border` の各 side の leaf 型
+// - `ComputedLength`                 — `font_size` / `ComputedBorder::width()`
+// - `ComputedLengthPercentage`       — per-side leaf of `padding`
+// - `ComputedLengthPercentageOrAuto` — per-side leaf of `margin`, `width`, `height`
+// - `ComputedLineHeight`             — `line_height`
+// - `ComputedBorder`                 — per-side leaf of `border`
 //
-// **訂正**: 上記 5 型は leaf 型に過ぎず、`padding` /
-// `margin` / `border` の実 field 型は `Sides<ComputedLengthPercentage>` 等の
-// 4-side container だった。この最初の re-export 時点では `Sides<T>` 自体が
-// re-export されていなかったため、この 3 field は leaf 型を揃えても依然として
-// 型付きで名指しできていなかった — その時点ではこれを承知の上で `Sides` を
-// approved surface の外と判定し、意図的に見送っていた。後続の修正で
-// `Sides` を追加し、この gap を閉じた (下記)。
+// **Correction:** These five are only leaves. The actual `padding`, `margin`,
+// and `border` field types are four-side containers such as
+// `Sides<ComputedLengthPercentage>`. When the leaves were first re-exported,
+// `Sides<T>` was deliberately kept outside the approved surface. Thus those
+// three fields still could not be named with explicit types. A later change
+// re-exported `Sides` and closed that gap (see below).
 //
-// `Length` (specified 層) は**残す** — `ComputedValues` の field 型ではなくなった
-// が、同じく re-export している `PropertyValue` は variant payload に `Length` を
-// 持ち続ける (`PropertyValue::FontSize(Length)` 等) ので、Consumer が declaration
-// を読むには依然として名指しが要る。外すと `PropertyValue` を扱う Consumer が
-// 孤立する。
+// Keep `Length` (associated with the specified layer). It is no longer a
+// ComputedValues field type, but the also-exported `PropertyValue` still
+// carries `Length` in variant payloads such as
+// `PropertyValue::FontSize(Length)`. Consumers reading declarations need to
+// name it; removing it would strand users of `PropertyValue`.
 //
-// `Length` が payload に居ることは「その値が specified 層である」ことを意味しない
-// — **どの層かは PropertyValue をどこから受け取ったかで決まる**。この規則
-// 自体の canonical な記述は
-// `raikiri_style::Length` の doc の「本型は『specified 層』を意味しない —
-// 層は出所で決まる」節にある (`Length` は下で re-export しているので Consumer
-// から到達可能)。出所ごとの内訳:
+// A `Length` payload does **not** imply a specified-layer value. The layer
+// depends on where the `PropertyValue` came from. See the canonical rule in
+// the `raikiri_style::Length` docs, which consumers can reach through this
+// re-export. Specifically:
 //
-// - `RuleTree` / `Declaration` 由来 (parse 直後の cascade 入力) は specified 層。
-//   `Em` / `Rem` / `Pt` / `Percent` がそのまま入る。
-// - `raikiri_style::cascade_page` の `PageCascadeResult.declarations` 由来は
-//   **computed 層** — `Length` はその computed 値の運搬 shape として使われて
-//   いる。**何が保証され例外が何かの canonical な記述は
-//   `raikiri_style::page::PageCascadeResult::declarations` の doc** であり、
-//   ここで再掲しない (過去に再掲した記述が実装から drift した経緯がある
-//   ため)。
-//   (`cascade_page` 自体は umbrella が re-export していないので、この経路に
-//   届く Consumer は raikiri-style へ直接 dep している場合のみ。)
+// - `RuleTree` / `Declaration` values (cascade inputs just after parsing)
+//   are specified-layer values and may retain `Em`, `Rem`, `Pt`, or `Percent`.
+// - `PageCascadeResult.declarations` from `raikiri_style::cascade_page` are
+//   **computed-layer** values carried in `Length`. For exact guarantees and
+//   exceptions, consult the canonical docs on
+//   `raikiri_style::page::PageCascadeResult::declarations`; do not repeat
+//   them here, as a previous copy drifted from the implementation. The
+//   umbrella crate does not re-export `cascade_page`, so only consumers
+//   depending directly on raikiri-style can access this path.
 //
-// `Sides<T>` / `LengthOrAuto` / `LineHeight` / `Border` — 追加された。**この
-// 4 型追加が上の「最初の re-export 時点では見送った」判断を上書きする** —
-// 旧文面をそのまま残すと「追加しない」という嘘が残るため書き換えた。役割:
+// `Sides<T>`, `LengthOrAuto`, `LineHeight`, and `Border` were added later.
+// **This supersedes the earlier decision not to export Sides.** Their roles:
 //
-// - `Sides<T>` — layer-agnostic な 4-side container (padding / margin /
-//   border の top/right/bottom/left)。specified 層
-//   (`PropertyValue::Padding(Sides<Length>)` 等) と computed 層
-//   (`ComputedValues.padding: Sides<ComputedLengthPercentage>` 等) の両方で
-//   型パラメータ化されて使われる — 他 3 型と違い「specified 層の型」ではない。
-//   上段で訂正した「leaf 型はあるが container が無い」gap を本追加が閉じる。
-// - `LengthOrAuto` — specified 層。`PropertyValue::MarginTop(LengthOrAuto)` 等
-//   の payload。computed 層対応は `ComputedLengthPercentageOrAuto` (上に既出)。
-// - `LineHeight` — specified 層。`PropertyValue::LineHeight(LineHeight)` の
-//   payload。computed 層対応は `ComputedLineHeight` (上に既出)。
-// - `Border` — specified 層。`PropertyValue::Border(Sides<Border>)` の
-//   payload。computed 層対応は `ComputedBorder` (上に既出)。`raikiri_style`
-//   crate root では re-export されておらず `raikiri_style::property::Border`
-//   経由でのみ public なため、下の一括 `pub use` block には含めず、直後の別
-//   `pub use` 文でその path から明示 import する (`LineHeight` も同じ理由で同居)。
+// - `Sides<T>` is a layer-agnostic top/right/bottom/left container. It is
+//   parameterized for both specified values (e.g.
+//   `PropertyValue::Padding(Sides<Length>)`) and computed values (e.g.
+//   `ComputedValues.padding: Sides<ComputedLengthPercentage>`). Unlike the
+//   other three additions, it is not itself a specified-layer type. It closes
+//   the missing-container gap described above.
+// - `LengthOrAuto` is specified-layer data, e.g. the payload of
+//   `PropertyValue::MarginTop(LengthOrAuto)`. Its computed counterpart is
+//   `ComputedLengthPercentageOrAuto`.
+// - `LineHeight` is specified-layer data, e.g. the payload of
+//   `PropertyValue::LineHeight(LineHeight)`. Its computed counterpart is
+//   `ComputedLineHeight`.
+// - `Border` is specified-layer data in
+//   `PropertyValue::Border(Sides<Border>)`; its computed counterpart is
+//   `ComputedBorder`. It is public through
+//   `raikiri_style::property::Border`, not the raikiri_style crate root, so
+//   it is imported separately below. `LineHeight` has the same constraint.
 //
-// **さらなる修正**: 上の Sides / Border 追加時点の記述には 2 つの gap が
-// あった。(1) `Border` 自体が
-// `#[non_exhaustive]` struct のため raikiri crate から struct-literal 構築が
-// できず (E0639)、再 export しても値を得る public な経路が無かった —
-// `Sides::all` は既存の `Border` 値を 4 面に複製するだけで、その入力自体
-// (`Border` 値そのもの) を得る手段ではなかった。(2) `style: BorderStyle` /
-// `color: BorderColor` (`Border` の残り 2 field の型) が re-export されて
-// おらず、Consumer が `Border::width` 以外の field を型付きで読めなかった。
+// **Further correction:** The Sides/Border addition left two gaps. First,
+// `Border` is a `#[non_exhaustive]` struct, so a struct literal from raikiri
+// fails (E0639), and merely exporting the type offered no public way to
+// obtain a value. `Sides::all` can duplicate an existing Border across four
+// sides but cannot create that initial value. Second, `BorderStyle` and
+// `BorderColor`, the types of the other two fields besides `Border::width`,
+// were not re-exported, so consumers could not read them with explicit types.
 //
-// この修正で両方を埋めた:
+// Both gaps were addressed:
 //
-// - `raikiri_style::property::Border` に `pub fn new() -> Self`
-//   (= `Self::default()` の thin wrapper) + `impl Default for Border`
-//   (CSS Backgrounds 3 初期値: `width` = medium(3px) / `style` = `none` /
-//   `color` = `currentcolor`) を追加。`raikiri_traits::page::PageBox::new`
-//   と同じ「zero-arg `new()` + 全 field `pub` による mutation」の 2-pattern
-//   契約 (`crates/raikiri/tests/external_consumer.rs` の "3 pattern"
-//   acceptance criteria の pattern 1 + pattern 2) — 3 field のみの単純な値
-//   なので pattern 3 (builder) は他の類似 struct 同様見送り。これで
-//   `raikiri::Border::new()` (+ 必要なら pub field への直接代入) が
-//   umbrella 経由の public な value-acquisition path になった。
-// - `BorderStyle` / `BorderColor` を re-export に追加 (下記)。どちらも
-//   `#[non_exhaustive]` enum だが、struct とは違い既存 variant の直接
-//   construct は enum では E0639 の対象外 (`LineHeight` enum と同じ扱い、
-//   上の該当箇所参照) — 追加 constructor は不要で re-export のみで足りる。
+// - `raikiri_style::property::Border` gained `pub fn new() -> Self` (a thin
+//   wrapper around `Self::default()`) and `impl Default for Border` with CSS
+//   Backgrounds 3 initial values: medium (3px) width, none style, and
+//   currentcolor color. Like `raikiri_traits::page::PageBox::new`, this gives
+//   the two construction patterns zero-argument `new()` and mutation of all
+//   public fields (patterns 1 and 2 of the three acceptance patterns in
+//   `crates/raikiri/tests/external_consumer.rs`). A builder (pattern 3) was
+//   deliberately omitted for this simple three-field value, as for similar
+//   structs. `raikiri::Border::new()` and optional field assignment now
+//   provide a public value-acquisition path through the umbrella crate.
+// - `BorderStyle` and `BorderColor` were also re-exported below. Both are
+//   `#[non_exhaustive]` enums; unlike structs, constructing an existing enum
+//   variant is not subject to E0639 (as with the `LineHeight` enum). No
+//   additional constructor is needed.
 //
-// **shorthand 展開についての残る注記**: `border` shorthand は parse 時に
-// 必ず 12 longhand (4 side × 3 sub-property) へ展開される
-// (`crate::rule::expand_border`)。この展開は `crate::rule::expand_shorthand_into`
-// (parse 出口 `parse_declaration_block` と `@page` cascade 入口の両方から
-// 呼ばれる、`crates/raikiri-style/src/page.rs` の
-// `absolutize_in_page_context_shorthand_fall_throughs` doc が明記) で行われる
-// ため、**DOM cascade (`RuleTree::style_rules()...declarations()`) と `@page`
-// cascade (`raikiri_style::page::cascade_page` / `PageCascadeResult`、
-// どちらも umbrella は re-export していない) の両方**で
-// `PropertyValue::Border(Sides<Border>)` を保持した `Declaration` は観測されず、
-// 観測されるのは展開後の `PropertyValue::BorderTopWidth(Length)` /
-// `BorderTopStyle(BorderStyle)` / `BorderTopColor(BorderColor)` 等の per-side
-// longhand である (`Border` 型は fields としては全部揃うが、実 declaration が
-// その形で出てくる経路は現状無い)。`Border::new()` が閉じるのはそれとは別の
-// gap — 「型は名指しできるが値を一切構築できない」という construction-path
-// gap であり、shorthand 展開の挙動そのものは変えていない。
+// **Remaining note on shorthand expansion:** Parsing always expands `border`
+// into 12 longhands (four sides × three subproperties) in
+// `crate::rule::expand_border`. `crate::rule::expand_shorthand_into` performs
+// this expansion at both the parse exit (`parse_declaration_block`) and the
+// `@page` cascade entrance (as documented on
+// `absolutize_in_page_context_shorthand_fall_throughs` in
+// `crates/raikiri-style/src/page.rs`). Thus neither DOM cascade
+// (`RuleTree::style_rules()...declarations()`) nor `@page` cascade
+// (`raikiri_style::page::cascade_page` / `PageCascadeResult`, neither of
+// which the umbrella re-exports) exposes a Declaration containing
+// `PropertyValue::Border(Sides<Border>)`. Consumers instead see expanded
+// per-side longhands such as `PropertyValue::BorderTopWidth(Length)`,
+// `BorderTopStyle(BorderStyle)`, and `BorderTopColor(BorderColor)`. All of
+// Border's field types are exported, but real declarations do not currently
+// appear in the unexpanded form. `Border::new()` closes a separate gap:
+// consumers could name the type but could not construct a value. It does
+// not change shorthand expansion.
 // cov:ignore: public re-export declarations have no executable body
 pub use raikiri_style::{
     AtRuleBody, AtRuleRecord, Atom, CascadeResult, ComputedBorder, ComputedLength,
@@ -257,17 +254,17 @@ pub use raikiri_style::{
     PageSize, PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, Sides,
     cascade_with_media_context, cascade_with_media_context_for_page,
 };
-// `Border` / `BorderColor` / `BorderStyle` / `LineHeight` は raikiri-style
-// crate root では re-export されておらず
-// (`raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight}`
-// 経由でのみ public)、上の一括 block には含められない (理由は上のコメント
-// 参照)。`BorderColor` / `BorderStyle` は追加された
-// (`Border` の残り 2 field の型を Consumer に型付きで公開する)。
+// `Border`, `BorderColor`, `BorderStyle`, and `LineHeight` are not exported
+// from the raikiri-style crate root. They are public only through
+// `raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight}`,
+// so import them separately, rather than in the block above. `BorderColor`
+// and `BorderStyle` let consumers read the other two Border fields with
+// explicit types.
 pub use raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight};
 pub use raikiri_style::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 
-// ── url: `ParseOptions.base_url: Option<Url>` の実体型 ─────────────────
+// ── url: concrete type for `ParseOptions.base_url: Option<Url>` ────────
 pub use url::Url;
 
-// ── bytes: `FetchedResource.bytes: Bytes` / `Body::Bytes(Bytes)` 用 ────
+// ── bytes: type used by `FetchedResource.bytes: Bytes` / `Body::Bytes(Bytes)` ────
 pub use bytes::Bytes;

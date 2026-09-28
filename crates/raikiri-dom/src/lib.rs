@@ -1,7 +1,7 @@
 //! raikiri-dom — DOM data model + layout engine (taffy + parley) + GCPM runtime side.
 //!
-//! node arena + taffy 6 trait impl + raikiri_traits::Dom co-design を実装。
-//! 詳細は design 由来の §4 raikiri-dom scope 参照。
+//! Implements the node arena, taffy 6 trait implementations, and raikiri_traits::Dom co-design.
+//! For details, see §4, raikiri-dom scope, in the original design.
 
 // Public module rustdoc cross-links some crate-private helpers (e.g.
 // `crate::layout::preshape_text`, `Document::flags_dirty`) which resolve fine
@@ -17,28 +17,28 @@
 //! - [`dom_impl`] — `raikiri_traits::{Dom, Node, Element}` +
 //!   `raikiri_style::{StyleDom, StyleNode, StyleElement}` impls + `NodeRef` /
 //!   `ElementRef` types (both trait families over one arena, see file header)
-//! - [`fonts`] — WPT bundled font dir から cross-machine 決定性 `FontContext`
-//!   を構築する (`build_wpt_font_ctx`)
+//! - [`fonts`] — constructs a cross-machine deterministic `FontContext` from the
+//!   WPT bundled font directory (`build_wpt_font_ctx`)
 //!
 //! # Flat tree membership
 //!
-//! [`Node`] は [`NodeFlags::IS_IN_DOCUMENT`] bit で「Document root から
-//! flat-tree-parent 経由で到達可能」を表す。以下の subtree は clear される:
+//! The [`NodeFlags::IS_IN_DOCUMENT`] bit on [`Node`] indicates reachability from
+//! the Document root through flat-tree-parent edges. It is clear for these subtrees:
 //!
-//! - `<template>` element の子孫 (element 自身は in_document=true)
-//! - 将来: shadow root 外の light-DOM 子孫、slotted-only 子孫、mutator の
-//!   transient な detached node
+//! - Descendants of a `<template>` element (the element itself has in_document=true)
+//! - In the future: light-DOM descendants outside a shadow root, slotted-only
+//!   descendants, and transient detached nodes during mutation
 //!
-//! 維持: raikiri-html sink `finish()` が
-//! [`Document::mark_in_document_flags`] を single pass で呼ぶ。現状の prototype
-//! 実装は parse-only なので finish 後は固定。将来 runtime mutation を導入する
-//! 時に blitz `process_added_subtree` / `process_removed_subtree` 相当を
-//! 追加する予定。
+//! Maintenance: the raikiri-html sink calls
+//! [`Document::mark_in_document_flags`] in a single pass during `finish()`.
+//! The current prototype is parse-only, so the flags stay fixed after finish.
+//! When runtime mutation is introduced, add the equivalent of blitz
+//! `process_added_subtree` / `process_removed_subtree`.
 //!
-//! Traversal が inert subtree を skip したい場合、
-//! [`Node::is_in_document`] を各 iteration で呼ぶ。string 比較 (tag_name ==
-//! "template" 等) で個別判定するのは禁止 — 概念が implicit になり、shadow DOM
-//! 追加時に漏れる。
+//! To skip inert subtrees during traversal,
+//! call [`Node::is_in_document`] on each iteration. Do not use string comparisons
+//! (such as tag_name == "template") for separate checks: that makes the concept
+//! implicit and risks omissions when shadow DOM is added.
 
 mod diag;
 mod fragment;

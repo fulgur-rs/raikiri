@@ -1,19 +1,19 @@
 //! Bundled UA stylesheet for HTML documents.
 //!
-//! `MINIMAL_UA_CSS` は raikiri-html crate が HTML LS §14 "Rendering" 由来
-//! (独立実装) の必要最小 UA CSS を提供する。`raikiri-html::parse` は parse
-//! 完了時に自動的にこの CSS を Document に inject する
-//! (`StylesheetKind::UserAgent` として)。
+//! `MINIMAL_UA_CSS` supplies the minimal UA CSS derived from HTML LS §14 "Rendering"
+//! through an independent implementation. `raikiri-html::parse` automatically injects
+//! this CSS into the Document when parsing completes
+//! (as `StylesheetKind::UserAgent`).
 //!
-//! spec 参照ソース制約 (独立実装 — 他実装の UA CSS を持ち込まない):
+//! Allowed specification sources (independent implementation; do not import another UA CSS):
 //!
-//! - 参照 OK: CSS 2.1 App.D、HTML Living Standard §14、CSS module Sample
+//! - Allowed: CSS 2.1 App.D, HTML Living Standard §14, CSS module sample
 //!   style sheet
-//! - 参照 NG: Chromium `html.css`、Firefox `layout/style/res/html.css`、
-//!   WebKit UA CSS、blitz が bundle する UA CSS
+//! - Disallowed: Chromium `html.css`, Firefox `layout/style/res/html.css`,
+//!   WebKit UA CSS, and UA CSS bundled with blitz.
 
-/// Bundled minimal UA CSS for HTML documents。
+/// Bundled minimal UA CSS for HTML documents.
 ///
-/// 実体は `crates/raikiri-html/src/ua/minimal.css` に `include_str!` で
-/// 埋め込まれた文字列。詳細は同ファイル頭部コメント参照。
+/// The source is embedded via `include_str!` from `crates/raikiri-html/src/ua/minimal.css`.
+/// See the comments at the top of that file for details.
 pub const MINIMAL_UA_CSS: &str = include_str!("ua/minimal.css");

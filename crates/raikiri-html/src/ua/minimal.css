@@ -247,7 +247,7 @@ blockquote, figure { margin-inline: 40px; }
  *   a:link, a:visited { text-decoration: underline; cursor: pointer; }
  *
  * `:link` / `:visited` are an explicit non-goal here — visited-link
- * history is not something a static 独立実装 style engine can observe.
+ * history is not something a static, independently implemented style engine can observe.
  * This rule applies the unvisited `#0000EE` color to `a` unconditionally
  * instead of gating it on `:link`, an accepted simplification that does
  * not distinguish visited from unvisited. `:active` (`#FF0000`)

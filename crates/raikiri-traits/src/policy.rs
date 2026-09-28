@@ -1,74 +1,74 @@
 //! Resource policy trait + policy violation types.
 //!
-//! `SandboxedNetProvider` / `SandboxedResolver` (raikiri-net) が消費する policy。
-//! Finding #6 対応。
+//! Policy consumed by `SandboxedNetProvider` / `SandboxedResolver` (raikiri-net).
+//! Finding #6.
 
 use std::time::Duration;
 use url::Url;
 
-/// Resource fetch / decode に対する policy 判定 trait。
+/// Trait for policy decisions on resource fetches and decoding.
 ///
-/// raikiri-net の `SandboxedNetProvider<P>` / `SandboxedResolver<R>` が
-/// 各 method を pre-fetch / post-fetch phase で呼び分ける。Consumer が
-/// custom policy を実装するか、`raikiri-net::DefaultSandboxPolicy` を利用。
+/// raikiri-net `SandboxedNetProvider<P>` / `SandboxedResolver<R>` call
+/// its methods at the appropriate pre-fetch / post-fetch phase. Consumers
+/// can implement a custom policy or use `raikiri-net::DefaultSandboxPolicy`.
 ///
-/// Finding #6 対応 (round 7 未対応 finding: redirect / timeout / recursion 系
-/// method の削除は sandboxed-net-provider-impl 実装前に確定)。
+/// Finding #6 (round 7 outstanding item: settle removal of redirect /
+/// timeout / recursion methods before sandboxed-net-provider-impl).
 pub trait ResourcePolicy: Send + Sync {
-    /// URL scheme (`https` / `data` / `file` / ...) が許可されているか。
+    /// Whether the URL scheme (`https` / `data` / `file` / ...) is allowed.
     fn is_scheme_allowed(&self, scheme: &str, kind: ResourceKind) -> bool;
 
-    /// host が許可されているか。
+    /// Whether the host is allowed.
     fn is_host_allowed(&self, host: &str, kind: ResourceKind) -> bool;
 
-    /// redirect を許可するか。
+    /// Whether redirects are allowed.
     fn allow_redirect(&self, from: &Url, to: &Url, hop: u32) -> bool;
 
-    /// redirect の最大 hop 数。
+    /// Maximum number of redirect hops.
     fn max_redirect_hops(&self, kind: ResourceKind) -> u32;
 
-    /// fetch 前の最大 byte 数 (Content-Length ベース、DoS 対策)。
+    /// Maximum bytes before fetching (based on Content-Length; DoS mitigation).
     fn max_fetch_bytes(&self, kind: ResourceKind) -> Option<u64>;
 
-    /// decode 後の最大 byte 数 (展開後 memory footprint 対策)。
+    /// Maximum bytes after decoding (limit on expanded memory footprint).
     fn max_decoded_bytes(&self, kind: ResourceKind) -> Option<u64>;
 
-    /// fetch 全体の timeout (thread hang 対策)。
+    /// Timeout for the whole fetch (prevent thread hangs).
     fn fetch_timeout(&self, kind: ResourceKind) -> Duration;
 
-    /// decode の timeout。
+    /// Timeout for decoding.
     fn decode_timeout(&self, kind: ResourceKind) -> Duration;
 
-    /// 許可される MIME type list (`text/css`, `image/png`, ...)。
+    /// Allowed MIME types (`text/css`, `image/png`, ...).
     fn allowed_mime_types(&self, kind: ResourceKind) -> Vec<String>;
 
-    /// chained `@import` の最大 depth。
+    /// Maximum depth of chained `@import`.
     fn max_import_depth(&self) -> u32;
 
-    /// 外部 SVG recursion の最大 depth。
+    /// Maximum depth of external SVG recursion.
     fn max_svg_recursion_depth(&self) -> u32;
 }
 
-/// Fetch した resource の分類 (policy 判定の context)。
+/// Classification of fetched resources (context for policy decisions).
 ///
-/// Finding #6 対応。§4 に列挙された 7 variant を再現。将来拡張のため
-/// `#[non_exhaustive]`。
+/// Finding #6. Reproduces the seven variants listed in §4. For future extension,
+/// `#[non_exhaustive]` permits future extension.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResourceKind {
-    /// `@import` inside CSS。
+    /// `@import` inside CSS.
     StylesheetImport,
-    /// `<link rel="stylesheet">` から fetch する外部 stylesheet。
+    /// External stylesheet fetched from `<link rel="stylesheet">`.
     ExternalStylesheet,
-    /// `<img src>`, `background-image` 等。
+    /// `<img src>`, `background-image`, etc.
     Image,
-    /// `@font-face src`。
+    /// `@font-face src`.
     Font,
-    /// 外部 SVG。
+    /// External SVG.
     Svg,
-    /// 外部 MathML。
+    /// External MathML.
     MathML,
-    /// Fallback。
+    /// Fallback.
     Other,
 }
 
@@ -86,16 +86,16 @@ impl std::fmt::Display for ResourceKind {
     }
 }
 
-/// Policy 違反の詳細情報。
+/// Details of a policy violation.
 #[derive(Debug, Clone)]
 pub struct PolicyViolation {
-    /// どの resource kind で発生した違反か。
+    /// Resource kind for which the violation occurred.
     pub kind: ResourceKind,
-    /// 対象 URL。
+    /// Target URL.
     pub url: Url,
-    /// 違反 type。
+    /// Violation type.
     pub violation_type: ViolationType,
-    /// 人間可読な詳細 message。
+    /// Human-readable details.
     pub details: String,
 }
 
@@ -111,41 +111,41 @@ impl std::fmt::Display for PolicyViolation {
 
 impl std::error::Error for PolicyViolation {}
 
-/// Policy 違反の分類。
+/// Classification of policy violations.
 ///
-/// §4 の 8 variant を再現。round 7 未対応 finding: redirect / timeout /
-/// recursion 系は将来 `ResourcePolicy` から削除される可能性あり。
+/// Reproduces the eight variants in §4. Round 7 outstanding item: redirect /
+/// timeout / recursion methods may later be removed from `ResourcePolicy`.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ViolationType {
-    /// URL scheme が `is_scheme_allowed` で reject。
+    /// URL scheme rejected by `is_scheme_allowed`.
     SchemeNotAllowed,
-    /// host が `is_host_allowed` で reject。
+    /// Host rejected by `is_host_allowed`.
     HostNotAllowed,
-    /// redirect が `allow_redirect` で reject。
+    /// Redirect rejected by `allow_redirect`.
     RedirectDenied,
-    /// fetch 済 byte 数が `max_fetch_bytes` 超過。
+    /// Fetched bytes exceeded `max_fetch_bytes`.
     FetchTooLarge {
         /// The size limit that was exceeded.
         limit: u64,
         /// The actual size encountered.
         actual: u64,
     },
-    /// decode 済 byte 数が `max_decoded_bytes` 超過。
+    /// Decoded bytes exceeded `max_decoded_bytes`.
     DecodedTooLarge {
         /// The size limit that was exceeded.
         limit: u64,
         /// The actual size encountered.
         actual: u64,
     },
-    /// fetch / decode timeout 超過。
+    /// Fetch / decode timeout exceeded.
     Timeout,
-    /// MIME type が `allowed_mime_types` に無い。
+    /// MIME type not in `allowed_mime_types`.
     MimeNotAllowed {
         /// The MIME type that was rejected.
         mime: String,
     },
-    /// `@import` / SVG recursion depth 超過。
+    /// `@import` / SVG recursion depth exceeded.
     RecursionExceeded {
         /// The recursion depth that exceeded the limit.
         depth: u32,
@@ -156,7 +156,7 @@ pub enum ViolationType {
     /// which is a Consumer-configured `ResourcePolicy` decision — this
     /// variant fires regardless of policy configuration.
     PrivateNetworkBlocked,
-    /// その他。
+    /// Other violation.
     Other,
 }
 

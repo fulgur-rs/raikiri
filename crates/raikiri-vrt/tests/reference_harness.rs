@@ -380,11 +380,11 @@ fn test_run_and_compare_writes_artifacts_on_diff() {
 
 #[test]
 fn test_compare_png_dimension_mismatch() {
-    // compare_png:207-217 branch: actual と expected の decode dim が異なる場合、
-    // DiffReport::{width, height} は expected 側の dim を、mismatched_pixel_count
-    // は ew * eh を報告する。色を変えているのは EXACT byte-eq shortcut を
-    // 偶然通っていないことが視覚的に読めるようにするため (実際には dim check が
-    // 先に走るので shortcut に到達しない)。
+    // compare_png:207-217 branch: when actual and expected have different decoded dimensions,
+    // DiffReport::{width, height} reports the expected dimensions, while mismatched_pixel_count
+    // reports ew * eh. The colors differ to show visually that the EXACT byte-equality
+    // shortcut was not taken accidentally (the dimension check actually runs before
+    // the shortcut can be reached).
     let actual_png = encode_png(&solid([255, 0, 0, 255], 10, 10), 10, 10); // 10x10 red
     let expected_png = encode_png(&solid([0, 0, 255, 255], 5, 5), 5, 5); // 5x5 blue
 
@@ -407,14 +407,14 @@ fn test_compare_png_dimension_mismatch() {
 fn test_run_and_compare_page_count_mismatch() {
     use std::panic;
 
-    // run_and_compare:395-402 branch: pipeline output page count が fixture の
-    // expected_pages.len() と一致しないとき、compare_png loop の手前で panic!。
-    // 副作用として diff artifacts は書かれない (loop に入らないため)。
+    // run_and_compare:395-402 branch: when the pipeline output page count differs from
+    // fixture.expected_pages.len(), panic before entering the compare_png loop.
+    // Consequently, no diff artifacts are written because the loop does not run.
     let _guard = EnvGuard::read(); // exclude concurrent env-setter tests
 
     let png_a = encode_png(&solid([255, 0, 0, 255], 4, 4), 4, 4);
     let png_b = encode_png(&solid([0, 255, 0, 255], 4, 4), 4, 4);
-    // Fixture: 1 expected page. Pipeline は 2 page 返す → mismatch。
+    // Fixture: one expected page. The pipeline returns two pages → mismatch.
     let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, png_a.clone())]);
 
     let fixture_name = dir
@@ -444,7 +444,7 @@ fn test_run_and_compare_page_count_mismatch() {
     }));
 
     let payload = result.expect_err("run_and_compare should panic on page count mismatch");
-    // Panic payload は run_and_compare の panic!("...") が生成する String。
+    // The panic payload is the String produced by run_and_compare's panic!("...").
     let msg = payload
         .downcast_ref::<String>()
         .map(String::as_str)
@@ -463,7 +463,7 @@ fn test_run_and_compare_page_count_mismatch() {
         "expected 'actual 2' in panic payload, got: {msg}"
     );
 
-    // panic は compare_png loop の手前で走るので diff artifacts は生成されない。
+    // The panic runs before the compare_png loop, so no diff artifacts are created.
     assert!(
         !diff_dir.exists(),
         "page-count panic path must not create diff dir: {}",

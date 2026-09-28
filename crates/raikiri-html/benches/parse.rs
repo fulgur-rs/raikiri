@@ -1,8 +1,8 @@
 //! HTML parse throughput — `raikiri_html::parse` micro-bench.
 //!
-//! `cascade.rs` が cascade の per-declaration 定数を、`walk.rs` が paint の
-//! per-element DFS コストを守るのに対し、このファイルは parse 層
-//! (`html5ever` tokenizer + `RaikiriTreeSink`) の per-node コストを守る。
+//! While `cascade.rs` guards the per-declaration cost of cascading and `walk.rs` guards
+//! the per-element DFS cost of painting, this file guards the per-node cost of parsing
+//! (`html5ever` tokenizer + `RaikiriTreeSink`).
 //!
 //! ```text
 //! cargo bench -p raikiri-html --bench parse

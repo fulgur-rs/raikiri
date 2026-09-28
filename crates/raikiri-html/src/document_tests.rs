@@ -18,7 +18,7 @@ mod html_document_tests {
         };
         let uncascaded = crate::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
         let cascade = build_cascaded(&uncascaded);
-        // 内部 field 直接 construct (crate-internal test なので pub(crate) field OK)
+        // Construct internal fields directly (pub(crate) fields are accessible in crate-internal tests).
         HtmlDocument {
             uncascaded,
             cascade,
@@ -44,7 +44,7 @@ mod html_document_tests {
     #[test]
     fn html_document_accessors_expose_underlying_types() {
         let doc = hello_world_doc();
-        // accessor が inner field と identity 一致 (別 heap 割当てなし)
+        // The accessor has the same identity as the inner field (no separate heap allocation).
         let dom_ref: &raikiri_dom::Document = doc.dom();
         let cascade_ref: &CascadeResult = doc.cascade();
         let sources_ref: &[String] = doc.stylesheet_sources();
@@ -83,7 +83,7 @@ mod html_document_tests {
             !doc.cascade().computed.is_empty(),
             "cascade must be populated (build_cascaded produces per-node ComputedValues)"
         );
-        // node_count と cascade.computed.len() 契約
+        // Contract between node_count and cascade.computed.len().
         assert_eq!(
             doc.cascade().computed.len(),
             doc.dom().node_count(),
@@ -137,7 +137,7 @@ mod parse_html_tests {
 
     #[test]
     fn parse_html_propagates_utf8_error() {
-        // 0x80 は UTF-8 continuation byte 単独、invalid UTF-8
+        // 0x80 alone is a UTF-8 continuation byte and invalid UTF-8.
         let opts = ParseOptions {
             extra_stylesheets: &[],
             network: None,
@@ -158,8 +158,8 @@ mod parse_html_tests {
             network: None,
             base_url: None,
         };
-        // 2 経路の cascade が同じ結果を出すことを check (parse_html は
-        // build_cascaded を内部で呼んでいる契約)
+        // Check that the two cascade paths produce the same result (parse_html calls
+        // build_cascaded internally by contract).
         let via_parse_html = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html");
         let via_manual = {
             let uncascaded = crate::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
@@ -172,11 +172,11 @@ mod parse_html_tests {
         );
     }
 
-    // `HtmlDocument.uncascaded` は `pub(crate)` (Consumer 向けには非公開) の
-    // ため、`RenderLimits::max_parse_warnings` が実際に parse 中の
-    // `RaikiriTreeSink` に consult されていることの検証は、この crate 内部の
-    // white-box test としてのみ書ける (`doc.uncascaded.warnings` へのアクセス
-    // が必要)。
+    // `HtmlDocument.uncascaded` is `pub(crate)` (not public to consumers).
+    // Verifying that `RenderLimits::max_parse_warnings` is actually consulted by
+    // `RaikiriTreeSink` during parsing therefore requires a white-box test
+    // inside this crate (to access `doc.uncascaded.warnings`).
+    // No public consumer can access this field.
 
     #[test]
     fn parse_html_with_limits_consults_custom_max_parse_warnings() {
@@ -185,12 +185,12 @@ mod parse_html_tests {
             network: None,
             base_url: None,
         };
-        // `</x>` は closing tag に対応する開始要素が無いため、html5ever の
-        // エラー回復アルゴリズムが 1 個あたり概ね 1 個の非致命 parse error を
-        // 報告する (raikiri_html crate の同種 test と同じ input shape)。cap=5
-        // → last_real_slot=4 なので real warning 4 件 + synthetic 1 件の
-        // 計 5 件で頭打ちになる (reserved-last-slot 契約、
-        // `RaikiriTreeSink::parse_error` doc 参照)。
+        // `</x>` has no matching start element, so html5ever's error recovery
+        // algorithm reports roughly one nonfatal parse error per closing tag.
+        // This matches the input shape used in similar raikiri_html tests. With cap=5,
+        // last_real_slot=4, allowing four real warnings plus one synthetic warning:
+        // five in total (the reserved-last-slot contract; see the docs for
+        // `RaikiriTreeSink::parse_error`).
         let malformed = b"</x>".repeat(50);
 
         let strict_limits = RenderLimits::builder().max_parse_warnings(Some(5)).build();
@@ -211,9 +211,9 @@ mod parse_html_tests {
             other => panic!("expected HtmlParseError, got {other:?}"),
         }
 
-        // Contrast: 同じ input を default cap (1024) で parse すると 5 件より
-        // 多く記録される — cap 値が実際に RenderLimits から読まれていること
-        // (固定の小さい値に偶然収まっただけではないこと) を check する。
+        // By contrast, parsing the same input with the default cap (1024) records
+        // more than five warnings. This confirms that the cap is read from RenderLimits
+        // rather than the test merely staying under a fixed, small limit.
         let default_doc =
             parse_html_with_limits(malformed.as_slice(), &opts, RenderLimits::default())
                 .expect("malformed input still recovers");
@@ -257,8 +257,8 @@ mod parse_html_tests {
             network: None,
             base_url: None,
         };
-        // 2,000 個の `</x>` は default cap (1024) 下では確実に cap に到達する
-        // 入力サイズ (raikiri_html crate の同種 test で確認済み)。
+        // 2,000 `</x>` closing tags reliably reach the default cap (1024),
+        // as confirmed by similar tests in raikiri_html.
         let malformed = b"</x>".repeat(2_000);
 
         let mut limits = RenderLimits::default();

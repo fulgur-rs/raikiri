@@ -1,4 +1,4 @@
-//! RenderSink trait — Consumer 側の page emission receiver。
+//! RenderSink trait: consumer-side receiver for emitted pages.
 
 use crate::error::RenderSummary;
 use crate::page::{PageFragment, PageFragmentEvent}; // cov:ignore: type-only import
@@ -34,23 +34,23 @@ pub trait PagePaintSink: Send {
     fn finish_paint(&mut self) -> std::io::Result<()>; // cov:ignore: trait signature has no executable body
 }
 
-/// Consumer 側 render output receiver (Finding #4 completion protocol)。
+/// Consumer-side render output receiver (Finding #4 completion protocol).
 ///
-/// 1 ページ確定ごとに `accept_page` が呼ばれる:
-/// - Streaming preset: 逐次 (`ImmediateEmission`)
-/// - Batch preset: 全 layout 完了後まとめて (`DeferredEmission`)
+/// `accept_page` is called whenever a page is finalized:
+/// - Streaming preset: immediately (`ImmediateEmission`)
+/// - Batch preset: together after all layout is complete (`DeferredEmission`)
 ///
-/// 全 `accept_page` 呼び出し完了後、`finish_render` が最終通知として呼ばれる。
+/// After all `accept_page` calls finish, `finish_render` sends the final notification.
 ///
-/// Consumer 側 resource 解放 (PDF trailer 書出 等) は `finish_render` の責務外で、
-/// Consumer が別途 `sink.finalize_pdf()` などを呼び出す。
+/// Releasing consumer-side resources (such as writing a PDF trailer) is not the
+/// responsibility of `finish_render`; the consumer calls `sink.finalize_pdf()` separately.
 pub trait RenderSink: Send {
-    /// 1 ページ確定次第呼ばれる。
+    /// Called as soon as a page is finalized.
     fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()>;
 
-    /// 全 `accept_page` 完了後、`render()` が呼ぶ最終通知。
+    /// Final notification called by `render()` after all `accept_page` calls complete.
     ///
-    /// `summary` で TargetRegistry の最終状態を Consumer に届け、Consumer は
-    /// 未解決 slot を patch する機会を得る (§4.x completion protocol)。
+    /// Deliver the final TargetRegistry state to the consumer via `summary`, giving it
+    /// a chance to patch unresolved slots (§4.x completion protocol).
     fn finish_render(&mut self, summary: RenderSummary) -> std::io::Result<()>;
 }

@@ -3,24 +3,23 @@
 //!
 //! # Flat tree membership contract
 //!
-//! 全 tree mutation primitive (`append_*` / `attach_child` /
+//! Every tree mutation primitive (`append_*` / `attach_child` /
 //! `insert_child_before` / `detach_from_parent` / `reparent_children` /
-//! `retain_children` / `set_element_namespace` for template elements) は
-//! [`Document::flags_dirty`] を `true` に set する。`Node::is_in_document()`
-//! を観測する caller は observation 前に
-//! [`Document::mark_in_document_flags`] を呼んで bit を re-sync する必要が
-//! ある。`mark_in_document_flags` は `!flags_dirty` のとき O(1) の no-op
-//! なので、多重呼び出しも安全。
+//! `retain_children` / `set_element_namespace` for template elements) sets
+//! [`Document::flags_dirty`] to `true`. Callers observing `Node::is_in_document()`
+//! must call [`Document::mark_in_document_flags`] before observation to
+//! resynchronize the bit. `mark_in_document_flags` is an O(1) no-op when
+//! `!flags_dirty`, so repeated calls are safe.
 //!
 //! Auto-sync entry:
-//! - `raikiri-html::sink::finish()` が parse の観測境界で呼ぶ
-//! - `raikiri-dom::layout_single_page()` が layout/paint の観測境界で呼ぶ
+//! - `raikiri-html::sink::finish()` calls it at the parse observation boundary.
+//! - `raikiri-dom::layout_single_page()` calls it at the layout/paint observation boundary.
 //!
 //! Manual-sync required:
-//! - `raikiri-style::cascade()` は `&D: Dom` を取るため mutation 不可、
-//!   sync 呼び出しを caller に委ねる。cascade を直接呼ぶ consumer は
-//!   parse 経由でしか自動 sync されないため、post-parse mutation の後は
-//!   明示的に `mark_in_document_flags()` する必要がある。
+//! - `raikiri-style::cascade()` takes `&D: Dom` and cannot mutate it, so the
+//!   caller must perform synchronization. Consumers that call cascade directly
+//!   get automatic synchronization only during parsing and must explicitly
+//!   call `mark_in_document_flags()` after post-parse mutations.
 
 use smol_str::SmolStr;
 use std::borrow::Cow;
@@ -109,40 +108,40 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
         )
 }
 
-/// DOM Document (root + Vec-backed node arena)。
+/// DOM Document (root plus a Vec-backed node arena).
 ///
-/// `nodes` は arena indices を key とする flat storage。index 0 は Document
-/// kind の virtual root。HTML の `<html>` element は raikiri-html の基本
-/// parse 経路が index 1 以降に append する想定 (root = 0 の子として)。
+/// `nodes` is flat storage keyed by arena indices. Index 0 is the virtual
+/// Document root. The usual raikiri-html parse path appends the HTML `<html>`
+/// element at index 1 or later, as a child of root index 0.
 #[derive(Debug, Clone)]
 pub struct Document {
     pub(crate) nodes: Vec<Node>,
-    /// arena index of the Document root (always 0 の予定、明示的に保持して
-    /// 将来 detach root 等の変則 case に備える)。
+    /// Arena index of the Document root (normally 0, stored explicitly to
+    /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
-    /// Layout cache dirty flag。任意の tree mutation で set され、次の
-    /// `compute_child_layout` の頭で lazy に全 node cache clear + reset
-    /// する。O(1) per-mutation cost + O(N) per-layout-batch cost で
-    /// invalidation の amortized O(1) を実現。
+    /// Layout cache dirty flag. Any tree mutation sets it; the next
+    /// `compute_child_layout` lazily clears every node cache and resets it.
+    /// O(1) cost per mutation plus O(N) per layout batch gives amortized
+    /// O(1) invalidation.
     pub(crate) layout_dirty: bool,
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
     pub(crate) layout_cascade_generation: Option<u64>,
-    /// IS_IN_DOCUMENT bit dirty flag。任意の tree-mutation primitive
+    /// Dirty flag for the IS_IN_DOCUMENT bit. Any tree mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
-    /// reparent_children / retain_children) で set される。observation-side
-    /// API (cascade / paint / extract) は生の bit を信じる前に
-    /// [`Document::mark_in_document_flags`] を呼ぶことで dirty check + lazy
-    /// recompute を強制する contract。
+    /// reparent_children / retain_children) sets it. Observation APIs
+    /// (cascade / paint / extract) must call
+    /// [`Document::mark_in_document_flags`] before trusting the bit, forcing a
+    /// dirty check and lazy recomputation.
     ///
-    /// 現状の parse-only 経路では `sink.finish()` が明示的に呼ぶため無視できる
-    /// が、手動で `append_*` を呼んで Document を組み立てる code path
-    /// (raikiri-dom 内 test / raikiri-paint hello-world setup / 将来の
-    /// mutation runtime) では本 dirty flag が correctness の contract を担う。
+    /// The current parse-only path calls `sink.finish()` explicitly, so this
+    /// is handled there. For paths that build a Document with manual `append_*`
+    /// calls (raikiri-dom tests, raikiri-paint hello-world setup, and a future
+    /// mutation runtime), this flag is essential to correctness.
     pub(crate) flags_dirty: bool,
-    /// Document に associate されている stylesheet の list。
-    /// lazy: parse は cascade phase で行う。
-    /// 呼び出し順で同 kind 内の cascade source_order が決まる。
+    /// Stylesheets associated with the Document.
+    /// Parsing is deferred to the cascade phase.
+    /// Call order determines cascade source_order within each kind.
     stylesheets: Vec<(Cow<'static, str>, StylesheetKind)>,
     /// Buffered [`LayoutWarn`] diagnostic events for the current (or most
     /// recent) `layout_single_page` pass (generalizing
@@ -206,7 +205,7 @@ pub struct Document {
 }
 
 impl Document {
-    /// 新しい Document を構築する。arena index 0 に Document kind node を配置。
+    /// Construct a new Document with a Document node at arena index 0.
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
@@ -215,9 +214,9 @@ impl Document {
             root: 0,
             layout_dirty: false,
             layout_cascade_generation: None,
-            // 初期 root node は Node::new_document() が IS_IN_DOCUMENT=true を
-            // 立てているため、"attached under root" として consistent。まだ
-            // template も detached node も無いので dirty ではない。
+            // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
+            // consistent with an attached root. There are no templates or
+            // detached nodes yet, so the flag is not dirty.
             flags_dirty: false,
             stylesheets: Vec::new(),
             layout_warnings: Vec::new(),
@@ -236,24 +235,24 @@ impl Document {
         Ok(self.append_element(None, tag, Style::default(), None::<&str>))
     }
 
-    /// Element node を arena に追加する。`parent` が `Some(idx)` の場合
-    /// その node の children に append される。`None` の場合 detached (どこにも
-    /// 属さない fragment、後で attach する用途)。
+    /// Add an Element node to the arena. If `parent` is `Some(idx)`, append it
+    /// to that node's children. With `None`, it remains detached (for a fragment
+    /// unattached to the tree, or for later attachment).
     ///
-    /// `inline_style` は HTML `style="..."` attribute の生 string を渡す
-    /// (`None` = 属性なし)。raikiri-style::cascade が消費する。
+    /// Pass the raw HTML `style="..."` attribute string as `inline_style`
+    /// (`None` means no attribute). raikiri-style::cascade consumes it.
     ///
     /// # Contract
     ///
-    /// 本 method は [`flags_dirty`](Self#structfield.flags_dirty) を `true` に
-    /// set する。`Node::is_in_document()` を観測する caller (raikiri-style::cascade
-    /// / raikiri-dom::layout_single_page / raikiri-paint::paint_single_page)
-    /// は、mutation batch 後に [`mark_in_document_flags`](Self::mark_in_document_flags)
-    /// を呼んで bit を re-sync する必要がある。`layout_single_page` は entry で
-    /// 自動 sync するため、layout/paint pipeline のみを消費する consumer は
-    /// 明示呼び出し不要。cascade を直接呼ぶ場合は明示 sync が必要。
+    /// This method sets [`flags_dirty`](Self#structfield.flags_dirty) to `true`.
+    /// Callers observing `Node::is_in_document()` (raikiri-style::cascade /
+    /// raikiri-dom::layout_single_page / raikiri-paint::paint_single_page) must
+    /// call [`mark_in_document_flags`](Self::mark_in_document_flags) after a
+    /// mutation batch to resynchronize the bit. `layout_single_page` does this
+    /// automatically on entry, so consumers of only the layout/paint pipeline
+    /// need no explicit call. Direct cascade callers must synchronize explicitly.
     ///
-    /// Returns: 追加された node の arena index。
+    /// Returns: the arena index of the added node.
     pub fn append_element(
         &mut self,
         parent: Option<usize>,
@@ -275,10 +274,10 @@ impl Document {
         id
     }
 
-    /// Text node を arena に追加する。`parent` の子として append される
-    /// (parent は必須、text は必ず attach される)。
+    /// Add a Text node to the arena as a child of `parent` (which is required;
+    /// text nodes are always attached).
     ///
-    /// Returns: 追加された node の arena index。
+    /// Returns: the arena index of the added node.
     pub fn append_text(&mut self, parent: usize, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(text.into()));
@@ -309,24 +308,24 @@ impl Document {
         self.append_text(parent, text)
     }
 
-    /// Comment node を arena に追加する。
+    /// Add a Comment node to the arena.
     ///
-    /// `parent` が `Some(idx)` の場合その node の children に append される。
-    /// `None` の場合 detached (html5ever `TreeSink::create_comment` の primitive
-    /// と対応 — html5ever は comment を detached に作ってから後で
-    /// `append(parent, AppendNode(c))` する)。
+    /// If `parent` is `Some(idx)`, append it to that node's children. With
+    /// `None`, it remains detached, matching html5ever's `TreeSink::create_comment`
+    /// primitive: html5ever creates a detached comment and later calls
+    /// `append(parent, AppendNode(c))`.
     ///
     /// # Flat tree semantics
     ///
-    /// Comment は `NodeKind::Element` ではなく `NodeKind::Comment` なので
-    /// cascade / paint / stylesheet extraction は Element gate で自動 skip する。
-    /// 追加で [`Document::mark_in_document_flags`] が Comment / PI variant を
-    /// 観測すると `IS_IN_DOCUMENT` bit を clear する contract により、Taffy layout
-    /// tree (is_in_document filter) からも自動的に消える。旧来の
-    /// `strip_non_element_stubs` (arena children Vec からの physical 除去) は
-    /// この 2 段 gate に置き換わったため raikiri-html sink から廃止した。
+    /// A Comment has `NodeKind::Comment`, not `NodeKind::Element`, so the Element
+    /// gate automatically skips it during cascade, paint, and stylesheet extraction.
+    /// Also, [`Document::mark_in_document_flags`] clears `IS_IN_DOCUMENT` for
+    /// Comment and PI variants, removing them from the Taffy layout tree through
+    /// its is_in_document filter. These two gates replaced the old
+    /// `strip_non_element_stubs` (physical removal from arena children Vec),
+    /// which was removed from the raikiri-html sink.
     ///
-    /// Returns: 追加された node の arena index。
+    /// Returns: the arena index of the added node.
     pub fn append_comment(&mut self, parent: Option<usize>, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_comment(text.into()));
@@ -338,16 +337,17 @@ impl Document {
         id
     }
 
-    /// Processing instruction node を arena に追加する。
+    /// Add a processing instruction node to the arena.
     ///
-    /// `parent` は Comment と同じ semantics (Some で attach、None で detached)。
-    /// HTML では実質発生しないが XML / XHTML では有効な NodeType (WHATWG DOM §4)。
+    /// `parent` has the same semantics as for Comment (Some attaches it; None
+    /// leaves it detached). It rarely occurs in HTML but is a valid NodeType
+    /// in XML / XHTML (WHATWG DOM §4).
     ///
-    /// Flat tree semantics: Comment と同一 (Element でないので cascade / paint /
-    /// extract の Element gate で skip、`IS_IN_DOCUMENT` clear で taffy からも
-    /// 消える)。
+    /// Flat tree semantics: the same as Comment. The Element gate skips it
+    /// during cascade / paint / extraction, and clearing `IS_IN_DOCUMENT`
+    /// removes it from Taffy as well.
     ///
-    /// Returns: 追加された node の arena index。
+    /// Returns: the arena index of the added node.
     pub fn append_processing_instruction(
         &mut self,
         parent: Option<usize>,
@@ -365,48 +365,47 @@ impl Document {
         id
     }
 
-    /// 既存の detached node を `parent` の末尾 child として attach する。
+    /// Attach an existing detached node as the final child of `parent`.
     ///
-    /// html5ever `TreeSink::append(parent, AppendNode(child))` の primitive。
-    /// `child` は既に arena に存在している必要があり、既に別 parent の下にいる
-    /// 場合は事前に [`Document::detach_from_parent`] で detach しておくこと
-    /// (tree の重複配置を防ぐため raikiri-dom は自動 detach しない)。
+    /// Primitive for html5ever's `TreeSink::append(parent, AppendNode(child))`.
+    /// `child` must already exist in the arena. If it belongs to another parent,
+    /// detach it first with [`Document::detach_from_parent`]; raikiri-dom does not
+    /// detach it automatically to prevent duplicate placement in the tree.
     ///
     /// # Fragment-aware semantics (WHATWG DOM §4.2.3 Mutation algorithms)
     ///
-    /// `child` が [`NodeData::DocumentFragment`] variant の場合、fragment node
-    /// 自身は `parent.children` に append せず、fragment の全 children を parent
-    /// の末尾に移動する (fragment の children は afterwards 空になる、
-    /// insert algorithm steps 1 + 4.1 + 7.2 —
-    /// step 1 で fragment の場合 nodes = fragment.children、step 4.1 で fragment の
-    /// children を drain、step 7.2 で parent.children の末尾に append
-    /// (spec は append を "pre-insert node into parent before null" と定義するので
-    /// 本 method は referenceChild = null 経路 = step 7.2 分岐、non-null
-    /// referenceChild の positional splice は step 7.3 で
-    /// [`Document::insert_child_before`] 側が該当))。これは
-    /// spec-conformant な DocumentFragment insertion semantics で、fragment そのもの
-    /// は常に unrendered な virtual container として振る舞う。
+    /// If `child` is the [`NodeData::DocumentFragment`] variant, the fragment
+    /// node itself is not appended to `parent.children`. Instead, all its
+    /// children move to the end of the parent's children, leaving the fragment
+    /// empty. This follows insert algorithm steps 1 + 4.1 + 7.2: step 1 takes
+    /// the fragment's children as the nodes to insert, step 4.1 drains them,
+    /// and step 7.2 appends them to the parent's children. The spec defines
+    /// append as "pre-insert node into parent before null", so this method takes
+    /// the referenceChild = null branch (step 7.2). The non-null positional
+    /// splice in step 7.3 belongs to [`Document::insert_child_before`]. This is
+    /// spec-conformant DocumentFragment insertion: the fragment itself remains
+    /// an unrendered virtual container.
     ///
-    /// Element / Text / Comment / PI / Document は fragment 以外なので直接 append
-    /// (旧挙動保持)。html5ever が実行時に fragment を parent として渡すことは
-    /// ない (fragment は `get_template_contents` の返り値になる parent 側のみで
-    /// child 側では現れない) ため、この分岐は raikiri-dom を直接 driving する
-    /// consumer (test / 将来の DOM Mutation API) のためのもの。
+    /// Element / Text / Comment / PI / Document nodes are appended directly,
+    /// preserving the previous behavior. At runtime, html5ever uses fragments
+    /// only as parents returned by `get_template_contents`, never as children.
+    /// This branch serves consumers that drive raikiri-dom directly (tests and
+    /// a future DOM Mutation API).
     ///
     /// # Panics
     ///
-    /// - `parent` / `child` が arena 範囲外 (`nodes[..]` indexing による)。
-    /// - `parent == child` の場合 (spec HierarchyRequestError 相当) は現状
-    ///   detect しない (現在の実装範囲では発生しない、将来 spec-conformant
-    ///   mutation API 化する時に raise 判定する予定)。
+    /// - `parent` or `child` is outside the arena (`nodes[..]` indexing).
+    /// - `parent == child` (equivalent to a spec HierarchyRequestError) is not
+    ///   currently detected. It does not arise in the current implementation;
+    ///   a future spec-conformant mutation API should check and raise it.
     pub fn attach_child(&mut self, parent: usize, child: usize) {
         // Fragment-aware branch: WHATWG DOM insert algorithm steps 1 + 4.1 + 7.2
-        // (§4.2.3 Mutation algorithms) の効果と一致 — fragment 自身は
-        // parent.children に含めず、fragment の children を parent の末尾へ
-        // move する。insert_child_before (positional splice) の tail append 対応。
+        // (§4.2.3 Mutation algorithms) has the same effect: exclude the fragment
+        // itself from parent.children and move its children to the parent's end.
+        // This is the tail-append counterpart of insert_child_before's splice.
         if matches!(self.nodes[child].data, NodeData::DocumentFragment) {
-            // reparent_children の drain + extend pattern と一致。fragment 自身
-            // は `parent.children` に含まれない (contract test (c) 参照)。
+            // Follow the drain + extend pattern of reparent_children. The fragment
+            // itself is absent from `parent.children` (see contract test (c)).
             let moved: Vec<usize> = self.nodes[child].children.drain(..).collect();
             self.nodes[parent].children.extend(moved);
         } else {
@@ -433,62 +432,60 @@ impl Document {
             })
     }
 
-    /// `parent` の children 配列内、`before` の直前 index に `child` を挿入する。
+    /// Insert `child` immediately before `before` in `parent`'s children array.
     ///
     /// html5ever `TreeSink::append_before_sibling(sibling, AppendNode(child))`
-    /// および foster parenting の primitive。`before` が `parent` の子でない場合
-    /// は末尾に append する (defensive: TreeSink 規約上発生しない想定)。
+    /// and foster parenting use this primitive. If `before` is not a child of
+    /// `parent`, append at the end (defensive; the TreeSink contract rules this out).
     ///
     /// # Fragment-aware semantics (WHATWG DOM §4.2.3 Mutation algorithms)
     ///
-    /// `child` が [`NodeData::DocumentFragment`] variant の場合、fragment node
-    /// 自身は `parent.children` に挿入せず、fragment の全 children を parent の
-    /// `before` position から source order で splice する (fragment の children は
-    /// afterwards 空になる、insert algorithm steps 1 + 4.1 + 7.3 —
-    /// step 1 で fragment の場合 nodes = fragment.children、step 4.1 で fragment の
-    /// children を drain、step 7.3 で referenceChild の index に splice
-    /// (step 7.2 は null referenceChild = tail append case、本 method は
-    /// non-null referenceChild 経路なので step 7.3 分岐))。これは
-    /// spec-conformant な DocumentFragment insertion semantics で、fragment そのもの
-    /// は常に unrendered な virtual container として振る舞う。
+    /// If `child` is the [`NodeData::DocumentFragment`] variant, the fragment
+    /// node itself is not inserted into `parent.children`. Instead, its children
+    /// are spliced in source order at `before`, leaving the fragment empty.
+    /// This follows insert algorithm steps 1 + 4.1 + 7.3: step 1 takes the
+    /// fragment's children as the nodes to insert, step 4.1 drains them, and
+    /// step 7.3 splices them at the referenceChild index. Step 7.2 handles a
+    /// null referenceChild (tail append); this method handles the non-null
+    /// branch in step 7.3. This is spec-conformant DocumentFragment insertion:
+    /// the fragment itself remains an unrendered virtual container.
     ///
-    /// Element / Text / Comment / PI / Document は fragment 以外なので直接 insert
-    /// (旧挙動保持)。html5ever が実行時に fragment を `append_before_sibling` の
-    /// new_node として渡すことはない (fragment は `get_template_contents` の返り値
-    /// になる parent 側のみで child 側では現れない) ため、この分岐は raikiri-dom
-    /// を直接 driving する consumer (test / 将来の DOM Mutation API) のためのもの
-    /// (以前 latent な asymmetry として観測されていたが、後に
-    /// [`Document::attach_child`] と整合するよう修正済み)。
+    /// Element / Text / Comment / PI / Document nodes are inserted directly,
+    /// preserving the previous behavior. At runtime, html5ever never passes a
+    /// fragment as `append_before_sibling`'s new_node: fragments occur only as
+    /// parents returned by `get_template_contents`. This branch serves direct
+    /// raikiri-dom consumers (tests and a future DOM Mutation API). It also
+    /// resolves a previously observed asymmetry with [`Document::attach_child`].
     pub fn insert_child_before(&mut self, parent: usize, before: usize, child: usize) {
         // Fragment-aware branch: WHATWG DOM insert algorithm steps 1 + 4.1 + 7.3
-        // (§4.2.3 Mutation algorithms) の効果と一致 — fragment 自身は
-        // parent.children に含めず、fragment の children を `before` position から
-        // source order で splice する。attach_child (tail append) の positional 対応。
+        // (§4.2.3 Mutation algorithms) has the same effect: exclude the fragment
+        // itself from parent.children and splice its children in source order at
+        // `before`. This is the positional counterpart of attach_child's append.
         if matches!(self.nodes[child].data, NodeData::DocumentFragment) {
-            // drain fragment children (move semantics) — collect() で borrow を切り、
-            // 後段の parent.children への &mut と衝突しない。
+            // Drain fragment children (move semantics); collect() ends the borrow
+            // before the later &mut borrow of parent.children.
             let moved: Vec<usize> = self.nodes[child].children.drain(..).collect();
             let kids = &mut self.nodes[parent].children;
             let pos = kids.iter().position(|&c| c == before).unwrap_or_else(|| {
-                // html5ever TreeSink contract 上ここには来ない。dev/test では
-                // contract 違反として panic、release では末尾追加 fallback。
+                // The html5ever TreeSink contract rules this out. Panic on a
+                // contract violation in dev/test; fall back to append in release.
                 debug_assert!(
                     false,
                     "insert_child_before: `before` ({before}) not a child of parent ({parent})"
                 );
                 kids.len()
             });
-            // Vec::splice(pos..pos, moved) は pos 位置に moved を単一 pass で
-            // 挿入する (何も remove しない)。O(n+k) allocation で完了。
+            // Vec::splice(pos..pos, moved) inserts at pos in one pass without
+            // removing anything. It completes with O(n+k) allocation.
             kids.splice(pos..pos, moved);
         } else {
             let kids = &mut self.nodes[parent].children;
             if let Some(pos) = kids.iter().position(|&c| c == before) {
                 kids.insert(pos, child);
             } else {
-                // html5ever TreeSink contract 上ここには来ない。dev/test では
-                // contract 違反として panic、release では plan 指定の tail-append
-                // fallback。
+                // The html5ever TreeSink contract rules this out. Panic on a
+                // contract violation in dev/test; use the specified tail-append
+                // fallback in release.
                 debug_assert!(
                     false,
                     "insert_child_before: `before` ({before}) not a child of parent ({parent})"
@@ -500,9 +497,9 @@ impl Document {
         self.flags_dirty = true;
     }
 
-    /// `child` を保持する parent の arena index を返す。root (index 0) や
-    /// 未 attach node は `None`。linear scan (O(N))、TreeSink の呼び出し
-    /// 頻度は多くないため raikiri-dom は parent pointer 非保持。
+    /// Return the arena index of the parent holding `child`. Return `None` for
+    /// the root (index 0) or an unattached node. raikiri-dom stores no parent
+    /// pointer because TreeSink calls this infrequently; lookup is O(N).
     pub fn parent_of(&self, child: usize) -> Option<usize> {
         self.nodes
             .iter()
@@ -510,10 +507,10 @@ impl Document {
             .find_map(|(i, n)| n.children.contains(&child).then_some(i))
     }
 
-    /// `child` を現在の parent から取り除く。除去した親 index を返す。
-    /// 未 attach の場合は `None` (no-op)。
+    /// Remove `child` from its current parent and return that parent's index.
+    /// Return `None` for an unattached node (no-op).
     ///
-    /// html5ever `TreeSink::remove_from_parent(target)` の primitive。
+    /// Primitive for html5ever's `TreeSink::remove_from_parent(target)`.
     pub fn detach_from_parent(&mut self, child: usize) -> Option<usize> {
         let parent = self.parent_of(child)?;
         let kids = &mut self.nodes[parent].children;
@@ -525,8 +522,8 @@ impl Document {
         Some(parent)
     }
 
-    /// `from` の全 children を `to` の children 末尾に move する。`from`
-    /// の children は空になる。html5ever `TreeSink::reparent_children` の primitive。
+    /// Move all children of `from` to the end of `to`'s children, leaving
+    /// `from` empty. Primitive for html5ever's `TreeSink::reparent_children`.
     pub fn reparent_children(&mut self, from: usize, to: usize) {
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
         self.nodes[to].children.extend(moved);
@@ -534,19 +531,20 @@ impl Document {
         self.flags_dirty = true;
     }
 
-    /// Element node に non-HTML namespace URI を紐付ける。
-    /// `ns` が `None` = HTML default namespace / element
-    /// でない場合の効果無し。HTML default は `None` を optimized path とする
-    /// (memory saving + `Element::namespace_uri()` の O(1) 判定)。
+    /// Associate a non-HTML namespace URI with an Element node.
+    /// `ns = None` denotes the default HTML namespace; this has no effect on
+    /// non-elements. Using `None` for HTML saves memory and enables an O(1)
+    /// check in `Element::namespace_uri()`.
     ///
-    /// raikiri-html sink が `finish()` 時に qual_names metadata table から呼び出す。
-    /// tree mutation ではないので `invalidate_layout_cache` は call しない。
+    /// The raikiri-html sink calls this from its qual_names metadata table
+    /// during `finish()`. It does not call `invalidate_layout_cache` because
+    /// it does not mutate the tree.
     ///
-    /// Panics (debug + release 共通): `id` が Element kind
-    /// でない場合。Text / Document node に attribute-family setter を呼ぶのは
-    /// caller bug なので early fail させる (旧 `debug_assert_eq!` から
-    /// `NodeData::as_element_mut().expect(...)` に移行、release でも panic する
-    /// ようになったのは意図的な strictness 向上)。
+    /// Panics (debug and release): if `id` is not an Element. Calling an
+    /// attribute-family setter on a Text or Document node is a caller bug, so
+    /// it fails early. Replacing the old `debug_assert_eq!` with
+    /// `NodeData::as_element_mut().expect(...)` intentionally makes this panic
+    /// in release builds too.
     pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
         self.set_element_namespace_info(id, ns, None);
     }
@@ -579,17 +577,17 @@ impl Document {
         }
     }
 
-    /// Element node に attribute list を紐付ける。
-    /// `attrs` は null-namespace attribute の `(local, value)` 列。html5ever の
-    /// source order を保持する必要があるので Vec で受ける。`style` attribute は
-    /// [`Document::set_element_inline_style`] で別途 wire するため呼び出し側で
-    /// 除外しておくこと。
+    /// Associate an attribute list with an Element node.
+    /// `attrs` contains `(local, value)` pairs for null-namespace attributes.
+    /// A Vec preserves html5ever's source order. The caller must exclude the
+    /// `style` attribute, which is wired separately by
+    /// [`Document::set_element_inline_style`].
     ///
-    /// raikiri-html sink が `finish()` 時に attributes metadata table から呼び出す。
-    /// tree mutation ではないので `invalidate_layout_cache` は call しない。
+    /// The raikiri-html sink calls this from its attributes metadata table
+    /// during `finish()`. It does not call `invalidate_layout_cache` because
+    /// it does not mutate the tree.
     ///
-    /// Panics (debug + release 共通): `id` が Element kind
-    /// でない場合。
+    /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
         let e = self.nodes[id]
             .data
@@ -1162,59 +1160,53 @@ impl Document {
         Ok(output)
     }
 
-    /// `<template>` element の contents fragment root を新規 allocate し、
-    /// その arena index を template element の `template_contents` slot に
-    /// wire する。
+    /// Allocate a new contents fragment root for a `<template>` element and
+    /// store its arena index in the element's `template_contents` slot.
     ///
-    /// # Fragment root の shape (NodeData::DocumentFragment)
+    /// # Fragment root shape (NodeData::DocumentFragment)
     ///
-    /// Fragment root は `Document.nodes` arena に detached 状態で allocate される
-    /// (parent なし、Document root からも reachable でない)。以前は
-    /// `"#document-fragment"` pseudo-tag な Element として実装していたが、
-    /// [`NodeData::DocumentFragment`] variant として恒久化した:
-    /// - `NodeKind::DocumentFragment` として存在 (Element ではない)、
-    ///   `as_element() == None` — CSS selector / cascade はそもそも Element gate
-    ///   で自動 skip
-    /// - `tag_name()` は `None` (pseudo-tag pollution 廃止)
-    /// - `is_in_document()` は false (以下 `flags_dirty=true` →
-    ///   `mark_in_document_flags` の step 1 で clear された後、step 2 で reachable
-    ///   でないため false のまま)
+    /// The fragment root is allocated detached in the `Document.nodes` arena
+    /// (without a parent and unreachable from the Document root). Previously
+    /// represented as an Element with a `"#document-fragment"` pseudo-tag, it
+    /// now has the dedicated [`NodeData::DocumentFragment`] variant:
+    /// - It has `NodeKind::DocumentFragment`, not Element, so the Element gate
+    ///   automatically skips it during CSS selection and cascade.
+    /// - `tag_name()` returns `None`, eliminating pseudo-tag pollution.
+    /// - `is_in_document()` is false: after `flags_dirty=true`, step 1 of
+    ///   `mark_in_document_flags` clears the bit, and step 2 cannot reach it.
     ///
     /// # html5ever integration
     ///
-    /// html5ever `TreeSink::create_element` に渡される `ElementFlags::template`
-    /// が true の時、sink がこの method を呼んで fragment root を作り
-    /// template element の `template_contents` slot に格納する。以降
-    /// `TreeSink::get_template_contents` は fragment root index を返し、
-    /// html5ever は template contents をその子として append する
-    /// (template element 自身の children は空のまま)。
+    /// When `ElementFlags::template` passed to html5ever's
+    /// `TreeSink::create_element` is true, the sink calls this method to create
+    /// a fragment root and store it in the template element's `template_contents`
+    /// slot. Thereafter, `TreeSink::get_template_contents` returns the fragment
+    /// root index, and html5ever appends template contents as its children
+    /// (the template element's own children remain empty).
     ///
-    /// blitz `blitz-dom::html_sink::HtmlSink::create_element` の
-    /// `create_template_contents` 相当。
+    /// Equivalent to `create_template_contents` in blitz's
+    /// `blitz-dom::html_sink::HtmlSink::create_element`.
     ///
     /// # Panics
     ///
-    /// - `template_id` が Element kind でない場合 (release + debug 共通)。
-    ///   template element でない node に fragment root を wire するのは
-    ///   caller bug なので early fail。
-    /// - `template_id` の Element の `tag_name` が `"template"` でない場合
-    ///   (release + debug 共通)。html5ever
+    /// - `template_id` is not an Element (release and debug). Wiring a fragment
+    ///   root to a non-template node is a caller bug, so it fails early.
+    /// - The Element at `template_id` has a `tag_name` other than `"template"`
+    ///   (release and debug). In html5ever,
     ///   [`ElementFlags::template`](https://docs.rs/markup5ever/latest/markup5ever/interface/tree_builder/struct.ElementFlags.html#structfield.template)
-    ///   が true になるのは HTML namespace の `<template>` element のみ、
-    ///   したがってこの entry point は template element 限定。誤って通常
-    ///   element を渡すのは caller bug。
-    /// - `template_id` の `template_contents` slot が既に populate されている
-    ///   場合 (debug のみ)。sink は template element ごとに 1 度だけこの
-    ///   method を呼ぶ契約で、二重呼び出しは古い fragment root を silently
-    ///   orphan するため debug で fail。release では上書きを許容
-    ///   (将来の mutation runtime での再 wire を想定した保守的挙動)。
+    ///   is true only for an HTML namespace `<template>` element. This entry
+    ///   point therefore accepts only template elements; passing an ordinary
+    ///   element is a caller bug.
+    /// - The `template_contents` slot of `template_id` is already populated
+    ///   (debug only). The sink must call this method once per template element;
+    ///   a second call silently orphans the old fragment root, so debug builds
+    ///   fail. Release builds allow overwriting for a future mutation runtime.
     ///
-    /// Returns: 新規 allocate された fragment root の arena index。
+    /// Returns: the arena index of the newly allocated fragment root.
     pub fn allocate_template_fragment_root(&mut self, template_id: usize) -> usize {
-        // Precondition: template_id は Element kind、かつ tag_name == "template"、
-        // かつ template_contents slot が未 populate。
-        // 借用の都合で immutable check を先に走らせて validation を確定させる
-        // (Step 1 の append_element が &mut self を borrow するため)。
+        // Precondition: template_id is an Element with tag_name == "template"
+        // and an unpopulated template_contents slot. Validate immutably first
+        // to avoid a borrow conflict with the later &mut self operation.
         {
             let data = match &self.nodes[template_id].data {
                 NodeData::Element(e) => e.as_ref(),
@@ -1233,18 +1225,17 @@ impl Document {
                 data.template_contents,
             );
         }
-        // Step 1: fragment root を detached DocumentFragment として allocate
-        // (旧 append_element(None, "#document-fragment", ...)
-        // pseudo-tag を廃止)。flags_dirty を明示的に set することで、後段
-        // mark_in_document_flags が step 1 で default IS_IN_DOCUMENT bit を
-        // clear する。
+        // Step 1: Allocate the fragment root as a detached DocumentFragment,
+        // replacing the old append_element(None, "#document-fragment", ...)
+        // pseudo-tag. Setting flags_dirty explicitly lets the later
+        // mark_in_document_flags clear the default IS_IN_DOCUMENT bit in step 1.
         let frag_root = self.nodes.len();
         self.nodes.push(Node::new_document_fragment());
         self.invalidate_layout_cache();
         self.flags_dirty = true;
-        // Step 2: template element の template_contents slot に fragment root
-        // index を wire。precondition check 済のため as_element_mut / template
-        // tag_name の re-validation は不要。
+        // Step 2: Store the fragment root index in the template element's
+        // template_contents slot. The precondition check already validated the
+        // element and tag_name, so no second validation is needed.
         let e = self.nodes[template_id]
             .data
             .as_element_mut()
@@ -1253,15 +1244,14 @@ impl Document {
         frag_root
     }
 
-    /// Element node の `inline_style` を後付けで更新する。
-    /// sink が `finish()` 時に metadata table から
-    /// `style="..."` を抽出して呼び出す。値は生 string でよく、`style=""`
-    /// の空文字列 → `None` 正規化は Element trait 実装側
-    /// ([`raikiri_traits::Element::inline_style_source`]) が行う。
-    /// 二重正規化を避けるため storage 層はここで判定しない。
+    /// Update an Element node's `inline_style` after creation.
+    /// During `finish()`, the sink extracts `style="..."` from its metadata
+    /// table and calls this method. The raw string is sufficient; the Element
+    /// trait implementation ([`raikiri_traits::Element::inline_style_source`])
+    /// normalizes an empty `style=""` to `None`. The storage layer does not
+    /// repeat that normalization.
     ///
-    /// Panics (debug + release 共通): `id` が Element kind
-    /// でない場合。
+    /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
         let e = self.nodes[id]
             .data
@@ -1270,21 +1260,20 @@ impl Document {
         e.inline_style = inline_style;
     }
 
-    /// 全 node の children Vec に対して predicate を適用し、`false` を返す
-    /// entry を除去する generic bulk-detach primitive。個別に
-    /// `detach_from_parent` を N 回呼ぶ O(K*N) 実装を回避 (attacker-controlled
-    /// な多量 mutation で quadratic を防ぐ)。tree mutation なので
-    /// `invalidate_layout_cache` も call する。
+    /// Apply a predicate to every node's children Vec and remove entries for
+    /// which it returns `false`. This generic bulk-detach primitive avoids N
+    /// calls to `detach_from_parent` at O(K*N), preventing quadratic work on
+    /// large, attacker-controlled mutations. It also calls
+    /// `invalidate_layout_cache` because it mutates the tree.
     ///
-    /// **Historical note**: 旧 raikiri-html sink の
-    /// `strip_non_element_stubs` が Comment / PI unimplemented Element の bulk 除去に
-    /// 消費していたが、Comment / ProcessingInstruction が
-    /// [`NodeData`] variant として恒久 tree 保持 + `mark_in_document_flags`
-    /// による IS_IN_DOCUMENT clear の 2 段 gate に置換されたため、この primitive
-    /// の parse 経路での使用は無くなった。現在は将来の mutation runtime /
-    /// 直接組み立てを行う consumer 向けの汎用 helper として存置。
-    /// [`flags_dirty`](Self#structfield.flags_dirty) `true` を tree topology
-    /// 変更時に set する契約は他 mutation primitive と一致。
+    /// **Historical note**: The old raikiri-html sink used
+    /// `strip_non_element_stubs` to remove Comment / PI stubs represented as
+    /// unimplemented Elements in bulk. That use disappeared when Comment and
+    /// ProcessingInstruction became permanent [`NodeData`] variants in the
+    /// tree and `mark_in_document_flags` began clearing IS_IN_DOCUMENT for them.
+    /// This helper remains for a future mutation runtime and consumers that
+    /// build trees directly. It sets [`flags_dirty`](Self#structfield.flags_dirty)
+    /// to `true` on topology changes, like the other mutation primitives.
     pub fn retain_children(&mut self, mut predicate: impl FnMut(usize) -> bool) {
         let mut any_removed = false;
         for node in &mut self.nodes {
@@ -1300,87 +1289,85 @@ impl Document {
         }
     }
 
-    /// Flat tree membership bit (`IS_IN_DOCUMENT`) を全 arena node について
-    /// dirty flag ベースで recompute する (Comment / PI kind への拡張を含む)。
-    /// sink.finish() および mutation batch 後に呼ばれる。
+    /// Recompute the flat tree membership bit (`IS_IN_DOCUMENT`) for all arena
+    /// nodes when the dirty flag is set, including Comment and PI nodes.
+    /// Called by sink.finish() and after mutation batches.
     ///
-    /// **どの node が clear されるか** (post-condition):
-    /// - Document root から reachable でない (detached / unreachable) node
-    /// - `<template>` element の子孫 (element 自身は set、その中身は clear)
+    /// **Nodes whose bits are cleared** (postcondition):
+    /// - Nodes unreachable from the Document root (detached / unreachable).
+    /// - Descendants of `<template>` elements (the element itself stays set).
     /// - `NodeData::Comment` / `NodeData::ProcessingInstruction` variant
-    ///   (**reachable でも unconditionally clear** — flat tree 上 unrendered な
-    ///   kind として rendering traversal から統一 skip)
+    ///   (**cleared even when reachable**: unrendered kinds are consistently
+    ///   skipped during flat tree rendering traversal).
     ///
-    /// `NodeData::DocumentFragment` は typically detached なので step 2 の DFS
-    /// が届かず step 1 の clear が残る (kind-based clear は不要)。
+    /// `NodeData::DocumentFragment` is usually detached, so the DFS in step 2
+    /// cannot reach it and its bit remains cleared from step 1. No kind-based
+    /// clearing is needed.
     ///
-    /// アルゴリズム:
-    /// 1. 全 arena node の bit を先に clear (detached / unreachable node を
-    ///    default true のまま残さないため)
-    /// 2. Document root から iterative DFS で bit set。template element 自身
-    ///    は set、その descendants は skip (bit clear の状態が残る)。
-    ///    Comment / PI variant は reachable でも set しない (kind gate)
+    /// Algorithm:
+    /// 1. Clear every arena node's bit first, so detached or unreachable nodes
+    ///    do not retain the default value of true.
+    /// 2. Set bits with an iterative DFS from the Document root. Set the bit
+    ///    on a template element but skip its descendants, leaving them cleared.
+    ///    Do not set Comment / PI bits even when reachable (kind gate).
     ///
-    /// 補足: sink 経由の parse では template
-    /// contents は fragment root subtree に流れ、Document root から reachable
-    /// でなくなる → step 2 の DFS は自動的に届かない (in_template branch は
-    /// 走らない)。だが本 step 2 の "template 判定 → descendants skip" logic は
-    /// 残す: 手動で `append_element(Some(tmpl), ...)` を呼ぶ code path (raikiri-dom
-    /// 内 test / raikiri-paint hello-world setup / 将来の mutation runtime で
-    /// fragment root を経由しない contents 追加) は template 直下に子を積む
-    /// ため、その inert 保証を defense-in-depth として維持する。
+    /// Note: When parsing through the sink, template contents go into a
+    /// fragment-root subtree that is unreachable from the Document root. The
+    /// step 2 DFS therefore cannot reach them (the in_template branch does not
+    /// run). Keep step 2's "detect template, then skip descendants" logic for
+    /// paths that manually call `append_element(Some(tmpl), ...)` (raikiri-dom
+    /// tests, raikiri-paint hello-world setup, and future mutation runtimes
+    /// adding contents without a fragment root). These paths place children
+    /// directly under the template, so this preserves inertness as a safeguard.
     ///
-    /// 実装上の細かい contract:
-    /// - `<template>` 判定は HTML namespace + local == "template"
-    ///   (case-sensitive)。html5ever が local を lowercase 済で提供する契約に
-    ///   依存。SVG hypothetical `<template>` (別 namespace) は skip 対象外
-    ///   (spec-correct: SVG に `<template>` はそもそも定義が無いが raw parser で
-    ///   混入し得るため defensive)。
-    /// - foster parenting 中の transient detached node は Vec::retain 系
-    ///   mutation (`Document::retain_children`) や `detach_from_parent` で
-    ///   arena の子 pointer だけ切れた state になり得る。本 method は step 1 で
-    ///   全 node を clear するため、そうした node が in_document=true として
-    ///   残ることは無い。
-    /// - iterative Vec stack で深い DOM での stack overflow を回避。
-    /// - 本 method は taffy の effective child tree
-    ///   (`TaffyChildIter` が `is_in_document()` で filter する) を変更する。
-    ///   post-condition として layout cache も無効化する — さもなくば次回
-    ///   `compute_child_layout` が古い child ordering で cached result を再利用
-    ///   してしまう。
-    /// - `flags_dirty` が false のときは no-op
-    ///   (idempotent + O(1))。mutation primitive が dirty mark するため、
-    ///   observation-side は毎回本 method を呼んでも overhead が amortize される。
-    ///   Consumer は「mutation batch → mark → observation」の contract を守る
-    ///   ことでどこかの primitive で flag 更新を忘れた場合の regression を回避
-    ///   できる。
+    /// Detailed implementation contracts:
+    /// - `<template>` detection requires the HTML namespace and
+    ///   local == "template" (case-sensitive). It relies on html5ever providing
+    ///   a lowercased local name. A hypothetical SVG `<template>` in another
+    ///   namespace is not skipped. SVG defines no `<template>`, but a raw
+    ///   parser could introduce one, so this distinction is defensive.
+    /// - During foster parenting, `Document::retain_children` or
+    ///   `detach_from_parent` can remove only an arena child pointer, leaving a
+    ///   node transiently detached. Step 1 clears every node, so such a node
+    ///   cannot retain in_document=true.
+    /// - An iterative Vec stack avoids stack overflow on deep DOM trees.
+    /// - This method changes Taffy's effective child tree, which `TaffyChildIter`
+    ///   filters with `is_in_document()`. It also invalidates the layout cache
+    ///   afterward; otherwise the next `compute_child_layout` could reuse a
+    ///   cached result with stale child ordering.
+    /// - When `flags_dirty` is false, this method is an idempotent O(1) no-op.
+    ///   Mutation primitives set the dirty flag, so observation code can call
+    ///   this method each time with amortized overhead. Consumers must follow
+    ///   the "mutation batch → mark → observation" contract to avoid regressions
+    ///   if a primitive ever fails to update the flag.
     pub fn mark_in_document_flags(&mut self) {
         const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
-        // dirty check で cheap early return。
-        // parse.finish() 直後 (dirty) → 明示的 recompute。以降 mutation 無しで
-        // 複数回呼ばれても再計算しない。
+        // Return early when clean. Immediately after parse.finish() the flag
+        // is dirty and triggers recomputation; repeated calls without a later
+        // mutation do not recompute.
         if !self.flags_dirty {
             return;
         }
         self.flags_dirty = false;
-        // Step 1: 全 arena node の bit を先に clear。Node::new_* constructor が
-        // default true を立てるが、それは "attach 済み" の楽観的初期値。ここで
-        // 明示的に clear することで detached / unreachable node が false に落ちる。
+        // Step 1: Clear every arena node's bit. Node::new_* constructors set
+        // true by default as an optimistic "attached" value; clearing here
+        // makes detached and unreachable nodes false.
         for node in &mut self.nodes {
             node.set_in_document(false);
             node.set_inline_svg_content(false);
             node.set_inline_svg_root(false);
         }
-        // Step 2: Document root から reachable な node を DFS で set。
+        // Step 2: Set bits for nodes reachable from the Document root by DFS.
         //
         // Comment /
-        // ProcessingInstruction は flat tree 上 unrendered なので、reachable
-        // でも `IS_IN_DOCUMENT` bit は clear のままにする。これにより
-        // TaffyChildIter の is_in_document filter で自動的に skip され、
-        // cascade / paint / stylesheet extraction の同 filter も一貫して
-        // Comment/PI を触らない (「traversal に個別の kind gate を散らさない」
-        // 契約 = crates/raikiri-traits/src/dom.rs の Node::is_in_document doc)。
-        // DocumentFragment は detached なので DFS が届かず、step 1 の clear
-        // 状態のまま残る (追加処理不要)。
+        // ProcessingInstruction nodes are unrendered in the flat tree, so keep
+        // their `IS_IN_DOCUMENT` bits cleared even when reachable. The
+        // TaffyChildIter is_in_document filter then skips them automatically;
+        // cascade, paint, and stylesheet extraction use the same filter and
+        // likewise avoid Comment/PI (the Node::is_in_document contract in
+        // crates/raikiri-traits/src/dom.rs avoids scattered kind gates).
+        // DocumentFragment is detached and unreachable by DFS, so its bit stays
+        // cleared from step 1 without extra handling.
         let root = self.root_index();
         let mut stack: Vec<(usize, bool, bool)> = vec![(root, false, false)];
         while let Some((id, in_template, in_svg_subtree)) = stack.pop() {
@@ -1414,15 +1401,15 @@ impl Document {
                     .map(|&child| (child, child_in_template, svg_subtree_here)),
             );
         }
-        // Step 3: taffy が観測する effective child tree が変わり得るため、
-        // layout cache を dirty mark する。
+        // Step 3: Mark the layout cache dirty because Taffy's effective child
+        // tree may have changed.
         self.invalidate_layout_cache();
     }
 
-    /// arena index `id` の node への借用参照。範囲外 index は `None`。
+    /// Borrow the node at arena index `id`, or return `None` if out of range.
     ///
-    /// blitz-dom の `BaseDocument::get_node` 相当。raikiri-paint が walk 中に
-    /// per-node で呼ぶ hot path なので O(1) の `Vec::get` を wrap。
+    /// Equivalent to blitz-dom's `BaseDocument::get_node`. This wraps O(1)
+    /// `Vec::get` for the hot path raikiri-paint calls per node while walking.
     pub fn get_node(&self, id: usize) -> Option<&Node> {
         self.nodes.get(id)
     }
@@ -1614,48 +1601,50 @@ impl Document {
         self.nodes.get(id).map(|node| &node.style)
     }
 
-    /// arena 内の総 node 数 (Document root を含む)。
+    /// Total number of nodes in the arena, including the Document root.
     ///
-    /// raikiri-paint / caller が `cascade.computed.len() == doc.node_count()`
-    /// の contract violation を early に検出する目的 + doctest / smoke test で消費。
+    /// Used by raikiri-paint and other callers to detect violations of
+    /// `cascade.computed.len() == doc.node_count()` early, and by doctests and
+    /// smoke tests.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Document root の arena index (常に 0)。
+    /// Arena index of the Document root (always 0).
     ///
-    /// `Dom::root_id()` trait method の inherent 版。trait import せず
-    /// `&Document` から直接呼べる。
-    /// 命名: `root_index` (type は `usize` で trait method の `NodeId` newtype と区別)
+    /// Inherent counterpart of the `Dom::root_id()` trait method; callable
+    /// directly on `&Document` without importing the trait. The `root_index`
+    /// name distinguishes its `usize` return type from the trait method's
+    /// `NodeId` newtype.
     pub fn root_index(&self) -> usize {
         self.root
     }
 
-    /// tree mutation を layout cache dirty として mark する。実際の cache
-    /// clear は次回 `compute_child_layout` (taffy_impl 経由) で lazy に発火する。
-    /// per-mutation は O(1)、per-layout-batch で amortized O(N)。
+    /// Mark the layout cache dirty after a tree mutation. The next
+    /// `compute_child_layout` (via taffy_impl) clears it lazily. Each mutation
+    /// costs O(1); each layout batch incurs amortized O(N) clearing.
     pub(crate) fn invalidate_layout_cache(&mut self) {
         self.layout_dirty = true;
     }
 
     // ─── stylesheets ───────────────────
 
-    /// Stylesheet を Document に associate する。
+    /// Associate a stylesheet with the Document.
     ///
-    /// - lazy: parse は行わない。cascade phase で一括処理される。
-    /// - 呼び出し順で同一 `kind` 内の cascade source_order が決まる。
-    /// - `Cow<'static, str>` により、bundled UA CSS 等 static &str は
-    ///   borrow のまま保持され allocation なし。Consumer 提供の
-    ///   `String` は Cow::Owned で消費される。
+    /// - Parsing is deferred and batched in the cascade phase.
+    /// - Call order determines cascade source_order within the same `kind`.
+    /// - `Cow<'static, str>` retains static &str values such as bundled UA CSS
+    ///   by borrowing them, without allocation. A consumer-provided `String`
+    ///   is stored as Cow::Owned.
     pub fn add_stylesheet(&mut self, source: impl Into<Cow<'static, str>>, kind: StylesheetKind) {
         self.stylesheets.push((source.into(), kind));
     }
 
-    /// 現在 associate されている全 stylesheet を `(source, kind)` の
-    /// tuple として iterate する。順序は `add_stylesheet` の呼び出し順。
+    /// Iterate over all currently associated stylesheets as `(source, kind)`
+    /// tuples, in `add_stylesheet` call order.
     ///
-    /// cascade orchestrator (raikiri umbrella) が RuleTree 構築時に
-    /// consume する想定。
+    /// Intended for the cascade orchestrator (raikiri umbrella) when it builds
+    /// the RuleTree.
     pub fn stylesheets(&self) -> impl Iterator<Item = (&str, StylesheetKind)> + '_ {
         self.stylesheets
             .iter()
@@ -1664,18 +1653,18 @@ impl Document {
 
     // ─── quirks mode ───────────────────
 
-    /// この Document の HTML5 quirks mode を設定する。raikiri-html の parse
-    /// sink が html5ever `TreeSink::set_quirks_mode` callback で得た値を
-    /// `finish()` 時にここへ書き込む想定 (`RaikiriTreeSink::finish` 参照)。
+    /// Set this Document's HTML5 quirks mode. During `finish()`, the raikiri-html
+    /// parse sink writes the value received from html5ever's
+    /// `TreeSink::set_quirks_mode` callback here (see `RaikiriTreeSink::finish`).
     pub fn set_quirks_mode(&mut self, mode: QuirksMode) {
         self.quirks_mode = mode;
     }
 
-    /// この Document の HTML5 quirks mode。手動構築された `Document` (parse
-    /// を経由しない test / setup コード) では [`QuirksMode::NoQuirks`]
-    /// のまま。`impl raikiri_style::StyleDom for Document` の
-    /// `quirks_mode()` override がこの値を `StyleQuirksMode` へ変換して
-    /// cascade に渡す (`dom_impl.rs`)。
+    /// This Document's HTML5 quirks mode. A manually constructed `Document`
+    /// (in test or setup code that does not parse HTML) retains
+    /// [`QuirksMode::NoQuirks`]. The `quirks_mode()` override in
+    /// `impl raikiri_style::StyleDom for Document` converts this value to
+    /// `StyleQuirksMode` and passes it to cascade (`dom_impl.rs`).
     pub fn quirks_mode(&self) -> QuirksMode {
         self.quirks_mode
     }

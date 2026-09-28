@@ -21,12 +21,12 @@ use crate::import::{
 use crate::sink::RaikiriTreeSink;
 use crate::types::{ParseOptions, UncascadedDocument};
 
-/// HTML を parse し [`UncascadedDocument`] を返す。cascade 前の DOM +
-/// inline `<style>` 抽出 + parse warning が含まれる。
+/// Parse HTML and return an [`UncascadedDocument`] containing the pre-cascade
+/// DOM, extracted inline `<style>` elements, and parse warnings.
 ///
-/// `input` は UTF-8 の byte stream として扱う。Read 失敗は
-/// [`ParseError::Io`]、UTF-8 として invalid な入力は [`ParseError::Encoding`]
-/// を返す (current implementation scope。encoding_rs 導入は将来予定)。
+/// Treat `input` as a UTF-8 byte stream. Read failures return
+/// [`ParseError::Io`]; input that is not valid UTF-8 returns [`ParseError::Encoding`].
+/// This is the current scope; encoding_rs support may be added later.
 ///
 /// # Example
 ///
@@ -47,20 +47,20 @@ pub fn parse<R: Read>(
     parse_with_sink(input, RaikiriTreeSink::default(), options)
 }
 
-/// Consumer-supplied sink 経由で parse する。Consumer wrapper は
-/// `type Output = UncascadedDocument` を宣言し、`finish(self)` で inner
-/// sink の finish 結果を bubble させる契約。
+/// Parse through a consumer-supplied sink. Consumer wrappers must declare
+/// `type Output = UncascadedDocument` and propagate the inner sink's
+/// `finish(self)` result.
 ///
-/// parse 完了時に既定 UA CSS + `options.extra_stylesheets` を
-/// [`raikiri_dom::Document::add_stylesheet`] 経由で Document 状態に注入する
-/// (UA=UserAgent/extra=User kind)。Extra と inline stylesheet の leading `@import`
-/// は `options.network` がある場合に source order に従って展開される。続けて
-/// `<head>` 内の external stylesheet を `options.network` / `options.base_url` 経由で
-/// fetch し、成功分を `UncascadedDocument.stylesheet_sources` に Author として
-/// head source の後へ統合する (`fetch_external_stylesheets` doc 参照)。外部 stylesheet
-/// の import は response の `final_url` を nested import の base として使う。
-/// 失敗した import は元の at-rule を保持し、fetch failure は
-/// `NetworkFallback` / `PolicyWarning` を記録する。
+/// After parsing, inject the default UA CSS and `options.extra_stylesheets`
+/// into the Document with [`raikiri_dom::Document::add_stylesheet`]
+/// (UserAgent and User kinds, respectively). Leading `@import` rules in extra
+/// and inline stylesheets expand in source order when `options.network` is set.
+/// Then fetch external stylesheets in `<head>` via `options.network` and
+/// `options.base_url`, merging successful responses into
+/// `UncascadedDocument.stylesheet_sources` as Author after head sources
+/// (see `fetch_external_stylesheets`). External stylesheets resolve nested
+/// imports against the response `final_url`. Failed imports keep their original
+/// at-rules; fetch failures record `NetworkFallback` or `PolicyWarning`.
 pub fn parse_with_sink<R, S>(
     input: R,
     sink: S,
@@ -140,26 +140,26 @@ fn finish_document(
     mut doc: UncascadedDocument,
     options: &ParseOptions<'_>,
 ) -> Result<UncascadedDocument, ParseError> {
-    // 既定 UA CSS を Document に注入。
+    // Inject the default UA CSS into the Document.
     doc.dom.add_stylesheet(
         Cow::Borrowed(crate::ua::MINIMAL_UA_CSS),
         StylesheetKind::UserAgent,
     );
 
-    // HTML の document base URL は inline / extra stylesheet の relative
-    // `@import` 解決にも使う。外部 stylesheet 自身は fetch 後の
-    // `FetchedResource::final_url` を base に使う。
+    // The HTML document base URL also resolves relative `@import` rules in
+    // inline and extra stylesheets. External stylesheets instead use their
+    // fetched `FetchedResource::final_url` as the base.
     let effective_base = effective_document_base_url(&doc, options.base_url.as_ref());
     // Share import limits across every stylesheet root in this document. A
     // separate per-root expander would let many inline/link sheets multiply
     // the fetch and expansion caps.
     let mut import_budget = ImportBudget::default();
 
-    // Consumer 提供の extra_stylesheets を User origin として追加
-    // (ParseOptions::extra_stylesheets の実 consume 経路)。
-    // StylesheetKind::Author retag から独立 StylesheetKind::User へ移行済み —
-    // real author-origin stylesheet (`<link rel=stylesheet>` 等) が将来
-    // Author として届く経路と混同しないため。
+    // Add consumer-provided extra_stylesheets with User origin
+    // (the path that consumes ParseOptions::extra_stylesheets).
+    // These were moved from StylesheetKind::Author to StylesheetKind::User
+    // so they are not confused with real author-origin stylesheets
+    // (such as `<link rel=stylesheet>`) arriving through other paths.
     for extra in options.extra_stylesheets {
         let expanded = expand_stylesheet_imports_with_budget(
             extra,
@@ -173,40 +173,40 @@ fn finish_document(
             .add_stylesheet(Cow::Owned(expanded), StylesheetKind::User);
     }
 
-    // <link rel="stylesheet" href="..."> を検出し、ParseOptions::network
-    // 経由で fetch、CSS text を Author stylesheet source として
-    // doc.stylesheet_sources に統合する。
+    // Find `<link rel="stylesheet" href="...">` elements, fetch via
+    // ParseOptions::network, and merge the CSS text into
+    // doc.stylesheet_sources as Author stylesheet sources.
     fetch_external_stylesheets(&mut doc, options, &mut import_budget);
 
     Ok(doc)
 }
 
-/// `<head>` 内の stylesheet-bearing elements を document order で処理し、成功した
-/// external CSS を `doc.stylesheet_sources` に Author origin として追加する。
-/// Head 内の inline `<style>` と `<link>` は head order に並び、head 外の inline
-/// `<style>` はその後ろに保持される。`raikiri` umbrella の `build_cascaded` はこの Vec を
-/// 丸ごと Author として消費するため、umbrella 側の API 変更は不要である。
+/// Process stylesheet-bearing `<head>` elements in document order, adding
+/// successfully fetched external CSS to `doc.stylesheet_sources` as Author.
+/// Inline `<style>` elements and `<link>` elements in the head retain head order;
+/// inline `<style>` elements outside the head follow. The raikiri umbrella
+/// crate's `build_cascaded` consumes the entire Vec as Author, without API changes.
 ///
-/// href の検出は `sink::collect_head_stylesheet_sources` (`finish()` 後の
-/// `Document` を読むだけの純粋関数) が担う。実 fetch は `TreeSink::finish()`
-/// の外で行うため、Sink 実装は I/O を持たない。`options.network` が `None`
-/// の場合は external stylesheet を処理しない。fetch 失敗は fatal にせず
-/// `doc.warnings` に記録して parse 全体を継続する。
+/// `sink::collect_head_stylesheet_sources` detects hrefs using only the
+/// `Document` after `finish()`, with no side effects. Actual fetching happens
+/// outside `TreeSink::finish()`, keeping the sink free of I/O. If
+/// `options.network` is `None`, external stylesheets are ignored. Fetch failures
+/// are nonfatal: record them in `doc.warnings` and continue parsing.
 ///
-/// # 既知の scope 制限
+/// # Known scope limits
 ///
-/// - `Document::stylesheets()` (UA CSS / extra stylesheets) は既存の別 bucket
-///   なので、head stylesheet より先に cascade される。extra stylesheet 内の
-///   imports はこの post-processing pass より前に展開される。
+/// - `Document::stylesheets()` (UA CSS / extra stylesheets) is a separate
+///   bucket, so these cascade before head stylesheets. Imports in extra
+///   stylesheets expand before this post-processing pass.
 /// - **`disabled` / `media` / `crossorigin` / `integrity`**:
-///   `sink::collect_external_stylesheet_hrefs` doc 参照。
-/// - **`<base>` の探索範囲と href の扱い**:
-///   `sink::find_document_base_href` doc 参照。frozen base URL algorithm の
-///   Document-level security policy は本 crate に相当する概念がないため未実装。
-/// - **`<base>` と `<link>` の相対順序**: 全 parse 完了後に一括 fetch するため、
-///   links before a later `<base>` also use the final effective base URL.
-/// - **encoding**: HTML body の parse と同様 UTF-8 前提
-///   (`String::from_utf8_lossy`)。非 UTF-8 CSS の decoding は将来対応する。
+///   See the `sink::collect_external_stylesheet_hrefs` documentation.
+/// - **`<base>` search scope and href handling**:
+///   See the `sink::find_document_base_href` documentation. Document-level
+///   security policy for the frozen base URL algorithm is not implemented here.
+/// - **Relative order of `<base>` and `<link>`**: fetching happens after
+///   parsing finishes, so links before a later `<base>` also use the final base URL.
+/// - **encoding**: CSS assumes UTF-8, as the HTML body parser does
+///   (`String::from_utf8_lossy`). Non-UTF-8 CSS decoding is future work.
 ///
 fn fetch_external_stylesheets(
     doc: &mut UncascadedDocument,

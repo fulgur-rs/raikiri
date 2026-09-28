@@ -5,7 +5,7 @@ Called by `scripts/patch-coverage.sh` after it has already produced an lcov
 report. This module owns the two pieces of logic that don't belong in shell:
 
   1. Parsing a `-U0` unified diff to get the exact set of *added* line
-     numbers per file (gate.md §8.1.1's "merge-base 差分抽出").
+     numbers per file (gate.md §8.1.1's "merge-base diff extraction").
   2. Deciding whether an uncovered added line is exempted by a
      `// cov:ignore: <reason>` annotation (the "exemption mechanism").
 
@@ -41,8 +41,8 @@ the arm the author meant. This is deliberately the *safe* direction for a
 false-negative/false-positive tradeoff here: an over-broad exemption only
 matters if some other line in the same block is uncovered for an unrelated
 reason, which `cov:ignore` additions already go through quality-lens review
-for (`lens-matrix.md` §fix-application model: "cov:ignore の追加: quality
-lens のみ"). New annotations should still be written as tightly as
+for (`lens-matrix.md` §fix-application model: "adding cov:ignore: quality
+lens only"). New annotations should still be written as tightly as
 possible (immediately before the minimal exempted line/arm) — this is a
 known limitation, not a license to annotate loosely.
 

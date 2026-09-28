@@ -1,16 +1,16 @@
 //! Page-related neutral model types.
 //!
-//! ここに集めた型は §5 (Pipeline), §7 (GCPM), §9 (PageBox), §11 (Paint) が
-//! authoritative なので、現時点では opaque placeholder として置き、後続の
-//! task が field / method を段階的に populate する。
+//! Types gathered here are governed by §5 (Pipeline), §7 (GCPM), §9 (PageBox),
+//! and §11 (Paint). For now they are opaque placeholders; later tasks will
+//! populate fields and methods incrementally.
 //!
-//! 入力/構築対象の struct は `#[non_exhaustive]` + `impl Default` + `pub fn new()` を持ち、
-//! external consumer crate から `X::new()` / `X::default()` で construct 可能
-//! ([`TargetInfo`] は `TargetRegistry::register` の input として consumer 側で構築)。
-//! Output-only snapshot 型 (現状 [`PendingResolution`] のみ — registry 内部で
-//! populate されて API 返り値経由で consumer に届くのみ) は consumer 側で直接
-//! construct しないため Default / new を要件外とする
-//! (`#[non_exhaustive]` は全 public struct に維持)。
+//! Input / constructible structs have `#[non_exhaustive]`, `impl Default`, and `pub fn new()`,
+//! so external consumer crates can construct them with `X::new()` / `X::default()`
+//! (consumers construct [`TargetInfo`] as input to `TargetRegistry::register`).
+//! Output-only snapshot types (currently only [`PendingResolution`], populated
+//! within the registry and returned through its API) are not constructed
+//! directly by consumers, so Default / new are not required
+//! (`#[non_exhaustive]` still applies to all public structs).
 
 mod context;
 mod target;
@@ -485,43 +485,43 @@ impl PageFragmentLineRange {
 }
 
 /// PageBox — the concrete paper-size part of an `@page` result.
-/// `width` / `height` および `A4` / `US_LETTER` const は実装済み。
+/// The `width` / `height` fields and `A4` / `US_LETTER` constants are implemented.
 /// Page margins and margin-box declaration bags are carried by the page
 /// cascade/scene layers rather than this two-dimensional paper-size value.
 ///
-/// **単位 = CSS px** (1 CSS px = 1/96 in in print context per CSS Values L4 §6.2
-/// "Absolute Lengths" <https://www.w3.org/TR/css-values-4/#absolute-lengths>)。
-/// `from_page_size` は cascaded `@page size` の CSS absolute units をこの
-/// CSS-px shape に変換する。直接 `PageBox` を構築する consumer は引き続き
-/// CSS px を渡す。
+/// **Unit = CSS px** (1 CSS px = 1/96 inch in print contexts per CSS Values L4 §6.2
+/// "Absolute Lengths" <https://www.w3.org/TR/css-values-4/#absolute-lengths>).
+/// `from_page_size` converts cascaded CSS absolute units in `@page size`
+/// into this CSS-px representation. Consumers constructing `PageBox`
+/// directly must continue to pass CSS px.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct PageBox {
-    /// Page 幅 (CSS px)。
+    /// Page width (CSS px).
     pub width: f32,
-    /// Page 高 (CSS px)。
+    /// Page height (CSS px).
     pub height: f32,
-    // 将来 populate 予定:
+    // Populate later:
     //   pub margins: Margins,
     //   pub margin_boxes: `[Option<MarginBox>; 16]`,
 }
 
 impl PageBox {
-    /// A4 portrait: 210×297 mm = **793.70 × 1122.52 px** (@ 96 DPI anchor)。
-    /// CSS Paged Media Level 3 §7 default size。
+    /// A4 portrait: 210×297 mm = **793.70 × 1122.52 px** (@ 96 DPI anchor).
+    /// CSS Paged Media Level 3 §7 default size.
     pub const A4: PageBox = PageBox {
         width: 793.7008,   // 210mm × 96/25.4
         height: 1122.5197, // 297mm × 96/25.4
     };
 
-    /// US Letter portrait: 8.5×11 in = **816 × 1056 px** ちょうど。
+    /// US Letter portrait: 8.5×11 in = exactly **816 × 1056 px**.
     pub const US_LETTER: PageBox = PageBox {
         width: 816.0,
         height: 1056.0,
     };
 
-    /// Construct a `PageBox` = `A4`。`#[non_exhaustive]` の下でも安定した
-    /// zero-arg constructor を残すため保持。
+    /// Construct a `PageBox` equal to `A4`. Retained as a stable
+    /// zero-argument constructor even with `#[non_exhaustive]`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -648,31 +648,31 @@ impl Default for PageBox {
     }
 }
 
-/// Consumer が render 開始時に渡す page-level default 値。現状は paper size
-/// のみを持つ最小 shape。将来 margin / orientation / named pages 等を追加予定。
+/// Page-level defaults supplied by consumers when rendering begins. Currently
+/// minimal, containing only paper size. Later add margins, orientation, named pages, etc.
 ///
-/// 全 field は CSS px 単位 (`PageBox` 参照)。pt/mm/in 換算は Consumer 責務。
+/// All fields use CSS px (see `PageBox`). Consumers handle pt/mm/in conversion.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageDefaults {
-    /// Default paper サイズ (`@page size` で override しない場合の initial value)。
-    /// 既定 = A4。
+    /// Default paper size (initial value when not overridden by `@page size`).
+    /// Defaults to A4.
     pub page_box: PageBox,
 }
 
 impl PageDefaults {
-    /// Default 相当の shortcut。
+    /// Shortcut equivalent to `Default`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Fluent builder を返す。
+    /// Return a fluent builder.
     pub fn builder() -> PageDefaultsBuilder {
         PageDefaultsBuilder::default()
     }
 }
 
-/// `PageDefaults` の fluent builder。
+/// Fluent builder for `PageDefaults`.
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct PageDefaultsBuilder {
@@ -680,13 +680,13 @@ pub struct PageDefaultsBuilder {
 }
 
 impl PageDefaultsBuilder {
-    /// `page_box` を設定。
+    /// Set `page_box`.
     pub fn page_box(mut self, v: PageBox) -> Self {
         self.page_box = Some(v);
         self
     }
 
-    /// Build。未設定 field は Default 値。
+    /// Build; unset fields use their default values.
     pub fn build(self) -> PageDefaults {
         PageDefaults {
             page_box: self.page_box.unwrap_or_default(),
@@ -702,13 +702,13 @@ impl PageDefaultsBuilder {
 // module re-exports only.
 
 /// LayoutBuffer — widow / orphan / break-inside / container probe lookahead
-/// buffer の中立モデル。実装は raikiri-dom 側 (§5 参照)。
-/// 未実装で、将来 populate される予定。
+/// Neutral model for a buffer; raikiri-dom supplies the implementation (see §5).
+/// Not yet implemented; to be populated later.
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct LayoutBuffer {
-    // 将来 populate 予定。
+    // Populate later.
 }
 
 impl LayoutBuffer {
@@ -718,18 +718,18 @@ impl LayoutBuffer {
     }
 }
 
-// `TargetRegistry` — target-* placeholder emit + resolve の runtime registry。
-// design doc §7.2 canonical shape、raikiri-dom 側の `pub(crate)` shadow 実装を
-// 本 crate に merge したもの。canonical impl は sibling `target` submodule。
-// この module では re-export のみ。
+// `TargetRegistry` — runtime registry for emitting and resolving target-* placeholders.
+// Merged the canonical shape from design doc §7.2 with raikiri-dom's
+// `pub(crate)` shadow implementation. The canonical implementation lives
+// in the sibling `target` submodule; this module only re-exports it.
 
-/// RunningTemplate — `position: running(name)` の template 登録。
-/// 未実装で、将来 populate される予定。
+/// RunningTemplate — registration of a `position: running(name)` template.
+/// Not yet implemented; to be populated later.
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct RunningTemplate {
-    // 将来 populate 予定。
+    // Populate later.
 }
 
 impl RunningTemplate {
@@ -739,13 +739,13 @@ impl RunningTemplate {
     }
 }
 
-/// FormData — application/x-www-form-urlencoded body の中立モデル。
-/// Consumer 側 network 実装で参照 (Body::Form(FormData))。
+/// FormData — neutral model for an application/x-www-form-urlencoded body.
+/// Used by consumer network implementations (Body::Form(FormData)).
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct FormData {
-    // 将来 populate:
+    // Populate later:
     //   pub pairs: Vec<(String, String)>,
 }
 
@@ -759,14 +759,14 @@ impl FormData {
 /// Stable identifier for a running-element template registered via
 /// `position: running(name)`.
 ///
-/// design doc §7.0 line 1903-1905 "shared types → raikiri-traits" scope。
-/// [`GcpmDirective::RegisterRunning`] (§7.1 line 1918) が field で参照する。
+/// design doc §7.0 line 1903-1905 "shared types → raikiri-traits" scope.
+/// Referenced by a field of [`GcpmDirective::RegisterRunning`] (§7.1 line 1918).
 ///
-/// Wraps a subtree-root [`NodeId`]。`position: running(name)` された element の
-/// subtree root は arena 内で per-element unique なので、そのまま stable な
-/// per-template key として使える (canonical: raikiri-dom 内の
-/// `RunningTemplateStore` の keying rationale と同一)。newtype で `NodeId` の
-/// 他用途との mix を防ぐ。
+/// Wraps a subtree-root [`NodeId`]. The root of an element with
+/// `position: running(name)` is unique per element in the arena, so it
+/// provides a stable per-template key (matching the keying rationale
+/// for raikiri-dom's `RunningTemplateStore`). The newtype avoids mixing
+/// `NodeId` values used for other purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RunningTemplateId(pub NodeId);
 
@@ -779,15 +779,15 @@ impl RunningTemplateId {
 
 /// Resolved `<content-list>` value used as the source of a `string-set` snapshot.
 ///
-/// design doc §7.1 line 1917 `StringSet { name: Symbol, source: ContentSource }`。
-/// raikiri-style cascade が `string-set: name <content-list>` declaration を
-/// resolve し、raikiri-dom Phase B walk が §2.7.2 の 4-snapshot mode
-/// (start / first / last / first-except) で [`PageContext`] named-string state
-/// にコピーする際の source shape。
+/// design doc §7.1 line 1917 `StringSet { name: Symbol, source: ContentSource }`.
+/// Source representation after raikiri-style cascade resolves a
+/// `string-set: name <content-list>` declaration and before raikiri-dom's
+/// Phase B walk copies it into [`PageContext`] named-string state in the
+/// four-snapshot mode of §2.7.2 (start / first / last / first-except).
 ///
-/// 将来、consumer (raikiri-style bridge) 側で [`Vec<ContentValueItem>`] から
-/// 構築する。`items` は public field で `..Default::default()` の struct-update
-/// syntax でも construct 可 (sibling [`PageBox`] pattern)。
+/// A future consumer (raikiri-style bridge) will construct it from
+/// [`Vec<ContentValueItem>`]. The public `items` field also supports
+/// construction with `..Default::default()` (as for sibling [`PageBox`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContentSource {
@@ -804,88 +804,88 @@ impl ContentSource {
 
 /// GCPM producing directive emitted by raikiri-style cascade
 /// (`counter-increment` / `counter-reset` / `counter-set` / `string-set` /
-/// `position: running(name)` 等)、raikiri-dom Phase B walk が [`PageContext`]
-/// と [`TargetRegistry`] を更新するために消費する (design doc §7.1 line
-/// 1907-1920 — "Producing directive"、raikiri-style emit → raikiri-dom apply)。
+/// `position: running(name)`), consumed by raikiri-dom Phase B
+/// walk to update [`PageContext`] and [`TargetRegistry`] (design doc §7.1
+/// lines 1907-1920 — "Producing directive", emitted by raikiri-style and applied by raikiri-dom).
 ///
-/// **Producing side** of §7 GCPM: Phase B walk は running counter tree /
-/// named-string 4-snapshot / running bindings / TargetRegistry を mutate する。
+/// **Producing side** of §7 GCPM: Phase B walk mutates the running counter tree,
+/// four named-string snapshots, running bindings, and TargetRegistry.
 ///
-/// **`#[non_exhaustive]` semantics** — sibling [`ContentValueItem`] と同じ
-/// forward-compat 契約: enum-level `#[non_exhaustive]` は downstream `match`
-/// に `_ =>` arm を強制するが、既存 variant の tuple/struct constructor 呼び出しは
-/// block しない。既存 variant の payload **type** 変更は downstream の
-/// constructor を compile-break させる。
+/// **`#[non_exhaustive]` semantics** — same forward-compatibility contract
+/// as sibling [`ContentValueItem`]: enum-level `#[non_exhaustive]` requires
+/// a `_ =>` arm in downstream `match` but does not block construction
+/// of existing tuple/struct variants. Changing the payload **type**
+/// of an existing variant will break downstream constructors at compile time.
 ///
-/// (design doc §7.1 line 1913-1920 の canonical 6 variant で、以前の
-/// uninhabited placeholder を置き換え済み。)
+/// Replaces the earlier uninhabited placeholder with the six canonical
+/// variants from design doc §7.1 lines 1913-1920.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GcpmDirective {
-    /// `counter-increment: name delta` — 指定 counter `name` を `delta` だけ増分
-    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-increment>)。
+    /// `counter-increment: name delta` — increment the specified counter `name` by `delta`
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-increment>).
     CounterIncrement {
-        /// Counter name (custom-ident)。
+        /// Counter name (custom-ident).
         name: Symbol,
-        /// Increment amount (spec default 1、`counter-increment: name -3` で負値)。
+        /// Increment amount (spec default 1; negative for `counter-increment: name -3`).
         delta: i32,
     },
-    /// `counter-reset: name value` — 指定 counter `name` を `value` に reset
-    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#propdef-counter-reset>)。
+    /// `counter-reset: name value` — reset the specified counter `name` to `value`
+    /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#propdef-counter-reset>).
     CounterReset {
-        /// Counter name (custom-ident)。
+        /// Counter name (custom-ident).
         name: Symbol,
-        /// Reset value (spec default 0)。
+        /// Reset value (spec default 0).
         value: i32,
     },
-    /// `counter-set: name value` — 現要素で counter `name` を `value` に set
-    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-set>)。
+    /// `counter-set: name value` — set counter `name` to `value` on this element
+    /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-set>).
     CounterSet {
-        /// Counter name (custom-ident)。
+        /// Counter name (custom-ident).
         name: Symbol,
-        /// Set value (spec default 0)。
+        /// Set value (spec default 0).
         value: i32,
     },
-    /// `string-set: name <content-list>` — resolve 済 content-list を named-string
-    /// `name` の 4-snapshot state (start / first / last / first-except) に snapshot
-    /// (CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>)。
+    /// `string-set: name <content-list>` — snapshot the resolved content-list
+    /// into the four-snapshot named-string state of `name`
+    /// (start / first / last / first-except; CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>).
     StringSet {
-        /// Named-string identifier。
+        /// Named-string identifier.
         name: Symbol,
-        /// Resolved source content-list ([`ContentSource`])。
+        /// Resolved source content-list ([`ContentSource`]).
         source: ContentSource,
     },
-    /// `position: running(name)` — 現 subtree を running template として `name`
-    /// 下に登録し、`template_id` (subtree root wrapped in [`RunningTemplateId`])
-    /// を key として [`RunningTemplate`] pool に格納
-    /// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>)。
+    /// `position: running(name)` — register the current subtree as a running template
+    /// under `name` and store `template_id` (subtree root wrapped in
+    /// [`RunningTemplateId`]) as the key in the [`RunningTemplate`] pool
+    /// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>).
     RegisterRunning {
-        /// Running-template name (custom-ident)。
+        /// Running-template name (custom-ident).
         name: Symbol,
-        /// Template identifier (subtree root wrapped)。
+        /// Template identifier (subtree root wrapped).
         template_id: RunningTemplateId,
     },
-    /// In-document fragment id を [`TargetRegistry`] に登録
-    /// (`target-counter()` / `target-counters()` / `target-text()` の後続解決用)
-    /// (design doc §7.2 TargetRegistry)。
+    /// Register an in-document fragment ID in [`TargetRegistry`]
+    /// (for later resolution by `target-counter()` / `target-counters()` /
+    /// `target-text()`; design doc §7.2 TargetRegistry).
     RegisterTarget {
-        /// Fragment id (通常は element `id` attribute 値の Symbol view)。
+        /// Fragment ID (usually a Symbol view of the element's `id` attribute value).
         fragment_id: Symbol,
     },
 }
 
-/// resolved `content` property の item — [`GcpmDirective`] の "consuming"
-/// counterpart (design doc §7.1 line 1923-1937 — "Consuming directive"、
-/// raikiri-style cascade emit → raikiri-dom paint-time resolve で concrete
-/// string に変換)。
+/// Item from the resolved `content` property — the "consuming" counterpart
+/// of [`GcpmDirective`] (design doc §7.1 lines 1923-1937:
+/// raikiri-style cascade emits it, raikiri-dom resolves it to a concrete
+/// string at paint time).
 ///
-/// **`#[non_exhaustive]` semantics** — sibling [`GcpmDirective`] および
-/// [`raikiri_style::property::ContentComponent`] と同じ forward-compat 契約。
+/// **`#[non_exhaustive]` semantics** — same forward-compatibility contract
+/// as sibling [`GcpmDirective`] and [`raikiri_style::property::ContentComponent`].
 ///
-/// **`TargetCounters::sep`** — design doc §7.1 line 1935 の field 名は `sep`。
+/// **`TargetCounters::sep`** — design doc §7.1 line 1935 names the field `sep`.
 ///   [`raikiri_style::property::ContentComponent::TargetCounters::separator`]
-///   は `separator`。design doc に verbatim 従い `sep` を使う。[`TryFrom`] impl
-///   で `separator → sep` を map。
+/// is `separator`; use `sep` verbatim from the design doc. The [`TryFrom`]
+/// implementation maps `separator → sep`.
 ///
 /// # `Element` variant
 ///
@@ -894,157 +894,157 @@ pub enum GcpmDirective {
 /// bridge retain this name so the paint-side running-template resolver
 /// can select the matching `position: running(name)` element.
 ///
-/// (design doc §7.1 line 1926-1937 の canonical 10 variant で、以前の
-/// uninhabited placeholder を置き換え済み。
+/// Replaces the uninhabited placeholder with the 10 canonical variants
+/// from design doc §7.1 lines 1926-1937.
 ///
 /// [`Image`](Self::Image) / [`Contents`](Self::Contents) / [`Quote`](Self::Quote) /
-/// [`Leader`](Self::Leader) の 4 variant は design doc §7.1 の canonical 10 には
-/// **含まれない** — raikiri-style 側で `ContentComponent` に同 4 variant が
-/// 追加されたこと (CSS Content 3 §2.2/§2.3/§2.4.2/§2.5.1) を受けた 1:1 mirror
-/// 追加。[`QuoteKeyword`] / [`LeaderType`] は raikiri-style の型を直接 reuse、
-/// sibling [`Counter`](Self::Counter) の `style: CounterStyle` 直接 reuse 慣行と
-/// 同じ)。)
+/// [`Leader`](Self::Leader) are **not** among the 10 canonical variants
+/// in design doc §7.1. They mirror four variants later
+/// added to raikiri-style `ContentComponent` (CSS Content 3
+/// §2.2/§2.3/§2.4.2/§2.5.1). [`QuoteKeyword`] / [`LeaderType`] reuse
+/// raikiri-style types directly, following sibling [`Counter`](Self::Counter)
+/// with its direct reuse of `style: CounterStyle`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContentValueItem {
-    /// bare `<string>` literal (`content: "hello"`)。
+    /// bare `<string>` literal (`content: "hello"`).
     Literal(String),
     /// `counter(name, style?)` (CSS Lists 3 §4.7
-    /// <https://www.w3.org/TR/css-lists-3/#counter-functions>)。
+    /// <https://www.w3.org/TR/css-lists-3/#counter-functions>).
     Counter {
-        /// Counter name (custom-ident)。
+        /// Counter name (custom-ident).
         name: Symbol,
-        /// Counter style (spec default `decimal`)。
+        /// Counter style (spec default `decimal`).
         style: CounterStyle,
     },
-    /// `counters(name, separator, style?)` (CSS Lists 3 §4.7)。
+    /// `counters(name, separator, style?)` (CSS Lists 3 §4.7).
     Counters {
-        /// Counter name (custom-ident)。
+        /// Counter name (custom-ident).
         name: Symbol,
-        /// Separator string (nested counter stack join)。
+        /// Separator string (nested counter stack join).
         separator: String,
-        /// Counter style (spec default `decimal`)。
+        /// Counter style (spec default `decimal`).
         style: CounterStyle,
     },
     /// `string(name, mode?)` (CSS Content 3 §2.7.2
-    /// <https://www.w3.org/TR/css-content-3/#string-function>)。
+    /// <https://www.w3.org/TR/css-content-3/#string-function>).
     String {
-        /// Named-string identifier。
+        /// Named-string identifier.
         name: Symbol,
-        /// Fetch mode (spec default `first`)。
+        /// Fetch mode (spec default `first`).
         fetch: StringFetchMode,
     },
     /// `element(name)` (CSS GCPM 3 §1.2.2
-    /// <https://www.w3.org/TR/css-gcpm-3/#element-syntax>)。runtime resolve は
-    /// raikiri-dom の [`RunningTemplate`] pool 引きから。
+    /// <https://www.w3.org/TR/css-gcpm-3/#element-syntax>). Runtime resolution
+    /// looks up raikiri-dom's [`RunningTemplate`] pool.
     ///
-    /// **From-impl gap**: `ContentComponent::Element` は未実装。
-    /// See type-level docstring "Element variant" section。
+    /// **From-impl gap**: `ContentComponent::Element` is not implemented.
+    /// See type-level docstring "Element variant" section.
     Element {
-        /// Running-template name (custom-ident)。
+        /// Running-template name (custom-ident).
         name: Symbol,
     },
     /// `content(part?)` (CSS GCPM 3 §1.1.1.1
-    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>) (`?` は raikiri の
-    /// 受理済み記法であり spec の grammar 自体の表記ではない)。keyword 省略時は
-    /// [`ContentPart::Content`] をフォールバック値として使う (根拠は spec の
-    /// "default" 宣言ではない — 詳細は [`ContentTextKeyword`] の doc comment
-    /// 参照)。
+    /// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content>) (`?` is accepted
+    /// by raikiri but does not appear in the spec grammar). If the keyword
+    /// is omitted, use [`ContentPart::Content`] as a fallback (not based on a
+    /// spec statement that it is the "default"; see the docs for
+    /// [`ContentTextKeyword`] for details).
     Content {
-        /// Element の string value のどの部分を挿入するか。
+        /// Which part of the element's string value to insert.
         part: ContentPart,
     },
     /// `attr(name)` (CSS Content 3 §2.1
-    /// <https://www.w3.org/TR/css-content-3/#strings>)。
+    /// <https://www.w3.org/TR/css-content-3/#strings>).
     Attr {
-        /// Attribute name (null-namespace、CSS Content 3 §2.1)。
+        /// Attribute name (null-namespace, CSS Content 3 §2.1).
         name: Symbol,
     },
     /// `target-counter(url, name, style?)` (CSS Content 3 §2.6.1
-    /// <https://www.w3.org/TR/css-content-3/#target-counter>)。
+    /// <https://www.w3.org/TR/css-content-3/#target-counter>).
     TargetCounter {
-        /// Target URL (bridge 側で [`Url::parse`] 済)。
+        /// Target URL (parsed by [`Url::parse`] in the bridge).
         url: Url,
-        /// Counter name (custom-ident)。
+        /// Counter name (custom-ident).
         name: Symbol,
-        /// Counter style (spec default `decimal`)。
+        /// Counter style (spec default `decimal`).
         style: CounterStyle,
     },
     /// `target-counters(url, name, separator, style?)` (CSS Content 3 §2.6.2
-    /// <https://www.w3.org/TR/css-content-3/#target-counters>)。
+    /// <https://www.w3.org/TR/css-content-3/#target-counters>).
     ///
-    /// field 名は design doc §7.1 line 1935 に verbatim (`sep`)。
+    /// Field name `sep` follows design doc §7.1 line 1935 verbatim.
     TargetCounters {
-        /// Target URL (bridge 側で [`Url::parse`] 済)。
+        /// Target URL (parsed by [`Url::parse`] in the bridge).
         url: Url,
-        /// Counter name (custom-ident)。
+        /// Counter name (custom-ident).
         name: Symbol,
-        /// Separator string (design doc verbatim `sep`)。
+        /// Separator string (design doc verbatim `sep`).
         sep: String,
-        /// Counter style (spec default `decimal`)。
+        /// Counter style (spec default `decimal`).
         style: CounterStyle,
     },
     /// `target-text(url, part?)` (CSS Content 3 §2.6.3
-    /// <https://www.w3.org/TR/css-content-3/#target-text>)。
+    /// <https://www.w3.org/TR/css-content-3/#target-text>).
     TargetText {
-        /// Target URL (bridge 側で [`Url::parse`] 済)。
+        /// Target URL (parsed by [`Url::parse`] in the bridge).
         url: Url,
-        /// どの部分を挿入するか (`content` は要素の string value 全体を指す
-        /// keyword)。
+        /// Which part to insert (`content` is the keyword for the entire
+        /// string value of the element).
         part: ContentPart,
     },
     /// `<image>` (`url()` alternative) — CSS Content 3 §2.2
-    /// <https://www.w3.org/TR/css-content-3/#content-uri>。
-    /// [`ContentComponent::Image`] の 1:1 mirror。
+    /// <https://www.w3.org/TR/css-content-3/#content-uri>.
+    /// One-to-one mirror of [`ContentComponent::Image`].
     ///
-    /// **`<content-replacement>` 未実装**:
-    /// [`raikiri_style::property::ContentComponent::Image`] の docstring と同じ
-    /// 注意点がここにも及ぶ — 単一 `Image` item の `content-list` を
-    /// `<content-replacement>` (pseudo-element 抑制 + 全要素置換) として扱う
-    /// semantics は raikiri-dom Phase B / paint-time 責務で未実装。shape
-    /// (`Vec<ContentValueItem>` の単一 `Image` 要素) 自体はこの区別を
-    /// downstream が再構成するのに十分。
+    /// **`<content-replacement>` is not implemented**:
+    /// The same caveat from the docs for
+    /// [`raikiri_style::property::ContentComponent::Image`] applies here:
+    /// treating a `content-list` with a single `Image` item as
+    /// `<content-replacement>` (suppressing the pseudo-element and replacing
+    /// the whole element) is not implemented in raikiri-dom Phase B / paint time.
+    /// Its shape (a single `Image` in `Vec<ContentValueItem>`) is enough for downstream reconstruction.
     Image {
-        /// Image URL (bridge 側で [`Url::parse`] 済、sibling
-        /// [`TargetCounter`](Self::TargetCounter) と同じ convention)。
+        /// Image URL (parsed by [`Url::parse`] in the bridge, matching sibling
+        /// [`TargetCounter`](Self::TargetCounter)).
         url: Url,
     },
     /// `contents` keyword — CSS Content 3 §2.3
-    /// <https://www.w3.org/TR/css-content-3/#element-content>。
-    /// [`ContentComponent::Contents`] の 1:1 mirror。
+    /// <https://www.w3.org/TR/css-content-3/#element-content>.
+    /// One-to-one mirror of [`ContentComponent::Contents`].
     Contents,
     /// `<quote>` (`open-quote` / `close-quote` / `no-open-quote` /
     /// `no-close-quote`) — CSS Content 3 §2.4.2
-    /// <https://www.w3.org/TR/css-content-3/#quote-values>。
-    /// [`ContentComponent::Quote`] の 1:1 mirror —
-    /// payload は [`raikiri_style::property::QuoteKeyword`] を直接 reuse
-    /// (traits-side 複製なし)。
+    /// <https://www.w3.org/TR/css-content-3/#quote-values>.
+    /// One-to-one mirror of [`ContentComponent::Quote`];
+    /// the payload directly reuses [`raikiri_style::property::QuoteKeyword`]
+    /// (no duplicate type in traits).
     Quote(QuoteKeyword),
     /// `leader(<leader-type>)` — CSS Content 3 §2.5.1
-    /// <https://www.w3.org/TR/css-content-3/#leader-function>。
-    /// [`ContentComponent::Leader`] の 1:1 mirror —
-    /// payload は [`raikiri_style::property::LeaderType`] を直接 reuse
-    /// (traits-side 複製なし)。
+    /// <https://www.w3.org/TR/css-content-3/#leader-function>.
+    /// One-to-one mirror of [`ContentComponent::Leader`];
+    /// the payload directly reuses [`raikiri_style::property::LeaderType`]
+    /// (no duplicate type in traits).
     Leader(LeaderType),
 }
 
-/// [`TryFrom<ContentComponent> for ContentValueItem`] の failure taxonomy。
+/// Failure taxonomy for [`TryFrom<ContentComponent> for ContentValueItem`].
 ///
-/// raikiri-style は `url` crate に依存しない leaf crate なので target-* variant
-/// の URL は raw [`String`] で保持され、bridge 側で [`Url::parse`] する。
-/// parse 失敗と、raikiri-style 側に新 variant が landing した際の
-/// forward-compat 検知の 2 case を分離する。
+/// raikiri-style is a leaf crate without a `url` dependency, so target-*
+/// variants store raw URLs as [`String`], parsed by [`Url::parse`] in the bridge.
+/// Distinguish parsing failures from detection of a new variant added to
+/// raikiri-style for forward compatibility.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContentValueConvertError {
-    /// target-* variant の URL 文字列が [`Url::parse`] で fail した。
+    /// Failed to parse the URL string of a target-* variant with [`Url::parse`].
     InvalidUrl(url::ParseError),
-    /// raikiri-style [`ContentComponent`] に本 crate 未対応 variant が新規追加された
-    /// (cross-crate `#[non_exhaustive]` の catch-all)。
+    /// raikiri-style [`ContentComponent`] gained a variant unsupported by this crate
+    /// (the catch-all for cross-crate `#[non_exhaustive]`).
     ///
-    /// stable Rust では cross-crate `#[non_exhaustive]` に対して compile-time
-    /// 全 variant enforce できないため、runtime error でハンドリング。raikiri-style
-    /// 側追加時に本 crate の [`TryFrom`] arm を extend する discipline。
+    /// Stable Rust cannot enforce an exhaustive match across crates for
+    /// `#[non_exhaustive]` at compile time, so this is a runtime error. Extend
+    /// this crate's [`TryFrom`] arm when raikiri-style adds a variant.
     UnsupportedVariant,
 }
 
@@ -1074,19 +1074,19 @@ impl From<url::ParseError> for ContentValueConvertError {
     }
 }
 
-/// [`ContentTextKeyword`] → [`ContentPart`] mapping (`content(keyword)` の
-/// keyword を bridge)。keyword 集合は spec spelling が異なる: GCPM 3 §1.1.1.1
-/// の `content()` と CSS Content 3 §2.6.3 の `target-text()` は同じ概念に
-/// 異なる keyword spelling を当てている (`text` vs `content`)。両者を
-/// [`ContentPart`] 側の value 集合に集約するときは意味の対応で紐付ける
-/// (spec の "default" 宣言には依らない — CSS Content 3 §2.6.3 は
-/// `target-text()` の第 2 引数省略時の値を規定していない。GCPM 3 §1.1.1.1
-/// は `text` を "the default value" と述べているが、同 section は grammar に
-/// `?` が無く [第 2 引数が構文上 optional でない]、かつ "default をどう
-/// 定義するか" 自体が未解決の WG issue として残っており、TR 上安定した根拠
-/// ではない):
-/// - [`ContentTextKeyword::Text`] → [`ContentPart::Content`] (どちらも
-///   「要素の string value 全体」を指す)
+/// Mapping [`ContentTextKeyword`] → [`ContentPart`] (bridging the keyword in
+/// `content(keyword)`). The spec spellings differ: GCPM 3 §1.1.1.1
+/// `content()` and CSS Content 3 §2.6.3 `target-text()` use different
+/// keywords for the same idea (`text` vs `content`). Map them by meaning
+/// when consolidating them into [`ContentPart`] values, not by an alleged
+/// spec "default": CSS Content 3 §2.6.3 does not specify the value when
+/// the second argument of `target-text()` is omitted. GCPM 3 §1.1.1.1
+/// calls `text` "the default value", but its grammar omits `?`
+/// (the second argument is syntactically required), and how to define
+/// "default" remains an open WG issue, not stable evidence in the TR.
+///
+/// - [`ContentTextKeyword::Text`] → [`ContentPart::Content`] (both denote
+///   the element's entire string value)
 /// - [`ContentTextKeyword::Before`] → [`ContentPart::Before`]
 /// - [`ContentTextKeyword::After`] → [`ContentPart::After`]
 /// - [`ContentTextKeyword::FirstLetter`] → [`ContentPart::FirstLetter`]
@@ -1111,26 +1111,26 @@ impl TryFrom<ContentComponent> for ContentValueItem {
     type Error = ContentValueConvertError;
 
     /// [`raikiri_style::property::ContentComponent`] → [`ContentValueItem`]
-    /// canonical taxonomy 変換。
+    /// Convert to the canonical taxonomy.
     ///
-    /// 変換対象 13 variant (Element は raikiri-style 側未実装、raikiri-style 側に
-    /// 生えたら arm 追加):
+    /// Convert 13 variants (`Element` is not yet implemented in raikiri-style;
+    /// add an arm when it becomes available):
     ///
-    /// - [`ContentComponent::Literal`] → [`ContentValueItem::Literal`] (`String` に変換)
+    /// - [`ContentComponent::Literal`] → [`ContentValueItem::Literal`] (convert to `String`)
     /// - [`ContentComponent::Counter`] → [`ContentValueItem::Counter`]
     ///   (`name: SmolStr` → [`Symbol::new`])
     /// - [`ContentComponent::Counters`] → [`ContentValueItem::Counters`]
     /// - [`ContentComponent::String`] → [`ContentValueItem::String`]
     /// - [`ContentComponent::Attr`] → [`ContentValueItem::Attr`]
     /// - [`ContentComponent::TargetCounter`] → [`ContentValueItem::TargetCounter`]
-    ///   (URL は [`Url::parse`]、失敗時 [`ContentValueConvertError::InvalidUrl`])
+    ///   (parse URL with [`Url::parse`]; on failure return [`ContentValueConvertError::InvalidUrl`])
     /// - [`ContentComponent::TargetCounters`] → [`ContentValueItem::TargetCounters`]
-    ///   (`separator` → `sep` field 名変換、design doc §7.1 line 1935 verbatim)
+    ///   (map field name `separator` → `sep`; design doc §7.1 line 1935 verbatim)
     /// - [`ContentComponent::TargetText`] → [`ContentValueItem::TargetText`]
     /// - [`ContentComponent::Content`] → [`ContentValueItem::Content`]
     ///   ([`ContentTextKeyword`] → [`ContentPart`] mapping)
     /// - [`ContentComponent::Image`] → [`ContentValueItem::Image`]
-    ///   (URL は [`Url::parse`]、失敗時 [`ContentValueConvertError::InvalidUrl`])
+    ///   (parse URL with [`Url::parse`]; on failure return [`ContentValueConvertError::InvalidUrl`])
     /// - [`ContentComponent::Contents`] → [`ContentValueItem::Contents`]
     ///   (unit variant 1:1)
     /// - [`ContentComponent::Quote`] → [`ContentValueItem::Quote`]
@@ -1212,7 +1212,7 @@ mod pagebox_px_baseline_tests {
 
     #[test]
     fn a4_dimensions_match_css_px_conversion() {
-        // 210mm × 297mm を CSS px (1/96 in) 換算:
+        // Convert 210mm × 297mm to CSS px (1/96 in):
         //   width  = 210mm × 96/25.4 ≈ 793.7008
         //   height = 297mm × 96/25.4 ≈ 1122.5197
         assert!(
@@ -1398,11 +1398,11 @@ mod pagedefaults_tests {
 
 #[cfg(test)]
 mod gcpm_directive_populate_tests {
-    //! GcpmDirective canonical 6 variant construction pins。
+    //! GcpmDirective canonical 6 variant construction pins.
     //!
-    //! design doc §7.1 line 1913-1920 verbatim shape。variant 追加 / rename /
-    //! payload type 変更で fail、`#[non_exhaustive]` catch-all は無し
-    //! (crate-local match は non_exhaustive の enforce 外)。
+    //! Verbatim shape from design doc §7.1 lines 1913-1920; adding / renaming
+    //! variants or changing payload types fails; no `#[non_exhaustive]` catch-all
+    //! (crate-local matches are not subject to non_exhaustive enforcement).
 
     use super::*;
 
@@ -1504,12 +1504,12 @@ mod gcpm_directive_populate_tests {
 
 #[cfg(test)]
 mod content_value_item_populate_tests {
-    //! ContentValueItem canonical 10 variant construction pins と、
-    //! Image/Contents/Quote/Leader 4 variant construction pins
-    //! (design doc §7.1 canonical 10 の外、raikiri-style
-    //! `ContentComponent` 1:1 mirror)。
+    //! Pin construction of the 10 canonical ContentValueItem variants and
+    //! construction of the four Image/Contents/Quote/Leader variants
+    //! (the latter four are outside the canonical 10 from design doc §7.1
+    //! and mirror raikiri-style `ContentComponent` one-to-one).
     //!
-    //! design doc §7.1 line 1926-1937 verbatim shape (canonical 10 分)。
+    //! Verbatim shape for the canonical 10 from design doc §7.1 lines 1926-1937.
 
     use super::*;
 
@@ -1638,7 +1638,7 @@ mod content_value_item_populate_tests {
 
     #[test]
     fn target_counters_sep_field_name_matches_design_doc() {
-        // design doc §7.1 line 1935: `sep: String` (not `separator`)。
+        // design doc §7.1 line 1935: `sep: String` (not `separator`).
         // Regression check for the deliberate field-name deviation from
         // ContentComponent::TargetCounters (which uses `separator`).
         let url = Url::parse("https://example.com/#foo").expect("valid URL");
@@ -1743,11 +1743,11 @@ mod content_value_item_populate_tests {
 mod content_component_bridge_tests {
     //! [`TryFrom<ContentComponent> for ContentValueItem`] roundtrip pins
     //! (canonical taxonomy conversion; Image/Contents/Quote/Leader arms
-    //! added as a 1:1 mirror of raikiri-style `ContentComponent`)。
+    //! added as a 1:1 mirror of raikiri-style `ContentComponent`).
     //!
-    //! Coverage: 13 of 14 [`ContentValueItem`] variants — [`Element`] は
-    //! [`ContentComponent::Element`] 未実装のため bridge 経路では現在到達
-    //! 不能。variant 追加時に arm を extend する。
+    //! Coverage: 13 of 14 [`ContentValueItem`] variants — [`Element`] is
+    //! unreachable through the bridge because [`ContentComponent::Element`]
+    //! is not yet implemented. Extend an arm when a variant is added.
 
     use super::*;
 
@@ -1776,9 +1776,9 @@ mod content_component_bridge_tests {
 
     #[test]
     fn counters_bridge_preserves_separator_field_name() {
-        // ContentComponent::Counters は `separator`、ContentValueItem::Counters も
-        // `separator` (design doc §7.1 line 1929 verbatim)。両者同名なので
-        // straight mapping。
+        // Both ContentComponent::Counters and ContentValueItem::Counters have
+        // a `separator` field (design doc §7.1 line 1929 verbatim), so the
+        // mapping is direct.
         let cc = ContentComponent::Counters {
             name: SmolStr::new("section"),
             separator: String::from("."),
@@ -1846,9 +1846,9 @@ mod content_component_bridge_tests {
 
     #[test]
     fn target_counters_bridge_maps_separator_to_sep() {
-        // ContentComponent::TargetCounters は `separator`、design doc §7.1
-        // line 1935 の ContentValueItem::TargetCounters は `sep` — bridge
-        // で名称変換される。
+        // ContentComponent::TargetCounters uses `separator`; design doc §7.1
+        // line 1935 names ContentValueItem::TargetCounters' field `sep`, so the
+        // bridge converts the field name.
         let cc = ContentComponent::TargetCounters {
             url: String::from("https://example.com/#foo"),
             name: SmolStr::new("section"),
@@ -1888,10 +1888,10 @@ mod content_component_bridge_tests {
     #[test]
     fn content_bridge_maps_text_keyword_to_content_part() {
         // ContentTextKeyword::Text (GCPM 3 §1.1.1.1) →
-        // ContentPart::Content (CSS Content 3 §2.6.3): 両者とも「要素の
-        // string value 全体」を指す同一概念への canonical mapping
-        // (spec の "default" 宣言には依らない — 詳細は
-        // content_text_keyword_to_content_part の doc comment 参照)。
+        // Canonical mapping to ContentPart::Content (CSS Content 3 §2.6.3):
+        // both denote the element's entire string value
+        // (not based on a spec "default" statement; see the docs for
+        // content_text_keyword_to_content_part).
         let cc = ContentComponent::Content {
             keyword: ContentTextKeyword::Text,
         };
@@ -1906,7 +1906,7 @@ mod content_component_bridge_tests {
 
     #[test]
     fn content_bridge_maps_before_after_first_letter_verbatim() {
-        // 非-default keyword は同名の ContentPart 値に mapping。
+        // Map non-default keywords to ContentPart values with the same names.
         for (kw, expected) in [
             (ContentTextKeyword::Before, ContentPart::Before),
             (ContentTextKeyword::After, ContentPart::After),
@@ -1977,8 +1977,8 @@ mod content_component_bridge_tests {
 
     #[test]
     fn image_bridge_returns_invalid_url_error() {
-        // Invalid URL (relative URL に base 無し) は InvalidUrl error
-        // (sibling target_counter_bridge_returns_invalid_url_error と同じ pattern)。
+        // A relative URL without a base is an InvalidUrl error
+        // (same pattern as sibling target_counter_bridge_returns_invalid_url_error).
         let cc = ContentComponent::Image {
             url: String::from("not a url"),
         };
@@ -1988,7 +1988,7 @@ mod content_component_bridge_tests {
 
     #[test]
     fn target_counter_bridge_returns_invalid_url_error() {
-        // Invalid URL (relative URL に base 無し) は InvalidUrl error。
+        // A relative URL without a base is an InvalidUrl error.
         let cc = ContentComponent::TargetCounter {
             url: String::from("not a url"),
             name: SmolStr::new("chapter"),
@@ -2023,13 +2023,13 @@ mod content_component_bridge_tests {
     #[test]
     fn convert_error_display_and_source_chain() {
         use std::error::Error as _;
-        // InvalidUrl は source() で url::ParseError を surface。
+        // InvalidUrl exposes url::ParseError through source().
         let parse_err = Url::parse("not a url").expect_err("invalid URL");
         let err = ContentValueConvertError::InvalidUrl(parse_err);
         assert!(err.to_string().contains("invalid URL"));
         assert!(err.source().is_some());
 
-        // UnsupportedVariant は source() none、Display で origin cite。
+        // UnsupportedVariant has no source(); Display cites its origin.
         let uv = ContentValueConvertError::UnsupportedVariant;
         assert!(uv.to_string().contains("unsupported ContentComponent"));
         assert!(uv.source().is_none());
@@ -2061,8 +2061,8 @@ mod content_source_tests {
 
     #[test]
     fn content_source_struct_update_from_default() {
-        // #[non_exhaustive] public struct の consumer construct pattern
-        // (sibling PageBox の struct-update pattern 継承)。
+        // Consumer construction pattern for a #[non_exhaustive] public struct
+        // (following sibling PageBox's struct-update pattern).
         let cs = ContentSource {
             items: vec![ContentValueItem::Literal(String::from("hello"))],
             ..Default::default()
@@ -2087,8 +2087,8 @@ mod running_template_id_tests {
         let id1 = RunningTemplateId::new(NodeId::new(1));
         let id2 = id1; // Copy
         assert_eq!(id1, id2);
-        // Hash + Eq — HashMap key として使える (raikiri-dom
-        // RunningTemplateStore.parsed_templates keying rationale)。
+        // Hash + Eq: usable as a HashMap key (raikiri-dom
+        // RunningTemplateStore.parsed_templates keying rationale).
         let mut m: HashMap<RunningTemplateId, &'static str> = HashMap::new();
         m.insert(id1, "template-1");
         assert_eq!(m.get(&id2), Some(&"template-1"));

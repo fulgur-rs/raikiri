@@ -15,41 +15,41 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 use super::html_quirks::{push_img_dimension_hints, push_margin_collapsing_quirk_declarations};
 use super::selector_match::{match_complex_selector_list, selector_matches_pseudo_element};
 
-/// selectors 由来の 32-bit specificity。u32 で完全順序比較。
+/// A 32-bit specificity from selectors, totally ordered as `u32`.
 pub(crate) type Specificity = u32;
 
-/// inline style の specificity。CSS Cascading L4 §6.1 "Cascade Sorting Order"
-/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Specificity 段 verbatim:
+/// Inline-style specificity. CSS Cascading L4 §6.1 "Cascade Sorting Order"
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>, Specificity paragraph:
 /// "declarations that do not belong to a style rule (such as the contents of a
 /// style attribute) are considered to have a specificity higher than any
-/// selector." (`(1, 0, 0, 0)` は CSS 2.1 §6.4.3 の旧表現であり L4 の規定ではない)。
-/// selectors crate は 32-bit packed で `id << 20 | class << 10 | element` を使う。
+/// selector." (`(1, 0, 0, 0)` is older CSS 2.1 §6.4.3 notation, not L4.)
+/// The selectors crate packs 32 bits as `id << 20 | class << 10 | element`.
 /// `1 << 30` is above the selector-specificity range used by this adapter,
 /// satisfying the CSS ordering rule.
 pub(crate) const INLINE_SPECIFICITY: Specificity = 1 << 30;
-/// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
+/// Inline-style source_order: after all stylesheet rules (last occurrence).
 pub(crate) const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 
-/// HTML presentational hint (`<img width>` / `<img height>`,
-/// [`push_img_dimension_hints`]) の specificity。HTML LS §15.2 "The CSS user
-/// agent style sheet and presentational hints"
+/// Specificity of HTML presentational hints (`<img width>` / `<img height>`,
+/// [`push_img_dimension_hints`]). HTML LS §15.2 "The CSS user agent style
+/// sheet and presentational hints"
 /// (<https://html.spec.whatwg.org/multipage/rendering.html#presentational-hints>)
-/// がこの種の hint を "author-level **zero-specificity** presentational
-/// hints" と呼ぶ — 0 はその verbatim な表現 (CSS Cascading L5 §6.5
-/// <https://drafts.csswg.org/css-cascade-5/#preshint> は origin 選択の
-/// 枠組みを定義するのみで "specificity" という語自体は使っていない —
-/// 引用元を混同しないよう分離。origin 選択の根拠は
-/// [`push_img_dimension_hints`] doc の "Cascade origin" 節参照)。
+/// calls these "author-level **zero-specificity** presentational hints".
+/// The `0` follows that wording directly. CSS Cascading L5 §6.5
+/// <https://drafts.csswg.org/css-cascade-5/#preshint> defines origin choices
+/// but does not itself use "specificity"; do not conflate the two sources.
+/// For the origin choice, see the "Cascade origin" section of the
+/// [`push_img_dimension_hints`] docs.
 pub(crate) const PRESENTATIONAL_HINT_SPECIFICITY: Specificity = 0;
-/// 同 hint の source_order。`0` — 実 stylesheet の最初の rule
-/// ([`crate::ruletree::RuleTree::add_stylesheet`] は空 `RuleTree` への
-/// 最初の rule に `source_order = 0` を採番する) と数値上 tie し得る値だが、
-/// hint 専用の `cascade_rank` tier ([`Origin::AuthorPresentationalHint`]) を
-/// 導入して以降、この tie は実際には発生しない — rank 差が specificity/source_order より先に
-/// tuple compare で決着するため ([`push_img_dimension_hints`] doc の
-/// "Cascade origin" 節参照)。`0` という値自体は「他候補と衝突しない値」を
-/// 意図したものではなく、単に real stylesheet rule の source_order と同じ
-/// 値域を使うという単純さのための選択。
+/// Source order of the same hint. `0` can numerically tie with the first
+/// actual stylesheet rule ([`crate::ruletree::RuleTree::add_stylesheet`]
+/// assigns `source_order = 0` to the first rule in an empty `RuleTree`).
+/// Since the dedicated `cascade_rank` tier was added for
+/// [`Origin::AuthorPresentationalHint`], that tie cannot affect the cascade:
+/// origin rank is compared before specificity and source_order. See the
+/// "Cascade origin" section of the [`push_img_dimension_hints`] docs.
+/// The value `0` was chosen for simplicity in the same numeric range as
+/// stylesheet source_order, not as a value guaranteed to be collision-free.
 pub(crate) const PRESENTATIONAL_HINT_SOURCE_ORDER: u32 = 0;
 
 /// Margin-collapsing quirks zeroing declaration
@@ -77,9 +77,9 @@ pub(crate) const MARGIN_COLLAPSING_QUIRK_SPECIFICITY: Specificity = INLINE_SPECI
 /// source_order uses" is needed here.
 pub(crate) const MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER: u32 = 0;
 
-/// 1 candidate declaration = `(value, important, origin, specificity, source_order)`。
-/// `collect_cascaded` が populate、`pick_winners` が rank 化して winner を選ぶ
-/// (`Origin` を含む — clippy::type_complexity 回避のため alias 化)。
+/// One candidate declaration: `(value, important, origin, specificity, source_order)`.
+/// `collect_cascaded` populates it; `pick_winners` ranks and selects winners.
+/// Alias the tuple (including `Origin`) to avoid clippy::type_complexity.
 pub(crate) type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
 
 /// A custom-property candidate. Unlike ordinary declarations, custom
@@ -87,54 +87,50 @@ pub(crate) type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
 /// `PropertyKey` slot.
 pub(crate) type CustomCascadedDecl = (CustomProperty, bool, Origin, Specificity, u32);
 
-/// [`collect_cascaded`] の出力 — 全 node 分の candidate を単一 flat `Vec` に
-/// 積み、node ごとの部分区間を [`Range`] で引く。
+/// Output of [`collect_cascaded`]: all nodes' candidates in one flat `Vec`,
+/// indexed by per-node [`Range`] values.
 ///
 /// The flat arena keeps candidate storage contiguous and records one range per
 /// node. This avoids per-node candidate containers while preserving document
 /// order.
 ///
-/// # なぜ struct で wrap するか (bare `(Vec<_>, HashMap<_, Range<usize>>)` にしないか)
+/// # Why wrap this in a struct instead of `(Vec<_>, HashMap<_, Range<usize>>)`?
 ///
-/// [`pick_winners`] の `winner.idx` は「渡された **その** slice 内の位置」で
-/// あり、**範囲外にならず静かに別 node の宣言を読む** 経路がある。arena 化で新たに生まれる同型の
-/// 危険は「[`candidates`](Self::candidates) を経由せず、`decls` 全体や
-/// `decls[range.start..]` のような**部分的に間違ったスライス**を
-/// [`super::inherit::apply_winners`] に渡してしまう」こと — この場合も範囲外にはならず、
-/// 別 node の候補を静かに拾う。通常の呼び出し側 (実装コード) には
-/// [`candidates`](Self::candidates) だけを使わせることで、
-/// 「この node 自身の区間ちょうど」以外のスライスを組み立てさせない。
+/// The `winner.idx` from [`pick_winners`] indexes **the supplied slice**. A
+/// wrong slice can silently select a declaration for another node without
+/// going out of bounds. The flat arena adds precisely this risk: passing all
+/// `decls` or an incomplete slice such as `decls[range.start..]` to
+/// [`super::inherit::apply_winners`] instead of using
+/// [`candidates`](Self::candidates). Make production callers use only
+/// [`candidates`](Self::candidates), which supplies exactly this node's range.
 /// The `decls`/`ranges` fields are `pub(crate)` so the owning cascade
 /// module can maintain the non-overlapping range invariant; implementation
 /// code reads candidates through the typed accessors.
 ///
-/// `pub(crate)` は [`super::inherit::resolve_inheritance`] 自身が `pub(crate)` (他 module の
-/// doc からの intra-doc link のため) であることに追随するだけで、他 module
-/// から構築/操作されることは想定していない — 構築は [`super::cascade`] が行い、
-/// 内容の書き込みは [`collect_cascaded`] に閉じている (いずれも本 module)。
+/// `pub(crate)` follows [`super::inherit::resolve_inheritance`], which is
+/// also `pub(crate)` for an intra-doc link from another module. Other modules
+/// are not meant to construct or manipulate this arena: [`super::cascade`]
+/// constructs it, and [`collect_cascaded`] populates it in this module.
 pub(crate) struct CascadedArena {
-    /// 全 node の candidate を document 内 visit 順で連結した flat 領域。
+    /// Flat storage for all nodes' candidates in document visit order.
     pub(crate) decls: Vec<CascadedDecl>,
-    /// node ごとの `decls` 内部分区間。空 (no candidate) の node はここに
-    /// entry を持たない — 旧実装の `if !per_node.is_empty() { out.insert(..) }`
-    /// と同じ「無ければ握らない」契約。
+    /// Per-node ranges in `decls`. A node with no candidates has no entry,
+    /// matching the old `if !per_node.is_empty() { out.insert(..) }` contract.
     pub(crate) ranges: HashMap<StyleNodeId, Range<usize>>,
     /// All custom-property candidates in document visit order.
     custom_decls: Vec<CustomCascadedDecl>,
     /// Per-node ranges into `custom_decls`.
     custom_ranges: HashMap<StyleNodeId, Range<usize>>,
-    /// `decls`/`ranges` と同じ flat-arena 技法だが、key が「originating
-    /// element の `StyleNodeId`」ではなく「`(originating element の
-    /// StyleNodeId, その `::before`/`::after`)`」— 1 element が `::before`/
-    /// `::after` 両方の候補を独立に持ちうるため。空 (no candidate) の
-    /// `(id, pseudo)` の組はここに entry を持たない (同じ「無ければ握らない」
-    /// 契約)。
+    /// Flat arena like `decls`/`ranges`, but keyed by the originating
+    /// element's `StyleNodeId` plus its `::before` or `::after` pseudo-element.
+    /// One element may have independent candidates for both. Empty `(id,
+    /// pseudo)` pairs have no entry, following the same contract.
     pseudo_decls: Vec<CascadedDecl>,
-    /// `(id, pseudo)` ごとの `pseudo_decls` 内部分区間。
+    /// Per-`(id, pseudo)` ranges in `pseudo_decls`.
     pseudo_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
-    /// `pseudo_decls` の custom-property 版。
+    /// Custom-property counterpart of `pseudo_decls`.
     pseudo_custom_decls: Vec<CustomCascadedDecl>,
-    /// `(id, pseudo)` ごとの `pseudo_custom_decls` 内部分区間。
+    /// Per-`(id, pseudo)` ranges in `pseudo_custom_decls`.
     pseudo_custom_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
 }
 
@@ -152,13 +148,12 @@ impl CascadedArena {
         }
     }
 
-    /// `id` 自身の candidate 一覧 — [`pick_winners`] にそのまま渡せる
-    /// **自 node 専用**のスライス。
+    /// Candidate list for `id`: a slice **only for this node**, suitable for
+    /// passing directly to [`pick_winners`].
     ///
-    /// 返す slice は常に `&self.decls[range]` で `range` は `id` のために
-    /// `collect_cascaded` が積んだ区間ちょうど — 呼び出し側がこれ以外の形の
-    /// slice (全体、あるいは `range.start` だけずらしたもの) を組み立てる経路は
-    /// 本 struct に存在しない。
+    /// The slice is always `&self.decls[range]`, where `range` is exactly the
+    /// range filled by `collect_cascaded` for `id`. This struct exposes no
+    /// path for callers to assemble the full slice or shift `range.start`.
     pub(crate) fn candidates(&self, id: StyleNodeId) -> Option<&[CascadedDecl]> {
         self.ranges.get(&id).map(|range| &self.decls[range.clone()])
     }
@@ -169,8 +164,8 @@ impl CascadedArena {
             .map(|range| &self.custom_decls[range.clone()])
     }
 
-    /// `(id, pseudo)` の candidate 一覧 — [`candidates`](Self::candidates) の
-    /// `::before`/`::after` 版。
+    /// Candidates for `(id, pseudo)`: the `::before`/`::after` counterpart
+    /// of [`candidates`](Self::candidates).
     pub(crate) fn pseudo_candidates(
         &self,
         id: StyleNodeId,
@@ -217,49 +212,50 @@ fn push_cascaded_decl(
     }
 }
 
-/// [`pick_winners`] の scratch slot — 1 property key の暫定勝者。
+/// Scratch slot for [`pick_winners`]: the provisional winner for one key.
 ///
-/// [`idx`](Self::idx) が [`PropertyValue`] 本体ではなく **index** なのが要点:
+/// Crucially, [`idx`](Self::idx) is an **index**, not a [`PropertyValue`]:
+/// - The slot is `Copy` with no `Drop`, so [`Option::take`] resets it without
+///   dropping or reallocating the entire buffer.
+/// - Losing candidates are never cloned. Previously each candidate's
+///   `value.clone()` was discarded if it lost; now only the winner is cloned
+///   once for [`super::inherit::apply_value`].
 ///
-/// - slot が `Copy` になり `Drop` を持たないので、slot の reset が
-///   [`Option::take`] だけで済む (buffer 全体を drop / 再確保しなくてよい)。
-/// - 敗者を clone しなくなる。従来は候補 1 つごとに `value.clone()` してから
-///   比較で捨てていたが、clone は winner を [`super::inherit::apply_value`] に渡す 1 回だけになる。
-///
-/// sibling の [`CascadedDecl`] は tuple alias のままだが、そちらは常に named
-/// binding へ destructure され positional access されない。本型は [`beats`] が
-/// 3 field を**順序付き比較**するので named field にしてある —
-/// [`specificity`](Self::specificity) は `u32` の alias、隣の
-/// [`source_order`](Self::source_order) も `u32` であり、tuple の `.1` / `.2`
-/// では取り違えても compile が通って cascade の勝敗が静かに壊れる。
+/// The sibling [`CascadedDecl`] remains a tuple alias because it is always
+/// destructured into named bindings, never accessed positionally. This type
+/// uses named fields because [`beats`] compares three fields **in order**:
+/// [`specificity`](Self::specificity) and [`source_order`](Self::source_order)
+/// are both `u32`; swapping tuple positions `.1` and `.2` would compile and
+/// silently change cascade winners.
 #[derive(Clone, Copy)]
 pub(crate) struct RankedDecl {
-    /// [`cascade_rank`] の origin + `!important` 優先度。
+    /// Origin plus `!important` precedence from [`cascade_rank`].
     pub(crate) rank: u8,
-    /// selector specificity (inline style は [`INLINE_SPECIFICITY`])。
+    /// Selector specificity (inline style uses [`INLINE_SPECIFICITY`]).
     pub(crate) specificity: Specificity,
-    /// stylesheet 内出現順 (inline style は [`INLINE_SOURCE_ORDER`])。
+    /// Source order in the stylesheet (inline style uses [`INLINE_SOURCE_ORDER`]).
     pub(crate) source_order: u32,
-    /// [`pick_winners`] に渡された `candidates` slice 内の位置。
+    /// Position in the `candidates` slice passed to [`pick_winners`].
     pub(crate) idx: usize,
 }
 
-/// Cascade origin + `!important` flag に基づく優先度 rank。
-/// [`Origin::AuthorPresentationalHint`] と [`Origin::User`] の 2 origin は
-/// 当初の UA/Author 2-origin 実装に後から追加されたものであり、特に
-/// [`Origin::User`] の追加時には単純な番号ずらしではなく 4-tier 全体を
-/// re-derive している (下記参照)。
+/// Precedence rank from cascade origin and `!important`.
+/// [`Origin::AuthorPresentationalHint`] and [`Origin::User`] were added after
+/// the initial UA/Author implementation. Adding [`Origin::User`] required
+/// re-deriving all four origin tiers, not merely shifting rank numbers.
 ///
-/// 高いほど勝つ。CSS Cascading L4 §6.1 "Cascade Sorting Order"
-/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の Origin and Importance
-/// 段を表現する (origin の定義は §6.2
-/// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>、`!important` に
-/// よる反転は §6.3 <https://www.w3.org/TR/css-cascade-4/#importance>)。
+/// Higher ranks win. This represents Origin and Importance in CSS Cascading
+/// L4 §6.1 "Cascade Sorting Order"
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>. See §6.2
+/// <https://www.w3.org/TR/css-cascade-4/#cascading-origins> for origins and
+/// §6.3 <https://www.w3.org/TR/css-cascade-4/#importance> for the `!important`
+/// reversal.
 ///
-/// # UA / User / Author の 3-origin 部分 (spec-verbatim)
+/// # UA / User / Author: three origins (verbatim spec order)
 ///
-/// §6.1 "Cascade Sorting Order" は origin 優先度を降順 8 項目のリストで
-/// 定める (transition/animation の 2 項目は本 crate 未実装のため以下では省略):
+/// §6.1 "Cascade Sorting Order" lists origins from strongest to weakest.
+/// The six relevant entries follow; transitions and animations are not yet
+/// implemented in this crate:
 /// - "Important user agent declarations"
 /// - "Important user declarations"
 /// - "Important author declarations"
@@ -268,23 +264,20 @@ pub(crate) struct RankedDecl {
 /// - "Normal user agent declarations"
 ///
 /// "Declarations from origins earlier in this list win over declarations
-/// from later origins" — すなわち降順优先度を昇順 (弱い→強い) rank に
-/// 反転すると: `Normal UA < Normal User < Normal Author < Important Author
-/// < Important User < Important UA`。UA/User/Author の 3-origin に関しては
-/// これが spec の直接記述であり、Important 段の User の位置 (`Important
-/// Author < Important User < Important UA`) も含めて **verbatim** — 導出
-/// ではない。
+/// from later origins". Reversing that strongest-to-weakest list to ascending
+/// rank gives `Normal UA < Normal User < Normal Author < Important Author
+/// < Important User < Important UA`. This ordering for the three origins,
+/// including Important User's position (`Important Author < Important User
+/// < Important UA`), comes **directly** from the spec, not a derivation.
 ///
-/// # [`Origin::AuthorPresentationalHint`] の挿入 (CSS Cascading L5 §6.5)
+/// # Inserting [`Origin::AuthorPresentationalHint`] (CSS Cascading L5 §6.5)
 ///
-/// [`Origin::AuthorPresentationalHint`] は CSS Cascading L5 §6.5
-/// "Precedence of Non-CSS Presentational Hints"
-/// (<https://drafts.csswg.org/css-cascade-5/#preshint>) が定める "author presentational hint origin"。L5 自身の §6.1 も
-/// 上記と同じ 8 項目リストのままで hint origin をそこに明示的には
-/// 挿入しない (hint の位置付けは §6.5 側の
-/// 独立した記述に委ねられている)。以下は §6.5 の段落から**関連する抜粋を
-/// verbatim 引用**したもの (段落全体の逐語コピーではない — 完全性を主張
-/// しない):
+/// [`Origin::AuthorPresentationalHint`] is the "author presentational hint
+/// origin" defined by CSS Cascading L5 §6.5 "Precedence of Non-CSS
+/// Presentational Hints" (<https://drafts.csswg.org/css-cascade-5/#preshint>).
+/// L5 §6.1 still lists the same eight entries without explicitly inserting
+/// this origin; §6.5 describes its placement separately. These are
+/// **relevant excerpts** from §6.5, not a verbatim copy of its entire text:
 /// - "All document language-based styling must be translated to
 ///   corresponding CSS rules and enter the cascade as rules in **either
 ///   the UA-origin or** a special-purpose author presentational hint
@@ -300,52 +293,44 @@ pub(crate) struct RankedDecl {
 /// - "however for the purpose of the revert keyword (but not for the
 ///   revert-layer keyword) it is considered part of the author origin"
 ///
-/// **どの tier を選ぶかは host language 次第、という点に注意**: 上記 3 番目の
-/// 引用の通り、spec は presentational hint の origin 配置を host language に
-/// 委ねる (UA-origin か author-origin かを明示的に選べる、SVG は author
-/// origin を選ぶ例)。HTML Living Standard §15.2 は自身のこの選択を
-/// "author-level zero-specificity presentational hints" と呼ぶだけで、
-/// CSS-Cascade-5 の origin taxonomy の用語 ("UA-origin" / "author-origin" /
-/// "author presentational hint origin") を一切参照しない — つまり HTML LS
-/// 自身は「UA-origin」「author-origin」「author presentational hint
-/// origin」のどれを選んだとも明言していない。`<img>` の width/height hint を
-/// 独立 origin tier ([`Origin::AuthorPresentationalHint`]) に置くという本
-/// crate の判断 ([`push_img_dimension_hints`] doc 参照) は、したがって
-/// **spec が直接指定する結論ではなく**、"author-level" という HTML LS の
-/// 言葉遣いと上記引用群を突き合わせた this crate の解釈 (spec 上の直接の
-/// 裏付けがない defensible な judgment call)。
+/// **The host language chooses the tier.** The third quote above lets the
+/// host language choose UA or author origin explicitly (SVG chooses author).
+/// HTML Living Standard §15.2 only calls its hints "author-level
+/// zero-specificity presentational hints". It never uses the CSS-Cascade-5
+/// terms "UA-origin", "author-origin", or "author presentational hint origin",
+/// and thus does not explicitly select one of those tiers. Assigning `<img>`
+/// width/height hints to the independent [`Origin::AuthorPresentationalHint`]
+/// tier (see [`push_img_dimension_hints`]) is this crate's interpretation of
+/// "author-level" and the quoted spec text: a defensible judgment call,
+/// **not a placement directly specified by the standard**.
 ///
-/// 上記 §6.5 の引用が直接定めるのは **Normal 段の位置**だけ: hint は
-/// "between the regular user origin and the author origin" — Normal User
-/// と Normal Author の間。Important 段での `AuthorPresentationalHint` の
-/// 位置は spec に verbatim 記述が無い — presentational hint は host
-/// language 側 (HTML LS §15.2) が生成するもので常に non-important なため、
-/// spec 側にも important-hint tier を定める動機が無い。この不在を、
-/// origin 独立性 (「独立 origin である」という上記引用) と §6.1 の
-/// **reversal-equivalence** から導出する: UA/User/Author の 3-origin に
-/// 限れば、Important 段の昇順順序 (`Author < User < UA`) は Normal 段の
-/// 昇順順序 (`UA < User < Author`) のちょうど逆順になっている — これは
-/// 類推ではなく、§6.1 の同じ 8 項目リストから直接読み取れる事実 (上記
-/// 「UA / User / Author の 3-origin 部分」節参照)。hint (4th origin) に
-/// この同じ reversal 機構をそのまま延長するのが、追加の仮定を要さない
-/// 最小の拡張であり、それが以下の順序を導く: Normal 段で hint が User と
-/// Author の間に挟まる (「独立した第三者」として) のと同じ相対位置を、
-/// reversal された Important 段 (Important Author と Important User の
-/// 間) でも保つ、という位置取りを採用する (verbatim ではない、derived —
-/// ただし spec 自身の reversal 機構をそのまま延長しただけで、恣意的な
-/// 選択の余地は無い)。
+/// The §6.5 quotes directly place hints only at the **Normal tier**:
+/// "between the regular user origin and the author origin", i.e. between
+/// Normal User and Normal Author. They do not explicitly place
+/// `AuthorPresentationalHint` at the Important tier. Host-language-generated
+/// hints (HTML LS §15.2) are always non-important, so the spec has no reason
+/// to define an important-hint tier. Derive this otherwise absent position
+/// from independent-origin status (quoted above) and the §6.1
+/// **reversal-equivalence**: for UA/User/Author, ascending Important order
+/// (`Author < User < UA`) is exactly the reverse of ascending Normal order
+/// (`UA < User < Author`). This is a direct observation of the §6.1 list,
+/// not an analogy. Extending the same reversal to a fourth origin is the
+/// smallest extension without additional assumptions: the hint stays
+/// between User and Author in Normal order, and between Important Author
+/// and Important User in reversed Important order. This position is
+/// **derived**, not verbatim, from the spec's own reversal mechanism.
 ///
-/// # 4-tier 全体の rank 表 (re-derivation)
+/// # Rank table for all four origins (re-derived)
 ///
-/// 上記 2 節を合成すると、Normal / Important 各 4 origin の順序は:
-/// - Normal   : UA < User < AuthorPresentationalHint < Author (spec-verbatim
-///   な UA/User/Author の骨格に、spec-verbatim な hint の位置 — User と
-///   Author の間 — を挿入)
-/// - Important: Author < AuthorPresentationalHint < User < UA (反転した
-///   spec-verbatim な Author/User/UA の骨格に、derived な hint の位置 —
-///   Important Author と Important User の間 — を挿入)
+/// Combining these two sections orders the four origins at each tier:
+/// - Normal: UA < User < AuthorPresentationalHint < Author (insert the
+///   spec-defined hint position between User and Author into the
+///   spec-defined UA/User/Author ordering).
+/// - Important: Author < AuthorPresentationalHint < User < UA (insert the
+///   derived hint position between Important Author and Important User into
+///   the reversed, spec-defined Author/User/UA ordering).
 ///
-/// rank 番号を割り当てると (0 が最弱、7 が最強):
+/// Assign ranks with 0 weakest and 7 strongest:
 ///
 /// | origin                     | Normal | Important |
 /// |-----------------------------|--------|-----------|
@@ -354,31 +339,29 @@ pub(crate) struct RankedDecl {
 /// | `AuthorPresentationalHint`  | 2      | 5         |
 /// | `Author`                    | 3      | 4         |
 ///
-/// 検算: `min(Important) = 4 > max(Normal) = 3` — 「any important
-/// declaration beats any normal declaration」(§6.1/§6.3) を満たす。UA/User/
-/// Author の 3 列はいずれも Normal 昇順・Important 降順が spec-verbatim の
-/// 骨格 (`0,1,3` と `7,6,4`) と一致し、hint の挿入 (`2` / `5`) は両列とも
-/// 「User と Author の間」という同じ relative position を保つ (対称)。
+/// Check: `min(Important) = 4 > max(Normal) = 3`, so any important
+/// declaration beats any normal declaration (§6.1/§6.3). For UA/User/Author,
+/// ascending Normal (`0,1,3`) and descending Important (`7,6,4`) follow the
+/// spec directly. The inserted hint ranks (`2`/`5`) retain the same relative
+/// position between User and Author in both orderings.
 ///
-/// `(AuthorPresentationalHint, true)` の arm は現状
-/// [`push_img_dimension_hints`] から到達しない (常に `important = false` で
-/// push する)。`(User, false)` / `(User, true)` の 2 arm は当初どの
-/// production 呼び出し元からも到達しなかったが、consumer 提供
-/// `extra_stylesheets` が [`Origin::User`] へ route されるようになったため、
-/// 今は両方とも到達する
-/// ([`Origin::User`] の doc 参照) — [`crate::page::cascade_page`] も同じ
-/// [`Origin`] を経由するため、これらも `unreachable!()` にはせず total
-/// function として値を返す (この判断自体は producer の有無に関わらず
-/// 元々正しかった)。
+/// [`push_img_dimension_hints`] always pushes `important = false`, so its
+/// `(AuthorPresentationalHint, true)` arm is currently unreachable. The two
+/// User arms (`(User, false)` / `(User, true)`) originally had no production
+/// caller. Consumer-provided `extra_stylesheets` now route to [`Origin::User`],
+/// making both arms reachable (see the [`Origin::User`] docs). Because
+/// [`crate::page::cascade_page`] also uses [`Origin`], keep these as total
+/// function arms rather than `unreachable!()`. This was the right choice
+/// even before a producer existed.
 ///
-/// `revert` keyword carve-out (上記 4 番目の引用: "it is considered part of
-/// the author origin" — `revert-layer` は対象外) は本 crate に現状影響しない
-/// — `revert`/`revert-layer` CSS-wide keyword 自体がまだ未実装
-/// ([`crate::property`] の "CSS-wide keyword (canonical)" 節参照)。実装時に
-/// この carve-out の special-case が必要になる。
+/// The `revert` keyword carve-out (the fourth quote: "it is considered part
+/// of the author origin"; not `revert-layer`) does not yet affect this crate:
+/// neither CSS-wide keyword is implemented (see the "CSS-wide keyword
+/// (canonical)" section of [`crate::property`]). Implementation will need
+/// a special case for this carve-out.
 ///
-/// `@page` cascade も同じ origin ordering を共有するため
-/// `pub(crate)` で公開し [`crate::page::cascade_page`] から reuse。
+/// The `@page` cascade shares this origin ordering, so expose this function
+/// as `pub(crate)` for reuse by [`crate::page::cascade_page`].
 pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     match (origin, important) {
         (Origin::UserAgent, false) => 0,
@@ -392,29 +375,26 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     }
 }
 
-/// `collect_cascaded` は DFS で node を訪れる。descendant/child combinator に
-/// 未対応だった頃は「per-node の処理は他の node の状態に依存しないため
-/// 訪問順は無関係」だった。descendant/child combinator の追加でこの前提は
-/// **もう成り立たない** — 各 element の selector matching は本関数 local の
-/// `ancestor_path`（「これまでに訪れた祖先 element の id 列」）を参照するため、
-/// **祖先を子孫より先に処理する pre-order 訪問が正しさの前提**になった (祖先が
-/// 先に積まれていなければ descendant/child の ancestor 参照が空振りする)。
-/// overflow 回避のため explicit `Vec` stack で iterative に書く方針
-/// 自体は変わらないが、stack の要素は素の `StyleNodeId`
-/// ではなく `(StyleNodeId, usize)` — 後者は「この node を処理する直前に
-/// ancestor path を truncate すべき長さ」。詳細は本関数の実装コメント参照。
+/// `collect_cascaded` traverses nodes with DFS. Before descendant/child
+/// combinators were supported, per-node work was independent of other nodes
+/// and visit order did not matter. This is **no longer true**: selector
+/// matching uses the local `ancestor_path` (IDs of elements already visited).
+/// Correctness requires pre-order traversal with ancestors before descendants;
+/// otherwise ancestor lookups for combinators fail. The traversal remains
+/// iterative with an explicit `Vec` stack to avoid overflow, but each entry
+/// is `(StyleNodeId, usize)` rather than just `StyleNodeId`: the second value
+/// is the length to which the ancestor path must be truncated before the node.
+/// See the implementation comments below.
 ///
-/// # flat arena への書き込み
+/// # Writing to the flat arena
 ///
-/// 1 node 分の candidate は `out.decls` に**連続して**積まれる —
-/// stylesheet rule matching (rule/declaration の source order) → inline
-/// style の順に push し、両方終わったところで `start..out.decls.len()` を
-/// その node の区間として登録する。次の node の処理が始まるまで他の push が
-/// 割り込まないことが「区間が連続」の根拠であり、
-/// [`CascadedArena::candidates`] が返す slice の index が
-/// [`pick_winners`]/[`super::inherit::apply_winners`] にとって**その node 自身の**
-/// `candidates` 内 index であり続ける前提そのもの (global index space を
-/// そのまま渡すと壊れる、という点に注意)。
+/// Candidates for one node are appended **contiguously** to `out.decls`:
+/// matching stylesheet rules in source order, then inline style. Once both
+/// complete, `start..out.decls.len()` becomes the node's range. No other
+/// append occurs before the next node. Thus indices in the slice returned
+/// by [`CascadedArena::candidates`] remain indices into **that node's own**
+/// `candidates` for [`pick_winners`]/[`super::inherit::apply_winners`].
+/// Passing indices in the global arena instead would break this contract.
 #[cfg_attr(
     not(test),
     expect(
@@ -494,10 +474,9 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     while let Some((id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
         if let Some(node) = dom.node(id) {
-            // <template> 子孫 + 将来の inert subtree を統一 skip。
-            // silent bug fix: 従来 template 内 element にも rule matching が走り
-            // arena (旧実装では per-node Vec<CascadedDecl>) が waste で膨らんで
-            // いた。
+            // Skip descendants of <template> and future inert subtrees alike.
+            // Silent bug fix: rule matching previously ran inside templates,
+            // wasting arena space (formerly per-node Vec<CascadedDecl>).
             if !node.is_in_document() {
                 continue;
             }
@@ -604,11 +583,10 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         None,
                     ) {
                         for decl in &rule.declarations {
-                            // shorthand を longhand に展開してから candidate に
-                            // 積む (parse 出口の展開だけでは `RuleTree` の
-                            // post-parse mutation 経路を守れないため)。
-                            // rationale は `crate::rule::expand_shorthand_into`
-                            // doc に集約。
+                            // Expand shorthands before adding longhand
+                            // candidates. Expanding only during parsing does
+                            // not cover post-parse mutation of `RuleTree`.
+                            // See the `crate::rule::expand_shorthand_into` docs.
                             expand_shorthand_into(decl, |d| {
                                 push_cascaded_decl(
                                     &mut out.decls,
@@ -744,23 +722,18 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 // truncation depth).
                 ancestor_path.push(id);
             }
-            // stack は LIFO なので document order で push するため reverse。
-            // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
-            // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
-            // `Vec` を経由しない。`stack` 自体の
-            // capacity growth は元の `for .. { stack.push(..) }` と同じ
-            // amortized pattern のままで、ここで削れるのは「今回だけの捨て
-            // Vec」1 本分のみ。
+            // The stack is LIFO, so reverse children to visit them in document
+            // order. Extend `stack` directly from `child_ids`, then reverse
+            // only the newly appended tail in place. This removes one
+            // disposable intermediate `Vec`; `stack` retains the same
+            // amortized capacity-growth pattern as `for .. { stack.push(..) }`.
             //
-            // なぜ document order (pre-order) を保つ**必要がある**か (descendant/
-            // child combinator 対応の追加でここの結論が反転): 本関数冒頭のコメント
-            // の通り、descendant/child combinator matching は
-            // `ancestor_path` — DFS の訪問順そのもの — に依存する。子を
-            // 親より先に訪れると `ancestor_path` にまだ親が積まれておらず、
-            // 子の combinator matching が誤って不一致になる。旧
-            // (combinator 非対応時代) の「訪問順は無関係、
-            // 挙動一致のためだけに維持している」という位置づけはここで終わり
-            // — 現在は正しさ上の要請。
+            // Document-order pre-order is now **necessary** for correctness.
+            // Descendant/child combinator matching reads `ancestor_path`, which
+            // reflects DFS visit order. Visiting a child before its parent
+            // leaves the parent absent and falsely rejects the match. Before
+            // combinators were supported, visit order only preserved behavior;
+            // that older rationale no longer applies.
             let child_depth = ancestor_path.len();
             let start = stack.len();
             stack.extend(dom.child_ids(id).map(|child| (child, child_depth)));
@@ -769,37 +742,38 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     }
 }
 pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
-    // selectors crate の Selector::specificity は 32-bit packed integer を返す。
+    // Selector::specificity in selectors returns a packed 32-bit integer.
     selector.specificity()
 }
-/// property key ごとに勝者 declaration を pick (specificity + !important + source order)。
+/// Pick the winning declaration for each property key using specificity,
+/// `!important`, and source order.
 ///
-/// 結果は返さず `best` に書く。`best` は [`PropertyKey`] の discriminant を
-/// そのまま index にした **direct-address table** で、`best[k as usize]` が
-/// key `k` の勝者 (= `candidates` 内 index) を持つ。
+/// Write results to `best` rather than returning them. `best` is a
+/// **direct-address table** indexed by the [`PropertyKey`] discriminant:
+/// `best[k as usize]` stores the winner for `k` (an index into `candidates`).
 ///
-/// # なぜ `HashMap` を返さないのか
+/// # Why not return a `HashMap`?
 ///
-/// [`PropertyKey`] は payload を持たない ~40 variant の 1-byte enum、すなわち
-/// **既に密な小整数**であり、hash して bucket を引く価値がない。従来実装は
-/// per-node に `HashMap` を 2 つ (作業用と戻り値) 建てており、n=1000 node の
-/// cascade で 3,667 allocs / 3.0 MB — 全 heap traffic の 56.7% を占めていた。
-/// slot 配列にすると allocation は buffer が最大 index まで育つ最初の数 node
-/// だけで済み、以降の node は再利用で 0 alloc になる。
+/// [`PropertyKey`] is a payload-free one-byte enum with about 40 variants:
+/// **already dense small integers** that do not need hashing and buckets.
+/// The old implementation allocated two per-node `HashMap`s (working data and
+/// return value), accounting for 3,667 allocations / 3.0 MB across 1,000
+/// nodes: 56.7% of total cascade heap traffic. With slots, only the first
+/// few nodes grow the buffer to its largest index; later nodes reuse it with
+/// zero allocations.
 ///
-/// 唯一の caller は [`super::inherit::apply_winners`]。buffer の確保と使い回しは
-/// [`super::inherit::resolve_inheritance`] の walk loop が持つ。
+/// The only caller is [`super::inherit::apply_winners`]. Its walk loop in
+/// [`super::inherit::resolve_inheritance`] owns and reuses the buffer.
 ///
-/// # 呼び出し契約
+/// # Call contract
 ///
-/// - **entry**: `winners` の全 slot が `None` であること (debug_assert で検査)。
-/// - **exit**: 出現した key の slot だけが `Some`。
+/// - **entry**: all `winners` slots are `None` (checked by debug_assert).
+/// - **exit**: only slots for encountered keys are `Some`.
 ///
-/// [`super::inherit::apply_winners`] が fill と drain を対で行うので、通常この契約は自明に
-/// 満たされる。debug_assert を残してあるのは、drain loop が unwind
-/// (`apply_value` 内 panic) 等で途中終了した場合に slot が生き残る経路が
-/// あるため — 次 node がその残骸を拾うと **別 node の declaration を適用**して
-/// しまう。安いので保険として置いてある。
+/// Normally [`super::inherit::apply_winners`] fills and drains the slots as
+/// a pair. Keep the inexpensive debug_assert because the drain loop can stop
+/// on unwind (for example, a panic in `apply_value`), leaving a slot alive.
+/// The next node could then apply **another node's declaration**.
 ///
 /// [`PropertyKey`]: crate::property::PropertyKey
 pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option<RankedDecl>>) {
@@ -810,8 +784,8 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
     );
 
     for (idx, (value, important, origin, spec, order)) in candidates.iter().enumerate() {
-        // fieldless enum の discriminant をそのまま slot index に使う。
-        // variant が増えても `resize` が追随するので上限定数は持たない。
+        // Use the fieldless enum discriminant directly as the slot index.
+        // `resize` handles new variants; no fixed upper bound is needed.
         let slot = value.key() as usize;
         if winners.len() <= slot {
             winners.resize(slot + 1, None);
@@ -830,19 +804,19 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
 
 pub(crate) fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
     // Tuple compare: (rank, specificity, source_order)
-    // - rank 高い方が勝つ (順序と正確な値は `cascade_rank` doc 参照 — 当初の
-    //   UA/Author の 2 段から現在の UA/User/AuthorPresentationalHint/Author
-    //   の 4 段まで拡張済み)
-    // - 同 rank なら specificity 高い方が勝つ
-    // - 同 rank + spec なら source_order 大 (=後ろ) が勝つ
-    // `>=` は同一 rule 内 duplicate property の後方勝ち (CSS Cascading L4 §6.1
-    // "Order of Appearance" <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
-    // の "the last declaration in document order wins") のため意図的。
-    // cross-rule では source_order が異なるので `>=` でも安全。
+    // - Higher rank wins (see `cascade_rank` for exact ordering and values:
+    //   originally UA/Author, now UA/User/AuthorPresentationalHint/Author).
+    // - At equal rank, higher specificity wins.
+    // - At equal rank and specificity, later source_order wins.
+    // Deliberately use `>=` so a later duplicate in the same rule wins,
+    // per CSS Cascading L4 §6.1 "Order of Appearance"
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: "the last
+    // declaration in document order wins". Cross-rule source_order differs,
+    // so `>=` is safe there too.
     //
-    // `idx` を比較 key に**入れないこと** — `idx` は candidates 走査順に単調
-    // 増加するので第 4 key に足しても結果は変わらないが、tie-break 規則が
-    // 「同 rank/spec/order なら後方勝ち」であることが code から読めなくなる。
+    // Do **not** include `idx` in the comparison key. It increases with
+    // candidate iteration order, so it would not change results, but would
+    // obscure the explicit tie-break rule: later wins at equal rank/spec/order.
     (
         candidate.rank,
         candidate.specificity,

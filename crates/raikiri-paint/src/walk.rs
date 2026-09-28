@@ -1,31 +1,31 @@
-//! DOM walker — Document arena を DFS で walk し PaintScene に emit する。
+//! DOM walker — traverses the Document arena in DFS order and emits to PaintScene.
 //!
-//! `paint_document` は iterative `PaintFrame` stack で walk する
-//! (cascade / find_body の pattern と一貫、深 DOM で stack overflow 回避)。
-//! kind 分岐は loop 内で inline に行い、Element は children を push、Text は
-//! draw_text_node を call、display:none は subtree ごと skip する。overflow
-//! clip は subtree の後で対応する `PopClip` frame により閉じる。
-//! `parent_font_size` / `shift_y` は `vertical_align_shift_px` doc 参照。
+//! `paint_document` walks with an iterative `PaintFrame` stack, following
+//! the pattern of cascade / find_body and avoiding stack overflow for deep DOMs.
+//! It handles each kind inline: Element pushes children, Text calls
+//! draw_text_node, and display:none skips a subtree. A matching `PopClip`
+//! frame closes each overflow clip after the subtree.
+//! See the `vertical_align_shift_px` docs for `parent_font_size` / `shift_y`.
 //!
-//! 将来 inline formatting context を実装する時は、Element 分岐内の children
-//! push を "self の inline layout を walk する" に置き換え、Text 分岐は
-//! unreachable 化する予定 (現状の text_layout 選択は暫定的な妥協のため)。
+//! Once inline formatting context is implemented, the Element branch will
+//! walk its own inline layout instead of pushing children; the Text branch
+//! will become unreachable (the current text_layout choice is provisional).
 //!
-//! **この inline formatting context の不在は `vertical_align_shift_px` の
-//! shift 適用でも未解決のまま残る** — `display: inline` の要素も現状は
-//! taffy 上で他の block 要素と同じ独立した行として積み上がる
-//! (`bridge_display` が `DisplayValue::Inline` を `taffy::Display::Block` に
-//! 写す)。したがって `<p>H<sub>2</sub>O</p>` の "H" / "2" / "O" は現状でも
-//! 3 行に分かれたまま描画される — `vertical_align_shift_px` が加える
-//! offset は「その独立した行の中で `2` をわずかに動かす」だけであり、
-//! `2` を `H`/`O` と同じ行に呼び戻すものではない。この shift は taffy が
-//! box 位置を確定させた**後**、paint 時にのみ加算される (taffy 自体は
-//! `vertical_align` を一切見ない) ため box-model 計算には一切参加せず、
-//! どこにもクリップされない — 例えば page 最上部近くの `vertical-align:
-//! super` は margin 領域へはみ出して描画されうる。
+//! **This missing inline formatting context also limits how
+//! `vertical_align_shift_px` applies shifts.** Currently, even elements with
+//! `display: inline` are stacked by taffy as separate lines, like blocks
+//! (`bridge_display` maps `DisplayValue::Inline` to `taffy::Display::Block`).
+//! Thus "H", "2", and "O" in `<p>H<sub>2</sub>O</p>` still paint on three
+//! lines: the `vertical_align_shift_px` offset moves `2` slightly within
+//! its separate line, not back onto the same line as `H` and `O`.
+//! Painting adds this offset **after** taffy has fixed box positions; taffy
+//! does not inspect `vertical_align`. The shift does not affect box-model
+//! calculations and is not clipped anywhere. For example, near the top
+//! of a page, `vertical-align: super` may paint into the margin area.
+//! This remains a known rendering limitation.
 //!
-//! find_body は raikiri-dom::layout::find_body と重複するが、5 行の helper
-//! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
+//! find_body duplicates raikiri-dom::layout::find_body, but keeping this
+//! five-line helper here is cleaner than exporting it across crate boundaries.
 
 use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
@@ -54,7 +54,7 @@ use taffy::CompactLength;
 
 use crate::text;
 
-/// Canvas 背景 fill site — CSS Backgrounds 3 §2.11 canvas propagation の minimal 実装。
+/// Canvas background fill site — minimal CSS Backgrounds 3 §2.11 canvas propagation.
 ///
 /// Page backgrounds cover the paper.  When the page has a non-zero margin,
 /// the html/body canvas background is painted only in the page content area;
@@ -2996,23 +2996,23 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
     y < page_bottom && y + height > page_top
 }
 
-/// Document arena を body から iterative DFS で walk する。fragment (no `<body>`)
-/// case は silent return (layout_single_page が Err を返すので paint
-/// 呼び出し前に検出済のはず、defensive)。
+/// Walk the Document arena iteratively in DFS order, starting from body.
+/// A fragment (without `<body>`) returns silently. `layout_single_page` should
+/// already have returned Err before painting; this is defensive.
 ///
 /// Stack frames carry either a node visit or a matching clip-layer pop.
-/// Node children は `.rev()` で push し、pop 時に document order で処理する。
-/// Element の場合は `is_display_none` を先に判定し true なら subtree ごと
-/// skip (旧来の size == 0 判定は overflow: visible な legitimate zero-size
-/// 要素も silent drop するため誤りだったための対応)。
+/// Push Node children with `.rev()` to process them in document order when
+/// popping. For Element, check `is_display_none` first and skip its subtree
+/// if true. The old size == 0 check incorrectly dropped legitimate zero-size
+/// elements with overflow: visible.
 ///
-/// `parent_font_size` はこの stack frame の node の**親**の used font-size
-/// (px)。`shift_y` はこの node に至るまでの祖先全体が積んだ
-/// `vertical-align` shift の累計 (px、down 方向が正)。両方とも
-/// `vertical_align_shift_px` の入力・出力に対応する — 詳細はその doc 参照。
+/// `parent_font_size` is the **parent's** used font-size (px) for this
+/// stack frame's node. `shift_y` accumulates `vertical-align` shifts from
+/// all ancestors up to this node (px, positive downward). Both correspond to
+/// inputs and outputs of `vertical_align_shift_px`; see its docs for details.
 ///
-/// 将来 element background-color / border / box-shadow を Element arm 内で
-/// 描画する予定 (site だけ確保)。
+/// Future work will paint element background-color / border / box-shadow
+/// in the Element arm (which reserves the site for that work).
 pub(crate) fn paint_document(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -3120,12 +3120,12 @@ fn paint_document_impl(
         }
     };
 
-    // body 自身の親 (`<html>`) の font-size は stack と独立した traversal
-    // (`find_body`) でしか到達できないため、self-referential に body 自身の
-    // font-size を代わりに使う。body の UA default display は block なので
-    // `vertical_align_shift_px` の inline-level gate が常にこの値を無視する
-    // — body に `display: inline` を override するような病的な入力でない
-    // 限り、この fallback の精度は実質無関係。
+    // The body's parent (`<html>`) font-size is available only from a
+    // separate traversal (`find_body`), not from this stack. Use the body's
+    // own font-size as a self-referential fallback. The UA default display
+    // for body is block, so `vertical_align_shift_px` always ignores this
+    // value through its inline-level gate. Except for pathological input
+    // overriding body with `display: inline`, its accuracy does not matter.
     let body_font_size = cascade.computed[body_id].font_size.px();
     // The synthetic body root does not expose its root margin in descendant
     // coordinates.  Direct text and ordinary flow children are therefore
@@ -3414,21 +3414,21 @@ fn paint_document_impl(
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
-        // template 子孫 + 将来の inert subtree を統一 skip。
-        // UA CSS の display:none rule 有無に依存しない、明示的な gate。
+        // Skip template descendants and future inert subtrees consistently.
+        // Use an explicit gate independent of any UA CSS display:none rule.
         if !node.is_in_document() {
             continue;
         }
-        // HTML の hidden elements (metadata / raw-text content / ruby
-        // parenthesis fallback) は subtree ごと描画対象外。
-        // 現在の対象 tag 集合は `Node::is_non_rendered_html_element` の
-        // match arms を single source of truth とする。
-        // UA CSS `display: none` は author / user CSS で override 可能なため
-        // cascade-independent な defense-in-depth gate として paint 側で
-        // fail-close する (HTML LS §15.3.1 "Hidden elements"、
-        // https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements
-        // 準拠、namespace check で SVG / MathML の同名 element は除外)。
-        // <template> は is_in_document 側と二重 gate。
+        // Do not paint subtrees of HTML hidden elements (metadata, raw text,
+        // or fallback parentheses for ruby).
+        // Treat `Node::is_non_rendered_html_element` match arms as the
+        // single source of truth for the current set of tags.
+        // Author / user CSS can override UA CSS `display: none`, so painting
+        // fails closed with a cascade-independent defense-in-depth gate
+        // (HTML LS §15.3.1 "Hidden elements":
+        // https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements).
+        // Namespace checks exclude same-named SVG / MathML elements.
+        // <template> is doubly gated by is_in_document().
         if node.is_non_rendered_html_element() {
             continue;
         }
@@ -4335,19 +4335,19 @@ fn paint_document_impl(
                 }
             }
             NodeKind::Document => {
-                // paint_document が body から start するので通常来ない。
-                // Document node は children を持ちうる (未 attach <html>) が
-                // 現状は扱わない。defensive: subtree を skip。
+                // Usually unreachable because paint_document starts at body.
+                // A Document node may have children (unattached `<html>`), but
+                // they are not handled yet. Skip the subtree defensively.
             }
             _ => {
                 // NodeKind is #[non_exhaustive]: `Comment` / `ProcessingInstruction` /
-                // `DocumentFragment` はここに落ちる (paint 対象外)。実際には
-                // mark_in_document_flags が Comment/PI の IS_IN_DOCUMENT bit を
-                // clear しているため、この walker 到達前段の is_in_document()
-                // gate で先に filter されることが expected — defense-in-depth の
-                // 第 2 gate として本 arm を保持 (kind gate と is_in_document gate
-                // の両方が failing した場合でも subtree ごと skip)。将来 CDATA /
-                // DocumentType 等が追加された場合も同じ扱い。
+                // `DocumentFragment` arrives here (not paintable). In practice,
+                // mark_in_document_flags clears IS_IN_DOCUMENT for Comment/PI,
+                // so the earlier is_in_document() gate should filter those
+                // before this walker reaches them. Keep this kind gate as a
+                // second defense: if both gates fail, skip the whole subtree.
+                // Apply the same behavior to future CDATA / DocumentType kinds.
+                // Retain the defensive fallback for unknown node kinds.
             }
         }
     }
@@ -4672,40 +4672,40 @@ fn paint_inline_svg(
     true
 }
 
-/// `vertical-align` が inline-level box の位置へ寄与する pixel offset。
-/// 正の戻り値 = 下方向 (`draw_text_node` の `abs_y` と同じ、Y が下に伸びる
-/// 座標系)。
+/// Pixel offset contributed by `vertical-align` to an inline-level box's
+/// position. Positive values move downward, as does `draw_text_node`'s
+/// `abs_y` in the downward-growing Y coordinate system.
 ///
-/// # 実装範囲
+/// # Supported behavior
 ///
-/// [`VerticalAlign::Sub`] / [`VerticalAlign::Super`] は parent font-size
-/// 基準、[`VerticalAlign::Length`] は computed px 値を使って shift する。
-/// CSS 2.1 §10.8.1 の length は正値で上げ、負値で下げるため、paint の
-/// Y-down 座標では符号を反転する。
+/// [`VerticalAlign::Sub`] / [`VerticalAlign::Super`] shift relative to the
+/// parent's font-size; [`VerticalAlign::Length`] uses the computed px value.
+/// Positive lengths raise and negative lengths lower (CSS 2.1 §10.8.1), so
+/// the sign reverses in paint's downward-growing Y coordinate system.
 ///
 /// [`VerticalAlign::Middle`] / [`VerticalAlign::TextTop`] /
-/// [`VerticalAlign::TextBottom`] は font metrics を使う shift が未実装のため
-/// 0 shift のまま。`Top` / `Bottom` はこの関数では shift せず、対象となる
-/// minimal line-box layout が box 位置を決める。`_` arm はこの関数を total
-/// にするための defensive default (`VerticalAlign` は `#[non_exhaustive]`)。
-/// [`VerticalAlign::Baseline`] も 0 shift になる (CSS 2.1 §10.8.1 verbatim:
-/// "Align the baseline of the box with the baseline of the parent box" —
-/// 追加の shift なし)。
+/// [`VerticalAlign::TextBottom`] all remain at zero shift because shifting by
+/// font metrics is not implemented. `Top` / `Bottom` do not shift here; the
+/// relevant minimal line-box layout determines box positions. The `_` arm
+/// is a defensive default to make this function total (`VerticalAlign` is
+/// `#[non_exhaustive]`). [`VerticalAlign::Baseline`] also has no shift
+/// (CSS 2.1 §10.8.1: "Align the baseline of the box with the baseline of
+/// the parent box").
 ///
 /// CSS 2.1 §10.8.1 "Applies to: inline-level and 'table-cell' elements"
 /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
-/// (`table-cell` はこの crate 未実装) — block-level box の
-/// `vertical-align: sub` は shift に寄与しない。
+/// (`table-cell` is not implemented in this crate): a block-level box's
+/// `vertical-align: sub` does not contribute a shift.
 ///
-/// # Shift 量
+/// # Shift size
 ///
-/// CSS 2.1 §10.8.1 自体は `sub`/`super` の offset を "the proper position
-/// for subscripts/superscripts" とだけ述べ、量を implementation-defined の
-/// ままにする。CSS Inline Layout Module Level 3 §4.2.3 "Post-Alignment
+/// CSS 2.1 §10.8.1 calls the `sub`/`super` offset only "the proper position
+/// for subscripts/superscripts", leaving its size implementation-defined.
+/// CSS Inline Layout Module Level 3 §4.2.3 "Post-Alignment
 /// Shift: the baseline-shift longhand"
-/// <https://www.w3.org/TR/css-inline-3/#baseline-shift-property> が
-/// 具体的な UA-default fallback を与える (font metrics 参照はそちらが
-/// 優先だが本関数では未実装 — font table を一切読まない):
+/// <https://www.w3.org/TR/css-inline-3/#baseline-shift-property> provides
+/// a concrete UA-default fallback. Font metrics take priority there, but
+/// this function does not use them or read any font tables:
 ///
 /// - `sub`, spec verbatim: "Lower by the offset appropriate for
 ///   subscripts of the parent's box. The UA may use the parent's font
@@ -4716,34 +4716,34 @@ fn paint_inline_svg(
 ///   metrics to find this offset; otherwise it defaults to raising by one
 ///   third of the parent's used font-size."
 ///
-/// `vertical-align` (CSS 2.1) と `baseline-shift` (CSS Inline 3) は別
-/// property である — [`raikiri_style::property::VerticalAlign`] doc が
-/// 説明する通り、本 crate は keyword grammar の primary source として CSS
-/// 2.1 を採り続ける。ここで CSS Inline 3 を引くのは、CSS 2.1 が定義しない
-/// shift **量**についてのみ、CSS Inline 3 の同じ `sub`/`super` keyword に
-/// 対する UA-default fallback 記述を借りるためである。
+/// `vertical-align` (CSS 2.1) and `baseline-shift` (CSS Inline 3) are
+/// different properties. As the [`raikiri_style::property::VerticalAlign`]
+/// docs explain, this crate still uses CSS 2.1 as the primary source for
+/// keyword grammar. CSS Inline 3 is cited here only for the **size** of the
+/// shift undefined by CSS 2.1: its UA-default fallback for the same
+/// `sub`/`super` keywords.
 ///
-/// `parent_font_size_px` は **box 自身の親の** used font-size でなければ
-/// ならない (box 自身の font-size ではない — `sub`/`super` content は通常
-/// 既に author/UA の `font-size: smaller` で縮小済みで、上記 spec 文の
-/// "the parent's used font-size" はその縮小前の値を指す)。
+/// `parent_font_size_px` must be the used font-size of the **box's parent**,
+/// not the box itself. Author/UA `font-size: smaller` commonly shrinks
+/// `sub`/`super` content already; "the parent's used font-size" in the
+/// cited specification refers to the size before that shrinkage.
 ///
-/// # Nested `vertical-align` の合成 (未検証の近似)
+/// # Composing nested `vertical-align` (unverified approximation)
 ///
-/// この関数自体は 1 box 分の shift だけを返す。呼び出し側
-/// ([`paint_document`]) は祖先ごとの shift を単純加算で累積する
-/// (`shift_y` stack frame) — real な inline formatting context 下では
-/// 各 box は直接の親の baseline に対して shift し、それが line box
-/// 構築を通じて連鎖することの素朴な近似であり、どの primary source にも
-/// 明記された規則ではない。
+/// This function returns a shift for only one box. The caller
+/// ([`paint_document`]) simply adds ancestor shifts to the `shift_y` stack
+/// frame. With a real inline formatting context, each box shifts relative
+/// to its immediate parent's baseline, propagating through line-box
+/// construction. This is a rough approximation, not a rule stated by any
+/// of the primary sources.
 ///
-/// # Box-model への非参加 (未実装)
+/// # Exclusion from the box model (unimplemented)
 ///
-/// この戻り値は taffy が box 位置を確定させた後、paint 時にのみ加算される
-/// — taffy 自身は `vertical_align` を見ないため、shift された結果が
-/// どこにもクリップされない。CSS 2.1 / CSS Inline 3 とも shift 後の位置を
-/// box-model 計算 (line box の高さ等) に参加させる前提だが、ここでは
-/// 参加しない — 極端な shift 量が page box の外へはみ出して描画されうる。
+/// The shift is added only during painting, after taffy determines box
+/// positions. Taffy does not see `vertical_align`, and the result is not
+/// clipped. CSS 2.1 / CSS Inline 3 expect shifted positions to affect
+/// box-model calculations (including line-box height), but they do not here:
+/// a large shift may paint outside the page box.
 /// Return the intrinsic horizontal background width for a vertical table cell.
 ///
 /// The vertical table projection gives an auto cell the containing block's
@@ -6152,15 +6152,15 @@ fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
     }
 }
 
-/// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
+/// Walk the Document arena in DFS order; return the first `<body>` element index.
 ///
-/// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
-/// 深 DOM で stack overflow を回避)。fragment parse (no `<body>`) では `None`。
+/// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid
+/// stack overflow on deep DOMs. Return `None` for fragments (no `<body>`).
 ///
-/// `!is_in_document()` の subtree (`<template>` descendants など) を skip
-/// する。inert subtree 内の hypothetical `<body>` を選ばないため。paint 側の
-/// find_body と layout 側の
-/// find_body は独立実装 (crate 境界越境コスト回避)、同じ contract を持つ。
+/// Skip subtrees with `!is_in_document()` (such as `<template>` descendants)
+/// so a hypothetical `<body>` in an inert subtree is not selected. The
+/// paint-side and layout-side find_body are separate to avoid crossing crate
+/// boundaries, but share the same contract.
 fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root_index()];
     while let Some(id) = stack.pop() {
