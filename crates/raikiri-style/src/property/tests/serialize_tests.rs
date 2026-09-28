@@ -621,8 +621,8 @@ fn serialize_value_canonicalizes_single_keyword_properties() {
         ("writing-mode", "SIDEWAYS-LR", "sideways-lr"),
     ];
     for (name, input, expected) in cases {
-        let value = parse_entire(input, name)
-            .unwrap_or_else(|| panic!("{name}: {input:?} should parse"));
+        let value =
+            parse_entire(input, name).unwrap_or_else(|| panic!("{name}: {input:?} should parse"));
         assert_eq!(
             serialize_value(&value),
             Some(expected.to_owned()),
