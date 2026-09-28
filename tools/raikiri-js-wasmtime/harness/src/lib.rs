@@ -1,7 +1,5 @@
 //! Boa-specific WPT support shared by native and isolated execution.
-use boa_engine::object::FunctionObjectBuilder;
-use boa_engine::property::PropertyDescriptor;
-use boa_engine::{Context, JsResult, JsString, JsSymbol, JsValue, NativeFunction, js_string};
+use boa_engine::{Context, JsResult, JsString, JsValue, js_string};
 use raikiri_js::runtime::{DomRuntime, RunReport, RuntimeError};
 pub const SINK_SYMBOL_DESCRIPTION: &str = "raikiri testharness report sink";
 
@@ -85,30 +83,18 @@ pub fn probe_timeout(runtime: &mut DomRuntime, report: &mut RunReport) -> Option
     take_delivery(runtime)
 }
 
+/// Install the page support scripts: the `document.fonts` stand-in every
+/// page needs before any of its own scripts run.
+///
+/// The testharness delivery sink is *not* installed here. It lives only for
+/// the document run itself: the run site hands [`deliver`] to
+/// [`DomRuntime::run_document_with_callback`] together with
+/// [`SINK_SYMBOL_DESCRIPTION`], so a page whose report script never claims
+/// the sink leaves nothing behind either.
 pub fn install_page_support(
     runtime: &mut DomRuntime,
 ) -> Result<(), raikiri_js::runtime::RuntimeError> {
     runtime.evaluate(DOCUMENT_FONTS_SCRIPT)?;
-    install_result_sink(runtime.context_mut())
-        .map_err(|error| raikiri_js::runtime::RuntimeError::JavaScript(error.to_string())) // cov:ignore: defining a fresh symbol-keyed property on the global object does not fail.
-}
-
-pub fn install_result_sink(context: &mut Context) -> JsResult<()> {
-    let sink = FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(deliver))
-        .name(js_string!("deliver"))
-        .length(2)
-        .build();
-    let key = JsSymbol::new(Some(JsString::from(SINK_SYMBOL_DESCRIPTION)));
-    let key =
-        key.ok_or_else(|| boa_engine::JsNativeError::range().with_message("out of symbols"))?; // cov:ignore: symbol ids run out only after 2^64 symbols.
-    let descriptor = PropertyDescriptor::builder()
-        .value(sink)
-        .writable(false)
-        .enumerable(false)
-        .configurable(true);
-    context
-        .global_object()
-        .define_property_or_throw(key, descriptor, context)?;
     Ok(())
 }
 

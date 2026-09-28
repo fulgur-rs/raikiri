@@ -712,3 +712,140 @@ fn is_classic_script_type_matches_the_javascript_mime_essence_list() {
         "text/javascript;charset=utf-8"
     )));
 }
+
+// ---- run_document_with_callback ----
+
+/// A document script finds the run-scoped callback by scanning the global
+/// object's symbols for its description (the delivery protocol
+/// [`DomRuntime::run_document_with_callback`] exists for), claims and calls
+/// it, and nothing is left behind afterwards.
+#[test]
+fn run_document_with_callback_installs_a_claimable_symbol_sink() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use boa_engine::JsValue;
+
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "var sink = null;         var symbols = Object.getOwnPropertySymbols(globalThis);         for (var i = 0; i < symbols.length; i++) {             if (symbols[i].description === 'test sink') {                 sink = globalThis[symbols[i]];                 delete globalThis[symbols[i]];             }         }         sink('hello');",
+    );
+    let mut rt = DomRuntime::new(host).unwrap();
+    let delivered: Rc<RefCell<Vec<String>>> = Rc::default();
+    let report = rt.run_document_with_callback("test sink", {
+        let delivered = Rc::clone(&delivered);
+        move |_this, args, context| {
+            let text = args[0].to_string(context)?.to_std_string_escaped();
+            delivered.borrow_mut().push(text);
+            Ok(JsValue::undefined())
+        }
+    });
+    assert_eq!(report.aborted, None);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(report.scripts_run, 1, "{report:?}");
+    assert_eq!(*delivered.borrow(), vec!["hello".to_owned()]);
+    assert!(eval_bool(
+        &mut rt,
+        "Object.getOwnPropertySymbols(globalThis).filter(s => s.description === 'test sink')             .length === 0"
+    ));
+}
+
+/// A sink no script claims is still removed after the run: nothing leaks
+/// onto the global object either way.
+#[test]
+fn run_document_with_callback_removes_an_unclaimed_sink() {
+    use boa_engine::JsValue;
+
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(&mut host.document, body, &[], "var x = 1;");
+    let mut rt = DomRuntime::new(host).unwrap();
+    let report = rt.run_document_with_callback("test sink", |_this, _args, _context| {
+        Ok(JsValue::undefined())
+    });
+    assert_eq!(report.scripts_run, 1, "{report:?}");
+    assert!(eval_bool(
+        &mut rt,
+        "Object.getOwnPropertySymbols(globalThis).filter(s => s.description === 'test sink')             .length === 0"
+    ));
+}
+
+/// A second call returns the cached report without running the document or
+/// the callback again.
+#[test]
+fn run_document_with_callback_is_idempotent() {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use boa_engine::JsValue;
+
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "var symbols = Object.getOwnPropertySymbols(globalThis);         for (var i = 0; i < symbols.length; i++) {             if (symbols[i].description === 'test sink') {                 globalThis[symbols[i]]();                 delete globalThis[symbols[i]];             }         }",
+    );
+    let mut rt = DomRuntime::new(host).unwrap();
+    let runs = Rc::new(Cell::new(0u32));
+    let delivered: Rc<RefCell<Vec<String>>> = Rc::default();
+    let first = rt.run_document_with_callback("test sink", {
+        let runs = Rc::clone(&runs);
+        let delivered = Rc::clone(&delivered);
+        move |_this, args, context| {
+            runs.set(runs.get() + 1);
+            let text = args
+                .first()
+                .map(|value| value.to_string(context))
+                .transpose()?
+                .map(|text| text.to_std_string_escaped())
+                .unwrap_or_default();
+            delivered.borrow_mut().push(text);
+            Ok(JsValue::undefined())
+        }
+    });
+    assert_eq!(runs.get(), 1);
+    let second = rt.run_document_with_callback("test sink", |_this, _args, _context| {
+        Ok(JsValue::undefined())
+    });
+    assert_eq!(runs.get(), 1);
+    assert_eq!(first, second);
+}
+
+/// A delivery script that kept its own reference still delivers after the
+/// run (the timeout-probe shape): only the symbol property is removed, the
+/// callback slot stays until replaced or torn down.
+#[test]
+fn run_document_with_callback_keeps_a_retained_sink_callable_after_the_run() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use boa_engine::JsValue;
+
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "var stashed = null;         var symbols = Object.getOwnPropertySymbols(globalThis);         for (var i = 0; i < symbols.length; i++) {             if (symbols[i].description === 'test sink') {                 stashed = globalThis[symbols[i]];                 delete globalThis[symbols[i]];             }         }",
+    );
+    let mut rt = DomRuntime::new(host).unwrap();
+    let delivered: Rc<RefCell<Vec<String>>> = Rc::default();
+    let report = rt.run_document_with_callback("test sink", {
+        let delivered = Rc::clone(&delivered);
+        move |_this, args, context| {
+            let text = args[0].to_string(context)?.to_std_string_escaped();
+            delivered.borrow_mut().push(text);
+            Ok(JsValue::undefined())
+        }
+    });
+    assert_eq!(report.aborted, None);
+    assert!(eval_bool(
+        &mut rt,
+        "Object.getOwnPropertySymbols(globalThis).filter(s => s.description === 'test sink')             .length === 0"
+    ));
+    rt.evaluate("stashed('late');").unwrap();
+    assert_eq!(*delivered.borrow(), vec!["late".to_owned()]);
+}

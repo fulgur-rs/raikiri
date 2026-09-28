@@ -7,7 +7,9 @@
 
 use raikiri_js_wasmtime_harness::{Delivery, harness_status_word};
 #[cfg(feature = "js-native")]
-use raikiri_js_wasmtime_harness::{install_page_support, probe_timeout, take_delivery};
+use raikiri_js_wasmtime_harness::{
+    SINK_SYMBOL_DESCRIPTION, deliver, install_page_support, probe_timeout, take_delivery,
+};
 use std::path::Path;
 #[cfg(feature = "js-wasmtime")]
 mod backend;
@@ -16,8 +18,6 @@ compile_error!("select only one JS backend");
 #[cfg(not(any(feature = "js-native", feature = "js-wasmtime")))]
 compile_error!("select a JS backend");
 pub(crate) use raikiri_js_wasmtime_harness::REPORT_SCRIPT;
-#[cfg(test)]
-use raikiri_js_wasmtime_harness::SINK_SYMBOL_DESCRIPTION;
 
 #[cfg(feature = "js-native")]
 use raikiri_js::runtime::DomRuntime;
@@ -175,7 +175,7 @@ fn prepare_host(path: &Path, wpt_root: &Path) -> Result<WptDocumentHost, PageErr
 /// to [`PageError::NoResults`] as if the probe had never run.
 #[cfg(feature = "js-native")]
 fn finish_page(runtime: &mut DomRuntime) -> Result<Vec<SubtestOutcome>, PageError> {
-    let mut report = runtime.run_document();
+    let mut report = runtime.run_document_with_callback(SINK_SYMBOL_DESCRIPTION, deliver);
     let mut delivery = take_delivery(runtime);
     if delivery.is_none()
         && report.aborted.is_none()

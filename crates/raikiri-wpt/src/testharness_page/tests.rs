@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use raikiri_js::runtime::{Abort, RunReport};
+use raikiri_js_wasmtime_harness::SINK_SYMBOL_DESCRIPTION;
 
 use super::*;
 
