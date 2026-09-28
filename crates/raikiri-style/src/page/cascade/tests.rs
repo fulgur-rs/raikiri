@@ -1565,6 +1565,44 @@ fn cascade_page_border_width_is_gated_by_border_style_none() {
 
 /// `hidden` gates identically to `none` (same §3.3 clause).
 #[test]
+fn cascade_page_border_css_wide_inherit_takes_root() {
+    // `@page` with `border-right: inherit` takes the root element's computed right side.
+    // Covers `resolve_border_page_*` helpers for inherit.
+    let mut root = ComputedValues::initial();
+    root.border.right = crate::resolve::resolve_border(
+        Border {
+            width: Length::Px(7.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        },
+        root.font_size,
+        None,
+        &crate::resolve::ResolveContext::initial(),
+    );
+    let result = page("@page { border-right: inherit }", &root);
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(7.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightStyle),
+        Some(&PropertyValue::BorderRightStyle(BorderStyle::Solid))
+    );
+    // `border: initial` clears to initial (covers initial/unset arms for all sides).
+    let result2 = page("@page { border: initial }", &root);
+    assert_eq!(
+        result2.declarations().get(&PropertyKey::BorderRightStyle),
+        Some(&PropertyValue::BorderRightStyle(BorderStyle::None))
+    );
+    // `revert` with no lower origin falls back to initial (covers revert fallback).
+    let result3 = page("@page { border-right-width: revert }", &root);
+    assert_eq!(
+        result3.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(0.0)))
+    );
+}
+
+#[test]
 fn cascade_page_border_width_is_gated_by_border_style_hidden() {
     let root = ComputedValues::initial();
     let result = page(

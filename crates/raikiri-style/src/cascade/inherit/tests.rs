@@ -8261,3 +8261,138 @@ fn border_shorthand_css_wide_expands_to_all_sides() {
     let r2 = cascade(&doc2, &tree2).expect("cascade Ok");
     assert_eq!(r2.computed[div2].border.right.style, BorderStyle::None);
 }
+
+#[test]
+fn border_all_sides_inherit_parent_computed() {
+    // Cover `resolve_border_css_wide`'s per-side `pick_field` for every longhand key:
+    // parent has distinct per-side values; each child longhand with `inherit`
+    // takes its own side's computed value.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some(
+            "border-top-width: 1px; border-top-style: solid; border-top-color: red; \
+             border-right-width: 2px; border-right-style: dashed; border-right-color: blue; \
+             border-bottom-width: 3px; border-bottom-style: dotted; border-bottom-color: green; \
+             border-left-width: 4px; border-left-style: double; border-left-color: black",
+        ),
+    );
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some(
+            "border-top-width: inherit; border-top-style: inherit; border-top-color: inherit; \
+             border-right-width: inherit; border-right-style: inherit; border-right-color: inherit; \
+             border-bottom-width: inherit; border-bottom-style: inherit; border-bottom-color: inherit; \
+             border-left-width: inherit; border-left-style: inherit; border-left-color: inherit",
+        ),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[child].border.top.width,
+        r.computed[parent].border.top.width
+    );
+    assert_eq!(
+        r.computed[child].border.top.style,
+        r.computed[parent].border.top.style
+    );
+    assert_eq!(
+        r.computed[child].border.top.color,
+        r.computed[parent].border.top.color
+    );
+    assert_eq!(
+        r.computed[child].border.right.width,
+        r.computed[parent].border.right.width
+    );
+    assert_eq!(
+        r.computed[child].border.right.style,
+        r.computed[parent].border.right.style
+    );
+    assert_eq!(
+        r.computed[child].border.bottom.width,
+        r.computed[parent].border.bottom.width
+    );
+    assert_eq!(
+        r.computed[child].border.left.width,
+        r.computed[parent].border.left.width
+    );
+}
+
+#[test]
+fn border_var_with_css_wide_resolves() {
+    // `var()` substituting to a CSS-wide keyword resolves one level
+    // (see `apply_winners`'s Deferred-then-CssWide arm and
+    // `resolve_border_css_wide`'s deferred-rollback handling).
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("border-right-width: 7px; border-right-style: solid"),
+    );
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some("--w: inherit; border-right-width: var(--w); border-right-style: solid"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[child].border.right.width,
+        r.computed[parent].border.right.width
+    );
+    // `border: var(--x)` where `--x` is `inherit` expands via `BorderCssWide` projection.
+    let mut doc2 = TestDoc::new();
+    let p2 = doc2.push_element(0, "div", Some("border: 6px solid red"));
+    let c2 = doc2.push_element(p2, "div", Some("--x: inherit; border: var(--x)"));
+    let tree2 = build_rule_tree(&doc2);
+    let r2 = cascade(&doc2, &tree2).expect("cascade Ok");
+    assert_eq!(
+        r2.computed[c2].border.top.width,
+        r2.computed[p2].border.top.width
+    );
+    assert_eq!(
+        r2.computed[c2].border.right.style,
+        r2.computed[p2].border.right.style
+    );
+    // `border-right: var(--y)` where `--y` is `initial` clears to initial.
+    let mut doc3 = TestDoc::new();
+    let p3 = doc3.push_element(0, "div", Some("border-right: 5px solid red"));
+    let c3 = doc3.push_element(p3, "div", Some("--y: initial; border-right: var(--y)"));
+    let tree3 = build_rule_tree(&doc3);
+    let r3 = cascade(&doc3, &tree3).expect("cascade Ok");
+    assert_eq!(r3.computed[c3].border.right.style, BorderStyle::None);
+}
+
+#[test]
+fn border_revert_for_style_and_color_rolls_back() {
+    // Cover `find_border_rollback` for style/color keys (width already covered):
+    // User declares style/color; Author reverts; rollback finds User values.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div { border-right-style: dashed; border-right-color: blue; border-right-width: 2px; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div { border-right-style: revert; border-right-color: revert; border-right-width: 2px; border-right-style: solid; }",
+        crate::ruletree::Origin::Author,
+    );
+    // Note: Author has both `revert` and later `solid` for style in same rule?
+    // Order within one rule: `revert` then `solid` — later `solid` wins, no rollback.
+    // Use separate rules so `revert` wins by source order, then rolls back.
+    let mut tree2 = RuleTree::empty();
+    tree2.add_stylesheet(
+        "div { border-right-style: dashed; border-right-color: blue; border-right-width: 2px; }",
+        crate::ruletree::Origin::User,
+    );
+    tree2.add_stylesheet(
+        "div { border-right-style: revert; border-right-color: revert; border-right-width: 2px; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r = cascade(&doc, &tree2).expect("cascade Ok");
+    assert_eq!(r.computed[div].border.right.style, BorderStyle::Dashed);
+    let _ = tree;
+}

@@ -3145,3 +3145,114 @@ fn css_wide_keyword_roundtrips_through_all() {
         assert_eq!(CssWideKeyword::from_css_ident(kw.as_css_str()), Some(*kw));
     }
 }
+
+#[test]
+fn border_all_longhands_accept_css_wide_keywords() {
+    // Cover every `border-*-width/style/color` dispatch arm in `parse_value`
+    // (see `parse_css_wide_keyword`): all twelve longhands accept all five keywords.
+    let cases: &[(&str, fn(CssWideKeyword) -> PropertyValue)] = &[
+        ("border-top-width", PropertyValue::BorderTopWidthCssWide),
+        ("border-right-width", PropertyValue::BorderRightWidthCssWide),
+        (
+            "border-bottom-width",
+            PropertyValue::BorderBottomWidthCssWide,
+        ),
+        ("border-left-width", PropertyValue::BorderLeftWidthCssWide),
+        ("border-top-style", PropertyValue::BorderTopStyleCssWide),
+        ("border-right-style", PropertyValue::BorderRightStyleCssWide),
+        (
+            "border-bottom-style",
+            PropertyValue::BorderBottomStyleCssWide,
+        ),
+        ("border-left-style", PropertyValue::BorderLeftStyleCssWide),
+        ("border-top-color", PropertyValue::BorderTopColorCssWide),
+        ("border-right-color", PropertyValue::BorderRightColorCssWide),
+        (
+            "border-bottom-color",
+            PropertyValue::BorderBottomColorCssWide,
+        ),
+        ("border-left-color", PropertyValue::BorderLeftColorCssWide),
+    ];
+    for (name, ctor) in cases {
+        for kw in CssWideKeyword::ALL {
+            assert_eq!(
+                parse(kw.as_css_str(), name),
+                Some(ctor(*kw)),
+                "{name}: {kw:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn border_css_wide_serializes_to_keyword() {
+    // Cover `serialize_value`'s `CssWideKeyword` arm for every border variant.
+    for kw in CssWideKeyword::ALL {
+        let expected = kw.as_css_str().to_owned();
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+    }
+    // `border-right` shorthand itself is not canonically serialized (expanded first).
+    assert_eq!(
+        crate::property::serialize_value(&PropertyValue::BorderRight(Border {
+            width: Length::Px(2.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        })),
+        None
+    );
+}
