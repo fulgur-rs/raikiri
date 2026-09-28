@@ -3147,6 +3147,7 @@ fn css_wide_keyword_roundtrips_through_all() {
 }
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn border_all_longhands_accept_css_wide_keywords() {
     // Cover every `border-*-width/style/color` dispatch arm in `parse_value`
     // (see `parse_css_wide_keyword`): all twelve longhands accept all five keywords.
