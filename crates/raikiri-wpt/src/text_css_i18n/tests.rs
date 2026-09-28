@@ -311,15 +311,17 @@ fn discovers_testharness_files_recursively_but_not_reference_documents() {
     assert_eq!(ids, ["test.html", "zh/locale.html"]);
 }
 
-/// A temp WPT root holding the checkout's real `resources/testharness.js`,
-/// for pages that run end to end through the real harness.
-fn wpt_root_with_real_harness() -> tempfile::TempDir {
-    let harness =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt/resources/testharness.js");
+/// Shared fake `resources/testharness.js` stand-in, covering what the restored
+/// always-on tests need: `setup`, `add_completion_callback`, `test`,
+/// `assert_true`, `assert_approx_equals`, and `done` with explicit done.
+const FAKE_HARNESS: &str = include_str!("../../tests/fixtures/fake-testharness.js");
+
+/// A temp WPT root holding the shared fake harness, for host-behavior pages
+/// that run without the sparse WPT checkout.
+fn wpt_root_with_fake_harness() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("resources")).unwrap();
-    fs::copy(&harness, dir.path().join("resources/testharness.js"))
-        .unwrap_or_else(|error| panic!("{}: {error}", harness.display()));
+    fs::write(dir.path().join("resources/testharness.js"), FAKE_HARNESS).unwrap();
     dir
 }
 
@@ -427,11 +429,9 @@ fn native_dom_updates_identity_attributes_style_and_current_geometry() {
         .unwrap();
 }
 
-// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
 #[test]
-#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn live_document_preserves_hidden_geometry_parent_links_and_replacement_identity() {
-    let wpt_root = wpt_root_with_real_harness();
+    let wpt_root = wpt_root_with_fake_harness();
     write_test_page(
         wpt_root.path(),
         "hidden.html",
@@ -518,11 +518,9 @@ fn unreadable_test_file_is_reported_as_an_execution_error() {
     );
 }
 
-// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
 #[test]
-#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn live_testharness_resolves_relative_stylesheets_and_images_from_the_page_directory() {
-    let wpt_root = wpt_root_with_real_harness();
+    let wpt_root = wpt_root_with_fake_harness();
     let test_dir = wpt_root.path().join(TEST_DIR).join("nested");
     fs::create_dir_all(&test_dir).unwrap();
     fs::write(
