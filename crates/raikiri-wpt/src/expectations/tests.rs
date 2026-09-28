@@ -677,7 +677,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text nowrap suppresses overflow-wrap exact slice (+1).
     // + CSS Text text-justify none exact slice (+1).
     // + CSS Text word-space-transform:space ZWSP/wbr exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1347);
+    // + CSS Text word-space-transform:ideographic-space ZWSP/wbr exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1348);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
