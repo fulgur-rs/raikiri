@@ -432,7 +432,10 @@ fn find_border_rollback(
         }
         // `revert` carve-out: Author rollback also ignores presentational hints.
         if is_revert
-            && matches!(winner_origin, Origin::Author | Origin::AuthorPresentationalHint)
+            && matches!(
+                winner_origin,
+                Origin::Author | Origin::AuthorPresentationalHint
+            )
             && matches!(origin, Origin::Author | Origin::AuthorPresentationalHint)
         {
             continue;
@@ -1853,7 +1856,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::BorderBottomColorCssWide(_)
         | PropertyValue::BorderLeftColorCssWide(_) => {}
         PropertyValue::Border(sides) => expand_border(sides, |v| apply_value(v, target)),
-        PropertyValue::BorderRight(border) => expand_border_right(border, |v| apply_value(v, target)),
+        PropertyValue::BorderRight(border) => {
+            expand_border_right(border, |v| apply_value(v, target))
+        }
         PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, |v| apply_value(v, target)),
         PropertyValue::BorderRightCssWide(kw) => {
             expand_border_right_css_wide(kw, |v| apply_value(v, target))

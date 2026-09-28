@@ -8123,10 +8123,7 @@ fn wpt_border_right_017_inherit_two_values() {
         r.computed[parent].border.right.color,
         BorderColor::Resolved(blue)
     );
-    assert_eq!(
-        r.computed[child].border.right.style,
-        BorderStyle::Dashed
-    );
+    assert_eq!(r.computed[child].border.right.style, BorderStyle::Dashed);
     assert_eq!(
         r.computed[child].border.right.color,
         BorderColor::Resolved(blue)
@@ -8144,10 +8141,7 @@ fn wpt_border_right_018_inherit_three_values() {
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(r.computed[parent].border.right.width, ComputedLength(96.0));
     assert_eq!(r.computed[parent].border.right.style, BorderStyle::Solid);
-    assert_eq!(
-        r.computed[child].border.right.width,
-        ComputedLength(96.0)
-    );
+    assert_eq!(r.computed[child].border.right.width, ComputedLength(96.0));
     assert_eq!(r.computed[child].border.right.style, BorderStyle::Solid);
 }
 
@@ -8168,10 +8162,7 @@ fn border_right_initial_and_unset_reset_to_initial() {
             ComputedLength::ZERO,
             "initial/unset width gates to zero with style none"
         );
-        assert_eq!(
-            r.computed[child].border.right.style,
-            BorderStyle::None
-        );
+        assert_eq!(r.computed[child].border.right.style, BorderStyle::None);
         assert_eq!(
             r.computed[child].border.right.color,
             BorderColor::CurrentColor

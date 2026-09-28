@@ -9930,8 +9930,9 @@ impl PropertyValue {
             PropertyValue::BorderRightWidth(_) | PropertyValue::BorderRightWidthCssWide(_) => {
                 PropertyKey::BorderRightWidth
             }
-            PropertyValue::BorderBottomWidth(_)
-            | PropertyValue::BorderBottomWidthCssWide(_) => PropertyKey::BorderBottomWidth,
+            PropertyValue::BorderBottomWidth(_) | PropertyValue::BorderBottomWidthCssWide(_) => {
+                PropertyKey::BorderBottomWidth
+            }
             PropertyValue::BorderLeftWidth(_) | PropertyValue::BorderLeftWidthCssWide(_) => {
                 PropertyKey::BorderLeftWidth
             }
@@ -9941,8 +9942,9 @@ impl PropertyValue {
             PropertyValue::BorderRightStyle(_) | PropertyValue::BorderRightStyleCssWide(_) => {
                 PropertyKey::BorderRightStyle
             }
-            PropertyValue::BorderBottomStyle(_)
-            | PropertyValue::BorderBottomStyleCssWide(_) => PropertyKey::BorderBottomStyle,
+            PropertyValue::BorderBottomStyle(_) | PropertyValue::BorderBottomStyleCssWide(_) => {
+                PropertyKey::BorderBottomStyle
+            }
             PropertyValue::BorderLeftStyle(_) | PropertyValue::BorderLeftStyleCssWide(_) => {
                 PropertyKey::BorderLeftStyle
             }
@@ -9952,8 +9954,9 @@ impl PropertyValue {
             PropertyValue::BorderRightColor(_) | PropertyValue::BorderRightColorCssWide(_) => {
                 PropertyKey::BorderRightColor
             }
-            PropertyValue::BorderBottomColor(_)
-            | PropertyValue::BorderBottomColorCssWide(_) => PropertyKey::BorderBottomColor,
+            PropertyValue::BorderBottomColor(_) | PropertyValue::BorderBottomColorCssWide(_) => {
+                PropertyKey::BorderBottomColor
+            }
             PropertyValue::BorderLeftColor(_) | PropertyValue::BorderLeftColorCssWide(_) => {
                 PropertyKey::BorderLeftColor
             }

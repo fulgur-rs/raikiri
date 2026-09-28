@@ -1707,11 +1707,15 @@ fn border_width_accepts_css_wide_keyword() {
     // accepts the five CSS-wide keywords as a lone value (see `CssWideKeyword`).
     assert_eq!(
         parse("inherit", "border-top-width"),
-        Some(PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit))
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::Inherit
+        ))
     );
     assert_eq!(
         parse("initial", "border-top-width"),
-        Some(PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Initial))
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::Initial
+        ))
     );
     assert_eq!(
         parse("unset", "border-top-width"),
@@ -1946,11 +1950,15 @@ fn border_style_accepts_css_wide_keyword() {
     // accepts the five CSS-wide keywords as a lone value (see `CssWideKeyword`).
     assert_eq!(
         parse("inherit", "border-top-style"),
-        Some(PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Inherit))
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::Inherit
+        ))
     );
     assert_eq!(
         parse("initial", "border-top-style"),
-        Some(PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Initial))
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::Initial
+        ))
     );
     assert_eq!(
         parse("unset", "border-top-style"),
