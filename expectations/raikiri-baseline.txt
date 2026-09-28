@@ -1604,3 +1604,5 @@ css/css-text/text-autospace/text-autospace-ideograph-numeric-001.html
 css/css-text/text-autospace/text-autospace-supplementary-ideograph.html
 # --- css-text text-transform full-width collapsed spaces Ahem exact 800x600 PASS-only (+1) ---
 css/css-text/text-transform/text-transform-fullwidth-006.html
+# --- css-text text-transform full-width preserved spaces Ahem exact 800x600 PASS-only (+1) ---
+css/css-text/text-transform/text-transform-fullwidth-007.html
