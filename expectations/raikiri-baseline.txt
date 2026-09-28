@@ -1594,3 +1594,5 @@ css/css-text/word-space-transform/word-space-transform-004.html
 css/css-text/word-space-transform/word-space-transform-005.html
 # --- css-text word-space-transform:space on inline children exact 800x600 PASS-only (+1) ---
 css/css-text/word-space-transform/word-space-transform-006.html
+# --- css-text word-space-transform without auto-phrase exact 800x600 PASS-only (+1) ---
+css/css-text/word-space-transform/word-space-transform-028.html
