@@ -693,3 +693,37 @@ fn word_space_transform_ideographic_space_for_zwsp_and_wbr_exact() {
         result.mismatched_pixels
     );
 }
+
+fn word_space_transform_none_override_pair(file: &str) {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/css-text/word-space-transform").join(file);
+    let pairs =
+        discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pair");
+    assert_eq!(pairs.len(), 1);
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair(&pairs[0], config).expect("run WPT pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "outcome={:?}, mismatches={}",
+        result.outcome,
+        result.mismatched_pixels
+    );
+}
+
+/// The `<wbr>` may opt out of its parent's `word-space-transform: space`.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn word_space_transform_none_on_wbr_exact() {
+    word_space_transform_none_override_pair("word-space-transform-004.html");
+}
+
+/// An inline span may opt out of its parent's `word-space-transform: space`.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn word_space_transform_none_on_inline_exact() {
+    word_space_transform_none_override_pair("word-space-transform-005.html");
+}

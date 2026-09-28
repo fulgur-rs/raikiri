@@ -1589,3 +1589,6 @@ css/printing/fragmented-inline-block-002-print.html
 css/css-text/word-space-transform/word-space-transform-002.html
 # --- css-text word-space-transform:ideographic-space ZWSP/wbr exact 800x600 PASS-only (+1) ---
 css/css-text/word-space-transform/word-space-transform-001.html
+# --- css-text word-space-transform:none inline/wbr override exact 800x600 PASS-only (+2) ---
+css/css-text/word-space-transform/word-space-transform-004.html
+css/css-text/word-space-transform/word-space-transform-005.html
