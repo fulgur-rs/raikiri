@@ -262,6 +262,7 @@ impl DocumentHost for WptDocumentHost {
             self.setup.page_box.width as u32,
             self.setup.page_box.height as u32,
             self.setup.document_base_url.as_ref(),
+            self.setup.page_resource_base.as_deref(),
             &self.wpt_root,
         )
         .map_err(HostError)?; // cov:ignore: UTF-8 markup is parsed from memory; its reader and parser recover without I/O/encoding errors.

@@ -605,31 +605,51 @@ pub fn discover_all_pairs_with_docroot(walk_root: &Path, docroot: &Path) -> Vec<
 /// handles stylesheets, while replaced-element and paint-time URLs are read
 /// from the DOM/computed values after parsing; keeping one absolute URL in all
 /// three paths lets the file provider and image cache share a key.
-fn absolutize_wpt_resource_urls(html: &str, resource_base: Option<&Path>) -> String {
-    let Some(resource_base) = resource_base else {
-        return html.to_owned();
-    };
-    let Ok(base_url) = raikiri::Url::from_directory_path(resource_base) else {
-        return html.to_owned();
-    };
-    let prefix = base_url.to_string();
-    let mut html = html
-        .replace("\"support/", &format!("\"{prefix}support/"))
-        .replace("'support/", &format!("'{prefix}support/"));
+///
+/// Relative `support/` URLs resolve against the page directory, the same base
+/// the parser uses, so a quoted `src="support/x.js"` resolves identically to
+/// the same URL written unquoted. URLs rooted at `/` resolve against the WPT
+/// checkout instead.
+fn absolutize_wpt_resource_urls(
+    html: &str,
+    page_base: Option<&Path>,
+    wpt_root: Option<&Path>,
+) -> String {
+    let mut html = html.to_owned();
+    if let Some(page_base) = page_base
+        && let Ok(base_url) = raikiri::Url::from_directory_path(page_base)
+    {
+        let prefix = base_url.to_string();
+        html = html
+            .replace("\"support/", &format!("\"{prefix}support/"))
+            .replace("'support/", &format!("'{prefix}support/"));
+    }
 
     // WPT URLs beginning with `/` are rooted at the checkout, not at the
     // host filesystem root.  Convert the bundled Ahem stylesheet link to a
     // file URL so the parser's ordinary external-stylesheet path can load it.
     // The stylesheet keeps its `/fonts/Ahem.ttf` source URL; WptFontLoader
     // resolves that URL against the same WPT checkout.
-    let wpt_root = resource_base.ancestors().find(|candidate| {
-        candidate.join("fonts").join("Ahem.ttf").is_file()
-            || candidate.join("fonts").join("ahem.css").is_file()
-    });
+    let fonts_root = wpt_root
+        .filter(|root| {
+            root.join("fonts").join("Ahem.ttf").is_file()
+                || root.join("fonts").join("ahem.css").is_file()
+        })
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            page_base.and_then(|base| {
+                base.ancestors()
+                    .find(|candidate| {
+                        candidate.join("fonts").join("Ahem.ttf").is_file()
+                            || candidate.join("fonts").join("ahem.css").is_file()
+                    })
+                    .map(Path::to_path_buf)
+            })
+        });
     // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
-    if let Some(wpt_root) = wpt_root
+    if let Some(fonts_root) = fonts_root
         // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
-        && let Ok(root_url) = raikiri::Url::from_directory_path(wpt_root)
+        && let Ok(root_url) = raikiri::Url::from_directory_path(&fonts_root)
     // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
     {
         let fonts_prefix = root_url.to_string();
@@ -1591,7 +1611,7 @@ pub(crate) fn prepare_wpt_live_document(
         base_url: stylesheet_base.clone(),
     };
 
-    let html = absolutize_wpt_resource_urls(html, wpt_root.as_deref());
+    let html = absolutize_wpt_resource_urls(html, page_base.as_deref(), wpt_root.as_deref());
     let html = expand_viewport_units(&html, width as f32, height as f32);
     let image_resolver = wpt_root
         .as_ref()
@@ -1704,6 +1724,7 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_wpt_inner_html_fragment(
     markup: &str,
     context_tag: &str,
@@ -1711,8 +1732,10 @@ pub(crate) fn parse_wpt_inner_html_fragment(
     width: u32,
     height: u32,
     document_base_url: Option<&raikiri::Url>,
+    page_base: Option<&Path>,
     wpt_root: &Path,
 ) -> Result<raikiri_html::UncascadedDocument, String> {
+    let page_base = page_base.and_then(|base| std::fs::canonicalize(base).ok());
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
     let stylesheet_network = wpt_root.as_ref().map(|_| raikiri_net::FileNetworkProvider);
     let opts = raikiri::ParseOptions {
@@ -1722,7 +1745,7 @@ pub(crate) fn parse_wpt_inner_html_fragment(
             .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
         base_url: document_base_url.cloned(),
     };
-    let markup = absolutize_wpt_resource_urls(markup, wpt_root.as_deref());
+    let markup = absolutize_wpt_resource_urls(markup, page_base.as_deref(), wpt_root.as_deref());
     let markup = expand_viewport_units(&markup, width as f32, height as f32);
     raikiri_html::parse_fragment(
         markup.as_bytes(),
@@ -1755,7 +1778,7 @@ fn render_raikiri_pages_inner(
     let stylesheet_base =
         resource_base.and_then(|path| raikiri::Url::from_directory_path(path).ok());
     let font_loader = WptFontLoader::discover(font_base.or(resource_base));
-    let html = absolutize_wpt_resource_urls(html, resource_base);
+    let html = absolutize_wpt_resource_urls(html, resource_base, None);
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
