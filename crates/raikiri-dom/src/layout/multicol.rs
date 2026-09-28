@@ -134,7 +134,6 @@ pub(crate) fn compute_multicol_layout(
     output
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 pub(crate) fn multicol_definite_dimension(
     tree: &Document,
     value: Dimension,
@@ -245,7 +244,6 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
     })
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn relayout_nested_multicol_children(
     tree: &mut Document,
     node_id: TaffyNodeId,
@@ -470,7 +468,6 @@ fn relayout_nested_multicol_children(
     maximum.max(cursor).max(minimum_height)
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn nested_text_line_ranges(
     layout: &parley::Layout<()>,
     context: FragmentationContext,
@@ -548,7 +545,6 @@ fn nested_text_line_ranges(
     ranges
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn refresh_nested_text_fragments(
     tree: &mut Document,
     node_id: usize,
