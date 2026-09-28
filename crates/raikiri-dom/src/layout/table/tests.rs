@@ -2059,3 +2059,46 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
         td_layout.size.width
     );
 }
+
+// -----------------------------------------------------------------
+// get_colspan — WHATWG HTML 4.9.12.1 ("Forming a table", "Cells" step):
+// missing / unparseable / zero defaults to 1, values above 1000 clamp
+// to 1000. Regression: values above u16::MAX (e.g. "100000") used to
+// fail `parse::<u16>` and fall back to 1 instead of clamping to 1000.
+// -----------------------------------------------------------------
+
+fn colspan_of(value: Option<&str>) -> u16 {
+    let mut doc = Document::new();
+    let td = doc.append_element(None, "td", Style::default(), None::<&str>);
+    if let Some(v) = value {
+        doc.set_element_attributes(td, vec![("colspan".into(), v.into())]);
+    }
+    super::get_colspan(&doc, td)
+}
+
+#[test]
+fn get_colspan_normal_value_passes_through() {
+    assert_eq!(colspan_of(Some("2")), 2);
+    assert_eq!(colspan_of(Some("1000")), 1000);
+}
+
+#[test]
+fn get_colspan_missing_zero_and_invalid_default_to_one() {
+    assert_eq!(colspan_of(None), 1);
+    assert_eq!(colspan_of(Some("0")), 1);
+    assert_eq!(colspan_of(Some("abc")), 1);
+}
+
+#[test]
+fn get_colspan_clamps_values_above_1000() {
+    assert_eq!(colspan_of(Some("1001")), 1000);
+    assert_eq!(colspan_of(Some("65535")), 1000);
+}
+
+#[test]
+fn get_colspan_huge_value_clamps_to_1000_not_one() {
+    // "100000" overflows u16: the old `parse::<u16>` failed and fell
+    // back to 1; parsing wide (u32) clamps it to 1000 per spec.
+    assert_eq!(colspan_of(Some("70000")), 1000);
+    assert_eq!(colspan_of(Some("100000")), 1000);
+}
