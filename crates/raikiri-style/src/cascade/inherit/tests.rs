@@ -8077,3 +8077,196 @@ fn transform_origin_absolutizes_own_font_lengths_and_resets_in_children() {
     );
     assert_eq!(result.computed[child].transform_origin_z.px(), 0.0);
 }
+
+#[test]
+fn wpt_border_right_016_inherit_single_value() {
+    // WPT css/CSS2/borders/border-right-016.xht: parent `border-right: dashed`
+    // (style only, width medium, color currentcolor); child `border-right: inherit`
+    // takes all three right-side computed values.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: dashed"));
+    let child = doc.push_element(parent, "div", Some("border-right: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[parent].border.right.style, BorderStyle::Dashed);
+    assert_eq!(r.computed[parent].border.right.width, ComputedLength(3.0));
+    assert_eq!(
+        r.computed[child].border.right.style,
+        r.computed[parent].border.right.style
+    );
+    assert_eq!(
+        r.computed[child].border.right.width,
+        r.computed[parent].border.right.width
+    );
+    assert_eq!(
+        r.computed[child].border.right.color,
+        r.computed[parent].border.right.color
+    );
+}
+
+#[test]
+fn wpt_border_right_017_inherit_two_values() {
+    // WPT css/CSS2/borders/border-right-017.xht: parent `border-right: dashed blue`.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: dashed blue"));
+    let child = doc.push_element(parent, "div", Some("border-right: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    assert_eq!(r.computed[parent].border.right.style, BorderStyle::Dashed);
+    assert_eq!(
+        r.computed[parent].border.right.color,
+        BorderColor::Resolved(blue)
+    );
+    assert_eq!(
+        r.computed[child].border.right.style,
+        BorderStyle::Dashed
+    );
+    assert_eq!(
+        r.computed[child].border.right.color,
+        BorderColor::Resolved(blue)
+    );
+}
+
+#[test]
+fn wpt_border_right_018_inherit_three_values() {
+    // WPT css/CSS2/borders/border-right-018.xht: parent `border-right: 1in solid blue`
+    // (96px); child `border-right: inherit` takes width, style, and color.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: 1in solid blue"));
+    let child = doc.push_element(parent, "div", Some("border-right: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[parent].border.right.width, ComputedLength(96.0));
+    assert_eq!(r.computed[parent].border.right.style, BorderStyle::Solid);
+    assert_eq!(
+        r.computed[child].border.right.width,
+        ComputedLength(96.0)
+    );
+    assert_eq!(r.computed[child].border.right.style, BorderStyle::Solid);
+}
+
+#[test]
+fn border_right_initial_and_unset_reset_to_initial() {
+    // CSS Cascading 4 §7.3: `initial` takes the property initial value;
+    // `unset` behaves as `initial` for non-inherited `border-*`.
+    // Parent has a visible border; child resets.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: 5px solid red"));
+    let initial_child = doc.push_element(parent, "div", Some("border-right: initial"));
+    let unset_child = doc.push_element(parent, "div", Some("border-right: unset"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    for child in [initial_child, unset_child] {
+        assert_eq!(
+            r.computed[child].border.right.width,
+            ComputedLength::ZERO,
+            "initial/unset width gates to zero with style none"
+        );
+        assert_eq!(
+            r.computed[child].border.right.style,
+            BorderStyle::None
+        );
+        assert_eq!(
+            r.computed[child].border.right.color,
+            BorderColor::CurrentColor
+        );
+    }
+    // Parent keeps its authored values.
+    assert_eq!(r.computed[parent].border.right.width, ComputedLength(5.0));
+}
+
+#[test]
+fn border_right_revert_rolls_back_to_user_origin() {
+    // CSS Cascading 4 §7.3.4: Author `revert` rolls back to the User origin winner.
+    // User declares 8px; Author declares `revert` (plus visible style/color so the
+    // gated width stays visible). The winner is the Author `revert` marker, which
+    // rolls back to the User 8px rather than falling back to initial.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div { border-right-width: 8px; border-right-style: solid; border-right-color: red; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div { border-right-width: revert; border-right-style: solid; border-right-color: red; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[div].border.right.width,
+        ComputedLength(8.0),
+        "Author revert must roll back to User 8px"
+    );
+    // Minimal pin: revert with no lower-origin winner falls back to initial.
+    let mut doc3 = TestDoc::new();
+    let lone = doc3.push_element(0, "div", Some("border-right-width: revert"));
+    let tree3 = build_rule_tree(&doc3);
+    let r3 = cascade(&doc3, &tree3).expect("cascade Ok");
+    assert_eq!(
+        r3.computed[lone].border.right.width,
+        ComputedLength::ZERO,
+        "revert with no User/UA winner falls back to initial (gated zero)"
+    );
+}
+
+#[test]
+fn border_right_revert_layer_falls_back_to_origin_rollback() {
+    // This crate stores no style layers for element rules, so `revert-layer`
+    // falls back to the `revert` origin rollback (see `CssWideKeyword`).
+    // With no lower-origin winner it reaches initial.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", Some("border-right-style: revert-layer"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[div].border.right.style, BorderStyle::None);
+}
+
+#[test]
+fn border_right_var_resolves_and_preserves_order() {
+    // `border-right: var(--b)` defers through custom properties; the substituted
+    // `2px dashed` expands to three longhands preserving width, style, color order.
+    // A later longhand in the same block wins per order of appearance.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(
+        0,
+        "div",
+        Some("--b: 2px dashed; border-right: var(--b); border-right-width: 5px"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[div].border.right.width, ComputedLength(5.0));
+    assert_eq!(r.computed[div].border.right.style, BorderStyle::Dashed);
+}
+
+#[test]
+fn border_shorthand_css_wide_expands_to_all_sides() {
+    // `border: inherit` expands to twelve longhands; each side inherits its parent side.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border: 4px dotted blue"));
+    let child = doc.push_element(parent, "div", Some("border: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    for side in [
+        &r.computed[child].border.top,
+        &r.computed[child].border.right,
+        &r.computed[child].border.bottom,
+        &r.computed[child].border.left,
+    ] {
+        assert_eq!(side.width, ComputedLength(4.0));
+        assert_eq!(side.style, BorderStyle::Dotted);
+    }
+    // Invalid combination `border: inherit solid` drops the whole declaration,
+    // leaving initial (tested end-to-end through the declaration block).
+    let mut doc2 = TestDoc::new();
+    let div2 = doc2.push_element(0, "div", Some("border: inherit solid"));
+    let tree2 = build_rule_tree(&doc2);
+    let r2 = cascade(&doc2, &tree2).expect("cascade Ok");
+    assert_eq!(r2.computed[div2].border.right.style, BorderStyle::None);
+}

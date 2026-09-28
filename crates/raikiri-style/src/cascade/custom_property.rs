@@ -295,6 +295,69 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        PropertyValue::BorderRight(border) => match key {
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidth(border.width)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyle(border.style)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColor(border.color)
+            }
+            _ => return None,
+        },
+        PropertyValue::BorderCssWide(kw) => match key {
+            crate::property::PropertyKey::BorderTopWidth => {
+                PropertyValue::BorderTopWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderTopStyle => {
+                PropertyValue::BorderTopStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderTopColor => {
+                PropertyValue::BorderTopColorCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColorCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderBottomWidth => {
+                PropertyValue::BorderBottomWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderBottomStyle => {
+                PropertyValue::BorderBottomStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderBottomColor => {
+                PropertyValue::BorderBottomColorCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftWidth => {
+                PropertyValue::BorderLeftWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftStyle => {
+                PropertyValue::BorderLeftStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftColor => {
+                PropertyValue::BorderLeftColorCssWide(kw)
+            }
+            _ => return None,
+        },
+        PropertyValue::BorderRightCssWide(kw) => match key {
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColorCssWide(kw)
+            }
+            _ => return None,
+        },
         // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::Overflow(pair) => match key {
             crate::property::PropertyKey::OverflowX => PropertyValue::OverflowX(pair.x),

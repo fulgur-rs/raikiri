@@ -70,6 +70,21 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::OutlineWidth(l)
         | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
 
+        PropertyValue::BorderTopWidthCssWide(kw)
+        | PropertyValue::BorderRightWidthCssWide(kw)
+        | PropertyValue::BorderBottomWidthCssWide(kw)
+        | PropertyValue::BorderLeftWidthCssWide(kw)
+        | PropertyValue::BorderTopStyleCssWide(kw)
+        | PropertyValue::BorderRightStyleCssWide(kw)
+        | PropertyValue::BorderBottomStyleCssWide(kw)
+        | PropertyValue::BorderLeftStyleCssWide(kw)
+        | PropertyValue::BorderTopColorCssWide(kw)
+        | PropertyValue::BorderRightColorCssWide(kw)
+        | PropertyValue::BorderBottomColorCssWide(kw)
+        | PropertyValue::BorderLeftColorCssWide(kw)
+        | PropertyValue::BorderCssWide(kw)
+        | PropertyValue::BorderRightCssWide(kw) => Some(kw.as_css_str().to_owned()),
+
         PropertyValue::Top(v)
         | PropertyValue::Right(v)
         | PropertyValue::Bottom(v)
@@ -454,6 +469,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderBottomColor(..)
         | PropertyValue::BorderLeftColor(..)
         | PropertyValue::Border(..)
+        | PropertyValue::BorderRight(..)
         | PropertyValue::BorderStyle(..)
         | PropertyValue::BoxSizing(..)
         | PropertyValue::OverflowX(..)

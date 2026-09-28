@@ -6,9 +6,10 @@ use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
 use crate::property::{
-    BorderRadius, FontWeightValue, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    Length, LengthOrAuto, LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize,
-    Sides, TextIndentLength, WordSpacingValue, WritingMode, initial_grid_auto_track_list,
+    Border, BorderColor, BorderRadius, BorderStyle, CssWideKeyword, FontWeightValue,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
+    LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize, Sides, TextIndentLength,
+    WordSpacingValue, WritingMode, initial_grid_auto_track_list,
     resolve_text_align_internal_center, resolve_text_align_match_parent,
 };
 use crate::resolve::{
@@ -16,17 +17,18 @@ use crate::resolve::{
     used_line_height_length,
 };
 use crate::rule::{
-    expand_background, expand_border, expand_border_color, expand_border_style,
-    expand_border_width, expand_flex, expand_flex_flow, expand_font, expand_gap,
-    expand_grid_column, expand_grid_row, expand_margin, expand_margin_block, expand_margin_inline,
-    expand_outline, expand_overflow, expand_padding, expand_padding_block, expand_padding_inline,
-    expand_place_content, expand_place_items, expand_place_self, expand_text_decoration,
+    expand_background, expand_border, expand_border_color, expand_border_css_wide,
+    expand_border_right, expand_border_right_css_wide, expand_border_style, expand_border_width,
+    expand_flex, expand_flex_flow, expand_font, expand_gap, expand_grid_column, expand_grid_row,
+    expand_margin, expand_margin_block, expand_margin_inline, expand_outline, expand_overflow,
+    expand_padding, expand_padding_block, expand_padding_inline, expand_place_content,
+    expand_place_items, expand_place_self, expand_text_decoration,
 };
 use crate::ruletree::Origin;
-use crate::specified::SpecifiedValues;
+use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
-use super::collect::{CascadedArena, CascadedDecl, RankedDecl, pick_winners};
+use super::collect::{CascadedArena, CascadedDecl, RankedDecl, cascade_rank, pick_winners};
 use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
 
 type InheritanceStackEntry = (
@@ -355,6 +357,257 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 // The winner application already groups several optional cascade side channels;
 // the inherited computed values add one more required input for `inherit`
 // resolution without changing that staging boundary.
+/// Find the origin-rollback winner for `revert` / `revert-layer` on one border longhand.
+///
+/// CSS Cascading 4 §7.3.4 "The revert keyword" rolls back to the previous origin:
+/// an Author `revert` uses the best User (or UA if no User) winner for the same
+/// [`PropertyKey`], ignoring all Author declarations for that property. CSS Cascading 5
+/// §6.5 carves out presentational hints for `revert` only ("it is considered part of
+/// the author origin", not for `revert-layer`): an Author `revert` therefore also
+/// ignores [`Origin::AuthorPresentationalHint`] candidates. This crate stores no style
+/// layers for element rules, so `revert-layer` falls back to the same origin rollback
+/// (see [`CssWideKeyword`]).
+///
+/// `winner_rank` / `winner_origin` come from the `revert` declaration that won
+/// [`pick_winners`]. Among `candidates` with the same `key`, consider only those with
+/// strictly lower [`cascade_rank`] (any lower origin tier, or the same origin tier at
+/// lower importance when `!important` is involved) and, for `revert` from Author,
+/// exclude both Author and presentational-hint origins per the carve-out above.
+/// Pick the best among the survivors with the same ordering [`pick_winners`] uses
+/// (rank, specificity, source order). Candidates that are themselves `revert` /
+/// `revert-layer` markers are skipped to avoid recursion; when no survivor exists,
+/// the caller falls back to the initial value (see [`INITIAL_BORDER`]).
+///
+/// Returns the rollback [`PropertyValue`] still in specified form (possibly
+/// [`PropertyValue::Deferred`], which the caller resolves). Returns `None` when no
+/// lower-origin winner exists.
+fn find_border_rollback(
+    candidates: &[CascadedDecl],
+    key: crate::property::PropertyKey,
+    winner_rank: u8,
+    winner_origin: Origin,
+    keyword: CssWideKeyword,
+) -> Option<PropertyValue> {
+    use crate::cascade::collect::RankedDecl;
+    let is_revert = matches!(keyword, CssWideKeyword::Revert);
+    let mut best: Option<(RankedDecl, PropertyValue)> = None;
+    for (idx, (value, important, origin, spec, order)) in candidates.iter().enumerate() {
+        if value.key() != key {
+            continue;
+        }
+        // Skip other revert markers to avoid recursion.
+        if matches!(
+            value,
+            PropertyValue::BorderTopWidthCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderRightWidthCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderBottomWidthCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderLeftWidthCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderTopStyleCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderRightStyleCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderBottomStyleCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderLeftStyleCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderTopColorCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderRightColorCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderBottomColorCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) | PropertyValue::BorderLeftColorCssWide(
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            )
+        ) {
+            continue;
+        }
+        let rank = cascade_rank(*origin, *important);
+        if rank >= winner_rank {
+            continue;
+        }
+        // `revert` carve-out: Author rollback also ignores presentational hints.
+        if is_revert
+            && matches!(winner_origin, Origin::Author | Origin::AuthorPresentationalHint)
+            && matches!(origin, Origin::Author | Origin::AuthorPresentationalHint)
+        {
+            continue;
+        }
+        let candidate = RankedDecl {
+            rank,
+            specificity: *spec,
+            source_order: *order,
+            idx,
+        };
+        let better = match &best {
+            None => true,
+            Some((existing, _)) => {
+                use crate::cascade::collect::beats as beats_fn;
+                beats_fn(candidate, *existing)
+            }
+        };
+        if better {
+            best = Some((candidate, value.clone()));
+        }
+    }
+    best.map(|(_, v)| v)
+}
+
+/// Resolve one border longhand CSS-wide marker to its concrete specified value.
+///
+/// `inherited` supplies the parent computed border for `Inherit`. `INITIAL_BORDER`
+/// supplies `Initial` and, because all `border-*` are non-inherited, `Unset`.
+/// `Revert` / `RevertLayer` use [`find_border_rollback`]; when no lower-origin winner
+/// exists they fall back to [`INITIAL_BORDER`]. A rollback winner that is
+/// [`PropertyValue::Deferred`] is resolved through `custom_properties`; a rollback
+/// winner that is itself a CSS-wide marker (only `Inherit` / `Initial` / `Unset`
+/// can survive [`find_border_rollback`]'s revert skip) is resolved recursively one
+/// level without further rollback.
+fn resolve_border_css_wide(
+    keyword: CssWideKeyword,
+    key: crate::property::PropertyKey,
+    inherited: &ComputedValues,
+    candidates: &[CascadedDecl],
+    winner_rank: u8,
+    winner_origin: Origin,
+    custom_properties: &CustomPropertyEnvironment,
+) -> Option<PropertyValue> {
+    let parent_side = |side: &crate::resolve::ComputedBorder| -> Border {
+        Border {
+            width: inherited_border_width(side.width()),
+            style: side.style(),
+            color: side.color,
+        }
+    };
+    let parent_border = || -> Border {
+        // Dispatch by key to the matching side; unreachable keys fall back to initial
+        // (defensive: every border longhand key maps to one side below).
+        match key {
+            crate::property::PropertyKey::BorderTopWidth
+            | crate::property::PropertyKey::BorderTopStyle
+            | crate::property::PropertyKey::BorderTopColor => parent_side(&inherited.border.top),
+            crate::property::PropertyKey::BorderRightWidth
+            | crate::property::PropertyKey::BorderRightStyle
+            | crate::property::PropertyKey::BorderRightColor => {
+                parent_side(&inherited.border.right)
+            }
+            crate::property::PropertyKey::BorderBottomWidth
+            | crate::property::PropertyKey::BorderBottomStyle
+            | crate::property::PropertyKey::BorderBottomColor => {
+                parent_side(&inherited.border.bottom)
+            }
+            _ => parent_side(&inherited.border.left),
+        }
+    };
+    let initial_border = || -> Border { INITIAL_BORDER };
+    let pick_field = |border: Border| -> PropertyValue {
+        match key {
+            crate::property::PropertyKey::BorderTopWidth => {
+                PropertyValue::BorderTopWidth(border.width)
+            }
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidth(border.width)
+            }
+            crate::property::PropertyKey::BorderBottomWidth => {
+                PropertyValue::BorderBottomWidth(border.width)
+            }
+            crate::property::PropertyKey::BorderLeftWidth => {
+                PropertyValue::BorderLeftWidth(border.width)
+            }
+            crate::property::PropertyKey::BorderTopStyle => {
+                PropertyValue::BorderTopStyle(border.style)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyle(border.style)
+            }
+            crate::property::PropertyKey::BorderBottomStyle => {
+                PropertyValue::BorderBottomStyle(border.style)
+            }
+            crate::property::PropertyKey::BorderLeftStyle => {
+                PropertyValue::BorderLeftStyle(border.style)
+            }
+            crate::property::PropertyKey::BorderTopColor => {
+                PropertyValue::BorderTopColor(border.color)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColor(border.color)
+            }
+            crate::property::PropertyKey::BorderBottomColor => {
+                PropertyValue::BorderBottomColor(border.color)
+            }
+            _ => PropertyValue::BorderLeftColor(border.color),
+        }
+    };
+    match keyword {
+        CssWideKeyword::Inherit => Some(pick_field(parent_border())),
+        CssWideKeyword::Initial | CssWideKeyword::Unset => Some(pick_field(initial_border())),
+        CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
+            let rollback =
+                find_border_rollback(candidates, key, winner_rank, winner_origin, keyword)?;
+            // Resolve one level: Deferred needs custom-property substitution;
+            // a surviving Inherit/Initial/Unset marker resolves without further rollback.
+            match rollback {
+                PropertyValue::Deferred(deferred) => {
+                    let resolved = resolve_deferred_value(&deferred, custom_properties)?;
+                    // A deferred var() may itself substitute to a CSS-wide keyword
+                    // (e.g. `--x: inherit`). Resolve that single level directly
+                    // against parent/initial to avoid rollback recursion.
+                    match resolved {
+                        PropertyValue::BorderTopWidthCssWide(kw)
+                        | PropertyValue::BorderRightWidthCssWide(kw)
+                        | PropertyValue::BorderBottomWidthCssWide(kw)
+                        | PropertyValue::BorderLeftWidthCssWide(kw)
+                        | PropertyValue::BorderTopStyleCssWide(kw)
+                        | PropertyValue::BorderRightStyleCssWide(kw)
+                        | PropertyValue::BorderBottomStyleCssWide(kw)
+                        | PropertyValue::BorderLeftStyleCssWide(kw)
+                        | PropertyValue::BorderTopColorCssWide(kw)
+                        | PropertyValue::BorderRightColorCssWide(kw)
+                        | PropertyValue::BorderBottomColorCssWide(kw)
+                        | PropertyValue::BorderLeftColorCssWide(kw) => match kw {
+                            CssWideKeyword::Inherit => Some(pick_field(parent_border())),
+                            CssWideKeyword::Initial | CssWideKeyword::Unset => {
+                                Some(pick_field(initial_border()))
+                            }
+                            CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
+                                Some(pick_field(initial_border()))
+                            }
+                        },
+                        v => Some(v),
+                    }
+                }
+                PropertyValue::BorderTopWidthCssWide(kw)
+                | PropertyValue::BorderRightWidthCssWide(kw)
+                | PropertyValue::BorderBottomWidthCssWide(kw)
+                | PropertyValue::BorderLeftWidthCssWide(kw)
+                | PropertyValue::BorderTopStyleCssWide(kw)
+                | PropertyValue::BorderRightStyleCssWide(kw)
+                | PropertyValue::BorderBottomStyleCssWide(kw)
+                | PropertyValue::BorderLeftStyleCssWide(kw)
+                | PropertyValue::BorderTopColorCssWide(kw)
+                | PropertyValue::BorderRightColorCssWide(kw)
+                | PropertyValue::BorderBottomColorCssWide(kw)
+                | PropertyValue::BorderLeftColorCssWide(kw) => match kw {
+                    CssWideKeyword::Inherit => Some(pick_field(parent_border())),
+                    CssWideKeyword::Initial | CssWideKeyword::Unset => {
+                        Some(pick_field(initial_border()))
+                    }
+                    // Unreachable via find_border_rollback's skip, defensive fallback.
+                    CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
+                        Some(pick_field(initial_border()))
+                    }
+                },
+                v => Some(v),
+            }
+            .or(Some(pick_field(initial_border())))
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_winners(
     candidates: &[CascadedDecl],
@@ -388,13 +641,62 @@ pub(crate) fn apply_winners(
                     _ => {}
                 }
             }
+            let winner_rank = winner.rank;
+            let winner_origin = candidates[winner.idx].2;
+            let winner_key = value.key();
             let value = match value {
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
                     inherited_border_radius_value(inherited),
                 )),
                 PropertyValue::Deferred(deferred) => {
-                    resolve_deferred_value(deferred, custom_properties)
+                    let resolved = resolve_deferred_value(deferred, custom_properties);
+                    match resolved {
+                        None => None,
+                        Some(
+                            PropertyValue::BorderTopWidthCssWide(kw)
+                            | PropertyValue::BorderRightWidthCssWide(kw)
+                            | PropertyValue::BorderBottomWidthCssWide(kw)
+                            | PropertyValue::BorderLeftWidthCssWide(kw)
+                            | PropertyValue::BorderTopStyleCssWide(kw)
+                            | PropertyValue::BorderRightStyleCssWide(kw)
+                            | PropertyValue::BorderBottomStyleCssWide(kw)
+                            | PropertyValue::BorderLeftStyleCssWide(kw)
+                            | PropertyValue::BorderTopColorCssWide(kw)
+                            | PropertyValue::BorderRightColorCssWide(kw)
+                            | PropertyValue::BorderBottomColorCssWide(kw)
+                            | PropertyValue::BorderLeftColorCssWide(kw),
+                        ) => resolve_border_css_wide(
+                            kw,
+                            winner_key,
+                            inherited,
+                            candidates,
+                            winner_rank,
+                            winner_origin,
+                            custom_properties,
+                        ),
+                        Some(v) => Some(v),
+                    }
                 }
+                PropertyValue::BorderTopWidthCssWide(kw)
+                | PropertyValue::BorderRightWidthCssWide(kw)
+                | PropertyValue::BorderBottomWidthCssWide(kw)
+                | PropertyValue::BorderLeftWidthCssWide(kw)
+                | PropertyValue::BorderTopStyleCssWide(kw)
+                | PropertyValue::BorderRightStyleCssWide(kw)
+                | PropertyValue::BorderBottomStyleCssWide(kw)
+                | PropertyValue::BorderLeftStyleCssWide(kw)
+                | PropertyValue::BorderTopColorCssWide(kw)
+                | PropertyValue::BorderRightColorCssWide(kw)
+                | PropertyValue::BorderBottomColorCssWide(kw)
+                | PropertyValue::BorderLeftColorCssWide(kw) => resolve_border_css_wide(
+                    *kw,
+                    winner_key,
+                    inherited,
+                    candidates,
+                    winner_rank,
+                    winner_origin,
+                    custom_properties,
+                ),
                 _ => Some(value.clone()),
             };
             if let Some(value) = value {
@@ -648,6 +950,114 @@ pub(crate) fn inherited_border_radius(value: ComputedLengthPercentage) -> Length
     }
 }
 
+/// Resolve one border width longhand CSS-wide marker for the page path
+/// ([`resolve_against_inherited`]), which has no rollback candidates.
+///
+/// `is_top` / `is_right` / `is_bottom` select the side (all false = left).
+/// `Inherit` lifts the parent computed side's gated width (see
+/// [`inherited_border_width`]); `Initial` / `Unset` use [`INITIAL_BORDER`];
+/// `Revert` / `RevertLayer` fall back to [`INITIAL_BORDER`] here because this
+/// function has no candidate list — the page winner-selection in
+/// [`crate::page::cascade_page`] replaces revert winners with their rollback
+/// before calling this function, so reaching this arm via the normal page path
+/// means no lower-origin winner existed.
+fn resolve_border_page_longhand(
+    kw: CssWideKeyword,
+    inherited: &ComputedValues,
+    is_top: bool,
+    is_right: bool,
+    is_bottom: bool,
+) -> Length {
+    let side = if is_top {
+        &inherited.border.top
+    } else if is_right {
+        &inherited.border.right
+    } else if is_bottom {
+        &inherited.border.bottom
+    } else {
+        &inherited.border.left
+    };
+    match kw {
+        CssWideKeyword::Inherit => inherited_border_width(side.width()),
+        CssWideKeyword::Initial | CssWideKeyword::Unset => INITIAL_BORDER.width,
+        CssWideKeyword::Revert | CssWideKeyword::RevertLayer => INITIAL_BORDER.width,
+    }
+}
+
+/// Page-path companion of [`resolve_border_page_longhand`] for `border-*-style`.
+fn resolve_border_page_style(
+    kw: CssWideKeyword,
+    inherited: &ComputedValues,
+    is_top: bool,
+    is_right: bool,
+    is_bottom: bool,
+) -> BorderStyle {
+    let side = if is_top {
+        &inherited.border.top
+    } else if is_right {
+        &inherited.border.right
+    } else if is_bottom {
+        &inherited.border.bottom
+    } else {
+        &inherited.border.left
+    };
+    match kw {
+        CssWideKeyword::Inherit => side.style(),
+        CssWideKeyword::Initial | CssWideKeyword::Unset => INITIAL_BORDER.style,
+        CssWideKeyword::Revert | CssWideKeyword::RevertLayer => INITIAL_BORDER.style,
+    }
+}
+
+/// Page-path companion for `border-*-color`.
+fn resolve_border_page_color(
+    kw: CssWideKeyword,
+    inherited: &ComputedValues,
+    is_top: bool,
+    is_right: bool,
+    is_bottom: bool,
+) -> BorderColor {
+    let side = if is_top {
+        &inherited.border.top
+    } else if is_right {
+        &inherited.border.right
+    } else if is_bottom {
+        &inherited.border.bottom
+    } else {
+        &inherited.border.left
+    };
+    match kw {
+        CssWideKeyword::Inherit => side.color,
+        CssWideKeyword::Initial | CssWideKeyword::Unset => INITIAL_BORDER.color,
+        CssWideKeyword::Revert | CssWideKeyword::RevertLayer => INITIAL_BORDER.color,
+    }
+}
+
+/// Page-path single-side resolver for `border-right: <css-wide>` (and the per-side
+/// helper for [`resolve_border_page_sides`]).
+fn resolve_border_page_side(
+    kw: CssWideKeyword,
+    inherited: &ComputedValues,
+    is_top: bool,
+    is_right: bool,
+    is_bottom: bool,
+) -> Border {
+    Border {
+        width: resolve_border_page_longhand(kw, inherited, is_top, is_right, is_bottom),
+        style: resolve_border_page_style(kw, inherited, is_top, is_right, is_bottom),
+        color: resolve_border_page_color(kw, inherited, is_top, is_right, is_bottom),
+    }
+}
+
+/// Page-path resolver for `border: <css-wide>` — all four sides.
+fn resolve_border_page_sides(kw: CssWideKeyword, inherited: &ComputedValues) -> Sides<Border> {
+    Sides {
+        top: resolve_border_page_side(kw, inherited, true, false, false),
+        right: resolve_border_page_side(kw, inherited, false, true, false),
+        bottom: resolve_border_page_side(kw, inherited, false, false, true),
+        left: resolve_border_page_side(kw, inherited, false, false, false),
+    }
+}
+
 fn inherited_border_radius_value(inherited: &ComputedValues) -> BorderRadius {
     BorderRadius {
         top_left: inherited_border_radius(inherited.border_radius.top_left),
@@ -655,6 +1065,17 @@ fn inherited_border_radius_value(inherited: &ComputedValues) -> BorderRadius {
         bottom_right: inherited_border_radius(inherited.border_radius.bottom_right),
         bottom_left: inherited_border_radius(inherited.border_radius.bottom_left),
     }
+}
+
+/// Lift a parent computed border width into specified form for `inherit`.
+///
+/// CSS Cascading 4 §7.3 takes the parent's computed value. For `border-*-width`
+/// the computed value is already gated to zero when the parent's style is `none`
+/// or `hidden` (see [`crate::resolve::resolve_border`]); inheriting that gated
+/// zero is spec-correct. `ComputedLength` absolutizes to px (see [`crate::resolve`]),
+/// so representing it as [`Length::Px`] is lossless.
+fn inherited_border_width(computed: ComputedLength) -> Length {
+    Length::Px(computed.0)
 }
 
 fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
@@ -695,6 +1116,48 @@ pub(crate) fn resolve_against_inherited(
             bottom: inherited_margin_length(inherited.margin.bottom),
             left: inherited_margin_length(inherited.margin.left),
         }),
+        PropertyValue::BorderTopWidthCssWide(kw) => {
+            PropertyValue::BorderTopWidth(resolve_border_page_longhand(kw, inherited, true, false, false))
+        }
+        PropertyValue::BorderRightWidthCssWide(kw) => {
+            PropertyValue::BorderRightWidth(resolve_border_page_longhand(kw, inherited, false, true, false))
+        }
+        PropertyValue::BorderBottomWidthCssWide(kw) => {
+            PropertyValue::BorderBottomWidth(resolve_border_page_longhand(kw, inherited, false, false, true))
+        }
+        PropertyValue::BorderLeftWidthCssWide(kw) => {
+            PropertyValue::BorderLeftWidth(resolve_border_page_longhand(kw, inherited, false, false, false))
+        }
+        PropertyValue::BorderTopStyleCssWide(kw) => {
+            PropertyValue::BorderTopStyle(resolve_border_page_style(kw, inherited, true, false, false))
+        }
+        PropertyValue::BorderRightStyleCssWide(kw) => {
+            PropertyValue::BorderRightStyle(resolve_border_page_style(kw, inherited, false, true, false))
+        }
+        PropertyValue::BorderBottomStyleCssWide(kw) => {
+            PropertyValue::BorderBottomStyle(resolve_border_page_style(kw, inherited, false, false, true))
+        }
+        PropertyValue::BorderLeftStyleCssWide(kw) => {
+            PropertyValue::BorderLeftStyle(resolve_border_page_style(kw, inherited, false, false, false))
+        }
+        PropertyValue::BorderTopColorCssWide(kw) => {
+            PropertyValue::BorderTopColor(resolve_border_page_color(kw, inherited, true, false, false))
+        }
+        PropertyValue::BorderRightColorCssWide(kw) => {
+            PropertyValue::BorderRightColor(resolve_border_page_color(kw, inherited, false, true, false))
+        }
+        PropertyValue::BorderBottomColorCssWide(kw) => {
+            PropertyValue::BorderBottomColor(resolve_border_page_color(kw, inherited, false, false, true))
+        }
+        PropertyValue::BorderLeftColorCssWide(kw) => {
+            PropertyValue::BorderLeftColor(resolve_border_page_color(kw, inherited, false, false, false))
+        }
+        PropertyValue::BorderCssWide(kw) => {
+            PropertyValue::Border(resolve_border_page_sides(kw, inherited))
+        }
+        PropertyValue::BorderRightCssWide(kw) => {
+            PropertyValue::BorderRight(resolve_border_page_side(kw, inherited, false, true, false))
+        }
         // CSS Fonts 4 §2.2.1 "Relative Weights"
         // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: resolve `bolder` /
         // `lighter` against the inherited computed weight. Convert to
@@ -833,6 +1296,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::Border(_)
+        | PropertyValue::BorderRight(_)
         // `border-style` / `border-width` / `border-color` shorthands —
         // same "nothing for phase 2 to resolve" shape as `Border` above
         // (non-inherited keywords/lengths; structurally unreachable here
@@ -1373,7 +1837,27 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRightColor(v) => target.border.right.color = v,
         PropertyValue::BorderBottomColor(v) => target.border.bottom.color = v,
         PropertyValue::BorderLeftColor(v) => target.border.left.color = v,
+        // Border longhand CSS-wide markers are resolved in `apply_winners` before
+        // reaching here (they need the parent computed value or rollback candidates).
+        // Keep them panic-free for direct callers that bypass that phase.
+        PropertyValue::BorderTopWidthCssWide(_)
+        | PropertyValue::BorderRightWidthCssWide(_)
+        | PropertyValue::BorderBottomWidthCssWide(_)
+        | PropertyValue::BorderLeftWidthCssWide(_)
+        | PropertyValue::BorderTopStyleCssWide(_)
+        | PropertyValue::BorderRightStyleCssWide(_)
+        | PropertyValue::BorderBottomStyleCssWide(_)
+        | PropertyValue::BorderLeftStyleCssWide(_)
+        | PropertyValue::BorderTopColorCssWide(_)
+        | PropertyValue::BorderRightColorCssWide(_)
+        | PropertyValue::BorderBottomColorCssWide(_)
+        | PropertyValue::BorderLeftColorCssWide(_) => {}
         PropertyValue::Border(sides) => expand_border(sides, |v| apply_value(v, target)),
+        PropertyValue::BorderRight(border) => expand_border_right(border, |v| apply_value(v, target)),
+        PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, |v| apply_value(v, target)),
+        PropertyValue::BorderRightCssWide(kw) => {
+            expand_border_right_css_wide(kw, |v| apply_value(v, target))
+        }
         PropertyValue::Width(v) => target.width = v,
         PropertyValue::Height(v) => target.height = v,
         PropertyValue::MaxWidth(v) => target.max_width = v,

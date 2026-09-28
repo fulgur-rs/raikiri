@@ -2935,7 +2935,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 143;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 157;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3064,6 +3064,11 @@ property_key_samples! {
         style: BorderStyle::Solid,
         color: BorderColor::CurrentColor,
     })),
+    BorderRight => PropertyValue::BorderRight(Border {
+        width: Length::Em(1.0),
+        style: BorderStyle::Solid,
+        color: BorderColor::CurrentColor,
+    }),
     BorderStyle => PropertyValue::BorderStyle(Sides::all(BorderStyle::Double)),
     BorderWidth => PropertyValue::BorderWidth(Sides::all(Length::Em(2.0))),
     BorderColor => PropertyValue::BorderColor(Sides::all(BorderColor::CurrentColor)),
@@ -3687,7 +3692,9 @@ property_key_samples! {
 /// here for each new non-1:1 variant. `property_value_variant_registry!`
 /// and `page_corpus_covers_every_registered_property_value_variant` catch omissions.
 fn key_sharing_extras() -> Vec<PropertyValue> {
-    use crate::property::{DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand};
+    use crate::property::{
+        CssWideKeyword, DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand,
+    };
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
         PropertyValue::CounterResetInherit,
@@ -3697,6 +3704,20 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::MarginLeftInherit,
         PropertyValue::MarginInherit,
         PropertyValue::BorderRadiusInherit,
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftColorCssWide(CssWideKeyword::Inherit),
         PropertyValue::Deferred(DeferredValue {
             property: "width".into(),
             value: "calc(1px + 1px)".into(),
@@ -3848,6 +3869,21 @@ property_value_variant_registry! {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    BorderRight,
+    BorderCssWide,
+    BorderRightCssWide,
+    BorderTopWidthCssWide,
+    BorderRightWidthCssWide,
+    BorderBottomWidthCssWide,
+    BorderLeftWidthCssWide,
+    BorderTopStyleCssWide,
+    BorderRightStyleCssWide,
+    BorderBottomStyleCssWide,
+    BorderLeftStyleCssWide,
+    BorderTopColorCssWide,
+    BorderRightColorCssWide,
+    BorderBottomColorCssWide,
+    BorderLeftColorCssWide,
     BorderStyle,
     BorderWidth,
     BorderColor,
@@ -4411,6 +4447,21 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 start_end(*p, length_or_auto)
             }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            PropertyValue::BorderRight(b) => length(b.width),
+            PropertyValue::BorderCssWide(_)
+            | PropertyValue::BorderRightCssWide(_)
+            | PropertyValue::BorderTopWidthCssWide(_)
+            | PropertyValue::BorderRightWidthCssWide(_)
+            | PropertyValue::BorderBottomWidthCssWide(_)
+            | PropertyValue::BorderLeftWidthCssWide(_)
+            | PropertyValue::BorderTopStyleCssWide(_)
+            | PropertyValue::BorderRightStyleCssWide(_)
+            | PropertyValue::BorderBottomStyleCssWide(_)
+            | PropertyValue::BorderLeftStyleCssWide(_)
+            | PropertyValue::BorderTopColorCssWide(_)
+            | PropertyValue::BorderRightColorCssWide(_)
+            | PropertyValue::BorderBottomColorCssWide(_)
+            | PropertyValue::BorderLeftColorCssWide(_) => None,
             // Shorthand fall-throughs — styles/colors carry no length.
             PropertyValue::BorderStyle(_)
             | PropertyValue::BorderColor(_) => None,

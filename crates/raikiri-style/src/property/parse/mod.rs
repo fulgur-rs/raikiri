@@ -425,37 +425,118 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // Specified keyword mappings: thin=1px, medium=3px, thick=5px.
         // Negative values violate the grammar and are dropped by
         // `parse_border_width_side`.
-        "border-top-width" => parse_border_width_side(input).map(PropertyValue::BorderTopWidth),
-        "border-right-width" => parse_border_width_side(input).map(PropertyValue::BorderRightWidth),
-        "border-bottom-width" => {
-            parse_border_width_side(input).map(PropertyValue::BorderBottomWidth)
+        "border-top-width" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderTopWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderTopWidth)
+            }
         }
-        "border-left-width" => parse_border_width_side(input).map(PropertyValue::BorderLeftWidth),
+        "border-right-width" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderRightWidth)
+            }
+        }
+        "border-bottom-width" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderBottomWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderBottomWidth)
+            }
+        }
+        "border-left-width" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderLeftWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderLeftWidth)
+            }
+        }
         // CSS Backgrounds 3 §3.2 border-style physical longhand. Grammar:
         // `<line-style>` has ten alternatives
         // (none / hidden / dotted / dashed / solid / double / groove / ridge /
         // inset / outset). Other keywords are silently dropped.
-        "border-top-style" => parse_border_style_side(input).map(PropertyValue::BorderTopStyle),
-        "border-right-style" => parse_border_style_side(input).map(PropertyValue::BorderRightStyle),
-        "border-bottom-style" => {
-            parse_border_style_side(input).map(PropertyValue::BorderBottomStyle)
+        "border-top-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderTopStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderTopStyle)
+            }
         }
-        "border-left-style" => parse_border_style_side(input).map(PropertyValue::BorderLeftStyle),
+        "border-right-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderRightStyle)
+            }
+        }
+        "border-bottom-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderBottomStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderBottomStyle)
+            }
+        }
+        "border-left-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderLeftStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderLeftStyle)
+            }
+        }
         // CSS Backgrounds 3 §3.1 border-color physical longhand, via
         // `parse_border_color`. The grammar also accepts `currentcolor` ahead
         // of `<color>` (CSS Color 3 §4.4). `BorderColor` preserves the specified
         // value distinction; used-value resolution belongs to painting.
-        "border-top-color" => parse_border_color(input).map(PropertyValue::BorderTopColor),
-        "border-right-color" => parse_border_color(input).map(PropertyValue::BorderRightColor),
-        "border-bottom-color" => parse_border_color(input).map(PropertyValue::BorderBottomColor),
-        "border-left-color" => parse_border_color(input).map(PropertyValue::BorderLeftColor),
+        "border-top-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderTopColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderTopColor)
+            }
+        }
+        "border-right-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderRightColor)
+            }
+        }
+        "border-bottom-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderBottomColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderBottomColor)
+            }
+        }
+        "border-left-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderLeftColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderLeftColor)
+            }
+        }
         // CSS Backgrounds 3 §3.4 border shorthand: `<line-width> || <line-style>
         // || <color>` (any order, each component at most once, at least one present).
         // Apply the same Border to all four sides. During cascade,
         // `PropertyValue::Border` expands into 12 longhands (four sides × three
         // subproperties) in `parse_declaration_block` and is not normally observed
         // (see the `PropertyValue::Border` doc and `crate::rule::expand_shorthand_into`).
-        "border" => parse_border_shorthand(input).map(PropertyValue::Border),
+        "border" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderCssWide(kw))
+            } else {
+                parse_border_shorthand(input).map(PropertyValue::Border)
+            }
+        }
+        "border-right" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightCssWide(kw))
+            } else {
+                parse_border_right_shorthand(input).map(PropertyValue::BorderRight)
+            }
+        }
         "border-style" => parse_border_style_shorthand(input).map(PropertyValue::BorderStyle),
         "border-width" => parse_border_width_shorthand(input).map(PropertyValue::BorderWidth),
         "border-color" => parse_border_color_shorthand(input).map(PropertyValue::BorderColor),
