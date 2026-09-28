@@ -998,14 +998,22 @@ fn absolute_auto_table_uses_definite_containing_block_width() {
 }
 
 // -----------------------------------------------------------------
-// distribute_columns — pure column distributor (avail/min/max/pct).
+// distribute_columns_with_authored with no authored tracks — pure column
+// distributor (avail/min/max/pct). With all-false authored flags this matches
+// the old plain distributor exactly.
 // -----------------------------------------------------------------
 
 #[test]
 fn distribute_columns_exact_fit_uses_min_widths_unchanged() {
     // avail exactly matches the summed min: neither the grow nor the
     // shrink branch fires, so the result is just `min`.
-    let widths = super::distribute_columns(30.0, &[10.0, 20.0], &[50.0, 50.0], &[0.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        30.0,
+        &[10.0, 20.0],
+        &[50.0, 50.0],
+        &[0.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [10.0, 20.0]);
 }
 
@@ -1013,7 +1021,13 @@ fn distribute_columns_exact_fit_uses_min_widths_unchanged() {
 fn distribute_columns_grows_toward_max_then_shares_remainder_equally() {
     // avail exceeds the summed max: every column first grows to its
     // own max, then the still-leftover space is split equally.
-    let widths = super::distribute_columns(30.0, &[0.0, 0.0], &[10.0, 10.0], &[0.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        30.0,
+        &[0.0, 0.0],
+        &[10.0, 10.0],
+        &[0.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [15.0, 15.0]);
 }
 
@@ -1021,7 +1035,13 @@ fn distribute_columns_grows_toward_max_then_shares_remainder_equally() {
 fn distribute_columns_percentage_over_100_percent_is_scaled_down() {
     // pct sums to 120% of avail: the `psum > 1.0` branch scales every
     // percentage down by 1/psum before applying it.
-    let widths = super::distribute_columns(100.0, &[0.0, 0.0], &[100.0, 100.0], &[0.6, 0.6]);
+    let widths = super::distribute_columns_with_authored(
+        100.0,
+        &[0.0, 0.0],
+        &[100.0, 100.0],
+        &[0.6, 0.6],
+        &[false, false],
+    );
     assert!((widths[0] - 50.0).abs() < 0.01, "widths: {widths:?}");
     assert!((widths[1] - 50.0).abs() < 0.01, "widths: {widths:?}");
 }
@@ -1031,7 +1051,13 @@ fn distribute_columns_shrinks_percentage_driven_column_when_over_avail() {
     // The pct-driven column (50px) plus the min-floored column (20px)
     // exceed avail (50px): shrink comes only out of the pct column's
     // slack above its own min (column 1 already sits at its min).
-    let widths = super::distribute_columns(50.0, &[0.0, 20.0], &[100.0, 100.0], &[1.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        50.0,
+        &[0.0, 20.0],
+        &[100.0, 100.0],
+        &[1.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [30.0, 20.0]);
 }
 
@@ -1041,7 +1067,13 @@ fn distribute_columns_min_floor_holds_when_shrink_budget_is_zero() {
     // percentage columns: every column already sits at its own min,
     // so the shrink budget is zero and the table overflows rather
     // than compressing columns below their intrinsic minimum.
-    let widths = super::distribute_columns(10.0, &[20.0, 30.0], &[20.0, 30.0], &[0.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        10.0,
+        &[20.0, 30.0],
+        &[20.0, 30.0],
+        &[0.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [20.0, 30.0]);
 }
 
@@ -1760,6 +1792,70 @@ fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets()
     assert!(
         (widths[0] - widths[1]).abs() < 0.01,
         "a colspan cell's min/max excess splits evenly across its non-authored targets"
+    );
+}
+
+#[test]
+fn resolve_column_widths_definite_avail_nonfit_keeps_colspan_minimum() {
+    // None + Definite(50) with a colspan=2 cell forcing 100px: the
+    // max-full sum (100) exceeds avail (50), so the non-fit path runs.
+    // It must keep the colspan-derived minimum (50 per column), matching
+    // the known-width branch, not shrink to 25 per column.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let span_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    doc.append_element(
+        Some(span_cell),
+        "div",
+        Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::length(10.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let c0 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    let c1 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![],
+        cells: vec![
+            make_cell(span_cell, 0, 0, 2, 1, Dimension::auto()),
+            make_cell(c0, 1, 0, 1, 1, Dimension::auto()),
+            make_cell(c1, 1, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+    let inputs = LayoutInput {
+        known_dimensions: Size {
+            width: None,
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(50.0),
+            height: AvailableSpace::MaxContent,
+        },
+        ..column_probe_input()
+    };
+    let widths = super::resolve_column_widths(
+        &mut doc,
+        &grid,
+        inputs,
+        Size {
+            width: 0.0,
+            height: 0.0,
+        },
+    );
+
+    assert!((widths[0] - 50.0).abs() < 1.0, "widths: {widths:?}");
+    assert!((widths[1] - 50.0).abs() < 1.0, "widths: {widths:?}");
+    assert!(
+        widths.iter().sum::<f32>() >= 100.0 - 1.0,
+        "colspan minimum must hold even when avail is smaller: {widths:?}"
     );
 }
 
