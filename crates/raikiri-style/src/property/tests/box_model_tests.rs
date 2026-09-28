@@ -3257,3 +3257,12 @@ fn border_css_wide_serializes_to_keyword() {
         None
     );
 }
+
+#[test]
+fn border_right_shorthand_rejects_empty_and_unknown() {
+    // Cover `parse_border_right_shorthand`'s empty-declaration guard (see
+    // `parse_border_shorthand`'s `||` contract): empty and unknown-only drop.
+    assert_eq!(parse("", "border-right"), None);
+    assert_eq!(parse("garbage", "border-right"), None);
+    assert_eq!(parse_entire("1px 2px", "border-right"), None);
+}
