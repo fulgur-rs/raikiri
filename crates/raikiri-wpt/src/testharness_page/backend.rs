@@ -25,7 +25,7 @@ pub(super) fn run(
     path: &Path,
     wpt_root: &Path,
     preamble: Option<&str>,
-) -> Result<Vec<TestOutcome>, PageError> {
+) -> Result<Vec<SubtestOutcome>, PageError> {
     let host = prepare_host(path, wpt_root)?;
     let mut sandbox = SandboxOptions::default();
     if let Ok(fuel) = std::env::var("RAIKIRI_WPT_FUEL") {
@@ -71,7 +71,7 @@ pub(super) fn run(
             tests: d
                 .tests
                 .into_iter()
-                .map(|t| TestOutcome {
+                .map(|t| SubtestOutcome {
                     name: t.name,
                     passed: t.passed,
                     message: t.message,

@@ -48,12 +48,12 @@ fn absent_output_flag_preserves_arguments_and_needs_no_file() {
 #[test]
 fn json_owns_ordered_duplicate_names_unicode_messages_and_page_errors() {
     let mut tests = vec![
-        TestOutcome {
+        SubtestOutcome {
             name: "同名".into(),
             passed: true,
             message: String::new(),
         },
-        TestOutcome {
+        SubtestOutcome {
             name: "同名".into(),
             passed: false,
             message: "FAIL: 行\n\"値\"".into(),

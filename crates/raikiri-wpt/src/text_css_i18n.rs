@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use raikiri_js::TestOutcome;
+use crate::testharness_page::SubtestOutcome;
 
 const TEST_DIR: &str = "css/css-text/i18n";
 
@@ -19,7 +19,7 @@ pub struct TestHarnessFileResult {
     /// The WPT-relative test ID.
     pub test_id: String,
     /// Results for every `test()` call. Empty only when `error` is set.
-    pub outcomes: Vec<TestOutcome>,
+    pub outcomes: Vec<SubtestOutcome>,
     /// A page, layout, or harness-level error, separate from assertion failures.
     pub error: Option<String>,
 }

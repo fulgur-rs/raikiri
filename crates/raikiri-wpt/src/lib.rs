@@ -15,7 +15,7 @@ pub mod runner;
 pub mod screen;
 #[cfg(test)]
 mod test_http_server;
-pub(crate) mod testharness_page;
+pub mod testharness_page;
 pub mod text_css_i18n;
 pub(crate) mod wpt_host;
 pub mod wpt_host_resolver;
