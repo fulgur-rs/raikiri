@@ -5,7 +5,7 @@ use taffy::Style;
 
 fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     // <html><head></head><body><p style="color:red">Hi</p></body></html>
-    // 相当 (parser の代わりに手動構築、raikiri-html 統合は将来 umbrella が担当)
+    // Equivalent to parsing (built manually instead; future umbrella integration handles raikiri-html).
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -1139,8 +1139,8 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     assert!((child_layout.size.width - 16.0).abs() < 0.01);
 }
 
-/// single-line block の glyph 両端を返す helper
-/// (first glyph x, last glyph x+advance)。
+/// Helper returning both glyph ends of a single-line block.
+/// (first glyph x, last glyph x+advance).
 fn single_line_ends(doc: &Document, t: usize) -> (f32, f32) {
     use parley::PositionedLayoutItem;
 
@@ -1165,8 +1165,8 @@ fn single_line_ends(doc: &Document, t: usize) -> (f32, f32) {
 
 #[test]
 fn text_justify_none_disables_justification() {
-    // text-align:justify + text-justify:none → spread しない
-    // (CSS Text 3 §6.2)。
+    // text-align:justify + text-justify:none → do not spread.
+    // (CSS Text 3 §6.2).
     use parley::FontContext;
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -1413,7 +1413,7 @@ fn layout_single_page_without_body_returns_error() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::{LayoutError, PageBox};
 
-    // <p> 直接 attach (fragment 相当)
+    // Attach <p> directly (fragment equivalent).
     let mut doc = Document::new();
     let _p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
     let rules = build_rule_tree(&doc);
@@ -1433,9 +1433,9 @@ fn layout_single_page_without_body_returns_error() {
 
 #[test]
 fn layout_single_page_bridges_display_none() {
-    // layout_single_page 経由で display bridge が active
-    // であることを確認 — body に display:none を指定すると taffy::Style.display
-    // が Display::None になる。
+    // Check that the display bridge is active via layout_single_page:
+    // assigning display:none to body must set taffy::Style.display
+    // to Display::None.
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -1454,11 +1454,11 @@ fn layout_single_page_bridges_display_none() {
 
 #[test]
 fn inline_block_width_auto_shrink_wraps_to_content() {
-    // width:auto の inline-block は containing block いっぱいに広がらず
-    // content に shrink-wrap する (shrink-to-fit)。block の子として
-    // fill される plain block との差を geometry で check する:
-    // 100px の child を持つ inline-block は幅 100 に、明示 width:300px の
-    // inline-block は 300 のままになる (どちらも body 幅 fill ではない)。
+    // An inline-block with width:auto shrinks to its content rather than
+    // filling the containing block (shrink-to-fit). Check its geometry against
+    // a plain block child that fills the available width:
+    // an inline-block containing a 100px child is 100px wide, while an
+    // inline-block with explicit width:300px stays 300px wide (neither fills the body).
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -1741,9 +1741,9 @@ fn nested_normal_flow_descendant_clears_ancestor_level_float() {
 
 #[test]
 fn layout_single_page_deterministic_across_10_runs() {
-    // 10 回連続実行で byte-identical であることを acceptance 条件とする。
-    // 同一マシン上の determinism を check (cross-machine は将来 font
-    // pinning に置き換わる)。
+    // Require byte-identical results across ten consecutive runs.
+    // Check determinism on the same machine (cross-machine consistency needs
+    // future font pinning).
     use raikiri_traits::PageBox;
 
     fn one_run() -> Vec<taffy::Layout> {
@@ -1761,9 +1761,9 @@ fn layout_single_page_deterministic_across_10_runs() {
             "run {i}: layout node count changed"
         );
         for (j, (b, r)) in baseline.iter().zip(run.iter()).enumerate() {
-            // taffy::Layout の全 field を byte-identical で比較。
-            // 浮動小数点の subnormal / NaN drift があると here が最も先に
-            // 反応する (design doc §12.8 の NonFiniteFloat 検討の check 相当)
+            // Compare every taffy::Layout field byte for byte.
+            // This catches floating-point subnormal / NaN drift first
+            // (equivalent to the design doc §12.8 NonFiniteFloat check).
             assert_eq!(
                 b.size.width, r.size.width,
                 "run {i} node {j}: size.width differs (baseline={} run={})",

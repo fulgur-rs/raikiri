@@ -1,16 +1,16 @@
-//! `HtmlDocument`: assembled document type。
+//! `HtmlDocument`: assembled document type.
 //!
-//! HTML を parse して cascade まで完了した document unit。Consumer 視点で
-//! 「layout/paint に投入できる状態」を単一 handle で表現する。
+//! A document unit that has been parsed from HTML and cascaded. From a consumer's
+//! perspective, one handle represents a document ready for layout and painting.
 //!
-//! blitz `HtmlDocument` の analog (spec §L1134 blitz-compat 対応)。名前のみ
-//! 一致、shape / code / UA CSS の持ち込みなし (independent implementation)。
+//! Analogous to blitz `HtmlDocument` (spec §L1134 blitz compatibility). Only the name
+//! matches; no shape, code, or UA CSS is imported (independent implementation).
 
 use crate::UncascadedDocument;
 use raikiri_style::{CascadeResult, FontFaceRegistry};
 use url::Url;
 
-/// Cascade まで完了した document unit。
+/// A document unit after cascading.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct HtmlDocument {
@@ -21,20 +21,20 @@ pub struct HtmlDocument {
 }
 
 impl HtmlDocument {
-    /// DOM tree への参照 (Dom / Element trait を使う際の entry point)。
+    /// Reference to the DOM tree (entry point for using the Dom / Element traits).
     pub fn dom(&self) -> &raikiri_dom::Document {
         &self.uncascaded.dom
     }
 
-    /// Cascade 結果 (per-node ComputedValues)。
+    /// Cascade result (per-node ComputedValues).
     pub fn cascade(&self) -> &CascadeResult {
         &self.cascade
     }
 
-    /// Parse 時に head/body から集約された inline `<style>` element と
-    /// fetched head stylesheet source の list
-    /// ([`UncascadedDocument::stylesheet_sources`] に一致)。
-    /// HTML/XHTML と SVG の `<style>` は対象で、MathML の同名 element は除外される。
+    /// Inline `<style>` elements collected from head/body during parsing and
+    /// a list of fetched head stylesheet sources
+    /// (matching [`UncascadedDocument::stylesheet_sources`]).
+    /// Includes HTML/XHTML and SVG `<style>`, but excludes MathML elements with that name.
     pub fn stylesheet_sources(&self) -> &[String] {
         &self.uncascaded.stylesheet_sources
     }

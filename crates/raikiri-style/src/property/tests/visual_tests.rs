@@ -75,11 +75,11 @@ fn visibility_key_maps_to_visibility_property_key() {
 // ── parse_url_value helper ────────────────────
 //
 // CSS Values 4 §4.4 <url> value type
-// (<https://www.w3.org/TR/css-values-4/#urls>) の共通 helper を property
-// dispatcher (`parse_value`) を経由せず直接叩く — `background-image` の
-// 呼び出し経路とは独立に helper 自体の grammar 境界 (unquoted/quoted
-// form、`<url-modifier>` reject 等) を check する
-// (`parse_length_value` helper 単体 test と同じ fixture pattern)。
+// (<https://www.w3.org/TR/css-values-4/#urls>): exercise the shared helper
+// directly, without the property dispatcher (`parse_value`). Independently of
+// the `background-image` call path, check the helper's grammar boundaries
+// (unquoted/quoted forms, rejection of `<url-modifier>`, etc.)
+// (the same fixture pattern as direct `parse_length_value` helper tests).
 
 fn parse_url(source: &str) -> Option<String> {
     let mut input = ParserInput::new(source);
@@ -102,15 +102,15 @@ fn url_value_accepts_quoted_form() {
 
 #[test]
 fn url_value_accepts_quoted_form_with_single_quotes() {
-    // CSS Syntax 3 `<string-token>` は `"` `'` どちらの quote 文字も
-    // 受理する — `url()` 内の `<string>` も同様。
+    // CSS Syntax 3 `<string-token>` accepts either `"` or `'` as the
+    // quote character; `<string>` inside `url()` does too.
     assert_eq!(parse_url("url('foo.png')"), Some("foo.png".to_string()));
 }
 
 #[test]
 fn url_value_rejects_css_wide_keywords() {
-    // CSS-wide keyword は `<url>` grammar のどの alternative にも
-    // 一致しない — see `parse_url_value` doc.
+    // CSS-wide keywords do not match any alternative in the `<url>` grammar
+    // (see the `parse_url_value` doc).
     for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
         assert_eq!(parse_url(keyword), None, "{keyword}");
     }
@@ -141,7 +141,7 @@ fn url_value_rejects_number() {
 
 #[test]
 fn url_value_rejects_url_with_modifier() {
-    // `<url-modifier>` (`crossorigin()` 等) 付き `url()` — unsupported,
+    // `url()` with `<url-modifier>` (such as `crossorigin()`) is unsupported,
     // see `parse_url_value` doc for the block-exhaustion mechanism.
     assert_eq!(parse_url("url(\"foo.png\" crossorigin)"), None);
 }
@@ -869,8 +869,8 @@ fn background_image_parse_url_quoted_form() {
 
 #[test]
 fn background_image_is_case_insensitive() {
-    // `none` keyword は ASCII case-insensitive (他の keyword-only property
-    // と同じ扱い、`background-repeat` の `REPEAT-X`/`No-Repeat` test 参照)。
+    // The `none` keyword is ASCII case-insensitive (as in other keyword-only
+    // properties; see the `REPEAT-X`/`No-Repeat` tests for `background-repeat`).
     assert_eq!(
         parse("NONE", "background-image"),
         Some(PropertyValue::BackgroundImage(BackgroundImage::None))
@@ -1533,9 +1533,9 @@ fn background_image_parses_conic_gradient_explicit_color_interpolation_method() 
 
 #[test]
 fn background_image_rejects_bare_string_without_url_wrapper() {
-    // `<image>` は `<url> | <gradient>` のみで bare `<string>` を含まない
-    // — `parse_url_value` doc の同節参照 (`content_bare_string_is_still_literal_not_image`
-    // と同型の regression check)。
+    // `<image>` includes only `<url> | <gradient>`, not a bare `<string>`;
+    // see the same section of the `parse_url_value` doc (a regression check
+    // like `content_bare_string_is_still_literal_not_image`).
     assert_eq!(parse("\"foo.png\"", "background-image"), None);
 }
 
@@ -2994,11 +2994,11 @@ fn filter_blur_rejects_percentage() {
     assert_eq!(parse("blur(50%)", "filter"), None);
 }
 
-/// `filter_parse_amount_functions_with_argument`/
-/// `filter_amount_functions_preserve_over_100_percent_unclamped` の
-/// per-function name/constructor table 用 — clippy `type_complexity`
-/// を避けるための alias (意味論的な新型ではない、`RadialShapeSizePositionGroup`
-/// と同じ convention)。
+/// Alias for the per-function name/constructor tables in
+/// `filter_parse_amount_functions_with_argument` and
+/// `filter_amount_functions_preserve_over_100_percent_unclamped`; it
+/// avoids clippy `type_complexity` (not a semantically new type; follow
+/// the `RadialShapeSizePositionGroup` convention).
 type FilterAmountCtorCase = (&'static str, fn(f32) -> FilterFunction);
 
 #[test]
@@ -3248,7 +3248,7 @@ fn filter_drop_shadow_offset_infinity_passes_through_unclamped() {
     // collapse above (ordinary `<number>` magnitude overflow, not a
     // `0 * Infinity` collapse) — legitimate, if extreme, `<length>`
     // values per CSS Values 4 §5, so unlike NaN they must NOT be
-    // rejected here (`parse_shadow_length_reject_nan` doc参照).
+    // rejected here (see the `parse_shadow_length_reject_nan` doc).
     assert_eq!(
         expect_filter(parse("drop-shadow(1e40px 2px)", "filter")),
         vec![FilterFunction::DropShadow(TextShadowItem {

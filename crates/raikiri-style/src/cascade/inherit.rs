@@ -36,42 +36,44 @@ type InheritanceStackEntry = (
     Arc<CustomPropertyEnvironment>,
 );
 
-/// Top-down inheritance walk。子 node は親の computed value を必要とするため
-/// 各 stack entry は親の node ID を保持し、訪問時に出力済みの親の値を参照する。
-/// 親の結果は子を stack に積む前に保存され、tree の走査中は上書きされない。
-/// ID で参照するため、出力 Vec が拡張されても参照先を再取得できる。
-/// 最初の entry の親 ID は `None` とし、引数 `parent_computed` を使う。
-/// これにより子ごとの [`ComputedValues`] の複製を避ける。
+/// Top-down inheritance walk. Children need their parent's computed values, so
+/// each stack entry stores the parent's node ID and retrieves its already-written
+/// values when visited. We save the parent's result before pushing its children
+/// and never overwrite it during the tree walk. The ID lets us retrieve the value
+/// again even if the output Vec grows. The first entry has no parent ID (`None`)
+/// and uses `parent_computed` instead. This avoids cloning [`ComputedValues`] for
+/// every child.
 ///
-/// # `rem` context の threading (設計文書 §6.3)
+/// # Threading the `rem` context (design document §6.3)
 ///
-/// stack entry 第 3 要素の `Option<ResolveContext>` は「この node より上に
-/// **element 祖先が居るか**」を表す:
+/// The third field of each stack entry, `Option<ResolveContext>`, indicates
+/// **whether this node has an element ancestor**:
 ///
-/// - `None` — element 祖先が無い。すなわちこの node が element なら **root
-///   element** であり、[`SpecifiedValues::finalize_as_root`] を通す。同関数の
-///   doc が CSS Values 4 §6.1.1
-///   (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) の
-///   parent-metrics 条項を verbatim で引き、`font-size` (initial 16px 基準) と
-///   box property (自 font-size 基準) で `rem` の基準が違う理由を説明する。
-///   **`html { font-size: 2rem }` が自己参照になる誤実装 (tree 全体に単一
-///   context を配る) を塞ぐのはここ。**
-/// - `Some(ctx)` — element 祖先が居る。その最上位 element (= root element) の
-///   computed font-size が `ctx.root_font_size`、`lh` の値 (`rlh` の参照値、
-///   `used_line_height_length` で絶対長化したもの。`normal` で解決不能なら
-///   `None`) が `ctx.root_line_height`。
+/// - `None` — there is no element ancestor. If this node is an element, it is
+///   the **root element** and goes through [`SpecifiedValues::finalize_as_root`].
+///   That function's docs quote the parent-metrics clause of CSS Values 4 §6.1.1
+///   (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim.
+///   They explain why `rem` uses different bases for `font-size` (initial 16px)
+///   and box properties (the element's own font-size). **This prevents the
+///   incorrect self-reference in `html { font-size: 2rem }` that would result
+///   from giving the entire tree one context.**
+/// - `Some(ctx)` — there is an element ancestor. The computed font-size of the
+///   highest such ancestor (= root element) is `ctx.root_font_size`; its `lh`
+///   value (the `rlh` basis, absolutized by `used_line_height_length`, or `None`
+///   when `normal` cannot be resolved) is `ctx.root_line_height`.
 ///
-/// [`StyleDom::root_id`] は Document node であって root element ではない
-/// ([`crate::style_dom`] の Contract 節) ため、Document / Comment / Text の
-/// ような非 element node は `None` をそのまま子へ渡す。
+/// [`StyleDom::root_id`] identifies the Document node, not the root element
+/// (see the Contract section of [`crate::style_dom`]). Non-element nodes such as
+/// Document / Comment / Text therefore pass `None` through to their children.
 ///
-/// well-formed な HTML document の root element は 1 つだが、`StyleDom` は
-/// それを強制しない。Document 直下に element が複数ある合成 DOM では**各々が
-/// root element として扱われる** (自分の subtree の `rem` 基準になる) —
-/// 「親 element を持たない element は initial values を参照する」という §6.1.1
-/// の規則を素直に適用した結果であり、意図した挙動である。
+/// A well-formed HTML document has one root element, but `StyleDom` does not
+/// enforce this. In a synthetic DOM with several elements directly under the
+/// Document, **each acts as a root element** (providing the `rem` basis for its
+/// own subtree). This deliberately follows the §6.1.1 rule that elements
+/// without an element parent use initial values.
 ///
-/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
+/// `pub(crate)` permits intra-doc links from other modules; making this private
+/// fails the documentation gate (repository rule 3).
 #[allow(clippy::too_many_arguments)] // the traversal writes several independent cascade outputs
 pub(crate) fn resolve_inheritance<D: StyleDom>(
     dom: &D,
@@ -85,29 +87,27 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 ) {
     let mut stack: Vec<InheritanceStackEntry> = vec![(id, None, None, empty_custom_properties())];
-    // `apply_winners` の scratch buffer。walk loop の**外**で確保して全 node で
-    // 使い回す — per-node の `HashMap` 2 個が
-    // n=1000 node で 3,667 allocs / 3.0 MB = cascade 全 heap traffic の 56.7%
-    // を占めていた。buffer は最初の数 node で最大 `PropertyKey` index まで
-    // 育ち、以降は 0 alloc。fill と drain は `apply_winners` に閉じており、
-    // walk loop 側は「使い回す入れ物を貸す」以上の責務を持たない。
+    // Scratch buffer for `apply_winners`, allocated **outside** the walk loop
+    // and reused for every node. Two per-node `HashMap`s previously accounted
+    // for 3,667 allocations / 3.0 MB at n=1000 nodes, or 56.7% of all cascade
+    // heap traffic. The buffer grows to the maximum `PropertyKey` index over
+    // the first few nodes, then incurs no allocations. `apply_winners` owns its
+    // fill and drain; the walk loop only lends it a reusable container.
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     while let Some((id, parent_id, root_ctx, parent_custom_properties)) = stack.pop() {
-        // is_in_document()==false
-        // の node は subtree ごと早期 continue する。
+        // Skip the entire subtree when is_in_document()==false.
         //
-        // 以前は resize + write + children push を unconditional に行い computed
-        // 長を node_count() に揃えていた。今 `cascade()` が
-        // `dom.node_count()` で `computed` を pre-allocate + initial() で埋める
-        // ように変わったため、visited しないままの slot は自然に initial()
-        // として残る。これにより:
-        //   - detached / template descendants は inherit_from(parent) の
-        //     継承値ではなく initial() となる (`<template style="color:red">`
-        //     配下は red を継承しない)
-        //   - template subtree の walk が省ける (パフォーマンス改善)
+        // Previously resize + write + children push ran unconditionally to
+        // bring the computed length up to node_count(). Now `cascade()`
+        // pre-allocates `computed` to `dom.node_count()` and fills it with
+        // initial(), so unvisited slots naturally remain initial(). Thus:
+        //   - detached / template descendants retain initial() instead of
+        //     inheriting from inherit_from(parent) (nodes under
+        //     `<template style="color:red">` do not inherit red)
+        //   - the walk skips template subtrees (a performance improvement)
         //
-        // 未知 NodeId (dom.node が None) の場合も skip: initial() のままにする
-        // 方が defensive (旧コードは inherit_from してから書いていた)。
+        // Also skip unknown NodeIds (dom.node returns None). Leaving initial()
+        // intact is safer than the old code's inherit_from before writing.
         let Some(node) = dom.node(id).filter(|n| n.is_in_document()) else {
             continue;
         };
@@ -123,9 +123,10 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         let local_custom_properties =
             local_custom_properties.unwrap_or_else(empty_custom_properties);
 
-        // phase 1: 親からの inheritance walk 開始値 (inherited のみ親の computed
-        // からコピー、非継承は initial) に自 node の cascaded winner を適用する。
-        // 適用対象は staging 表現なので winner の適用順に依存しない。
+        // Phase 1: apply this node's cascade winners to the initial state of
+        // the inheritance walk (inherited fields copied from the parent's
+        // computed values; non-inherited fields initialized). The target is a
+        // staging representation, so winner application order does not matter.
         let mut specified = SpecifiedValues::inherit_from(parent_computed);
         let mut node_non_ua_margin = Sides::all(false);
         if authored_writing_modes.len() <= id.0 as usize {
@@ -144,28 +145,28 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
             );
         }
 
-        // phase 2 + phase 3: 絶対化。root element (element 祖先なし) は `rem` の
-        // 基準が phase 2 / phase 3 で異なるため専用 entry point を通す
-        // (`SpecifiedValues::finalize_as_root` の doc に spec verbatim)。
+        // Phases 2 + 3: absolutize. A root element (no element ancestor) uses
+        // different `rem` bases in these phases, so it needs a dedicated entry
+        // point (see the spec quote in `SpecifiedValues::finalize_as_root` docs).
         let mut computed = match &root_ctx {
             Some(ctx) => specified.finalize(parent_computed, ctx),
             None => {
-                // `finalize_as_root` は phase 2 の基準を initial value に固定する
-                // (§6.1.1 の "if the element has no parent")。それが正しいのは
-                // **`root_ctx == None` ならこの node に element 親が居ない**からで
-                // あり、その caller-side invariant を check しておく:
+                // `finalize_as_root` fixes the phase-2 basis to the initial
+                // value (§6.1.1: "if the element has no parent"). This is
+                // correct because **`root_ctx == None` means this node has no
+                // element parent**. Check this caller-side invariant:
                 //
-                // - `cascade()` は必ず `dom.root_id()` (= Document node) から
-                //   walk を開始し、そこに `ComputedValues::initial()` を渡す。
-                // - `collect_cascaded` は Element にしか winner を作らないので
-                //   Document node の computed は initial のまま。
-                // - `root_ctx` が `None` のままなのは Document 自身とその直接の子
-                //   だけ (element を 1 つ通れば `Some` になる)。
+                // - `cascade()` always starts at `dom.root_id()` (= Document
+                //   node) and passes `ComputedValues::initial()` there.
+                // - `collect_cascaded` creates winners only for Elements, so
+                //   the Document node retains its initial computed values.
+                // - Only the Document itself and its direct children still
+                //   have `root_ctx == None` (`Some` follows the first element).
                 //
-                // したがって subtree の途中から `resolve_inheritance` を呼ぶ
-                // entry point (incremental restyle 等) を将来足すなら、
-                // `root_ctx` を呼び出し側から供給しなければならない。この assert が
-                // その見落としを debug build で捕まえる。
+                // Any future entry point that calls `resolve_inheritance` partway
+                // through a subtree (e.g. incremental restyle) must therefore
+                // supply `root_ctx` itself. This assertion catches an omission
+                // in debug builds.
                 debug_assert_eq!(
                     parent_computed.font_size,
                     ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
@@ -179,12 +180,13 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         computed.custom_properties = custom_properties.clone();
         computed.local_custom_properties = local_custom_properties;
 
-        // 子へ渡す rem/rlh context。root element の phase 2 + 2.5 が終わった
-        // 時点で `root_font_size` / `root_line_height` が確定するので、ここで
-        // 初めて `Some` になる。`used_line_height_length` は
-        // `crate::specified::SpecifiedValues::finalize_as_root` が自分の
-        // `ctx` を組み立てるのに使う導出と同一 — 両者の一致は
-        // `rlh_on_root_element_matches_child_root_line_height_basis` が check する。
+        // The rem/rlh context passed to children. Only after phases 2 + 2.5
+        // for the root element are `root_font_size` / `root_line_height` known,
+        // so this is the first point where the context becomes `Some`.
+        // `used_line_height_length` uses the same derivation as
+        // `crate::specified::SpecifiedValues::finalize_as_root` uses to build
+        // its own `ctx`; `rlh_on_root_element_matches_child_root_line_height_basis`
+        // checks that the two agree.
         let child_ctx = match root_ctx {
             Some(ctx) => Some(ctx),
             None if is_element => Some(ResolveContext::with_root_line_height(
@@ -270,10 +272,10 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
             }
         }
 
-        // out を id+1 サイズに resize してから index 書き込み。
-        // `cascade()` の pre-allocation で通常 out.len() == node_count() のため
-        // resize は no-op、defensive safety net として維持 (Dom impl の
-        // node_count() 過小報告に対する保険)。
+        // Resize out to id+1 before writing by index. Pre-allocation in
+        // `cascade()` normally makes out.len() == node_count(), so this resize
+        // is a no-op. Keep it as a safety net if a Dom implementation
+        // underreports node_count().
         let idx = id.0 as usize;
         if out.len() <= idx {
             out.resize(idx + 1, ComputedValues::initial());
@@ -284,22 +286,22 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         }
         non_ua_margin_sides[idx] = node_non_ua_margin;
 
-        // 子を stack に push (出力済みの親の computed value を ID で参照する)。
-        // stack は LIFO なので document order で push するため reverse。
-        // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
-        // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
-        // `Vec` を経由しない。`child_ctx` は `Copy`
-        // (`ResolveContext` の derive) なので closure 内で複数回使い回せる。
+        // Push children onto the stack, looking up their already-written
+        // parent's computed value by ID. The stack is LIFO, so reverse the
+        // children to visit them in document order. Extend `stack` directly
+        // from the `child_ids` iterator, then reverse only the newly appended
+        // suffix in place; no throwaway intermediate `Vec` is needed.
+        // `child_ctx` is `Copy` (via `ResolveContext`) and can be reused inside
+        // the closure.
         //
-        // なぜ document order を保つか: resolve_inheritance 自体の正しさも
-        // 兄弟の訪問順には依存しない — 各 node の computed 値は push 時点で既に
-        // 保存されている親の computed value / child_ctx だけから決まり、`winners`
-        // scratch buffer は各 node の処理前後で完全に drain されるの
-        // で兄弟の処理順に左右されない。ここで document order を維持して
-        // いるのは refactor 前との**挙動の完全一致**のためであり、加えて
-        // `winner_does_not_leak_into_next_sibling` 自身の doc comment が
-        // 明記する「document order で先行する `<p>` → 後続 `<span>` の向き」
-        // という leak 検出方向を、この traversal 順が引き続き満たすため。
+        // Why preserve document order? `resolve_inheritance` itself does not
+        // rely on sibling visitation order: each node depends only on its
+        // parent's saved computed values and child_ctx, and the `winners`
+        // scratch buffer is fully drained before and after each node. We keep
+        // document order to match behavior **exactly** before the refactor.
+        // It also preserves the leak-detection direction documented by
+        // `winner_does_not_leak_into_next_sibling`: earlier `<p>` then later
+        // `<span>` in document order.
         let start = stack.len();
         stack.extend(
             dom.child_ids(id)
@@ -309,17 +311,18 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     }
 }
 
-/// 1 node 分の cascade winner を選び、staging 表現へ適用する (**phase 1**)。
+/// Choose the cascade winners for one node and apply them to the staging
+/// representation (**phase 1**).
 ///
-/// `winners` は caller が walk loop の外で確保した scratch buffer。
-/// 本関数が fill ([`pick_winners`]) と drain を対で
-/// 行い、抜けるときは全 slot が `None` に戻っている。
+/// The caller allocates `winners` outside the walk loop as a scratch buffer.
+/// This function pairs filling it ([`pick_winners`]) with draining it, leaving
+/// every slot at `None` on return.
 ///
-/// # 適用順
+/// # Application order
 ///
-/// slot を index 昇順 = [`PropertyKey`] の**宣言順**に走査する。
-/// [`Option::take`] が slot を `None` に戻すので、この走査自体が次 node 用の
-/// reset を兼ねる。
+/// Iterate slots by ascending index, i.e. [`PropertyKey`] **declaration order**.
+/// [`Option::take`] restores each slot to `None` during this walk, also resetting
+/// the buffer for the next node.
 ///
 /// Shorthand keys must not reach this phase. CSS Cascading Level 4 §3
 /// requires shorthand declarations to behave as if expanded in place, and
@@ -327,26 +330,26 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// expand shorthands before collecting candidates; the exhaustive expansion
 /// match requires an explicit decision for new property variants.
 ///
-/// # `candidates[winner.idx]` の unchecked index について
+/// # The unchecked `candidates[winner.idx]` index
 ///
-/// `winner.idx` は直前の [`pick_winners`] が **同じ `candidates`** に対して
-/// 作ったものなので in-bounds。fill と drain が本関数 body 内で隣接しており、
-/// 間に `candidates` を差し替える経路が無いことが根拠。
+/// `winner.idx` is in bounds because the immediately preceding [`pick_winners`]
+/// produced it from **the same `candidates`**. Filling and draining occur next
+/// to each other in this function body; no path swaps out `candidates` between
+/// them.
 ///
 /// The index is valid only because [`pick_winners`] produced it from the
 /// same candidate slice immediately before this drain. A stale slot could
 /// otherwise select another declaration, so the winner buffer is reset for
 /// every node.
 ///
-/// # `candidates` の出所 (flat arena 化後)
+/// # Origin of `candidates` (after conversion to a flat arena)
 ///
-/// 唯一の呼び出し元 [`resolve_inheritance`] は `candidates` を
-/// [`CascadedArena::candidates`] からしか受け取らない。同メソッドは常に
-/// 「その node 自身の区間ちょうど」の slice を返す設計になっており (fields
-/// が private で他の切り出し方を作れない)、`winner.idx` が
-/// **別 node の宣言を指す**という上記の危険が「slot leak (drain し損ね)」
-/// 以外の経路 — 例えば `candidates` 自体が呼び出し側のミスで global index
-/// space の slice になる — からは発生し得ない。
+/// The sole caller, [`resolve_inheritance`], obtains `candidates` only through
+/// [`CascadedArena::candidates`]. That method always returns a slice containing
+/// **exactly this node's range** (private fields prevent alternate slicing).
+/// Thus `winner.idx` cannot point to **another node's declaration** through an
+/// accidental slice in global index space. The only remaining risk described
+/// above is a leaked slot that was not drained.
 ///
 /// [`PropertyKey`]: crate::property::PropertyKey
 // The winner application already groups several optional cascade side channels;
@@ -411,12 +414,12 @@ pub(crate) fn apply_winners(
     }
 }
 
-/// `font-weight` の specified value を computed absolute weight に解決する。
+/// Resolve a specified `font-weight` to a computed absolute weight.
 ///
 /// CSS Fonts 4 §2.2.1 "Relative Weights"
-/// <https://www.w3.org/TR/css-fonts-4/#relative-weights> の
-/// bolder / lighter table を **そのまま 6 行** で写したもの (`inherited` = 表の
-/// `w`):
+/// <https://www.w3.org/TR/css-fonts-4/#relative-weights> supplies the
+/// bolder / lighter table below, reproduced **exactly in six rows**
+/// (`inherited` corresponds to the table's `w`):
 ///
 /// | inherited value | `bolder` | `lighter` |
 /// |---|---|---|
@@ -427,49 +430,49 @@ pub(crate) fn apply_winners(
 /// | `750 <= w < 900`| 900 | 700 |
 /// | `900 <= w`      | `w` (no change) | 700 |
 ///
-/// # 算術式で書いてはいけない理由
+/// # Why arithmetic expressions are incorrect
 ///
-/// `min(w + 300, 900)` / `max(w - 300, 100)` のような近似は表の両端 2 行
-/// ("no change" 行) を落とす。`<number [1,1000]>` の全域が author から到達
-/// 可能になった今、その 2 行は実際に踏まれる:
+/// Approximations such as `min(w + 300, 900)` / `max(w - 300, 100)` omit the
+/// two "no change" rows at the ends of the table. Authors can now specify
+/// the full `<number [1,1000]>` range, making those rows reachable:
 ///
-/// - 親 `font-weight: 1000` + 子 `bolder` → **1000** (`900 <= w` 行の no change)。
-///   `min(1300, 900)` なら誤って 900 に落ちる。
-/// - 親 `font-weight: 50` + 子 `lighter` → **50** (`w < 100` 行の no change)。
-///   `max(-250, 100)` なら誤って 100 に上がる。
+/// - Parent `font-weight: 1000` + child `bolder` → **1000** (no change in the
+///   `900 <= w` row). `min(1300, 900)` would incorrectly return 900.
+/// - Parent `font-weight: 50` + child `lighter` → **50** (no change in the
+///   `w < 100` row). `max(-250, 100)` would incorrectly return 100.
 ///
-/// なお表の境界は半開区間 (`350 <= w < 550` 等)。実装は match arm を上から順に
-/// 評価させ、各 guard には **上限のみ** (`w < N`) を書く — 下限は直前 arm の
-/// 否定として暗黙に成立する。したがって **arm の順序が spec の行順と 1 対 1** で
-/// あることが正しさの条件であり、並べ替えは不可。
+/// The boundaries are half-open intervals (e.g. `350 <= w < 550`). The match
+/// arms run top to bottom, with **only an upper bound** (`w < N`) in each
+/// guard; the previous arm's failure supplies the lower bound. Thus **arm
+/// order must match spec row order exactly**. Do not reorder these arms.
 ///
-/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
+/// `pub(crate)` permits intra-doc links from other modules; making this
+/// private fails the documentation gate (repository rule 3).
 ///
-/// `inherited` / 戻り値は `f32` (`u16` から格上げ済み)。
-/// table の境界値 (100 / 350 / 550 / 750 / 900) は全て整数だが、`inherited` は
-/// fractional weight (`349.5` 等) を保持したまま渡ってくる。丸めずに直接
-/// 比較するため行選択は spec §2.2.1 のとおり正確に決まる — 旧 `u16` 実装は
-/// parse 段の丸めで `349.5` が `350` に化けてから本関数に渡り、`350 <= w < 550`
-/// 行を誤って踏んでいた (詳細: [`crate::property`] の `parse_font_weight` doc)。
+/// `inherited` and the result are `f32` (formerly `u16`). All table boundaries
+/// (100 / 350 / 550 / 750 / 900) are integers, but `inherited` retains
+/// fractional weights (e.g. `349.5`). Comparing without rounding selects the
+/// precise row prescribed by spec §2.2.1. The old `u16` implementation rounded
+/// `349.5` to `350` while parsing and incorrectly selected the `350 <= w < 550`
+/// row (details in the `parse_font_weight` docs of [`crate::property`]).
 ///
-/// # 非有限 `inherited` (`NaN` / `±Inf`) — 本関数は guard しない
+/// # Non-finite `inherited` (`NaN` / `±Inf`) — not guarded here
 ///
-/// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化で
-/// finiteness は「型で保証」から「呼び出し元の値
-/// 検証で保証」に変わった。通常の cascade 経路は
-/// [`crate::property`] の `parse_font_weight` の `[1, 1000]` range guard により
-/// 常に finite だが、`ComputedValues` の field は全て `pub` で
-/// [`crate::page::cascade_page`] も呼び出し側提供の
-/// [`crate::page::PageInheritance`]`::FromRoot` を継承元 root として受け取るため、
-/// cascade を経由しない直接構築
-/// (`ComputedValues { font_weight: f32::NAN, .. }`) 経由で理論上到達しうる。
+/// The `u16` type structurally excluded non-finite values. With `f32`, the
+/// caller must validate finiteness rather than relying on the type. The usual
+/// cascade path always supplies finite values because `parse_font_weight` in
+/// [`crate::property`] checks the `[1, 1000]` range. But every field of
+/// `ComputedValues` is `pub`, and [`crate::page::cascade_page`] accepts a
+/// caller-provided [`crate::page::PageInheritance`]`::FromRoot` as its inherited
+/// root. A direct construction that bypasses the cascade
+/// (`ComputedValues { font_weight: f32::NAN, .. }`) can theoretically reach here.
 ///
-/// 両 arm とも `<` 比較は NaN に対し常に false になるが、catch-all arm の
-/// 位置が異なるため結果は非対称: `Bolder` の catch-all は `w => w` (`900 <=
-/// w` 行の no-change) なので `NaN` / `+Inf` は**そのまま伝播**する
-/// (`-Inf` は最初の `w < 100.0` guard に一致し 400.0 に解決される)。
-/// `Lighter` の catch-all は `_ => 700.0` なので `NaN` / `+Inf` は**700.0 に
-/// 丸められる** (`-Inf` は同じく最初の guard に一致しそのまま伝播する)。
+/// In both match arms, `<` against NaN is always false. Their different
+/// catch-all arms make their behavior asymmetric: `Bolder` falls through to
+/// `w => w` (the `900 <= w` no-change row), propagating `NaN` / `+Inf`;
+/// `-Inf` matches the first `w < 100.0` guard and resolves to 400.0.
+/// `Lighter` falls through to `_ => 700.0`, mapping `NaN` / `+Inf` to **700.0**;
+/// `-Inf` matches the first guard and propagates unchanged.
 ///
 /// The resolver leaves non-finite and out-of-range values to the sink
 /// boundary, where the value is normalized before it reaches layout.
@@ -482,11 +485,11 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32
             w if w < 550.0 => 700.0,
             w if w < 750.0 => 900.0,
             w if w < 900.0 => 900.0,
-            // `900 <= w`: no change (1000 のような 900 超の継承値をそのまま返す)
+            // `900 <= w`: no change (return inherited values above 900, such as 1000)
             w => w,
         },
         FontWeightValue::Lighter => match inherited {
-            // `w < 100`: no change (50 のような 100 未満の継承値をそのまま返す)
+            // `w < 100`: no change (return inherited values below 100, such as 50)
             w if w < 100.0 => w,
             w if w < 350.0 => 100.0,
             w if w < 550.0 => 100.0,
@@ -497,9 +500,9 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32
     }
 }
 
-/// `font-size` の `<relative-size>` (`larger` / `smaller`) を親の computed
-/// font-size に対して解決する。[`resolve_relative_weight`] の font-size 版
-/// (bolder/lighter と同型)。
+/// Resolve `<relative-size>` (`larger` / `smaller`) for `font-size` against
+/// the parent's computed font-size. This is the font-size counterpart of
+/// [`resolve_relative_weight`] (same pattern as bolder/lighter).
 ///
 /// CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop> verbatim:
 ///
@@ -514,23 +517,23 @@ pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32
 /// > parent element. The specific ratio is unspecified, but should be around
 /// > 1.2–1.5.
 ///
-/// # next/previous table-entry 分岐を実装しない理由
+/// # Why the next/previous table-entry branch is not implemented
 ///
-/// spec は 2 分岐を "may" (どちらも規範ではなく許容) で並べており、raikiri は
-/// simple-ratio 分岐**のみ**を実装する。`<absolute-size>` keyword は parser
-/// (`parse_font_size_keyword`) が parse 時点で `medium` 基準の `Length::Px` に
-/// 解決し尽くすため (variant 自体を保持しない)、継承された computed font-size
-/// からは「親が keyword で指定したかどうか」を区別できず、table 分岐の前提
-/// ("if the parent element has a keyword font size in the ... table") を
-/// 安全に判定できない。
+/// The spec offers both branches with "may" (both are permitted, neither is
+/// required). Raikiri implements **only** the simple-ratio branch. The parser
+/// (`parse_font_size_keyword`) already resolves `<absolute-size>` keywords to
+/// `Length::Px` relative to `medium` at parse time and discards the keyword
+/// variant. The inherited computed font-size cannot reveal whether the parent
+/// specified a keyword, so we cannot safely check the table branch's premise
+/// ("if the parent element has a keyword font size in the ... table").
 ///
-/// # ratio = 1.2 の根拠
+/// # Why ratio = 1.2
 ///
-/// spec 引用の "should be around 1.2–1.5" が許容 range の下限。**この 1.2 は
-/// 同 §2.5.1 の note (CSS2 で隣接 index 間の scaling factor として 1.2 を
-/// 採用したが小さいサイズで不足だったという指摘) とは別の根拠から来ている**
-/// — 誤って note を典拠に引用しないこと (note は table 側の話で、本関数は
-/// simple-ratio 分岐の話)。
+/// The spec quote's "should be around 1.2–1.5" gives the lower end of the
+/// allowed range. **This 1.2 has a different basis from the note in §2.5.1**
+/// (which says CSS2's 1.2 scaling factor between adjacent indices was too
+/// small at small sizes). Do not cite that note as the basis: it concerns the
+/// table branch, while this function uses the simple-ratio branch.
 pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px: f32) -> f32 {
     const RATIO: f32 = 1.2;
     match keyword {
@@ -539,104 +542,105 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
     }
 }
 
-/// specified value を継承元の computed values に対して解決し、**`PropertyValue`
-/// 表現のまま** ([`ResolvedAgainstInherited`] に包んで) computed-equivalent な
-/// 値を返す。
+/// Resolve a specified value against inherited computed values and return a
+/// computed-equivalent value **still represented as `PropertyValue`**, wrapped
+/// in [`ResolvedAgainstInherited`].
 ///
-/// # なぜ [`apply_value`] と別に必要か
+/// # Why this is separate from [`apply_value`]
 ///
-/// [`apply_value`] は解決結果を [`SpecifiedValues`] の field へ直接書き込むため、
-/// 結果を `PropertyValue` として受け取りたい呼び手から reuse できない。
-/// [`crate::page::cascade_page`] の結果は
+/// [`apply_value`] writes results directly into fields of [`SpecifiedValues`];
+/// callers needing a `PropertyValue` result cannot reuse it. The result of
+/// [`crate::page::cascade_page`] exposes
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// という `HashMap<PropertyKey, PropertyValue>` として public に出るので、格納前に
-/// この関数を通す必要がある。CSS Fonts 4 §2.2.1 の relative-weight table 自体は
-/// `resolve_relative_weight` に 1 つしか存在せず、本関数と [`apply_value`] は
-/// どちらもそこへ funnel する (table の二重実装は無い)。
+/// publicly as a `HashMap<PropertyKey, PropertyValue>`, so values must pass
+/// through this function before insertion. The CSS Fonts 4 §2.2.1 relative-
+/// weight table exists only once in `resolve_relative_weight`; this function
+/// and [`apply_value`] both call it rather than duplicating the table.
 ///
-/// # wildcard arm を置かない理由 (契約)
+/// # Why there is no wildcard arm (contract)
 ///
-/// pass-through 側は全 variant を明示列挙し `_ => value` を使わない。これは意図的な
-/// compile-time guard である: **継承元に依存する解決を持つ property を新しく足した
-/// とき、`_` があると本関数を素通りして未解決値が public な結果に漏れる**。
+/// The pass-through side lists every variant instead of using `_ => value`.
+/// This is an intentional compile-time guard: **if a new property needs
+/// inherited-value resolution, a wildcard would silently pass its unresolved
+/// value into the public result**.
 /// The pass-through side is exhaustive rather than using a wildcard. Adding a
 /// property variant therefore requires an explicit decision about whether it
 /// depends on inherited values. This compile-time guard does not detect new
 /// entry points or new payload semantics inside an existing variant.
 ///
-/// # 本関数の pass-through は「解決済」ではない (phase 3 が要る)
+/// # Pass-through here does not mean "resolved" (phase 3 is still required)
 ///
-/// 本関数が担うのは「継承元 computed values **だけ**で解ける」解決に限る =
-/// **phase 2**。pass-through arm を通った値のうち、box property
+/// This function performs only resolutions possible using **inherited computed
+/// values alone**: **phase 2**. Values passed through still include specified
+/// [`Length`] `Em` / `Rem` / `Pt` in box properties
 /// ([`padding`](PropertyValue::PaddingTop) /
 /// [`margin`](PropertyValue::MarginTop) / [`width`](PropertyValue::Width) /
-/// [`height`](PropertyValue::Height) / `border-*-width`) と `line-height` の
-/// [`Length`] `Em` / `Rem` / `Pt` は**まだ specified
-/// 値**である。CSS Paged Media 3 §6 "Page Properties"
-/// <https://www.w3.org/TR/css-page-3/#page-properties> の "Values in units of
+/// [`height`](PropertyValue::Height) / `border-*-width`) and `line-height`.
+/// CSS Paged Media 3 §6 "Page Properties"
+/// <https://www.w3.org/TR/css-page-3/#page-properties> says, "Values in units of
 /// em and ex are interpreted relative to the font associated with their
-/// context" どおり `Em` は page context 自身の font に対する倍率であり、その
-/// font-size は**同 cascade の兄弟 declaration から来得る**ため `inherited`
-/// だけでは決まらない。`border-*-width` の style gating (CSS Backgrounds 3 §3.3)
-/// も同様に兄弟 declaration (`border-*-style`) を要する。
+/// context". Thus `Em` uses the page context's own font, whose size **may come
+/// from a sibling declaration in the same cascade** and cannot be determined
+/// from `inherited` alone. `border-*-width` style gating (CSS Backgrounds 3 §3.3)
+/// likewise requires a sibling `border-*-style` declaration.
 ///
-/// **その解決は呼び手の責務である。** 唯一の呼び手
-/// [`crate::page::cascade_page`] は本関数の直後に **phase 3**
-/// ([`crate::page`] の `absolutize_in_page_context`) を走らせ、そこで page context の
-/// font-size を基準に絶対化 + style gating を行う。
-/// したがって
-/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// に届く時点では computed 値になっている — **本関数の戻り値をそのまま public に
-/// 出す新しい呼び手を書いてはならない**。
+/// **The caller must perform that resolution.** The sole caller,
+/// [`crate::page::cascade_page`], immediately runs **phase 3**
+/// (`absolutize_in_page_context` in [`crate::page`]) to absolutize against the
+/// page context's font-size and apply style gating. Values are therefore
+/// computed by the time they enter
+/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations).
+/// **Do not write a new caller that exposes this function's result directly.**
 ///
-/// element 経路の対応物は [`apply_value`] → [`SpecifiedValues::finalize`] で、
-/// phase 2 (font-size 確定) → phase 3 (自 font-size 基準で残りを絶対化) が
-/// 同じ順に走る。両経路の phase 3 は [`crate::resolve`] の同じ関数群へ funnel する
-/// ので、spec 規則 (`em` / `rem` の基準、percentage の素通し、border style
-/// gating) の実装は 1 本ずつしかない。
+/// The element counterpart is [`apply_value`] → [`SpecifiedValues::finalize`]:
+/// phase 2 determines font-size, then phase 3 absolutizes remaining values
+/// against the element's own font-size. Both phase-3 paths share the same
+/// functions in [`crate::resolve`], so each spec rule (`em` / `rem` bases,
+/// unchanged percentages, border style gating) has one implementation.
 ///
-/// # `TextAlign::MatchParent` は本関数が解決する
+/// # This function resolves `TextAlign::MatchParent`
 ///
-/// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) は `inherited`
-/// だけで解ける — CSS Text 3 §6.1 `#valdef-text-align-match-parent` の
-/// 「実の親を持つ」半分 (root element の "computes to start" は対象外、下記注記)
-/// — ので本関数の `TextAlign` arm が
-/// [`crate::property::resolve_text_align_match_parent`] へ `inherited.text_align` +
-/// `inherited.direction` を渡して解決する。以前は raikiri
-/// が `direction` を computed 層に持たなかったため未実装だった。
+/// [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent) can be
+/// resolved using `inherited` alone: this covers the actual-parent case of
+/// CSS Text 3 §6.1 `#valdef-text-align-match-parent`, not the root element's
+/// "computes to start" case (see below). The `TextAlign` arm passes
+/// `inherited.text_align` and `inherited.direction` to
+/// [`crate::property::resolve_text_align_match_parent`]. Raikiri previously
+/// could not implement this because it lacked computed `direction`.
 ///
-/// ⚠️ **trap**: CSS Paged Media 3 §6 の "The page context inherits from the
-/// root element" は「page context に親が無い」ことを意味**しない** —
-/// `inherited` 引数は常に「実の親 (または L3 legacy exception の initial
-/// values)」であり、[`TextAlign`](crate::property::TextAlign) doc が引用する
-/// "Computes to start when specified on the root element" の特別扱いは
-/// **本関数の対象外**。page context がその特別扱いを受けることは無い —
-/// page context 自身が root element になるわけではないため。element 経路で
-/// この特別扱いを担うのは [`SpecifiedValues::finalize_as_root`]。
+/// ⚠️ **Trap**: "The page context inherits from the root element" in CSS Paged
+/// Media 3 §6 **does not** mean the page context has no parent. `inherited`
+/// always denotes the actual parent (or initial values under the L3 legacy
+/// exception). The "Computes to start when specified on the root element"
+/// exception quoted in the [`TextAlign`](crate::property::TextAlign) docs is
+/// **not handled here**. A page context is not itself the root element, so it
+/// never receives that exception. [`SpecifiedValues::finalize_as_root`] handles
+/// this exception on the element path.
 ///
 /// The public contract is [`crate::PageCascadeResult::declarations`].
 ///
-/// なお `Percent` は「未解決」ではない — box property の computed value は
-/// percentage のままである (CSS Paged Media 3 §6 の "Percentage values on the
+/// `Percent` is not "unresolved": the computed value of a box property
+/// retains its percentage. CSS Paged Media 3 §6 says "Percentage values on the
 /// margin and padding properties are relative to the dimensions of the
-/// containing block" = used 層の入力。引用は canonical 側)。element 経路の
-/// [`crate::resolve::resolve_length_percentage`] と同じ扱い。
+/// containing block"; that is an input to the used-value stage (the quote is
+/// on the canonical side). This matches the element path's
+/// [`crate::resolve::resolve_length_percentage`].
 ///
-/// # 戻り値が生の [`PropertyValue`] ではなく [`ResolvedAgainstInherited`] な理由
+/// # Why the result is [`ResolvedAgainstInherited`], not a bare [`PropertyValue`]
 ///
-/// 上記「この guard が守らない範囲」§2
-/// (本関数を呼ばない新しい entry point) を型で狭めるため。詳細は
-/// [`ResolvedAgainstInherited`] の doc を参照。
+/// This type narrows the gap described in §2 of "What this guard does not
+/// protect" above (a new entry point that does not call this function).
+/// See the [`ResolvedAgainstInherited`] docs for details.
 ///
-/// # `ctx` の caller contract
+/// # Caller contract for `ctx`
 ///
-/// `ctx.root_line_height` は `inherited` から導出したもの
-/// (`used_line_height_length(inherited.line_height, inherited.font_size)`)
-/// を渡すこと — `FontSize` arm の `lh`/`rlh` 解決 (下記 arm 参照) がこの
-/// 一致を前提にしている。唯一の呼び手 [`crate::page::cascade_page`] はこれを
-/// 一度だけ構築し、本関数と phase 3 ([`crate::page`] の `absolutize_in_page_context`)
-/// の両方に使い回す (`inherited` は関数全体で不変なので、二重に計算しても
-/// 同じ値になる — 呼び手の doc 参照)。
+/// Pass `ctx.root_line_height` derived from `inherited` via
+/// (`used_line_height_length(inherited.line_height, inherited.font_size)`).
+/// The `FontSize` arm's `lh`/`rlh` resolution (see below) requires that match.
+/// The sole caller, [`crate::page::cascade_page`], computes the value once and
+/// reuses it here and in phase 3 (`absolutize_in_page_context` in
+/// [`crate::page`]). Because `inherited` is unchanged throughout the function,
+/// computing it twice would yield the same result (see the caller's docs).
 pub(crate) fn inherited_border_radius(value: ComputedLengthPercentage) -> Length {
     match value {
         ComputedLengthPercentage::Px(px) => Length::Px(px),
@@ -692,92 +696,91 @@ pub(crate) fn resolve_against_inherited(
             left: inherited_margin_length(inherited.margin.left),
         }),
         // CSS Fonts 4 §2.2.1 "Relative Weights"
-        // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: `bolder` /
-        // `lighter` は継承元の computed weight に対して解決される。ここで
-        // `Absolute` に落とすので戻り値に relative keyword は残らない
-        // (`Absolute(f32)` → `f32` → `Absolute(f32)` の round-trip は無損失)。
+        // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: resolve `bolder` /
+        // `lighter` against the inherited computed weight. Convert to
+        // `Absolute` here so no relative keyword remains in the result.
+        // The `Absolute(f32)` → `f32` → `Absolute(f32)` round-trip loses nothing.
         PropertyValue::FontWeight(fw) => PropertyValue::FontWeight(FontWeightValue::Absolute(
             resolve_relative_weight(fw, inherited.font_weight),
         )),
-        // `font-size` は継承元の computed font-size だけで解ける。
-        // `crate::resolve::resolve_font_size` に funnel し、
-        // 結果を `Length::Px` で包み直して computed-equivalent にする
-        // (`FontWeight` arm が `Absolute(f32)` を返すのと同じ形)。
+        // `font-size` needs only the inherited computed font-size. Delegate to
+        // `crate::resolve::resolve_font_size` and wrap the result in `Length::Px`
+        // to make it computed-equivalent (as the `FontWeight` arm returns
+        // `Absolute(f32)`).
         //
-        // 基準が `inherited.font_size` でよい根拠:
+        // Why `inherited.font_size` is the right basis:
         //
         // - `em`: CSS Paged Media 3 §6 "Page Properties"
         //   <https://www.w3.org/TR/css-page-3/#page-properties> verbatim —
         //   "When used on the font-size property in the page context, they are
         //   relative to the font-size of the root element."
-        //   `cascade_page` の `inherited` は root element の `ComputedValues`
-        //   そのもの (`PageInheritance::LegacyInitialValues` なら initial) な
-        //   ので、これが §6 の言う基準である。
+        //   `cascade_page` receives the root element's `ComputedValues` as
+        //   `inherited` (or initial values for
+        //   `PageInheritance::LegacyInitialValues`). This is the §6 basis.
         // - `rem`: CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>
         //   "Equal to the computed value of the em unit on the root element." —
-        //   同じく `inherited.font_size`。
-        // - `%`: **§6 は page context の `font-size` 上の `%` を規定していない。**
+        //   again, `inherited.font_size`.
+        // - `%`: **§6 does not specify `%` for page-context `font-size`.**
         //   CSS Fonts 4 §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop>
-        //   の "Percentages: refer to parent element's font size" と、§6 の
-        //   "The page context inherits from the root element." を合わせると
-        //   基準は root element の font-size になる、という**導出**であって
-        //   §6 の明文ではない。
-        // - `px` / `pt`: 絶対単位なので context 非依存。
-        // - `lh` / `rlh`: §6 は `lh`/`rlh` を規定して
-        //   いない。上記 `%` と同型の**導出** — 「the page context inherits
-        //   from the root element」+ CSS Values 4 §6.1.1 の自己参照条項を
-        //   合わせると、page context の self-reference basis (`lh` の基準)
-        //   は root element の used line-height になる。`rlh` は page context
-        //   にとって「root」と「parent」が同じ node (= `inherited`) なので
-        //   両者は一致する — `crate::page::page_context_line_height_basis`
-        //   の doc が `line-height` 自身の同じ状況について既に説明している
-        //   のと同じ判断 (「両者が一致するのはこの page context に限った話」
-        //   という同 doc の注記もそのまま当てはまる)。この一致のおかげで、
-        //   `lh` の自己参照基準にも `ctx.root_line_height` をそのまま渡せる
-        //   (上記「`ctx` の caller contract」節 — 呼び手が保証する)。
+        //   says "Percentages: refer to parent element's font size"; together
+        //   with §6's "The page context inherits from the root element.", this
+        //   implies the root element's font-size. This is an **inference**, not
+        //   an explicit statement in §6.
+        // - `px` / `pt`: absolute units, independent of context.
+        // - `lh` / `rlh`: §6 does not specify `lh`/`rlh` either. By the same
+        //   **inference** as for `%`, "the page context inherits from the root
+        //   element" plus CSS Values 4 §6.1.1's self-reference clause makes
+        //   the root element's used line-height the page context's `lh`
+        //   self-reference basis. For this page context, "root" and "parent"
+        //   are the same node (= `inherited`), so `rlh` has the same basis.
+        //   The docs of `crate::page::page_context_line_height_basis` make
+        //   this argument for `line-height` itself and note that the two bases
+        //   coincide **only for this page context**. This lets us pass
+        //   `ctx.root_line_height` as the `lh` self-reference basis too (as
+        //   guaranteed by the caller contract for `ctx` above).
         //
-        // 本 arm が `font-size` に限る理由: box property
-        // (`padding` / `margin` / `width` / `height` / `border-*-width`) の
-        // `em` は page context 自身の font-size を要し、それは同 cascade の兄弟
-        // declaration から来得るので `inherited` だけでは決まらない。それらは
-        // 呼び手 (`cascade_page`) が本関数の後に走らせる phase 3 の担当である
-        // (上の「本関数の pass-through は『解決済』ではない」節を参照)。
-        // **本 arm の戻り値が常に `Length::Px` であることは load-bearing** —
-        // phase 3 はその値を page context の font-size (= `em` の基準) として
-        // 読み戻す (`crate::page::page_context_font_size`)。次の `FontSizeRelative`
-        // arm も同じ保証を守る (`PropertyValue::FontSize(Length::Px(_))` に収束させる)。
+        // This arm handles only `font-size`: `em` in box properties (`padding` /
+        // `margin` / `width` / `height` / `border-*-width`) needs the page
+        // context's own font-size, which may come from a sibling declaration
+        // in this cascade and is not determined by `inherited` alone. The
+        // caller (`cascade_page`) handles these in phase 3 after this function
+        // (see "Pass-through here does not mean resolved" above).
+        // **Always returning `Length::Px` here is essential**: phase 3 reads
+        // it back as the page context's font-size (the `em` basis) via
+        // `crate::page::page_context_font_size`. The next `FontSizeRelative`
+        // arm also produces `PropertyValue::FontSize(Length::Px(_))`.
         PropertyValue::FontSize(len) => PropertyValue::FontSize(Length::Px(
             crate::resolve::resolve_font_size(len, inherited.font_size, ctx.root_line_height, ctx)
                 .px(),
         )),
-        // CSS Text 3 §6.1 `#valdef-text-align-match-parent`。
-        // `inherited` は page context の inheritance parent (root element、
-        // または L3 legacy exception の initial values) — 常に「実の親」扱いで
-        // 解決する (上記 doc の trap 注記: page context 自身が root element の
-        // "computes to start" 特別扱いを受けることは無い)。他 keyword は
-        // no-op (関数 doc参照)。
+        // CSS Text 3 §6.1 `#valdef-text-align-match-parent`.
+        // `inherited` is the page context's inheritance parent (the root
+        // element, or initial values under the L3 legacy exception). Resolve
+        // it as an **actual parent**; the page context is not itself the root
+        // element and never receives its "computes to start" exception (see
+        // the trap in the docs above). Other keywords are no-ops (see docs).
         PropertyValue::TextAlign(t) => PropertyValue::TextAlign(
             resolve_text_align_internal_center(
                 resolve_text_align_match_parent(t, inherited.text_align, inherited.direction),
                 inherited.text_align,
             ),
         ),
-        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`):
-        // `bolder` / `lighter` と同型、継承元の computed
-        // font-size に対して解決する。`FontSize` variant に収束させる —
-        // `PropertyValue::FontSizeRelative` doc の「解決タイミング」節が説明する
-        // とおり、この variant は cascade winner の一時的な表現に留まり
-        // public な結果 (`crate::page::PageCascadeResult::declarations`) には残らない。
+        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`): like
+        // `bolder` / `lighter`, resolve against the inherited computed
+        // font-size. Convert to the `FontSize` variant. As the "resolution
+        // timing" section of the `PropertyValue::FontSizeRelative` docs says,
+        // this variant exists only temporarily for cascade winners, never in
+        // the public result (`crate::page::PageCascadeResult::declarations`).
         PropertyValue::FontSizeRelative(rel) => PropertyValue::FontSize(Length::Px(
             resolve_relative_font_size(rel, inherited.font_size.px()),
         )),
-        // 本関数では解決しない property — pass-through。上記 doc の「本関数の
-        // pass-through は『解決済』ではない (phase 3 が要る)」節が、これらを
-        // 呼び手の phase 3 が絶対化することを説明している。`_` に潰さないこと。
+        // Pass through properties not resolved here. The "Pass-through here
+        // does not mean resolved (phase 3 is still required)" section above
+        // explains how the caller's phase 3 absolutizes them. Do not use `_`.
         //
-        // `Direction` はここに属する — computed value = specified value
-        // (相対解決なし、`crate::property::Direction` doc 参照)、`Color` /
-        // `FontFamily` と同型。
+        // `Direction` belongs here: computed value = specified value (no
+        // relative resolution; see `crate::property::Direction` docs), just
+        // like `Color` / `FontFamily`.
         v @ (PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
@@ -896,7 +899,7 @@ pub(crate) fn resolve_against_inherited(
         // `text-top`/`text-bottom`) describe a shift *relative to the
         // parent's font metrics*, but that relation is a used-value/layout
         // concern (raikiri-paint scope, `VerticalAlign` doc's "baseline
-        // shift 量の計算は raikiri-paint scope" note) — CSS 2.1 §10.8.1's
+        // shift calculation is raikiri-paint's scope" note) — CSS 2.1 §10.8.1's
         // computed value for these keywords is still the bare specified
         // keyword, so there is nothing for this function (phase 2,
         // inheritance-parent-relative resolution) to resolve. The
@@ -1170,11 +1173,11 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
-        // `border-spacing` (CSS Tables 3 §6.1) — `<length>{1,2}` の絶対化は
-        // 宣言 node 自身の font-size を要するため phase 3 の仕事
-        // (`Padding`/`Margin` arm と同じ "nothing for phase 2" 形)。
-        // `caption-side` (§7) / `empty-cells` (§8) は bare keyword payload
-        // のため phase 2 依存なし (`BorderCollapse` と同じ)。
+        // `border-spacing` (CSS Tables 3 §6.1): absolutizing `<length>{1,2}`
+        // needs the declaring node's own font-size, so it belongs in phase 3
+        // (like the "nothing for phase 2" `Padding`/`Margin` arms).
+        // `caption-side` (§7) / `empty-cells` (§8) hold bare keywords and have
+        // no phase-2 dependency (like `BorderCollapse`).
         | PropertyValue::BorderSpacing(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)
@@ -1196,25 +1199,25 @@ pub(crate) fn resolve_against_inherited(
     })
 }
 
-/// [`resolve_against_inherited`] (phase 2) を通過済であることを **型で**示す
-/// wrapper。tuple field は本 module (`cascade`) に private — 他 module は
-/// [`resolve_against_inherited`] を呼ぶ以外にこの型の値を作れない。
+/// Wrapper that **encodes in its type** passage through phase 2
+/// ([`resolve_against_inherited`]). Its tuple field is private to the
+/// `cascade` module: another module cannot construct this value without
+/// calling [`resolve_against_inherited`].
 ///
-/// [`crate::page`] の `absolutize_in_page_context` (phase 3) は引数にこの型を
-/// 要求するので、page 経路で phase 3 を再利用する限り、呼び手がどの module に
-/// 書かれていても [`resolve_against_inherited`] を経由せざるを得ない —
-/// `page` module 自身も、本型が `cascade` module 定義である以上、tuple field
-/// に対しては他の module と同じ「foreign」な立場になる (`page` は単に
-/// `cascade` と別の module であり、それ以上の特別扱いは無い)。
+/// Phase 3's `absolutize_in_page_context` in [`crate::page`] requires this
+/// type. Thus any caller that reuses phase 3 on the page path must pass through
+/// [`resolve_against_inherited`], regardless of its module. Even `page` itself
+/// is foreign to the tuple field, since the type is defined in `cascade`:
+/// there is no special access between these two modules.
 ///
 /// # narrowed, not closed
 ///
-/// 本 module (`cascade.rs`) 自身に新しい経路が追加された場合はこの限りでは
-/// ない (tuple field は定義 module 内では直接見える) し、margin-box cascade
-/// が phase 3 を再利用せず独自の絶対化ロジックを書けばこの型は何も強制しない
-/// — 残る「経路の数え上げ」不能性は、別途 margin-box cascade 実装の
-/// acceptance criteria として切り出してある。[`resolve_against_inherited`]
-/// の doc「この guard が守らない範囲」§2 も参照。
+/// A new path inside this module (`cascade.rs`) could access the tuple field
+/// directly. A margin-box cascade that implements its own absolutization
+/// instead of reusing phase 3 also bypasses this type. That remaining inability
+/// to enumerate all paths is tracked separately in the margin-box cascade's
+/// acceptance criteria. See §2 of "What this guard does not protect" in the
+/// [`resolve_against_inherited`] docs.
 ///
 /// This wrapper marks values that have passed phase 2 before phase 3.
 /// The direct constructor exists only in test builds; production code uses
@@ -1223,14 +1226,14 @@ pub(crate) fn resolve_against_inherited(
 pub(crate) struct ResolvedAgainstInherited(PropertyValue);
 
 impl ResolvedAgainstInherited {
-    /// Phase 2 を通過済の値を取り出す (所有権ごと)。
+    /// Extract a value that has passed phase 2, taking ownership.
     pub(crate) fn into_property_value(self) -> PropertyValue {
         self.0
     }
 
-    /// Phase 2 を通過済の値を覗き見る (所有権を取らない版)。[`crate::page`] の
-    /// `page_context_font_size` / `page_context_border_styles` が、phase 3 に
-    /// 渡す前の `font-size` / `border-*-style` を読むために使う。
+    /// Inspect a value that has passed phase 2 without taking ownership.
+    /// `page_context_font_size` / `page_context_border_styles` in [`crate::page`]
+    /// use this to read `font-size` / `border-*-style` before phase 3.
     pub(crate) fn as_property_value(&self) -> &PropertyValue {
         &self.0
     }
@@ -1242,24 +1245,26 @@ impl ResolvedAgainstInherited {
     }
 }
 
-/// Cascade winner 1 つを staging 表現 ([`SpecifiedValues`]) に書き込む
-/// (**phase 1**)。
+/// Write one cascade winner to the staging representation
+/// ([`SpecifiedValues`]) (**phase 1**).
 ///
-/// length を運ぶ property は specified 表現のまま格納し、絶対化は
-/// [`SpecifiedValues::finalize`] に任せる (`em` などの基準 font-size は、その node の
-/// 全 winner を適用し終えるまで確定しない)。winner の適用順は任意なので、他
-/// property の値に依存する解決 (`text-align: match-parent` など) もここでは行わない。
+/// Keep length-bearing properties in specified form and let
+/// [`SpecifiedValues::finalize`] absolutize them: the font-size used for `em`
+/// cannot be known until all of this node's winners have been applied.
+/// Winners can be applied in any order, so resolutions depending on other
+/// properties (such as `text-align: match-parent`) also do not happen here.
 ///
-/// 例外は `font-weight` の `bolder` / `lighter` と `font-size` の `larger` /
-/// `smaller`。`target` は [`SpecifiedValues::inherit_from`] で親の computed 値に
-/// seed 済みなので、これらの arm は上書き前に `target` から継承値を読んで絶対値に
-/// 解決する。
+/// Exceptions are `bolder` / `lighter` in `font-weight` and `larger` /
+/// `smaller` in `font-size`. [`SpecifiedValues::inherit_from`] has already
+/// seeded `target` with the parent's computed values. These arms read the
+/// inherited values from `target` before replacing them with absolute ones.
 ///
-/// shorthand の arm は、[`crate::rule::expand_shorthand_into`] が cascade 前に
-/// longhand へ展開するため通常は到達しない。直接呼ばれた場合は cascade と同じ
-/// `crate::rule` の per-family expander (例: [`crate::rule::expand_border`]) に委譲する。
+/// Shorthand arms are normally unreachable because
+/// [`crate::rule::expand_shorthand_into`] expands them to longhands before the
+/// cascade. If invoked directly, they delegate to the same per-family
+/// expanders in `crate::rule` (e.g. [`crate::rule::expand_border`]).
 ///
-/// `pub(crate)` は他 module の doc からの intra-doc link のため。
+/// `pub(crate)` permits intra-doc links from other modules.
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,

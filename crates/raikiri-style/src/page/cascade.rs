@@ -24,7 +24,7 @@ use super::absolutize::absolutize_in_page_context;
 use super::types::*;
 
 // ---------------------------------------------------------------------------
-// @page cascade order 本実装
+// Actual @page cascade order implementation
 //
 // CSS Paged Media Level 3, §"Cascading and page context" —
 //   <https://www.w3.org/TR/css-page-3/#cascading-and-page-context>
@@ -50,7 +50,7 @@ use super::types::*;
 /// per page it is about to lay out. All fields are declarative — the caller
 /// pre-computes `is_left` / `is_right` from `page_index` parity, `is_first`
 /// from the page number, and `is_blank` from the fragmentation state
-/// (design specification §9.1 "page name 遷移ルール"). raikiri-style does
+/// (design specification §9.1 "page name transition rules"). raikiri-style does
 /// not know about page indexes, only about which pseudo-page states are
 /// currently true.
 ///
@@ -746,7 +746,7 @@ pub fn cascade_page(
     // Properties" permits explicitly (see `PageInheritance`'s doc). Shared
     // static: the fallback is immutable and `initial()` costs a heap allocation,
     // which the `LegacyInitialValues` path would otherwise take on every call
-    // (`property.rs` の `empty_counter_entries` と同じ前例)。
+    // (following the `empty_counter_entries` precedent in `property.rs`).
     static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
     let empty_custom_property_environment = empty_custom_properties();
     let (inherited, inherited_custom_properties): (
@@ -920,8 +920,8 @@ fn page_context_font_size(
 /// [`crate::resolve::ComputedLineHeight`] with **this call's own `font_size`
 /// argument** (the page context's own, from [`page_context_font_size`]),
 /// never the root's — ordinary CSS inheritance semantics for the unitless
-/// multiplier ([`crate::resolve::ComputedLineHeight`] doc, "子は number を
-/// inherit して自分の font-size に掛ける"), not a page-context-specific
+/// multiplier ([`crate::resolve::ComputedLineHeight`] doc, "children inherit the number and
+/// multiply it by their own font-size"), not a page-context-specific
 /// carve-out — pinned by
 /// `cascade_page_padding_lh_uses_page_context_own_font_size_for_inherited_number`.
 ///

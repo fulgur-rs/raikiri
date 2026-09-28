@@ -107,7 +107,7 @@ class Role1PlainBracketTests(unittest.TestCase):
         # §8.3 final review (GATE FAIL, non-trivial): an earlier
         # version of _BARE_BRACKET_RE only matched identifier/path-shaped
         # content and silently let this through with 0 violations —
-        # contradicting AGENTS.md's unconditional "一切書かない" for plain
+        # contradicting AGENTS.md's unconditional "never write them" for plain
         # `//` comments. This is the exact negative-to-positive regression
         # test for that finding.
         text = "// see [two words] for details\n"

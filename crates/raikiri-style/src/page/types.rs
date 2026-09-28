@@ -274,20 +274,19 @@ impl PageSizeDeclaration {
     /// `&`[`crate::property::PropertyValue`], since that type is not
     /// `Copy`).
     ///
-    /// # write 経路が無いことの compile-fail check
+    /// # Compile-fail check that no write path exists
     ///
-    /// `value` は `pub(crate)` に絞ってある (field doc参照)。
-    /// `PageSizeDeclaration` には既に `#[non_exhaustive]` が付いているため、
-    /// struct literal / functional-update 経由の fence は `value` 単独の
-    /// visibility を discriminate できない — 発生するエラーは常に
-    /// non_exhaustive 由来の `E0639` であり、`value` が将来 `pub` に戻っても
-    /// compile-fail し続けてしまう ([`crate::resolve::ComputedBorder`] の doc
-    /// が指摘する同種の vacuous check と同じ構造)。そのため struct literal
-    /// fence は作らず、`PageSizeDeclaration` が `Copy` であることを使う —
-    /// `Vec` indexing で取り出した値は borrow を経由しない owned なコピーに
-    /// なるので、[`crate::rule::Declaration`] の doc が踏んだ `.clone()`
-    /// confound ([`crate::resolve::ComputedBorder`] の doc 参照) はここでも
-    /// 発生しない:
+    /// `value` is restricted to `pub(crate)` (see its field documentation).
+    /// `PageSizeDeclaration` already has `#[non_exhaustive]`, so a fence using
+    /// a struct literal or functional update cannot isolate `value`'s
+    /// visibility: `E0639` from non-exhaustiveness occurs even if `value`
+    /// becomes `pub` later. This is the same vacuous-check problem described
+    /// in the documentation for [`crate::resolve::ComputedBorder`]. Instead of
+    /// a struct-literal fence, use the fact that `PageSizeDeclaration` is
+    /// `Copy`: indexing a `Vec` yields an owned copy without borrowing, so
+    /// the `.clone()` confound described in the documentation for
+    /// [`crate::rule::Declaration`] (also see
+    /// [`crate::resolve::ComputedBorder`]) does not apply:
     ///
     /// ```compile_fail
     /// use raikiri_style::{Origin, PageSize, RuleTree};

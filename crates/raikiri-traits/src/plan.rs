@@ -1,49 +1,49 @@
-//! `plan()` (dry-run) 用の output 型。
+//! Output types for `plan()` (dry run).
 //!
-//! Finding #5 対応: raikiri は自身で iteration しない。`plan` は 1 pass の
-//! `DocumentPlan` を返し、Consumer が自身の convergence loop で hint として
-//! 再入力する。
+//! Finding #5: raikiri does not iterate on its own. `plan` returns a one-pass
+//! `DocumentPlan`, which the consumer uses as a hint in its own convergence loop
+//! and passes back as input.
 
 use crate::error::UnresolvedTarget;
 use crate::page::{PageBox, TargetRegistry};
 
-/// `plan()` の output (paint scene / PaintedBox 構築なし)。
+/// `plan()` output (without constructing a paint scene or PaintedBox).
 ///
-/// 用途: fulgur の pass-1 前哨、cost 見積り、target 収束判定用の hint 生成。
+/// Uses: fulgur pass-1 reconnaissance, cost estimates, and target convergence hints.
 #[derive(Debug)]
 pub struct DocumentPlan {
-    /// 総ページ数。
+    /// Total number of pages.
     pub total_pages: u32,
-    /// hint: render 時は再計算される (Finding #5)。
+    /// A hint: recalculated during rendering (Finding #5).
     pub target_registry: TargetRegistry,
-    /// target 定義 list (将来 populate 予定)。
+    /// List of target definitions (to be populated in the future).
     pub target_definitions: Vec<TargetDefinition>,
-    /// 未解決 target list。
+    /// List of unresolved targets.
     pub unresolved_targets: Vec<UnresolvedTarget>,
-    /// 各ページの summary (box tree, glyph 情報なし)。
+    /// Summary of each page (without box tree or glyph information).
     pub page_summary: Vec<PageSummary>,
 }
 
-/// 1 ページの summary (`plan()` output の要素)。
+/// Summary of one page (an element of `plan()` output).
 #[derive(Debug)]
 pub struct PageSummary {
-    /// 0-indexed page number。
+    /// Zero-indexed page number.
     pub page_index: u32,
-    /// このページの実効 `@page` 解決結果。
+    /// Resolved effective `@page` for this page.
     pub page_box: PageBox,
-    /// なぜこのページで break したか。
+    /// Reason for the page break.
     pub break_reason: BreakReason,
-    /// このページに含まれる target slot 数。
+    /// Number of target slots on this page.
     pub target_slot_count: u32,
-    /// このページで新規定義された target 数。
+    /// Number of targets newly defined on this page.
     pub target_definition_count: u32,
-    /// このページの content 高さ (physical pixel)。
+    /// Content height of this page (physical pixels).
     pub content_height: f32,
 }
 
-/// `page-break-*` / auto-fill 等、ページ break の理由 (将来 variant を populate)。
+/// Reason for a page break, such as `page-break-*` or auto-fill (future variants).
 ///
-/// 現時点では uninhabited。想定 variant:
+/// Currently uninhabited. Planned variants:
 ///   - `PageBreakBefore { property: BreakProperty }`
 ///   - `PageBreakAfter { property: BreakProperty }`
 ///   - `PageBreakInside`
@@ -52,17 +52,17 @@ pub struct PageSummary {
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum BreakReason {
-    // 将来 populate 予定。
+    // To be populated in the future.
 }
 
-/// target-* の定義側情報 (`target-counter` などが参照する source location)。
+/// Information about a target definition (the source location referenced by `target-counter`, etc.).
 ///
-/// 将来 fields を populate。現時点では opaque。
+/// Fields to be populated in the future; currently opaque.
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct TargetDefinition {
-    // 将来 populate 予定:
+    // To be populated in the future:
     //   pub fragment_id: Symbol,
     //   pub page_index: u32,
     //   pub kind: TargetKind,

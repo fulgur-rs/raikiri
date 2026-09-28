@@ -9,7 +9,7 @@ use super::collect::{
     PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
 };
 
-/// `<img width>` / `<img height>` の HTML presentational-hint 昇格。
+/// Promote HTML `<img width>` / `<img height>` to presentational hints.
 ///
 /// # Spec mapping (verbatim, live HTML Standard)
 ///
@@ -374,32 +374,32 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
 
 /// HTML LS "rules for parsing dimension values"
 /// (<https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values>,
-/// verbatim algorithm)。
+/// verbatim algorithm).
 ///
-/// 1. 先頭の ASCII whitespace を skip。
-/// 2. 直後が ASCII digit でなければ (末尾も含め) 失敗 → `None`。
-/// 3. 整数部の連続 digit を集めて 10 進数として解釈。
-/// 4. 直後が `.` なら、消費してから続く digit を小数部として集める
-///    (`.` の直後が digit でなければ小数部なしとして扱い、位置は `.` の
-///    次で確定)。
-/// 5. 最終的に「数値の直後の 1 文字」で分類: `%` なら percentage
-///    ([`Length::Percent`])、それ以外 (garbage でも文字列終端でも) は
-///    length ([`Length::Px`])。
+/// 1. Skip leading ASCII whitespace.
+/// 2. If the next character is not an ASCII digit (including at end of input),
+///    fail with `None`.
+/// 3. Collect consecutive digits for the integer part and interpret in base 10.
+/// 4. If the next character is `.`, consume it and collect subsequent digits
+///    for the fractional part. If no digit follows `.`, leave the fractional
+///    part empty and continue from the position after `.`.
+/// 5. Classify by the character immediately after the number: `%` means a
+///    percentage ([`Length::Percent`]); anything else, including garbage or
+///    end of input, means a length ([`Length::Px`]).
 ///
-/// 数値直後の garbage は失敗にならない — `"42px"` → `Px(42.0)`、
-/// `"10.5%rest"` → `Percent(10.5)`。この寛容さは
-/// `embedded-content-other.html#dimension-attributes` にある**著者向け**
-/// conformance 要件 ("must have values that are valid non-negative
-/// integers") とは別物で、UA 側の実際の parse 規則はこちら (dimension
-/// value 一般、非負整数だけでなく小数・percentage も受理) —
-/// "非負整数" という短い要約だけでは誤解を招きうるため、実装はこの
-/// spec 本文の algorithm に忠実にした
-/// (percentage / 小数を含む)。負値を作る分岐 (`-`/`+` の読み取り) は
-/// algorithm 自体に存在しないため、別途の負値拒否は不要。
+/// Garbage following the number does not cause failure: `"42px"` gives
+/// `Px(42.0)`, and `"10.5%rest"` gives `Percent(10.5)`. This permissive UA
+/// parsing rule differs from the *author-facing* conformance requirement
+/// ("must have values that are valid non-negative integers") in
+/// `embedded-content-other.html#dimension-attributes`: dimension values can
+/// include decimals and percentages. A "non-negative integers" summary would
+/// mislead, so this implementation follows the full spec algorithm. The
+/// algorithm has no branch consuming `-` or `+`, so negative values need no
+/// separate rejection step.
 pub(crate) fn parse_html_dimension_value(input: &str) -> Option<Length> {
     let bytes = input.as_bytes();
     let mut pos = 0usize;
-    // Infra "ASCII whitespace": TAB / LF / FF / CR / SPACE。
+    // Infra "ASCII whitespace": TAB / LF / FF / CR / SPACE.
     while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t' | b'\n' | b'\x0C' | b'\r') {
         pos += 1;
     }
@@ -443,8 +443,7 @@ mod tests {
     #[test]
     fn img_width_and_height_attributes_promoted_to_computed_style() {
         // Acceptance: `<img width="100"
-        // height="50">` の HTML attribute が author CSS 無しでも computed
-        // width/height に届く。
+        // height="50">` are reflected in computed width/height even without author CSS.
         let mut doc = TestDoc::new();
         let img =
             doc.push_element_with_attrs(0, "img", None, &[("width", "100"), ("height", "50")]);
@@ -462,8 +461,8 @@ mod tests {
 
     #[test]
     fn img_width_attribute_alone_does_not_set_height() {
-        // 独立 mapping — `width` だけ指定した場合 `height` は initial のまま
-        // (spec は 2 属性を "respectively" と個別に mapping する)。
+        // Independent mapping: specifying only `width` leaves `height` at its
+        // initial value (the spec maps the two attributes "respectively").
         let mut doc = TestDoc::new();
         let img = doc.push_element_with_attrs(0, "img", None, &[("width", "100")]);
         let tree = build_rule_tree(&doc);
@@ -477,9 +476,8 @@ mod tests {
 
     #[test]
     fn img_width_attribute_zero_is_a_valid_hint() {
-        // 「maps to the dimension property」であり「…(ignoring zero)」では
-        // ないことの check (cf. `<table width>` は ignoring-zero) — `width="0"`
-        // は 0px という有効な hint になる。
+        // Check "maps to the dimension property", not "... (ignoring zero)"
+        // (unlike `<table width>`). `width="0"` is a valid 0px hint.
         let mut doc = TestDoc::new();
         let img = doc.push_element_with_attrs(0, "img", None, &[("width", "0")]);
         let tree = build_rule_tree(&doc);
@@ -492,10 +490,10 @@ mod tests {
 
     #[test]
     fn img_width_attribute_percentage_and_decimal_accepted() {
-        // "非負整数" とだけ要約すると誤解を招くが、
-        // spec 本文の "rules for parsing dimension values" は percentage /
-        // 小数も受理する — 実装はその本文どおり (`parse_html_dimension_value`
-        // doc 参照)。
+        // Summarizing the rule as "non-negative integers" is misleading:
+        // the spec's "rules for parsing dimension values" also accept
+        // percentages and decimals. Follow that rule (see the
+        // `parse_html_dimension_value` docs).
         let mut doc = TestDoc::new();
         let pct = doc.push_element_with_attrs(0, "img", None, &[("width", "50%")]);
         let dec = doc.push_element_with_attrs(0, "img", None, &[("width", "10.5")]);
@@ -513,9 +511,9 @@ mod tests {
 
     #[test]
     fn img_width_attribute_trailing_garbage_does_not_fail_parse() {
-        // legacy dimension-value microsyntax の寛容さ check: 数値直後の garbage
-        // は失敗にならない (`"42px"` → 42px, naive integer parse ならここで
-        // 失敗していたはず)。先頭 whitespace の skip も同時に確認。
+        // Check the permissive legacy dimension-value microsyntax: garbage
+        // immediately after the number is not a failure (`"42px"` becomes 42px,
+        // unlike naive integer parsing). Also check leading whitespace.
         let mut doc = TestDoc::new();
         let px = doc.push_element_with_attrs(0, "img", None, &[("width", "  42px")]);
         let pct_dot = doc.push_element_with_attrs(0, "img", None, &[("width", "10.%")]);
@@ -539,9 +537,9 @@ mod tests {
 
     #[test]
     fn img_width_attribute_invalid_or_negative_value_produces_no_hint() {
-        // 失敗 (parse failure) は「hint を作らない」に落ちる — 属性が無いのと
-        // 同じ扱いで width は initial `auto` のまま。`-5` は algorithm に
-        // `-`/`+` 分岐が無いため即失敗 (先頭が ASCII digit でない)。
+        // A parse failure creates no hint, as if the attribute were absent;
+        // width stays at its initial `auto`. `-5` fails immediately because
+        // the algorithm has no `-`/`+` branch and requires an initial digit.
         let mut doc = TestDoc::new();
         let garbage = doc.push_element_with_attrs(0, "img", None, &[("width", "abc")]);
         let negative = doc.push_element_with_attrs(0, "img", None, &[("width", "-5")]);
@@ -584,8 +582,7 @@ mod tests {
 
     #[test]
     fn non_img_element_width_height_attributes_not_promoted() {
-        // scope narrowing: mapping は `img` のみ。
-        // 同じ attribute を持つ `div` は影響を受けない。
+        // Scope the mapping to `img` only; the same attributes do not affect `div`.
         let mut doc = TestDoc::new();
         let div =
             doc.push_element_with_attrs(0, "div", None, &[("width", "100"), ("height", "50")]);
@@ -597,12 +594,11 @@ mod tests {
 
     #[test]
     fn img_width_attribute_overridable_by_inline_author_style() {
-        // Cascade-origin check: presentational hint は
-        // `Origin::AuthorPresentationalHint`、inline style は `Origin::Author`
-        // (`push_img_dimension_hints` doc の "Cascade origin" 節) — 別 origin
-        // tier なので `cascade_rank` の rank 差だけで無条件に決着し、
-        // inline style の specificity (`INLINE_SPECIFICITY` = `1 << 30`) を
-        // 参照するまでもなく勝つ。
+        // Cascade-origin check: the hint is `Origin::AuthorPresentationalHint`,
+        // while inline style is `Origin::Author` (see the "Cascade origin"
+        // section of `push_img_dimension_hints`). Their different origin ranks
+        // in `cascade_rank` alone make inline style win regardless of its
+        // specificity (`INLINE_SPECIFICITY` = `1 << 30`).
         let mut doc = TestDoc::new();
         let img = doc.push_element_with_attrs(
             0,
@@ -661,14 +657,14 @@ mod tests {
 
     #[test]
     fn img_tag_name_match_is_ascii_case_insensitive() {
-        // `push_img_dimension_hints` 自身の `elem.tag_name().eq_ignore_ascii_case`
-        // 判定を確認 — `compound_matches` の `Component::LocalName` 判定
-        // (旧名 `match_by_tag`、その後
-        // `match_simple_selectors` → `compound_matches`/
-        // `match_complex_selector_list` に分割 rename) と同じ寛容さの、独立
-        // した別実装。real DOM (html5ever) は tag name を常に lowercase に
-        // 正規化するので実運用では観測されないが、`StyleElement` は特定 DOM
-        // 実装に紐付かない generic trait なので defensive に確認しておく。
+        // Check `push_img_dimension_hints`'s own
+        // `elem.tag_name().eq_ignore_ascii_case` matching. It independently
+        // duplicates the permissive `Component::LocalName` check in
+        // `compound_matches` (formerly `match_by_tag`, then split from
+        // `match_simple_selectors` into `compound_matches` and
+        // `match_complex_selector_list`). Real html5ever DOM normalizes tag
+        // names to lowercase, making this invisible in production, but
+        // `StyleElement` is a DOM-agnostic trait, so test defensively.
         let mut doc = TestDoc::new();
         let img = doc.push_element_with_attrs(0, "IMG", None, &[("width", "100")]);
         let tree = build_rule_tree(&doc);
@@ -707,15 +703,14 @@ mod tests {
 
     #[test]
     fn test_dom_attr_style_matches_inline_style_source_contract() {
-        // `push_img_dimension_hints` は `elem.attr("width")`/`attr("height")`
-        // 経由で `TestElementRef::attr()` の override (`crate::test_dom`
-        // に追加済み) を叩く。`StyleElement::attr` の
-        // trait doc ("Default handles `style` by delegating to
-        // `inline_style_source`; overrides must preserve that contract")
-        // をこの override が守っていることを直接確認する — real DOM
-        // (`crates/raikiri-dom/src/dom_impl.rs`) の `ElementRef::attr()` も
-        // 同じ `"style"` 特別扱いを持つので、ここが崩れると実 DOM との
-        // 挙動差が生まれる。
+        // `push_img_dimension_hints` calls `TestElementRef::attr()` through
+        // `elem.attr("width")` / `attr("height")`. Its override in
+        // `crate::test_dom` must preserve the `StyleElement::attr` trait
+        // contract: "Default handles `style` by delegating to
+        // `inline_style_source`; overrides must preserve that contract".
+        // Check this directly: real DOM `ElementRef::attr()` in
+        // `crates/raikiri-dom/src/dom_impl.rs` also handles `"style"` specially.
+        // Breaking this contract would cause different behavior in real DOM.
         let mut doc = TestDoc::new();
         let id = doc.push_element(0, "div", Some("color: red"));
         let node = doc.node(StyleNodeId::new(id as u64)).expect("node exists");
@@ -726,8 +721,8 @@ mod tests {
 
     #[test]
     fn parse_html_dimension_value_matches_spec_algorithm_directly() {
-        // `parse_html_dimension_value` の unit-level check — 上の end-to-end
-        // test 群と違い、cascade を経由せず algorithm 自体の分岐を直接叩く。
+        // Unit-level check for `parse_html_dimension_value`: unlike the
+        // end-to-end tests above, exercise algorithm branches without cascade.
         assert_eq!(parse_html_dimension_value("100"), Some(Length::Px(100.0)));
         assert_eq!(parse_html_dimension_value("0"), Some(Length::Px(0.0)));
         assert_eq!(
@@ -739,10 +734,10 @@ mod tests {
             parse_html_dimension_value("10.5%"),
             Some(Length::Percent(10.5))
         );
-        // 2 桁以上の小数部 — fractional-digit loop が 1 回で `break` せず
-        // 「まだ digit が続く」経路 (`parse_html_dimension_value` 内 `loop`
-        // の non-break iteration) を通ることを pin。1 桁小数
-        // (上の `10.5` / `10.5%`) だけでは exercise されない分岐。
+        // At least two fractional digits: ensure the fractional-digit loop
+        // continues rather than breaking after one digit. This exercises the
+        // non-break iteration in `parse_html_dimension_value`; the single-digit
+        // `10.5` / `10.5%` cases above cannot cover it.
         assert_eq!(
             parse_html_dimension_value("12.345"),
             Some(Length::Px(12.345))

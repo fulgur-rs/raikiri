@@ -4,11 +4,11 @@ use taffy::TraversePartialTree;
 
 #[test]
 fn taffy_child_ids_and_count_filter_out_template_descendants() {
-    // Regression pin。taffy layout tree
-    // (= web spec flat tree) から template descendants を除外する。
-    // template 自身は in_document=true なので body の child 数に含まれる、
-    // その内側の <p> は in_document=false なので template の taffy child
-    // 数 = 0 になる。
+    // Regression check: exclude template descendants from the taffy layout tree
+    // (= the web-spec flat tree).
+    // The template itself has in_document=true and counts as a body child,
+    // but its inner <p> has in_document=false, so the template has zero
+    // taffy children.
     let mut doc = Document::new();
     let root = doc.root_index();
     let body = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
@@ -21,7 +21,7 @@ fn taffy_child_ids_and_count_filter_out_template_descendants() {
     let body_id = taffy::NodeId::from(body);
     let tmpl_id = taffy::NodeId::from(tmpl);
 
-    // body の直接子は template 1 個 (taffy 経由 count)
+    // The body directly contains one template child (taffy count).
     assert_eq!(
         <Document as TraversePartialTree>::child_count(&doc, body_id),
         1,
@@ -31,7 +31,7 @@ fn taffy_child_ids_and_count_filter_out_template_descendants() {
         <Document as TraversePartialTree>::child_ids(&doc, body_id).collect();
     assert_eq!(body_children, vec![tmpl_id]);
 
-    // template の taffy view から見た child_count = 0 (inner <p> は filter される)
+    // The template has taffy child_count = 0 (its inner <p> is filtered).
     assert_eq!(
         <Document as TraversePartialTree>::child_count(&doc, tmpl_id),
         0,
@@ -66,21 +66,21 @@ fn synthetic_inline_root_keeps_collapsed_whitespace_child() {
 #[test]
 fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
     // Regression check:
-    // Comment / ProcessingInstruction variant を body 直下に attach した後
-    // mark_in_document_flags を経由すると、TaffyChildIter は
-    // is_in_document filter でこれらを skip する。旧 strip_non_element_stubs
-    // が担っていた "layout tree から non-Element node を消す" 機能が、
-    // strip 廃止後は「NodeData variant → mark_in_document_flags で
-    // IS_IN_DOCUMENT clear → TaffyChildIter が filter」の chain に置き換わって
-    // いることを end-to-end で pin。
+    // After attaching Comment / ProcessingInstruction variants directly to the body
+    // and calling mark_in_document_flags, TaffyChildIter skips these nodes
+    // through the is_in_document filter. The former strip_non_element_stubs
+    // removed non-Element nodes from the layout tree; after removing that strip,
+    // the chain is “NodeData variant → mark_in_document_flags clears
+    // IS_IN_DOCUMENT → TaffyChildIter filters.” This test pins that chain
+    // end to end.
     //
-    // 特に「Comment/PI が layout child count に leak する」
-    // failure mode を stress する: body 直下に Comment 3 個 + PI 2 個 + <p>、
-    // という mix で、body の taffy child_count == 1 (<p> only) を要求する。
+    // In particular, stress the failure mode where Comments / PIs leak into
+    // the layout child count: mix three Comments, two PIs, and one <p> directly
+    // under body and require body taffy child_count == 1 (only <p>).
     let mut doc = Document::new();
     let root = doc.root_index();
     let body = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    // Interleaved で attach、ordering に依存しないことを確認。
+    // Attach in interleaved order; verify order independence.
     let _c0 = doc.append_comment(Some(body), "hello");
     let _pi0 = doc.append_processing_instruction(Some(body), "xml-stylesheet", "href='x'");
     let _c1 = doc.append_comment(Some(body), "middle");
@@ -90,7 +90,7 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
 
     doc.mark_in_document_flags();
 
-    // (a) Comment / PI variant node は IS_IN_DOCUMENT が clear されている。
+    // (a) Clear IS_IN_DOCUMENT on Comment / PI variant nodes.
     for i in 0..doc.node_count() {
         let n = doc.get_node(i).unwrap();
         match n.kind() {
@@ -105,7 +105,7 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
         }
     }
 
-    // (b) taffy layout tree から見た body の child は <p> の 1 個のみ。
+    // (b) The body has only one child (<p>) in the taffy layout tree.
     let body_taffy = taffy::NodeId::from(body);
     let p_taffy = taffy::NodeId::from(p);
     assert_eq!(
@@ -117,7 +117,7 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
         <Document as TraversePartialTree>::child_ids(&doc, body_taffy).collect();
     assert_eq!(kids, vec![p_taffy]);
 
-    // (c) get_child_id も filtered view で consistent (index 0 = <p>)。
+    // (c) get_child_id also agrees with the filtered view (index 0 = <p>).
     assert_eq!(
         <Document as TraversePartialTree>::get_child_id(&doc, body_taffy, 0),
         p_taffy

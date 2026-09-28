@@ -1597,7 +1597,7 @@ mod tests {
 
     #[test]
     fn var_in_font_shorthand_projects_each_deferred_longhand() {
-        // `var_in_background_shorthand_projects_each_deferred_longhand` の
+        // Sibling of `var_in_background_shorthand_projects_each_deferred_longhand`:
         // sibling — `font: var(--f)` expands 6 grammar longhands plus 9
         // reset-only subproperties after substitution.
         use crate::property::{

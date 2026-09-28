@@ -801,7 +801,7 @@ fn preshape_text_populates_text_layout_for_text_nodes() {
         "text 'Hi' must have non-zero line height"
     );
 
-    // Element / Document は None のまま
+    // Keep Element / Document at None.
     assert!(
         doc.nodes[html].text_layout().is_none(),
         "html element is not text"
@@ -2406,17 +2406,17 @@ fn establish_minimal_line_boxes_leading_br_does_not_add_leading_blank_line() {
     );
 }
 
-/// sites 7-8 — `preshape_text` の `cv.line_height` → parley
-/// `StyleProperty::LineHeight`。site 5 (`font-size`) と同じ「guard を
-/// 外すと fail ではなく hang する」site だが、機構は別
-/// (`sanitize_line_height` の doc参照 — `next_x <= max_advance` ではなく
-/// `running_line_height > line_max_height` が恒真になる)。
+/// Sites 7-8: `cv.line_height` in `preshape_text` → parley's
+/// `StyleProperty::LineHeight`. Like site 5 (`font-size`), removing the guard
+/// hangs instead of failing, but through a different mechanism (see
+/// `sanitize_line_height`: `running_line_height > line_max_height` remains
+/// true, rather than `next_x <= max_advance` remaining false).
 ///
-/// 通常の `cascade()` だけで非有限値を作れる — `line-height: 1e40`
-/// (unitless number)、`line-height: 1e40px` (absolute length) はいずれも
-/// cssparser の f64→f32 変換で `+Inf` に saturate する (site 5 の
-/// `font-size: 1e40px` と同じ機構)。font-size と違い 2 element も
-/// bypass も要らない。
+/// Ordinary `cascade()` can produce non-finite values: both
+/// `line-height: 1e40` (unitless) and `line-height: 1e40px` (absolute)
+/// saturate to `+Inf` during cssparser's f64→f32 conversion, just as at
+/// site 5 for `font-size: 1e40px`. Unlike font-size, this needs neither a
+/// second element nor a bypass.
 #[test]
 fn nonfinite_line_height_is_clamped_before_parley() {
     fn shaped_height(inline_style: &str) -> f32 {
@@ -2443,8 +2443,8 @@ fn nonfinite_line_height_is_clamped_before_parley() {
         doc.nodes[text].text_layout().unwrap().height()
     }
 
-    /// guard 消失時の hang を有界時間の失敗に変える wrapper — site 5 の
-    /// `shaped_height_bounded` と同じ構造 (doc参照)。
+    /// Bound a guard-regression hang so it becomes a timed test failure.
+    /// Same structure as site 5's `shaped_height_bounded` (see its docs).
     fn shaped_height_bounded(inline_style: &str) -> f32 {
         use std::sync::mpsc::RecvTimeoutError;
 
@@ -2490,20 +2490,20 @@ fn nonfinite_line_height_is_clamped_before_parley() {
 
 // ── site 6: sanitize_font_weight ─────────────
 //
-// sanitize_finite / sanitize_taffy と同型の unit test。`ComputedValues`
-// が全 field `pub` であることに由来する非有限 font_weight (f32 格上げで
-// 型による排除ができなくなった) が
-// `parley::FontWeight::new` の直前で有限 + `[1,1000]` に収まることを
-// 直接検証する。
+// Unit tests analogous to sanitize_finite / sanitize_taffy. They verify
+// that non-finite font_weight values (possible because all `ComputedValues`
+// fields are `pub` and the f32 promotion removed type-level exclusion)
+// become finite and stay in `[1,1000]` immediately before
+// `parley::FontWeight::new`.
 
 #[test]
 fn sanitize_font_weight_maps_nan_to_normal_fallback() {
-    // `f32::clamp` は NaN を NaN のまま返すので、この分岐が無いと NaN が
-    // 素通りする。fallback は `0.0` ではなく `FALLBACK_FONT_WEIGHT`
-    // (400.0、CSS Fonts 4 §2.2 "Font weight: the font-weight property"
-    // <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
-    // `normal` の computed value) — `sanitize_finite` の length 系 site
-    // とは異なる fallback を選ぶ理由は `sanitize_font_weight` の doc 参照。
+    // `f32::clamp` returns NaN for NaN, so without this branch it passes
+    // through. Use `FALLBACK_FONT_WEIGHT` instead of `0.0` (400.0, the
+    // computed value of `normal` under CSS Fonts 4 §2.2,
+    // <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal>).
+    // See `sanitize_font_weight` for why this differs from the fallback
+    // used at length-related `sanitize_finite` sites.
     let mut diag = Vec::new();
     assert_eq!(
         sanitize_font_weight(f32::NAN, &mut diag),
@@ -2536,21 +2536,22 @@ fn sanitize_font_weight_clamps_infinities_to_bounds() {
 
 #[test]
 fn sanitize_font_weight_clamps_out_of_range_finite_values() {
-    // 有限でも範囲外なら寄せる (「有限化するだけ」ではない) —
-    // `sanitize_taffy_clamps_out_of_range_finite_values` の font-weight 版。
+    // Also clamp finite values outside the range; this is not just
+    // finiteness checking (the font-weight counterpart of
+    // `sanitize_taffy_clamps_out_of_range_finite_values`).
     let mut diag = Vec::new();
     assert_eq!(sanitize_font_weight(1e30, &mut diag), MAX_FONT_WEIGHT);
     assert_eq!(sanitize_font_weight(-1e30, &mut diag), MIN_FONT_WEIGHT);
-    // `0.0` は length 系 site では有効な値だが font-weight の妥当域
-    // `[1, 1000]` の外 — MIN_FONT_WEIGHT に寄る。
+    // `0.0` is valid for length sinks but below font-weight's valid
+    // `[1, 1000]` range, so clamp it to MIN_FONT_WEIGHT.
     assert_eq!(sanitize_font_weight(0.0, &mut diag), MIN_FONT_WEIGHT);
     assert_eq!(diag.len(), 3);
 }
 
 #[test]
 fn sanitize_font_weight_passes_through_in_range_values() {
-    // 通常値 (fractional weight 含む) は
-    // bit-identical に素通しする。
+    // Let ordinary values, including fractional weights, pass through
+    // bit-identically.
     let mut diag = Vec::new();
     for v in [
         MIN_FONT_WEIGHT,
@@ -2650,18 +2651,17 @@ fn line_height_to_parley_maps_all_three_variants() {
 
 #[test]
 fn preshape_text_pushes_computed_font_style_into_parley_run_attrs() {
-    // `preshape_text` が `cv.font_style` を実際に RangedBuilder へ push して
-    // いることを、shape 済 `Run` の font-matching 属性から確認する。
+    // Check that `preshape_text` really pushes `cv.font_style` into
+    // RangedBuilder by inspecting the shaped `Run`'s font-matching attrs.
     //
-    // `GlyphRun::style()` (`parley::layout::Style<B>`) は brush /
-    // underline / strikethrough / 非公開 line_height 等のみで
-    // `font_style` field を持たないため使えない。代わりに
-    // `Run::font_attrs()` (`&fontique::Attributes`, `pub style: FontStyle`
-    // field を持つ) を使う — これは実際に選ばれた font file の属性では
-    // なく、font matching に**渡された** CSS-requested attribute
-    // そのもの (parley `shape` module が `RangedBuilder` へ push した
-    // `StyleProperty::FontStyle` から直接組み立てる) なので、実行環境に
-    // italic face を持つフォントがあるかどうかに関わらず決定的に検証できる。
+    // `GlyphRun::style()` (`parley::layout::Style<B>`) only has brush,
+    // underline, strikethrough, and private line_height, not font_style.
+    // Instead, use `Run::font_attrs()` (`&fontique::Attributes`, with a
+    // public `style: FontStyle` field). This captures the CSS-requested
+    // attribute passed to font matching, not the chosen font file's attrs:
+    // parley's `shape` module builds it directly from `StyleProperty::FontStyle`
+    // pushed to `RangedBuilder`. The check is deterministic regardless of
+    // whether the environment has any italic font face.
     use parley::{FontContext, LayoutContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -2694,7 +2694,7 @@ fn preshape_text_pushes_computed_font_style_into_parley_run_attrs() {
             // instead of a GlyphRun — preshape_text (this file) never
             // pushes an inline box, matching the same premise
             // `crates/raikiri-paint/src/text.rs`'s glyph-draw walk
-            // relies on ("InlineBox は現状生成されない" there), so
+            // relies on ("InlineBox is not currently generated" there), so
             // this is unreachable for plain text today.
             panic!("expected shaped text to produce a GlyphRun, got an InlineBox");
         };
@@ -2723,16 +2723,15 @@ fn preshape_text_pushes_computed_font_style_into_parley_run_attrs() {
 
 #[test]
 fn preshape_text_pushes_computed_line_height_into_parley_run_metrics() {
-    // `preshape_text` が `cv.line_height` を実際に RangedBuilder へ push
-    // していることを、shape 済 `Run` の `RunMetrics::line_height` から
-    // 確認する。`font_style` の兄弟 test と違い `Run::font_attrs()` では
-    // 検証できない (`fontique::Attributes` に line-height 相当の field は
-    // 無い) — 代わりに `Run::metrics()` (`&RunMetrics`, `pub line_height:
-    // f32` field を持つ) を使う。`Number` / `Length` はいずれも font
-    // metrics (ascent / descent / leading) に依存しない計算式
-    // (`parley-0.10.0/src/layout/data.rs` の `push_run` 内 `match
-    // style.line_height`) なので、実行環境のフォントに関わらず厳密な値で
-    // 決定的に検証できる。
+    // Confirm that `preshape_text` pushes `cv.line_height` to RangedBuilder
+    // by reading `RunMetrics::line_height` from the shaped `Run`.
+    // Unlike the sibling `font_style` test, `Run::font_attrs()` cannot
+    // verify it: `fontique::Attributes` has no line-height field. Instead,
+    // use `Run::metrics()` (`&RunMetrics`, with a public `line_height: f32`
+    // field). Both `Number` and `Length` use formulas independent of font
+    // metrics (ascent / descent / leading), in the `match style.line_height`
+    // within `push_run` in `parley-0.10.0/src/layout/data.rs`. Thus the
+    // exact result is deterministic across installed fonts.
     use parley::{FontContext, LayoutContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -2814,31 +2813,28 @@ fn preshape_text_pushes_computed_line_height_into_parley_run_metrics() {
 
 #[test]
 fn preshape_text_sanitizes_non_finite_font_weight_bypassing_cascade() {
-    // `ComputedValues` は全 field が `pub` なので、cascade を経由しない
-    // 直接構築 (ここでは cascade() 後に該当 node の font_weight だけを
-    // 上書きする形で再現) から非有限値が来る経路がある。この経路が
-    // `preshape_text` を panic させないこと — sink 直前で
-    // `sanitize_font_weight` が有限化すること — を確認する。
+    // Every `ComputedValues` field is `pub`, so a non-finite font_weight can
+    // arrive through direct construction without cascade. Model this by
+    // overwriting only that node's font_weight after cascade(). Verify that
+    // `sanitize_font_weight` makes it finite immediately before the sink
+    // and prevents `preshape_text` from panicking.
     //
-    // `CascadeResult` / `ComputedValues` はどちらも `#[non_exhaustive]`
-    // なので、raikiri-dom (外部 crate) からは struct literal で直接
-    // construct できない。正当な `cascade()` 呼び出しで得た
-    // `CascadeResult` の `pub computed: Vec<ComputedValues>` を後から
-    // 上書きすることで、「cascade を経由しない値」を再現する — これは
-    // `ComputedValues::font_weight` の doc が挙げる
-    // `crate::page::cascade_page` の継承元 root 引数と同じ攻撃面
-    // (呼び出し元が任意の `ComputedValues` を用意して渡せる) の縮図。
+    // Both `CascadeResult` and `ComputedValues` are `#[non_exhaustive]`,
+    // so raikiri-dom (an external crate) cannot construct them as struct
+    // literals. Overwrite `pub computed: Vec<ComputedValues>` in the
+    // `CascadeResult` returned by a valid `cascade()` call. This models
+    // an uncascaded value and the same attack surface as the inherited root
+    // argument of `crate::page::cascade_page` mentioned in the docs for
+    // `ComputedValues::font_weight`: a caller can supply arbitrary values.
     //
-    // `text_layout().is_some()` だけでは「panic しなかった」ことしか
-    // 検証できない — 将来誰かが `preshape_text` から
-    // `sanitize_font_weight` の呼び出しを誤って外しても (parley が
-    // 非有限値を panic せず黒箱処理する場合)、それは検知できない。
-    // そこで `doc.layout_warnings` (`sanitize_font_weight` が実際に
-    // clamp した時だけ push する `LayoutWarn::NonFiniteClamped`
-    // の蓄積先) を直接検査し、sink 直前に渡った raw 値と、そこから
-    // 実際に有限化された値の両方を assert する — 配線が外れれば
-    // site `"font-weight"` の event が一切積まれなくなるので、
-    // その断線をここで検知できる。
+    // Testing only `text_layout().is_some()` would prove merely that no
+    // panic occurred. If `sanitize_font_weight` were mistakenly removed
+    // from `preshape_text`, parley might handle non-finite input opaquely
+    // without panicking. Inspect `doc.layout_warnings`, where
+    // `sanitize_font_weight` pushes `LayoutWarn::NonFiniteClamped` only
+    // when it clamps a value, and assert both the raw input reaching the
+    // sink and its sanitized output. Disconnecting the guard would remove
+    // every event at site `"font-weight"`, which this check detects.
     use parley::{FontContext, LayoutContext};
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -2876,9 +2872,9 @@ fn preshape_text_sanitizes_non_finite_font_weight_bypassing_cascade() {
                  text_layout despite a non-finite font_weight bypassing cascade"
         );
 
-        // 配線検証: font-size はこの test では触っていないので clamp は
-        // 発火せず、"font-weight" site の event だけが (毎 case とも
-        // clamp が実際に効くので) ちょうど 1 件積まれるはず。
+        // Wiring check: this test leaves font-size unchanged, so no clamp
+        // fires there. Every case must produce exactly one event at the
+        // "font-weight" site, because each case actually needs clamping.
         let font_weight_events: Vec<LayoutWarn> = doc
             .layout_warnings
             .iter()

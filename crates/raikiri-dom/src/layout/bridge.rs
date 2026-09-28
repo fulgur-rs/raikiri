@@ -30,13 +30,13 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
     })
 }
 
-/// ComputedValues → taffy::Style bridge の dispatch site。
+/// ComputedValues → taffy::Style bridge dispatch site.
 ///
-/// per-element for loop 内 inline mapping から per-field `bridge_*` helper へ
-/// dispatch する pattern にリファクタ済み。新しい bridge は helper 追加 +
-/// dispatch 1 行追加のみで足りるよう設計している。
+/// Refactored from inline mapping inside the per-element loop to dispatching
+/// to per-field `bridge_*` helpers. Adding a new bridge now requires only a
+/// helper and one dispatch line.
 ///
-/// 現時点で active な bridge:
+/// Bridges currently active:
 /// - [`bridge_direction`] — [`Direction`] → [`taffy::Direction`]
 /// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`]
 /// - [`bridge_float`] — [`ComputedValues::float`] / [`ComputedValues::clear`] →
@@ -44,16 +44,16 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// - [`bridge_margin`] — `Sides<ComputedLengthPercentageOrAuto>` → [`taffy::Rect<LengthPercentageAuto>`]
 /// - [`bridge_padding`] — `Sides<ComputedLengthPercentage>` → [`taffy::Rect<LengthPercentage>`]
 /// - [`bridge_size`] — [`ComputedLengthPercentageOrAuto`] `cv.width` / `cv.height` →
-///   [`taffy::Style::size`] (`Size<Dimension>`)。width / height 両 field を
-///   struct literal 1 発 assign で書く。
+///   [`taffy::Style::size`] (`Size<Dimension>`). Assigns both width and height
+///   fields at once with a struct literal.
 /// - [`bridge_min_max_size`] — [`ComputedLengthPercentageOrAuto`]
-///   `cv.min_width` / `cv.min_height` → [`taffy::Style::min_size`]、
-///   `cv.max_width` / `cv.max_height` → [`taffy::Style::max_size`]。
-///   min/max 4 field を 2 struct literal で書く ([`bridge_size`] と同 shape)。
-/// - [`bridge_border`] — `Sides<ComputedBorder>` → [`taffy::Rect<LengthPercentage>`]
-///   。**border-style gating は本 bridge ではなく上流の
-///   `raikiri_style::resolve_border` (computed 層) が持つ** — CSS Backgrounds 3
-///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>。
+///   `cv.min_width` / `cv.min_height` → [`taffy::Style::min_size`],
+///   `cv.max_width` / `cv.max_height` → [`taffy::Style::max_size`].
+///   Writes the four min/max fields with two struct literals (as in [`bridge_size`]).
+/// - [`bridge_border`] — `Sides<ComputedBorder>` → [`taffy::Rect<LengthPercentage>`].
+///   **The upstream `raikiri_style::resolve_border` owns border-style gating,
+///   not this bridge** (at the computed-value stage) — CSS Backgrounds 3
+///   §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>.
 /// - [`bridge_box_sizing`] — [`raikiri_style::property::BoxSizing`] → [`taffy::BoxSizing`]
 ///   (CSS Sizing 3 §7)
 /// - [`bridge_flex`] — `flex-direction` / `flex-wrap` / `flex-grow` /
@@ -71,10 +71,10 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 ///   `grid-column-start` / `grid-column-end` → [`taffy::Style`]'s matching
 ///   grid container/item fields (CSS Grid Layout Module Level 1)
 ///
-/// per-node の bridge loop の後、second pass
-/// ([`establish_minimal_line_boxes`]) が bridge 済みの tree 全体を走査し、
-/// 条件を満たす block container に minimal な inline formatting context を
-/// 確立する — qualifying condition と scope は同関数の doc 参照。
+/// After the per-node bridge loop, a second pass
+/// ([`establish_minimal_line_boxes`]) scans the entire bridged tree and
+/// establishes a minimal inline formatting context in qualifying block
+/// containers. See that function's docs for the conditions and scope.
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     // Styles retain raw pointers to these payloads for Taffy's calc callback;
     // rebuild the arena for every cascade/layout pass.
@@ -203,33 +203,33 @@ fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
-/// [`DisplayValue`] → [`taffy::Display`] mapping。
+/// [`DisplayValue`] → [`taffy::Display`] mapping.
 ///
-/// [`DisplayValue`] を
-/// [`taffy::Display`] に mapping する。taffy 0.x は Block / Flex / Grid /
-/// None のみ (`Inline` / `InlineBlock` 独立 variant なし) のため:
-/// - `Inline` → `Block` (initial は Block、text-only は leaf で render)
-/// - `InlineBlock` → `Block` (block child + inline-level flow parent の
-///   separate 扱い、精密化は follow-up)
+/// Maps [`DisplayValue`] to
+/// [`taffy::Display`]. Taffy 0.x has only Block / Flex / Grid /
+/// None (no distinct `Inline` / `InlineBlock` variants), so:
+/// - `Inline` → `Block` (initially Block; text-only nodes render as leaves)
+/// - `InlineBlock` → `Block` (separate handling for a block child within
+///   an inline-level flow parent is a follow-up)
 /// - `None` → `None`
-/// - `Flex` → `Flex` (CSS Display 3 §2.2 `<display-inside>` keyword、
-///   outer-defaulting rule で `block flex` と等価。
+/// - `Flex` → `Flex` (a CSS Display 3 §2.2 `<display-inside>` keyword,
+///   equivalent to `block flex` under the outer-defaulting rule;
 ///   [`crate::taffy_impl`]'s `LayoutFlexboxContainer` impl + taffy's
-///   `compute_flexbox_layout` が実 layout を担う)
-/// - `Grid` → `Grid` (CSS Display 3 §2.2 `<display-inside>` keyword、
-///   outer-defaulting rule で `block grid` と等価。
+///   `compute_flexbox_layout` perform the actual layout)
+/// - `Grid` → `Grid` (a CSS Display 3 §2.2 `<display-inside>` keyword,
+///   equivalent to `block grid` under the outer-defaulting rule;
 ///   [`crate::taffy_impl`]'s `LayoutGridContainer` impl + taffy's
-///   `compute_grid_layout` が実 layout を担う)
+///   `compute_grid_layout` perform the actual layout)
 /// - Table internal types (`table` / `inline-table` / `table-row-group` /
 ///   `table-header-group` / `table-footer-group` / `table-row` /
 ///   `table-column-group` / `table-column` / `table-cell` / `table-caption`)
-///   → `Block` (暫定: taffy 0.12 は table layout 未対応のため block 近似。
-///   TODO(table-layout): [`crate::layout::table`] の dedicated table
+///   → `Block` (temporary block approximation: taffy 0.12 lacks table layout.
+///   TODO(table-layout): once [`crate::layout::table`]'s dedicated table
 ///   formatting context (CSS 2.1 §17.2.1 anonymous table object generation
-///   含む) が landing したら専用 Display / layout へ置換)
-/// - `flow-root` → `FlowRoot` (独立 block formatting context)
-/// - `list-item` / `contents` → `Block` (catch-all 経由、将来専用 handling
-///   が入るまで block 近似)
+///   included) is implemented, replace with dedicated Display / layout handling.)
+/// - `flow-root` → `FlowRoot` (independent block formatting context)
+/// - `list-item` / `contents` → `Block` (block approximation via catch-all
+///   until dedicated handling is added)
 /// - catch-all arm → `Block` (`non_exhaustive` forward-compat)
 fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
     style.display = match cv.display {
@@ -266,7 +266,7 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
 /// [`ComputedValues::float`] / [`ComputedValues::clear`] → [`taffy::Style::float`] /
 /// [`taffy::Style::clear`] bridge (CSS2 §9.5.1
 /// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float> / §9.5.2
-/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>)。**enum 1:1
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>). **One-to-one enum
 /// mapping** (both raikiri-style's `FloatValue`/`ClearValue` and taffy's
 /// `Float`/`Clear` carry exactly the spec's keyword sets, so no length
 /// resolution or Length policy participation is needed, same shape as
@@ -301,15 +301,15 @@ fn bridge_float(style: &mut taffy::Style, cv: &ComputedValues) {
 }
 
 /// [`ComputedValues::margin`] (`Sides<ComputedLengthPercentageOrAuto>`) → [`taffy::Style::margin`]
-/// (`Rect<LengthPercentageAuto>`) bridge。
+/// (`Rect<LengthPercentageAuto>`) bridge.
 ///
-/// CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical> の
-/// physical margin 4 side (top / right / bottom / left) を taffy `Rect` に
-/// **field 名 mapping** で write する (positional constructor は使わない —
-/// `Sides` の field 順 `top,right,bottom,left` と `Rect` の field 順
-/// `left,right,top,bottom` が異なるため silent transpose を防ぐ)。
+/// CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>:
+/// write the four physical margin sides (top / right / bottom / left) to
+/// taffy's `Rect` **by field name**, not with a positional constructor.
+/// `Sides` orders fields `top,right,bottom,left`, whereas `Rect` orders them
+/// `left,right,top,bottom`; named fields prevent a silent transpose.
 ///
-/// Length policy は [`computed_length_percentage_or_auto_to_taffy_length_percentage_auto`] を参照。
+/// See [`computed_length_percentage_or_auto_to_taffy_length_percentage_auto`] for length policy.
 fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let m = cv.margin;
     style.margin = Rect {
@@ -329,18 +329,18 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 }
 
 /// [`ComputedValues::padding`] (`Sides<ComputedLengthPercentage>`) → [`taffy::Style::padding`]
-/// (`Rect<LengthPercentage>`) bridge。
+/// (`Rect<LengthPercentage>`) bridge.
 ///
-/// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical> の
-/// physical padding 4 side (top / right / bottom / left) を taffy `Rect` に
-/// **field 名 mapping** で write する (positional constructor は使わない —
-/// `Sides` の field 順 `top,right,bottom,left` と `Rect` の field 順
-/// `left,right,top,bottom` が異なるため silent transpose を防ぐ)。margin と
-/// の差は value type: padding は `<length-percentage [0,∞]>` (auto なし、
-/// non-negative は raikiri-style parse-time enforce) のため
-/// [`computed_length_percentage_to_taffy_length_percentage`] を使う。
+/// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>:
+/// write the four physical padding sides (top / right / bottom / left) to
+/// taffy's `Rect` **by field name**, not with a positional constructor.
+/// `Sides` orders fields `top,right,bottom,left`, whereas `Rect` orders them
+/// `left,right,top,bottom`; named fields prevent a silent transpose. Unlike margin,
+/// padding has the `<length-percentage [0,∞]>` value type (no auto, with
+/// non-negativity enforced at parse time by raikiri-style), so it uses
+/// [`computed_length_percentage_to_taffy_length_percentage`].
 ///
-/// Length policy は [`computed_length_percentage_to_taffy_length_percentage`] を参照。
+/// See [`computed_length_percentage_to_taffy_length_percentage`] for length policy.
 fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let p = cv.padding;
     style.padding = Rect {
@@ -352,45 +352,45 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<
 }
 
 /// [`ComputedValues::border`] (`Sides<ComputedBorder>`) → [`taffy::Style::border`]
-/// (`Rect<LengthPercentage>`) bridge。
+/// (`Rect<LengthPercentage>`) bridge.
 ///
-/// # style-gating は **上流** で済んでいる
+/// # Style gating is already handled **upstream**
 ///
-/// `border-style: none` / `hidden` の側で width を 0 にする規則は、CSS
-/// Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
-/// の propdef table が "Computed value: absolute length, snapped as a border
-/// width; **zero if the border style is `none` or `hidden`**" と規定するとおり
-/// **computed 層**の要求である。したがって gate は
-/// `raikiri_style::resolve_border` が持ち、[`ComputedValues::border`] に届く
-/// 時点で width は既に 0 に潰れている。
+/// CSS Backgrounds 3 §3.3
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-width> specifies
+/// zero border widths for `none` and `hidden` at the **computed-value** stage:
+/// "Computed value: absolute length, snapped as a border
+/// width; **zero if the border style is `none` or `hidden`**". Thus
+/// `raikiri_style::resolve_border` gates widths before they reach
+/// [`ComputedValues::border`]; they are already zero in this bridge.
 ///
-/// 本 bridge が同じ判定を再実装してはならない (spec 規則の二重実装になり、
-/// 一方だけ直す drift の温床になる)。かつてあった `used_border_width` helper は
-/// この理由で削除した。end-to-end の gating check は本 file の
-/// `apply_computed_to_style_bridges_border_to_taffy` が引き続き持つ。
+/// This bridge must not duplicate that check (duplicating the spec rule
+/// risks drift when only one copy is fixed). The former `used_border_width`
+/// helper was removed for this reason. The end-to-end gating test in this file,
+/// `apply_computed_to_style_bridges_border_to_taffy`, still checks it.
 ///
-/// `@page` 経路 (`PageCascadeResult::declarations`) も同じ `resolve_border` へ
-/// funnel するようになったので、border-width の gate は
-/// raikiri-style 側に 1 本しか無い。本 bridge が読むのは per-node
-/// [`ComputedValues`] なので直接の影響は無いが、将来 page-margin box の layout を
-/// 本 bridge に通す場合も **gate を再実装せず** 上流の値を信頼すること。
+/// The `@page` path (`PageCascadeResult::declarations`) now also funnels through
+/// `resolve_border`, leaving just one border-width gate in raikiri-style.
+/// This bridge reads per-node [`ComputedValues`], so that change does not
+/// directly affect it. If page-margin boxes later use this bridge, trust the
+/// upstream value **without reimplementing the gate**.
 ///
-/// ⚠️ 上記は **border-style gating に限った話**。`PageCascadeResult::declarations`
-/// は非有限 `f32` (+Inf / NaN) について本段落とは別の未対応 hazard を抱えている
-/// (contract は `raikiri_style::page::PageCascadeResult::declarations`
-/// の doc が canonical)。将来 page-margin box の layout を本 bridge に通す際は
-/// gating の再確認だけでなくそちらも再確認すること。
+/// ⚠️ This applies **only to border-style gating**. Separately,
+/// `PageCascadeResult::declarations` still has an unresolved hazard involving
+/// non-finite `f32` values (+Inf / NaN); the canonical contract is in the docs
+/// for `raikiri_style::page::PageCascadeResult::declarations`. When passing
+/// page-margin boxes through this bridge, recheck that hazard as well as gating.
 ///
-/// 4-side は **field 名 mapping** で write (positional constructor は使わない —
-/// [`bridge_margin`] と同じ `Sides` vs `Rect` field 順不一致の silent transpose
-/// 防止)。
+/// Write all four sides **by field name** rather than using a positional
+/// constructor, to prevent the same silent `Sides` vs `Rect` field-order
+/// transpose described in [`bridge_margin`].
 ///
-/// # taffy scope の非対応
+/// # Unsupported by taffy
 ///
-/// - `border-color` / `border-style` 自体は taffy が track しない (taffy は
-///   border-width のみ)。色 / 線 pattern は paint scope が別途 [`ComputedValues::border`]
-///   から consume する将来 task。
-/// - `border-image` / `border-radius` はスコープ外。
+/// - Taffy tracks only `border-width`, not `border-color` or `border-style`.
+///   Consuming color and line patterns from [`ComputedValues::border`] is
+///   future work for the paint layer.
+/// - `border-image` and `border-radius` are out of scope.
 fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let b = cv.border;
     style.border = Rect {
@@ -404,30 +404,30 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// [`ComputedValues::width`] / [`ComputedValues::height`] (`ComputedLengthPercentageOrAuto`) →
 /// [`taffy::Style::size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §3.1.1
 /// "Preferred Size Properties"
-/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>).
 ///
-/// width 側を先に landing、続けて height 側を追記して両 preferred size 軸を
-/// full-bridge にした。両 field を同時に書き込むため struct literal
-/// (`style.size = Size { width, height }`) で 1 発 assign する — partial write
-/// scaffold はもう不要になった。
+/// Width support landed first, then height, so both preferred-size axes are
+/// fully bridged. Assign both fields together using a struct literal
+/// (`style.size = Size { width, height }`); the partial-write scaffold is
+/// no longer needed.
 ///
-/// Length policy は [`computed_length_percentage_or_auto_to_taffy_dimension`] を参照。
+/// See [`computed_length_percentage_or_auto_to_taffy_dimension`] for length policy.
 ///
-/// # PageBox 妥協
+/// # PageBox compromise
 ///
-/// `<body>` element の `style.size` は本 bridge の後、[`apply_page_box_to_body`]
-/// で PageBox の値 (width / height 両方) に上書きされる (layout.rs Step 1 →
-/// Step 4)。したがって `<body style="width: 100px; height: 200px">` の author
-/// 値は本 helper で一度 taffy に write されるが、Step 4 で PageBox 値に
-/// clobber される — 現行実装で意図された挙動 (将来 @page cascade + per-page
-/// PageBox に refactor 予定)。width 側 clobber の author→PageBox 上書き経路は
-/// test `apply_page_box_clobbers_body_width_from_bridge` が check する。height
-/// 側は [`apply_page_box_to_body`] が `style.size = Size { width, height }` の
-/// struct literal で **field を分岐なく一括代入する** ため、width と同じ
-/// clobber 経路を通る (両 field は同一 statement で書かれる)。同 helper の
-/// PageBox output check は test `apply_page_box_to_body_sets_body_style_size_to_page_dimensions`
-/// が担う (author→PageBox の bridge→clobber 連鎖 test は width 側で十分、
-/// 冗長化を避け height 側は structural 保証に留める)。
+/// After this bridge, [`apply_page_box_to_body`] overwrites the `<body>`
+/// element's `style.size` with both PageBox dimensions (layout.rs Step 1 →
+/// Step 4). Thus the author values in `<body style="width: 100px; height: 200px">`
+/// are written to taffy by this helper, but PageBox values overwrite them
+/// in Step 4. This is intentional for now (pending an @page cascade and
+/// per-page PageBox refactor). The width author→PageBox overwrite path is
+/// checked by `apply_page_box_clobbers_body_width_from_bridge`. For height,
+/// [`apply_page_box_to_body`] assigns both fields without branching through
+/// the struct literal `style.size = Size { width, height }`; height thus uses
+/// the same overwrite path as width (both fields are written in one statement).
+/// `apply_page_box_to_body_sets_body_style_size_to_page_dimensions` checks that
+/// helper's PageBox output. The width test sufficiently checks the full
+/// bridge→overwrite path; height relies on the structural guarantee to avoid duplication.
 fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
     fn map(value: OverflowValue) -> TaffyOverflow {
         match value {
@@ -464,7 +464,7 @@ fn bridge_position(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec
 }
 
 fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
-    // width + height 両方を同時に書くので struct literal を採用。
+    // width and height are written together, so use a struct literal.
     let width = computed_length_percentage_or_auto_to_taffy_dimension(
         &mut doc.calc_values,
         cv.width,
@@ -509,27 +509,27 @@ fn bridge_known_image_intrinsic_size(
 /// [`taffy::Style::max_size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §4
 /// "Minimum Size Properties" / §5 "Maximum Size Properties").
 ///
-/// min 側 initial `auto` / max 側 initial `none` は共に computed 層で
-/// [`ComputedLengthPercentageOrAuto::Auto`] に正規化済み (specified 層の
-/// `none` → `Auto` placeholder mapping は sibling `parse_max_size` が担う)
-/// ので、4 field とも同じ
-/// [`computed_length_percentage_or_auto_to_taffy_min_max`] helper で `Auto` →
-/// `LengthPercentageAuto::auto()` に translate する — max の `none` 用の特別扱いは本
-/// bridge に要らない。`none` (no max) と `auto` (no minimum) は共に
-/// "制約なし" として taffy に委譲する。calc() payloads are retained in the
+/// The initial `auto` minimum and initial `none` maximum are both normalized
+/// to [`ComputedLengthPercentageOrAuto::Auto`] at the computed-value stage.
+/// The sibling `parse_max_size` maps specified `none` to the `Auto` placeholder,
+/// so all four fields use the same
+/// [`computed_length_percentage_or_auto_to_taffy_min_max`] helper to translate
+/// `Auto` to `LengthPercentageAuto::auto()`. This bridge needs no special
+/// handling for max `none`: both `none` (no maximum) and `auto` (no minimum)
+/// delegate "unconstrained" to taffy. calc() payloads are retained in the
 /// document arena by that helper.
 ///
-/// Length policy / Percent policy / 非有限 guard は helper の doc 参照。
-/// `site` label は 4 caller ごとに `min-width` / `min-height` /
-/// `max-width` / `max-height` を渡す ([`LayoutWarn::NonFiniteClamped`] の診断用)。
+/// See the helper docs for length/percent policies and the non-finite guard.
+/// Each of the four callers passes its own `site` label: `min-width`,
+/// `min-height`, `max-width`, or `max-height` (for [`LayoutWarn::NonFiniteClamped`] diagnostics).
 fn bridge_min_max_size(
     style: &mut taffy::Style,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
-    // min/max 各 2 field を同時に書くので struct literal を 2 発採用
-    // (bridge_size と同 shape — default 保持は cv 側の Auto で自然に達成)。
+    // Use two struct literals to write each pair of min/max fields together
+    // (as in bridge_size; cv's Auto naturally preserves defaults).
     // Keep calc() handles alive in the document arena just like width/height;
     // collapsing a max-width calc() to zero would spuriously clamp a <col>.
     // The layout writing mode is normalized to horizontal-tb, just like
@@ -574,69 +574,69 @@ fn bridge_min_max_size(
     };
 }
 
-/// [`raikiri_style::property::BoxSizing`] → [`taffy::BoxSizing`] bridge。
+/// [`raikiri_style::property::BoxSizing`] → [`taffy::BoxSizing`] bridge.
 ///
 /// CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
 /// <https://www.w3.org/TR/css-sizing-3/#box-sizing>: value grammar
-/// `content-box | border-box`、spec initial `content-box`。**enum 1:1 mapping**
-/// (Length policy に不参加の最小 helper)。
+/// `content-box | border-box`, with spec initial `content-box`. **One-to-one enum mapping**
+/// (a small helper that needs no length policy).
 ///
-/// # Initial-value 補正 note
+/// # Initial-value correction
 ///
-/// - raikiri-style initial = `BoxSizing::ContentBox` (CSS Sizing 3 §3.3 spec 準拠)
-/// - taffy default = `taffy::BoxSizing::BorderBox` (taffy 0.12 の `#[default]`)
+/// - raikiri-style initial = `BoxSizing::ContentBox` (per CSS Sizing 3 §3.3)
+/// - taffy default = `taffy::BoxSizing::BorderBox` (`#[default]` in taffy 0.12)
 ///
-/// 両者の初期値は spec と食い違うが、cascade は unspecified 時に必ず
-/// [`ComputedValues::initial`] 経由で `ContentBox` を seed するため、本 bridge が
-/// 走った後の `style.box_sizing` は常に spec 初期値 (`ContentBox`) になる。
-/// つまり本 helper の副作用として "taffy default の spec 違反" を補正する。
+/// Taffy's default disagrees with the spec, but for unspecified values the
+/// cascade always seeds `ContentBox` through [`ComputedValues::initial`]. Once
+/// this bridge runs, `style.box_sizing` always has the spec initial (`ContentBox`).
+/// This helper therefore also corrects taffy's nonconforming default.
 ///
 /// # non_exhaustive catch-all
 ///
-/// raikiri-style の [`BoxSizing`] は `#[non_exhaustive]`
-/// (forward-compat のための sibling pattern)。未知 variant は spec initial (`ContentBox`) に
-/// fail-quiet — spec-violation を silent に伸ばさないよう "最も安全な既定"
-/// にする方針 ([`bridge_display`] catch-all → `Block` と同じ趣旨)。
+/// Raikiri-style's [`BoxSizing`] is `#[non_exhaustive]`, following the sibling
+/// forward-compatibility pattern. Unknown variants quietly use the spec initial
+/// (`ContentBox`) rather than silently extending a spec violation: the safest
+/// default (like the [`bridge_display`] catch-all → `Block`).
 ///
-/// taffy 側 (`taffy::BoxSizing`) は `#[non_exhaustive]` **ではない** ため、
-/// mapping 出力 arm は `ContentBox` / `BorderBox` の 2 個で網羅済。
+/// Taffy's `taffy::BoxSizing` is **not** `#[non_exhaustive]`, so the output
+/// mapping is complete with its two `ContentBox` and `BorderBox` arms.
 ///
 /// [`BoxSizing`]: raikiri_style::property::BoxSizing
 fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
     style.box_sizing = match cv.box_sizing {
         StyleBoxSizing::ContentBox => TaffyBoxSizing::ContentBox,
         StyleBoxSizing::BorderBox => TaffyBoxSizing::BorderBox,
-        // non_exhaustive catch-all — 未知 variant は spec initial (ContentBox)
-        // に fail-quiet (silent spec-violation 拡大を避ける)。
+        // For non_exhaustive variants, use the spec initial (ContentBox)
+        // quietly to avoid spreading a silent spec violation.
         _ => TaffyBoxSizing::ContentBox,
     };
 }
 
-/// flex container/item property → [`taffy::Style`] bridge。
+/// Flex container/item properties → [`taffy::Style`] bridge.
 ///
-/// CSS Flexible Box Layout Module Level 1 の 5 property を対応する taffy
-/// field へ写す:
+/// Map five CSS Flexible Box Layout Module Level 1 properties to their
+/// matching taffy fields:
 ///
 /// - `flex-direction` ([`FlexDirectionValue`]) → `style.flex_direction`
 ///   (§5.1)
 /// - `flex-wrap` ([`FlexWrapValue`]) → `style.flex_wrap` (§5.2)
-/// - `flex-grow` (`f32`) → `style.flex_grow` (§7.2.1、無変換で直接 copy —
-///   `<number>` は spec 上絶対化を要さない、[`ComputedValues::flex_grow`]
-///   doc の sink-guard 注記参照)
-/// - `flex-shrink` (`f32`) → `style.flex_shrink` (§7.2.2、同上)
+/// - `flex-grow` (`f32`) → `style.flex_grow` (§7.2.1, copied unchanged;
+///   `<number>` needs no absolutization under the spec; see the sink-guard
+///   note in [`ComputedValues::flex_grow`]'s docs)
+/// - `flex-shrink` (`f32`) → `style.flex_shrink` (§7.2.2, likewise)
 /// - `flex-basis` ([`ComputedFlexBasis`]) → `style.flex_basis`
-///   (`taffy::Dimension`、§7.2.3)
+///   (`taffy::Dimension`, §7.2.3)
 ///
-/// # `flex-basis` の bridge
+/// # Bridging `flex-basis`
 ///
-/// `Px` / `Percent` は [`bridge_size`] と同じ percent `/100.0` 変換 +
-/// [`sanitize_taffy`] 非有限 guard で [`taffy::Dimension`] に載せる。
-/// `MinContent` / `MaxContent` / `FitContent` は taffy 0.14 の同名
-/// `Dimension` variant にそのまま写像する (flex アルゴリズムが content
-/// 測定で解決する)。
+/// `Px` / `Percent` become [`taffy::Dimension`] using the same `/100.0`
+/// percent conversion and non-finite [`sanitize_taffy`] guard as [`bridge_size`].
+/// `MinContent` / `MaxContent` / `FitContent` map directly to the matching
+/// taffy 0.14 `Dimension` variants (resolved by the flex algorithm during
+/// content measurement).
 ///
-/// - `Content` → [`taffy::Dimension::content`] (0.14 — flex-basis 専用
-///   keyword、そのままの意味で写像する)。
+/// - `Content` → [`taffy::Dimension::content`] (the 0.14 flex-basis-specific
+///   keyword, mapped without changing its meaning).
 fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     style.flex_direction = match cv.flex_direction {
         FlexDirectionValue::Row => TaffyFlexDirection::Row,
@@ -646,7 +646,7 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
         // cov:ignore: unreachable while FlexDirectionValue is
         // Row|RowReverse|Column|ColumnReverse only; required for its
         // #[non_exhaustive] contract (see doc above, `bridge_display`
-        // catch-all と同じ趣旨).
+        // catch-all's rationale).
         _ => TaffyFlexDirection::Row,
     };
     style.flex_wrap = match cv.flex_wrap {
@@ -658,7 +658,7 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
         // contract.
         _ => TaffyFlexWrap::NoWrap,
     };
-    // `<number>` は絶対化不要 — 無変換で直接 copy。
+    // `<number>` needs no absolutization; copy it unchanged.
     style.flex_grow = cv.flex_grow;
     style.flex_shrink = cv.flex_shrink;
     // `flex-basis: content` (CSS Flexible Box Layout 1 §4.5) is distinct
@@ -684,7 +684,7 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
 }
 
 /// alignment property → [`taffy::Style`] bridge (CSS Box Alignment Module
-/// Level 3)。
+/// Level 3).
 ///
 /// - `justify-content` ([`ContentAlignmentValue`]) → `style.justify_content`
 ///   (§5.1)
@@ -693,31 +693,31 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
 /// - `align-items` ([`SelfAlignmentValue`]) → `style.align_items` (§7.2)
 /// - `align-self` ([`AlignSelfValue`]) → `style.align_self` (§6.2)
 /// - `justify-items` ([`SelfAlignmentValue`]) → `style.justify_items` (§7.1)
-///   — grid container 上の inline-axis 版 `align-items`、同じ keyword set
-///   ([`SelfAlignmentValue`] doc 参照) を共有する。
+///   — the inline-axis counterpart of `align-items` on a grid container;
+///   it shares the keyword set (see [`SelfAlignmentValue`]'s docs).
 /// - `justify-self` ([`AlignSelfValue`]) → `style.justify_self` (§6.1) —
-///   grid item 上の inline-axis 版 `align-self`。taffy `GridItemStyle::justify_self`
-///   の doc も `align_self` と同じ "Falls back to the parents … if not set"
-///   契約を持つため、`align-self` と同じ `normal`/`auto` 特殊 handling が
-///   そのまま適用できる。
+///   the inline-axis counterpart of `align-self` on a grid item. Taffy's
+///   `GridItemStyle::justify_self` docs promise the same "Falls back to the parents … if not set"
+///   behavior as `align_self`, so the same special handling for `normal` and
+///   `auto` applies.
 ///
-/// taffy 側の 6 field は全て `Option<…>` — CSS の `normal` (content-*系)
-/// keyword には対応する taffy keyword が無く、`None` へ写す
-/// (`bridge_box_sizing` の "Initial-value 補正" 節と同型の initial-value
-/// mismatch)。taffy はその後 layout mode 依存の default で埋める
-/// (`GridContainerStyle::grid_align_content` 等の `unwrap_or(AlignContent::STRETCH)`
-/// — grid path の fallback は `STRETCH`、flex path は
-/// `compute_flexbox_layout` 内部の別 default)。`align-self`/`justify-self`
-/// の `auto` も同じ形 (`Option::None` → 親の `align-items`/`justify-items`
-/// に fallback、CSS Box Alignment 3 §6.2/§6.1 の spec 規定どおり)。
+/// All six taffy fields are `Option<…>`. Taffy has no keyword for CSS `normal`
+/// (on content-* properties), so map it to `None`, another initial-value
+/// mismatch like the "Initial-value correction" in `bridge_box_sizing`.
+/// Taffy then uses defaults dependent on the layout mode
+/// (e.g. `GridContainerStyle::grid_align_content` uses `unwrap_or(AlignContent::STRETCH)`;
+/// the grid fallback is `STRETCH`, while the flex path has another default
+/// inside `compute_flexbox_layout`). `auto` on `align-self` / `justify-self`
+/// also maps to `Option::None`, falling back to the parent's
+/// `align-items` / `justify-items`, per CSS Box Alignment 3 §6.2/§6.1.
 ///
-/// 明示 keyword は [`taffy::AlignItems`] / [`taffy::AlignContent`] の
-/// 定数 (`AlignItems::CENTER` 等、struct constant であって enum variant
-/// ではない — taffy 0.12 の safe/unsafe overflow-position 分離 shape、
-/// [`ContentAlignmentValue`]/[`SelfAlignmentValue`] doc の scope carving
-/// 節参照) に写す。`safety` field は常に `AlignmentSafety::Unsafe` —
-/// `safe`/`unsafe` prefix 自体を本 crate が受理していないため
-/// (`parse_content_alignment`/`parse_self_alignment` doc 参照)。
+/// Explicit keywords map to constants on [`taffy::AlignItems`] /
+/// [`taffy::AlignContent`] (e.g. `AlignItems::CENTER` is a struct constant,
+/// not an enum variant). Taffy 0.12 separates safe/unsafe overflow positions;
+/// see the scope notes in the [`ContentAlignmentValue`] / [`SelfAlignmentValue`]
+/// docs. The `safety` field is always `AlignmentSafety::Unsafe`, because this
+/// crate does not accept the `safe` / `unsafe` prefix
+/// (see `parse_content_alignment` / `parse_self_alignment` docs).
 fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     style.justify_content = content_alignment_to_taffy(cv.justify_content);
     style.align_content = content_alignment_to_taffy(cv.align_content);
@@ -728,34 +728,34 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
 }
 
 /// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by
-/// `align-self` and `justify-self` ([`bridge_alignment`] doc の
-/// `justify-self` 節参照、taffy 側 `AlignSelf` は `AlignItems` の type
-/// alias)。
+/// `align-self` and `justify-self` (see the `justify-self` section in
+/// [`bridge_alignment`]'s docs; taffy's `AlignSelf` is a type alias for
+/// `AlignItems`).
 fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<TaffyAlignItems> {
     match v {
         AlignSelfValue::Auto => None,
-        // `normal` は `auto` とは異なり、親の align-items/justify-items へ
-        // fallback せず、flex/grid layout では単独で `stretch` 相当に
-        // 振る舞う (CSS Box Alignment 3 §8.3 の "In flex layout, this
-        // value behaves as stretch" — grid layout も同節の対象)。
-        // `self_alignment_to_taffy`'s `Normal => None` mapping はここでは
-        // 使えない — taffy の `None` は「コンテナの対応 property を
-        // 継承する」意味 (`auto` の spec 挙動そのもの) であり、`normal` の
-        // 「親の値に関わらず stretch」とは異なるため、明示的に `STRETCH`
-        // へ写す。
+        // Unlike `auto`, `normal` does not fall back to the parent's
+        // align-items/justify-items. In flex/grid layout it independently
+        // behaves like `stretch` (CSS Box Alignment 3 §8.3 says "In flex
+        // layout, this value behaves as stretch"; grid is covered too).
+        // The `Normal => None` mapping in `self_alignment_to_taffy` cannot
+        // apply here: taffy's `None` means inherit the corresponding
+        // container property (exactly the spec behavior of `auto`). Since
+        // `normal` means stretch regardless of the parent's value, map it
+        // explicitly to `STRETCH`.
         AlignSelfValue::Value(SelfAlignmentValue::Normal) => Some(TaffyAlignItems::STRETCH),
         AlignSelfValue::Value(v) => self_alignment_to_taffy(v),
         // cov:ignore: unreachable while AlignSelfValue is Auto|Value(_)
         // only; required for its #[non_exhaustive] contract
-        // (`self_alignment_to_taffy` の catch-all と同じ判断).
+        // (the same rationale as `self_alignment_to_taffy`'s catch-all).
         _ => None,
     }
 }
 
 /// [`ContentAlignmentValue`] → `Option<taffy::AlignContent>` mapping —
-/// [`bridge_alignment`] の `justify_content` / `align_content` 両 field で
-/// 共有する ([`ContentAlignmentValue`] 自体が両 property の共有 payload
-/// 型であるのと同じ理由)。
+/// [`bridge_alignment`] shares this between `justify_content` and `align_content`,
+/// just as [`ContentAlignmentValue`] is the shared payload type of those
+/// two properties.
 fn content_alignment_to_taffy(v: ContentAlignmentValue) -> Option<TaffyAlignContent> {
     match v {
         ContentAlignmentValue::Normal => None,
@@ -776,9 +776,9 @@ fn content_alignment_to_taffy(v: ContentAlignmentValue) -> Option<TaffyAlignCont
 }
 
 /// [`SelfAlignmentValue`] → `Option<taffy::AlignItems>` mapping —
-/// [`bridge_alignment`] の `align_items` field と `align_self` の
-/// `AlignSelfValue::Value` branch で共有する (`align-self` の非-`auto` 値は
-/// `align-items` と同じ keyword set、[`AlignSelfValue`] doc 参照)。
+/// [`bridge_alignment`] shares this between its `align_items` field and
+/// the `AlignSelfValue::Value` branch of `align_self`: non-`auto` values of
+/// `align-self` use the `align-items` keyword set (see [`AlignSelfValue`]'s docs).
 fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
     match v {
         SelfAlignmentValue::Normal => None,
@@ -797,27 +797,27 @@ fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
 }
 
 /// `row-gap` / `column-gap` → [`taffy::Style::gap`] (`Size<LengthPercentage>`)
-/// bridge。
+/// bridge.
 ///
 /// CSS Box Alignment Module Level 3 §8.1 "Row and Column Gutters: the
 /// row-gap and column-gap properties"
-/// <https://www.w3.org/TR/css-align-3/#column-row-gap> propdef の
-/// "Initial: normal" に対し、同 propdef の value 説明 (verbatim) が:
+/// <https://www.w3.org/TR/css-align-3/#column-row-gap> defines "Initial: normal";
+/// its description of that value says (verbatim):
 ///
 /// > The value `normal` represents a used value of `1em` on multi-column
 /// > containers, and a used value of `0px` in all other contexts.
 ///
-/// と規定する — flex/grid container はこの "all other contexts" に属する。
-/// これは [`bridge_box_sizing`] の "Initial-value 補正" 節と同型の
-/// mismatch: raikiri-style の computed 層 initial は `normal` keyword を
-/// 保持する ([`ComputedLengthPercentageOrNormal::Normal`]) が、taffy 側
-/// `Size<LengthPercentage>` (non-`Option`) には `normal` keyword が
-/// 存在しないため、本 bridge が `normal → 0` の変換を担う。
+/// Thus flex/grid containers belong to "all other contexts" in that quote.
+/// This is an initial-value mismatch like [`bridge_box_sizing`]'s correction:
+/// the raikiri-style computed initial retains the `normal` keyword
+/// ([`ComputedLengthPercentageOrNormal::Normal`]), but taffy's
+/// `Size<LengthPercentage>` (not an `Option`) has no `normal` keyword.
+/// This bridge therefore translates `normal → 0`.
 ///
-/// `Px` / `Percent` は [`ComputedLengthPercentage`] に一度変換してから
-/// [`computed_length_percentage_to_taffy_length_percentage`] (percent の
-/// `/100.0` 変換 + [`sanitize_taffy`] 非有限 guard を含む) へ delegate する
-/// — [`bridge_padding`] と同じ helper を再利用し、実装を複製しない。
+/// Convert `Px` / `Percent` to [`ComputedLengthPercentage`] before calling
+/// [`computed_length_percentage_to_taffy_length_percentage`], which handles
+/// percent `/100.0` conversion and the non-finite [`sanitize_taffy`] guard.
+/// This reuses [`bridge_padding`]'s helper instead of duplicating it.
 fn bridge_gap(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     style.gap = Size {
         width: computed_gap_component_to_taffy(cv.column_gap, "column-gap", diag),
@@ -825,10 +825,10 @@ fn bridge_gap(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Layo
     };
 }
 
-/// [`bridge_gap`] の per-axis helper — `taffy::Size<LengthPercentage>` の
-/// `width` は inline axis (`column-gap` 相当)、`height` は block axis
-/// (`row-gap` 相当) に対応する (taffy `Size` の一般 convention、
-/// [`bridge_size`] の `width`/`height` mapping と同じ軸の向き)。
+/// Per-axis helper for [`bridge_gap`]: `width` in `taffy::Size<LengthPercentage>`
+/// corresponds to the inline axis (`column-gap`), while `height` corresponds
+/// to the block axis (`row-gap`). This follows taffy `Size` conventions and
+/// the axis mapping of `width`/`height` in [`bridge_size`].
 fn computed_gap_component_to_taffy(
     gap: ComputedLengthPercentageOrNormal,
     site: &'static str,
@@ -843,20 +843,20 @@ fn computed_gap_component_to_taffy(
 }
 
 /// grid container/item property → [`taffy::Style`] bridge (CSS Grid Layout
-/// Module Level 1)。
+/// Module Level 1).
 ///
 /// - `grid-template-columns` / `grid-template-rows` → `style.grid_template_columns`
-///   / `style.grid_template_rows` (`Vec<GridTemplateComponent>`、§7.2) +
+///   / `style.grid_template_rows` (`Vec<GridTemplateComponent>`, §7.2) plus
 ///   `style.grid_template_column_names` / `style.grid_template_row_names`
-///   (line names outside any `repeat()`、§7.2.2 — [`grid_template_tracks_to_taffy`]
-///   doc の shape 対応参照)
+///   (line names outside any `repeat()`, §7.2.2; see the shape mapping in
+///   [`grid_template_tracks_to_taffy`]'s docs)
 /// - `grid-template-areas` → `style.grid_template_areas`
-///   (`Vec<GridTemplateArea>`、§7.3)
+///   (`Vec<GridTemplateArea>`, §7.3)
 /// - `grid-auto-columns` / `grid-auto-rows` → `style.grid_auto_columns` /
 ///   `style.grid_auto_rows` (§7.6)
 /// - `grid-auto-flow` → `style.grid_auto_flow` (§7.7)
 /// - `grid-row-start`/`grid-row-end` / `grid-column-start`/`grid-column-end`
-///   → `style.grid_row` / `style.grid_column` (`Line<GridPlacement>`、§8.3)
+///   → `style.grid_row` / `style.grid_column` (`Line<GridPlacement>`, §8.3)
 fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let (columns, column_names) =
         grid_template_tracks_to_taffy(&cv.grid_template_columns, "grid-template-columns", diag);
@@ -1140,7 +1140,7 @@ fn saturate_u16(n: u32) -> u16 {
 }
 
 /// [`ComputedLengthPercentage`] → [`taffy::LengthPercentage`] bridge
-/// (padding / gap 用)。
+/// (for padding / gap).
 ///
 /// `site` distinguishes the callers (`"padding"` / `"row-gap"` /
 /// `"column-gap"`) in [`LayoutWarn::NonFiniteClamped`] events — same
@@ -1149,40 +1149,40 @@ fn saturate_u16(n: u32) -> u16 {
 /// (`"width"`/`"height"`), generalized once a second caller
 /// ([`bridge_gap`]) appeared.
 ///
-/// # 網羅 match
+/// # Exhaustive match
 ///
-/// 引数が **computed 層**の型になったため 2 arm で網羅する。以前あった
-/// `Length::Em(_) | Length::Rem(_) => length(0.0)` (font-relative unit を黙って
-/// 0px に潰す fail-quiet) と `_ => length(0.0)` (non_exhaustive catch-all) は
-/// **削除した** — `em` / `rem` / `pt` は cascade の phase 3 で px に絶対化済み
-/// であり、computed 層に到達しない。
+/// The argument has a **computed-value** type, making two exhaustive arms
+/// possible. The old `Length::Em(_) | Length::Rem(_) => length(0.0)` arm
+/// (which silently collapsed font-relative units to 0px) and the
+/// `_ => length(0.0)` non_exhaustive catch-all were **removed**. Cascade
+/// phase 3 converts `em` / `rem` / `pt` to px before they reach computed values.
 ///
-/// **ただし削除した arm は「単位」だけでなく「病的な f32 の値」も吸収していた**
-/// (`Em(inf)` / `0.0 * inf` = NaN)。その分は [`sanitize_taffy`] が
-/// backfill している — **guard を「不要な防御」と
-/// 判断して外さないこと。**
+/// **But the removed arms absorbed pathological `f32` values as well as units**
+/// (`Em(inf)` / `0.0 * inf` = NaN). [`sanitize_taffy`] covers this case instead;
+/// **do not remove its guard as "unnecessary defensive code".**
+/// Keep this protection in place.
 ///
-/// [`ComputedLengthPercentage`] に `#[non_exhaustive]` が付いていないのは、
-/// この網羅性を今得るための explicit trade である (将来 `Calc` variant が
-/// 増えるときに coordinated breaking change を払う。`raikiri_style::resolve`
-/// の module doc 参照)。**`_` arm を足して「forward-compat」にしてはならない** —
-/// trade の得る側を捨てることになる。
+/// [`ComputedLengthPercentage`] deliberately lacks `#[non_exhaustive]` so this
+/// exhaustive match works today. This is an explicit trade-off: adding a
+/// `Calc` variant later requires a coordinated breaking change (see the module
+/// docs for `raikiri_style::resolve`). **Do not add a `_` arm in the name of
+/// "forward compatibility"**; that would discard the benefit of this trade-off.
 ///
 /// # Percent policy
 ///
-/// `Percent(p)` → `percent(sanitize_taffy(p / 100.0))` — CSS spec の authored
-/// 0-100 を taffy の fraction 0.0-1.0 に変換し、[`sanitize_taffy`] で有限化する。
-/// containing block に対する解決は **used value 層**
-/// (CSS Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>) であり
-/// taffy に委譲する — **guard が bound するのは fraction であって解決後の
-/// used value ではない** ([`MAX_TAFFY_MAGNITUDE`] の射程節を参照)。
+/// `Percent(p)` → `percent(sanitize_taffy(p / 100.0))`: convert the authored
+/// CSS 0–100 percent to taffy's 0.0–1.0 fraction, then make it finite with [`sanitize_taffy`].
+/// Resolution against the containing block happens at the **used-value stage**
+/// (CSS Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>) and is
+/// delegated to taffy. **The guard bounds the fraction, not the resolved
+/// used value** (see [`MAX_TAFFY_MAGNITUDE`]'s scope section).
 pub(crate) fn computed_length_percentage_to_taffy_length_percentage(
     len: ComputedLengthPercentage,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentage {
     match len {
-        // site 1: `sanitize_taffy` で非有限を落とす。
+        // Site 1: `sanitize_taffy` rejects non-finite values.
         ComputedLengthPercentage::Px(v) => LengthPercentage::length(sanitize_taffy(v, site, diag)),
         ComputedLengthPercentage::Percent(p) => {
             LengthPercentage::percent(sanitize_taffy(p / 100.0, site, diag))
@@ -1191,14 +1191,14 @@ pub(crate) fn computed_length_percentage_to_taffy_length_percentage(
 }
 
 /// [`ComputedLengthPercentageOrAuto`] → [`taffy::Dimension`] bridge
-/// (width / height 用)。
+/// (for width / height).
 ///
-/// 網羅 match (`Px` / `Percent`) の分岐ロジック・Percent policy・非有限 guard は
-/// [`computed_length_percentage_to_taffy_length_percentage`] と同じ (参照先は
-/// 2 arm)。本関数はそれに `Auto` arm が加わり合計 3 arm (catch-all なし)。
-/// `Auto` → `Dimension::auto()` (f32 を持たないので guard 対象外)。
+/// The exhaustive `Px` / `Percent` branching, percent policy, and non-finite
+/// guard match [`computed_length_percentage_to_taffy_length_percentage`], which
+/// has two arms. This helper adds `Auto`, for three arms without a catch-all.
+/// `Auto` → `Dimension::auto()` (no `f32`, so no guard is needed).
 ///
-/// [`bridge_size`] から width / height 両方で consume される。
+/// Both width and height in [`bridge_size`] consume this helper.
 ///
 /// `site` distinguishes the two [`bridge_size`] callers (`"width"` /
 /// `"height"`) in [`LayoutWarn::NonFiniteClamped`] events.
@@ -1209,7 +1209,7 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
     diag: &mut Vec<LayoutWarn>,
 ) -> Dimension {
     match loa {
-        // site 2。
+        // Site 2.
         ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(v, site, diag)),
         ComputedLengthPercentageOrAuto::Percent(p) => {
             Dimension::percent(sanitize_taffy(p / 100.0, site, diag))
@@ -1258,21 +1258,21 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
 }
 
 /// [`ComputedLengthPercentageOrAuto`] → [`taffy::LengthPercentageAuto`] bridge
-/// (margin 用)。
+/// (for margin).
 ///
-/// 網羅 match / Percent policy / 非有限 guard は
-/// [`computed_length_percentage_to_taffy_length_percentage`] と同じ。`Auto` →
-/// `LengthPercentageAuto::auto()` (CSS Box 3 §3.1 "margin auto = distribute
-/// available space" を taffy に委譲、f32 を持たないので guard 対象外)。
+/// The exhaustive match, percent policy, and non-finite guard match
+/// [`computed_length_percentage_to_taffy_length_percentage`]. `Auto` maps to
+/// `LengthPercentageAuto::auto()` (delegating CSS Box 3 §3.1's "margin auto = distribute
+/// available space" to taffy; no `f32` means no guard is needed).
 fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
     loa: ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentageAuto {
     match loa {
-        // site 3。margin は負値が spec-valid なので
-        // `sanitize_taffy` の対称 clamp が load-bearing。唯一の caller
-        // (`bridge_margin`) 由来なので site label は固定。
+        // Site 3: negative margins are valid under the spec, so the symmetric
+        // `sanitize_taffy` clamp matters. Only `bridge_margin` calls this
+        // helper, so its site label is fixed.
         ComputedLengthPercentageOrAuto::Px(v) => {
             LengthPercentageAuto::length(sanitize_taffy(v, site, diag))
         }
@@ -1287,28 +1287,28 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
 }
 
 /// [`ComputedLength`] (px) → [`taffy::LengthPercentage`] bridge
-/// (`border-*-width` 用)。
+/// (for `border-*-width`).
 ///
-/// sibling 3 helper (`computed_length_percentage_to_taffy_length_percentage` /
+/// Keep this alongside three sibling helpers (`computed_length_percentage_to_taffy_length_percentage` /
 /// `computed_length_percentage_or_auto_to_taffy_dimension` /
-/// `computed_length_percentage_or_auto_to_taffy_length_percentage_auto`) と同じ
-/// `<src>_to_taffy_<dst>` 命名 / 同じ cluster に置く。
+/// `computed_length_percentage_or_auto_to_taffy_length_percentage_auto`), with
+/// the same `<src>_to_taffy_<dst>` naming pattern.
 ///
-/// `border-*-width` 専用に分けているのは、grammar (`<line-width>` =
-/// `<length [0,∞]> | thin | medium | thick`) が `<percentage>` を含まないため
-/// computed 層でも length しか来ないから (CSS Backgrounds 3 §3.3 "Line
+/// This is separate for `border-*-width` because its grammar (`<line-width>` =
+/// `<length [0,∞]> | thin | medium | thick`) excludes percentages. Thus even
+/// at the computed-value stage, only lengths occur (CSS Backgrounds 3 §3.3 "Line
 /// Thickness: the border-width properties"
-/// <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。戻り値型は
-/// [`computed_length_percentage_to_taffy_length_percentage`] と同一
-/// (`LengthPercentage` が taffy 側の最小共通型) だが、入力型が
-/// [`ComputedLength`] なので percentage arm を
-/// 持たない点が違う。非有限 guard ([`sanitize_taffy`]) は同じく通す。
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-width>). Its return type
+/// matches [`computed_length_percentage_to_taffy_length_percentage`]
+/// (`LengthPercentage` is the smallest shared taffy type), but its argument
+/// is [`ComputedLength`], so it has no percentage arm. It still uses the
+/// non-finite guard ([`sanitize_taffy`]).
 fn computed_length_to_taffy_length_percentage(
     len: ComputedLength,
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentage {
-    // site 4。唯一の caller (`bridge_border`) 由来
-    // なので site label は固定。
+    // Site 4 has only one caller, `bridge_border`,
+    // so the site label is fixed.
     LengthPercentage::length(sanitize_taffy(len.px(), "border-width", diag))
 }
 

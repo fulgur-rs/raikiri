@@ -256,10 +256,11 @@ impl PageLengthBasis<'_> {
         }
     }
 
-    /// `border-radius` の 4 corner を computed 長から `PropertyValue` が
-    /// 運ぶ `Length::Px` 表現へ戻す。page bag は element path の
-    /// `ComputedValues` と同じ computed-value 契約を持つが、既存の bag の
-    /// API を壊さないため payload 型は specified 側を再利用する。
+    /// Convert the four `border-radius` corners from computed lengths back
+    /// to the `Length::Px` representation carried by `PropertyValue`.
+    /// The page bag has the same computed-value contract as the element path's
+    /// `ComputedValues`, but reuses specified-side payload types to preserve
+    /// the existing bag API.
     fn border_radius_value(self, specified: BorderRadius) -> BorderRadius {
         let computed =
             resolve_border_radius(specified, self.font_size, self.own_line_height, self.ctx);
@@ -275,9 +276,9 @@ impl PageLengthBasis<'_> {
         }
     }
 
-    /// `box-shadow` の 1 item を computed 長から page bag の
-    /// `BoxShadowItem` へ戻す。`color` は resolve 層で長さを持たないため
-    /// そのまま保持する。
+    /// Convert one `box-shadow` item from computed lengths back to the
+    /// page bag's `BoxShadowItem`. Keep `color` unchanged because it has no
+    /// length in the resolution layer.
     fn box_shadow_item(self, specified: BoxShadowItem) -> BoxShadowItem {
         let computed =
             resolve_box_shadow_item(specified, self.font_size, self.own_line_height, self.ctx);
@@ -291,9 +292,9 @@ impl PageLengthBasis<'_> {
         }
     }
 
-    /// `outline` の width を絶対化した computed value を
-    /// `PropertyValue` の payload に戻す。outline は box model の寸法へ
-    /// 影響しないため、page phase では値の解決だけを行う。
+    /// Convert the computed value with an absolutized `outline` width back
+    /// to a `PropertyValue` payload. An outline does not affect box model
+    /// dimensions, so the page phase only resolves its value.
     fn outline_value(self, specified: Outline) -> Outline {
         let computed = resolve_outline(specified, self.font_size, self.own_line_height, self.ctx);
         Outline {
@@ -303,10 +304,10 @@ impl PageLengthBasis<'_> {
         }
     }
 
-    /// `transform` の `<length-percentage>` slot を絶対化し page bag の
-    /// `TransformFunction` へ戻す。`lp` と同じ round-trip — length 側は
-    /// `Px` へ、percentage 側は `Percent` のまま残す。`matrix` の 6
-    /// `<number>` slot と `rotate`/`skew` 系の `<angle>` slot はそのまま。
+    /// Absolutize the `<length-percentage>` slots of `transform` and convert
+    /// back to the page bag's `TransformFunction`. As with `lp`, lengths
+    /// become `Px` while percentages remain `Percent`. Keep the six `<number>`
+    /// slots of `matrix` and the `<angle>` slots of `rotate`/`skew` unchanged.
     fn transform_function(self, specified: TransformFunction) -> TransformFunction {
         match specified {
             TransformFunction::Matrix(m) => TransformFunction::Matrix(m),

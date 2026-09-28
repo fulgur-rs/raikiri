@@ -1,26 +1,25 @@
-//! Regression tests for `parse_html` / `parse_html_with_limits` input byte
-//! cap enforcement (promotion of an earlier hard-coded stopgap to a
-//! configurable field)。
+//! Regression tests for enforcing the `parse_html` / `parse_html_with_limits`
+//! input-byte cap (a formerly hard-coded stopgap, now configurable).
 //!
-//! `parse_html` は [`RenderLimits::default().max_input_bytes`] = 32 MiB
-//! input byte cap を持ち、cap 超過は
-//! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }` として
-//! 返る。html5ever は truncated input を silently accept するため、単純
-//! `Read::take` だけでは cap 到達を検出できない。実装は
-//! `take(cap + 1) + read_to_end` の "+1 probe" pattern (crates/raikiri-html/src/document_parse.rs)。
+//! `parse_html` has a 32 MiB cap, [`RenderLimits::default().max_input_bytes`].
+//! Inputs beyond this cap return
+//! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`.
+//! Because html5ever silently accepts truncated input, `Read::take` alone
+//! cannot detect a cap violation. The implementation uses the "+1 probe":
+//! `take(cap + 1) + read_to_end` (crates/raikiri-html/src/document_parse.rs).
 //!
-//! Consumer は [`RenderLimitsBuilder::max_input_bytes`] (または field への
-//! 直接代入) で cap を調整、`None` で無効化できる (`None` の security 上の
-//! 含意は `RenderLimits::max_input_bytes` field doc を参照)。
+//! Consumers can adjust the cap with [`RenderLimitsBuilder::max_input_bytes`]
+//! (or direct field assignment) and disable it with `None`. See the
+//! `RenderLimits::max_input_bytes` field docs for the security implications.
 
 use std::io::Read;
 
 use raikiri::{ParseOptions, parse_html, parse_html_with_limits};
 use raikiri_traits::{LimitKind, RenderError, RenderLimits};
 
-/// Default cap を test 側でも参照するための local mirror
-/// (`RenderLimits::default().max_input_bytes` に合わせる、SEC-HIGH regression
-/// が破れると default が変わった signal)。
+/// Local copy of the default cap for tests. If it diverges from
+/// `RenderLimits::default().max_input_bytes`, the SEC-HIGH regression fails,
+/// signaling that the default has changed.
 const DEFAULT_INPUT_BYTES_CAP: u64 = 32 * 1024 * 1024;
 
 fn opts() -> ParseOptions<'static> {
@@ -31,9 +30,8 @@ fn opts() -> ParseOptions<'static> {
     }
 }
 
-/// `RenderLimits::default().max_input_bytes` は SEC-HIGH の旧 stopgap
-/// と一致する 32 MiB を継承していることを check (promotion
-/// が behavior 不変であることの regression guard)。
+/// Check that `RenderLimits::default().max_input_bytes` retains the
+/// original SEC-HIGH stopgap of 32 MiB after becoming configurable.
 #[test]
 fn render_limits_default_input_cap_matches_d9y3_stopgap() {
     assert_eq!(
@@ -43,9 +41,9 @@ fn render_limits_default_input_cap_matches_d9y3_stopgap() {
     );
 }
 
-/// Small (< cap) input: 正常 parse。cascade も populate される。
+/// An input smaller than the cap parses and populates the cascade.
 ///
-/// Cap enforcement が small input を誤って reject しないことを pin。
+/// Guard against rejecting valid small inputs.
 #[test]
 fn parse_html_accepts_input_well_below_cap() {
     let html = b"<html><body><p>Hi</p></body></html>";
@@ -56,11 +54,10 @@ fn parse_html_accepts_input_well_below_cap() {
     );
 }
 
-/// `parse_html_with_limits` も同じく small input を parse する。
+/// `parse_html_with_limits` also accepts a small input.
 ///
-/// `RenderLimits::default()` を渡した場合の behavior が `parse_html` と
-/// 完全に一致することを check (parse_html は with_limits の thin wrapper なので、
-/// この test が失敗すると wrapper 契約が壊れている)。
+/// With `RenderLimits::default()`, it must behave exactly like `parse_html`,
+/// which is a thin wrapper around the limits-aware function.
 #[test]
 fn parse_html_with_limits_default_matches_parse_html_for_small_input() {
     let html = b"<html><body><p>Hi</p></body></html>";
@@ -74,19 +71,18 @@ fn parse_html_with_limits_default_matches_parse_html_for_small_input() {
     );
 }
 
-/// Input が **正確に** cap = 32 MiB のとき、cap 内 accept される。
+/// An input of **exactly** 32 MiB remains within the cap.
 ///
-/// "+1 probe" が exactly-at-cap を誤って reject しないことを check
-/// (境界条件、buf.len() == cap の場合は accept)。
+/// The "+1 probe" must accept this boundary (`buf.len() == cap`).
 ///
-/// NB: 32 MiB alloc + parse は memory / time 的に重いが、境界検証は SEC-HIGH
-/// regression test の core なので implicitly ignored にしない。
+/// Allocating and parsing 32 MiB is costly, but this boundary is central
+/// to the SEC-HIGH regression and must not be silently skipped.
 #[test]
 fn parse_html_accepts_input_exactly_at_cap() {
-    // 32 MiB の valid HTML: <!-- ... --> comment で埋める。html5ever が comment
-    // を dropping する pipeline のみ通せば充分 (parse 結果自体は使わない)。
-    //
-    // "<!--" (4) + payload + "-->" (3) = DEFAULT_INPUT_BYTES_CAP bytes に調整。
+    // Fill a valid 32 MiB HTML document with a <!-- ... --> comment.
+    // html5ever only needs to process and discard the comment; the parsed
+    // result itself is not used.
+    // "<!--" (4) + payload + "-->" (3) = DEFAULT_INPUT_BYTES_CAP bytes.
     let cap_usize =
         usize::try_from(DEFAULT_INPUT_BYTES_CAP).expect("cap fits usize on test targets");
     let mut buf = Vec::with_capacity(cap_usize);
@@ -103,15 +99,15 @@ fn parse_html_accepts_input_exactly_at_cap() {
     );
 }
 
-/// Input が cap + 1 byte のとき、`LimitExceeded { kind: InputBytes, .. }`
-/// を返す。SEC-HIGH core assertion (kind が InputBytes に昇格済み)。
+/// At cap + 1 bytes, return `LimitExceeded { kind: InputBytes, .. }`.
+/// This is the core SEC-HIGH assertion after introducing the InputBytes kind.
 ///
-/// `std::io::repeat` で streaming 生成し、over-cap の 32 MiB 超 alloc を
-/// test source 側では避ける (parse_html_with_limits 内部の read_to_end は
-/// cap + 1 bytes = ≈ 32 MiB alloc、これは避けられない)。
+/// Generate input with `std::io::repeat` to avoid allocating over 32 MiB
+/// in the test source. The internal `read_to_end` still necessarily
+/// allocates approximately 32 MiB (cap + 1 bytes).
 #[test]
 fn parse_html_rejects_input_one_byte_over_cap() {
-    // 32 MiB + 1 byte を streaming で提供 (test source 側 memory 節約)。
+    // Stream 32 MiB + 1 byte to save memory in the test source.
     let source = std::io::repeat(b'a').take(DEFAULT_INPUT_BYTES_CAP + 1);
     let err =
         parse_html(source, &opts()).expect_err("input > cap must be rejected as LimitExceeded");
@@ -140,11 +136,10 @@ fn parse_html_rejects_input_one_byte_over_cap() {
     }
 }
 
-/// Custom cap の enforcement check: `Some(N)` を渡すと N byte で reject される
-/// (`limits.max_input_bytes` が実際に consult されている
-/// ことを cheap な small input で証明)。
+/// A custom `Some(N)` cap rejects input above N bytes, proving with
+/// cheap, small input that `limits.max_input_bytes` is actually used.
 ///
-/// Cap = 100, input = 101 byte → reject。
+/// Cap = 100, input = 101 bytes: reject.
 #[test]
 fn parse_html_with_limits_custom_cap_rejects_over_cap() {
     let limits = RenderLimits::builder().max_input_bytes(Some(100)).build();
@@ -170,9 +165,9 @@ fn parse_html_with_limits_custom_cap_rejects_over_cap() {
     }
 }
 
-/// Custom cap の accept 側 check: cap = 200, input = 101 byte → accept
-/// (contrast: 同じ 101 byte input が cap=100 では reject、cap=200 では accept、
-/// これで cap field が actually consulted であることを確定させる)。
+/// A custom cap also accepts input below the limit: with cap = 200,
+/// 101 bytes are accepted, whereas the same input is rejected at cap = 100.
+/// This contrast confirms that the cap field is actually consulted.
 #[test]
 fn parse_html_with_limits_custom_cap_accepts_under_cap() {
     let limits = RenderLimits::builder().max_input_bytes(Some(200)).build();
@@ -189,13 +184,12 @@ fn parse_html_with_limits_custom_cap_accepts_under_cap() {
     );
 }
 
-/// `max_input_bytes = None` は cap を無効化する (Consumer が明示的に opt-out
-/// した場合の unbounded read path)。
+/// `max_input_bytes = None` disables the cap, allowing the consumer
+/// to explicitly opt into unbounded reads.
 ///
-/// Contrast test: 同じ 101 byte input が cap=100 では reject、cap=None では
-/// accept。default (32 MiB) では 101 byte は無関係に accept されるので、
-/// この test が check するのは "None field が実際に unbounded 経路を選ぶ"
-/// ことである (cap=100 rejection と対比してのみ意味を持つ)。
+/// The same 101-byte input is rejected at cap = 100 but accepted at
+/// cap = None. The default 32 MiB cap also accepts 101 bytes, so only
+/// the contrast with cap = 100 tests the unbounded path.
 #[test]
 fn parse_html_with_limits_none_disables_cap() {
     let mut limits = RenderLimits::default();
@@ -212,7 +206,7 @@ fn parse_html_with_limits_none_disables_cap() {
         result.as_ref().err()
     );
 
-    // Contrast: 同じ input を cap=100 で試すと reject される (None 経路の意味を pin)。
+    // The same input is rejected at cap = 100, establishing the contrast with None.
     let strict = RenderLimits::builder().max_input_bytes(Some(100)).build();
     let strict_err =
         parse_html_with_limits(input.as_slice(), &opts(), strict).expect_err("strict cap rejects");
@@ -225,10 +219,10 @@ fn parse_html_with_limits_none_disables_cap() {
     ));
 }
 
-/// `RenderLimitsBuilder::max_input_bytes` の compile + runtime pin。
+/// Compile-time and runtime check of `RenderLimitsBuilder::max_input_bytes`.
 ///
-/// Consumer が builder pattern で cap を tune できる契約 (`Some(cap)` / `None`
-/// 両経路の設定が builder + field 直接代入と equivalent であること)。
+/// Consumers can tune the cap through the builder. Both `Some(cap)` and
+/// `None` must be equivalent to direct field assignment.
 #[test]
 fn render_limits_builder_max_input_bytes_roundtrip() {
     let via_builder = RenderLimits::builder()
@@ -236,13 +230,13 @@ fn render_limits_builder_max_input_bytes_roundtrip() {
         .build();
     assert_eq!(via_builder.max_input_bytes, Some(64 * 1024 * 1024));
 
-    // Direct field write pattern (`with_*` ergonomic を持たない sibling
-    // convention に揃えている)。
+    // Direct field assignment follows the convention of sibling types
+    // without a `with_*` convenience method.
     let mut via_field = RenderLimits::default();
     via_field.max_input_bytes = Some(64 * 1024 * 1024);
     assert_eq!(via_field.max_input_bytes, Some(64 * 1024 * 1024));
 
-    // None も builder 経由で設定可能。
+    // The builder also accepts None.
     let unbounded = RenderLimits::builder().max_input_bytes(None).build();
     assert_eq!(unbounded.max_input_bytes, None);
 }

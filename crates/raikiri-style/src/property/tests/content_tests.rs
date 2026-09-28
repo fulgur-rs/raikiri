@@ -4,9 +4,9 @@ use super::*;
 
 // ── counter-* (CSS Lists 3 §4) ──
 
-// `PropertyValue::Counter*(Arc<Vec<..>>)` に wrap したため、
-// literal test 比較用に Arc<Vec<..>> を返す helper に切り替え
-// (content/string_set helper と同 pattern)。
+// Because these values are wrapped in `PropertyValue::Counter*(Arc<Vec<..>>)`,
+// switch to a helper returning Arc<Vec<..>> for literal test comparisons
+// (the same pattern as the content/string_set helpers).
 fn counter_pairs(pairs: &[(&str, i32)]) -> Arc<Vec<(SmolStr, i32)>> {
     Arc::new(
         pairs
@@ -18,7 +18,7 @@ fn counter_pairs(pairs: &[(&str, i32)]) -> Arc<Vec<(SmolStr, i32)>> {
 
 #[test]
 fn counter_reset_single_name_defaults_to_zero() {
-    // spec: reset の default は 0
+    // Spec: reset defaults to 0.
     assert_eq!(
         parse("chapter", "counter-reset"),
         Some(PropertyValue::CounterReset(counter_pairs(&[(
@@ -29,7 +29,7 @@ fn counter_reset_single_name_defaults_to_zero() {
 
 #[test]
 fn counter_reset_multiple_names_with_mixed_ints() {
-    // 2 番目に integer が付く → 1 番目は default 0、2 番目は 3
+    // Second name has an integer: first defaults to 0, second takes 3.
     assert_eq!(
         parse("chapter section 3", "counter-reset"),
         Some(PropertyValue::CounterReset(counter_pairs(&[
@@ -41,8 +41,8 @@ fn counter_reset_multiple_names_with_mixed_ints() {
 
 #[test]
 fn counter_reset_none_returns_empty_vec() {
-    // spec: `none` は空リストと同等 (top-level alternative)
-    // empty case は shared Arc slot (`empty_counter_entries`) を使う。
+    // Spec: `none` is equivalent to an empty list (top-level alternative).
+    // Use the shared Arc slot (`empty_counter_entries`) for the empty case.
     assert_eq!(
         parse("none", "counter-reset"),
         Some(PropertyValue::CounterReset(empty_counter_entries()))
@@ -51,14 +51,14 @@ fn counter_reset_none_returns_empty_vec() {
 
 #[test]
 fn counter_reset_rejects_number_first() {
-    // 先頭が number → ident が来るまで peel できず empty → None (drop)
-    // spec §4: `<counter-name> = <custom-ident>` (数値は counter-name ではない)
+    // A leading number cannot be peeled as an identifier: empty → None (drop).
+    // Spec §4: `<counter-name> = <custom-ident>`; numbers are not counter names.
     assert_eq!(parse("123 abc", "counter-reset"), None);
 }
 
 #[test]
 fn counter_increment_single_name_defaults_to_one() {
-    // spec: increment の default は 1
+    // Spec: increment defaults to 1.
     assert_eq!(
         parse("chapter", "counter-increment"),
         Some(PropertyValue::CounterIncrement(counter_pairs(&[(
@@ -69,7 +69,7 @@ fn counter_increment_single_name_defaults_to_one() {
 
 #[test]
 fn counter_increment_mixed_int_and_default() {
-    // `chapter 2 section` → chapter=2、section=default(1)
+    // `chapter 2 section` → chapter=2, section=default(1)
     assert_eq!(
         parse("chapter 2 section", "counter-increment"),
         Some(PropertyValue::CounterIncrement(counter_pairs(&[
@@ -81,7 +81,7 @@ fn counter_increment_mixed_int_and_default() {
 
 #[test]
 fn counter_increment_accepts_negative_integer() {
-    // spec §4: <integer> — negative も valid (counter を decrement する用途)
+    // Spec §4: <integer> includes negatives (to decrement a counter).
     assert_eq!(
         parse("chapter -1", "counter-increment"),
         Some(PropertyValue::CounterIncrement(counter_pairs(&[(
@@ -92,7 +92,7 @@ fn counter_increment_accepts_negative_integer() {
 
 #[test]
 fn counter_increment_none_returns_empty_vec() {
-    // empty case は shared Arc slot を使う。
+    // Use the shared Arc slot for the empty case.
     assert_eq!(
         parse("none", "counter-increment"),
         Some(PropertyValue::CounterIncrement(empty_counter_entries()))
@@ -101,7 +101,7 @@ fn counter_increment_none_returns_empty_vec() {
 
 #[test]
 fn counter_set_defaults_to_zero() {
-    // spec: set の default は 0
+    // Spec: set defaults to 0.
     assert_eq!(
         parse("page 5 note", "counter-set"),
         Some(PropertyValue::CounterSet(counter_pairs(&[
@@ -113,7 +113,7 @@ fn counter_set_defaults_to_zero() {
 
 #[test]
 fn counter_set_none_returns_empty_vec() {
-    // empty case は shared Arc slot を使う。
+    // Use the shared Arc slot for the empty case.
     assert_eq!(
         parse("none", "counter-set"),
         Some(PropertyValue::CounterSet(empty_counter_entries()))
@@ -122,8 +122,8 @@ fn counter_set_none_returns_empty_vec() {
 
 #[test]
 fn counter_reset_is_case_insensitive_on_none() {
-    // CSS spec: keyword `none` は ASCII case-insensitive
-    // empty case は shared Arc slot を使う。
+    // CSS spec: the `none` keyword is ASCII case-insensitive.
+    // Use the shared Arc slot for the empty case.
     assert_eq!(
         parse("NONE", "counter-reset"),
         Some(PropertyValue::CounterReset(empty_counter_entries()))
@@ -147,8 +147,8 @@ fn counter_reset_accepts_inherit_marker_and_rejects_other_reserved_names() {
 #[test]
 fn counter_reset_accepts_negative_integer() {
     // CSS Values 3 §4.2 "Integers: the <integer> type"
-    // (https://www.w3.org/TR/css-values-3/#integers): <integer> は負値を含む。
-    // increment だけでなく reset / set も同一 grammar。
+    // (https://www.w3.org/TR/css-values-3/#integers): <integer> includes negatives.
+    // Reset and set use the same grammar as increment.
     assert_eq!(
         parse("chapter -5", "counter-reset"),
         Some(PropertyValue::CounterReset(counter_pairs(&[(
@@ -159,7 +159,7 @@ fn counter_reset_accepts_negative_integer() {
 
 #[test]
 fn counter_set_accepts_negative_integer() {
-    // 同上 (parity with reset/increment negative-integer coverage)。
+    // Same rule (parity with negative-integer coverage for reset/increment).
     assert_eq!(
         parse("page -3", "counter-set"),
         Some(PropertyValue::CounterSet(counter_pairs(&[("page", -3)])))
@@ -168,11 +168,11 @@ fn counter_set_accepts_negative_integer() {
 
 // ── content property (CSS Content 3 §2) ──
 //
-// task の verification items は spec-derived。task 記述の
-// `raikiri_traits::ContentValueItem` は下流 (raikiri-dom) mapping 先。
-// raikiri-style は raikiri-traits に依存しない leaf crate
-// のため、counter-* precedent に倣い local `ContentComponent` を emit
-// する (原則 1: 前例主義)。Symbol → SmolStr、Url → String へ substitution。
+// The task's verification items are derived from the spec. In the task,
+// `raikiri_traits::ContentValueItem` is the downstream (raikiri-dom) mapping target.
+// raikiri-style is a leaf crate without a dependency on raikiri-traits;
+// following the counter-* precedent, it emits a local `ContentComponent`
+// (principle 1: follow precedent). Replace Symbol with SmolStr and Url with String.
 
 #[test]
 fn content_parse_string_function() {
@@ -258,10 +258,10 @@ fn content_parse_target_text_first_letter() {
     // Verification 6: content: target-text(url("#anchor"), first-letter)
     // → ContentComponent::TargetText { url, part: ContentPart::FirstLetter }
     //
-    // NB: task description の "content-first-letter" は spec (§2.6.3
-    // `[ content | before | after | first-letter ]?`) と食い違うため、
-    // spec-correct な `first-letter` を採用 (task 側の記述が誤りと
-    // 判明したための訂正)。
+    // Note: "content-first-letter" in the task description conflicts with the
+    // spec (§2.6.3 `[ content | before | after | first-letter ]?`), so
+    // use the spec-correct `first-letter` (correcting the task description
+    // after discovering the mistake).
     let items = content_items(r##"target-text(url("#anchor"), first-letter)"##);
     assert_eq!(items.len(), 1);
     assert_eq!(
@@ -342,11 +342,11 @@ fn content_parse_mixed_sequence_preserves_order() {
 }
 
 // ── content property: image / contents / <quote> / leader() (CSS Content 3
-// §2.2 / §2.3 / §2.4.2 / §2.5.1 — under-accept fix、CssContent3 mode arm) ──
+// §2.2 / §2.3 / §2.4.2 / §2.5.1 — under-accept fix, CssContent3 mode arm) ──
 
 #[test]
 fn content_parse_image_url_quoted_form() {
-    // `<image>` の `<url>` alternative、`url("...")` (quoted) form。
+    // The `<url>` alternative of `<image>`: quoted `url("...")` form.
     let items = content_items(r#"url("cat.png")"#);
     assert_eq!(items.len(), 1);
     assert_eq!(
@@ -359,7 +359,7 @@ fn content_parse_image_url_quoted_form() {
 
 #[test]
 fn content_parse_image_url_unquoted_form() {
-    // `<image>` の `<url>` alternative、`url(...)` (unquoted url-token) form。
+    // The `<url>` alternative of `<image>`: unquoted `url(...)` url-token form.
     let items = content_items("url(cat.png)");
     assert_eq!(items.len(), 1);
     assert_eq!(
@@ -372,10 +372,10 @@ fn content_parse_image_url_unquoted_form() {
 
 #[test]
 fn content_bare_string_is_still_literal_not_image() {
-    // Regression check: `<image>` production は `<url> | <gradient>` のみで
-    // bare `<string>` を含まない (target-* の `[<string>|<url>]` とは別
-    // grammar)。`expect_url` は quoted string 単体を受理しないため
-    // `content: "cat.png"` は Literal のまま — Image への誤変換防止。
+    // Regression check: `<image>` allows only `<url> | <gradient>`,
+    // not bare `<string>` (unlike the target-* grammar `[<string>|<url>]`).
+    // `expect_url` does not accept a quoted string by itself, so
+    // `content: "cat.png"` stays Literal; do not incorrectly turn it into Image.
     let items = content_items(r#""cat.png""#);
     assert_eq!(
         items,
@@ -385,7 +385,7 @@ fn content_bare_string_is_still_literal_not_image() {
 
 #[test]
 fn content_parse_contents_keyword() {
-    // CSS Content 3 §2.3 "Elemental Content: the contents keyword"。
+    // CSS Content 3 §2.3 "Elemental Content: the contents keyword".
     let items = content_items("contents");
     assert_eq!(items, vec![ContentComponent::Contents]);
 }
@@ -399,7 +399,7 @@ fn content_contents_keyword_is_case_insensitive() {
 #[test]
 fn content_parse_quote_keywords() {
     // CSS Content 3 §2.4.2 `<quote> = open-quote | close-quote |
-    // no-open-quote | no-close-quote` の 4 keyword 全数検証。
+    // no-open-quote | no-close-quote`: check all four keywords.
     assert_eq!(
         content_items("open-quote"),
         vec![ContentComponent::Quote(QuoteKeyword::OpenQuote)]
@@ -429,7 +429,7 @@ fn content_quote_keyword_is_case_insensitive() {
 
 #[test]
 fn content_parse_leader_dotted_solid_space_keywords() {
-    // CSS Content 3 §2.5.1 `<leader-type> = dotted | solid | space | <string>`。
+    // CSS Content 3 §2.5.1 `<leader-type> = dotted | solid | space | <string>`.
     assert_eq!(
         content_items("leader(dotted)"),
         vec![ContentComponent::Leader(LeaderType::Dotted)]
@@ -463,8 +463,8 @@ fn content_leader_is_case_insensitive() {
 
 #[test]
 fn content_leader_rejects_missing_argument() {
-    // spec production `leader( <leader-type> )` に `?` が無いため引数必須。
-    // bare `leader()` は spec-invalid → declaration drop。
+    // Spec production `leader( <leader-type> )` has no `?`, so its argument is required.
+    // Bare `leader()` is invalid per spec → drop the declaration.
     assert_eq!(parse("leader()", "content"), None);
 }
 
@@ -475,21 +475,21 @@ fn content_leader_rejects_unknown_keyword() {
 
 #[test]
 fn content_rejects_unknown_bare_keyword() {
-    // `parse_content_bare_keyword` の 5 keyword (`contents` / 4 `<quote>`)
-    // いずれにも一致しない ident は catch-all `_ => None` に落ちる —
-    // items 0 → declaration drop (単独 token の場合)。
+    // Of the five keywords in `parse_content_bare_keyword` (`contents` / four `<quote>`),
+    // an identifier matching none falls through to `_ => None`;
+    // with zero items (when it is the only token), drop the declaration.
     assert_eq!(parse("bogus", "content"), None);
 }
 
 #[test]
 fn content_unknown_bare_keyword_mid_list_stops_items_and_leaves_leftover() {
-    // 認識済み item (`counter(chapter)`) の後に未知 ident が来た場合、
-    // items+ loop は unknown token で break する (catch-all の break 経路)。
-    // caller (rule.rs) の `expect_exhausted` 相当は `parse` helper では
-    // 経由しないため、本 helper 経由では 1-item 到達で観測できる — leftover
-    // 自体の drop 挙動は既存 `content_rejects_unknown_function` /
-    // `string_set_accepts_missing_comma_single_leftover_entry` と同じ
-    // break-then-leftover pattern の non-regression check。
+    // If an unknown identifier follows a recognized item (`counter(chapter)`),
+    // the items+ loop breaks on the unknown token (catch-all break path).
+    // The `parse` helper does not use the caller's (rule.rs) equivalent of
+    // `expect_exhausted`, so one item is observable through this helper;
+    // the existing `content_rejects_unknown_function` and
+    // `string_set_accepts_missing_comma_single_leftover_entry` tests cover
+    // the same break-then-leftover pattern for dropping leftovers.
     let items = content_items("counter(chapter) bogus");
     assert_eq!(
         items,
@@ -502,8 +502,8 @@ fn content_unknown_bare_keyword_mid_list_stops_items_and_leaves_leftover() {
 
 #[test]
 fn content_parse_mixed_sequence_with_new_alternatives() {
-    // image / contents / quote / leader を既存 alternative と混在させ、
-    // 順序が保持されることを検証。
+    // Mix image / contents / quote / leader with existing alternatives,
+    // then verify that order is preserved.
     let items =
         content_items(r#"open-quote "term" close-quote leader(dotted) url("icon.png") contents"#);
     assert_eq!(
@@ -524,10 +524,10 @@ fn content_parse_mixed_sequence_with_new_alternatives() {
 // ── string-set narrow <content-list> gate: image / contents / quote /
 // leader() (CSS GCPM 3 §1.1.1 L82) ──
 //
-// GCPM 3 §1.1.1 narrow list には `<image>` / `contents` / `<quote>` /
-// `leader()` のいずれも含まれない (既存の string_set_rejects_* group と
-// 同じ rationale — sibling test 群と揃えて 1 declaration = 1 rejection の
-// check にする)。
+// The GCPM 3 §1.1.1 narrow list contains none of `<image>` / `contents` /
+// `<quote>` / `leader()` (same rationale as the existing string_set_rejects_*
+// group). Follow sibling tests with one declaration per rejection
+// check.
 
 #[test]
 fn string_set_rejects_image_url() {
@@ -549,12 +549,12 @@ fn string_set_rejects_leader_fn() {
     assert_eq!(parse("title leader(dotted)", "string-set"), None);
 }
 
-// ── content property edge cases (spec-derived、guard rails) ──
+// ── content property edge cases (spec-derived, guard rails) ──
 
 #[test]
 fn content_normal_returns_empty_list() {
-    // spec §1: `normal` は「content が明示されない場合と同じ」= 空 list として保持。
-    // pseudo-element generation 判断は下流で行う。
+    // Spec §1: `normal` means "as if content was not explicitly specified"; store an empty list.
+    // Decide pseudo-element generation downstream.
     assert_eq!(
         parse("normal", "content"),
         Some(PropertyValue::Content(empty_content_list()))
@@ -573,7 +573,7 @@ fn content_none_keeps_a_suppression_sentinel() {
 
 #[test]
 fn content_string_with_fetch_last_keyword() {
-    // spec §2.7.2 の string() 第 2 引数 keyword を全て受理することを smoke で pin。
+    // Smoke-test acceptance of every second-argument keyword of string() in spec §2.7.2.
     let items = content_items("string(head, last)");
     assert_eq!(
         items,
@@ -586,9 +586,9 @@ fn content_string_with_fetch_last_keyword() {
 
 #[test]
 fn content_target_text_default_part_is_content() {
-    // target-text() の第 2 引数省略時、raikiri は ContentPart::Content を
-    // フォールバック値として使う (根拠は spec の "default" 宣言ではない —
-    // CSS Content 3 §2.6.3 は第 2 引数省略時の値を規定していない)。
+    // When target-text() omits its second argument, raikiri uses ContentPart::Content
+    // as its fallback (not based on a spec declaration of a "default":
+    // CSS Content 3 §2.6.3 does not specify the omitted argument's value).
     let items = content_items(r##"target-text(url("#a"))"##);
     assert_eq!(
         items,
@@ -603,23 +603,23 @@ fn content_target_text_default_part_is_content() {
 fn content_counter_rejects_none_name() {
     // spec CSS Lists 3 §4 <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>:
     // "A <counter-name> name cannot match the keyword `none`; such an identifier
-    // is invalid as a <counter-name>". §4.7 counter() の first argument が
-    // <counter-name> production のため `counter(none)` は declaration drop。
-    // counter-reset/increment/set (property.rs 既存) と一貫、Chrome/FF と一致。
+    // is invalid as a <counter-name>". The first argument of §4.7 counter() is
+    // a <counter-name>, so drop the `counter(none)` declaration.
+    // Consistent with existing counter-reset/increment/set (property.rs) and Chrome/Firefox.
     assert_eq!(parse("counter(none)", "content"), None);
 }
 
 #[test]
 fn content_counters_rejects_none_name() {
-    // spec CSS Lists 3 §4 / §4.7: counters() の first argument も
-    // <counter-name> production、`none` は invalid。
+    // CSS Lists 3 §4 / §4.7: counters() also has <counter-name>
+    // as its first argument, so `none` is invalid.
     assert_eq!(parse(r#"counters(none, ".")"#, "content"), None);
 }
 
 #[test]
 fn content_counter_with_named_style_preserves_ident() {
-    // spec CSS Lists 3 §4.7: 第 2 引数 `<counter-style>` は decimal 以外の
-    // named style も受ける。下流 (raikiri-dom) が解釈するため raw ident 保持。
+    // CSS Lists 3 §4.7: the second argument `<counter-style>` also accepts
+    // named styles other than decimal. Keep the raw identifier for raikiri-dom to interpret.
     let items = content_items("counter(chapter, upper-alpha)");
     assert_eq!(
         items,
@@ -632,14 +632,14 @@ fn content_counter_with_named_style_preserves_ident() {
 
 #[test]
 fn content_rejects_unknown_function() {
-    // 未知 function は認識できず、items 開始 token として peel 失敗。
-    // 先頭 token が unknown function だと empty items → None (drop)。
+    // An unknown function cannot start items: peeling the first token fails.
+    // If the first token is an unknown function, items stay empty → None (drop).
     assert_eq!(parse("bogus(x)", "content"), None);
 }
 
 #[test]
 fn content_case_insensitive_function_name() {
-    // spec: function name は ASCII case-insensitive。
+    // Spec: function names are ASCII case-insensitive.
     let items = content_items("COUNTER(chapter)");
     assert_eq!(
         items,
@@ -652,8 +652,8 @@ fn content_case_insensitive_function_name() {
 
 #[test]
 fn content_key_maps_to_content_property_key() {
-    // PropertyValue::Content → PropertyKey::Content (cascade winner 選択の
-    // discriminant integrity、既存 sibling counter-* と同じ pattern)。
+    // PropertyValue::Content → PropertyKey::Content (discriminant integrity for
+    // cascade winner selection, like the existing sibling counter-* pattern).
     let cv = PropertyValue::Content(empty_content_list());
     assert_eq!(cv.key(), PropertyKey::Content);
 }
@@ -661,31 +661,31 @@ fn content_key_maps_to_content_property_key() {
 // ── parse_optional_counter_style trailing-comma strict reject ──
 //
 // CSS Lists 3 §4.7 `counter(<counter-name>, <counter-style>?)` /
-// CSS Content 3 §2.6.1-2 `target-counter()` / `target-counters()` は
-// `<counter-style>?` — `,` を先行させる時は ident 必須。trailing-comma
-// (`counter(chapter,)` 等) は spec-invalid → declaration ごと drop すべき。
-// sibling `parse_string_fetch` / `parse_content_part` は既に strict `?`
-// propagation、`parse_optional_counter_style` のみ silent Decimal fallback
-// していた regression を check する。
+// CSS Content 3 §2.6.1–2 `target-counter()` / `target-counters()` have
+// `<counter-style>?`: after `,`, an identifier is required. A trailing comma
+// (as in `counter(chapter,)`) is invalid per spec; drop the whole declaration.
+// Siblings `parse_string_fetch` / `parse_content_part` already propagate `?`
+// strictly. Only `parse_optional_counter_style` silently fell back to Decimal;
+// check that regression.
 
 #[test]
 fn content_counter_rejects_trailing_comma() {
-    // `counter(chapter,)` — comma 消費後に ident 不在。spec-invalid、
-    // declaration drop = None (Chrome/Firefox と同挙動)。
+    // In `counter(chapter,)`, an identifier is missing after the comma;
+    // invalid per spec → None, dropping the declaration (as in Chrome/Firefox).
     assert_eq!(parse("counter(chapter,)", "content"), None);
 }
 
 #[test]
 fn content_counters_rejects_trailing_comma() {
-    // `counters(chapter, ".",)` — separator string 後の trailing comma。
+    // `counters(chapter, ".",)`: trailing comma after the separator string.
     assert_eq!(parse(r#"counters(chapter, ".",)"#, "content"), None);
 }
 
 #[test]
 fn content_target_counter_rejects_trailing_comma() {
-    // `target-counter(url("#a"), page,)` — name 後の trailing comma。
-    // target-counter/target-counters は parse_optional_counter_style を
-    // 経由 (parse_target_counter_fn / parse_target_counters_fn) するため同じ pattern で drop。
+    // `target-counter(url("#a"), page,)`: trailing comma after the name.
+    // target-counter/target-counters call parse_optional_counter_style
+    // (via parse_target_counter_fn / parse_target_counters_fn); drop with the same pattern.
     assert_eq!(
         parse(r##"target-counter(url("#a"), page,)"##, "content"),
         None
@@ -694,7 +694,7 @@ fn content_target_counter_rejects_trailing_comma() {
 
 #[test]
 fn content_target_counters_rejects_trailing_comma() {
-    // `target-counters(url("#a"), section, ".",)` — separator 後の trailing。
+    // `target-counters(url("#a"), section, ".",)`: trailing comma after separator.
     assert_eq!(
         parse(r##"target-counters(url("#a"), section, ".",)"##, "content"),
         None
@@ -703,22 +703,22 @@ fn content_target_counters_rejects_trailing_comma() {
 
 #[test]
 fn content_string_rejects_trailing_comma() {
-    // 対照実験 (現行 strict の維持確認): `string(foo,)` は
-    // `parse_string_fetch` が `?` 経由で伝播、既に None。
+    // Control case (keep the current strict behavior): `string(foo,)`
+    // already returns None via `?` propagation in `parse_string_fetch`.
     assert_eq!(parse("string(foo,)", "content"), None);
 }
 
 #[test]
 fn content_target_text_rejects_trailing_comma() {
-    // 対照実験: `target-text(url("#a"),)` は `parse_content_part` が
-    // `?` 経由で伝播、既に None。
+    // Control case: `target-text(url("#a"),)` returns None already via
+    // `?` propagation in `parse_content_part`.
     assert_eq!(parse(r##"target-text(url("#a"),)"##, "content"), None);
 }
 
 #[test]
 fn content_counter_accepts_bare_default() {
-    // `counter(chapter)` — trailing comma 無しの正常 case、Decimal default
-    // で Some を返す (silent fallback を strict にしても正常 path は変えない)。
+    // `counter(chapter)` is valid without a trailing comma; Decimal defaults,
+    // so it returns Some (strictness must not change the valid path).
     let items = content_items("counter(chapter)");
     assert_eq!(
         items,
@@ -731,14 +731,14 @@ fn content_counter_accepts_bare_default() {
 
 // ── string-set (CSS GCPM 3 §1.1.1) ──
 //
-// grammar: `none | [ <custom-ident> <content-list> ]#` — 各 entry は
-// (name, content-list) pair、`ContentComponent` + `parse_content_list_items`
-// を reuse。task description の "4-item Vec" は entry name の分を content 側に
-// 誤って含めた結果、実態は 3-item (name は tuple の第 1 要素)。
+// Grammar: `none | [ <custom-ident> <content-list> ]#`; each entry is a
+// (name, content-list) pair and reuses `ContentComponent` +
+// `parse_content_list_items`. The task's "4-item Vec" mistakenly counted the entry name
+// as content; there are actually three items (name is tuple element one).
 
 fn string_set_entries(source: &str) -> Vec<(SmolStr, Vec<ContentComponent>)> {
     match parse(source, "string-set") {
-        // PropertyValue::StringSet(Arc<Vec<..>>)、content_items と同 pattern。
+        // PropertyValue::StringSet(Arc<Vec<..>>), following the content_items pattern.
         Some(PropertyValue::StringSet(v)) => (*v).clone(),
         other => panic!("expected PropertyValue::StringSet, got {other:?}"),
     }
@@ -762,13 +762,13 @@ fn string_set_mixed_content_list_preserves_order() {
     // Verification 2:
     // string-set: chapter_title counter(chapter) ": " attr(title)
     //
-    // 先頭 `chapter_title` は entry name (tuple 第 1 要素)。content-list は
-    // 残りの `counter(chapter) ": " attr(title)` = 3 items。
+    // The initial `chapter_title` is the entry name (tuple element one). The content list
+    // contains the remaining `counter(chapter) ": " attr(title)` = three items.
     //
-    // NB: 原 test は末尾に `string(chapter_title)` を置いていたが、
-    // GCPM 3 §1.1.1 narrow list は `string()` function を含まないため
-    // `attr()` (GCPM narrow list の 5 alt の 1 つ) に
-    // swap。テストの主意 (mixed content-list の order 保持) は保つ。
+    // Note: the original test ended with `string(chapter_title)`, but
+    // GCPM 3 §1.1.1's narrow list excludes the `string()` function, so
+    // replace it with `attr()` (one of five alternatives in the GCPM narrow list).
+    // Keep the test's main purpose: preserve the order of a mixed content list.
     let entries = string_set_entries(r#"chapter_title counter(chapter) ": " attr(title)"#);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, SmolStr::new("chapter_title"));
@@ -822,13 +822,13 @@ fn string_set_none_returns_empty_vec() {
 fn string_set_rejects_reserved_css_wide_keyword_as_name() {
     // spec §1.1.1 + CSS Values 4 §4.2
     // <https://www.w3.org/TR/css-values-4/#custom-idents>:
-    // `<custom-ident>` は CSS-wide keyword 除外。
-    // 先頭 ident が `inherit` → try_parse rewind で entries 空 → None。
+    // `<custom-ident>` excludes CSS-wide keywords.
+    // If the first identifier is `inherit`, try_parse rewinds, leaving no entries → None.
     //
-    // NB: 先頭が `none` の場合は top-level alternative の branch を先に
-    // 通って `Some(empty)` を返し、leftover は下流 `expect_exhausted` で
-    // declaration drop (rule.rs level)。この case は parse_value 単体では
-    // 検証しない。
+    // Note: if the first identifier is `none`, the top-level alternative runs first,
+    // returning `Some(empty)`; downstream `expect_exhausted` drops the declaration
+    // because of leftover tokens (at rule.rs level). This case is not checked by
+    // parse_value alone.
     assert_eq!(parse("inherit \"x\"", "string-set"), None);
     assert_eq!(parse("initial \"x\"", "string-set"), None);
     assert_eq!(parse("unset \"x\"", "string-set"), None);
@@ -838,14 +838,14 @@ fn string_set_rejects_reserved_css_wide_keyword_as_name() {
 
 #[test]
 fn string_set_rejects_name_without_content_list() {
-    // spec §1.1.1 + Content 3 §2: `<content-list>` は 1+ items 必須。
-    // name だけで items 0 → declaration drop (None)。
+    // Spec §1.1.1 and Content 3 §2: `<content-list>` requires at least one item.
+    // A name alone yields zero items → None, dropping the declaration.
     assert_eq!(parse("my_str", "string-set"), None);
 }
 
 #[test]
 fn string_set_is_case_insensitive_on_none() {
-    // CSS spec: keyword `none` は ASCII case-insensitive
+    // CSS spec: the `none` keyword is ASCII case-insensitive.
     assert_eq!(
         parse("NONE", "string-set"),
         Some(PropertyValue::StringSet(empty_string_set_entries()))
@@ -854,62 +854,62 @@ fn string_set_is_case_insensitive_on_none() {
 
 #[test]
 fn string_set_key_maps_to_string_set_property_key() {
-    // PropertyValue::StringSet → PropertyKey::StringSet (cascade winner 選択の
-    // discriminant integrity、既存 sibling counter-* / content と同じ pattern)。
+    // PropertyValue::StringSet → PropertyKey::StringSet (discriminant integrity for
+    // cascade winner selection, as with sibling counter-* / content).
     let v = PropertyValue::StringSet(empty_string_set_entries());
     assert_eq!(v.key(), PropertyKey::StringSet);
 }
 
 // ── string-set trailing-comma strict reject ──
 //
-// `#` (comma-separated multiplier、CSS Values 4 §2.3
-// <https://www.w3.org/TR/css-values-4/#mult-comma>) は trailing comma を
-// 許容しない。GCPM 3 §1.1.1 <string-set-value> = `[ <custom-ident>
-// <content-list> ]#` は entry 間 comma 必須 + trailing comma 禁止。
+// `#` (comma-separated multiplier, CSS Values 4 §2.3
+// <https://www.w3.org/TR/css-values-4/#mult-comma>) forbids trailing commas.
+// GCPM 3 §1.1.1 `<string-set-value> = [ <custom-ident>
+// <content-list> ]#` requires commas between entries and forbids a trailing comma.
 //
-// 初期実装は separator loop で `try_parse(expect_comma).is_err() {
-// break }` していたため、trailing comma を silently 受理していた (comma を
-// consume 後 next iteration で name parse fail → break → 既存 entries を
-// Some で返す)。同じ principle の `.ok()?` propagation で strict 化。
+// The original implementation's separator loop used `try_parse(expect_comma).is_err() {
+// break }`; it silently accepted trailing commas (after consuming the comma,
+// the next iteration failed to parse a name, broke, and returned existing entries
+// as Some). Make it strict with the same `.ok()?` propagation principle.
 
 #[test]
 fn string_set_rejects_trailing_comma_single_entry() {
-    // `string-set: a "x",` → trailing comma → declaration drop。
-    // pre-fix は Some(`[(a, [Literal("x")])]`) を silently 返していた。
+    // `string-set: a "x",` → trailing comma → declaration drop.
+    // Before the fix it silently returned Some(`[(a, [Literal("x")])]`).
     assert_eq!(parse(r#"a "x","#, "string-set"), None);
 }
 
 #[test]
 fn string_set_rejects_trailing_comma_two_entries() {
-    // `string-set: a "x", b "y",` → trailing comma → declaration drop。
-    // 内部 comma 1 個は valid separator、末尾 comma のみが `#` 違反。
+    // `string-set: a "x", b "y",` → trailing comma → declaration drop.
+    // An internal comma is a valid separator; only a final comma violates `#`.
     assert_eq!(parse(r#"a "x", b "y","#, "string-set"), None);
 }
 
 #[test]
 fn string_set_rejects_trailing_comma_three_entries() {
-    // 3 entries + trailing comma — chain 越しの一貫 strict reject を pin。
+    // Pin consistent strict rejection across three entries and a trailing comma.
     assert_eq!(parse(r#"a "x", b "y", c "z","#, "string-set"), None);
 }
 
 #[test]
 fn string_set_rejects_missing_entry_after_comma() {
-    // `string-set: a "x", b` → comma 後 name は取れるが `<content-list>`
-    // が 0 items (`parse_content_list_items` empty) → declaration drop。
-    // trailing-comma 系とは reject 経路が異なる (items-empty) 独立 pin。
+    // In `string-set: a "x", b`, the name after the comma parses, but `<content-list>`
+    // has zero items (`parse_content_list_items` is empty): drop the declaration.
+    // This follows an items-empty rejection path distinct from trailing comma tests.
     assert_eq!(parse(r#"a "x", b"#, "string-set"), None);
 }
 
 #[test]
 fn string_set_accepts_missing_comma_single_leftover_entry() {
-    // `string-set: a "x" b "y"` は separator comma 欠如。iter 1 で
-    // (a, `["x"]`) push 後、bottom expect_comma fail → break、leftover
-    // `b "y"` は本 helper (parse_value 直呼び、caller expect_exhausted
-    // 経由なし) では drop されず 1 entry の Some として観測される。
-    // 実 caller (rule.rs) は expect_exhausted で declaration drop する
-    // — 本 test は parse_string_set の break exit が Some (`.ok()?`
-    // 経路と混同しない) であることを check する目的、trailing-comma fix の
-    // non-regression coverage。
+    // `string-set: a "x" b "y"` lacks a separating comma. After pushing
+    // (a, `["x"]`) in iteration one, bottom expect_comma fails and breaks. The
+    // leftover `b "y"` is not dropped by this helper (direct parse_value call,
+    // without caller expect_exhausted), so it returns Some with one entry.
+    // The real caller (rule.rs) drops the declaration via expect_exhausted.
+    // This test checks that parse_string_set's break exit returns Some (not the
+    // `.ok()?` path), separate from the trailing-comma fix.
+    // non-regression coverage.
     let entries = string_set_entries(r#"a "x" b "y""#);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, SmolStr::new("a"));
@@ -922,30 +922,30 @@ fn string_set_accepts_missing_comma_single_leftover_entry() {
 // ── string-set narrow <content-list> gate (CSS GCPM 3 §1.1.1) ──
 //
 // GCPM 3 §1.1.1 L82 verbatim: <content-list> = [ <string> | <counter()> |
-// <counters()> | <content()> | <attr()> ]+ — CSS Content 3 §2 broad list を
-// string-set 用に narrower 再定義。`string()` (function、bare literal とは別)
-// および `target-counter()` / `target-counters()` / `target-text()` は
-// spec grammar に含まれず、`ContentListMode::GcpmStringSet` mode dispatch で
-// reject する (parse_content_list_items が 0 items → parse_string_set →
-// None → declaration drop、cascade shadow 例
-// `p.hi { string-set: title target-counter(url("#x"), page); }` の spec 準拠
-// 挙動 = .hi rule drop → parser layer で確認)。
+// <counters()> | <content()> | <attr()> ]+ narrows the broad CSS Content 3 §2 list
+// for string-set. `string()` (a function, distinct from a bare literal)
+// and `target-counter()` / `target-counters()` / `target-text()` are
+// outside the spec grammar. Reject them in `ContentListMode::GcpmStringSet`
+// mode (parse_content_list_items has zero items → parse_string_set →
+// None → drop declaration). For example, the cascade-shadow case
+// `p.hi { string-set: title target-counter(url("#x"), page); }` correctly
+// drops the .hi rule; verify this at the parser layer.
 //
-// 一方 content property (CssContent3 mode) はこれら全てを引き続き受理する
-// (下の content_parse_* 系 check test 群で non-regression 検証)。
+// In contrast, the content property (CssContent3 mode) still accepts all these
+// (verified against regressions by the content_parse_* tests below).
 
 #[test]
 fn string_set_rejects_string_fn() {
-    // GCPM 3 §1.1.1 L82 は `string()` function を narrow list から除外。
-    // bare `<string>` literal (`"..."`) と混同しないよう function 側のみ reject。
+    // GCPM 3 §1.1.1 L82 excludes the `string()` function from the narrow list.
+    // Reject the function, not the bare `<string>` literal (`"..."`).
     assert_eq!(parse("title string(x)", "string-set"), None);
 }
 
 #[test]
 fn string_set_rejects_target_counter_fn() {
-    // GCPM 3 §1.1.1 L82 は `target-counter()` を narrow list から除外。
-    // cascade shadow の主要例、declaration drop → cascade で
-    // 先行の spec-valid rule が winner になる shape。
+    // GCPM 3 §1.1.1 L82 excludes `target-counter()` from the narrow list.
+    // This is the main cascade-shadow case: dropping this declaration lets an
+    // earlier valid rule win in the cascade.
     assert_eq!(
         parse(r##"title target-counter(url("#a"), page)"##, "string-set"),
         None
@@ -954,7 +954,7 @@ fn string_set_rejects_target_counter_fn() {
 
 #[test]
 fn string_set_rejects_target_counters_fn() {
-    // GCPM 3 §1.1.1 L82 は `target-counters()` を narrow list から除外。
+    // GCPM 3 §1.1.1 L82 excludes `target-counters()` from the narrow list.
     assert_eq!(
         parse(
             r##"title target-counters(url("#a"), section, ".")"##,
@@ -966,7 +966,7 @@ fn string_set_rejects_target_counters_fn() {
 
 #[test]
 fn string_set_rejects_target_text_fn() {
-    // GCPM 3 §1.1.1 L82 は `target-text()` を narrow list から除外。
+    // GCPM 3 §1.1.1 L82 excludes `target-text()` from the narrow list.
     assert_eq!(
         parse(r##"title target-text(url("#a"))"##, "string-set"),
         None
@@ -975,35 +975,35 @@ fn string_set_rejects_target_text_fn() {
 
 // ── content() function (CSS GCPM 3 §1.1.1.1) ──
 //
-// grammar (spec verbatim, line 758 of TR/css-gcpm-3/, string-set/GCPM3側の
+// Grammar (verbatim from line 758 of TR/css-gcpm-3/, in the string-set/GCPM3
 // grammar):
 //   content() = content(`[text | before | after | first-letter]`)
-// 4 keyword。keyword 省略時は `text` をフォールバック値として使う (根拠は
-// GCPM 3 側の spec "default" 宣言ではない — grammar に `?` が無く、"default
-// をどう定義するか" 自体が未解決の WG issue として残っている)。GCPM 3
-// §1.1.1 の narrow `<content-list>` と CSS Content 3 §2 の broad
-// `<content-list>` の両方に対し unconditional に受理されるため、
-// string-set および content property 双方の content-list 内で受理される
-// (`ContentListMode` mode dispatch 導入後も `content()` arm は両
-// mode で unconditional accept)。
+// Four keywords. If omitted, use `text` as a fallback (not based on
+// a GCPM 3 spec statement of "default": the meaning of "default" remains
+// an open WG issue, and the grammar does not have `?`). GCPM 3
+// §1.1.1's narrow `<content-list>` and CSS Content 3 §2's broad
+// `<content-list>` both accept this unconditionally, so accept it
+// in content lists for both string-set and content properties
+// (the `content()` arm accepts both modes unconditionally even after
+// introducing `ContentListMode` dispatch).
 //
-// CSS Content 3 §2.7.3 は content() を `?` 付き 5 keyword (`marker` 含む)
-// で別途定義しており、GCPM 3 §1.1.1.1 と keyword 集合が食い違う。この
-// 実装は keyword 集合について GCPM 3 §1.1.1.1 に従うと決めており、content
-// property 側でも `marker` は意図的に reject する (詳細・根拠は
-// `parse_content_fn` の doc comment 参照)。CSS Content 3 §2.7.3 の
-// `marker` keyword は既知の feature gap として残る。
+// CSS Content 3 §2.7.3 separately defines content() with `?` and five keywords
+// (including `marker`), conflicting with the GCPM 3 §1.1.1.1 set. This
+// implementation deliberately follows GCPM 3 §1.1.1.1 for keyword choices;
+// thus it rejects `marker` even in the content property (see the
+// `parse_content_fn` doc comment for details and reasoning). CSS Content 3 §2.7.3's
+// `marker` keyword remains a known feature gap.
 //
-// pre-fix reproduction: `string-set: title content(text)` は
-// silent drop していた (parse_content_function match arm 欠如 →
+// Before the fix, `string-set: title content(text)` was
+// silently dropped (parse_content_function had no matching arm →
 // parse_content_list_items break → 0 items → parse_string_set None →
-// declaration drop)。arm 追加で Some を返すことを check する。
+// declaration drop). Check that the new arm returns Some instead.
 
 #[test]
 fn string_set_content_text_reproduces_pre_fix_drop() {
-    // description の主要 repro case:
-    // pre-fix では declaration drop = None、post-fix では
-    // (title, `[Content{keyword: Text}]`) を含む Some を返す。
+    // Primary reproduction case from the description:
+    // before the fix it dropped the declaration (None); afterward it returns
+    // Some containing (title, `[Content{keyword: Text}]`).
     let entries = string_set_entries("title content(text)");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, SmolStr::new("title"));
@@ -1017,9 +1017,9 @@ fn string_set_content_text_reproduces_pre_fix_drop() {
 
 #[test]
 fn content_content_fn_explicit_text_keyword() {
-    // §1.1.1.1: `content(text)` は element の string value (bare `content()`
-    // のフォールバック値と同じ keyword だが、明示的 keyword 保持で
-    // downstream の分岐余地を残す)。
+    // §1.1.1.1: `content(text)` gets the element's string value (the same keyword
+    // as the fallback for bare `content()`, but preserve the explicit keyword
+    // to leave room for downstream branching).
     let items = content_items("content(text)");
     assert_eq!(
         items,
@@ -1031,10 +1031,10 @@ fn content_content_fn_explicit_text_keyword() {
 
 #[test]
 fn content_content_fn_default_keyword_on_empty_parens() {
-    // §1.1.1.1 の spec 例 `h2 { string-set: heading content() }` (string-set
-    // /GCPM3側の文脈) — bare `content()` は `text` をフォールバック値として
-    // 使う (根拠は GCPM 3 側の spec "default" 宣言ではない。
-    // content property側でのgrammar相反は上記 parse_content_fn doc 参照)。
+    // Spec example in §1.1.1.1: `h2 { string-set: heading content() }` (string-set
+    // in the GCPM3 context). Bare `content()` uses `text` as fallback,
+    // not because GCPM 3 defines a spec "default".
+    // For the content property's conflicting grammar, see parse_content_fn's doc above.
     let items = content_items("content()");
     assert_eq!(
         items,
@@ -1046,8 +1046,8 @@ fn content_content_fn_default_keyword_on_empty_parens() {
 
 #[test]
 fn content_content_fn_before_keyword() {
-    // §1.1.1.1 の spec 例 `h1 { string-set: header content(before) ':' content(text); }`
-    // で使われる `before` keyword。
+    // The `before` keyword is used in the §1.1.1.1 spec example
+    // `h1 { string-set: header content(before) ':' content(text); }`.
     let items = content_items("content(before)");
     assert_eq!(
         items,
@@ -1081,33 +1081,33 @@ fn content_content_fn_first_letter_keyword() {
 
 #[test]
 fn content_content_fn_rejects_unknown_keyword() {
-    // GCPM 3 §1.1.1.1 の grammar は `[text | before | after | first-letter]`
-    // の 4 alternative のみ (string-set/GCPM3側の文脈)。それ以外の ident は
-    // parse_content_text_keyword が None を返し、上位伝播で
-    // parse_content_list_items が break、declaration drop = None。`marker`
-    // はこの GCPM3 grammar には無い。CSS Content 3 §2.7.3 は独自に
-    // content() を `marker` 含む 5 keyword で定義しているが、この実装は
-    // keyword 集合について GCPM 3 §1.1.1.1 に従うと決めており
-    // (parse_content_fn の doc comment 参照)、`marker` reject は意図した
-    // 挙動であって未解決の問題ではない。
-    // 本 test は現状の GCPM3-scoped 実装の挙動を
-    // check するものであり、`marker` が spec に一切存在しないという主張では
-    // ない。
+    // GCPM 3 §1.1.1.1 grammar has only four alternatives,
+    // `[text | before | after | first-letter]`, in the string-set/GCPM3 context.
+    // For any other identifier, parse_content_text_keyword returns None;
+    // that propagates up, parse_content_list_items breaks, and the declaration
+    // drops as None. `marker` is absent from this GCPM3 grammar. Although
+    // CSS Content 3 §2.7.3 separately defines five keywords including `marker`,
+    // this implementation follows GCPM 3 §1.1.1.1 for its keyword set
+    // (see parse_content_fn's doc comment); rejecting `marker` is deliberate,
+    // not an unresolved defect.
+    // This test checks the current GCPM3-scoped implementation behavior;
+    // it does not claim that `marker` is absent
+    // from every specification.
     assert_eq!(parse("content(marker)", "content"), None);
     assert_eq!(parse("content(bogus)", "content"), None);
 }
 
 #[test]
 fn content_content_fn_rejects_target_text_keyword() {
-    // §1.1.1.1 は `text` alternative を持つ (target-text() §2.6.3 は `content`)。
-    // spec spelling divergence — `content(content)` は spec-invalid、reject。
-    // 混同 (sibling ContentPart 再利用) を防ぐ regression check。
+    // §1.1.1.1 offers the `text` alternative (target-text() §2.6.3 uses `content`).
+    // Due to this spelling difference, `content(content)` is invalid per spec: reject it.
+    // Regression check to prevent confusion through reuse of sibling ContentPart.
     assert_eq!(parse("content(content)", "content"), None);
 }
 
 #[test]
 fn content_content_fn_case_insensitive_keyword() {
-    // spec 慣行: keyword は ASCII case-insensitive。
+    // By CSS convention, keywords are ASCII case-insensitive.
     let items = content_items("content(TEXT)");
     assert_eq!(
         items,
@@ -1119,7 +1119,7 @@ fn content_content_fn_case_insensitive_keyword() {
 
 #[test]
 fn content_content_fn_case_insensitive_function_name() {
-    // parse_content_function は既存 arm と同じく ASCII case-insensitive dispatch。
+    // parse_content_function dispatches ASCII case-insensitively, like its existing arms.
     let items = content_items("CONTENT(before)");
     assert_eq!(
         items,
@@ -1131,17 +1131,17 @@ fn content_content_fn_case_insensitive_function_name() {
 
 #[test]
 fn content_content_fn_rejects_extra_argument() {
-    // grammar は single-argument。余剰 token は
-    // parse_nested_block 内 parse_entirely が拒否し declaration drop。
+    // The grammar takes one argument. Any extra tokens are
+    // rejected by parse_entirely inside parse_nested_block, dropping the declaration.
     assert_eq!(parse("content(text, extra)", "content"), None);
     assert_eq!(parse("content(text before)", "content"), None);
 }
 
 #[test]
 fn string_set_content_fn_mixed_with_other_items() {
-    // §1.1.1.1 の spec 例:
+    // Spec example in §1.1.1.1:
     //   h1 { string-set: header content(before) ':' content(text); }
-    // → (header, `[Content{Before}, Literal(":"), Content{Text}]`) 3 items。
+    // → (header, `[Content{Before}, Literal(":"), Content{Text}]`) 3 items.
     let entries = string_set_entries(r#"header content(before) ":" content(text)"#);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, SmolStr::new("header"));
@@ -1211,8 +1211,8 @@ fn quotes_pairs(pairs: &[(&str, &str)]) -> Arc<Vec<(SmolStr, SmolStr)>> {
 
 #[test]
 fn quotes_none_returns_empty_vec() {
-    // spec: `none` は空リストと同等 (top-level alternative)。
-    // empty case は shared Arc slot (`empty_quotes_entries`) を使う。
+    // Spec: `none` is equivalent to an empty list (top-level alternative).
+    // Use the shared Arc slot (`empty_quotes_entries`) for the empty case.
     assert_eq!(
         parse("none", "quotes"),
         Some(PropertyValue::Quotes(empty_quotes_entries()))
@@ -1221,7 +1221,7 @@ fn quotes_none_returns_empty_vec() {
 
 #[test]
 fn quotes_is_case_insensitive_on_none() {
-    // CSS spec: keyword `none` は ASCII case-insensitive。
+    // CSS spec: the `none` keyword is ASCII case-insensitive.
     assert_eq!(
         parse("NONE", "quotes"),
         Some(PropertyValue::Quotes(empty_quotes_entries()))
@@ -1238,8 +1238,8 @@ fn quotes_single_pair() {
 
 #[test]
 fn quotes_multiple_pairs_deeper_nesting_levels() {
-    // 2 pair 目は 1 pair 目より深い nesting level (`PropertyValue::Quotes`
-    // doc の「levels of nesting」節)。
+    // The second pair is at a deeper nesting level than the first (see the
+    // "levels of nesting" section of the `PropertyValue::Quotes` doc).
     assert_eq!(
         parse(r#""«" "»" "‹" "›""#, "quotes"),
         Some(PropertyValue::Quotes(quotes_pairs(&[
@@ -1251,21 +1251,21 @@ fn quotes_multiple_pairs_deeper_nesting_levels() {
 
 #[test]
 fn quotes_rejects_empty_declaration() {
-    // grammar は `[ <string> <string> ]+` — 0 pair (`none` でもなく
-    // 何も書かれていない) は invalid、declaration drop。
+    // The grammar is `[ <string> <string> ]+`: zero pairs (not `none`, just
+    // an empty value) are invalid; drop the declaration.
     assert_eq!(parse("", "quotes"), None);
 }
 
 #[test]
 fn quotes_rejects_odd_number_of_strings() {
-    // trailing unpaired <string> は `[ <string> <string> ]+` に一致しない
-    // (`parse_quotes_property` doc の "malformed pair" 節)。
+    // A trailing unpaired <string> does not match `[ <string> <string> ]+`
+    // (see the "malformed pair" section of the `parse_quotes_property` doc).
     assert_eq!(parse(r#""«" "»" "‹""#, "quotes"), None);
 }
 
 #[test]
 fn quotes_rejects_non_string_token() {
-    // <string> でない token (bare ident) は grammar 違反。
+    // A non-<string> token (bare identifier) violates the grammar.
     assert_eq!(parse("open close", "quotes"), None);
 }
 

@@ -1,6 +1,6 @@
-//! CSS rule と declaration の shape。type/universal selector を含む
-//! qualified rule (StyleRule) のみサポート。at-rule (@page / @media 等) は
-//! ruletree.rs 側で skip。
+//! CSS rule and declaration structures. Supports qualified rules (StyleRule)
+//! with type/universal selectors only. At-rules (@page / @media, etc.) are
+//! skipped in ruletree.rs.
 
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
@@ -21,12 +21,12 @@ use crate::property::{
     parse_consumer_text_value, parse_value,
 };
 
-/// 1 property declaration = value + `!important` flag。
+/// One property declaration = value + `!important` flag.
 ///
-/// `value` が私有なので、crate 外からは struct literal / functional-update
-/// のいずれでも構築できない。
+/// Because `value` is private, external crates cannot construct this through
+/// either a struct literal or functional update.
 ///
-/// # write 経路が無いことの compile-fail check
+/// # Compile-fail check for the absence of a write path
 ///
 /// `value` is crate-private, so external consumers can read it through
 /// [`Declaration::value`] but cannot construct or replace it directly. The
@@ -41,11 +41,11 @@ use crate::property::{
 /// };
 /// ```
 ///
-/// functional-update (`..base`) 経由の構築も同じ理由 (`value` が private) で
-/// reject される。
+/// Construction through functional update (`..base`) is rejected for the same
+/// reason (`value` is private).
 ///
-/// `value` の visibility だけを独立に discriminate するのは下の 3 番目の
-/// fence (`.clone()` 後の field 代入) だけである:
+/// Only the third fence below (field assignment after `.clone()`) separately
+/// isolates the visibility of `value`:
 ///
 /// ```compile_fail
 /// use raikiri_style::{CssColor, Declaration, Origin, PropertyValue, RuleTree};
@@ -93,57 +93,57 @@ use crate::property::{
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct Declaration {
-    /// resolved property value。
+    /// Resolved property value.
     pub(crate) value: PropertyValue,
-    /// `!important` flag (true なら importance 上げ)。
+    /// `!important` flag (true increases importance).
     pub important: bool,
 }
 
 impl Declaration {
-    /// resolved property value への read-only accessor。
+    /// Read-only accessor for the resolved property value.
     pub fn value(&self) -> &PropertyValue {
         &self.value
     }
 }
 
-/// Qualified style rule (`selectors { declarations }`)。
+/// Qualified style rule (`selectors { declarations }`).
 ///
-/// `source_order` は同一 `RuleTree` 内で 0 から通し番号。cascade tie-break
-/// (同 specificity 時に「後勝ち」) に使う。
-/// `origin` は CSS Cascading L4 §6.2 の origin。cascade tuple
-/// の rank 化 (`!important` 反転扱い) に使用。
-/// Future field (specificity cache / invalidation hint 等) は将来追加予定、
-/// `#[non_exhaustive]` の恩恵で non-breaking。
+/// `source_order` is numbered from 0 across a `RuleTree`. It breaks cascade ties
+/// (later wins at equal specificity).
+/// `origin` is the origin defined in CSS Cascading L4 §6.2. It determines the
+/// rank in the cascade tuple (with reversed ordering for `!important`).
+/// Future fields (specificity cache / invalidation hint, etc.) can be added
+/// without breaking consumers thanks to `#[non_exhaustive]`.
 #[non_exhaustive]
 pub struct StyleRule {
-    /// Parse 済 selector list。type + universal のみ受理 (他は build 段で drop)。
+    /// Parsed selector list. Only type + universal are accepted (others drop at build time).
     pub selectors: SelectorList<RaikiriSelectorImpl>,
-    /// このルールの declaration list (invalid は含まない)。
+    /// This rule's declaration list (excluding invalid declarations).
     pub(crate) declarations: Vec<Declaration>,
-    /// RuleTree 全体を通した 0-indexed source order。
+    /// Zero-indexed source order across the entire RuleTree.
     pub source_order: u32,
-    /// この rule が属する cascade origin。
+    /// The cascade origin to which this rule belongs.
     pub origin: crate::ruletree::Origin,
 }
 
 impl StyleRule {
-    /// このルールの declaration list への read-only accessor
-    /// (invalid は含まない)。
+    /// Read-only accessor for this rule's declaration list
+    /// (excluding invalid declarations).
     ///
-    /// # `declarations` field 自体への到達不能性
+    /// # Inaccessibility of the `declarations` field itself
     ///
-    /// `declarations` field は `pub(crate)` — external crate から届くのは
-    /// この accessor だけである。`StyleRule` は `Clone` を derive していない
-    /// ので、external crate は `.clone()` で所有値の `StyleRule` を得る経路が
-    /// そもそも無い。加えて `#[non_exhaustive]` が struct literal /
-    /// functional-update による新規構築も塞いでいる — この 2 つは独立な
-    /// gate であり、`StyleRule` を external crate が所有値として保持する
-    /// 経路はどちらの意味でも存在しない。触れられるのはこの accessor が返す
-    /// `&[Declaration]` だけである。したがって「write 経路」を意味のある形で
-    /// discriminate する check は存在しない (どんな可視性でも `&StyleRule` から
-    /// は書けない) が、
-    /// `declarations` という field 名そのものが private であることは以下で
-    /// 直接 check できる — `pub` に戻れば以下は compile が通るようになる:
+    /// The `declarations` field is `pub(crate)`; external crates can only use
+    /// this accessor. `StyleRule` does not derive `Clone`, so an external crate
+    /// cannot obtain an owned `StyleRule` with `.clone()`. Also, `#[non_exhaustive]`
+    /// prevents new construction with a struct literal or functional update.
+    /// These are independent barriers: an external crate cannot obtain an owned
+    /// `StyleRule` through either route. It can only access the `&[Declaration]`
+    /// returned by this accessor. No check can meaningfully distinguish a
+    /// write path here: no visibility permits writing through `&StyleRule`.
+    /// The following instead checks the visibility of the field itself.
+    /// Only this accessor is available externally. If the `declarations` field
+    /// becomes `pub`, direct access to its name becomes possible and the
+    /// compile-fail example below will compile:
     ///
     /// ```compile_fail
     /// use raikiri_style::{Origin, RuleTree};
@@ -157,18 +157,18 @@ impl StyleRule {
     }
 }
 
-/// declaration-list を消費して `Vec<Declaration>` を produce。
-/// 認識できない property name / invalid value は silently drop。
+/// Consume a declaration list to produce `Vec<Declaration>`.
+/// Silently drop unrecognized property names and invalid values.
 ///
 /// # Shorthand expansion
 ///
 /// spec CSS Cascading L4 §3 "Shorthand Properties"
 /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim: "A shorthand
 /// property sets all of its longhand sub-properties, exactly as if expanded
-/// in place." に準拠して、[`PropertyValue::Margin`] 系の shorthand declaration
-/// は本関数の出口で 4 longhand declaration に展開される。cascade 段の
-/// per-side winner selection が自然に成立することを担保するための spec-correct
-/// な expansion — 詳細は [`expand_shorthand_into`] doc 参照。
+/// in place." Accordingly, [`PropertyValue::Margin`] shorthand declarations
+/// expand into four longhand declarations at the exit of this function. This
+/// spec-correct expansion enables natural per-side winner selection in the
+/// cascade; see the [`expand_shorthand_into`] docs for details.
 pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
     parse_declaration_block_with_consumer_properties(input, &[])
 }
@@ -235,17 +235,17 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
             push_longhand(PropertyValue::TextSpacingTrim(shorthand.trim));
             push_longhand(PropertyValue::TextAutospace(shorthand.autospace));
         }
-        // `FontShorthand` は `family: Arc<Vec<FontFamilyName>>` を持ち `Copy` ではない —
-        // 他の shorthand payload (`Sides<..>` / `FlexShorthand` 等、全て Copy)
-        // と異なり値を move できないため、`ref` binding で参照のまま渡す
-        // (`Background` arm と同じ理由、`GridRow` arm の comment 参照)。
+        // `FontShorthand` owns `family: Arc<Vec<FontFamilyName>>` and is not `Copy`;
+        // unlike other shorthand payloads (`Sides<..>` / `FlexShorthand`, etc., all `Copy`),
+        // its value cannot be moved. Pass it by reference with a `ref` binding
+        // (as for the `Background` arm; see the `GridRow` arm comment).
         PropertyValue::Font(ref shorthand) => expand_font(shorthand, push_longhand),
         PropertyValue::Deferred(ref deferred) => {
             expand_deferred(d, deferred, d.important, push)
         }
-        // 展開先の longhand variant を持たない — そのまま 1 個 push。
-        // `_` に潰さないこと (上の「wildcard arm を置かない理由 (契約)」節)。
-        // ここへ variant を足すことは「展開先が無い」という主張である。
+        // No longhand variant exists for expansion: push one declaration unchanged.
+        // Do not collapse this into `_` (see "Why there is no wildcard arm (contract)" above).
+        // Adding a variant here asserts that it has no expansion target.
         PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::Color(_)
@@ -392,9 +392,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::OutlineColor(_)
         | PropertyValue::OutlineOffset(_)
         // grid-template-columns/-rows/-areas + grid-auto-columns/-rows/-flow
-        // + grid-row-start/-end + grid-column-start/-end — 展開先の longhand
-        // を持たない individual property (CSS Grid Layout Module Level 1
-        // §7.2/§7.3/§7.6/§7.7/§8.3)。
+        // + grid-row-start/-end + grid-column-start/-end: individual properties
+        // with no corresponding expansion longhands (CSS Grid Layout Module Level 1
+        // §7.2/§7.3/§7.6/§7.7/§8.3).
         | PropertyValue::GridTemplateColumns(_)
         | PropertyValue::GridTemplateRows(_)
         | PropertyValue::GridTemplateAreas(_)
@@ -406,24 +406,24 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::GridColumnStart(_)
         | PropertyValue::GridColumnEnd(_)
         // justify-items / justify-self (CSS Box Alignment Module Level 3
-        // §7.1/§6.1) — 同じく展開先の longhand を持たない。
+        // §7.1/§6.1): likewise have no expansion longhands.
         | PropertyValue::JustifyItems(_)
         | PropertyValue::JustifySelf(_)
-        // orphans / widows (CSS Fragmentation Module Level 3 §3.3) — 同じく
-        // 展開先の longhand を持たない。
+        // orphans / widows (CSS Fragmentation Module Level 3 §3.3): likewise have no
+        // expansion longhands.
         | PropertyValue::Orphans(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Widows(_)
-        // writing-mode (CSS Writing Modes 4 §3.2) — 同じく展開先の longhand を
-        // 持たない。
+        // writing-mode (CSS Writing Modes 4 §3.2): likewise has no expansion
+        // longhands.
         | PropertyValue::WritingMode(_)
         | PropertyValue::RubyPosition(_)
         // background-repeat / background-attachment / background-clip /
         // background-origin / background-size / background-position /
         // background-image (CSS Backgrounds and Borders 3 §2.3-§2.9) —
-        // 同じく展開先の longhand を持たない (`background` shorthand は
-        // 別 variant `PropertyValue::Background` で、下の
-        // `expand_background` arm が展開する)。
+        // Likewise have no expansion longhands (the `background` shorthand has
+        // a separate `PropertyValue::Background` variant, expanded by the
+        // `expand_background` arm below).
         | PropertyValue::BackgroundRepeat(_)
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
@@ -432,8 +432,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::BackgroundPosition(_)
         | PropertyValue::BackgroundImage(_)
         // object-fit / object-position (CSS Images Module Level 3 §5.1/§5.2)
-        // / opacity (CSS Color 4 §3.3) — 同じく展開先の longhand を持たない
-        // (shorthand を持たない standalone property)。
+        // / opacity (CSS Color 4 §3.3): likewise have no expansion longhands
+        // (standalone properties without shorthands).
         | PropertyValue::ObjectFit(_)
         | PropertyValue::ObjectPosition(_)
         | PropertyValue::TransformOrigin(..)
@@ -475,12 +475,12 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         PropertyValue::FlexFlow(f) => expand_flex_flow(f, push_longhand),
         PropertyValue::Gap(g) => expand_gap(g, push_longhand),
         PropertyValue::PlaceContent(p) => expand_place_content(p, push_longhand),
-        // `GridLineShorthand` は `SmolStr` を持ち Copy ではない — 他の
+        // `GridLineShorthand` contains `SmolStr` and is not `Copy`. Unlike other
         // shorthand payload (`Sides<..>` / `FlexShorthand` / `GapShorthand`
-        // 等、全て Copy) と異なり値を `d.value` (`&Declaration` 経由の
-        // place) から move できないため、`ref` binding で参照のまま
-        // `expand_grid_row` / `expand_grid_column` に渡す
-        // (`expand_grid_row` doc 参照)。
+        // payloads (all `Copy`), its value cannot be moved out of `d.value` (accessed
+        // through `&Declaration`), so pass it by reference with a `ref` binding
+        // to `expand_grid_row` / `expand_grid_column`
+        // (see the `expand_grid_row` docs).
         PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, push_longhand),
         PropertyValue::GridColumn(ref shorthand) => expand_grid_column(shorthand, push_longhand),
         PropertyValue::PlaceItems(p) => expand_place_items(p, push_longhand),
@@ -494,8 +494,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
     }
 }
 
-/// non-shorthand の共通 path。`expand_shorthand_into` から分離してあるのは
-/// hot path の code size を最小に保つため (下の per-family helper と対)。
+/// Shared path for non-shorthands. Split from `expand_shorthand_into` to minimize
+/// code size on the hot path (versus the per-family helpers below).
 #[inline(always)]
 fn expand_none(d: &Declaration, mut push: impl FnMut(Declaration)) {
     push(d.clone());
@@ -639,7 +639,7 @@ fn expand_deferred(
     }
 }
 
-/// `margin` shorthand を 4 longhand に展開する cold helper。
+/// Cold helper that expands the `margin` shorthand into four longhands.
 #[inline(never)]
 pub(crate) fn expand_margin(sides: Sides<LengthOrAuto>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::MarginTop(sides.top));
@@ -657,7 +657,7 @@ pub(crate) fn expand_margin_inherit(mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::MarginLeftInherit);
 }
 
-/// `padding` shorthand を 4 longhand に展開する cold helper。
+/// Cold helper that expands the `padding` shorthand into four longhands.
 #[inline(never)]
 pub(crate) fn expand_padding(sides: Sides<Length>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::PaddingTop(sides.top));
@@ -666,12 +666,12 @@ pub(crate) fn expand_padding(sides: Sides<Length>, mut push: impl FnMut(Property
     push(PropertyValue::PaddingLeft(sides.left));
 }
 
-/// `margin-inline` shorthand を `margin-left`/`margin-right` の 2 longhand に
-/// 展開する cold helper。margin/padding/overflow shorthand precedent と
-/// 同 pattern (2-value なので push は 2 回のみ)。
+/// Cold helper expanding `margin-inline` into two longhands, `margin-left`/
+/// `margin-right`. Follows the margin/padding/overflow shorthand pattern
+/// (two values require only two pushes).
 ///
-/// 物理写像 (inline axis → left/right、`direction: ltr` 仮定の近似) の
-/// rationale は [`crate::property::PropertyValue::MarginInline`] doc 参照。
+/// For the rationale behind the physical mapping (inline axis → left/right,
+/// approximating `direction: ltr`), see the [`crate::property::PropertyValue::MarginInline`] docs.
 #[inline(never)]
 pub(crate) fn expand_margin_inline(
     pair: StartEnd<LengthOrAuto>,
@@ -681,10 +681,10 @@ pub(crate) fn expand_margin_inline(
     push(PropertyValue::MarginRight(pair.end));
 }
 
-/// `margin-block` shorthand を `margin-top`/`margin-bottom` の 2 longhand に
-/// 展開する cold helper — [`expand_margin_inline`] の block-axis sibling
-/// (block axis は `direction` に依存しない厳密写像、
-/// [`crate::property::PropertyValue::PaddingInline`] doc の「非対称」節参照)。
+/// Cold helper expanding `margin-block` into two longhands, `margin-top`/
+/// `margin-bottom`: the block-axis sibling of [`expand_margin_inline`]
+/// (the block axis maps exactly regardless of `direction`; see the "asymmetry"
+/// section of the [`crate::property::PropertyValue::PaddingInline`] docs).
 #[inline(never)]
 pub(crate) fn expand_margin_block(
     pair: StartEnd<LengthOrAuto>,
@@ -694,18 +694,18 @@ pub(crate) fn expand_margin_block(
     push(PropertyValue::MarginBottom(pair.end));
 }
 
-/// `padding-inline` shorthand を `padding-left`/`padding-right` の 2
-/// longhand に展開する cold helper — [`expand_margin_inline`] の padding
-/// sibling。
+/// Cold helper expanding `padding-inline` into two longhands, `padding-left`/
+/// `padding-right`: the padding sibling of [`expand_margin_inline`].
+/// sibling.
 #[inline(never)]
 pub(crate) fn expand_padding_inline(pair: StartEnd<Length>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::PaddingLeft(pair.start));
     push(PropertyValue::PaddingRight(pair.end));
 }
 
-/// `padding-block` shorthand を `padding-top`/`padding-bottom` の 2
-/// longhand に展開する cold helper — [`expand_margin_block`] の padding
-/// sibling。
+/// Cold helper expanding `padding-block` into two longhands, `padding-top`/
+/// `padding-bottom`: the padding sibling of [`expand_margin_block`].
+/// sibling.
 #[inline(never)]
 pub(crate) fn expand_padding_block(pair: StartEnd<Length>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::PaddingTop(pair.start));
@@ -713,13 +713,13 @@ pub(crate) fn expand_padding_block(pair: StartEnd<Length>, mut push: impl FnMut(
 }
 
 /// `border` shorthand (CSS Backgrounds 3 §3.4 "Border Shorthand Properties"
-/// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>) を 12 longhand
-/// (4 side × 3 sub-property = width / style / color) に展開する。
-/// margin / padding shorthand precedent と同 pattern。
-/// spec `border` grammar は 4 side 共通 (`Sides::all(border)`) だが、cascade
-/// 段では per-side longhand として書き込むことで、`border: 1px solid red;
-/// border-top-color: blue;` のような longhand override が per-side
-/// determinism で解決する。
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>) into 12 longhands
+/// (four sides × three sub-properties: width / style / color).
+/// Follows the margin / padding shorthand pattern.
+/// The spec's `border` grammar applies to all four sides (`Sides::all(border)`),
+/// but writing per-side longhands at cascade time makes overrides such as
+/// `border: 1px solid red; border-top-color: blue;` resolve per side
+/// deterministically.
 #[inline(never)]
 pub(crate) fn expand_border(sides: Sides<Border>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::BorderTopWidth(sides.top.width));
@@ -736,8 +736,8 @@ pub(crate) fn expand_border(sides: Sides<Border>, mut push: impl FnMut(PropertyV
     push(PropertyValue::BorderLeftColor(sides.left.color));
 }
 
-/// `border-style` shorthand を 4 longhand (`border-*-style`) に展開する
-/// cold helper。margin/padding/border shorthand precedent と同 pattern。
+/// Cold helper expanding `border-style` into four longhands (`border-*-style`);
+/// follows the margin/padding/border shorthand pattern.
 #[inline(never)]
 pub(crate) fn expand_border_style(sides: Sides<BorderStyle>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::BorderTopStyle(sides.top));
@@ -746,8 +746,8 @@ pub(crate) fn expand_border_style(sides: Sides<BorderStyle>, mut push: impl FnMu
     push(PropertyValue::BorderLeftStyle(sides.left));
 }
 
-/// `border-width` shorthand を 4 longhand (`border-*-width`) に展開する
-/// cold helper。margin/padding/border shorthand precedent と同 pattern。
+/// Cold helper expanding `border-width` into four longhands (`border-*-width`);
+/// follows the margin/padding/border shorthand pattern.
 #[inline(never)]
 pub(crate) fn expand_border_width(sides: Sides<Length>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::BorderTopWidth(sides.top));
@@ -756,8 +756,8 @@ pub(crate) fn expand_border_width(sides: Sides<Length>, mut push: impl FnMut(Pro
     push(PropertyValue::BorderLeftWidth(sides.left));
 }
 
-/// `border-color` shorthand を 4 longhand (`border-*-color`) に展開する
-/// cold helper。margin/padding/border shorthand precedent と同 pattern。
+/// Cold helper expanding `border-color` into four longhands (`border-*-color`);
+/// follows the margin/padding/border shorthand pattern.
 #[inline(never)]
 pub(crate) fn expand_border_color(sides: Sides<BorderColor>, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::BorderTopColor(sides.top));
@@ -767,23 +767,23 @@ pub(crate) fn expand_border_color(sides: Sides<BorderColor>, mut push: impl FnMu
 }
 
 /// `overflow` shorthand (CSS Overflow 3 §3.1
-/// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>) を
-/// `overflow-x` / `overflow-y` の 2 longhand に展開する cold helper。
-/// margin / padding / border shorthand precedent と
-/// 同 pattern — 2-axis なので push は 2 回のみ。
+/// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>) into
+/// two longhands, `overflow-x` / `overflow-y`.
+/// Follows the margin / padding / border shorthand
+/// pattern: two axes require only two pushes.
 #[inline(never)]
 pub(crate) fn expand_overflow(pair: OverflowXY, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::OverflowX(pair.x));
     push(PropertyValue::OverflowY(pair.y));
 }
 
-/// `flex` shorthand を `flex-grow` / `flex-shrink` / `flex-basis` の 3
-/// longhand に展開する cold helper。margin / padding / border shorthand
-/// precedent と同 pattern — shorthand parser (`property.rs` の
-/// `parse_flex_shorthand`、private fn のため直接 link 不可) が既に
-/// shorthand-local default (grow=1 / shrink=1 / basis=0px) を埋めているため
-/// ([`FlexShorthand`] doc の "Omitted-component defaults" 節参照)、本関数は
-/// 3 field をそのまま 3 declaration に分配するだけでよい。
+/// Cold helper expanding the `flex` shorthand into three longhands:
+/// `flex-grow` / `flex-shrink` / `flex-basis`. Follows the margin / padding / border
+/// pattern. The shorthand parser (`property.rs`'s
+/// `parse_flex_shorthand`, a private function that cannot be linked directly)
+/// already fills in shorthand-local defaults (grow=1 / shrink=1 / basis=0px);
+/// see the "Omitted-component defaults" section of the [`FlexShorthand`] docs.
+/// This function only distributes the three fields into three declarations.
 #[inline(never)]
 pub(crate) fn expand_flex(f: FlexShorthand, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::FlexGrow(f.grow));
@@ -791,52 +791,52 @@ pub(crate) fn expand_flex(f: FlexShorthand, mut push: impl FnMut(PropertyValue))
     push(PropertyValue::FlexBasis(f.basis));
 }
 
-/// `flex-flow` shorthand を `flex-direction` / `flex-wrap` の 2 longhand に
-/// 展開する cold helper。`expand_flex` と同 pattern — shorthand parser
-/// (`parse_flex_flow`) が既に省略成分の initial (row / nowrap) を埋めて
-/// いるため、本関数は 2 field をそのまま 2 declaration に分配するだけでよい。
+/// Cold helper expanding `flex-flow` into two longhands, `flex-direction` /
+/// `flex-wrap`. As in `expand_flex`, the shorthand parser
+/// (`parse_flex_flow`) already fills in omitted initial components (row / nowrap).
+/// This function only distributes the two fields into two declarations.
 #[inline(never)]
 pub(crate) fn expand_flex_flow(f: FlexFlow, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::FlexDirection(f.direction));
     push(PropertyValue::FlexWrap(f.wrap));
 }
 
-/// `gap` shorthand を `row-gap` / `column-gap` の 2 longhand に展開する cold
-/// helper。[`GapShorthand`] doc の 2nd-value-omitted copy 規則は parser 側
-/// (`parse_gap_shorthand`) が既に適用済み — 本関数は 2 field をそのまま 2
-/// declaration に分配するだけでよい。
+/// Cold helper expanding `gap` into two longhands, `row-gap` / `column-gap`.
+/// The [`GapShorthand`] docs' second-value-omitted copy rule is already
+/// applied by the parser (`parse_gap_shorthand`). This function only distributes
+/// the two fields into two declarations.
 #[inline(never)]
 pub(crate) fn expand_gap(g: GapShorthand, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::RowGap(g.row));
     push(PropertyValue::ColumnGap(g.column));
 }
 
-/// `place-content` shorthand を `align-content` / `justify-content` の 2
-/// longhand に展開する cold helper — [`expand_gap`] と同じ shape
-/// ([`PlaceContentShorthand`] doc 参照)。
+/// Cold helper expanding `place-content` into two longhands, `align-content` /
+/// `justify-content`. Has the same shape as [`expand_gap`]
+/// (see the [`PlaceContentShorthand`] docs).
 #[inline(never)]
 pub(crate) fn expand_place_content(p: PlaceContentShorthand, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::AlignContent(p.align));
     push(PropertyValue::JustifyContent(p.justify));
 }
 
-/// `grid-row` shorthand を `grid-row-start` / `grid-row-end` の 2 longhand
-/// に展開する cold helper。[`GridLineShorthand`] doc の 2nd-value-omitted
-/// copy 規則は parser 側 (`property.rs` の `parse_grid_line_shorthand`、
-/// private fn のため直接 link 不可) が既に適用済み。
+/// Cold helper expanding `grid-row` into two longhands, `grid-row-start` /
+/// `grid-row-end`. The parser (`parse_grid_line_shorthand` in `property.rs`,
+/// a private function that cannot be linked directly) already applies the
+/// second-value-omitted copy rule in the [`GridLineShorthand`] docs.
 ///
-/// `shorthand: &GridLineShorthand` — [`expand_shorthand_into`] の
-/// `PropertyValue::GridRow(ref shorthand)` arm の doc 参照。他の shorthand
-/// expand helper (`expand_flex` 等) と異なり参照を受け取り `.clone()` する
-/// (`GridLineValue` が `SmolStr` を持ち Copy ではないため)。
+/// `shorthand: &GridLineShorthand`: see the `PropertyValue::GridRow(ref shorthand)`
+/// arm in the [`expand_shorthand_into`] docs. Unlike other shorthand expansion
+/// helpers (such as `expand_flex`), this takes a reference and calls `.clone()`
+/// because `GridLineValue` contains `SmolStr` and is not `Copy`.
 #[inline(never)]
 pub(crate) fn expand_grid_row(shorthand: &GridLineShorthand, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::GridRowStart(shorthand.start.clone()));
     push(PropertyValue::GridRowEnd(shorthand.end.clone()));
 }
 
-/// `grid-column` shorthand を `grid-column-start` / `grid-column-end` の 2
-/// longhand に展開する cold helper — [`expand_grid_row`] と同じ shape。
+/// Cold helper expanding `grid-column` into two longhands, `grid-column-start` /
+/// `grid-column-end`. Has the same shape as [`expand_grid_row`].
 #[inline(never)]
 pub(crate) fn expand_grid_column(
     shorthand: &GridLineShorthand,
@@ -846,18 +846,18 @@ pub(crate) fn expand_grid_column(
     push(PropertyValue::GridColumnEnd(shorthand.end.clone()));
 }
 
-/// `place-items` shorthand を `align-items` / `justify-items` の 2 longhand
-/// に展開する cold helper — [`expand_gap`] と同じ shape
-/// ([`PlaceItemsShorthand`] doc 参照)。
+/// Cold helper expanding `place-items` into two longhands, `align-items` /
+/// `justify-items`. Has the same shape as [`expand_gap`]
+/// (see the [`PlaceItemsShorthand`] docs).
 #[inline(never)]
 pub(crate) fn expand_place_items(p: PlaceItemsShorthand, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::AlignItems(p.align));
     push(PropertyValue::JustifyItems(p.justify));
 }
 
-/// `place-self` shorthand を `align-self` / `justify-self` の 2 longhand に
-/// 展開する cold helper — [`expand_place_items`] と同じ shape
-/// ([`PlaceSelfShorthand`] doc 参照)。
+/// Cold helper expanding `place-self` into two longhands, `align-self` /
+/// `justify-self`. Has the same shape as [`expand_place_items`]
+/// (see the [`PlaceSelfShorthand`] docs).
 #[inline(never)]
 pub(crate) fn expand_place_self(p: PlaceSelfShorthand, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::AlignSelf(p.align));
@@ -865,19 +865,19 @@ pub(crate) fn expand_place_self(p: PlaceSelfShorthand, mut push: impl FnMut(Prop
 }
 
 /// `text-decoration` shorthand (CSS Text Decoration 4 ED §2.6
-/// <https://drafts.csswg.org/css-text-decor-4/#text-decoration-property>) を
-/// `text-decoration-line` / `-thickness` / `-style` / `-color` の 4 longhand
-/// に展開する cold helper。margin / padding / border / overflow shorthand
-/// precedent と同 pattern — 4 longhand は互いに 1:1 disjoint field
-/// (`TextDecorationShorthand` doc の「cross-axis coupling が無い」節参照)
-/// なので push は 4 回のみ。
+/// <https://drafts.csswg.org/css-text-decor-4/#text-decoration-property>) into
+/// four longhands: `text-decoration-line` / `-thickness` / `-style` / `-color`.
+/// Follows the margin / padding / border / overflow shorthand
+/// pattern: the four longhands are disjoint fields in a 1:1 mapping
+/// (see the "cross-axis coupling is absent" section of the `TextDecorationShorthand` docs),
+/// so only four pushes are needed.
 ///
-/// shorthand parser (`property.rs` の `parse_text_decoration_shorthand`、
-/// private fn のため直接 link 不可) が既に省略成分を spec initial value で
-/// 埋めているため ([`TextDecorationShorthand`] doc の "Initial value fill"
-/// 節)、本関数は 4 field をそのまま 4 declaration に分配するだけでよい —
-/// margin/padding/border の各 side にも既に initial fill 済みの値が入って
-/// いるのと同じ形。
+/// The shorthand parser (`parse_text_decoration_shorthand` in `property.rs`,
+/// a private function that cannot be linked directly) already fills omitted
+/// components with spec initial values (see "Initial value fill" in the
+/// [`TextDecorationShorthand`] docs). This function only distributes the four
+/// fields into four declarations, just as the margin/padding/border sides
+/// already contain values filled with their initial values.
 #[inline(never)]
 pub(crate) fn expand_text_decoration(
     shorthand: TextDecorationShorthand,
@@ -899,7 +899,7 @@ pub(crate) fn expand_text_emphasis(
     push(PropertyValue::TextEmphasisColor(shorthand.color));
 }
 
-/// `outline` shorthand を width/style/color の longhand に展開する。
+/// Expand the `outline` shorthand into width/style/color longhands.
 #[inline(never)]
 pub(crate) fn expand_outline(outline: Outline, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::OutlineWidth(outline.width));
@@ -907,15 +907,15 @@ pub(crate) fn expand_outline(outline: Outline, mut push: impl FnMut(PropertyValu
     push(PropertyValue::OutlineColor(outline.color));
 }
 
-/// `font` shorthand を 15 longhand (6 grammar values plus 9 reset-only
-/// subproperties) に展開する cold helper ([`FontShorthand`] doc 参照)。
-/// 省略された grammar 成分は shorthand parser が spec initial value で埋めて
-/// いるため、本関数は 6 field をそのまま分配し、reset-only subproperties を
-/// CSS Fonts 4 §2.1 の initial value にする。`font-variant-caps` は grammar
-/// longhand として既に分配する。`family` は `Arc` のため `.clone()` は bump
-/// のみ ([`BackgroundShorthand`] の `image.clone()` と同じ理由付け)。`size` の
-/// 2 通りは対応する [`PropertyValue`] variant にそのまま載せる (どちらも key は
-/// [`PropertyKey::FontSize`])。
+/// Cold helper expanding the `font` shorthand into 15 longhands (six grammar
+/// values plus nine reset-only subproperties; see the [`FontShorthand`] docs).
+/// The shorthand parser fills omitted grammar components with spec initial
+/// values, so this function distributes the six fields and assigns initial
+/// values to reset-only subproperties under CSS Fonts 4 §2.1. `font-variant-caps`
+/// is already distributed as a grammar longhand. Cloning `family` only bumps
+/// the `Arc` (as when cloning `image` in [`BackgroundShorthand`]). Both forms of
+/// `size` map directly to the corresponding [`PropertyValue`] variants (both use
+/// [`PropertyKey::FontSize`]).
 #[inline(never)]
 pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(PropertyValue)) {
     push(PropertyValue::FontStyle(shorthand.style));
@@ -950,11 +950,11 @@ pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(Proper
     ));
 }
 
-/// `background` shorthand を 8 longhand (color/image/repeat/attachment/
-/// position/size/clip/origin) に展開する cold helper
-/// ([`BackgroundShorthand`] doc 参照)。`image` は `Copy` ではないため
-/// `.clone()` する — `expand_grid_row`/`expand_grid_column` が `GridLineValue`
-/// の `Named`/`NamedLine` 成分に対して行うのと同じ理由。
+/// Cold helper expanding `background` into eight longhands (color/image/repeat/
+/// attachment/position/size/clip/origin; see the [`BackgroundShorthand`] docs).
+/// `image` is not `Copy`, so it is cloned, for the same reason
+/// `expand_grid_row`/`expand_grid_column` clone `GridLineValue`'s
+/// `Named`/`NamedLine` components.
 #[inline(never)]
 pub(crate) fn expand_background(
     shorthand: &BackgroundShorthand,
@@ -1027,7 +1027,7 @@ fn parse_registered_consumer_value(
     }))
 }
 
-/// Per-declaration parser for cssparser::RuleBodyParser。
+/// Per-declaration parser for cssparser::RuleBodyParser.
 struct DeclParser<'a> {
     consumer_properties: &'a [ConsumerPropertyRegistration],
 }
@@ -1056,14 +1056,14 @@ impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
     }
 }
 
-// At-rule parser は no-op (block 内で @rule が現れた場合は drop)。
+// The at-rule parser does nothing (drops any @rule inside a block).
 impl<'i, 'a> AtRuleParser<'i> for DeclParser<'a> {
     type Prelude = ();
     type AtRule = Declaration;
     type Error = ();
 }
 
-// Qualified-rule parser (nested rule) も no-op — block 内 nested rule は drop。
+// The qualified-rule parser (nested rules) also does nothing: nested rules in a block are dropped.
 impl<'i, 'a> QualifiedRuleParser<'i> for DeclParser<'a> {
     type Prelude = ();
     type QualifiedRule = Declaration;
@@ -1355,18 +1355,18 @@ mod tests {
 
     #[test]
     fn drops_invalid_property_and_value() {
-        // cursor: pointer → 未対応 property (CSS Basic User Interface
+        // `cursor: pointer` is unsupported (CSS Basic User Interface
         // Module Level 3 <https://www.w3.org/TR/css-ui-3/#cursor>) → drop
-        // (`margin` / `width` / `float` は以前 dropped 例に使っていたが、
-        // その後順次認識対象になったため差し替え。`cursor` は現状
-        // unsupported — property.rs `unknown_property_returns_none` の
-        // canary と同じ property を使う)。
-        // font-size: math → MathML scaling algorithm が未実装のため drop
-        // (`medium` を以前 dropped 例に使っていたが、`<absolute-size>` /
-        // `<relative-size>` keyword が認識対象になったため差し替え —
-        // property.rs `PropertyValue` doc の「例を差し替えるときは…揃えること」
-        // 節参照)。
-        // color: red → 残す
+        // (`margin` / `width` / `float` were previously used as dropped examples,
+        // but were later recognized and replaced here; `cursor` remains
+        // unsupported, matching the canary in property.rs's
+        // `unknown_property_returns_none`).
+        // `font-size: math` drops because the MathML scaling algorithm is not implemented
+        // (`medium` was formerly used as a dropped example, but `<absolute-size>` /
+        // `<relative-size>` keywords became recognized and were replaced here; see
+        // the "keep examples synchronized when replacing them" section of the
+        // `PropertyValue` docs in property.rs).
+        // Keep `color: red`.
         let decls = parse_block("cursor: pointer; font-size: math; color: red;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
@@ -1400,14 +1400,14 @@ mod tests {
 
     #[test]
     fn rejects_trailing_garbage_after_value() {
-        // "red garbage" — value 後に余計な token があるので declaration ごと drop。
+        // "red garbage": the extra token after the value drops the whole declaration.
         let decls = parse_block("color: red garbage;");
         assert!(decls.is_empty());
     }
 
     #[test]
     fn rejects_extra_length_after_font_size() {
-        // "16px 20px" — 2 つ目の length は exhaust しない garbage 扱いで drop。
+        // "16px 20px": the second length is unconsumed garbage, so the declaration drops.
         let decls = parse_block("font-size: 16px 20px;");
         assert!(decls.is_empty());
     }
@@ -1465,8 +1465,8 @@ mod tests {
 
     #[test]
     fn still_accepts_important_after_value() {
-        // regression guard: !important は exhaustive-consumption check の後でも
-        // 引き続き受理されなければならない。
+        // Regression guard: `!important` must still be accepted after the
+        // exhaustive-consumption check.
         let decls = parse_block("color: red !important;");
         assert_eq!(decls.len(), 1);
         assert!(decls[0].important);
@@ -1474,8 +1474,8 @@ mod tests {
 
     #[test]
     fn font_family_leaves_important_alone() {
-        // parse_font_family の loop が `!` (from `!important`) を garbage として
-        // 拒否してしまうと、declaration ごと drop される (Finding 3)。
+        // If the `parse_font_family` loop rejects `!` (from `!important`) as garbage,
+        // it drops the entire declaration (Finding 3).
         let decls = parse_block("font-family: Arial !important;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
@@ -1489,16 +1489,16 @@ mod tests {
 
     // ── margin shorthand expansion (CSS Cascading L4 §3) ──
     //
-    // `parse_declaration_block` は shorthand `margin` を 4 longhand
-    // (`MarginTop` / `MarginRight` / `MarginBottom` / `MarginLeft`) に展開する。
+    // `parse_declaration_block` expands the `margin` shorthand into four longhands
+    // (`MarginTop` / `MarginRight` / `MarginBottom` / `MarginLeft`).
     // spec §3 "Shorthand Properties"
-    // <https://www.w3.org/TR/css-cascade-4/#shorthand> の "sets all of its
-    // longhand sub-properties, exactly as if expanded in place" 準拠、cascade 段
-    // に shorthand key を届かせない不変を parse-time で担保する。
+    // Per "sets all of its longhand sub-properties, exactly as if expanded
+    // in place" in <https://www.w3.org/TR/css-cascade-4/#shorthand>, this prevents
+    // a shorthand key from reaching the cascade by expanding at parse time.
 
     #[test]
     fn margin_shorthand_expands_into_four_longhand_declarations() {
-        // `margin: 10px 20px` → 4 longhand (top=10, right=20, bottom=10, left=20)。
+        // `margin: 10px 20px` → four longhands (top=10, right=20, bottom=10, left=20).
         let decls = parse_block("margin: 10px 20px;");
         assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
         assert_eq!(
@@ -1524,8 +1524,8 @@ mod tests {
         // spec CSS Cascading L4 §3 "Shorthand Properties"
         // <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim:
         // "Declaring a shorthand property to be !important is equivalent to
-        // declaring all of its sub-properties to be !important." — shorthand の
-        // `!important` は全 longhand に copy される。
+        // declaring all of its sub-properties to be !important": the shorthand's
+        // `!important` is copied to all longhands.
         let decls = parse_block("margin: 5px !important;");
         assert_eq!(decls.len(), 4);
         for d in &decls {
@@ -1535,10 +1535,10 @@ mod tests {
 
     #[test]
     fn margin_shorthand_five_values_declaration_dropped() {
-        // 5+ value shorthand: parse_margin_shorthand は 4 value 消費、5th 残り
-        // token は expect_exhausted で declaration drop。end-to-end で 0 decl
-        // になることを check (property.rs の
-        // `margin_shorthand_leaves_extra_values_for_caller_exhausted_check` と complementary)。
+        // For a 5+ value shorthand, `parse_margin_shorthand` consumes four values; the
+        // remaining fifth token causes `expect_exhausted` to drop the declaration.
+        // Check that this yields zero declarations end to end (complementing
+        // `margin_shorthand_leaves_extra_values_for_caller_exhausted_check` in property.rs).
         let decls = parse_block("margin: 10px 20px 30px 40px 50px;");
         assert!(
             decls.is_empty(),
@@ -1613,8 +1613,8 @@ mod tests {
 
     #[test]
     fn margin_longhand_declaration_not_expanded() {
-        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
-        // shorthand-only expansion の scope を check する negative test。
+        // A longhand passes through the `expand_shorthand_into` match arm unchanged (one declaration).
+        // Negative test checking the scope of shorthand-only expansion.
         let decls = parse_block("margin-top: 10px;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
@@ -1627,8 +1627,8 @@ mod tests {
 
     #[test]
     fn padding_shorthand_expands_into_four_longhand_declarations() {
-        // `padding: 10px 20px` → 4 longhand (top=10, right=20, bottom=10, left=20)。
-        // (margin の parse-time expansion model を padding に migrate)
+        // `padding: 10px 20px` → four longhands (top=10, right=20, bottom=10, left=20).
+        // Migrate margin's parse-time expansion model to padding.
         let decls = parse_block("padding: 10px 20px;");
         assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
         assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
@@ -1645,8 +1645,8 @@ mod tests {
 
     #[test]
     fn padding_shorthand_important_flag_propagates_to_all_longhand() {
-        // spec CSS Cascading L4 §3: shorthand の `!important` は全 longhand に
-        // copy される (margin important 拡張と同じ)。
+        // CSS Cascading L4 §3: a shorthand's `!important` is copied to every longhand,
+        // as in the margin important extension.
         let decls = parse_block("padding: 5px !important;");
         assert_eq!(decls.len(), 4);
         for d in &decls {
@@ -1656,7 +1656,7 @@ mod tests {
 
     #[test]
     fn padding_longhand_declaration_not_expanded() {
-        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
+        // A longhand passes through the `expand_shorthand_into` match arm unchanged (one declaration).
         let decls = parse_block("padding-top: 10px;");
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
@@ -1664,19 +1664,19 @@ mod tests {
 
     // ── border shorthand expansion (CSS Cascading L4 §3) ──
     //
-    // `parse_declaration_block` は shorthand `border` を 12 longhand
-    // (4 side × 3 sub-property: width / style / color) に展開する。
-    // spec §3 "Shorthand Properties" の "sets all of its longhand sub-properties,
-    // exactly as if expanded in place" 準拠、cascade 段に shorthand key を
-    // 届かせない不変を parse-time で担保する。margin / padding
-    // precedent を 12 longhand shape に拡張。
+    // `parse_declaration_block` expands the `border` shorthand into 12 longhands
+    // (four sides × three sub-properties: width / style / color).
+    // Under spec §3 "Shorthand Properties", which "sets all of its longhand sub-properties,
+    // exactly as if expanded in place", parse-time expansion prevents shorthand
+    // keys from reaching the cascade. Extends the margin / padding
+    // precedent to a 12-longhand shape.
 
     #[test]
     fn border_shorthand_expands_into_twelve_longhand_declarations() {
-        // `border: 1px solid red` → 12 longhand (4 side × {width, style, color})。
+        // `border: 1px solid red` → 12 longhands (four sides × {width, style, color}).
         // order: top-w / top-s / top-c / right-w / right-s / right-c / bottom-* /
-        // left-* (`expand_shorthand_into` の hand-written
-        // order を check することでcopy-paste regression を検知)。
+        // Check the handwritten order of the `left-*` longhands in
+        // `expand_shorthand_into` to catch copy-paste regressions.
         let decls = parse_block("border: 1px solid red;");
         assert_eq!(
             decls.len(),
@@ -1689,9 +1689,9 @@ mod tests {
             b: 0,
             a: 255,
         };
-        // color longhand は `BorderColor::Resolved(red)`
-        // で cascade に届く (shorthand の author-specified color slot は
-        // Resolved variant を渡す — hazard case 3 の pin)。
+        // The color longhand reaches the cascade as `BorderColor::Resolved(red)`:
+        // the author's color slot in the shorthand is passed as the
+        // Resolved variant (pin for hazard case 3).
         let red_bc = BorderColor::Resolved(red);
         assert_eq!(
             decls[0].value,
@@ -1733,9 +1733,9 @@ mod tests {
 
     #[test]
     fn border_shorthand_important_flag_propagates_to_all_longhand() {
-        // spec CSS Cascading L4 §3: shorthand `!important` は全 longhand に copy
-        // される (margin / padding important 拡張と同 pattern、12 longhand 全て
-        // 検証)。
+        // CSS Cascading L4 §3: a shorthand's `!important` is copied to all longhands,
+        // as in the margin / padding important extensions; check all 12 longhands.
+        // as a regression check.
         let decls = parse_block("border: 5px dashed blue !important;");
         assert_eq!(decls.len(), 12);
         for d in &decls {
@@ -1745,9 +1745,9 @@ mod tests {
 
     #[test]
     fn border_longhand_declaration_not_expanded() {
-        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
-        // shorthand-only expansion の scope を check する negative test (margin /
-        // padding sibling と同 pattern)。
+        // A longhand passes through the `expand_shorthand_into` match arm unchanged (one declaration).
+        // Negative test checking shorthand-only expansion scope, as in the margin /
+        // padding sibling tests.
         let decls = parse_block("border-top-width: 10px;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
@@ -1796,10 +1796,10 @@ mod tests {
     #[test]
     fn border_shorthand_two_widths_declaration_dropped() {
         // property.rs `border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check`
-        // の end-to-end 側 check: `border: 1px 2px` は shorthand helper が 1px を
-        // width slot に置いた後 2px は他 slot (style/color) に match しないため
-        // fall-through 到達で leftover になり、caller の `expect_exhausted` が
-        // declaration 全体を drop する (0 decl)。
+        // End-to-end check: with `border: 1px 2px`, the shorthand helper puts 1px in
+        // the width slot, then 2px matches neither style nor color. It falls through
+        // and remains unconsumed, so the caller's `expect_exhausted` drops the whole
+        // declaration (zero declarations).
         let decls = parse_block("border: 1px 2px;");
         assert!(
             decls.is_empty(),
@@ -1982,8 +1982,8 @@ mod tests {
 
     #[test]
     fn font_shorthand_important_flag_propagates_to_all_longhand() {
-        // CSS Cascading 4 §3: shorthand `!important` は全 longhand に copy
-        // される (outline / overflow important 拡張と同 pattern)。
+        // CSS Cascading 4 §3: a shorthand's `!important` is copied to all longhands,
+        // as in the outline / overflow important extensions.
         let decls = parse_block("font: italic 12px serif !important;");
         assert_eq!(decls.len(), 15);
         for d in &decls {
@@ -1993,8 +1993,8 @@ mod tests {
 
     #[test]
     fn font_shorthand_invalid_declaration_expands_to_nothing() {
-        // System-font keyword / missing family は declaration ごと drop
-        // されるため、block 出口には何も残らない。
+        // System-font keywords / a missing family drop the whole declaration,
+        // leaving nothing at the block exit.
         assert!(parse_block("font: menu;").is_empty());
         assert!(parse_block("font: italic 12px;").is_empty());
     }
@@ -2035,8 +2035,8 @@ mod tests {
 
     #[test]
     fn overflow_shorthand_important_flag_propagates_to_all_longhand() {
-        // spec CSS Cascading L4 §3: shorthand `!important` は全 longhand に copy
-        // される (margin / padding / border important 拡張と同 pattern)。
+        // CSS Cascading L4 §3: a shorthand's `!important` is copied to all longhands,
+        // as in the margin / padding / border important extensions.
         let decls = parse_block("overflow: hidden !important;");
         assert_eq!(decls.len(), 2);
         for d in &decls {
@@ -2048,9 +2048,9 @@ mod tests {
     fn overflow_shorthand_three_values_declaration_dropped() {
         // property.rs
         // `overflow_shorthand_leaves_extra_values_for_caller_exhausted_check`
-        // の end-to-end 側 check: `parse_overflow_shorthand` は 2 value 消費、3rd
-        // 残り token は expect_exhausted で declaration 全体を drop する
-        // (0 decl、margin 5-value sibling と同 pattern)。
+        // End-to-end check: `parse_overflow_shorthand` consumes two values. The third,
+        // unconsumed token causes `expect_exhausted` to drop the entire declaration
+        // (zero declarations, as in the margin 5-value sibling test).
         let decls = parse_block("overflow: hidden scroll auto;");
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -2062,9 +2062,9 @@ mod tests {
 
     #[test]
     fn overflow_longhand_declaration_not_expanded() {
-        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl
-        // のまま)。shorthand-only expansion の scope を check する negative test
-        // (margin / padding / border sibling と同 pattern)。
+        // A longhand passes through the `expand_shorthand_into` match arm unchanged
+        // (one declaration). Negative test checking the scope of shorthand-only expansion,
+        // as in the margin / padding / border sibling tests.
         let decls = parse_block("overflow-x: hidden;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
@@ -2076,10 +2076,10 @@ mod tests {
     // ── text-decoration shorthand expansion (CSS Text Decoration Module
     // Level 3 §2.4) ──
     //
-    // `parse_declaration_block` は shorthand `text-decoration` を 3 longhand
+    // `parse_declaration_block` expands `text-decoration` into three longhands
     // (`TextDecorationLine` / `TextDecorationStyle` / `TextDecorationColor`)
-    // に展開する。margin / padding / border / overflow precedent と同じ
-    // parse-time expansion model。
+    // following the margin / padding / border / overflow precedent.
+    // parse-time expansion model.
 
     #[test]
     fn text_decoration_shorthand_expands_into_four_longhand_declarations() {
@@ -2087,9 +2087,9 @@ mod tests {
             TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextDecorationThickness,
         };
 
-        // `text-decoration: underline` → 4 longhand、省略成分
-        // (thickness/style/color) は spec initial で埋まる (property.rs
-        // `parse_text_decoration_shorthand` の "Initial value fill" 節)。
+        // `text-decoration: underline` produces four longhands; omitted components
+        // (thickness/style/color) get spec initial values (see "Initial value fill" in
+        // `parse_text_decoration_shorthand` in property.rs).
         let decls = parse_block("text-decoration: underline;");
         assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
         assert_eq!(
@@ -2112,9 +2112,9 @@ mod tests {
 
     #[test]
     fn text_decoration_shorthand_important_flag_propagates_to_all_longhand() {
-        // spec CSS Cascading L4 §3: shorthand `!important` は全 longhand に copy
-        // される (margin / padding / border / overflow important 拡張と同
-        // pattern)。
+        // CSS Cascading L4 §3: a shorthand's `!important` is copied to all longhands,
+        // as in the margin / padding / border / overflow important extensions.
+        // pattern).
         let decls = parse_block("text-decoration: underline !important;");
         assert_eq!(decls.len(), 4);
         for d in &decls {
@@ -2126,8 +2126,8 @@ mod tests {
     fn text_decoration_shorthand_two_style_components_declaration_dropped() {
         // property.rs
         // `text_decoration_shorthand_two_style_components_leaves_leftover_for_caller_exhausted_check`
-        // の end-to-end 側 check: 2nd style keyword は leftover token として
-        // expect_exhausted に検知され、declaration 全体が drop される (0 decl)。
+        // End-to-end check: a second style keyword is unconsumed; `expect_exhausted`
+        // detects it and drops the entire declaration (zero declarations).
         let decls = parse_block("text-decoration: solid wavy;");
         assert!(
             decls.is_empty(),
@@ -2139,9 +2139,9 @@ mod tests {
     fn text_decoration_longhand_declarations_not_expanded() {
         use crate::property::{TextDecorationColor, TextDecorationLine, TextDecorationStyle};
 
-        // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl
-        // のまま)。shorthand-only expansion の scope を check する negative test
-        // (margin / padding / border / overflow sibling と同 pattern)。
+        // A longhand passes through the `expand_shorthand_into` match arm unchanged
+        // (one declaration). Negative test checking shorthand-only expansion scope,
+        // as in the margin / padding / border / overflow sibling tests.
         let decls = parse_block("text-decoration-line: underline;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
@@ -2179,7 +2179,7 @@ mod tests {
         // lets a later bare `text-decoration: underline` reset an earlier
         // `text-decoration-style: wavy` back to `solid` through ordinary
         // cascade order-of-appearance (see
-        // `crate::cascade::tests::text_decoration_shorthand_resets_earlier_longhand_declarations` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+        // `crate::cascade::tests::text_decoration_shorthand_resets_earlier_longhand_declarations` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — invisible to rustdoc, confirmed by deliberately breaking the link
         // for the end-to-end cascade pin).
         use crate::property::{TextDecorationColor, TextDecorationStyle};
 

@@ -4,25 +4,25 @@ use taffy::Style;
 #[test]
 fn apply_computed_to_style_bridges_display_to_taffy() {
     // display bridge active — DisplayValue → taffy::Display
-    // mapping が正しく行われていることを確認する regression check。
+    // Regression check that the mapping is correct.
     //
-    // bridge_margin が dispatch に加わったが
-    // margin unspecified の element では initial `Sides::all(Length::Px(0.0))`
-    // が cascade で入る → taffy `LengthPercentageAuto::length(0.0)` に translate、
-    // これは `taffy::Style::default().margin` (all `Length(0.0)`) と一致するため
-    // 既存 assertion は無変更で通ることを確認する check にもなる。
+    // Adding bridge_margin to the dispatch still preserves the existing assertion:
+    // for elements without an explicit margin, the cascade supplies initial
+    // `Sides::all(Length::Px(0.0))`, translated to taffy's
+    // `LengthPercentageAuto::length(0.0)`. This equals
+    // `taffy::Style::default().margin` (all `Length(0.0)`).
     //
-    // bridge_padding も dispatch に
-    // 加わったが同様に padding unspecified の element では initial
+    // Likewise, adding bridge_padding to the dispatch preserves the
+    // padding assertion: an unspecified padding has the initial
     // `Sides::all(Length::Px(0.0))` → taffy `LengthPercentage::length(0.0)`
-    // が入り、`taffy::Style::default().padding` と一致するため padding assertion
-    // も無変更で通る pin。
+    // value, matching `taffy::Style::default().padding`; no change to
+    // that assertion is needed.
     //
-    // bridge_size (width) が dispatch に
-    // 加わったが width unspecified の element は initial `LengthOrAuto::Auto`
-    // → `Dimension::auto()` に translate、これは `taffy::Style::default().size`
-    // (`Size::auto()`) の width と一致 (height は default 保持のまま追加予定)。
-    // 既存 `size == default_style.size` 相当 assertion は変化なく通る。
+    // Adding bridge_size (width) to the dispatch also preserves the
+    // size assertion: unspecified width has initial `LengthOrAuto::Auto`,
+    // translated to `Dimension::auto()`. That matches the width of
+    // `taffy::Style::default().size` (`Size::auto()`); height was initially
+    // left at its default. The existing size-equals-default assertion still passes.
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -265,7 +265,7 @@ fn establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row() {
     use raikiri_style::{build_rule_tree, cascade};
 
     // `build_rule_tree` deliberately excludes UA CSS (its own doc:
-    // "UA CSS は含めない" — UA is injected via `raikiri_html::parse`
+    // "Exclude UA CSS": `raikiri_html::parse` injects the UA stylesheet.
     // during real HTML parsing, which this hand-built-arena test
     // fixture bypasses). So every element's own display is declared
     // explicitly via inline style below, rather than relying on a
@@ -645,9 +645,9 @@ fn establish_minimal_line_boxes_lays_out_children_side_by_side_not_stacked() {
 
 #[test]
 fn text_align_center_on_flex_line_box_uses_justify_content() {
-    // qualify する container (2+ inline-level children) の中央寄せは
-    // container 側の `justify_content: Center` で実現すること
-    // (parley 側ではなく flex 側 — `realign_text_after_layout` doc 参照)。
+    // Center a qualifying container (2+ inline-level children) using its
+    // `justify_content: Center` property, rather than Parley alignment.
+    // The flex layout handles this; see `realign_text_after_layout`'s docs.
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -673,7 +673,7 @@ fn text_align_center_on_flex_line_box_uses_justify_content() {
         "centered line-box container must center via flex justify_content"
     );
 
-    // end-to-end: line box 全体が container 中央に寄ること。
+    // End-to-end: the entire line box is centered within its container.
     use parley::FontContext;
     use raikiri_traits::PageBox;
     layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
@@ -996,18 +996,18 @@ fn apply_computed_to_style_reserves_inside_list_marker_gutter() {
 
 #[test]
 fn apply_computed_to_style_bridges_margin_to_taffy() {
-    // bridge_margin が
-    // Sides<ComputedLengthPercentageOrAuto> を taffy::Rect<LengthPercentageAuto>
-    // に translate することを確認する regression check。bridge の 3 分岐
-    // (Px / Percent / Auto) をそれぞれ 1 case で covering。
+    // Regression check that bridge_margin translates
+    // Sides<ComputedLengthPercentageOrAuto> into taffy::Rect<LengthPercentageAuto>.
+    // Cover each of the three bridge branches (Px / Percent / Auto)
+    // with one case.
     //
-    // Case 4 の `pt` は bridge の分岐ではなくなった
-    // (cascade の phase 3 が px に絶対化する) が、end-to-end の期待値は
-    // 変わらないので test は残す。
+    // `pt` in Case 4 no longer has a separate bridge branch
+    // (cascade phase 3 converts it to px), but the end-to-end expected
+    // value is unchanged, so keep the test.
     //
-    // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
-    // → body.style.margin を assert。inline style 経由なので raikiri-style
-    // の parse_margin_shorthand + longhand path も同時に regression check。
+    // Test approach: each case has an independent fixture that cascades,
+    // calls apply_computed_to_style, then asserts body.style.margin.
+    // The inline style also checks raikiri-style's shorthand and longhand margin parsing.
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::{LengthPercentageAuto, Rect};
 
@@ -1022,9 +1022,9 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     }
 
     // Case 1: shorthand `margin: 10px 20px 30px 40px` (top/right/bottom/left)
-    //   → Rect { top: 10, right: 20, bottom: 30, left: 40 } (all Px identity)。
-    //   Sides.top,right,bottom,left → Rect.top,right,bottom,left の field-name
-    //   mapping を check (positional silent transpose を防ぐ)。
+    //   → Rect { top: 10, right: 20, bottom: 30, left: 40 } (Px unchanged).
+    //   Pin the field-name mapping from Sides.top,right,bottom,left to
+    //   Rect.top,right,bottom,left (to prevent a silent positional transpose).
     assert_eq!(
         margin_for("margin: 10px 20px 30px 40px"),
         Rect {
@@ -1035,7 +1035,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
         }
     );
 
-    // Case 2: shorthand `margin: auto` → 4 side 全て auto()。
+    // Case 2: shorthand `margin: auto` → auto() on all four sides.
     assert_eq!(
         margin_for("margin: auto"),
         Rect {
@@ -1046,9 +1046,9 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
         }
     );
 
-    // Case 3: longhand `margin-left: 50%` → left = percent(0.5)、他 3 side は
-    //   initial (0.0 px)。CSS spec の authored 0-100 → taffy fraction 0.0-1.0
-    //   の div-by-100 policy を pin。
+    // Case 3: longhand `margin-left: 50%` → left = percent(0.5); the other
+    //   three sides retain initial 0.0 px. Pin conversion of authored CSS
+    //   percentages 0–100 to taffy fractions 0.0–1.0 by dividing by 100.
     assert_eq!(
         margin_for("margin-left: 50%"),
         Rect {
@@ -1059,17 +1059,17 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
         }
     );
 
-    // Case 4: longhand `margin-top: 10pt` → top = length(10 * 4/3) = length(13.333...)。
-    //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
-    //   **この変換は bridge ではなく cascade の phase 3
-    //   (`raikiri_style::resolve_length_percentage_or_auto`) が行う**。
-    //   bridge に届く時点で既に px。本 case は
-    //   end-to-end の値を check する。
-    //   f32 bit-identical assert のため右辺を expression のまま書く
-    //   (`13.333` literal は round-trip で drift する。この式は
-    //   `resolve::pt_to_px` 本体と同じ `v * 4.0 / 3.0` の評価順を使う —
-    //   f32 は結合則を満たさないため簡約すると bit が変わる。詳細は
-    //   `resolve::pt_to_px` の doc 参照)。
+    // Case 4: longhand `margin-top: 10pt` → length(10 * 4/3) = length(13.333...).
+    //   CSS Values 4 §6.2: `1pt = 4/3 px` (1pt=1/72in, 1in=96px → 96/72=4/3).
+    //   **Cascade phase 3 performs this conversion, not the bridge**
+    //   (`raikiri_style::resolve_length_percentage_or_auto`).
+    //   Values have already become px when they reach the bridge. This case
+    //   checks the value end to end.
+    //   Keep the right-hand side as an expression for a bit-identical f32 assertion:
+    //   the `13.333` literal drifts after rounding. This expression uses
+    //   the `v * 4.0 / 3.0` evaluation order of `resolve::pt_to_px` itself;
+    //   simplifying it changes bits because f32 arithmetic is not associative.
+    //   See the docs for `resolve::pt_to_px`.
     assert_eq!(
         margin_for("margin-top: 10pt"),
         Rect {
@@ -1083,19 +1083,19 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_padding_to_taffy() {
-    // bridge_padding が
-    // Sides<ComputedLengthPercentage> を taffy::Rect<LengthPercentage> に
-    // translate することを確認する regression check。padding は margin と違い
-    // `auto` を持たない (<length-percentage `[0,∞]`>) ため bridge は **2 arm**
-    // (Px / Percent) で網羅する。
+    // Regression check that bridge_padding translates
+    // Sides<ComputedLengthPercentage> into taffy::Rect<LengthPercentage>.
+    // Unlike margin, padding does not accept `auto`
+    // (<length-percentage `[0,∞]`>), so **two arms**
+    // (Px / Percent) exhaust the bridge.
     //
-    // Case 3 の `pt` は **bridge の分岐ではなくなった**
-    // (cascade の phase 3 が px に絶対化する) が、end-to-end の期待値は
-    // 変わらないので test は残す。
+    // `pt` in Case 3 is **no longer a bridge branch**
+    // (cascade phase 3 converts it to px), but the end-to-end expected
+    // value is unchanged, so keep the test.
     //
-    // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
-    // → body.style.padding を assert。inline style 経由なので raikiri-style
-    // の parse_padding_shorthand + longhand path も同時に regression check。
+    // Test approach: each case has an independent fixture that cascades,
+    // calls apply_computed_to_style, then asserts body.style.padding.
+    // The inline style also checks raikiri-style's shorthand and longhand padding parsing.
     use raikiri_style::{build_rule_tree, cascade};
 
     fn padding_for(inline: &str) -> Rect<LengthPercentage> {
@@ -1109,10 +1109,10 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
     }
 
     // Case 1: shorthand `padding: 5px 10px 15px 20px` (top/right/bottom/left)
-    //   → Rect { top: 5, right: 10, bottom: 15, left: 20 } (all Px identity)。
-    //   Sides.top,right,bottom,left → Rect.top,right,bottom,left の field-name
-    //   mapping を check (positional silent transpose を防ぐ — Sides の field 順は
-    //   top,right,bottom,left、Rect の field 順は left,right,top,bottom で異なる)。
+    //   → Rect { top: 5, right: 10, bottom: 15, left: 20 } (Px unchanged).
+    //   Pin the field-name mapping from Sides.top,right,bottom,left to
+    //   Rect.top,right,bottom,left to prevent a silent transpose: `Sides`
+    //   orders fields top,right,bottom,left; `Rect` orders left,right,top,bottom.
     assert_eq!(
         padding_for("padding: 5px 10px 15px 20px"),
         Rect {
@@ -1123,9 +1123,9 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
         }
     );
 
-    // Case 2: longhand `padding-left: 5%` → left = percent(0.05)、他 3 side は
-    //   initial (0.0 px)。CSS spec の authored 0-100 → taffy fraction 0.0-1.0
-    //   の div-by-100 policy を pin。
+    // Case 2: longhand `padding-left: 5%` → left = percent(0.05); the other
+    //   three sides retain initial 0.0 px. Pin conversion of authored CSS
+    //   percentages 0–100 to taffy fractions 0.0–1.0 by dividing by 100.
     assert_eq!(
         padding_for("padding-left: 5%"),
         Rect {
@@ -1136,12 +1136,12 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
         }
     );
 
-    // Case 3: longhand `padding-top: 3pt` → top = length(3 * 4/3) = length(4.0)。
-    //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
-    //   **変換の所在は cascade の phase 3** (`resolve_length_percentage`) で
-    //   bridge ではない。
-    //   f32 bit-identical assert のため右辺を expression のまま書く
-    //   (`4.0` literal は 3*4/3 と bit-identical だが policy 明示のため式のまま)。
+    // Case 3: longhand `padding-top: 3pt` → length(3 * 4/3) = length(4.0).
+    //   CSS Values 4 §6.2: `1pt = 4/3 px` (1pt=1/72in, 1in=96px → 96/72=4/3).
+    //   **Cascade phase 3** (`resolve_length_percentage`) performs the conversion,
+    //   not the bridge.
+    //   Keep the right-hand side as an expression for a bit-identical f32 assertion.
+    //   (`4.0` happens to be bit-identical to 3*4/3, but the expression states the policy.)
     assert_eq!(
         padding_for("padding-top: 3pt"),
         Rect {
@@ -1156,29 +1156,29 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
 #[test]
 fn apply_computed_to_style_bridges_width_to_taffy() {
     // bridge_size (width component)
-    // が cv.width: ComputedLengthPercentageOrAuto を taffy::Style::size.width:
-    // Dimension に translate することを check する。bridge の 3 分岐
-    // (Px / Percent / Auto) をそれぞれ 1 case で covering
-    // (`pt` は cascade の phase 3 で px 化される)。
+    // translates cv.width: ComputedLengthPercentageOrAuto into
+    // taffy::Style::size.width: Dimension. Check each of its three branches
+    // (Px / Percent / Auto) with one case
+    // (`pt` is converted to px in cascade phase 3).
     //
-    // Test 戦略: fixture は **非 body element** (この場合 `<p>`) を使う —
-    // `<body>` は後段 `apply_page_box_to_body` で clobber されるため本 bridge
-    // の効果は observable でない (別 test `apply_page_box_clobbers_body_width_from_bridge`
-    // で clobber 挙動を pin)。inline style 経由なので raikiri-style の
-    // parse_width path + ComputedLengthPercentageOrAuto encoding も同時に
-    // regression check。
+    // Test approach: use a **non-body element** (here `<p>`) as the fixture:
+    // `<body>` is overwritten by `apply_page_box_to_body` later, so the
+    // bridge's effect is not observable there. A separate test,
+    // `apply_page_box_clobbers_body_width_from_bridge`, pins that behavior.
+    // The inline style also checks raikiri-style's parse_width path and
+    // ComputedLengthPercentageOrAuto encoding as a regression check.
     //
-    // 本 test は width 軸に絞る — height 軸は sibling test
+    // This test covers only width; the sibling test
     // `apply_computed_to_style_bridges_height_to_taffy`
-    // が同 fixture pattern で LengthOrAuto → Dimension bridge を check する。
+    // checks the same LengthOrAuto → Dimension bridge pattern for height.
     use raikiri_style::{build_rule_tree, cascade};
 
     fn width_for(inline: &str) -> Dimension {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        // 非 body element (p) に inline を載せる。apply_page_box_to_body は
-        // body だけを触るため、p の style.size は bridge 実行後そのまま観測可能。
+        // Put the inline style on non-body element p. Since
+        // apply_page_box_to_body only touches body, p's style.size is observable after the bridge.
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1186,21 +1186,21 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
         doc.nodes[p].style.size.width
     }
 
-    // Case 1: `width: 100px` → Dimension::length(100.0) (Px identity)。
+    // Case 1: `width: 100px` → Dimension::length(100.0) (Px unchanged).
     assert_eq!(width_for("width: 100px"), Dimension::length(100.0));
 
     // Case 2: `width: auto` → Dimension::auto()
-    //   (ComputedLengthPercentageOrAuto::Auto arm)。
+    //   (ComputedLengthPercentageOrAuto::Auto arm).
     assert_eq!(width_for("width: auto"), Dimension::auto());
 
-    // Case 3: `width: 50%` → Dimension::percent(0.5)。CSS spec の authored
-    //   0-100 → taffy fraction 0.0-1.0 の div-by-100 policy を pin。
+    // Case 3: `width: 50%` → Dimension::percent(0.5). Pin conversion of
+    //   authored CSS percent 0–100 to taffy fraction 0.0–1.0 by dividing by 100.
     assert_eq!(width_for("width: 50%"), Dimension::percent(0.5));
 
-    // Case 4: `width: 20pt` → Dimension::length(20 * 4/3) = length(26.666...)。
-    //   CSS Values 4 §6.2 の `1pt = 4/3 px` (1pt=1/72in、1in=96px → 96/72=4/3)。
-    //   **変換の所在は cascade の phase 3** で bridge ではない。
-    //   f32 bit-identical assert のため右辺を expression で書く。
+    // Case 4: `width: 20pt` → Dimension::length(20 * 4/3) = length(26.666...).
+    //   CSS Values 4 §6.2: `1pt = 4/3 px` (1pt=1/72in, 1in=96px → 96/72=4/3).
+    //   **Cascade phase 3**, not the bridge, performs the conversion.
+    //   Keep the right-hand side as an expression for a bit-identical f32 assertion.
     assert_eq!(
         width_for("width: 20pt"),
         Dimension::length(20.0 * 4.0 / 3.0)
@@ -1209,33 +1209,33 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_height_to_taffy() {
-    // bridge_size の height 側
-    // 拡張。cv.height: ComputedLengthPercentageOrAuto を
-    // taffy::Style::size.height: Dimension に translate することを check する。
-    // sibling test `apply_computed_to_style_bridges_width_to_taffy` と
-    // 対を成し、struct literal 化 (Size { width, height } の 1 発
-    // assign) で height 側の 3 分岐 (Px / Percent / Auto) が意図通り
-    // 書き込まれるか確認する。
+    // Height support in bridge_size extends its width mapping.
+    // Check that cv.height: ComputedLengthPercentageOrAuto becomes
+    // taffy::Style::size.height: Dimension. This pairs with the
+    // sibling test `apply_computed_to_style_bridges_width_to_taffy`.
+    // The single struct-literal assignment (Size { width, height }) should
+    // write all three height branches (Px / Percent / Auto)
+    // as intended.
     //
-    // Test 戦略: fixture は **非 body element** (`<p>`) を使う — `<body>` は
-    // 後段 `apply_page_box_to_body` で height も clobber されるため本 bridge
-    // の効果は body 上で observable でない。inline style 経由で raikiri-style
-    // の parse_height path + ComputedLengthPercentageOrAuto encoding も同時に
-    // regression check。
+    // Test approach: use a **non-body element** (`<p>`) as the fixture:
+    // the later `apply_page_box_to_body` also overwrites height on `<body>`,
+    // so the bridge's effect is not observable there. The inline style
+    // also checks raikiri-style's parse_height path and the
+    // ComputedLengthPercentageOrAuto encoding as a regression check.
     //
-    // Pt case は sibling width test が同じ
-    // computed_length_percentage_or_auto_to_taffy_dimension policy を
-    // check しているため redundant (かつ pt → px 変換は
-    // cascade の phase 3 の責務)。ここでは height
-    // 特有の 3 arm (auto default 保持、`Px` 通路、`Percent` 通路) に絞る。
+    // The sibling width test already checks the same
+    // computed_length_percentage_or_auto_to_taffy_dimension policy for pt,
+    // so that case is redundant (and cascade phase 3 owns pt → px conversion).
+    // Focus instead on height's three branches: preserving the auto default,
+    // the `Px` path, and the `Percent` path.
     use raikiri_style::{build_rule_tree, cascade};
 
     fn height_for(inline: &str) -> Dimension {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        // 非 body element (p) に inline を載せる。apply_page_box_to_body は
-        // body だけを触るため、p の style.size は bridge 実行後そのまま観測可能。
+        // Put the inline style on non-body element p. Since
+        // apply_page_box_to_body only touches body, p's style.size is observable after the bridge.
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1243,32 +1243,32 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
         doc.nodes[p].style.size.height
     }
 
-    // Case 1: `height: 100px` → Dimension::length(100.0) (Px identity)。
+    // Case 1: `height: 100px` → Dimension::length(100.0) (Px unchanged).
     assert_eq!(height_for("height: 100px"), Dimension::length(100.0));
 
     // Case 2: `height: auto` → Dimension::auto()
-    //   (ComputedLengthPercentageOrAuto::Auto arm)。
-    //   CSS Sizing 3 §3.1.1 initial `height: auto` の identity round-trip pin。
+    //   (ComputedLengthPercentageOrAuto::Auto arm).
+    //   Pin the identity round-trip of initial `height: auto` in CSS Sizing 3 §3.1.1.
     assert_eq!(height_for("height: auto"), Dimension::auto());
 
-    // Case 3: `height: 50%` → Dimension::percent(0.5)。CSS spec の authored
-    //   0-100 → taffy fraction 0.0-1.0 の div-by-100 policy を pin。
+    // Case 3: `height: 50%` → Dimension::percent(0.5). Pin conversion of
+    //   authored CSS percent 0–100 to taffy fraction 0.0–1.0 by dividing by 100.
     assert_eq!(height_for("height: 50%"), Dimension::percent(0.5));
 }
 
 #[test]
 fn apply_computed_to_style_bridges_min_size_to_taffy() {
-    // bridge_min_max_size の min 側。cv.min_width / cv.min_height:
-    // ComputedLengthPercentageOrAuto を taffy::Style::min_size:
-    // Size<Dimension> に translate することを check する。sibling test
-    // `apply_computed_to_style_bridges_height_to_taffy` と同 fixture
-    // pattern (非 body element `<p>` — body は apply_page_box_to_body
-    // が size のみ clobber し min/max には触らないが、size 系 test と
-    // 同じ fixture に揃える)。
+    // Min-size half of bridge_min_max_size: translate cv.min_width / cv.min_height,
+    // both ComputedLengthPercentageOrAuto, into taffy::Style::min_size,
+    // a Size<Dimension>. Use the same fixture pattern as the
+    // sibling `apply_computed_to_style_bridges_height_to_taffy` test:
+    // a non-body `<p>`. `apply_page_box_to_body` overwrites only size on
+    // body, not min/max; this fixture stays consistent with the other
+    // size tests.
     //
-    // CSS Sizing 3 §4 initial `auto` の identity round-trip (unspecified
-    // → taffy default と一致) も同時に check — bridge が unspecified 時に
-    // default を壊さないことの regression guard。
+    // Also check the identity round-trip of initial `auto` (CSS Sizing 3 §4):
+    // unspecified values match the taffy default. This guards against
+    // changing the default when the property is unspecified.
     use raikiri_style::{build_rule_tree, cascade};
 
     fn min_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
@@ -1282,10 +1282,10 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
         doc.nodes[p].style.min_size
     }
 
-    // Case 1: unspecified → taffy default (min initial `auto` round-trip)。
+    // Case 1: unspecified → taffy default (initial min `auto` round-trip).
     assert_eq!(min_for(None), <taffy::Style as Default>::default().min_size);
 
-    // Case 2: `min-width: 100px; min-height: 50%` → length + percent。
+    // Case 2: `min-width: 100px; min-height: 50%` → length + percent.
     assert_eq!(
         min_for(Some("min-width: 100px; min-height: 50%")),
         Size {
@@ -1294,13 +1294,13 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
         }
     );
 
-    // Case 3: `min-width: auto` → LengthPercentageAuto::auto() (no minimum)。
+    // Case 3: `min-width: auto` → LengthPercentageAuto::auto() (no minimum).
     assert_eq!(
         min_for(Some("min-width: auto")).width,
         LengthPercentageAuto::auto()
     );
 
-    // Case 4: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
+    // Case 4: negative values violate grammar `[0,∞]`, so the declaration is dropped; Auto remains.
     assert_eq!(
         min_for(Some("min-width: -10px")).width,
         LengthPercentageAuto::auto()
@@ -1309,13 +1309,13 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_max_size_to_taffy() {
-    // bridge_min_max_size の max 側。cv.max_width / cv.max_height を
-    // taffy::Style::max_size: Size<Dimension> に translate することを check
-    // する。sibling min test と同 fixture pattern。
+    // Max-size half of bridge_min_max_size: translate cv.max_width / cv.max_height
+    // into taffy::Style::max_size: Size<Dimension>.
+    // Use the same fixture pattern as the sibling min-size test.
     //
     // CSS Sizing 3 §5 initial `none` → computed Auto placeholder →
-    // `Dimension::auto()` (no max) の連鎖を check — unspecified が taffy
-    // default と一致することも同時に確認する。
+    // `Dimension::auto()` (no maximum). Also check that unspecified values
+    // match the taffy default.
     use raikiri_style::{build_rule_tree, cascade};
 
     fn max_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
@@ -1329,10 +1329,10 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
         doc.nodes[p].style.max_size
     }
 
-    // Case 1: unspecified → taffy default (max initial `none` round-trip)。
+    // Case 1: unspecified → taffy default (initial max `none` round-trip).
     assert_eq!(max_for(None), <taffy::Style as Default>::default().max_size);
 
-    // Case 2: `max-width: 100px; max-height: 50%` → length + percent。
+    // Case 2: `max-width: 100px; max-height: 50%` → length + percent.
     assert_eq!(
         max_for(Some("max-width: 100px; max-height: 50%")),
         Size {
@@ -1349,13 +1349,13 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
             .is_calc()
     );
 
-    // Case 4: `max-width: none` → LengthPercentageAuto::auto() (no max)。
+    // Case 4: `max-width: none` → LengthPercentageAuto::auto() (no maximum).
     assert_eq!(
         max_for(Some("max-width: none")).width,
         LengthPercentageAuto::auto()
     );
 
-    // Case 5: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
+    // Case 5: negative values violate grammar `[0,∞]`, so the declaration is dropped; Auto remains.
     assert_eq!(
         max_for(Some("max-height: -10px")).height,
         LengthPercentageAuto::auto()
@@ -1364,37 +1364,37 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_border_to_taffy() {
-    // bridge_border が
-    // Sides<ComputedBorder> を taffy::Rect<LengthPercentage> に translate
-    // することを確認する regression check。
+    // Regression check that bridge_border translates
+    // Sides<ComputedBorder> to taffy::Rect<LengthPercentage>.
+    // The assertion checks the mapping end to end.
     //
-    // spec correctness gate: border-style が `none` / `hidden` の場合、
-    // specified border-width にかかわらず width は 0 でなければならない。
-    // **gate の所在は本 bridge ではなく上流の
-    // `raikiri_style::resolve_border` (computed 層)** — CSS Backgrounds 3
+    // Spec-correctness gate: if border-style is `none` or `hidden`, width
+    // must be zero regardless of the specified border-width.
+    // **This gate belongs upstream in `raikiri_style::resolve_border`,
+    // at the computed-value stage, not in this bridge**. CSS Backgrounds 3
     // §3.3 "Line Thickness: the border-width properties"
-    // <https://www.w3.org/TR/css-backgrounds-3/#border-width> の propdef が
+    // <https://www.w3.org/TR/css-backgrounds-3/#border-width> states in its propdef:
     // "Computed value: absolute length, snapped as a border width; zero if
-    // the border style is none or hidden" と規定するため (TR 版 — ED は
-    // CSSWG Issue 11494 で resolved-value 効果へ移動済)
-    // (used 層から computed 層へ移動済で、bridge 側の
-    // `used_border_width` helper は削除済)。§3.2 "Line Patterns: the
+    // the border style is none or hidden" (TR version; the ED moved the
+    // effect to resolved values in CSSWG Issue 11494).
+    // The gate moved from used values to computed values, and the bridge's
+    // `used_border_width` helper was removed. Section 3.2, "Line Patterns: the
     // border-style properties"
-    // <https://www.w3.org/TR/css-backgrounds-3/#border-style> の `none` も
+    // <https://www.w3.org/TR/css-backgrounds-3/#border-style> also says for `none`:
     // "No border. Color and width are ignored (i.e., the border has width
-    // 0)." と整合する。
+    // 0)." The two descriptions agree.
     //
-    // 本 test は依然 gating の **end-to-end** check である (gate が上流に
-    // 移っても `5px none red` の 5px が taffy に leak しないことを保証する
-    // のが目的)。§ 番号と引用は spec の `data-level` / 本文実測に基づく —
-    // 以前あった "§5.2 The used values of the corresponding border-*-width
-    // become 0." は css-backgrounds-3 に存在しない文だったので差し替えた。
+    // This remains an **end-to-end** gating check: even though the gate moved
+    // upstream, a `5px none red` border must not leak 5px into taffy.
+    // Section numbers and quotations were checked against the spec's
+    // `data-level` and text. The older "§5.2 The used values of the
+    // corresponding border-*-width become 0." did not exist in css-backgrounds-3.
     //
-    // Test 戦略: `border: <w> <s> <c>` 4-side shorthand と longhand の
-    // 両方を使い、shorthand 展開 → per-side cascade → bridge_border の
-    // pipeline を end-to-end で check する (単一 side shorthand
-    // `border-top: ...` は現時点で parser 未対応、
-    // computed.rs 228-229 参照)。
+    // Test approach: use both the four-side `border: <w> <s> <c>` shorthand
+    // and longhands. Check the entire shorthand expansion → per-side
+    // cascade → bridge_border pipeline. The single-side shorthand
+    // `border-top: ...` is not yet supported by the parser;
+    // see computed.rs lines 228–229.
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::{LengthPercentage, Rect};
 
@@ -1409,9 +1409,9 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     }
 
     // Case 1 (positive path): `border: 5px solid red` shorthand → 4 side
-    //   全て width=5、style=solid で cascade。gating off (solid ≠ None/Hidden)
-    //   なので 4 side 全て length(5.0) になる。Rect.top/right/bottom/left ↔
-    //   Sides.top/right/bottom/left の field-name mapping pin。
+    //   cascades with width=5 and style=solid on every side. No gating
+    //   applies (solid ≠ None/Hidden), so all four sides become length(5.0).
+    //   Pin the Rect.top/right/bottom/left ↔ Sides.top/right/bottom/left field-name mapping.
     assert_eq!(
         border_for("border: 5px solid red"),
         Rect {
@@ -1423,10 +1423,10 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     );
 
     // Case 2 (spec correctness): `border: 5px none red` shorthand
-    //   → 4 side 全て width=5, style=None で cascade。§3.2 の `none` と
-    //   §3.3 propdef (TR 版、逐語引用は冒頭 block) による style-gating で
-    //   computed width = 0 → 4 side 全て length(0.0)。gating が壊れると 5.0
-    //   が leak するので、この case が canary。
+    //   → width=5, style=None on all four sides. Style gating under §3.2
+    //   and the §3.3 propdef (TR; quoted above) sets each computed
+    //   width to zero, yielding length(0.0) on all four sides. If gating
+    //   breaks, 5.0 leaks through; this case is the canary.
     assert_eq!(
         border_for("border: 5px none red"),
         Rect {
@@ -1438,11 +1438,11 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     );
 
     // Case 3 (spec correctness): `border: 5px hidden red`
-    //   shorthand → computed width = 0。直接の根拠は §3.3 propdef (TR 版) が
-    //   `none` と並べて `hidden` を名指ししていること。§3.2 の `hidden` は
+    //   shorthand → computed width = 0. The direct basis is the §3.3
+    //   propdef (TR), which names `hidden` alongside `none`. Section 3.2 says:
     //   "Same as none, but has different behavior in the border conflict
-    //   resolution rules for border-collapsed tables `CSS2`." であり、`none`
-    //   との差は border-collapsed table の conflict resolution だけ。
+    //   resolution rules for border-collapsed tables `CSS2`." Thus its only
+    //   difference from `none` is conflict resolution for collapsed table borders.
     assert_eq!(
         border_for("border: 5px hidden red"),
         Rect {
@@ -1454,9 +1454,9 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     );
 
     // Case 4 (pt unit conversion): `border-top-width: 3pt` + solid → top
-    //   only、他 3 side は initial (width=medium=3px, style=None) → gating
-    //   で length(0.0)。top は 3pt × 4/3 = 4.0 px (CSS Values 4 §6.2、
-    //   1pt = 96/72 px = 4/3 px)。f32 bit-identical のため右辺は式のまま。
+    //   only; the other three sides retain initial width=medium=3px and
+    //   style=None, so gating yields length(0.0). Top is 3pt × 4/3 = 4.0 px
+    //   (CSS Values 4 §6.2: 1pt = 96/72 px = 4/3 px). Keep the right-hand side as an expression for bit-identical f32.
     assert_eq!(
         border_for("border-top-width: 3pt; border-top-style: solid"),
         Rect {
@@ -1468,14 +1468,14 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     );
 
     // Case 5 (medium keyword): `border-top-width: medium` + solid → top =
-    //   3.0 px (property.rs `parse_border_width_side` 参照)。§3.3 は "The
+    //   3.0 px (see `parse_border_width_side` in property.rs). Section 3.3 says:
     //   thin, medium, and thick keywords are equivalent to 1px, 3px, and
-    //   5px, respectively." と**固定値を規定**する。CSS2.1 §8.5.1
+    //   5px, respectively." These are **fixed values**. Unlike CSS2.1 §8.5.1,
     //   <https://www.w3.org/TR/CSS21/box.html#border-width-properties>
-    //   の "The interpretation of the first three values depends on the
-    //   user agent." から性格が変わっている点に注意。他 3 side は Case 4
-    //   同様 gating で 0。medium keyword が Length::Px(3.0) にパースされる
-    //   ことを end-to-end で pin。
+    //   which says "The interpretation of the first three values depends on the
+    //   user agent," the newer spec fixes them. The other three sides are
+    //   zero after gating, as in Case 4. Pin the parsing of `medium` to
+    //   Length::Px(3.0) end to end.
     assert_eq!(
         border_for("border-top-width: medium; border-top-style: solid"),
         Rect {
@@ -1487,36 +1487,36 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     );
 }
 
-/// `ComputedBorder::width` / `::style` を `pub`
-/// field から `pub(crate)` + read-only accessor へ narrow した動機になった
-/// invariant の end-to-end pin。
+/// `ComputedBorder::width` / `::style` were narrowed from `pub` fields
+/// to `pub(crate)` fields with read-only accessors to maintain this
+/// invariant; this is an end-to-end pin.
 ///
-/// `border-top-width` だけを宣言し `border-top-style` を宣言しない
-/// (= 未宣言側の computed style は initial `none`、CSS Backgrounds 3
-/// §3.2) 素朴な入力で、declared width が bridge を通って taffy に **0** と
-/// して届くことを確認する。narrowing 前はこの gate を consumer が
-/// `ComputedValues::initial()` 等で得た `ComputedBorder` の
-/// `.style = BorderStyle::None` 直接書き換えで迂回でき、`.width` が非 0 の
-/// まま taffy に leak し得た (`used_border_width` bridge 削除後)。narrowing は
-/// `width` / `style` に限り crate 外
-/// からのその書き換え経路を塞ぐ — `color` は pub のまま、
-/// `cv.border.top = cv.border.left` のような side 単位の丸ごと代入も
-/// 引き続き可能で、いずれも本 invariant を破らない。
+/// Declare only `border-top-width`, not `border-top-style`.
+/// The undeclared computed style remains the initial `none` (CSS Backgrounds 3
+/// §3.2). This simple input checks that the declared width reaches taffy
+/// as **zero** after passing through the bridge. Before narrowing, a consumer
+/// could bypass this gate by taking `ComputedBorder` from
+/// `ComputedValues::initial()` or similar, directly setting
+/// `.style = BorderStyle::None`, and leaking a nonzero `.width` to taffy
+/// (after the `used_border_width` bridge helper was removed). Narrowing
+/// blocks this mutation from outside the crate for `width` / `style` only;
+/// `color` remains public, and whole-side assignment such as
+/// `cv.border.top = cv.border.left` is still possible. Neither breaks this invariant.
 ///
-/// **本 test は「narrowing 前の値で確認できる 1 入力が正しく gate される」
-/// ことの check であり、「crate 外からこの invariant を破る経路が存在しない」
-/// ことを本 test 自身が総当たりで示すものではない。** ただし後者自体は
-/// 現状すでに **型の visibility 境界で構造的に防がれている** — `width` /
-/// `style` は `pub(crate)`、公開 API は値渡し read-only accessor (`width()` /
-/// `style()`) のみで setter / builder / ctor が無いため、crate 外の
-/// safe code がこの 2 field を書き換える経路はコンパイル時に存在しない。
+/// **This test checks that one input observable before narrowing is gated
+/// correctly; it does not itself exhaustively prove that no outside-crate
+/// path can break the invariant.** The latter is already prevented
+/// **structurally by the type's visibility boundary**: `width` and
+/// `style` are `pub(crate)`, and the public API offers only by-value,
+/// read-only accessors (`width()` / `style()`), with no setter, builder, or
+/// constructor. Safe code outside the crate cannot write either field.
 ///
-/// **未解決なのは別の軸 — regression 検知**: 将来誰かが `width` /
-/// `style` を `pub(crate)` から `pub` に戻す (= 上記の型保証そのものを
-/// 撤回する) 変更をしても、それを検知して落ちる test が現状無い。
-/// 他の 3 field (`Declaration::value` 等) には同じ形の regression を
-/// 検知する compile-fail test setup がすでに追加され既に main に merge 済みだが、
-/// `ComputedBorder::width` / `::style` への横展開はまだ行われていない。
+/// **The remaining problem is different: regression detection.** If someone
+/// changes `width` / `style` back from `pub(crate)` to `pub`, retracting
+/// that type-level guarantee, no current test would catch it.
+/// A compile-fail test setup for the other three fields (such as
+/// `Declaration::value`) has already been added and merged into main,
+/// but it has not yet been extended to `ComputedBorder::width` / `::style`.
 #[test]
 fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
     use raikiri_style::{build_rule_tree, cascade};
@@ -1528,8 +1528,8 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
         Some(html),
         "body",
         Style::default(),
-        // `border-style` は一切宣言しない — 4 side とも computed style は
-        // initial `none` (CSS Backgrounds 3 §3.2 "Inherited: no")。
+        // Never declare `border-style`: all four computed sides retain
+        // the initial `none` (CSS Backgrounds 3 §3.2 "Inherited: no").
         Some("border-top-width: 5px"),
     );
     let rules = build_rule_tree(&doc);
@@ -1550,13 +1550,13 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
 
 #[test]
 fn font_relative_lengths_reach_taffy_as_real_pixels() {
-    // 以前の bridge は specified 層の `Length` を受けており、
-    // `Length::Em(_) | Length::Rem(_) => length(0.0)` で font-relative unit
-    // を **黙って 0px に潰していた** (fail-quiet)。cascade が phase 2 /
-    // phase 3 で絶対化するようになったので、実 px が taffy に届く。
+    // The old bridge accepted the specified-value `Length` and
+    // silently collapsed font-relative units to 0px with
+    // `Length::Em(_) | Length::Rem(_) => length(0.0)` (fail-quiet).
+    // Cascade phases 2 and 3 now absolutize them, so real px reaches taffy.
     //
-    // この test は「0.0 に潰れる」regression の canary である — 期待値は
-    // すべて font-size から計算した非ゼロ値。
+    // This test catches regressions that collapse values to 0.0; all
+    // expected values are nonzero and derived from font-size.
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::{Dimension, LengthPercentage, LengthPercentageAuto, Rect};
 
@@ -1566,8 +1566,8 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
         Some(html),
         "body",
         Style::default(),
-        // font-size は inherit で 20px。em は自 node の 20px、rem は root の
-        // 20px 基準。
+        // font-size inherits 20px. `em` uses this node's 20px; `rem` uses
+        // the root's 20px.
         Some(
             "padding: 2em; margin: 1.5rem; width: 3em; \
                  border-top-width: 0.5em; border-top-style: solid",
@@ -1578,7 +1578,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     apply_computed_to_style(&mut doc, &cr);
     let style = &doc.nodes[body].style;
 
-    // 2em × 20px = 40px (従来は 0.0)。
+    // 2em × 20px = 40px (previously 0.0).
     assert_eq!(
         style.padding,
         Rect {
@@ -1588,7 +1588,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
             left: LengthPercentage::length(40.0),
         }
     );
-    // 1.5rem × 20px (root font-size) = 30px (従来は 0.0)。
+    // 1.5rem × 20px (root font-size) = 30px (previously 0.0).
     assert_eq!(
         style.margin,
         Rect {
@@ -1598,18 +1598,18 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
             left: LengthPercentageAuto::length(30.0),
         }
     );
-    // 3em × 20px = 60px (従来は 0.0)。
+    // 3em × 20px = 60px (previously 0.0).
     assert_eq!(style.size.width, Dimension::length(60.0));
-    // 0.5em × 20px = 10px、style: solid なので gating も通り抜ける
-    // (従来は 0.0)。
+    // 0.5em × 20px = 10px; style: solid allows it through gating
+    // (previously 0.0).
     assert_eq!(style.border.top, LengthPercentage::length(10.0));
 }
 
 #[test]
 fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
-    // bridge_box_sizing が
-    // raikiri_style::BoxSizing → taffy::BoxSizing の enum 1:1 mapping を
-    // 実施することを確認する regression check。
+    // Regression check that bridge_box_sizing performs the one-to-one
+    // enum mapping from raikiri_style::BoxSizing to taffy::BoxSizing.
+    // Confirm it end to end.
     //
     // 3 case:
     //   #1 border-box (specified)   → taffy::BoxSizing::BorderBox
@@ -1617,10 +1617,10 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
     //   #3 unspecified (cascade default = raikiri-style initial = ContentBox)
     //      → taffy::BoxSizing::ContentBox
     //
-    // 特筆: taffy 0.12 default は BorderBox (spec 違反)、raikiri-style initial
-    // は ContentBox (CSS Sizing 3 §3.3 準拠)。#3 は cascade が initial 経由で
-    // ContentBox を seed し、bridge がそれを taffy に伝播することで、taffy default
-    // の spec 違反を副作用的に補正することを check する。
+    // Note: taffy 0.12 defaults to BorderBox (violating the spec), while
+    // raikiri-style initially uses ContentBox (per CSS Sizing 3 §3.3).
+    // In #3, the cascade seeds ContentBox from its initial value and the bridge
+    // propagates it to taffy, correcting taffy's default as a side effect.
     use raikiri_style::{build_rule_tree, cascade};
 
     fn box_sizing_for(inline: Option<&str>) -> TaffyBoxSizing {
@@ -1646,20 +1646,20 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
     );
 
     // Case 3: unspecified → raikiri-style initial (ContentBox) → taffy ContentBox
-    // (taffy default の BorderBox を上書き、spec 補正 pin)
+    // (overwrites taffy's default BorderBox; pins the spec correction)
     assert_eq!(box_sizing_for(None), TaffyBoxSizing::ContentBox);
 }
 
 #[test]
 fn apply_page_box_clobbers_body_width_from_bridge() {
-    // PageBox
-    // 妥協の regression check — `<body style="width: 100px">` に対して
-    //   Step 1 (`apply_computed_to_style`) → bridge_size が body.style.size.width
-    //       を length(100.0) に write
-    //   Step 4 (`apply_page_box_to_body`) → PageBox.width で clobber
-    // の順で走ると、最終 body.style.size.width は PageBox.width (author 値
-    // ではない) になる。将来 @page per-page PageBox に refactor するまで
-    // この clobber 挙動を意図的に保つ (現行実装での妥協) — silent regression 検出用。
+    // PageBox compromise:
+    // Regression check for `<body style="width: 100px">`:
+    //   Step 1 (`apply_computed_to_style`) → bridge_size writes
+    //       length(100.0) to body.style.size.width
+    //   Step 4 (`apply_page_box_to_body`) → PageBox.width overwrites it.
+    // After Step 4, body.style.size.width is PageBox.width rather than the
+    // author value. Preserve this intentional overwrite until a future
+    // @page cascade and per-page PageBox refactor; detect silent regressions.
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
@@ -1668,7 +1668,7 @@ fn apply_page_box_clobbers_body_width_from_bridge() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cr = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
 
-    // Step 1: bridge 実行後、body.style.size.width は author 値 100px。
+    // Step 1: the bridge writes the author value (100px) to body.style.size.width.
     apply_computed_to_style(&mut doc, &cr);
     assert_eq!(
         doc.nodes[body].style.size.width,
@@ -1676,14 +1676,14 @@ fn apply_page_box_clobbers_body_width_from_bridge() {
         "bridge_size must first write author width (100px) to body.style.size.width"
     );
 
-    // Step 4: PageBox clobber 後、author 値は消えて PageBox.width が入る。
+    // Step 4: PageBox overwrites the author value with PageBox.width.
     apply_page_box_to_body(&mut doc, body, PageBox::A4);
     assert_eq!(
         doc.nodes[body].style.size.width,
         Dimension::length(PageBox::A4.width),
         "apply_page_box_to_body must clobber author width with PageBox.width (現行実装での妥協)"
     );
-    // author 値と PageBox 値は不一致 (clobber が実際に起きていることを pin)。
+    // Author and PageBox values differ, proving the overwrite actually occurs.
     assert_ne!(
         doc.nodes[body].style.size.width,
         Dimension::length(100.0),
@@ -1730,13 +1730,13 @@ fn layout_single_page_bridges_display_flow_root() {
 
 #[test]
 fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
-    // display bridge が Display::Flex を実際に taffy::compute_flexbox_layout
-    // へ届けることを **geometry** で確認する — style.display の値を
-    // asserting するだけでは bridge が繋がったことしか示さず、taffy_impl.rs
-    // の compute_child_layout dispatch が実際に flex を起動していることの
-    // 証明にはならない。CSS Flexbox Level 1 の initial value
-    // (`flex-direction: row`、`flex-wrap: nowrap`) 通りなら、明示 width の
-    // 2 child は主軸 (x) 方向に並び、交差軸 (y) は揃う。
+    // Check by **geometry** that the display bridge delivers Display::Flex
+    // to taffy::compute_flexbox_layout. Merely asserting style.display
+    // shows that the bridge connects, not that compute_child_layout
+    // in taffy_impl.rs actually invokes flex layout. Under the initial
+    // CSS Flexbox Level 1 values
+    // (`flex-direction: row`, `flex-wrap: nowrap`), two children with
+    // explicit widths sit side by side on the main (x) axis and align on the cross (y) axis.
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -2433,14 +2433,14 @@ fn justify_content_flex_end_pushes_children_to_container_end() {
 
 #[test]
 fn layout_single_page_bridges_display_grid_to_taffy_grid() {
-    // display bridge が Display::Grid を taffy::compute_grid_layout へ
-    // 届けることを確認する。raikiri-style は `grid-template-columns` 等の
-    // grid-* property を未実装 (本 task の scope 外、"entry point を開く"
-    // だけが scope) なので、implicit single-track grid の挙動は block と
-    // 見分けがつきにくい — ここでは「bridge が Display::Grid を発火させ、
-    // compute_grid_layout がクラッシュせず有限な box を返す」ことのみを
-    // check する。track-level の挙動 check は grid-* property 実装時の
-    // follow-up の責務。
+    // Check that the display bridge delivers Display::Grid to
+    // taffy::compute_grid_layout. Raikiri-style does not yet implement
+    // grid-* properties such as `grid-template-columns` (outside this task's
+    // scope, which only opens the entry point). An implicit single-track
+    // grid is thus hard to distinguish from block layout. Here we only check
+    // that the bridge selects Display::Grid and compute_grid_layout
+    // returns finite boxes without crashing. Track-level checks belong
+    // to a follow-up when grid-* properties are implemented.
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 

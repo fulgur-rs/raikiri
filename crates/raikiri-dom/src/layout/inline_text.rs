@@ -1,83 +1,67 @@
 use super::*;
 
-/// 最小限の inline formatting context を、条件を満たす block container に
-/// 確立する。`<br>` を含まない場合は単一行・non-wrapping (下記 "実現方法")
-/// だが、display:none ではない `<br>` を 1 個以上含む場合は forced break
-/// だけで少なくともその個数 + 1 個の (視覚上高さを持つ) line に分かれる
-/// (下記 "`<br>` forced break")。先頭・末尾・連続する `<br>` はそれ自身の
-/// line が高さ 0 に潰れるため、実際の見た目上の line 数はこれより少なく
-/// なりうる一方、`<br>` を含む container は `flex_wrap: Wrap` も同時に
-/// 有効になる副作用を持つため、それとは独立な size-based wrapping が
-/// 追加の line を発生させ、より多くなることもある — 上限はない (同
-/// section の doc および Non-goals 参照)。
+/// Establish a minimal inline formatting context for qualifying block containers.
+/// Without `<br>`, this makes a single non-wrapping line (see "Implementation").
+/// With at least one `<br>` whose display is not none, forced breaks alone
+/// create at least one more (potentially visible) line than there are breaks
+/// (see "`<br>` forced break"). A leading, trailing, or repeated `<br>` can
+/// have a zero-height line, so fewer lines may be visible. Conversely, a
+/// container with `<br>` also enables `flex_wrap: Wrap`: independent size-based
+/// wrapping can add an unbounded number of lines (see that section and Non-goals).
 ///
 /// CSS 2.1 §9.4.2 <https://www.w3.org/TR/CSS21/visuren.html#inline-formatting>:
 /// "a block container either contains only block-level boxes or
 /// establishes an inline formatting context and thus contains only
-/// inline-level boxes."(block container は block-level box のみを含むか、
-/// inline formatting context を確立して inline-level box のみを含む)。
-/// ここで node が条件を満たすのは、自身の computed display
-/// ([`DisplayValue`]) が [`DisplayValue::Block`] または
-/// [`DisplayValue::InlineBlock`] であり (両方とも自身の content に対して
-/// block container を生成する — `inline-block` は CSS Display 3 §2 上
-/// "inline flow-root" (plain な `block` の "block flow" とは別の、独立
-/// した formatting context を確立する概念、[`DisplayValue::InlineBlock`]
-/// 自身の doc 参照) だが、本 pass の qualifying condition と扱いはこの
-/// 区別をしない — どちらも「自身の content area が block container で
-/// ある」という一点のみを見る)、**かつ** in-document な children が
-/// **2 個以上**あり、それら
-/// 全てが inline-level である場合 ([`NodeKind::Text`] の child、または
-/// [`DisplayValue`] が [`DisplayValue::Inline`] / [`DisplayValue::InlineBlock`]
-/// な [`NodeKind::Element`] の child。[`DisplayValue::None`] の child は
-/// 無視する — count にも disqualification にも数えない)。
-/// [`NodeKind::Text`] の child は無条件に count する
-/// (whitespace のみを保持する text node も含む) — HTML parser は source の
-/// indentation から sibling tag 間にこうした text node をよく生成し、CSS
-/// 2.1 §9.2.1.1 上、text node の content は保持する文字に関わらず
-/// ordinary な inline-level content である (`white-space` の collapsing は
-/// rendering 時の関心事であり、formatting context の関心事ではない) ため、
-/// "本物の" inline な child が 1 個だけの container でも、付随する parser
-/// の whitespace により実質的にすでに 2 個以上の qualifying な children
-/// を持つことが多い。inline-level な child が 1 個だけの場合は、plain な
-/// block path のままにする: line 上に box が 1 個しかなければ隣に置く
-/// ものが無く、taffy の block layout も 1 個だけの child を
-/// `align-items: flex-start` な 1-item flex row と同じ位置に置く
-/// (どちらも container を child 自身の margin box に合わせて size し、
-/// cross-axis 方向の処理が不要な点も同じ) — したがってこの case には
-/// 埋めるべき behavioral gap が無く、既存の block code path を乱す理由も
-/// 無い。
+/// inline-level boxes." A node qualifies here when its computed display
+/// ([`DisplayValue`]) is [`DisplayValue::Block`] or
+/// [`DisplayValue::InlineBlock`] (both create a block container for their
+/// contents). CSS Display 3 §2 calls `inline-block` an "inline flow-root",
+/// which establishes an independent formatting context, as distinct from a
+/// plain `block`'s "block flow" (see [`DisplayValue::InlineBlock`]). This pass
+/// only cares that the content area is a block container, not this distinction.
+/// The node must also have **at least two** in-document children, all of them
+/// inline-level: [`NodeKind::Text`] children or [`NodeKind::Element`] children
+/// whose [`DisplayValue`] is [`DisplayValue::Inline`] or
+/// [`DisplayValue::InlineBlock`]. Ignore [`DisplayValue::None`] children
+/// for both the count and disqualification.
+/// Count every [`NodeKind::Text`] child, including whitespace-only text.
+/// HTML parsing often creates these nodes from indentation between sibling tags.
+/// Under CSS 2.1 §9.2.1.1, text is ordinary inline-level content regardless
+/// of its characters: `white-space` collapsing affects rendering, not the
+/// formatting context. Thus a container with just one substantive inline child
+/// may already have two qualifying children because of parser whitespace.
+/// Keep the plain block path when there is only one inline-level child: there
+/// is no other box to place beside it, and taffy's block layout puts that
+/// child in the same position as a one-item flex row with
+/// `align-items: flex-start`. Both size to its margin box and need no
+/// cross-axis handling. There is no behavioral gap worth disturbing the block path.
 ///
-/// plain な [`DisplayValue::Inline`] の node は、direct text children
-/// だけなら本条件を満たさない: `block` / `inline-block` と異なり、
-/// non-replaced な `inline` box は CSS 2.1 §9.2.1.1 上、自身の content に
-/// 対して block container を生成しない — その content は `inline` box 自身と
-/// *同じ* inline formatting context に流れ込む ordinary な inline-level
-/// content である。nested な inline element child を持つ場合だけは例外として
-/// synthetic flex line root を作る。taffy の block path ではその child の
-/// descendants が縦に積まれるためであり、これは DOM の flatten ではなく
-/// nested wrapper ごとの最小 line-box bridge である。
+/// A plain [`DisplayValue::Inline`] node with only direct text children does
+/// not qualify. Unlike `block` or `inline-block`, a non-replaced `inline` box
+/// does not create a block container for its contents under CSS 2.1 §9.2.1.1.
+/// The contents flow as ordinary inline-level content in the *same* inline
+/// formatting context as the box. As an exception, create a synthetic flex
+/// line root if it has a nested inline element child: taffy's block path would
+/// stack that child's descendants vertically. This is a minimal line-box
+/// bridge per nested wrapper, not DOM flattening.
 ///
-/// block-level / flex / grid な in-document child を 1 個でも持つ
-/// container も同様に変更しない (block-level と inline-level が混在する
-/// content は、CSS 2.1 §9.2.1.1 に従い inline-level の run を囲む
-/// anonymous block box の生成が必要になるが、本 minimal pass はそこまで
-/// 対応しない)。
+/// Also leave a container unchanged if it has any in-document block-level,
+/// flex, or grid child. Mixed block-level and inline-level content requires
+/// anonymous block boxes around inline-level runs under CSS 2.1 §9.2.1.1;
+/// this minimal pass does not implement them.
 ///
-/// # 実現方法
+/// # Implementation
 ///
-/// taffy には inline layout mode が無いため、line box は 1 行・
-/// non-wrapping な flex container として実現する: [`Display::Flex`] +
-/// `flex_direction: Row` (taffy 自身の default と同じ) + `flex_wrap:
-/// NoWrap` (同上) により、参加する children を左から右へ 1 行に並べる —
-/// これは CSS 2.1 §9.4.2 が inline formatting context の box について
-/// 述べる内容 ("laid out horizontally, one after the other, beginning at
-/// the top of a containing block") そのものである。`flex_direction` /
-/// `flex_wrap` を default に委ねず明示的に set しているのは、この node
-/// が block container だった間は inert だった author の
-/// `flex-direction` / `flex-wrap` 宣言を `bridge_flex` が既に copy
-/// 済みの可能性があり、ここで flex container になった時点でそれが
-/// inert でなくなるため — default のままだろうと期待するのではなく
-/// 明示的に上書きする必要がある。
+/// Taffy has no inline layout mode, so implement the line box as a one-line,
+/// non-wrapping flex container: [`Display::Flex`] + `flex_direction: Row`
+/// (taffy's default) + `flex_wrap: NoWrap` (also the default) lays out its
+/// participating children left to right on one line. This matches CSS 2.1
+/// §9.4.2: boxes are "laid out horizontally, one after the other, beginning at
+/// the top of a containing block". Set `flex_direction` and `flex_wrap`
+/// explicitly rather than trusting defaults: `bridge_flex` may have copied
+/// author `flex-direction` / `flex-wrap` declarations that were inert when
+/// this node was a block container. They become active when it turns into a
+/// flex container and must be overridden.
 ///
 /// `align_items: Baseline` is used only when a direct, in-flow `inline-block`
 /// or inline replaced image (`<img>`) participates. This implements the
@@ -94,158 +78,132 @@ use super::*;
 /// an extent is counted once rather than padding every wrapper. The root's
 /// synthetic leading/trailing is added to authored padding.
 ///
-/// container 自身は `justify_content: None` (taffy 自身の default、CSS
-/// の `normal` 相当) へも reset する — 全く同じ「もう inert ではない」
-/// 理由による: `bridge_alignment` が copy した author の
-/// `justify-content` 宣言は、block container だった間は inert だったが、
-/// ここで flex container になった時点で main-axis 方向の item 配置
-/// (space-between 等) を変えてしまう。CSS 2.1 の inline formatting
-/// context に "line box 上の複数 box を main-axis 方向に再配置する"
-/// 意味論はそもそも存在しないため、taffy 側の default に戻すことでその
-/// 意味論を無効化する。`gap` (`row-gap` / `column-gap`) も同じ理由で
-/// `0` へ reset する — line box は inline-level box の間に author 指定の
-/// 隙間を空ける意味論を持たない (CSS 2.1 §9.4.2 の line box は隙間なく
-/// box を並べるモデル) ため、`bridge_gap` が copy した author 値を
-/// ここで無効化する。
+/// Reset the container's `justify_content` to `None` (taffy's default,
+/// equivalent to CSS `normal`) for the same reason. An author
+/// `justify-content` copied by `bridge_alignment` was inert on a block
+/// container but, on a flex container, changes main-axis item placement
+/// (e.g. space-between). CSS 2.1 inline formatting has no equivalent way to
+/// redistribute multiple boxes across a line box; resetting the property
+/// disables that effect. Also reset `gap` (`row-gap` / `column-gap`) to `0`:
+/// CSS 2.1 §9.4.2 does not insert authored gaps between inline-level boxes,
+/// so disable the author values copied by `bridge_gap`.
 ///
-/// `align_content` も `bridge_alignment` が copy した author の値を
-/// `Some(FlexStart)` へ reset する。これは複数 flex line 間で余った
-/// cross-axis space を配る flex 専用 property であり、CSS inline context
-/// には対応する意味論がない。reset を怠ると明示的な `height` がある場合に
-/// default の `Stretch` が余り space を `<br>` の zero-height line に配り、
-/// 視覚的な gap を作る。
+/// Reset `align_content`, also copied by `bridge_alignment`, to
+/// `Some(FlexStart)`. This flex-only property distributes spare cross-axis
+/// space between multiple flex lines and has no CSS inline counterpart.
+/// Otherwise, with an explicit `height`, the default `Stretch` can distribute
+/// extra space into a zero-height `<br>` line and create a visible gap.
 ///
-/// 参加する各 child はさらに `flex_grow: 0.0` / `flex_shrink: 0.0` /
-/// `flex_basis: auto` / `align_self: None` (or `Top` / `Bottom` override) も得る (`bridge_flex` /
-/// `bridge_alignment` が自身の author CSS から copy した値を、上記と
-/// 同じ「もう inert ではない」理由で上書きする)。`flex_grow` /
-/// `flex_shrink` を `0` にする理由: line wrapping を未実装の現状、
-/// container より広い content は圧縮されずに overflow するべきものである
-/// — flex の default である `flex-shrink: 1` のままだと、各 child の
-/// box を自身の shaped content より狭く圧縮してしまい、text の child
-/// ではすでに [`preshape_text`] が shape した glyph run と box が乖離
-/// する (shaped 済みの glyph は追従して縮まないため、狭くなった box から
-/// overflow し、隣の child の glyph と重なりうる — 本 pass が置き換える
-/// 以前の stacked-block な描画より悪化する)。`flex_basis` を `auto` へ
-/// 戻す理由も同じ box/glyph 乖離を防ぐためである — 明示的な author
-/// `flex-basis` は `flex_grow` / `flex_shrink` の値に関わらず box の
-/// main size を直接決めてしまうため、`flex_shrink: 0` だけでは守れない
-/// (自身の content 基準の flex basis に戻すことで、box は常に自身の
-/// shaped content 以上の幅を持つ)。`align_self` を `None` (= `auto`) へ
-/// 戻す理由は、container 側で上記の条件により選ばれた alignment へ
-/// fallback させるためである (`auto` は親の `align-items` へ fallback
-/// する契約、`bridge_alignment` の doc 参照)。`vertical-align: top` /
-/// `bottom` はそれぞれ `FlexStart` / `FlexEnd` に明示変換する。
+/// Give every participating child `flex_grow: 0.0` / `flex_shrink: 0.0` /
+/// `flex_basis: auto` / `align_self: None` (or a `Top` / `Bottom` override),
+/// overriding author values copied by `bridge_flex` / `bridge_alignment` that
+/// have likewise become active. Set `flex_grow` / `flex_shrink` to `0` because,
+/// without line wrapping, content wider than the container should overflow
+/// rather than shrink. The default `flex-shrink: 1` can compress a text child's
+/// box below its shaped content, detaching the box from the glyph run already
+/// shaped by [`preshape_text`]. The glyphs will not shrink with the box; they
+/// may overflow and overlap their neighbor, worse than the former stacked
+/// block rendering. Restore `flex_basis: auto` for the same reason: an author
+/// `flex-basis` directly sets the main size regardless of `flex_grow` or
+/// `flex_shrink`, so `flex_shrink: 0` alone cannot protect the box. A
+/// content-based basis keeps the box at least as wide as its shaped content.
+/// Reset `align_self` to `None` (= `auto`) to fall back to the alignment chosen
+/// on the container (`auto` falls back to the parent's `align-items`; see
+/// `bridge_alignment`). Convert `vertical-align: top` / `bottom` explicitly
+/// to `FlexStart` / `FlexEnd`, respectively.
 ///
 /// # `<br>` forced break
 ///
 /// HTML LS §the-br-element
 /// (<https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element>)
-/// の `<br>` は "a line break" を表す。HTML LS の rendering section
-/// (§phrasing-content-3) は `br { display-outside: newline; }` と記すが、
-/// これは CSS Display 4 の `<display-outside>` production
-/// (`block | inline | run-in` のみ) に存在しない illustrative な記法で、
-/// raikiri-style が消費できる CSS 宣言ではない。本 pass は代わりに `<br>`
-/// を tag_name で直接判別する ([`find_body`] が `tag_name() ==
-/// Some("body")` を直接比較するのと同じ pattern — `<br>` の判別に
-/// [`NodeKind`] へ新しい variant を追加する必要はない、`NodeKind::Element`
-/// のまま扱う)。
+/// defines `<br>` as "a line break". The HTML LS rendering section
+/// (§phrasing-content-3) uses `br { display-outside: newline; }`, but this
+/// is illustrative notation outside CSS Display 4's `<display-outside>`
+/// production (`block | inline | run-in`), not a CSS declaration raikiri-style
+/// can consume. Instead, this pass identifies `<br>` by tag_name, just as
+/// [`find_body`] directly compares `tag_name() == Some("body")`. No new
+/// [`NodeKind`] variant is needed; it remains `NodeKind::Element`.
 ///
-/// qualify する container の participating children に、display:none
-/// ではない `<br>` が 1 個以上含まれる場合、container 自身の `flex_wrap`
-/// を (taffy 自身の default である) `NoWrap` から `Wrap` へ切り替え、
-/// 参加する `<br>` child 自身の `flex_basis` のみを (他の child と同じ
-/// `auto` ではなく) `100%` にする。他の participating child への
-/// `flex_grow: 0` / `flex_shrink: 0` の適用は変わらない。
+/// If a qualifying container has at least one participating `<br>` child
+/// whose display is not none, switch its `flex_wrap` from `NoWrap` (taffy's
+/// default) to `Wrap` and set only that `<br>` child's `flex_basis` to `100%`
+/// instead of `auto`. Other participating children still get `flex_grow: 0` /
+/// `flex_shrink: 0`.
 ///
-/// これにより、taffy 自身の flex line-packing algorithm (CSS Flexbox 1
-/// §9.2 "Line Length Determination"
-/// <https://www.w3.org/TR/css-flexbox-1/#algo-line-break> — multi-line
-/// (`flex-wrap` が `nowrap` ではない) container の各 line は、item を
-/// 1 個ずつ足しながら、container の main size を超える最初の item の
-/// 手前で確定し、その item を次の line へ持ち越す。ただしその item が
-/// line 上の最初の item である場合 (line がまだ空) は、超えていても
-/// そのまま現在の line に置く、という例外を持つ) が `<br>` の位置で
-/// 自然に line を切る: `<br>` の hypothetical main size が container
-/// 幅の 100% であるため、すでに他の item が乗っている line には決して
-/// 収まらず新しい line へ move する一方、`<br>` 自身が (空の) line の
-/// 先頭に来た場合は上記例外でその line にそのまま置かれる。
-/// `<br>` が単独で占有するその line 自身の高さ (cross size、row 方向
-/// なので `flex_basis` が支配しない軸) は
-/// [`compute_leaf_layout`](taffy::compute_leaf_layout) の測定に委ねられる
-/// — `<br>` は children を持たない leaf であり [`Node::text_layout`](crate::node::Node::text_layout) も
-/// 返さないため、measure 結果は常に `0` になる (この module の
-/// `LayoutPartialTree::compute_child_layout` — `taffy_impl.rs` 側 — の
-/// leaf 分岐 doc 参照)。したがって `<br>` が占有する line は幅こそ
-/// container 全幅だが高さ 0 で、直後の line が直前の line の下端に
-/// 隙間なく続く。結果として `<br>` の前後にある run はそれぞれ別の
-/// (見た目上の) line に分かれる一方、`<br>` 自身は視覚上何の高さも
-/// 占めない — CSS 2.1 の forced line break の見た目の効果と一致する。
+/// Taffy's flex line-packing algorithm (CSS Flexbox 1 §9.2 "Line Length
+/// Determination" <https://www.w3.org/TR/css-flexbox-1/#algo-line-break>)
+/// then breaks naturally at `<br>`. In a multi-line container (where
+/// `flex-wrap` is not `nowrap`), it adds items one by one until an item
+/// would exceed the main size, then moves that item to the next line.
+/// The exception is an item first on a still-empty line: it stays even if
+/// too wide. Since `<br>` has a hypothetical main size of 100% of the
+/// container's width, it cannot fit after another item and moves to a new
+/// line, but stays put if it starts an empty line. The height (cross size,
+/// which `flex_basis` does not control in a row) of the line occupied by
+/// `<br>` alone comes from [`compute_leaf_layout`](taffy::compute_leaf_layout).
+/// `<br>` is a childless leaf and has no
+/// [`Node::text_layout`](crate::node::Node::text_layout), so measurement
+/// always returns `0` (see the leaf branch of this module's
+/// `LayoutPartialTree::compute_child_layout` in `taffy_impl.rs`). The line
+/// occupied by `<br>` is full width but zero height; the next line follows
+/// the previous one without a gap. Runs before and after `<br>` thus occupy
+/// different visible lines, while `<br>` itself occupies no visible height,
+/// matching the visual effect of a CSS 2.1 forced line break.
 ///
-/// この機構は `<br>` を含む container にのみ `flex_wrap: Wrap` を
-/// 付与する副作用も持つ: `<br>` を含まない container は従来通り
-/// `flex_wrap: NoWrap` のままだが、`<br>` を含む container では
-/// (`<br>` の前後どちらの run でも) 本来 Non-goal である
-/// size-based wrapping が technically 可能になる — line 内の
-/// inline-level item 群が container の available width を超えれば、
-/// `<br>` の有無に関わらず taffy 自身が折り返してしまう。この delta は
-/// `<br>` を含む container にのみ生じ、これまで check されていた
-/// no-wrap な挙動 (`establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row`
-/// 等の regression test) は `<br>` を含まないケースなので影響を受けない。
+/// This mechanism also enables `flex_wrap: Wrap` only for containers with
+/// `<br>`. Containers without it retain `flex_wrap: NoWrap`, but those with
+/// it can also undergo size-based wrapping, normally a Non-goal, on either
+/// side of `<br>`: taffy wraps whenever inline-level items exceed the
+/// available width, independently of the break. This difference applies
+/// only to containers with `<br>`. Existing no-wrap regression tests (e.g.
+/// `establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row`)
+/// exercise containers without `<br>` and remain unaffected.
 ///
-/// # Non-goals (本 pass)
+/// # Non-goals (this pass)
 ///
-/// - size-based line wrapping は行わない: qualify する container **自身が
-///   確立する line box** の個数は、display:none ではない `<br>` を含まない
-///   限り、container の available width に関わらず常にちょうど 1 個になる
-///   (`<br>` を含む場合の個数は上記 "`<br>` forced break" 参照 — それは
-///   forced break であり、size に基づく wrap ではない)。ただしこれは
-///   container レベルの取り扱いの話であり、participating な text child
-///   自身が shape する glyph run が内部で複数行に折り返されないことまでは
-///   意味しない (最後の bullet 参照 — [`preshape_text`] は本 pass とは
-///   独立に、text ごとに page width 基準で soft-wrap する)。
-/// - `<br>` 自身の box は測定上つねに `0×0` であり、「空の行が font の
-///   line-height 相当の高さを持つ」という real browser の挙動を再現
-///   しない。real browser でこの高さを与えているのは CSS 2.1 §10.8.1
-///   <https://www.w3.org/TR/CSS21/visudet.html#strut> の "strut" —
-///   各 line box の先頭に、その line box を確立した要素の font /
-///   line-height を持つ幅 0 の仮想 inline box が置かれているものとして
-///   扱う、という規定で、空行にも line-height 分の最小高さを与える。
-///   本 pass はこの strut を line box (= 本 pass が作る flex line) に
-///   対して合成しない — [`compute_leaf_layout`](taffy::compute_leaf_layout)
-///   による `<br>` 自身の測定結果だけが line の cross size を決めるため、
-///   これは [`establish_minimal_line_boxes`] が line box そのものを
-///   (単一行・non-wrapping な場合を含め) 元から strut 抜きで組んでいる
-///   ことの帰結であり、別々の special case ではない。これにより 2 個の
-///   bullet で挙動が変わる:
-///   (a) `<br>` が (自身の line 上で) 最初の participating item になる
-///   場合 — line の先頭にある container、あるいは連続する `<br><br>` の
-///   2 個目以降 — line-packing の "空の line はその最初の item を
-///   そのまま受け入れる" 例外により `<br>` はそこに留まり、高さ 0 のまま
-///   何も visible な空行を作らない。real browser が `<p><br>text</p>` の
-///   先頭や `<br><br>` の間で作る空行の高さは、本 pass では再現しない。
-///   (b) 末尾の `<br>` (後続の inline-level content が無い) も同様に
-///   高さ 0 の line を追加するだけで、視覚上の余白は生まない。
-///   両方とも、`<br>` が childless leaf で text layout を持たないために
-///   measure が `0` を返すという同じ機構の帰結であり、別々の special
-///   case ではない。
-/// - nested な inline element を ancestor の DOM line box へ flatten する
-///   ことは行わない。nested wrapper が inline element child を持つ場合は
-///   wrapper自身を最小 flex line root にするが、各 wrapper の children は
-///   その wrapper 内で独立に layout する。
-/// - [`preshape_text`] は本 pass の後 (`apply_computed_to_style` 完了後、
-///   `layout_single_page` の後段) に、各 text node の glyph run を full
-///   page width に対して shape・soft-wrap する。これは本 pass が最終的に
-///   その text node に line box 上の sibling と並べて与える横幅とは
-///   無関係であり、text の shaping を実際の available な inline space
-///   と整合させることは follow-up work であり、ここでは行わない。
-/// - `text-align: center` は本 pass と [`realign_text_after_layout`] の
-///   2 経路で扱う: qualify した container 自身は line box 全体を中央に寄せる
-///   ため `justify_content` を `Center` にする (他値は `None` のまま —
-///   `Right` / `Justify` 等の flex 対応は本 task の scope 外)。
-///   qualify しない block container 内の単独 Text は後段の
-///   `realign_text_after_layout` が parley 側で中央寄せする。
-///   詳細は同関数の doc 参照。
+/// - No size-based line wrapping: the qualifying container itself establishes
+///   exactly one line box, regardless of available width, unless it contains
+///   `<br>` whose display is not none. See "`<br>` forced break" for the
+///   number of lines with `<br>`: these are forced breaks, not size-based
+///   wrapping. This only describes the container's line boxes; a participating
+///   text child's shaped glyph run may itself wrap across lines. See the last
+///   bullet: [`preshape_text`] independently soft-wraps each text node using
+///   the page width.
+/// - `<br>` itself always measures `0×0`, so this does not reproduce the
+///   line-height-sized empty lines of a real browser. CSS 2.1 §10.8.1
+///   <https://www.w3.org/TR/CSS21/visudet.html#strut> specifies a "strut":
+///   a zero-width virtual inline box at the start of each line box, carrying
+///   the font and line-height of the element establishing that line. It gives
+///   even empty lines a minimum line-height. This pass does not synthesize a
+///   strut in its line boxes (flex lines); only measurement of `<br>` via
+///   [`compute_leaf_layout`](taffy::compute_leaf_layout) determines its
+///   line's cross size. This is a consequence of [`establish_minimal_line_boxes`]
+///   building all line boxes without struts, even single non-wrapping ones,
+///   not two separate special cases. Two behaviors follow:
+///   (a) If `<br>` is the first participating item on its line (at the start
+///   of a container or the second or later `<br>` in `<br><br>`), the
+///   line-packing exception that an empty line accepts its first item keeps
+///   it there. Its zero height creates no visible empty line. This pass does
+///   not reproduce the empty-line height a real browser creates at the start
+///   of `<p><br>text</p>` or between consecutive `<br>` elements.
+///   (b) A trailing `<br>` with no following inline-level content likewise
+///   adds only a zero-height line, not visible space. Both effects have the
+///   same cause: measuring a childless `<br>` leaf with no text layout returns
+///   `0`, rather than representing separate special cases.
+/// - Do not flatten nested inline elements into an ancestor's DOM line box.
+///   If a nested wrapper has an inline element child, make that wrapper a
+///   minimal flex line root; lay out its children independently within it.
+/// - After this pass (after `apply_computed_to_style`, later in
+///   `layout_single_page`), [`preshape_text`] shapes and soft-wraps each text
+///   node against the full page width. This is unrelated to the width that
+///   this pass eventually gives the node beside its siblings on a line box.
+///   Matching text shaping to the actual available inline space is follow-up work.
+/// - Handle `text-align: center` through this pass and
+///   [`realign_text_after_layout`]. A qualifying container sets
+///   `justify_content` to `Center` to center the entire line box; other
+///   values retain `None` (`Right` / `Justify` flex handling is outside this
+///   task). For a lone Text child in a non-qualifying block container,
+///   `realign_text_after_layout` centers it in parley instead. See its docs.
 fn text_align_to_parley(v: TextAlign) -> Alignment {
     match v {
         TextAlign::Start => Alignment::Start,
@@ -254,65 +212,67 @@ fn text_align_to_parley(v: TextAlign) -> Alignment {
         TextAlign::Right => Alignment::Right,
         TextAlign::Center => Alignment::Center,
         TextAlign::Justify => Alignment::Justify,
-        // CSS Text 3 §6.1: `justify-all` は全行 (最終行含む) を justify。
-        // parley に相当が無いため `Justify` に degrade する
-        // (最終行は start-aligned のまま — 既知の差分として doc に残す)。
+        // CSS Text 3 §6.1: `justify-all` justifies every line, including the last.
+        // Parley has no equivalent, so degrade to `Justify` (which leaves
+        // the last line start-aligned; this difference is documented).
         TextAlign::JustifyAll => Alignment::Justify,
-        // `MatchParent` は computed 層到達前に解決済のはず
-        // (`raikiri_style::computed::ComputedValues::text_align` doc 参照)。
-        // defensive fallback として `Start` (initial value) に倒す。
+        // `MatchParent` should be resolved before reaching the computed layer
+        // (see `raikiri_style::computed::ComputedValues::text_align`).
+        // Defensively fall back to `Start` (the initial value).
         TextAlign::MatchParent => Alignment::Start,
-        // `#[non_exhaustive]` 将来 variant への fail-closed fallback。
+        // Fail-closed fallback for future `#[non_exhaustive]` variants.
         _ => Alignment::Start,
     }
 }
 
-/// taffy の `compute_root_layout` 後に各 Text の parley `Layout` を
-/// containing block 幅基準で re-align する。
+/// After taffy's `compute_root_layout`, re-align each Text parley `Layout`
+/// using its containing block width.
 ///
-/// # なぜ preshape 時ではなくここか
+/// # Why not align during preshape?
 ///
-/// [`preshape_text`] は taffy より前に走り、使える幅は `page_box.width`
-/// のみ。`Center` 等をそこで素朴に渡すと、狭い containing block 内の text が
-/// ページ幅基準で中央寄せされ、大きくズレる。
-/// taffy 後に親 box の確定幅 (`unrounded_layout.size.width`) を
-/// containing 幅として `break_all_lines(Some(w))` + `align(...)` し直すことで、
-/// 正しい幅基準の offset を glyph run に bake する。
-/// `Start` は幅に依存しないため skip する (preshape のまま正しい)。
+/// [`preshape_text`] runs before taffy and only knows `page_box.width`.
+/// Naively passing `Center` there centers text in a narrow containing block
+/// against the page width, causing a large offset. After taffy, use the
+/// resolved parent box width (`unrounded_layout.size.width`) as the containing
+/// width for `break_all_lines(Some(w))` + `align(...)`. This bakes an offset
+/// based on the correct width into the glyph run. Skip `Start`, which is
+/// width-independent and already correct from preshape.
 ///
-/// # flex line box の child は対象外
+/// # Exclude children of flex line boxes
 ///
-/// 親が [`establish_minimal_line_boxes`] で flex 化された container
-/// (`IS_INLINE_ROOT`) の場合、その Text は line box 上の flex item であり、
-/// 中央寄せは container 側の `justify_content: Center` が担う。
-/// ここで親幅基準に parley re-align すると各 piece が親全幅基準で中央に
-/// 寄り、互いに重なってしまうため、明示的に skip する。
-/// 親幅ではなく自身の box 幅で寄せても offset 0 の no-op にしかならないが、
-/// 意図を明示するため skip 側に倒す。
+/// When the parent was converted to flex by [`establish_minimal_line_boxes`]
+/// (`IS_INLINE_ROOT`), its Text is a flex item on the line box. The container's
+/// `justify_content: Center` handles centering. Aligning each parley piece
+/// against the parent width instead would center all pieces independently
+/// and make them overlap, so explicitly skip them. Aligning against each
+/// piece's own box width would only give an offset-zero no-op, but skipping
+/// makes the intent clearer.
 ///
-/// # 既知の限界
+/// # Known limitations
 ///
-/// - 親の `size.width` をそのまま containing 幅にする。padding / border の
-///   content-box 減算はしない (px length のみ減算すべきだが、現状は未対応 —
-///   padding 付き narrow container では中央がわずかにずれる)。
-/// - re-break で行数が変わる場合 (narrow container 内の長文)、text の高さが
-///   変わるが taffy box は更新しない (sibling の y が stale のまま)。
-///   中央寄せの主 target である短文・単一行では高さ不変のため無害。
-///   長文 wrap の完全な整合は inline formatting context 全体の再設計時に扱う。
-/// - `Start` / `End` の論理→物理解決は自要素の `cv.direction` で行う。
-///   parley public API に base direction を渡す口が無いため、parley 側の
-///   `Start` / `End` には頼らず
-///   `Left` / `Right` に解決してから渡す。`dir=rtl` 属性は対象外
-///   (`direction` CSS のみ — dir 属性→direction 反映は Epic 3 領域)。
-/// - `text-indent` の `%` は親の border-box 幅基準で解決する (content-box
-///   減算なし — 上記第 1 bullet と同じ近似)。flex line box の child の
-///   indent は未対応 (box 測定との乖離のため skip)。
+/// - Use the parent's `size.width` directly as containing width. Do not
+///   subtract padding or borders (only px lengths should be subtracted;
+///   this is not yet supported, so centered text in a narrow padded box is
+///   slightly off).
+/// - A re-break can change the number of lines (long text in a narrow box),
+///   changing text height without updating the taffy box; sibling y positions
+///   remain stale. The main centering target, short single-line text, keeps
+///   the same height. Fully reconciling long wrapped text needs a redesign
+///   of the inline formatting context.
+/// - Resolve logical `Start` / `End` to physical alignment using the node's
+///   `cv.direction`. Parley's public API cannot accept a base direction, so
+///   resolve to `Left` / `Right` instead of relying on parley's `Start` / `End`.
+///   The `dir=rtl` attribute is outside scope (only CSS `direction` is used;
+///   mapping the dir attribute to direction belongs to Epic 3).
+/// - Resolve `%` `text-indent` against the parent's border-box width (without
+///   subtracting its content-box edges, the same approximation as above).
+///   Indent for a flex line-box child is unsupported because it would diverge
+///   from the measured box width.
 ///
-/// tab-stop 基準の block-container 祖先を探す (CSS Text 3 §4.2)。
-///
-/// `Inline` / `Contents` は透過して登る。`Flex` / `Grid` 等の
-/// 非 block-container で止まった場合・root 到達の場合は None
-/// (caller は自 font に倒す fail-safe)。
+/// Find the block-container ancestor defining tab-stop metrics (CSS Text 3 §4.2).
+/// Climb through `Inline` / `Contents`. Return None on encountering a
+/// non-block-container such as `Flex` / `Grid`, or reaching the root; the
+/// caller falls back to its own font as a fail-safe.
 fn nearest_block_container(
     doc: &Document,
     cascade: &CascadeResult,
@@ -338,22 +298,22 @@ fn nearest_block_container(
     None
 }
 
-/// CSS collapsing 対象の空白集合 (space / tab / LF / FF / CR)。
-///
-/// `char::is_whitespace` は NBSP 等も含むが、NBSP は collapse しないため
-/// ここでは使わない (CSS Text 3 §4.1 準拠の近似)。
+/// The CSS-collapsible whitespace set (space / tab / LF / FF / CR).
+/// `char::is_whitespace` also includes NBSP, which must not collapse, so do
+/// not use it here (an approximation of CSS Text 3 §4.1).
 fn is_collapsible_ws(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r')
 }
 
-/// sibling が block 内の先行 content になるか (CSS Text 3 §8.1 先頭行判定用)。
-///
-/// - Text: collapse 系 white-space で空白のみ → 無視 (行を占めない)。
-///   preserve 系では空白も行を占めるため content。空 string は常に無視。
-/// - `br` → 常に content (forced break → 後続は 2 行目以降)。
-/// - `display: none` → 無視。replaced (`img` 等) → content。
-///   その他: 子無し → 無視、子持ち → content。
-///   (空 inline の過剰除外は受容する近似 — doc に明記。)
+/// Whether a sibling contributes preceding content in a block (for the
+/// first-line check in CSS Text 3 §8.1).
+/// - Text: ignore whitespace-only text under collapsing white-space modes;
+///   preserved whitespace occupies a line and therefore counts. Always
+///   ignore empty strings.
+/// - `br` always counts (a forced break puts following content on a later line).
+/// - Ignore `display: none`; count replaced elements (e.g. `img`).
+///   Otherwise, ignore childless nodes and count nodes with children.
+///   This deliberately over-excludes empty inlines, as documented.
 fn is_block_content(doc: &Document, cascade: &CascadeResult, sib: usize) -> bool {
     match &doc.nodes[sib].data {
         crate::node::NodeData::Text(t) => {
@@ -397,14 +357,13 @@ fn is_block_content(doc: &Document, cascade: &CascadeResult, sib: usize) -> bool
     }
 }
 
-/// その Text node が属する block の先頭 formatted line を開始するか
-/// (CSS Text 3 §8.1 — `text-indent` は each-line 無しでは先頭行のみ)。
-///
-/// per-Text-node preshape では「node の先頭行」と「block の先頭行」が一致
-/// しない (`<br>` 後・inline 分割・nested block 混在 — length-002 が pin)。
-/// nearest block-container 祖先まで登りながら先行 sibling を scan し、
-/// content が 1 つでもあれば false。
-/// block 祖先が無い場合は true (fail-safe — 従来挙動を維持)。
+/// Whether this Text node starts the first formatted line of its block
+/// (CSS Text 3 §8.1: without each-line, `text-indent` only affects the first).
+/// Per-Text-node preshape cannot equate "first line of the node" with "first
+/// line of the block" (after `<br>`, across inline fragments, or among nested
+/// blocks, as pinned by length-002). Climb to the nearest block-container
+/// ancestor and scan preceding siblings; return false if any has content.
+/// Return true when no block ancestor exists (fail-safe, preserving prior behavior).
 /// Maps computed hanging/each-line flags plus node line position to parley
 /// [`IndentOptions`] (CSS Text 3 §8.1).
 ///
@@ -450,21 +409,20 @@ fn indent_options_for_node(
     }
 }
 
-/// 行頭位置の分類 (leading trim 用)。
+/// The position at the start of a line (for leading trim).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum LineStart {
-    /// block 先頭。
+    /// Start of a block.
     BlockStart,
-    /// `<br>` / preserved `\n` / 先行 block の直後。
+    /// Immediately after `<br>`, a preserved `\n`, or a preceding block.
     AfterBreak,
-    /// 上記以外 (行中)。
+    /// Any other position (mid-line).
     MidLine,
 }
 
-/// Text node が preserved な強制 break (`\n`) を含むか。
-///
-/// preserve するのは Pre / PreWrap / BreakSpaces / PreLine。
-/// Normal / Nowrap 下の `\n` は space 化されるため break ではない。
+/// Whether a Text node contains a preserved forced break (`\n`).
+/// Pre / PreWrap / BreakSpaces / PreLine preserve it. In Normal / Nowrap,
+/// `\n` becomes a space instead of a break.
 fn has_preserved_break(cascade: &CascadeResult, idx: usize, text: &str) -> bool {
     if !text.contains('\n') {
         return false;
@@ -475,13 +433,12 @@ fn has_preserved_break(cascade: &CascadeResult, idx: usize, text: &str) -> bool 
     )
 }
 
-/// 行頭位置を後ろ向き scan で求める (leading trim 用)。
-///
-/// block 祖先まで登りながら先行 sibling を逆順 scan:
-/// - collapse 系の空白のみ text / 空 / `display: none` → 透過。
-/// - preserved `\n` を含む text / `br` / 先行 block 要素 → [`LineStart::AfterBreak`]。
-/// - その他 content → [`LineStart::MidLine`]。
-/// - block 先頭 (or root) 到達 → [`LineStart::BlockStart`]。
+/// Determine line-start position by scanning backward (for leading trim).
+/// Scan preceding siblings while climbing toward the block ancestor:
+/// - Skip whitespace-only text in collapsing modes, empty text, and `display: none`.
+/// - Preserved `\n` in text, `br`, or a preceding block: [`LineStart::AfterBreak`].
+/// - Other content: [`LineStart::MidLine`].
+/// - Reach the block start (or root): [`LineStart::BlockStart`].
 fn line_start_pos(
     doc: &Document,
     cascade: &CascadeResult,
@@ -535,8 +492,9 @@ fn line_start_pos(
     }
 }
 
-/// 後続が block 終端・`<br>`・preserved `\n`・後続 block のいずれか
-/// (trailing trim 用)。前向き scan、分類は [`line_start_pos`] と対称。
+/// Whether the following position is a block end, `<br>`, preserved `\n`,
+/// or a following block (for trailing trim). Scan forward, symmetrically
+/// to [`line_start_pos`].
 fn trail_trim(
     doc: &Document,
     cascade: &CascadeResult,
@@ -590,15 +548,16 @@ fn trail_trim(
     }
 }
 
-/// white-space phase 1 collapsing (CSS Text 3 §4.1)。
+/// white-space phase 1 collapsing (CSS Text 3 §4.1).
 ///
-/// - Pre / PreWrap / BreakSpaces → 無変換 (tab 展開は [`preshape_text`] で別途行う)。
-/// - Normal / Nowrap: `\t \n \f \r` → space、run collapse、行頭/行末 trim。
-/// - PreLine: `\n` 保持 (forced break)、他は Normal と同じ。
-/// - leading trim は `start != MidLine`、trailing trim は `trim_end`。
+/// - Pre / PreWrap / BreakSpaces: unchanged (expand tabs in [`preshape_text`]).
+/// - Normal / Nowrap: convert `\t \n \f \r` to spaces, collapse runs, and trim line edges.
+/// - PreLine: preserve `\n` (forced break); otherwise follow Normal.
+/// - Trim the leading run when `start != MidLine` and the trailing run
+///   when `trim_end` is true.
 ///
-/// 対象外 (doc 明記): segment-break 前後の CJK space 除去、PreLine の
-/// hanging trailing space、`overflow-wrap` との相互作用。
+/// Out of scope (documented): CJK space removal around segment breaks,
+/// PreLine hanging trailing spaces, and interaction with `overflow-wrap`.
 fn collapse_ws(
     text: &str,
     ws: WhiteSpace,
@@ -613,7 +572,7 @@ fn collapse_ws(
         _ => {}
     }
     let keep_nl = ws == WhiteSpace::PreLine;
-    // 速径: 変換対象が無ければ borrow のまま返す。
+    // Fast path: borrow the string if it needs no transformation.
     let needs = text.chars().any(|c| match c {
         '\t' | '\x0C' | '\r' => true,
         '\n' => !keep_nl,
@@ -626,13 +585,13 @@ fn collapse_ws(
     let mut out = String::with_capacity(text.len());
     let mut pending_space = false;
     let mut at_start = true;
-    // 先頭 run の扱い: BlockStart / AfterBreak では捨て、MidLine では 1 space。
+    // Leading run: drop at BlockStart / AfterBreak; keep one space at MidLine.
     let mut drop_leading = start != LineStart::MidLine;
     for c in text.chars() {
         if c == '\n' && keep_nl {
-            // PreLine の preserved break: pending を flush して改行を置き、
-            // 改行後は常に行頭扱い (start-of-line run 除去 — CSS Text 3 §4.1.2)。
-            // break 直前 trailing の hanging 再現は対象外 (1 space 置く)。
+            // PreLine preserved break: flush pending space and insert a newline.
+            // Treat the next run as line-leading (CSS Text 3 §4.1.2).
+            // Hanging space before the break is unsupported; emit one space.
             if pending_space && !at_start {
                 out.push(' ');
             }
@@ -656,8 +615,8 @@ fn collapse_ws(
         at_start = false;
         out.push(c);
     }
-    // 末尾 run: `trim_end` (block 終端 / break 直前) のとき捨て、
-    // それ以外は 1 space。
+    // Trailing run: drop it at `trim_end` (block end / before break),
+    // otherwise keep one space.
     if pending_space && !trim_end {
         out.push(' ');
     }
@@ -1194,7 +1153,7 @@ pub(crate) fn realign_text_after_layout(
     fonts: &mut FontContext,
     layout_cx: &mut LayoutContext<()>,
 ) {
-    // parent map (arena に parent pointer が無いため children から逆引き)。
+    // Parent map: the arena has no parent pointers, so derive them from children.
     let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
     for idx in 0..doc.nodes.len() {
         for &c in &doc.nodes[idx].children.clone() {
@@ -1246,12 +1205,12 @@ pub(crate) fn realign_text_after_layout(
             // text still needs the ordinary post-Taffy alignment pass.
             continue;
         }
-        // 論理値 (`start` / `end`) は自要素の `direction` で物理値に解決する
-        // (CSS Text 3 §6.1)。parley の `Start` / `End` は content-inferred
-        // bidi に委ねられるため、RTL では誤った側に寄る
-        // (text-align-end-001 の regress で実測)。
-        // `Start` + LTR のみ skip (preshape のまま正しい — 再 break による
-        // wrap 変化の regress を避ける)。
+        // Resolve logical `start` / `end` to physical alignment using this
+        // element's `direction` (CSS Text 3 §6.1). Parley's `Start` / `End`
+        // follow content-inferred bidi direction and misalign RTL content
+        // (observed in the text-align-end-001 regression).
+        // Skip only `Start` + LTR (preshape already gets it right, avoiding
+        // a wrapping regression caused by re-breaking).
         let cv = &cascade.computed[idx];
         let parley_align = match text_align_to_parley(cv.text_align) {
             Alignment::Start if cv.direction == Direction::Rtl => Alignment::Right,
@@ -1288,28 +1247,27 @@ pub(crate) fn realign_text_after_layout(
             None
         };
         let measured_indent = measured_text_indent_px(cv, fonts, layout_cx, &mut ch_probes);
-        // preshape は page 幅で break するため、narrow container 内の text の
-        // 折り返しは container 幅に整合しない (slice 1b で
-        // 実測: length-001 の 3-line article が single-line のまま残る)。
-        // 全 node re-break の実験は nowrap-001 の pinned regress を起こしたため
-        // revert した (当該 experiment は別途 full-baseline 判定が必要 —
-        // the preceding comment参照)。したがって re-break は
-        // indent 付き / 非 Start の node のみに限定する。
+        // Preshape breaks at page width, not the width of a narrow container
+        // (measured in slice 1b: length-001's three-line article stays on
+        // one line). Re-breaking every node regressed the pinned nowrap-001
+        // test, so that experiment was reverted (it needs a separate full
+        // baseline review; see the preceding comment). Only re-break nodes
+        // with an indent or non-Start alignment.
         // All non-flex text re-breaks against the containing width here
         // preshape only knows the page width, so
         // narrow-container wrapping would otherwise never apply. `nowrap`
         // nodes are handled by the branch below without re-breaking.
         // `Start` alignment after re-break is a no-op offset-wise; only the
         // wrap points change.
-        // `Justify` / `End` 等も同じ幅基準問題を持つため同じ経路で扱うが、
-        // 本 goal の主 target は `Center`。他値もここで正しい幅基準になる。
+        // `Justify` / `End` also need the correct containing width.
+        // This goal chiefly targets `Center`, but fixes their width too.
         let Some(parent_idx) = *parent else {
             continue;
         };
-        // flex line box の child は container 側の justify に委ねる (上記 doc)。
-        // indent も同様に skip する — flex item の幅は taffy が indent 無し
-        // layout から測っており、ここで indent を付けると box と run が乖離
-        // する (既知の限界として doc に残す)。
+        // Defer flex line-box children to container-side justification (see docs).
+        // Skip indent too: taffy measured the flex item's box without it,
+        // so indenting here would separate the glyph run from its box
+        // (a documented limitation).
         let needs_line_break_property = matches!(
             cv.word_break,
             WordBreak::BreakAll | WordBreak::KeepAll | WordBreak::BreakWord
@@ -1411,14 +1369,14 @@ pub(crate) fn realign_text_after_layout(
             layout.set_text_indent(amount, options);
         }
         layout.break_all_lines(Some(containing_width));
-        // `text-align-last` (CSS Text 3 §6.1): 明示 last 値の適用は対象外。
-        // parley の `align(Justify)` は最終行 (`BreakReason::None`) を
-        // 意図的に除外するため (parley alignment.rs 実測)、single-line を含む
-        // あらゆる last-line-only の justify/align は public API では再現
-        // できない。`text_align_last` の cascade 配線 (parse/wire/inherit) は
-        // 将来の parley 対応に備えて維持する。`MatchParent` の cascade
-        // 未解決も同様に将来対応 (現状 `auto` 扱いの近似は reader 側で行わない —
-        // 何もしないのが正しい)。
+        // `text-align-last` (CSS Text 3 §6.1): applying an explicit last-line
+        // value is outside scope. Parley's `align(Justify)` deliberately omits
+        // the last line (`BreakReason::None`, observed in alignment.rs), so
+        // its public API cannot reproduce last-line-only justification or
+        // alignment, even on a single line. Keep `text_align_last` cascade
+        // wiring (parse/wire/inherit) for future parley support. Unresolved
+        // `MatchParent` is also future work: ignoring it is correct, rather
+        // than approximating it as `auto` on the reader side.
         layout.align(align, AlignmentOptions::default());
     }
 
@@ -1832,22 +1790,20 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
         if !qualifies {
             continue;
         }
-        // display:none な child も含む — taffy はそのような child を
-        // Display::None として layout tree から丸ごと除外するため、
-        // flex_grow/flex_shrink を check することに実害は無い (無駄では
-        // あるが害はない)。
+        // This includes display:none children: taffy excludes them entirely
+        // from the layout tree with Display::None. Checking their
+        // flex_grow/flex_shrink is redundant but harmless.
         let participating_children: Vec<usize> = doc.nodes[idx]
             .children
             .iter()
             .copied()
             .filter(|&c| doc.nodes[c].is_in_document())
             .collect();
-        // この container に display:none ではない `<br>` が 1 個でも
-        // あるかどうか — "`<br>` forced break" (この関数の doc 参照) の
-        // 適用条件そのもの。display:none な `<br>` は box を生成しないため
-        // forced break として数えない — 数えてしまうと `<br>` を含まない
-        // 見た目上の container まで `flex_wrap: Wrap` になり、size-based
-        // wrapping が意図せず有効になってしまう (下記 doc 参照)。
+        // Does this container have any `<br>` whose display is not none?
+        // This is exactly the condition in this function's "`<br>` forced break"
+        // docs. A display:none `<br>` makes no box and must not count:
+        // counting it would turn on `flex_wrap: Wrap` for a visually break-free
+        // container, unexpectedly enabling size-based wrapping (see docs).
         let has_forced_break = participating_children
             .iter()
             .any(|&c| is_forced_line_break(doc, c, cascade));
@@ -1921,10 +1877,9 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
                 TaffyAlignItems::FLEX_START
             });
             style.align_content = Some(TaffyAlignContent::FLEX_START);
-            // `text-align: center` の line box 全体の中央寄せは flex の
-            // main-axis 配置で実現する (parley 側ではなく container 側)。
-            // 他値は `None` のまま (本 task の scope 外 — `Right` 等の flex
-            // 対応は将来 work)。
+            // Center the whole line box for `text-align: center` via flex
+            // main-axis alignment, not parley. Keep other values at `None`:
+            // flex handling of `Right` and others is future work.
             style.justify_content = if cascade.computed[idx].text_align == TextAlign::Center {
                 Some(TaffyAlignContent::CENTER)
             } else {
@@ -1964,15 +1919,13 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
     }
 }
 
-/// `idx` (ある in-document な node) が [`establish_minimal_line_boxes`] の
-/// "`<br>` forced break" (同関数の doc section 参照) として扱われるべき
-/// かどうか。
+/// Whether `idx`, an in-document node, should act as a "`<br>` forced break"
+/// in [`establish_minimal_line_boxes`] (see that function's section).
 ///
-/// `NodeKind::Element` かつ `tag_name() == Some("br")` かつ computed
-/// `display` が [`DisplayValue::None`] ではないことを見る — tag_name の
-/// 直接比較は [`find_body`] の `tag_name() == Some("body")` と同じ pattern
-/// であり、`<br>` を判別するために [`NodeKind`] へ新しい variant を追加する
-/// 必要はない。
+/// Check for `NodeKind::Element` with `tag_name() == Some("br")` and computed
+/// `display` other than [`DisplayValue::None`]. This direct tag_name comparison
+/// follows [`find_body`], which compares `tag_name() == Some("body")`. Identifying
+/// `<br>` needs no new [`NodeKind`] variant.
 fn is_forced_line_break(doc: &Document, idx: usize, cascade: &CascadeResult) -> bool {
     doc.nodes[idx].kind() == NodeKind::Element
         && doc.nodes[idx].tag_name() == Some("br")
@@ -2007,26 +1960,24 @@ fn has_line_box_edge_aligned_descendant(
     false
 }
 
-/// `idx` (ある [`NodeKind::Element`]) が
-/// [`establish_minimal_line_boxes`] の minimal-line-box 処理の対象かどうか
-/// — qualifying condition とその根拠は同関数の doc 参照。
+/// Whether `idx` (a [`NodeKind::Element`]) qualifies for the minimal line-box
+/// handling in [`establish_minimal_line_boxes`]. See that function's docs
+/// for the qualifying condition and rationale.
 fn qualifies_for_minimal_line_box(
     doc: &Document,
     idx: usize,
     cascade: &CascadeResult,
     has_autospace_candidate: bool,
 ) -> bool {
-    // ここでは意図的に pre-bridge の `DisplayValue` を読む
-    // (post-`bridge_display` の `taffy::Display` ではない — この second
-    // pass が走る時点で `Block` / `Inline` / `InlineBlock` は既に全て
-    // `Display::Block` に collapse 済み)。plain な `Inline` は direct text
-    // children だけなら除外し、nested inline element child を持つ wrapper
-    // だけを qualify する (この module の doc 参照)。
-    // table 系 (`Table` / `InlineTable` / `TableRow` / `TableCell` /
-    // `TableCaption`) は全 child inline の場合に限り qualify する —
-    // match arm 上の注記参照。taffy dispatch 側
-    // (`taffy_impl.rs` の table dispatch) は `IS_INLINE_ROOT` flag を見て
-    // table engine を bypass する。
+    // Deliberately read the pre-bridge `DisplayValue`, not the post-
+    // `bridge_display` `taffy::Display`: by this second pass, `Block`,
+    // `Inline`, and `InlineBlock` have all collapsed to `Display::Block`.
+    // Exclude plain `Inline` with only direct text children; qualify only
+    // wrappers with a nested inline element child (see module docs).
+    // Qualify table types (`Table` / `InlineTable` / `TableRow` /
+    // `TableCell` / `TableCaption`) only with all-inline children; see
+    // the match-arm note. The table dispatch in `taffy_impl.rs` checks
+    // `IS_INLINE_ROOT` to bypass the table engine.
     let is_plain_inline = has_autospace_candidate
         && cascade.computed[idx].display == DisplayValue::Inline
         && cascade.computed[idx].text_autospace != TextAutospace::NoAutospace;
@@ -2065,16 +2016,15 @@ fn qualifies_for_minimal_line_box(
             NodeKind::Element => match cascade.computed[c].display {
                 DisplayValue::Inline | DisplayValue::InlineBlock => inline_level_count += 1,
                 DisplayValue::None => {}
-                // block-level / flex / grid な child (および将来の
-                // non_exhaustive な DisplayValue variant) は全て
-                // disqualify する — block-level と inline-level の
-                // 混在は対象外、この module の doc 参照。
+                // Block-level / flex / grid children, as well as future
+                // non_exhaustive DisplayValue variants, disqualify the parent:
+                // mixed block-level and inline-level content is out of scope
+                // (see module docs).
                 _ => return false,
             },
             // Comment / ProcessingInstruction / DocumentFragment /
-            // Document はそもそも `is_in_document()` にならないはず
-            // (`NodeData` の doc 参照) だが、その invariant を前提とせず
-            // ここで defensive に fail closed する。
+            // Document should never satisfy `is_in_document()` (see
+            // `NodeData` docs); fail closed here without assuming that invariant.
             // cov:ignore: unreachable — Comment/ProcessingInstruction/DocumentFragment/Document nodes always have IS_IN_DOCUMENT cleared (see document.rs's mark_in_document_flags invariant), filtered by the is_in_document() guard above; kept as a defensive fallback rather than relying on that invariant here.
             _ => return false,
         }
@@ -2091,82 +2041,76 @@ fn qualifies_for_minimal_line_box(
     }
 }
 
-/// parley に渡す `font-weight` の妥当域下限。
+/// Minimum valid `font-weight` passed to parley.
 ///
 /// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
-/// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop> の grammar は
-/// `<number [1,1000]>` — target context は [`MAX_TAFFY_MAGNITUDE`] /
-/// [`MAX_FONT_SIZE_PX`] とは別の sink (`parley::FontWeight`) なので、
-/// 「上限は sink ごとに変える」という方針に従い spec
-/// 由来の妥当域をそのまま採る — skrifa / CSSWG issue のような engineering
-/// measurement を要しない、数少ない site。
+/// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop> specifies
+/// `<number [1,1000]>`. This sink (`parley::FontWeight`) is distinct from
+/// [`MAX_TAFFY_MAGNITUDE`] / [`MAX_FONT_SIZE_PX`], so use the spec range
+/// rather than a shared bound: limits depend on the sink. Unlike skrifa /
+/// CSSWG issues, this site needs no engineering measurement.
 const MIN_FONT_WEIGHT: f32 = 1.0;
 
-/// parley に渡す `font-weight` の妥当域上限 (同上、CSS Fonts 4 §2.2)。
+/// Maximum valid `font-weight` passed to parley (CSS Fonts 4 §2.2).
 const MAX_FONT_WEIGHT: f32 = 1000.0;
 
-/// 非有限 `font-weight` (`NaN`) の fallback 値。
+/// Fallback for non-finite (`NaN`) `font-weight`.
 ///
 /// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
-/// <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
-/// `normal` keyword の computed value (`ComputedValues::initial().
-/// font_weight` の値と一致、`crates/raikiri-style/src/computed.rs` 参照)。
+/// <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> assigns
+/// `normal` this computed value, matching `ComputedValues::initial().
+/// font_weight` (see `crates/raikiri-style/src/computed.rs`).
 ///
-/// [`sanitize_finite`] が length 系 site で NaN を `0.0` に落とすのは、
-/// padding/margin の spec initial が幾何 `0` である、あるいは `0 * inf =
-/// NaN` という無限精度評価が実際に `0` になるケースだから (同関数 doc
-/// 参照) — font-weight にはどちらの根拠も対応しない。`0.0` は
-/// `[MIN_FONT_WEIGHT, MAX_FONT_WEIGHT]` の外なので、それをそのまま NaN の
-/// 代わりに使うと sanitize 後の値が sink の妥当域を割ってしまう。よって
-/// font-weight は独自の fallback を持つ。
+/// [`sanitize_finite`] maps NaN to `0.0` at length sinks because the spec's
+/// initial padding/margin is geometric zero or because infinite-precision
+/// `0 * inf = NaN` should evaluate to zero. Neither justification applies
+/// to font-weight. `0.0` is outside `[MIN_FONT_WEIGHT, MAX_FONT_WEIGHT]`;
+/// using it for NaN would leave the sanitized value outside the sink's valid
+/// range. Font-weight therefore has its own fallback.
 const FALLBACK_FONT_WEIGHT: f32 = 400.0;
 
-/// 非有限 (`NaN` / `±Inf`) または `[MIN_FONT_WEIGHT, MAX_FONT_WEIGHT]`
-/// 範囲外の `font-weight` を `parley::FontWeight::new` へ渡す直前で
-/// sanitize する。
+/// Sanitize non-finite (`NaN` / `±Inf`) or out-of-range
+/// `[MIN_FONT_WEIGHT, MAX_FONT_WEIGHT]` `font-weight` immediately before
+/// passing it to `parley::FontWeight::new`.
 ///
-/// # なぜここに置くか
+/// # Why guard here?
 ///
-/// 「非有限 / 範囲外 f32 の guard は値が実際に使われる sink 境界
-/// (target context) に置く。parse-time (specified 層) にも resolve 層
-/// (computed 層) にも置かない」という方針に従う。[`raikiri_style::page::cascade_page`]
-/// (raikiri-style) の継承元 root 引数や `ComputedValues` の直接構築は
-/// raikiri-style 側の resolve/computed 層であり、
-/// `raikiri_style::cascade::resolve_relative_weight` も同じ層に属する —
-/// この方針はそのどちらへの guard 追加も明示的に禁じる
-/// ("public な computed 層 surface は sanitize しない")。
+/// Guard non-finite / out-of-range f32 values at the sink where they are used
+/// (target context), not at parse time (specified layer) or during resolution
+/// (computed layer). The inherited root argument of
+/// [`raikiri_style::page::cascade_page`] (raikiri-style), direct construction
+/// of `ComputedValues`, and `raikiri_style::cascade::resolve_relative_weight`
+/// all belong to the resolve/computed layer. This policy expressly forbids
+/// adding guards there: "do not sanitize public computed-layer surfaces".
+/// Placing this function in [`preshape_text`], the sole caller of
+/// `parley::FontWeight::new`, matches the sink-adjacent guards at the other
+/// five sites (four taffy bridge helpers plus the font-size guard in
+/// `preshape_text`); this is site 6.
 ///
-/// 本関数は [`preshape_text`] — `parley::FontWeight::new` を呼ぶ唯一の call
-/// site — に置くことで、他の 5 site (taffy bridge
-/// helper 4 本 + font-size 用 `preshape_text` 呼び出し) と同じ「sink 直前」
-/// 構造に揃える (site 6)。
+/// # Why use [`FALLBACK_FONT_WEIGHT`] (`400.0`) rather than `0.0` for NaN?
 ///
-/// # NaN fallback が `0.0` ではなく [`FALLBACK_FONT_WEIGHT`] (`400.0`) な理由
+/// Do not reuse [`sanitize_finite`] directly, for two reasons:
 ///
-/// [`sanitize_finite`] を直接再利用しない。理由は 2 つ:
-///
-/// 1. **NaN fallback がそもそも違う** — [`sanitize_finite`] は NaN を
-///    無条件で `0.0` に落とすが、その根拠 (同関数 doc 参照) は font-weight
-///    に対応しない。`0.0` は妥当域の外なので、そのまま使うと sanitize
-///    後の値が sink の妥当域を割る。CSS Fonts 4 §2.2
+/// 1. **Different NaN fallback.** [`sanitize_finite`] unconditionally maps
+///    NaN to `0.0`, but its rationale (see its docs) does not apply to
+///    font-weight. Zero is outside the valid range. CSS Fonts 4 §2.2
 ///    "Font weight: the font-weight property"
-///    <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
-///    `normal` の computed value である `400.0` を採る方が、
-///    「fallback / 上限は sink ごとに変える」という方針に忠実。
-/// 2. **signature 変更の波及範囲** — `nan_fallback` 引数を足せば理屈上
-///    1 関数に統合できるが、それは既存の length 系 4 call site
-///    (`sanitize_taffy` 経由の 4 本 + font-size 直接呼び出し 1 本) と、
-///    それらを検証する既存 test 全部に本 task の scope
-///    (font-weight 1 sink) と無関係な引数を波及させる。独立した小関数として
-///    持つ方が diff が scope に対して釣り合う。
+///    <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> gives
+///    `normal` the computed value `400.0`; using it follows the policy that
+///    fallbacks and limits vary by sink.
+/// 2. **Cost of changing the signature.** Adding a `nan_fallback` parameter
+///    could unify the functions in theory, but it would add an irrelevant
+///    argument to the existing length-related call sites (four via
+///    `sanitize_taffy` plus one direct font-size call) and all their tests.
+///    A small separate function keeps the diff proportional to the single
+///    font-weight sink in scope.
 ///
-/// # 出力側 (`resolve_relative_weight`) は変えない
+/// # Do not change the producer (`resolve_relative_weight`)
 ///
-/// `resolve_relative_weight` の非対称処理 (`Bolder`/`Lighter`/`-Inf` の
-/// 扱いが異なる、同関数 doc 参照) は本関数の追加で修正しない —
-/// resolve 層の挙動変更は本方針の禁止対象であり、本 sink guard は
-/// 「resolve 層が何を出しても最終的に有限 + 妥当域内にする」ことだけを
-/// 保証する。
+/// Do not alter `resolve_relative_weight`'s asymmetric handling of `Bolder`,
+/// `Lighter`, and `-Inf` (see its docs). Changing resolution is forbidden by
+/// this policy; this sink guard only ensures that whatever the resolver
+/// produces ends up finite and within the valid range.
 fn sanitize_font_weight(v: f32, diag: &mut Vec<LayoutWarn>) -> f32 {
     let clamped = if v.is_nan() {
         FALLBACK_FONT_WEIGHT
@@ -2211,48 +2155,46 @@ fn font_style_to_parley(v: StyleFontStyle) -> FontStyle {
     }
 }
 
-/// [`ComputedLineHeight`] (`cascade.computed[idx].line_height`,
-/// [`ComputedValues`] の全 field は `pub` なので非有限になり得る) を parley の
-/// 2 numeric sink (`ComputedLineHeight::Number` / `Length`) 直前で sanitize
-/// する。`Normal` は数値を持たないのでそのまま素通しする。
+/// Sanitize [`ComputedLineHeight`] (`cascade.computed[idx].line_height`;
+/// all [`ComputedValues`] fields are `pub`, so values may be non-finite)
+/// immediately before parley's two numeric sinks (`ComputedLineHeight::Number`
+/// and `Length`). Pass `Normal` through; it has no numeric value.
 ///
-/// `[0.0, MAX]` の非対称 clamp (対称でない) は CSS Inline 3 §5.1
+/// The asymmetric `[0.0, MAX]` clamp follows CSS Inline 3 §5.1,
 /// "Line Spacing: the line-height property"
-/// (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>) の grammar
-/// `normal | <number [0,∞]> | <length-percentage [0,∞]>` に合わせたもの —
-/// `font-size` / `font-weight` の既存 sanitize サイトと同じ理由 (負値は
-/// grammar 上そもそも妥当域外)。
+/// (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>):
+/// `normal | <number [0,∞]> | <length-percentage [0,∞]>`. As at existing
+/// `font-size` / `font-weight` sanitization sites, negative values are outside
+/// the grammar's valid range.
 ///
-/// # `+Inf` は他の site と違う経路で **hang** する
+/// # `+Inf` **hangs** by a different route than at other sites
 ///
-/// 実測 (直接 `RangedBuilder` に `StyleProperty::LineHeight` を push し、
-/// worker thread + `recv_timeout` で有界化): `parley::LineHeight::Absolute(f32::INFINITY)`
-/// と `FontSizeRelative(f32::INFINITY)` はいずれも `break_all_lines` を
-/// hang させる。機構は `font-size` の hang (`next_x <= max_advance` が
-/// `next_x = +Inf` で恒偽になる、[`MAX_FONT_SIZE_PX`] の doc参照) とは別:
-/// `parley-0.10.0/src/layout/line_break.rs` の
-/// `BreakerState::add_line_height` が `running_line_height =
-/// running_line_height.max(height)` を計算しており、`height` が `+Inf` だと
-/// `running_line_height` も `+Inf` になって `running_line_height >
-/// line_max_height` (`line_max_height` の default は `f32::MAX`) が
-/// 以後ずっと真になり続ける。この `max_height_exceeded` 分岐が前進しない
-/// ことで hang する。
+/// Measured by pushing `StyleProperty::LineHeight` directly to `RangedBuilder`
+/// and bounding a worker thread with `recv_timeout`:
+/// `parley::LineHeight::Absolute(f32::INFINITY)` and
+/// `FontSizeRelative(f32::INFINITY)` both hang in `break_all_lines`.
+/// The mechanism differs from the font-size hang, in which
+/// `next_x <= max_advance` stays false with `next_x = +Inf` (see
+/// [`MAX_FONT_SIZE_PX`]). In `parley-0.10.0/src/layout/line_break.rs`,
+/// `BreakerState::add_line_height` calculates `running_line_height =
+/// running_line_height.max(height)`. When height is `+Inf`, the running
+/// height also becomes `+Inf`, so `running_line_height > line_max_height`
+/// (with default `line_max_height = f32::MAX`) remains true. The
+/// `max_height_exceeded` branch does not advance, causing the hang.
 ///
-/// `NaN` は hang **しない** — `f32::max` は NaN を捨てて他方の被演算子を返す
-/// (IEEE 754 の total-order ではなく Rust 標準の `f32::max` 挙動) ため
-/// `running_line_height` は有限のまま前進する。`font-size` の
-/// `NaN`/`-Inf`/巨大 finite が hang しないのと同じ非対称構造 (site 5 の
-/// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`
-/// 参照)。
+/// `NaN` does **not** hang: Rust's `f32::max` discards NaN and returns the
+/// other operand (not IEEE 754 total-order behavior), so the running height
+/// remains finite and advances. This matches the asymmetry at font-size site
+/// 5: `NaN`, `-Inf`, and huge finite values do not hang there (see
+/// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`).
 ///
-/// `FontSizeRelative` はさらに `value * font_size` の乗算で桁あふれし得る
-/// ([`MAX_LINE_HEIGHT_NUMBER`] の doc参照) — [`MAX_LINE_HEIGHT_NUMBER`] は
-/// この overflow を避ける上限。`Absolute` はそのまま渡るだけで乗算しないため
-/// `f32::MAX` 自体は overflow しない (`f32::MAX > f32::MAX` は偽) が、
-/// 同じ [`MAX_FONT_SIZE_PX`] を再利用して上限とする — 「巨大 finite を防ぐ」
-/// ためではなく「入力側で既に non-finite になっているケースを finite に倒す」
-/// ための clamp であり、typographic に意味のある line-height (px) から見て
-/// 過大という理由は font-size の値そのものと同種。
+/// `FontSizeRelative` can also overflow in `value * font_size` (see
+/// [`MAX_LINE_HEIGHT_NUMBER`]); [`MAX_LINE_HEIGHT_NUMBER`] caps it to prevent
+/// that overflow. `Absolute` does no multiplication, so even `f32::MAX` alone
+/// does not overflow (`f32::MAX > f32::MAX` is false). Reuse
+/// [`MAX_FONT_SIZE_PX`] as its limit not to prevent huge finite values but
+/// to clamp already non-finite input to a finite value. A value this large
+/// is typographically unreasonable for line-height (px), just as for font-size.
 pub(crate) fn sanitize_line_height(
     v: ComputedLineHeight,
     diag: &mut Vec<LayoutWarn>,
@@ -2282,32 +2224,30 @@ pub(crate) fn sanitize_line_height(
 /// [`LineHeight`] (`MetricsRelative | FontSizeRelative | Absolute`,
 /// `parley-0.10.0/src/style/mod.rs`).
 ///
-/// 呼び出し側は事前に [`sanitize_line_height`] で有限化した値を渡すこと —
-/// 本関数自体は値を変換するだけで sanitize しない ([`font_style_to_parley`]
-/// と同じ「mapping と sanitize は別関数」構造)。
+/// The caller must make the value finite with [`sanitize_line_height`]
+/// first. This function maps values but does not sanitize them, just as
+/// [`font_style_to_parley`] separates mapping from sanitization.
 ///
-/// # 値レベルの対応 (各 arm の根拠)
+/// # Value mapping (reason for each arm)
 ///
-/// - [`ComputedLineHeight::Normal`] → `LineHeight::MetricsRelative(1.0)` —
-///   parley 自身の `Default` (`parley-0.10.0/src/style/mod.rs` の
-///   `impl Default for LineHeight`) と一致する。本関数を経由しても
-///   line-height 配線前の挙動 (parley default 依存) を変えない。
-/// - [`ComputedLineHeight::Number`] → `LineHeight::FontSizeRelative` —
-///   parley は `FontSizeRelative(value) * font_size` を計算する
-///   (`parley-0.10.0/src/layout/data.rs` の `push_run`)。ここでの
-///   `font_size` は `preshape_text` が同じ `RangedBuilder` へ push する
-///   **自要素の** computed font-size (`StyleProperty::FontSize`) そのもの
-///   なので、CSS Inline 3 §5.1 の「unitless number は子が自分の font-size に
-///   掛ける」と一致する。
-/// - [`ComputedLineHeight::Length`] → `LineHeight::Absolute` — computed 層で
-///   既に絶対化済みの px 値 ([`ComputedLineHeight::Length`] の doc参照) を
-///   そのまま渡す。parley 側も `LineHeight::Absolute(value) => value` と
-///   素通しするだけ (`data.rs`) なので、二重の解決は起きない。
+/// - [`ComputedLineHeight::Normal`] → `LineHeight::MetricsRelative(1.0)`:
+///   parley's own `Default` (`impl Default for LineHeight` in
+///   `parley-0.10.0/src/style/mod.rs`). This preserves the old behavior
+///   that relied on the parley default before line-height was wired.
+/// - [`ComputedLineHeight::Number`] → `LineHeight::FontSizeRelative`:
+///   parley computes `FontSizeRelative(value) * font_size` (the `push_run`
+///   code in `parley-0.10.0/src/layout/data.rs`). This `font_size` is the
+///   **element's own** computed font-size (`StyleProperty::FontSize`) pushed
+///   to the same `RangedBuilder` by `preshape_text`. That matches CSS Inline
+///   3 §5.1: a child multiplies the unitless number by its own font-size.
+/// - [`ComputedLineHeight::Length`] → `LineHeight::Absolute`: pass the px
+///   value already absolutized by the computed layer (see
+///   [`ComputedLineHeight::Length`]). Parley uses
+///   `LineHeight::Absolute(value) => value` (`data.rs`), with no second resolve.
 ///
-/// [`ComputedLineHeight`] は `#[non_exhaustive]` を付けない判断がされている
-/// ([`raikiri_style::resolve`] module doc参照) ため、本関数も
-/// [`font_style_to_parley`] と異なり wildcard arm を持たない — 将来 variant が
-/// 追加されればここでコンパイルが落ちて気づける。
+/// [`ComputedLineHeight`] intentionally lacks `#[non_exhaustive]` (see the
+/// [`raikiri_style::resolve`] module docs). Unlike [`font_style_to_parley`],
+/// this match has no wildcard arm: adding a variant should fail compilation.
 fn line_height_to_parley(v: ComputedLineHeight) -> LineHeight {
     match v {
         ComputedLineHeight::Normal => LineHeight::MetricsRelative(1.0),
@@ -2316,77 +2256,74 @@ fn line_height_to_parley(v: ComputedLineHeight) -> LineHeight {
     }
 }
 
-/// 全 Text node を parley で pre-shape、結果を `Node.text_layout` に格納する。
+/// Pre-shape every Text node with parley and store the result in `Node.text_layout`.
 ///
-/// 呼び出し側 (`layout_single_page`) は事前に全 `Node.text_layout = None` に
-/// clear 済であることを前提とする (re-entrance safety)。
+/// Assume the caller (`layout_single_page`) has cleared every
+/// `Node.text_layout = None` first (for safe re-entry).
+/// Use the font stack, size, weight, style, and line-height from
+/// `cascade.computed[idx]` (already inherited from the parent).
+/// `max_advance` is the wrap boundary, usually `page_box.width`.
 ///
-/// Font stack / size / weight / style / line-height は
-/// `cascade.computed[idx]` (親から inherit 済) を消費。
-/// `max_advance` は行折り返し境界で、通常 `page_box.width`。
+/// # Why wire `line_height` before taffy's `compute_root_layout`?
 ///
-/// # `line_height` は taffy の `compute_root_layout` より前でも正しく配線できる
+/// This function runs **before** taffy's `compute_root_layout` within
+/// `layout_single_page` (see `text_align` below). Properties that require
+/// taffy's resolved width cannot be handled this early, but `line_height`
+/// does not: its dependency goes in the opposite direction, so this order
+/// is **necessary**.
 ///
-/// 本関数は `layout_single_page` 内で taffy の `compute_root_layout` より
-/// **前**に走る (下記 `text_align` 参照)。これは一般に「taffy が確定させる
-/// 幅を必要とする property」には問題になるが、`line_height` はその種類の
-/// property ではない — 依存方向が逆であり、むしろこの順序が**必要**:
+/// - During shaping (`builder.build(&text)`, before `break_all_lines`),
+///   parley computes `RunMetrics.line_height` in `push_run` in
+///   `parley-0.10.0/src/layout/data.rs`. Its inputs are the font metrics
+///   (ascent / descent / leading obtained directly from the shaped font),
+///   this element's computed `font_size` already pushed by this function,
+///   and the `StyleProperty::LineHeight` pushed here. It does not depend on
+///   the containing block width or available space resolved by taffy
+///   (the corresponding arm in `parley-0.10.0/src/resolve/mod.rs` only
+///   multiplies by `device pixel scale`).
+/// - Conversely, the shaped `Layout::height()` already includes line height.
+///   `compute_child_layout` in `taffy_impl.rs` supplies it *to* taffy as
+///   a leaf's intrinsic size. Line height thus constructs an input to taffy,
+///   rather than requiring taffy's output. This reverses the dependency of
+///   `text_align`, which requires taffy's width for alignment (see below).
+///   Running here is exactly the right time, not too early.
 ///
-/// - parley は line height を `RunMetrics.line_height` として shape 時点
-///   (`builder.build(&text)` 内、`break_all_lines` より前) に計算する
-///   (`parley-0.10.0/src/layout/data.rs` の `push_run`)。入力はフォント
-///   metrics (ascent / descent / leading、shape 対象フォントから直接取得)
-///   と `font_size` (本関数がすでに push した自要素の computed font-size)、
-///   そして本関数が push する `StyleProperty::LineHeight` の値だけであり、
-///   taffy が確定させる containing block 幅や利用可能領域には一切依存しない
-///   (`parley-0.10.0/src/resolve/mod.rs` の対応 arm も `device pixel scale`
-///   の乗算のみ)。
-/// - 逆に、shape 済みの `Layout::height()` (line height を織り込み済み) は
-///   `taffy_impl.rs` の `compute_child_layout` が leaf node の intrinsic
-///   size として taffy に**渡す側**の入力になる。つまり line height は
-///   taffy の出力を必要とするのではなく、taffy の入力を作る側に立つ —
-///   `text_align` (taffy が確定させる幅を align の基準として必要とする、
-///   下記参照) とは依存の向きが逆であり、本関数がここで走ることは
-///   line height にとって「早すぎる」のではなくちょうど必要なタイミングである。
+/// # Unused `ComputedValues` fields
 ///
-/// # 未消費の `ComputedValues` field
+/// `cascade.computed[idx]` also contains `direction` / `text_align`, neither
+/// of which this function reads:
 ///
-/// `cascade.computed[idx]` には他にも `direction` / `text_align` が乗って
-/// いるが、本関数はいずれも読まない:
+/// - `direction`: no API accepts it. `RangedBuilder` / `TreeBuilder` expose
+///   no public base-direction argument, and parley's internal bidi resolver
+///   always receives `None` for its base level. It infers direction from
+///   paragraph text using the Unicode Bidirectional Algorithm P2/P3
+///   first-strong-character heuristic, defaulting to LTR when no strong
+///   directional character exists (Unicode Standard Annex #9,
+///   <https://www.unicode.org/reports/tr9/>). There is currently no API to
+///   pass `cv.direction` explicitly; the default is not hard-coded LTR.
+/// - `text_align`: this function deliberately fixes its final
+///   `layout.align(...)` at `Alignment::Start` without reading
+///   `cv.text_align`. After taffy, [`realign_text_after_layout`] re-breaks
+///   and aligns using the resolved containing block width. A direct enum
+///   mapping here would only have `max_advance` (usually `page_box.width`),
+///   wrongly offsetting `Center` / `Right` / `End` / `Justify` inside narrow
+///   containers against the page width. `Start` does not depend on width.
+///   Moreover, `parley::Alignment::Start` / `End` resolve physical direction
+///   from the layout's bidi analysis. Without wiring `direction`, wiring
+///   only `text_align` would still resolve `Start` / `End` from the text's
+///   inferred direction. These are one coupled gap, not two independent ones:
+///   parley's public API does not expose direction wiring (see above).
+///   On flex-converted line boxes (`IS_INLINE_ROOT`), the container handles
+///   centering through `justify_content`, not parley (see
+///   [`establish_minimal_line_boxes`]).
 ///
-/// - `direction` — 配線先の API 自体が無い。`RangedBuilder` / `TreeBuilder`
-///   は base direction を受け取る public API を公開しておらず、parley 内部の
-///   bidi resolver は base level 引数に常に `None` を渡して呼ばれる (段落内の
-///   文字列から Unicode Bidirectional Algorithm の P2/P3
-///   first-strong-character heuristic で自動推定し、強い方向を持つ文字が
-///   無ければ LTR に fallback — Unicode Standard Annex #9
-///   <https://www.unicode.org/reports/tr9/>)。つまり `cv.direction` を明示的
-///   に渡す先の API 自体が現状無い — LTR がハードコードされた default なの
-///   ではない。
-/// - `text_align` — 本関数の末尾の `layout.align(...)` は意図的に
-///   `Alignment::Start` に固定し、`cv.text_align` を読まない。
-///   正しい幅基準の align は taffy 後の [`realign_text_after_layout`] が担う
-///   (確定した containing block 幅で `break_all_lines` + `align` し直す)。
-///   本関数で素朴に enum mapping してしまうと、使える幅が `max_advance`
-///   (= 通常 `page_box.width`) のみのため、狭い containing block 内の
-///   `Center` / `Right` / `End` / `Justify` がページ幅基準にズレる。
-///   `Start` は幅に依存しないためここでも正しい。
-///   加えて `parley::Alignment::Start` / `End` は layout 内の bidi 解析結果から
-///   physical 方向を解決するため、`direction` を配線せずに `text_align`
-///   だけ配線しても `Start`/`End` は content-inferred direction での解決に
-///   留まる — この 2 つは独立した gap ではなく 1 セットであり、`direction`
-///   の配線口は parley public API に存在しない (上記 `direction` bullet 参照)。
-///   flex 化された line box (`IS_INLINE_ROOT`) の中央寄せは parley 側ではなく
-///   container 側の `justify_content` が担う
-///   ([`establish_minimal_line_boxes`] doc 参照)。
+/// # Infallible
 ///
-/// # 失敗しない
-///
-/// 以前は `Result<(), LayoutError>` を返していた。唯一の `Err` 経路は
-/// `cv.font_size` が specified 層の `Length` で `Px` 以外だった場合の
-/// `LayoutError::Internal` だったが、`font_size` が [`ComputedLength`] (px) に
-/// なって match 自体が消えたため到達不能になった。`pub(crate)` なので戻り値の
-/// narrowing は crate 内で完結する (外部影響 0)。
+/// This formerly returned `Result<(), LayoutError>`. Its only `Err` case
+/// was `LayoutError::Internal` when `cv.font_size` was a specified-layer
+/// `Length` other than `Px`. Since `font_size` became [`ComputedLength`] (px),
+/// that match and error became unreachable. The function is `pub(crate)`,
+/// so narrowing the return type has no external effect.
 ///
 /// Preserve the previous per-text-node expansion for inline contexts whose
 /// shared line cursor and wrap positions are not available to pre-shaping.
@@ -5419,8 +5356,8 @@ pub(crate) fn preshape_text(
             migrated_prefix_count = pending_in;
             text = "\u{00A0}".repeat(pending_in as usize) + &text;
         }
-        // white-space phase 1 collapsing。
-        // pre 系は無変換 (tab 展開は後段)。collapse 系のみ trim 位置付きで変換。
+        // white-space phase 1 collapsing.
+        // Preserve pre modes unchanged (expand tabs later); collapse others with edge trimming.
         let start = line_start_pos(doc, cascade, &parent_of, idx);
         let trim_end = trail_trim(doc, cascade, &parent_of, idx);
         let mut text = collapse_ws(&text, cv.white_space, start, trim_end).into_owned();
@@ -5485,8 +5422,8 @@ pub(crate) fn preshape_text(
             text.retain(|c| c != '\u{00AD}');
         }
         let family_str: String = family_str_of(cv);
-        // tab-stop metrics は block-container 祖先の font (CSS Text 3 §4.2)。
-        // 見つからなければ自 font (fail-safe — 既存挙動と同等)。
+        // Tab-stop metrics use the block-container ancestor's font (CSS Text 3 §4.2).
+        // If none exists, use this element's font (a fail-safe matching old behavior).
         let mcv = nearest_block_container(doc, cascade, &parent_of, idx)
             .map(|b| &cascade.computed[b])
             .unwrap_or(cv);

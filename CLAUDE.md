@@ -2,6 +2,14 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## Source comment language
+
+Write code comments in English, including `//`, `///`, `//!`, block comments,
+CSS comments, and comments in scripts and manifests. Translate explanations,
+not program text. Keep exact Unicode glyphs in examples, test fixtures, and
+quoted specification text when their spelling is necessary to explain behavior.
+Do not translate string literals or user-facing content under this rule.
+
 ## docs/superpowers/ は flow 情報
 
 `docs/superpowers/` 配下 (plans / retros / specs / sprints) は **flow 情報であって stock

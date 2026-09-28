@@ -1,29 +1,29 @@
-//! `insert_child_before` が
-//! [`NodeData::DocumentFragment`] を child に受け取った時、fragment の
-//! children を parent.children の `before` position から source order で
-//! splice する fragment-aware semantics (WHATWG DOM §4.2.3 Mutation
-//! algorithms — insert algorithm steps 1 + 4.1 + 7.3) を pin。
-//! attach_child (tail append) の positional 対応で、これまで latent
-//! だった asymmetry を解消する。
+//! Check that `insert_child_before` accepts
+//! [`NodeData::DocumentFragment`] as a child and splices the fragment’s
+//! children into parent.children at `before` in source order.
+//! This pins fragment-aware semantics (WHATWG DOM §4.2.3 Mutation
+//! algorithms — insert algorithm steps 1 + 4.1 + 7.3).
+//! It is the positional counterpart of attach_child (tail append), resolving
+//! a previously latent asymmetry.
 //!
 //! Spec ref:
 //! - <https://dom.spec.whatwg.org/#concept-node-pre-insert>
 //! - <https://dom.spec.whatwg.org/#concept-node-insert>
 //!
-//! 契約 (test 5 分割 = `attach_child_fragment_tests` の mirror):
-//! (a) parent.children が fragment の children で `before` position から
-//!     source order で splice される
-//! (b) fragment の children Vec が empty 化される (move、not clone)
-//! (c) fragment node 自身は parent.children に含まれない
-//! (d) empty fragment splice は parent.children を変えない (edge)
-//! (e) fragment 以外の child は旧 insert 挙動を維持する (regression check)
+//! Contract (five tests mirroring `attach_child_fragment_tests`):
+//! (a) splice the fragment’s children into parent.children at `before`
+//! in source order
+//! (b) empty the fragment’s children Vec (move, not clone)
+//! (c) exclude the fragment node itself from parent.children
+//! (d) an empty-fragment splice leaves parent.children unchanged (edge case)
+//! (e) non-fragment children retain the old insertion behavior (regression check)
 use super::*;
 use crate::node::NodeData;
 
 fn make_fragment_with_two_children(doc: &mut Document) -> (usize, usize, usize) {
     let frag = doc.nodes.len();
     doc.nodes.push(Node::new_document_fragment());
-    // fragment の children は detached の Element 2 個。
+    // The fragment’s children are two detached Elements.
     let c0 = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
     let c1 = doc.append_element(Some(frag), "div", Style::default(), None::<&str>);
     (frag, c0, c1)
@@ -31,21 +31,21 @@ fn make_fragment_with_two_children(doc: &mut Document) -> (usize, usize, usize) 
 
 #[test]
 fn insert_child_before_splices_fragment_children_at_position() {
-    // (a): parent.children の `before` position に fragment の children が
-    // source order で挿入される。tail append の attach_child と違い、
-    // positional な splice を check する (`before` の直前に fragment children
-    // 全部、その後 `before` 自体、以降既存 sibling が続く)。
+    // (a): insert the fragment’s children into parent.children at `before`
+    // in source order. Unlike attach_child’s tail append, test the positional
+    // splice: all fragment children immediately precede `before`, followed by
+    // `before` itself and any later existing siblings.
     let mut doc = Document::new();
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    // parent には既に 2 個 sibling がある: `[first, last]`。
+    // The parent already has two siblings: `[first, last]`.
     let first = doc.append_element(Some(parent), "h1", Style::default(), None::<&str>);
     let last = doc.append_element(Some(parent), "footer", Style::default(), None::<&str>);
 
     let (frag, c0, c1) = make_fragment_with_two_children(&mut doc);
     doc.insert_child_before(parent, last, frag);
 
-    // fragment children c0, c1 が last の前 (= first と last の間) に挿入される。
+    // Insert fragment children c0, c1 before last (between first and last).
     assert_eq!(
         doc.nodes[parent].children,
         vec![first, c0, c1, last],
@@ -55,16 +55,16 @@ fn insert_child_before_splices_fragment_children_at_position() {
 
 #[test]
 fn insert_child_before_empties_fragments_children_after_move() {
-    // (b): fragment の children Vec は空になる (move semantics、clone ではない)。
-    // 旧挙動 (fragment 自身を単純 insert) なら fragment.children は保たれる
-    // ので、この test が drain の move semantics を check する。
+    // (b): empty the fragment’s children Vec (move semantics, not clone).
+    // The old behavior (simply inserting the fragment itself) would retain its
+    // children; this test checks that draining moves them.
     let mut doc = Document::new();
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
     let sibling = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
 
     let (frag, _c0, _c1) = make_fragment_with_two_children(&mut doc);
-    // 事前確認: fragment 自身は 2 個の children を持つ。
+    // Precondition: the fragment itself has two children.
     assert_eq!(doc.nodes[frag].children.len(), 2);
 
     doc.insert_child_before(parent, sibling, frag);
@@ -72,17 +72,17 @@ fn insert_child_before_empties_fragments_children_after_move() {
         doc.nodes[frag].children.is_empty(),
         "fragment's children must be drained after insert_child_before (move semantics per WHATWG DOM §4.2.3 Mutation algorithms — insert step 4.1)"
     );
-    // fragment 自身は arena には残る (kind = DocumentFragment、detached)。
+    // The fragment itself remains in the arena (kind = DocumentFragment, detached).
     assert!(matches!(doc.nodes[frag].data, NodeData::DocumentFragment));
 }
 
 #[test]
 fn insert_child_before_does_not_insert_the_fragment_node_itself() {
-    // (c): fragment node 自身は parent.children に絶対に含まれない。
-    // WHATWG DOM §4.2.3 Mutation algorithms — insert step 1 は fragment の場合
-    // nodes = fragment.children と定義し、fragment 自身は tree insertion 対象外
-    // となる (mutation record 上も parent → fragment ではなく
-    // parent → fragment's children で観測される)。
+    // (c): the fragment node itself must never appear in parent.children.
+    // WHATWG DOM §4.2.3 Mutation algorithms — insert step 1 defines nodes
+    // as fragment.children for a fragment, excluding the fragment itself from
+    // tree insertion (mutation records likewise observe parent → fragment’s
+    // children rather than parent → fragment).
     let mut doc = Document::new();
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
@@ -99,16 +99,16 @@ fn insert_child_before_does_not_insert_the_fragment_node_itself() {
 
 #[test]
 fn insert_child_before_with_empty_fragment_is_noop_on_parent_children() {
-    // (d): empty fragment splice は parent の children を変えない。
-    // splice(pos..pos, empty_vec) が何もしないことを check (attach_child edge
-    // check の positional 対応)。
+    // (d): splicing an empty fragment does not change the parent’s children.
+    // Check that splice(pos..pos, empty_vec) does nothing (the positional
+    // counterpart of the attach_child edge check).
     let mut doc = Document::new();
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
     let a = doc.append_element(Some(parent), "a", Style::default(), None::<&str>);
     let b = doc.append_element(Some(parent), "b", Style::default(), None::<&str>);
 
-    // Empty fragment。
+    // Empty fragment.
     let empty_frag = doc.nodes.len();
     doc.nodes.push(Node::new_document_fragment());
 
@@ -123,14 +123,14 @@ fn insert_child_before_with_empty_fragment_is_noop_on_parent_children() {
 
 #[test]
 fn insert_child_before_non_fragment_keeps_existing_insert_semantics() {
-    // (e) (acceptance 4): fragment 以外 (Element / Text / Comment
-    // / PI / Document) は旧挙動 (単純 insert at `before` position) 継続、
-    // fragment 分岐が collateral damage を出さないことを pin。
+    // (e) (acceptance 4): non-fragment children (Element / Text / Comment
+    // / PI / Document) retain the old behavior (simple insert at `before`);
+    // pin that the fragment branch causes no collateral damage.
     let mut doc = Document::new();
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
     let last = doc.append_element(Some(parent), "z", Style::default(), None::<&str>);
-    // Detached Element を before=last で insert (foster parenting の primitive)。
+    // Insert a detached Element at before=last (a foster-parenting primitive).
     let elem = doc.append_element(None, "m", Style::default(), None::<&str>);
     doc.insert_child_before(parent, last, elem);
     assert_eq!(doc.nodes[parent].children, vec![elem, last]);

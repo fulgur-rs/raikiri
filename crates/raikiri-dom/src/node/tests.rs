@@ -12,7 +12,7 @@ mod flags_tests {
 
     #[test]
     fn node_new_document_has_is_in_document_set_by_default() {
-        // Node::new_document() は Document root 用、常に flat tree の一員。
+        // Node::new_document() creates the Document root, always in the flat tree.
         let n = Node::new_document();
         assert!(n.is_in_document());
     }
@@ -40,18 +40,18 @@ mod flags_tests {
 
     #[test]
     fn node_new_comment_kind_and_default_flag_state() {
-        // Comment constructor は kind = NodeKind::Comment、
-        // IS_IN_DOCUMENT は default true (mark_in_document_flags で後段 clear
-        // される optimistic 初期値、Element / Text と同じ posture)。
+        // A Comment constructor has kind = NodeKind::Comment,
+        // with IS_IN_DOCUMENT=true by default (an optimistic initial value
+        // cleared later by mark_in_document_flags, as with Element / Text).
         let n = Node::new_comment(SmolStr::new("hello"));
         assert_eq!(n.kind(), NodeKind::Comment);
         assert!(
             n.is_in_document(),
             "constructor default follows Element/Text pattern"
         );
-        // tag_name accessor は Comment に対して None を返す (Element でない)。
+        // tag_name returns None for a Comment (not an Element).
         assert_eq!(n.tag_name(), None);
-        // text_layout accessor は Comment に対して None を返す (Text でない)。
+        // text_layout returns None for a Comment (not Text).
         assert!(n.text_layout().is_none());
     }
 
@@ -71,8 +71,8 @@ mod flags_tests {
     fn node_new_document_fragment_kind_and_default_flag_state() {
         let n = Node::new_document_fragment();
         assert_eq!(n.kind(), NodeKind::DocumentFragment);
-        // Fragment root は使用時 detached 状態で作られるため、mark 後に
-        // false に落ちる。constructor 単体では default true。
+        // The Fragment root starts detached when used, so it becomes false after
+        // marking; the constructor itself defaults to true.
         assert!(n.is_in_document());
         assert_eq!(n.tag_name(), None);
         assert!(n.text_layout().is_none());
@@ -80,13 +80,13 @@ mod flags_tests {
 
     #[test]
     fn node_flags_bit_values_match_blitz_raw() {
-        // Regression pin。blitz `NodeFlags`
-        // (blitz-dom/src/node/node.rs:50-58) と raw bit 値まで一致:
+        // Regression check: blitz `NodeFlags` must match the raw bit values
+        // defined in blitz-dom/src/node/node.rs:50-58:
         //   IS_INLINE_ROOT = 0b001, IS_TABLE_ROOT = 0b010, IS_IN_DOCUMENT = 0b100
         //
-        // これにより将来の blitz-compat の変換が `NodeFlags::from_bits(x)` の
-        // trivial cast で成立する。将来 bit を追加する際は blitz と同 bit
-        // 位置に揃えること。
+        // This makes future blitz-compat conversion a trivial
+        // `NodeFlags::from_bits(x)` cast. Add future bits at the same positions
+        // as blitz.
         assert_eq!(NodeFlags::IS_INLINE_ROOT.bits(), 0b001);
         assert_eq!(NodeFlags::IS_TABLE_ROOT.bits(), 0b010);
         assert_eq!(NodeFlags::IS_IN_DOCUMENT.bits(), 0b100);
@@ -95,10 +95,10 @@ mod flags_tests {
 
 #[cfg(test)]
 mod is_non_rendered_html_element_tests {
-    //! `<template>` 経路 test は
-    //! `is_in_document()` が先に発火するため、predicate 自体の direct
-    //! coverage が薄い。DOM predicate を builder + namespace mutation で
-    //! namespace 分岐まで含めて直接 check する。
+    //! The `<template>` path tests
+    //! trigger `is_in_document()` first, leaving little direct coverage
+    //! of the predicate itself. Test the DOM predicate directly with a builder
+    //! and namespace mutation, including its namespace branch.
 
     use super::*;
 
@@ -112,13 +112,13 @@ mod is_non_rendered_html_element_tests {
         }
     }
 
-    /// d9y.5 の 9 element + s8w で追加した §15.3.1 完全化 4 element
-    /// (datalist / noembed / noframes / rp)。tag 列挙は
-    /// `Node::is_non_rendered_html_element` の match arms と 1:1 対応。
+    /// Nine elements from d9y.5 plus four added for complete §15.3.1 coverage
+    /// in s8w (datalist / noembed / noframes / rp). The tag list matches
+    /// the arms of `Node::is_non_rendered_html_element` one to one.
     const SKIP_SET_TAGS: &[&str] = &[
         // d9y.5 original:
         "head", "title", "meta", "link", "base", "noscript", "script", "style", "template",
-        // s8w additions (§15.3.1 完全化):
+        // s8w additions (complete §15.3.1 coverage):
         "datalist", "noembed", "noframes", "rp",
     ];
 
@@ -147,9 +147,9 @@ mod is_non_rendered_html_element_tests {
 
     #[test]
     fn predicate_false_for_svg_namespace_same_named_elements() {
-        // SVG <title>, <style>, <script> は rendered / effective in SVG context。
-        // predicate は HTML namespace のみ filter するのが契約 (paint 側は
-        // SVG rendering を将来別 pipeline で扱う)。
+        // SVG <title>, <style>, and <script> are rendered / effective in SVG.
+        // The predicate must filter only the HTML namespace; paint will handle
+        // SVG rendering in a separate future pipeline.
         for tag in ["title", "style", "script"] {
             let mut n = html_element(tag);
             set_ns(&mut n, "http://www.w3.org/2000/svg");
@@ -187,7 +187,7 @@ mod is_non_rendered_html_element_tests {
 
     #[test]
     fn predicate_false_for_non_element_nodes() {
-        // Text / Document node は Element でないので false。
+        // Text / Document nodes are not Elements, so return false.
         let text = Node::new_text(SmolStr::new("hi"));
         assert!(!text.is_non_rendered_html_element());
         let doc = Node::new_document();

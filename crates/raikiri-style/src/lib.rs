@@ -5,13 +5,13 @@
 //! - `Atom` / `RaikiriSelectorImpl` / `parse_selector_list` — initial seed
 //!   implementation
 //! - [`property`] / [`rule`] / [`ruletree`] / [`computed`] / [`mod@cascade`] —
-//!   cascade minimum (type + universal selector、color / font-family / font-size /
-//!   font-weight、specificity + !important + source order + inheritance)
+//!   minimal cascade (type + universal selectors, color / font-family / font-size /
+//!   font-weight, specificity + !important + source order + inheritance)
 //!
-//! GCPM static side、@supports、class/id/attribute selector、基本的な
-//! combinator matching、L4 の `:not()` / `:is()` / `:where()` / `:has()` は
-//! 実装済み。`@media` は `MediaContext` による `all` / `print` / `screen` の
-//! 条件評価に対応する。
+//! GCPM static support, @supports, class/id/attribute selectors, basic
+//! combinator matching, and L4 `:not()` / `:is()` / `:where()` / `:has()` are
+//! implemented. `@media` evaluates `all` / `print` / `screen` conditions
+//! through `MediaContext`.
 //!
 //! `precomputed-hash` is encapsulated as a direct dep of this crate only. It
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
@@ -22,8 +22,8 @@
 // "links to private item" lint is allowed — same convention as `raikiri-dom`
 // and `raikiri-vrt`. `rustdoc::broken_intra_doc_links` is untouched, so an
 // unresolved or ambiguous path still warns (and hard-errors under the
-// `-D warnings` this repo's doc commands pass). 規約は AGENTS.md の
-// 「`crate::…` pointer は intra-doc link で書く」節。
+// `-D warnings` this repo's doc commands pass). See the AGENTS.md section
+// "Write `crate::…` pointers as intra-doc links" for the convention.
 #![allow(rustdoc::private_intra_doc_links)]
 #![allow(missing_docs)] // seed phase; docs come later
 

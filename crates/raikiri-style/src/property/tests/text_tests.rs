@@ -18,9 +18,9 @@ fn font_size_parse_px() {
     );
 }
 
-/// CSS Fonts 4 §2.5 の grammar `<length-percentage [0,∞]>` は font-relative
-/// unit と percentage を含む。cascade の phase 2 (絶対化) が入ったので、
-/// これらを parse 段で drop しなくなった。
+/// CSS Fonts 4 §2.5 allows font-relative units and percentages in the
+/// `<length-percentage [0,∞]>` grammar. Now that cascade phase 2 resolves
+/// them to absolute values, the parser no longer drops them.
 #[test]
 fn font_size_accepts_font_relative_and_percentage() {
     assert_eq!(
@@ -41,21 +41,21 @@ fn font_size_accepts_font_relative_and_percentage() {
     );
 }
 
-/// `math` は spec-valid だが未実装
-/// (MathML scaling algorithm 未対応) として drop。
-/// `<absolute-size>` / `<relative-size>` は受理済み —
-/// 別 test (`font_size_accepts_absolute_size_keywords` /
-/// `font_size_accepts_relative_size_keywords`) 参照。
+/// `math` is spec-valid but dropped because MathML scaling is not implemented.
+/// The `<absolute-size>` and `<relative-size>` keywords are already accepted;
+/// see `font_size_accepts_absolute_size_keywords` and
+/// `font_size_accepts_relative_size_keywords` for those tests.
+/// This test pins the remaining unsupported keyword.
 #[test]
 fn font_size_rejects_math_keyword() {
     assert_eq!(parse("math", "font-size"), None);
 }
 
 /// CSS Fonts 4 §2.5.1 <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>
-/// の scaling-factor table 全 8 keyword。`medium` = raikiri の固定基準
-/// (16px) そのもの、他は table の分数を掛けたもの
-/// (`resolve_relative_weight` 前例に倣い浮動小数 literal ではなく分数式で
-/// 期待値を書く — 丸め誤差の議論を spec 引用だけで閉じるため)。
+/// defines scaling factors for all eight keywords. `medium` is Raikiri's fixed
+/// base size (16px); the other sizes multiply it by the table's fractions.
+/// Following `resolve_relative_weight`, expected values use fractional
+/// expressions instead of decimal literals to avoid a separate rounding issue.
 #[test]
 fn font_size_accepts_absolute_size_keywords() {
     const MEDIUM: f32 = 16.0;
@@ -80,8 +80,8 @@ fn font_size_accepts_absolute_size_keywords() {
     }
 }
 
-/// CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
-/// case-insensitive。sibling `font_weight_keyword_case_insensitive` と同 pattern。
+/// CSS Values 3 §3.1, "Pre-defined Keywords": keywords are ASCII
+/// case-insensitive, as in the sibling `font_weight_keyword_case_insensitive` test.
 #[test]
 fn font_size_absolute_size_keyword_case_insensitive() {
     assert_eq!(
@@ -94,10 +94,10 @@ fn font_size_absolute_size_keyword_case_insensitive() {
     );
 }
 
-/// `<relative-size>` (`larger` / `smaller`) は parse 段では解決せず
-/// `PropertyValue::FontSizeRelative` をそのまま返す — 解決 (親の
-/// computed font-size に対する read-modify-write) は
-/// `crate::cascade` の責務 (`bolder` / `lighter` と同型)。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+/// `<relative-size>` (`larger` / `smaller`) returns
+/// `PropertyValue::FontSizeRelative` unchanged at parse time. Resolving it
+/// against the parent's computed font-size is `crate::cascade`'s job, as with
+/// `bolder` / `lighter`. // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed by deliberate link breakage
 #[test]
 fn font_size_accepts_relative_size_keywords() {
     assert_eq!(
@@ -114,9 +114,9 @@ fn font_size_accepts_relative_size_keywords() {
     );
 }
 
-/// `font-size: 12px` と `font-size: larger` は同じ property を競合する
-/// (`PropertyValue::FontSizeRelative` doc 参照) — 別 key だと両方が
-/// cascade で「勝つ」事態が起き spec (1 property = 1 winner) と食い違う。
+/// `font-size: 12px` and `font-size: larger` compete for the same property
+/// (see the `PropertyValue::FontSizeRelative` docs). Separate keys would let
+/// both win the cascade, contrary to the one-winner-per-property rule.
 #[test]
 fn font_size_relative_shares_property_key_with_font_size() {
     assert_eq!(
@@ -131,15 +131,15 @@ fn font_size_relative_shares_property_key_with_font_size() {
 
 #[test]
 fn font_size_rejects_negative() {
-    // spec grammar `[0,∞]`: 負値は全 unit で drop (px だけではない)。
+    // The `[0,∞]` grammar drops negative values for every unit, not just px.
     assert_eq!(parse("-10px", "font-size"), None);
     assert_eq!(parse("-0.5px", "font-size"), None);
     assert_eq!(parse("-1em", "font-size"), None);
     assert_eq!(parse("-2rem", "font-size"), None);
     assert_eq!(parse("-12pt", "font-size"), None);
     assert_eq!(parse("-50%", "font-size"), None);
-    // 追加した unit も `Length::payload` 経由で同じ
-    // non-negative check を通ることを pin。
+    // Additional units also pass through the same non-negative check via
+    // `Length::payload`.
     assert_eq!(parse("-1ex", "font-size"), None);
     assert_eq!(parse("-1cm", "font-size"), None);
 }
@@ -147,8 +147,8 @@ fn font_size_rejects_negative() {
 #[test]
 fn font_size_accepts_additional_units() {
     // CSS Fonts 4 §2.5 `<length-percentage [0,∞]>` —
-    // 追加した font-relative / absolute unit も `font-size` 上で受理される
-    // (`parse_length_value` の dispatch に mode 差は無い)。
+    // Additional font-relative and absolute units are accepted by `font-size`;
+    // `parse_length_value` dispatches them without a mode distinction.
     assert_eq!(
         parse("2ex", "font-size"),
         Some(PropertyValue::FontSize(Length::Ex(2.0)))
@@ -185,7 +185,7 @@ fn font_size_accepts_lh_and_rlh() {
 #[test]
 fn font_size_rejects_negative_lh_and_rlh() {
     // The grammar's `[0,∞]` non-negative constraint (`parse_font_size`
-    // doc "Non-negative constraint" 節) applies to `lh`/`rlh` the same as
+    // doc's "Non-negative constraint" section) applies to `lh`/`rlh` the same as
     // every other `Length` variant — `Length::payload` reads their inner
     // `f32` generically, so this falls out of the existing post-filter
     // without a dedicated branch.
@@ -195,9 +195,9 @@ fn font_size_rejects_negative_lh_and_rlh() {
 
 #[test]
 fn font_size_accepts_zero() {
-    // spec `[0,∞]` の閉区間下端。`0px` は Dimension arm、bare `0` は
-    // CSS Values 3 §5 unitless-zero clause の Number arm を通し、
-    // parse_font_size の非負 Px post-filter を pass。
+    // The lower endpoint of `[0,∞]` is included. `0px` uses the Dimension
+    // arm, while bare `0` uses the Number arm under CSS Values 3 §5's
+    // unitless-zero clause. Both pass the non-negative Px post-filter.
     assert_eq!(
         parse("0px", "font-size"),
         Some(PropertyValue::FontSize(Length::Px(0.0)))
@@ -232,7 +232,7 @@ fn font_family_preserves_quoted_generic_keyword_as_named_family() {
 
 #[test]
 fn font_family_unquoted_multi_word_single_family() {
-    // CSS4: unquoted multi-word family name = ident sequence joined by space。
+    // CSS4: unquoted multi-word family names join identifier tokens with spaces.
     let got = parse("Times New Roman", "font-family");
     let expected = Some(PropertyValue::FontFamily(Arc::new(vec![
         FontFamilyName::named("Times New Roman"),
@@ -240,27 +240,27 @@ fn font_family_unquoted_multi_word_single_family() {
     assert_eq!(got, expected);
 }
 
-/// `initial_font_family()` は呼び出しごとに独立した call site でも
-/// **同一** underlying `Vec` allocation を指す (`Arc::ptr_eq` = true) —
-/// `OnceLock` 経由の shared slot であることの直接 pin。
+/// Even at independent call sites, `initial_font_family()` points to
+/// **the same** underlying `Vec` allocation (`Arc::ptr_eq` is true) through
+/// the shared `OnceLock` slot.
 ///
-/// この check は cascade level の test (`mod@crate::cascade` の
-/// `initial_font_family_shares_arc_slot_across_independent_cascade_runs`
-/// 等) では**代替できない** — `font-family` は inherited なので、単一
-/// document 内の兄弟 element は `SpecifiedValues::inherit_from` の
-/// 「親の Arc を bump」経路で共有される。これは同 document 内で
-/// `initial_font_family()` が実質 1 回しか呼ばれないことを意味し、
-/// ここで `OnceLock` を外して per-call `Arc::new(..)` に戻す regression を
-/// 混入させても、その cascade level test は green のままになる
-/// (実際に perturbation で確認済み)。
-/// 本 test は `initial_font_family()` を直接 2 回呼ぶことで、この
-/// inheritance-sharing の死角を回避する。
+/// A cascade-level test (such as
+/// `mod@crate::cascade`'s
+/// `initial_font_family_shares_arc_slot_across_independent_cascade_runs`)
+/// cannot replace this check. `font-family` is inherited, so siblings in one
+/// document can share an Arc via `SpecifiedValues::inherit_from`, which bumps
+/// the parent's Arc. In that case, `initial_font_family()` is effectively
+/// called only once per document. Reverting the `OnceLock` to per-call
+/// `Arc::new(..)` would therefore leave that cascade test green; a deliberate
+/// perturbation confirmed this blind spot. This test calls
+/// `initial_font_family()` twice directly to catch that regression.
+/// It isolates allocation sharing from inheritance sharing.
 #[test]
 fn initial_font_family_shares_arc_slot_across_calls() {
     assert!(Arc::ptr_eq(&initial_font_family(), &initial_font_family()));
 }
 
-/// `font-weight` の parse 期待値を組み立てる test-local helper。
+/// Test-local helper for building expected parsed `font-weight` values.
 fn fw(w: f32) -> Option<PropertyValue> {
     Some(PropertyValue::FontWeight(FontWeightValue::Absolute(w)))
 }
@@ -273,20 +273,20 @@ fn font_weight_parse_integer() {
 
 #[test]
 fn font_weight_parse_keyword_normal() {
-    // CSS Fonts 4 §2.2: normal = 400。
+    // CSS Fonts 4 §2.2: normal = 400.
     assert_eq!(parse("normal", "font-weight"), fw(400.0));
 }
 
 #[test]
 fn font_weight_parse_keyword_bold() {
-    // CSS Fonts 4 §2.2: bold = 700。
+    // CSS Fonts 4 §2.2: bold = 700.
     assert_eq!(parse("bold", "font-weight"), fw(700.0));
 }
 
 #[test]
 fn font_weight_keyword_case_insensitive() {
-    // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII
-    // case-insensitive で照合する。
+    // CSS Values 3 §3.1, "Pre-defined Keywords": match keywords
+    // case-insensitively in ASCII.
     assert_eq!(parse("NORMAL", "font-weight"), fw(400.0));
     assert_eq!(parse("Bold", "font-weight"), fw(700.0));
 }
@@ -294,36 +294,36 @@ fn font_weight_keyword_case_insensitive() {
 #[test]
 fn font_weight_accepts_full_spec_range() {
     // CSS Fonts 4 §2.2 `<font-weight-absolute> = [ normal | bold |
-    // <number [1,1000]> ]`。旧実装は `[100, 900]` に絞っていたが spec は
-    // `[1, 1000]`。
+    // <number [1,1000]> ]`. The old implementation restricted this to
+    // `[100, 900]`, but the spec allows `[1, 1000]`.
     assert_eq!(parse("1", "font-weight"), fw(1.0));
     assert_eq!(parse("1000", "font-weight"), fw(1000.0));
     assert_eq!(parse("50", "font-weight"), fw(50.0));
-    // 旧 range の両端も当然 valid のまま (regression guard)。
+    // The old range's endpoints remain valid (regression guard).
     assert_eq!(parse("100", "font-weight"), fw(100.0));
     assert_eq!(parse("900", "font-weight"), fw(900.0));
 }
 
 #[test]
 fn font_weight_rejects_out_of_range_number() {
-    // spec-invalid — spec grammar。§2.2 "Only values greater than or
+    // Invalid under the spec grammar. §2.2 says: "Only values greater than or
     // equal to 1, and less than or equal to 1000, are valid, and all other
-    // values are invalid"。
+    // values are invalid".
     assert_eq!(parse("0", "font-weight"), None);
     assert_eq!(parse("1001", "font-weight"), None);
     assert_eq!(parse("-100", "font-weight"), None);
-    // 範囲判定は **丸める前の指定値** に対して行う: 丸めれば範囲内に入る
-    // 値でも spec 上は invalid。
+    // Check the **specified value before rounding**: even a value that would
+    // round into the permitted range is invalid under the spec.
     assert_eq!(parse("0.6", "font-weight"), None);
     assert_eq!(parse("1000.4", "font-weight"), None);
-    // 非有限値。`1e400` は f32 に収まらず ±inf に overflow するため、
-    // `value <= 1000.0` (または `>= 1.0`) が成立せず reject される
-    // (§2.2 "all other values are invalid" と一致) — これは genuine
-    // magnitude overflow であり、`next_numeric_stable` が訂正する
-    // zero-mantissa/huge-mantissa 由来の `NaN` collapse とは別の hazard
-    // class (`parse_font_weight` doc参照)。`nan` / `inf` は `<number>`
-    // production ではなく Ident token なので keyword arm にも該当せず
-    // reject される — cssparser tokenizer の `NaN` artifact とは無関係。
+    // Non-finite values: `1e400` overflows f32 to ±inf, so neither
+    // `value <= 1000.0` nor `value >= 1.0` holds; the parser rejects it.
+    // This matches §2.2's "all other values are invalid" rule. Genuine
+    // magnitude overflow differs from the `NaN` collapse caused by zero or
+    // huge mantissas, which `next_numeric_stable` corrects (see the
+    // `parse_font_weight` docs). `nan` / `inf` are Ident tokens, not `<number>`
+    // productions, so they cannot match the keyword arm either. This does
+    // not depend on cssparser's tokenizer-generated `NaN` artifact.
     assert_eq!(parse("1e400", "font-weight"), None);
     assert_eq!(parse("-1e400", "font-weight"), None);
     assert_eq!(parse("nan", "font-weight"), None);
@@ -356,17 +356,17 @@ fn font_weight_mirror_huge_mantissa_tiny_exponent_resolves_inside_valid_range() 
 
 #[test]
 fn font_weight_computed_preserves_fractional_precision() {
-    // **spec 準拠 pin。** §2.2 の computed value は "a number" であり、
-    // §2.2.2 "Missing weights" <https://www.w3.org/TR/css-fonts-4/#missing-weights>
-    // は "Fractional weights are valid" と明言する。旧実装 (computed side が
-    // `u16`) は parse 時に round-half-away-from-zero で整数化しており、
-    // これは spec 沈黙点の選択ではなく表現上の制約による既知 divergence
-    // だった。payload / `ComputedValues.font_weight`
-    // を `f32` に格上げしたことで丸め自体が不要になり、本 test はその
-    // 解消を check する — もはや丸めていないことの regression guard。
-    // 全て 2 進数で厳密表現可能な小数 (`.5` / `.25`) — parse 側と期待値の
-    // 独立な文字列→f32 変換が bit-for-bit 一致することを保証でき、
-    // 丸め誤差を懸念せず `assert_eq!` で直接比較できる。
+    // **Spec-conformance guard.** §2.2 defines the computed value as "a number";
+    // §2.2.2, "Missing weights" <https://www.w3.org/TR/css-fonts-4/#missing-weights>,
+    // expressly allows fractional weights. Previously, computed `u16` weights
+    // were rounded half away from zero during parsing. That known divergence
+    // came from the representation, not a choice left open by the spec.
+    // Moving the payload and `ComputedValues.font_weight` to `f32` removed
+    // the need to round. This test guards against reintroducing rounding.
+    // Each fraction (`.5` / `.25`) has an exact binary representation, so
+    // independent string-to-f32 conversions for the parser and expected
+    // value agree bit for bit. Direct `assert_eq!` comparisons need no
+    // rounding tolerance.
     assert_eq!(parse("100.5", "font-weight"), fw(100.5));
     assert_eq!(parse("250.75", "font-weight"), fw(250.75));
     assert_eq!(parse("399.5", "font-weight"), fw(399.5));
@@ -376,27 +376,27 @@ fn font_weight_computed_preserves_fractional_precision() {
 #[test]
 fn font_weight_wpt_font_weight_computed_150_25() {
     // WPT css/css-fonts/parsing/font-weight-computed.html:
-    // `test_computed_value('font-weight', '150.25')` — 2-arg 形は
-    // computed === specified を check する。parse 結果 (specified-equivalent
-    // な `PropertyValue`) がそのまま `150.25` を保持することを確認する。
-    // cascade を経由した computed 側の同値 check は
-    // `crate::cascade::tests::font_weight_wpt_font_weight_computed_150_25`。
+    // `test_computed_value('font-weight', '150.25')` has two arguments and
+    // checks that computed equals specified. This checks that parsing keeps
+    // `150.25` in the specified-equivalent `PropertyValue`. The corresponding
+    // computed-value check through the cascade lives in
+    // `crate::cascade::tests::font_weight_wpt_font_weight_computed_150_25`.
     assert_eq!(parse("150.25", "font-weight"), fw(150.25));
 }
 
 #[test]
 fn font_weight_accepts_scientific_notation_number() {
-    // `int_value` matcher から `value` (f32) 参照に変えた副次効果。
-    // `1e3` は CSS Values 3 の `<number>` production として spec-valid
-    // なので受理が正しい。
+    // A side effect of switching from the `int_value` matcher to `value` (f32):
+    // `1e3` is a valid `<number>` under CSS Values 3 and must be accepted.
+    // This also guards support for scientific notation.
     assert_eq!(parse("1e3", "font-weight"), fw(1000.0));
 }
 
 #[test]
 fn font_weight_parses_relative_keywords_as_sentinels() {
-    // CSS Fonts 4 §2.2: `bolder` / `lighter` は継承値依存の relative
-    // weight。parse 段では解けないので sentinel variant を返し、cascade が
-    // 親の computed weight から解決する。
+    // CSS Fonts 4 §2.2: `bolder` / `lighter` depend on inherited weight.
+    // Parsing cannot resolve them; it returns a sentinel variant so the
+    // cascade can resolve them against the parent's computed weight.
     assert_eq!(
         parse("bolder", "font-weight"),
         Some(PropertyValue::FontWeight(FontWeightValue::Bolder))
@@ -405,7 +405,7 @@ fn font_weight_parses_relative_keywords_as_sentinels() {
         parse("lighter", "font-weight"),
         Some(PropertyValue::FontWeight(FontWeightValue::Lighter))
     );
-    // CSS Values 3 §3.1: relative keyword も ASCII case-insensitive。
+    // CSS Values 3 §3.1: relative keywords are also ASCII case-insensitive.
     assert_eq!(
         parse("BOLDER", "font-weight"),
         Some(PropertyValue::FontWeight(FontWeightValue::Bolder))
@@ -418,19 +418,19 @@ fn font_weight_parses_relative_keywords_as_sentinels() {
 
 #[test]
 fn font_weight_rejects_unknown_ident() {
-    // spec-invalid keyword → declaration drop。
+    // An invalid keyword drops the declaration.
     assert_eq!(parse("normal-ish", "font-weight"), None);
     assert_eq!(parse("super-bold", "font-weight"), None);
 }
 
 // ── line-height (CSS Inline 3 §5.1) ────────────────
 //
-// Verification 5/6/7 の spec-derived: grammar `normal |
-// <number [0,∞]> | <length-percentage [0,∞]>` — 4 accept branch + negative
-// reject + Number vs Length variant distinction を check する。
+// Spec-derived verifications 5/6/7: grammar `normal |
+// <number [0,∞]> | <length-percentage [0,∞]>` — test four accepted
+// branches, negative rejection, and the Number/Length variant distinction.
 //
-// sibling: parse_display (keyword accept)、parse_font_size (Length
-// post-filter for non-negative)、parse_length_value (unit dispatch)。
+// Siblings: parse_display (keyword acceptance), parse_font_size (non-negative
+// Length post-filter), and parse_length_value (unit dispatch).
 
 #[test]
 fn line_height_parse_normal_keyword() {
@@ -444,9 +444,9 @@ fn line_height_parse_normal_keyword() {
 #[test]
 fn line_height_parse_bare_number() {
     // Verification 5.2 + 6: `line-height: 1.5` (bare number, no unit) →
-    // LineHeight::Number(1.5)。Token::Number arm を通り Length branch には
-    // 落ちない (Number vs Length distinction load-bearing、下流 special
-    // behavior "specified value inherit" のための variant tag)。
+    // LineHeight::Number(1.5). The Token::Number arm must not fall through
+    // to the Length branch: the variant tag preserves the distinction needed
+    // downstream for the special "inherit specified value" behavior.
     assert_eq!(
         parse("1.5", "line-height"),
         Some(PropertyValue::LineHeight(LineHeight::Number(1.5)))
@@ -467,7 +467,7 @@ fn line_height_parse_length_px() {
 #[test]
 fn line_height_parse_length_percentage() {
     // Verification 5.4: `line-height: 150%` → LineHeight::Length(Percent(150.0))
-    // parse_length_value(allow_percentage=true) が Percent branch を有効化。
+    // parse_length_value(allow_percentage=true) enables the Percent branch.
     assert_eq!(
         parse("150%", "line-height"),
         Some(PropertyValue::LineHeight(LineHeight::Length(
@@ -478,10 +478,10 @@ fn line_height_parse_length_percentage() {
 
 #[test]
 fn line_height_number_vs_em_are_distinct_variants() {
-    // Verification 6: `1.5` (unitless) と `1.5em` (dimensioned) は同じ scalar
-    // でも別 variant に mapping (Token::Number vs Token::Dimension で分岐)。
-    // spec §5.1 unitless number は child が specified value を inherit する
-    // special behavior、Length variant は通常 resolve — 下流が区別する必要。
+    // Verification 6: unitless `1.5` and dimensioned `1.5em` have the same
+    // scalar but map to different variants (Token::Number vs Token::Dimension).
+    // Under §5.1, children inherit a unitless number as a specified value;
+    // lengths resolve normally. Downstream code must distinguish them.
     let number = parse("1.5", "line-height");
     let length_em = parse("1.5em", "line-height");
     assert_eq!(
@@ -499,8 +499,8 @@ fn line_height_number_vs_em_are_distinct_variants() {
 
 #[test]
 fn line_height_accepts_length_em_rem_pt() {
-    // 5 unit sample の length-percentage branch smoke — parse_length_value
-    // helper との integration を check (em/rem/pt helper 経由)。
+    // Five-unit sample smoke test for the length-percentage branch: verify
+    // integration with parse_length_value for em/rem/pt.
     assert_eq!(
         parse("1.2em", "line-height"),
         Some(PropertyValue::LineHeight(LineHeight::Length(Length::Em(
@@ -523,13 +523,13 @@ fn line_height_accepts_length_em_rem_pt() {
 
 #[test]
 fn line_height_accepts_zero_number_and_length() {
-    // spec `[0,∞]`: 0 は境界の valid value。
+    // The boundary value 0 is valid under `[0,∞]`.
     // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths> clause 2:
     // "if a 0 could be parsed as either a `<number>` or a `<length>` in a
     // property (such as line-height), it must parse as a `<number>`" —
-    // parse_line_height は expect_number branch を parse_length_value より
-    // 先に試すため、bare `0` は LineHeight::Number(0.0) として確定 (unitless-zero
-    // clause の Length 経路が導入した Px(0.0) route ではない)。
+    // parse_line_height tries expect_number before parse_length_value, so
+    // bare `0` becomes LineHeight::Number(0.0), not the Px(0.0) produced by
+    // the length route of the unitless-zero clause.
     assert_eq!(
         parse("0", "line-height"),
         Some(PropertyValue::LineHeight(LineHeight::Number(0.0)))
@@ -544,51 +544,51 @@ fn line_height_accepts_zero_number_and_length() {
 
 #[test]
 fn line_height_rejects_negative_number() {
-    // Verification 7: `<number [0,∞]>` — 負値は spec grammar 違反 → drop。
+    // Verification 7: negative values violate `<number [0,∞]>` and are dropped.
     assert_eq!(parse("-1.5", "line-height"), None);
 }
 
 #[test]
 fn line_height_rejects_negative_number_with_trailing_length() {
-    // Regression: Number branch は
-    // Token::Number を commit した後 fallthrough すべきでない。fallthrough
-    // していた旧実装では `-0.5 20px` が Length branch で `20px` を拾い
-    // silently accept されていた (spec-invalid → 本来 declaration drop)。
-    // 現行: Number 到達 = 確定、`[0,∞]` 違反は declaration drop、
-    // 後続 token は expect_exhausted なくとも parse_length_value 側で拾わない。
+    // Regression: after consuming a Token::Number, the Number branch must
+    // not fall through. The old parser accepted `-0.5 20px` by picking up
+    // `20px` in the Length branch, even though the declaration is invalid.
+    // Now a Number token commits to that branch: a `[0,∞]` violation drops
+    // the declaration, and trailing tokens cannot be consumed later by
+    // parse_length_value even without expect_exhausted.
     assert_eq!(parse("-0.5 20px", "line-height"), None);
-    // 対称: negative number + em / % も同じく drop。
+    // Likewise, a negative number followed by em or % is dropped.
     assert_eq!(parse("-0.5 1em", "line-height"), None);
     assert_eq!(parse("-1.0 50%", "line-height"), None);
 }
 
 #[test]
 fn line_height_rejects_negative_length() {
-    // Verification 7: `<length-percentage [0,∞]>` — 負 length は drop。
+    // Verification 7: negative lengths violate `<length-percentage [0,∞]>`.
     assert_eq!(parse("-10px", "line-height"), None);
     assert_eq!(parse("-1em", "line-height"), None);
 }
 
 #[test]
 fn line_height_rejects_negative_percentage() {
-    // Verification 7: 負 percentage も spec `[0,∞]` 違反 → drop。
+    // Verification 7: negative percentages also violate `[0,∞]`.
     assert_eq!(parse("-50%", "line-height"), None);
 }
 
 #[test]
 fn line_height_rejects_unknown_keyword() {
-    // spec grammar 外の ident (`auto` / `medium` 等) は (a) spec-invalid、
-    // silent drop。CSS-wide keyword は別 test
-    // (`line_height_rejects_css_wide_keyword`) — (a) ではなく (b) の
-    // 非対応なので混同しないこと。
+    // Idents outside the grammar, such as `auto` / `medium`, are invalid
+    // under the spec and silently dropped. CSS-wide keywords have a separate
+    // test (`line_height_rejects_css_wide_keyword`): those are unsupported
+    // feature (b), not spec-invalid category (a).
     assert_eq!(parse("auto", "line-height"), None);
     assert_eq!(parse("medium", "line-height"), None);
 }
 
 #[test]
 fn line_height_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
-    // canonical: PropertyValue doc「CSS-wide keyword」節。
+    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
+    // silently dropped. The "CSS-wide keyword" section of PropertyValue is canonical.
     assert_eq!(parse("inherit", "line-height"), None);
     assert_eq!(parse("initial", "line-height"), None);
     assert_eq!(parse("unset", "line-height"), None);
@@ -598,11 +598,11 @@ fn line_height_rejects_css_wide_keyword() {
 
 #[test]
 fn line_height_rejects_unsupported_unit() {
-    // parse_length_value が silent drop する unit (`vw` / `cap` 等、
-    // 現状未対応) は helper 側で `None` →
-    // line-height parse も declaration drop。`ch` / `lh` / `rlh` は
-    // それぞれ受理側へ移った
-    // (`line_height_accepts_ch` / `line_height_accepts_lh` 参照)。
+    // parse_length_value silently drops unsupported units such as `vw` /
+    // `cap`; its `None` result also drops the line-height declaration.
+    // `ch`, `lh`, and `rlh` have moved to the accepted cases; see
+    // `line_height_accepts_ch` and `line_height_accepts_lh`.
+    // This test covers only the units still unsupported.
     assert_eq!(parse("10vw", "line-height"), None);
     assert_eq!(parse("10cap", "line-height"), None);
 }
@@ -640,8 +640,8 @@ fn line_height_accepts_ch() {
 
 #[test]
 fn line_height_normal_is_case_insensitive() {
-    // CSS spec: keyword ident は ASCII case-insensitive
-    // (expect_ident_matching が case-insensitive)。
+    // CSS keywords are ASCII case-insensitive;
+    // expect_ident_matching performs that comparison.
     assert_eq!(
         parse("NORMAL", "line-height"),
         Some(PropertyValue::LineHeight(LineHeight::Normal))
@@ -654,8 +654,8 @@ fn line_height_normal_is_case_insensitive() {
 
 #[test]
 fn line_height_key_maps_to_line_height_property_key() {
-    // PropertyValue::LineHeight → PropertyKey::LineHeight (cascade winner 選択の
-    // discriminant integrity、既存 sibling font_size / display と同じ pattern)。
+    // PropertyValue::LineHeight → PropertyKey::LineHeight: preserve the
+    // cascade winner's key, as in the font_size / display sibling tests.
     let v = PropertyValue::LineHeight(LineHeight::Normal);
     assert_eq!(v.key(), PropertyKey::LineHeight);
     let v = PropertyValue::LineHeight(LineHeight::Number(1.5));
@@ -668,15 +668,15 @@ fn line_height_key_maps_to_line_height_property_key() {
 //
 // Value grammar (§6.1 spec verbatim):
 //   start | end | left | right | center | justify | match-parent | justify-all
-// Initial: start / Inherited: yes / spec 上 shorthand (text-align-all +
-// text-align-last、単一 field で保持 = (b)
-// 非対応)。inheritance test は cascade.rs 側 (parent → child コピー、display
-// non-inherited との対比)。
+// Initial: start / Inherited: yes / The spec defines a shorthand for
+// text-align-all and text-align-last, but storing one field is unsupported (b).
+// Inheritance tests live in cascade.rs (parent-to-child copying contrasted
+// with non-inherited display).
 
 #[test]
 fn text_align_parse_all_eight_keywords() {
-    // Verification 5: 8 keyword が全て正しく TextAlign variant にマップされる。
-    // 1 test で全 arm coverage (patch coverage 100% 目標)。
+    // Verification 5: map all eight keywords to the correct TextAlign variants.
+    // One test covers every arm (100% patch coverage target).
     assert_eq!(
         parse("start", "text-align"),
         Some(PropertyValue::TextAlign(TextAlign::Start))
@@ -717,7 +717,7 @@ fn text_align_parse_all_eight_keywords() {
 
 #[test]
 fn text_align_is_case_insensitive() {
-    // Verification 6: CSS spec 慣行 — property value keyword は ASCII case-insensitive。
+    // Verification 6: CSS value keywords are ASCII case-insensitive.
     assert_eq!(
         parse("CENTER", "text-align"),
         Some(PropertyValue::TextAlign(TextAlign::Center))
@@ -734,8 +734,8 @@ fn text_align_is_case_insensitive() {
 
 #[test]
 fn text_align_rejects_unknown_keyword() {
-    // spec §6.1 grammar に含まれない keyword は silent drop (spec-invalid)。
-    // `middle` は typo/俗称、`text-align` spec に存在しない。
+    // Keywords outside the §6.1 grammar are silently dropped as invalid.
+    // `middle` is a colloquial name or typo, not a `text-align` value.
     assert_eq!(parse("middle", "text-align"), None);
     assert_eq!(parse("baseline", "text-align"), None);
     assert_eq!(parse("top", "text-align"), None);
@@ -743,8 +743,8 @@ fn text_align_rejects_unknown_keyword() {
 
 #[test]
 fn text_align_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。5 keyword
-    // の一覧・理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical。
+    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
+    // silently dropped. See PropertyValue's "CSS-wide keyword" section for the list.
     assert_eq!(
         parse("inherit", "text-align"),
         Some(PropertyValue::TextAlign(TextAlign::Inherit))
@@ -757,26 +757,26 @@ fn text_align_rejects_css_wide_keyword() {
 
 #[test]
 fn text_align_rejects_string_value() {
-    // CSS Text 3 §6.1 grammar は 8 keyword のみ、`<string>` value は本 crate
-    // が引用する level では未定義 → spec-invalid、silent drop。
-    // (Text 4 draft では tabular-data character alignment 用に `<string>` が
-    // 検討されているが本 crate は Text 3 pin。expect_ident が String token を
-    // reject する経路で `None` を返す。)
+    // CSS Text 3 §6.1 allows only eight keywords; this crate's cited level
+    // does not define `<string>`, so a string is invalid and silently dropped.
+    // Text 4 drafts consider `<string>` for tabular-data character alignment,
+    // but this crate is pinned to Text 3. expect_ident rejects String tokens
+    // and returns `None`.
     assert_eq!(parse(r#""." "#, "text-align"), None);
 }
 
 #[test]
 fn text_align_rejects_non_ident() {
-    // Number / dimension token は expect_ident で reject。
+    // expect_ident rejects Number and dimension tokens.
     assert_eq!(parse("16px", "text-align"), None);
     assert_eq!(parse("100", "text-align"), None);
 }
 
 #[test]
 fn text_align_key_maps_to_text_align_property_key() {
-    // PropertyValue::TextAlign → PropertyKey::TextAlign (cascade winner 選択の
-    // discriminant integrity、既存 sibling counter-* / content / string-set /
-    // position と同じ pattern)。
+    // PropertyValue::TextAlign → PropertyKey::TextAlign: preserve the
+    // cascade winner's key, as in the counter-* / content / string-set /
+    // position sibling tests.
     let v = PropertyValue::TextAlign(TextAlign::Start);
     assert_eq!(v.key(), PropertyKey::TextAlign);
     let v = PropertyValue::TextAlign(TextAlign::Center);
@@ -1365,7 +1365,7 @@ fn text_indent_key_maps_to_text_indent_property_key() {
 // ── direction (CSS Writing Modes 4 §2.1) ──
 //
 // Value grammar (§2.1 spec verbatim): ltr | rtl
-// Initial: ltr / Inherited: yes / Computed value: specified value。
+// Initial: ltr / Inherited: yes / Computed value: specified value.
 
 #[test]
 fn direction_parse_both_keywords() {
@@ -1393,15 +1393,15 @@ fn direction_is_case_insensitive() {
 
 #[test]
 fn direction_rejects_unknown_keyword() {
-    // 旧 draft 相当の `auto` は現行 §2.1 grammar に無い — 実 spec-invalid。
+    // `auto` from older drafts is absent from current §2.1 and is invalid.
     assert_eq!(parse("auto", "direction"), None);
     assert_eq!(parse("horizontal-tb", "direction"), None);
 }
 
 #[test]
 fn direction_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。5 keyword
-    // の一覧・理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical。
+    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
+    // silently dropped. See PropertyValue's "CSS-wide keyword" section for the list.
     assert_eq!(parse("inherit", "direction"), None);
     assert_eq!(parse("initial", "direction"), None);
     assert_eq!(parse("unset", "direction"), None);
@@ -1507,9 +1507,9 @@ fn writing_mode_rejects_unknown_keyword() {
 
 #[test]
 fn writing_mode_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。5
-    // keyword の一覧・理由は `PropertyValue` doc の「CSS-wide keyword」節が
-    // canonical。
+    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
+    // silently dropped. See PropertyValue's "CSS-wide keyword" section for
+    // the canonical list and reason.
     assert_eq!(parse("inherit", "writing-mode"), None);
     assert_eq!(parse("initial", "writing-mode"), None);
     assert_eq!(parse("unset", "writing-mode"), None);
@@ -1537,8 +1537,8 @@ fn writing_mode_key_maps_to_writing_mode_property_key() {
 /// pinned so a future refactor can't "fix" this into a no-op passthrough
 /// without a test noticing).
 ///
-/// Future work: vertical writing-mode 実装時に本 collapse を
-/// 削除し、本 test を revert/rewrite すること。
+/// Future work: remove this collapse when implementing vertical writing
+/// modes, and revert or rewrite this test.
 #[test]
 fn resolve_writing_mode_collapses_all_five_keywords_to_horizontal_tb() {
     for specified in [
@@ -3529,7 +3529,7 @@ fn font_style_key_maps_to_font_style_property_key() {
 // Value grammar (§6.6 spec verbatim, full property grammar): `normal |
 // small-caps | all-small-caps | petite-caps | all-petite-caps | unicase
 // | titling-caps`. This crate implements all 7 keywords
-// (`FontVariantCaps` doc's "7 keyword の意味" section). Initial: normal /
+// (see the "7 keyword meanings" section in `FontVariantCaps` docs). Initial: normal /
 // Inherited: yes / Computed value: specified keyword.
 
 #[test]
@@ -4726,8 +4726,8 @@ fn internal_center_resolver_does_not_change_author_values() {
 
 // ── text-shadow (CSS Text Decoration Module Level 3 §4) ─────────
 
-/// [`content_items`] と同じ shape の extraction helper —
-/// `PropertyValue::TextShadow(Arc<Vec<..>>)` の payload を clone して返す。
+/// Extraction helper with the same shape as [`content_items`]: clone and
+/// return the payload from `PropertyValue::TextShadow(Arc<Vec<..>>)`.
 fn text_shadow_items(source: &str) -> Vec<TextShadowItem> {
     match parse(source, "text-shadow") {
         Some(PropertyValue::TextShadow(v)) => (*v).clone(),
@@ -4767,8 +4767,8 @@ fn text_shadow_parse_rejects_percentage_calc_terms() {
 
 #[test]
 fn text_shadow_parse_single_offset_only_defaults_blur_and_color() {
-    // `<color>` / blur-radius 省略 — `TextShadowItem` doc の「各成分の
-    // 初期値埋め」節。
+    // Omitted `<color>` and blur radius: see the "component default values"
+    // section of the `TextShadowItem` docs.
     assert_eq!(
         text_shadow_items("1px 2px"),
         vec![TextShadowItem {
@@ -4798,9 +4798,9 @@ fn text_shadow_parse_color_after_lengths() {
     );
 }
 
-/// `<color>? && <length>{2,3}` の `&&` combinator — 順序は自由
-/// ([`parse_text_shadow_item`] doc の「`&&` grammar semantics」節)。
-/// color-before は color-after (直上 test) と同じ結果になる。
+/// The `&&` combinator in `<color>? && <length>{2,3}` permits either order
+/// (see the "`&&` grammar semantics" section of [`parse_text_shadow_item`]).
+/// Color-before gives the same result as color-after in the preceding test.
 #[test]
 fn text_shadow_parse_color_before_lengths_matches_color_after() {
     assert_eq!(
@@ -4824,8 +4824,8 @@ fn text_shadow_parse_explicit_currentcolor_keyword() {
 
 #[test]
 fn text_shadow_parse_negative_offsets_allowed() {
-    // offset-x / offset-y に non-negative 制約は無い (`TextShadowItem`
-    // doc の「Non-negative blur-radius」節 — blur のみ制約対象)。
+    // offset-x and offset-y have no non-negative constraint (see the
+    // "Non-negative blur-radius" section of `TextShadowItem`; only blur is constrained).
     assert_eq!(
         text_shadow_items("-1px -2px"),
         vec![TextShadowItem {
@@ -4839,23 +4839,23 @@ fn text_shadow_parse_negative_offsets_allowed() {
 
 #[test]
 fn text_shadow_parse_rejects_percentage() {
-    // `<length>` のみ、percentage 不可 (CSS Text Decoration Module Level
-    // 3 §4 "Percentages: N/A", `TextShadowItem` doc 参照)。
-    // `parse_length_value(input, false)` (`allow_percentage=false`) が
-    // parse-time で拒否する — sibling precedent
-    // `page_size_percentage_rejected` と同じ shape。
+    // Only `<length>` is allowed, not percentages (CSS Text Decoration Module
+    // 3 §4, "Percentages: N/A"; see the `TextShadowItem` docs).
+    // `parse_length_value(input, false)` (`allow_percentage=false`) rejects
+    // percentages at parse time, as in the sibling
+    // `page_size_percentage_rejected` test.
     assert_eq!(parse("50% 50%", "text-shadow"), None);
 }
 
 #[test]
 fn text_shadow_parse_rejects_negative_blur_radius() {
-    // blur-radius (3rd length) は non-negative — CSS Backgrounds 3 §6.1
-    // "Drop Shadows: the box-shadow property"
-    // "Negative values are invalid" (box-shadow / text-shadow 共通の
-    // `<shadow>` syntax)。負の 3rd length は blur slot にマッチせず
-    // unconsumed のまま残り、`parse_comma_separated` の
-    // `parse_until_before` → `parse_entirely` が leftover を検知して
-    // declaration ごと drop する (`parse_text_shadow` doc 参照)。
+    // CSS Backgrounds 3 §6.1, "Drop Shadows: the box-shadow property", says
+    // "Negative values are invalid" for the shared box/text-shadow `<shadow>`
+    // syntax. A negative third length cannot fill the blur-radius slot and
+    // remains unconsumed. `parse_comma_separated` then detects that leftover
+    // through `parse_until_before` → `parse_entirely` and drops the whole
+    // declaration (see the `parse_text_shadow` docs). The non-negative
+    // restriction applies to blur, not either offset.
     assert_eq!(parse("1px 1px -3px", "text-shadow"), None);
 }
 
@@ -4895,7 +4895,7 @@ fn text_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero_but_preserves
     // are checked (not just `+Inf`) because an earlier iteration of the
     // sibling `opacity` guard used `is_finite()` and wrongly dropped
     // the negative-overflow case too (`opacity_zero_mantissa_huge_exponent_resolves_to_zero_but_preserves_infinity`
-    // doc参照).
+    // docs).
     assert_eq!(
         text_shadow_items("1e40px 1px"),
         vec![TextShadowItem {
@@ -4967,8 +4967,8 @@ fn text_shadow_parse_multiple_comma_separated() {
 
 #[test]
 fn text_shadow_parse_rejects_empty_value() {
-    // length run は必須 — `<color>` 単体 (`text-shadow: red`) は
-    // grammar 上 invalid。
+    // A length run is required: `<color>` alone (`text-shadow: red`) is
+    // invalid under the grammar.
     assert_eq!(parse("red", "text-shadow"), None);
 }
 

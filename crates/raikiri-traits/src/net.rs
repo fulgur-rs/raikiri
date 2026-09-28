@@ -1,8 +1,8 @@
 //! Network provider trait + neutral network types.
 //!
-//! blitz-traits::NetProvider の shape に揃える (Finding #6 対応)。raikiri は
-//! sync core のため callback ではなく sync return。policy 適用は
-//! `raikiri-net::SandboxedNetProvider` による wrap で行う。
+//! Match the shape of blitz-traits::NetProvider (Finding #6). Raikiri has
+//! a synchronous core, so it returns synchronously rather than using callbacks.
+//! Policy is applied by wrapping with `raikiri-net::SandboxedNetProvider`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,19 +13,19 @@ use url::Url;
 use crate::page::FormData;
 use crate::policy::{PolicyViolation, ResourceKind};
 
-/// HTTP header の list。同名 header の複数値も表現可能。
+/// List of HTTP headers. Can represent multiple values for one header name.
 ///
-/// 軽量 shape に留めるため `http::HeaderMap` を採用せず `Vec<(String, String)>`。
-/// blitz-compat 実装時に必要なら再検討。
+/// Uses `Vec<(String, String)>` rather than `http::HeaderMap` to keep the shape
+/// lightweight. Reconsider if needed for blitz-compat.
 pub type HeaderMap = Vec<(String, String)>;
 
-/// Consumer が実装する sync-return の network provider trait。
+/// Synchronous-return network provider trait implemented by consumers.
 ///
-/// raikiri は timer thread を持たない (round 5 review #2)。timeout は
-/// Consumer が自身の async runtime / thread pool で管理する。
+/// Raikiri has no timer thread (round 5 review #2). Consumers manage timeouts
+/// in their own async runtime / thread pool.
 ///
-/// Finding #6 対応 (round 7 未対応 finding: byte enforcement 戦略確定は
-/// sandboxed-net-provider-impl 実装前)。
+/// Finding #6 (round 7 outstanding item: settle the byte-enforcement strategy
+/// before implementing sandboxed-net-provider-impl).
 pub trait NetworkProvider: Send + Sync {
     /// Fetches exactly one HTTP hop: if the response is itself a redirect
     /// (a 3xx status carrying a `Location`), returns it as
@@ -90,106 +90,106 @@ pub enum FetchOutcome {
     },
 }
 
-/// Fetch 要求の全情報。
+/// Complete fetch request information.
 #[derive(Debug, Clone)]
 pub struct Request {
-    /// Target URL (redirect 前)。
+    /// Target URL (before redirects).
     pub url: Url,
-    /// HTTP method。
+    /// HTTP method.
     pub method: Method,
-    /// Content-Type header (POST body 用)。
+    /// Content-Type header (for POST bodies).
     pub content_type: Option<String>,
-    /// 追加 header (`Accept`, `Referer`, custom 等)。
+    /// Additional headers (`Accept`, `Referer`, custom, etc.).
     pub headers: HeaderMap,
-    /// Request body。
+    /// Request body.
     pub body: Body,
-    /// AbortSignal (option、Consumer が渡す)。
+    /// Optional AbortSignal supplied by the consumer.
     pub signal: Option<AbortSignal>,
-    /// raikiri 追加: fetch の目的 (blitz は doc_id、raikiri は context 表現)。
+    /// Raikiri addition: purpose of the fetch (blitz uses doc_id; raikiri uses context).
     pub kind: ResourceKind,
 }
 
-/// Fetch 成功時の response。
+/// Successful fetch response.
 #[derive(Debug, Clone)]
 pub struct FetchedResource {
-    /// Response body の生 bytes。
+    /// Raw response-body bytes.
     pub bytes: Bytes,
-    /// `Content-Type` header (parse 済み MIME type)。
+    /// `Content-Type` header (parsed MIME type).
     pub content_type: Option<String>,
-    /// Redirect 後の実効 URL。
+    /// Effective URL after redirects.
     pub final_url: Url,
-    /// 明示された character encoding (無ければ MIME や BOM から推測)。
+    /// Explicit character encoding (otherwise inferred from MIME or BOM).
     pub encoding: Option<String>,
 }
 
-/// Request body 表現。
+/// Representation of a request body.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Body {
-    /// 生 bytes body。
+    /// Raw byte body.
     Bytes(Bytes),
-    /// application/x-www-form-urlencoded body。
+    /// application/x-www-form-urlencoded body.
     Form(FormData),
-    /// body 無し (GET 等)。
+    /// No body (GET, etc.).
     Empty,
 }
 
-/// HTTP method (拡張余地あり、round 3 review #3 訂正: HTTP method は仕様上
-/// 拡張可能なため `#[non_exhaustive]`)。
+/// HTTP method (extensible; round 3 review #3 correction: HTTP methods are
+/// extensible by spec, hence `#[non_exhaustive]`).
 ///
-/// 現状は GET / POST のみ (fulgur の primary use case)。PUT / DELETE / PATCH /
-/// HEAD / OPTIONS は sandboxed-net-provider-impl 実装 / Consumer 実 use case
-/// 発生時に追加。`#[non_exhaustive]` により Consumer 側 exhaustive match の
-/// accidental break を防ぐ。
+/// Currently only GET / POST (fulgur's primary use case). Add PUT / DELETE /
+/// PATCH / HEAD / OPTIONS when implementing sandboxed-net-provider-impl or
+/// when consumers need them. `#[non_exhaustive]` prevents accidental breaks
+/// to exhaustive matches in consumer code.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Method {
-    /// GET。
+    /// GET.
     Get,
-    /// POST。
+    /// POST.
     Post,
 }
 
-/// blitz と同じ AbortSignal shape (AtomicBool ラッパ)。
+/// AbortSignal with the same shape as blitz (AtomicBool wrapper).
 ///
-/// Consumer が `AbortController::abort()` を呼ぶと、共有 AtomicBool が
-/// `true` になり、raikiri と Consumer の両側から観測可能。
+/// When a consumer calls `AbortController::abort()`, the shared AtomicBool
+/// becomes `true`, observable both by raikiri and the consumer.
 #[derive(Debug, Clone)]
 pub struct AbortSignal(Arc<AtomicBool>);
 
 impl AbortSignal {
-    /// signal が abort されたか。
+    /// Whether the signal has been aborted.
     pub fn is_aborted(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
 
-    /// blitz-traits 互換 alias (`is_aborted` → `aborted`)。
+    /// Alias compatible with blitz-traits (`is_aborted` → `aborted`).
     ///
-    /// blitz `AbortSignal::aborted()` と shape 一致させるための alias。
-    /// `is_aborted` が canonical。
+    /// Alias matching the shape of blitz `AbortSignal::aborted()`.
+    /// `is_aborted` is canonical.
     pub fn aborted(&self) -> bool {
         self.is_aborted()
     }
 }
 
-/// AbortSignal を produce する controller。round 5 review #2 対応: raikiri は
-/// timer thread を一切 spawn しない。timeout は Consumer が自分の async
-/// runtime で管理する。
+/// Controller producing an AbortSignal. Round 5 review #2: raikiri never
+/// spawns a timer thread. Consumers manage timeouts in their own async
+/// runtime.
 #[derive(Debug, Default)]
 pub struct AbortController {
-    /// このコントローラが管理する signal。
+    /// Signal managed by this controller.
     pub signal: AbortSignal,
 }
 
 impl AbortController {
-    /// 新規 controller を生成。
+    /// Create a new controller.
     pub fn new() -> Self {
         Self {
             signal: AbortSignal(Arc::new(AtomicBool::new(false))),
         }
     }
 
-    /// signal を abort 状態に遷移させる。
+    /// Transition the signal to the aborted state.
     pub fn abort(&self) {
         self.signal.0.store(true, Ordering::Release);
     }
@@ -201,23 +201,23 @@ impl Default for AbortSignal {
     }
 }
 
-/// Network 層 error。§4 の 5 variant を再現。
+/// Network-layer error. Reproduces the five variants in §4.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum NetworkError {
-    /// AbortSignal によって中断された。
+    /// Aborted by an AbortSignal.
     Aborted,
-    /// ResourcePolicy 違反 (SandboxedNetProvider が発火)。
+    /// ResourcePolicy violation (raised by SandboxedNetProvider).
     ///
-    /// `PolicyViolation` は `Url` を含み 100 bytes を超えるため Box で保持する。
-    /// inline で持つと `NetworkError` と、それを包む `ResolverError` /
-    /// `LayoutError` / `RenderError` を返す全ての `Result` の Err 側が肥大化する。
+    /// `PolicyViolation` contains a `Url` and exceeds 100 bytes, so it is boxed.
+    /// Keeping it inline would enlarge the Err side of every `Result` returning
+    /// `NetworkError` or a wrapping `ResolverError` / `LayoutError` / `RenderError`.
     PolicyViolation(Box<PolicyViolation>),
-    /// I/O error。
+    /// I/O error.
     Io(std::io::Error),
-    /// HTTP status code error (4xx / 5xx)。
+    /// HTTP status code error (4xx / 5xx).
     Http(u16),
-    /// その他。
+    /// Other error.
     Other(String),
 }
 

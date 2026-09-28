@@ -1,8 +1,8 @@
 //! raikiri-traits — foundation traits and neutral model types.
 //!
-//! 設計仕様書 §4 に定義された全 trait / 中立モデル型を集約する。実装は持たず、
+//! Collects all traits and neutral model types from design spec §4 for
 //! raikiri-html / raikiri-style / raikiri-dom / raikiri-paint / raikiri-net /
-//! raikiri-js が参照する共通型層。
+//! raikiri-js. This shared type layer contains no implementations.
 //!
 //! ## Module tour
 //!
@@ -22,8 +22,8 @@
 //!
 //! ## Spec authority
 //!
-//! 型定義の authoritative source は design doc (Workspace Layout scope +
-//! spec drift protocol の design 由来)。
+//! The authoritative source for these type definitions is the design doc (from the
+//! Workspace Layout scope and spec drift protocol design).
 
 pub mod config;
 pub mod consumer;
@@ -41,7 +41,7 @@ pub mod script;
 pub mod sink;
 pub mod strategy;
 
-// 主要型 crate-root re-export (Consumer が `use raikiri_traits::*` で足りる shape)
+// Main types re-exported at the crate root (so consumers can use `use raikiri_traits::*`).
 pub use config::{
     BatchConfig, BatchConfigBuilder, LookaheadConfig, LookaheadConfigBuilder, PlanConfig,
     PlanConfigBuilder, RenderLimits, RenderLimitsBuilder, StreamingConfig, StreamingConfigBuilder,

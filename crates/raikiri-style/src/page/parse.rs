@@ -360,7 +360,7 @@ impl<'i> RuleBodyItemParser<'i, PageBodyItem, ()> for PageDeclParser {
 /// returns whether it was present, for the caller to retain on its own
 /// `*Declaration`.
 ///
-/// Exhaustive consumption matches [`mod@crate::rule`] の `DeclParser`: trailing
+/// Exhaustive consumption matches the `DeclParser` in [`mod@crate::rule`]: trailing
 /// garbage after the value (and optional `!important`) rejects the whole
 /// declaration.
 pub(crate) fn parse_important_and_exhaust<'i>(

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/safe_merge.sh — refuse `git merge` unless the pre-merge checklist
-# (rules/gate.md §Gate 通過条件 (合成)) is already recorded, before the merge
+# (rules/gate.md §combined gate pass conditions) is already recorded, before the merge
 # runs.
 #
 # gate.md's checklist (accepted via the earlier change) asks whoever runs
@@ -89,7 +89,7 @@
 #   - §8.1:   PASS, GREEN, or non-applicable/N/A (the §8.1.4 skip
 #             disposition), immediately after the marker
 #   - §8.2:   a convergence mode marker ("(i)" / "(ii)") or "skip" (the
-#             lens-matrix.md §発火 skip exception), immediately after the
+#             lens-matrix.md §review-trigger skip exception), immediately after the
 #             marker
 #   - §8.3:   a review job id (task-<id>-<id>) and a GATE PASS verdict
 #             specifically, adjacent to each other in either order
@@ -158,8 +158,8 @@
 # extending it is never the answer.
 #
 # This is a minimum check, not the full record: it verifies the checklist's 4 lines
-# exist and contain required content, not that every sub-clause gate.md's §Gate 通過
-# 条件 (合成) requires is satisfied in full detail (per-remit citations,
+# exist and contain required content, not that every sub-clause of gate.md's
+# combined gate pass conditions is satisfied in full detail (per-remit citations,
 # convergence-mode rationale for case (ii), etc. remain a human/coordinator
 # judgment call, same as before this script existed — the same limitation
 # scripts/gate.sh's own header states about its own §8.1.4 condition (2)).

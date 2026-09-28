@@ -1,75 +1,74 @@
-//! Computed value 層の value 型 + specified → computed の絶対化 (absolutization)。
+//! Computed-value types and conversion from specified to computed values (absolutization).
 //!
-//! 本 module は **層の分離**を担う。本 module の絶対化関数群は
-//! [`crate::property`] の [`Length`] / [`LengthOrAuto`] / [`LineHeight`] /
-//! [`Border`] を **入力**に取り、`Computed*` 型群を **出力**する。すなわち
-//! `Computed*` 型は「computed value 層である」ことを型で表明する。
-//! [`crate::computed::ComputedValues`] は per-node の集約 struct として
-//! `computed.rs` に残る (本 module は value 型と絶対化関数のみ)。
+//! This module **separates the value layers**. Its absolutization functions take
+//! [`Length`] / [`LengthOrAuto`] / [`LineHeight`] / [`Border`] from
+//! [`crate::property`] as **input** and produce the `Computed*` types as **output**.
+//! Thus the `Computed*` types identify themselves as computed-layer values.
+//! [`crate::computed::ComputedValues`] remains the per-node aggregate struct in
+//! `computed.rs`; this module contains only value types and conversion functions.
 //!
-//! **逆は成り立たない — [`Length`] 等は「specified 層である」ことを表明しない。**
-//! 本 module の入力に現れるときは specified 層だが、型そのものが層を決めるわけ
-//! ではなく、**層は値の出所で決まる**。実際 page 経路
-//! ([`crate::page::cascade_page`]) は `PropertyValue` の bag を運ぶので
-//! **computed 値も [`Length`] で運ばれる**。
-//! canonical な説明は [`Length`] の doc の「本型は『specified 層』を意味しない
-//! — 層は出所で決まる」節、page 経路が保証する内容は
-//! [`crate::page::PageCascadeResult::declarations`] の doc が canonical。
-//! 本節は層の関係だけを要約し、各 API の契約はそれぞれの doc comment に記す。
+//! **The reverse does not hold: [`Length`] and similar types do not identify
+//! themselves as specified-layer values.** They are specified-layer values when
+//! passed to this module, but a value's **origin determines its layer**, not its
+//! type. The page path ([`crate::page::cascade_page`]) carries a bag of
+//! `PropertyValue`s, so it carries **computed values in [`Length`] too**.
+//! The canonical explanation is in the [`Length`] documentation (the section
+//! explaining that its layer depends on origin, not its type). The documentation
+//! of [`crate::page::PageCascadeResult::declarations`] defines what the page path
+//! guarantees. This section only summarizes the layer relationship; individual
+//! API contracts appear in their own documentation.
 //!
-//! # なぜ絶対化が独立 phase なのか
+//! # Why absolutization is a separate phase
 //!
 //! CSS Cascade 5 §7.2 "Inheritance"
-//! (<https://www.w3.org/TR/css-cascade-5/#inheriting>) は
+//! (<https://www.w3.org/TR/css-cascade-5/#inheriting>) states:
 //! "The inherited value of a property on an element is the computed value of the
-//! property on the element's parent element." と規定する。すなわち inheritance が
-//! 運ぶのは **computed value** であり、`em` / `rem` は inheritance の時点で既に
-//! 絶対化されていなければならない。
+//! property on the element's parent element." Inheritance therefore carries
+//! **computed values**: `em` and `rem` must already be absolutized by then.
 //!
-//! かつ絶対化は **cascade winner の適用とは別 phase** でなければならない —
-//! `padding: 2em` の基準となる `font-size` は、同 node の全 winner を適用し終えた
-//! 後にしか確定しないため、winner を 1 つずつ適用する途中で絶対化することは
-//! できない (適用順は property 間で保証されない)。
+//! Absolutization must also be **separate from applying cascade winners**.
+//! The `font-size` that defines the basis for `padding: 2em` is known only after
+//! all winners for that node have been applied. We cannot absolutize while
+//! applying winners one by one (property application order is not guaranteed).
 //!
-//! 本 module の関数群は、この制約を守るのに必要な材料を signature に持つ —
-//! いずれも cascade の winner 集合に触らない純関数で、基準となる font-size を
-//! **引数で受け取る**。ただし signature が保証するのは
-//! **「本 module の関数自体が winner を適用しない」「基準が呼び出し側から明示的に
-//! 供給される」の 2 点だけ**である。
+//! The signatures of this module's functions provide the inputs needed to honor
+//! that constraint: they are pure functions that do not touch the set of cascade
+//! winners and **take the font-size basis as an argument**. A signature only
+//! guarantees these two facts, however: the function itself does not apply
+//! winners, and the caller explicitly supplies the basis.
 //!
-//! **順序は型で縛られていない。** 引数はただの [`ComputedLength`] なので、winner を
-//! 1 つ適用するたびに本 module の関数を呼び、親の font-size や phase 2 前の中間値を
-//! 基準として渡す誤実装は**普通に書ける** (型検査は通る)。すなわち上記の制約は
-//! 本 module では**規約として**守るものであり、下の doctest がその規約である。
+//! **The types do not enforce ordering.** The argument is just a
+//! [`ComputedLength`]. An incorrect implementation could call a function here
+//! after each winner, passing the parent's font-size or an intermediate value
+//! from before phase 2. This would still type-check. Thus this module enforces
+//! the constraint **by convention**, illustrated by the doctest below.
 //!
-//! **cascade pipeline 側は規約に頼っていない**:
-//! 絶対化の入口を [`SpecifiedValues::finalize`] /
-//! [`SpecifiedValues::finalize_as_root`] の 2 つに絞り、phase 3 を
-//! `parent_font_size` を受け取らない private 関数に閉じ込めてある。
-//! `OwnFontSize` / `ParentFontSize` newtype による型 level の enforcement は
-//! **採らなかった** — 守る距離が各 entry point の 2 行しかない一方、本 module の
-//! public 関数とその doctest 全体の signature churn を伴うため。
+//! **The cascade pipeline does not rely on that convention**: it limits entry
+//! into absolutization to [`SpecifiedValues::finalize`] and
+//! [`SpecifiedValues::finalize_as_root`], and encapsulates phase 3 in a private
+//! function that does not accept `parent_font_size`. We chose not to add
+//! `OwnFontSize` / `ParentFontSize` newtypes: each entry point has only two lines
+//! where the constraint matters, whereas newtypes would change the signatures
+//! of this module's public functions and all their doctests.
 //!
 //! [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
 //! [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
 //!
-//! # 想定される 4 段階 (phase 1 / 2 / 2.5 / 3) の呼び出し順序
+//! # Expected call order: four stages (phases 1 / 2 / 2.5 / 3)
 //!
-//! phase 2.5 (line-height の絶対化) は後から追加された —
-//! `padding: 2lh` のような box property が `1lh` を使うには、自 node の
-//! line-height が **先に**確定していなければならない (font-size が phase 2 で
-//! 先に確定するのと同じ理由)。
+//! Phase 2.5 (absolutizing line-height) was added later. A box property such as
+//! `padding: 2lh` needs this node's line-height to be resolved **first** to use
+//! `1lh` (for the same reason that font-size is resolved first in phase 2).
 //!
-//! `parent_line_height_basis` (**親要素の**確定済み used line-height) は
-//! phase 2 (`font-size` の `lh` 自己参照、
-//! [`resolve_font_size`] doc 参照) にも必要になった。**これは phase 2 → 2.5 の
-//! 順序を逆転させるものではない** — `parent_line_height_basis` が指すのは
-//! **自 node の** phase 2.5 の結果ではなく、**親 node** の (別の再帰呼び出しで
-//! 既に確定済みの) phase 2.5 の結果である。tree walk は親を子より先に処理する
-//! ため、この値は自 node の phase 2 に入る**前**から手元にある。したがって
-//! 呼び手は単に「`parent_line_height_basis` を求める式を、自 node の phase 2
-//! 呼び出しより前に書く」だけでよい (下記例、[`SpecifiedValues::finalize`] の
-//! 実装も同形)。
+//! `parent_line_height_basis` (the **parent element's** resolved used line-height)
+//! is also needed in phase 2 for `font-size`'s self-referential `lh` (see the
+//! [`resolve_font_size`] documentation). **This does not reverse the phase 2 →
+//! 2.5 order**: the basis is not the result of phase 2.5 for **this** node; it is
+//! the result of phase 2.5 for the **parent** node, already resolved in a separate
+//! recursive call. The tree walk processes parents before children, so the value
+//! is available **before** phase 2 of this node. The caller simply computes
+//! `parent_line_height_basis` before calling phase 2 for this node (as below and
+//! in [`SpecifiedValues::finalize`]).
 //!
 //! ```
 //! use raikiri_style::{
@@ -79,23 +78,23 @@
 //! };
 //! use raikiri_style::property::{Length, LineHeight};
 //!
-//! // 親の computed font-size / line-height (inheritance が運んできた computed
-//! // value — 親 node は既に処理済みなので、この 2 つは自 node の処理に入る
-//! // 前から確定している)。
+//! // The parent's computed font-size and line-height were carried by inheritance.
+//! // The parent node has already been processed, so both are known before this
+//! // node is processed.
 //! let parent_font_size = ComputedLength(16.0);
 //! let parent_line_height = ComputedLineHeight::Normal;
 //! let ctx = ResolveContext::new(ComputedLength(16.0));
 //!
-//! // 親の line-height 基準 (`lh` の自己参照、`font-size` と `line-height` の
-//! // 両方が使う) — 親が既に確定済みなので、自 node の phase 2 より前に求まる。
+//! // Compute the parent's line-height basis (used for self-referential `lh` in
+//! // both `font-size` and `line-height`) before this node's phase 2.
 //! let parent_line_height_basis = used_line_height_length(parent_line_height, parent_font_size);
 //!
-//! // phase 1: cascade winner を specified 表現のまま staging する (順不同)。
+//! // Phase 1: stage cascade winners in specified form (in any order).
 //! let specified_font_size = Length::Em(1.5);
 //! let specified_line_height = LineHeight::Number(1.5);
 //! let specified_padding_top = Length::Lh(2.0);
 //!
-//! // phase 2: font-size を **親基準** で絶対化する。
+//! // Phase 2: absolutize font-size against the **parent** basis.
 //! let font_size = resolve_font_size(
 //!     specified_font_size,
 //!     parent_font_size,
@@ -104,41 +103,41 @@
 //! );
 //! assert_eq!(font_size, ComputedLength(24.0));
 //!
-//! // phase 2.5: line-height を絶対化する。`<number>` は自 node の (今確定した)
-//! // font-size 基準、`lh`/`rlh` の自己参照基準は親の line-height
-//! // (`resolve_line_height` doc 参照) — ここでは `<number>` なので後者は未使用。
+//! // Phase 2.5: absolutize line-height. `<number>` uses this node's newly
+//! // resolved font-size; self-referential `lh`/`rlh` uses the parent's line-height
+//! // (see the `resolve_line_height` documentation). This example uses `<number>`.
 //! let line_height =
 //!     resolve_line_height(specified_line_height, font_size, parent_line_height_basis, &ctx);
 //! assert_eq!(line_height, ComputedLineHeight::Number(1.5));
 //!
-//! // phase 3: 残りを **自 node の確定済 font-size / line-height** 基準で絶対化する。
-//! // `padding: 2lh` の基準は phase 2.5 が確定した own line-height (1.5 * 24px = 36px)。
+//! // Phase 3: absolutize the rest against this node's **resolved** font-size and line-height.
+//! // `padding: 2lh` uses the own line-height from phase 2.5 (1.5 * 24px = 36px).
 //! let own_line_height = used_line_height_length(line_height, font_size);
 //! let padding_top =
 //!     resolve_length_percentage(specified_padding_top, font_size, own_line_height, &ctx);
 //! assert_eq!(padding_top, ComputedLengthPercentage::Px(72.0)); // 2 * 36
 //! ```
 //!
-//! # `#[non_exhaustive]` の方針 — 本 module の computed 型群に限る判断
+//! # Why these computed types do or do not use `#[non_exhaustive]`
 //!
-//! **crate-wide の規則ではない。** specified 層の [`Length`] / [`LengthOrAuto`] /
-//! [`LineHeight`] / [`Border`] を含む `property.rs` の公開 enum は sum 型でも
-//! `#[non_exhaustive]` を付ける (この crate 内の類似 enum に共通の convention)。
-//! 本 module の
-//! computed 型群だけがそこから外れる — 理由は下記の **explicit trade** であって
-//! 「sum 型だから」という形の性質ではない。
+//! **This is not a crate-wide rule.** Public enums in `property.rs`, including
+//! specified-layer [`Length`] / [`LengthOrAuto`] / [`LineHeight`] / [`Border`],
+//! use `#[non_exhaustive]` even for sum types (a convention shared by similar
+//! enums in this crate). Only the computed types in this module depart from
+//! that convention, due to the **explicit trade-off** below, not merely because
+//! they are sum types.
 //!
 //! - [`ComputedLengthPercentage`] / [`ComputedLengthPercentageOrAuto`] /
-//!   [`ComputedLineHeight`] / [`ComputedTabSize`] — **付けない** (下記 trade。
-//!   下流に網羅 match を強制する)。
-//! - [`ComputedBorder`] / [`ResolveContext`] — **付ける**。field 追加は下流の
-//!   match を fail-quiet にしないので、source 互換を取る方が純粋に得。
-//! - [`ComputedLength`] — **付けない**。`ComputedLength(16.0)` の位置構築を
-//!   下流に許すため (`#[non_exhaustive]` はそれを禁じる)。
+//!   [`ComputedLineHeight`] / [`ComputedTabSize`] — **not marked** (the trade-off
+//!   below requires downstream consumers to match exhaustively).
+//! - [`ComputedBorder`] / [`ResolveContext`] — **marked**. Adding a field does
+//!   not make downstream matches fail quietly; source compatibility is a gain.
+//! - [`ComputedLength`] — **not marked**, to let downstream code construct
+//!   `ComputedLength(16.0)` positionally (`#[non_exhaustive]` would prohibit it).
 //!
-//! 付けない判断は **spec が variant 数を閉じているからではない**。
+//! This decision does **not** mean the spec fixes the number of variants.
 //! CSS Values 4 §5.6.1 "Computation and Combination of Percentage and Dimension
-//! Mixes" (<https://www.w3.org/TR/css-values-4/#combine-mixed>) は verbatim で
+//! Mixes" (<https://www.w3.org/TR/css-values-4/#combine-mixed>) states verbatim:
 //!
 //! > The computed value of a percentage-dimension mix is defined as
 //! > - a computed dimension if the percentage component is zero or is defined
@@ -146,31 +145,30 @@
 //! > - a computed percentage if the dimension component is zero
 //! > - a computed calc() expression otherwise
 //!
-//! と規定しており、computed `<length-percentage>` は px / percentage /
-//! **calc()** の 3 形態を取る。したがって将来 css-variables-and-math 対応が
-//! 入れば `Calc` variant は**確実に増える**。これは以下の **explicit trade**
-//! である。
+//! The spec thus defines three forms of computed `<length-percentage>`: px,
+//! percentage, and **calc()**. Adding css-variables-and-math support will
+//! necessarily add a `Calc` variant. We accept the following **explicit trade-off**:
 //!
-//! - **得るもの**: 今すぐ下流で網羅 match が書けること。`raikiri-dom` の
-//!   `layout.rs` にある defensive な `_ => length(0.0)` を削除でき、
-//!   fail-quiet の class が型検査で閉じる。
-//! - **払うもの**: 将来 `Calc` variant を追加する際、raikiri-style /
-//!   raikiri-dom / raikiri を跨ぐ coordinated breaking change が 1 回発生する。
-//! - **取る理由**: `calc()` は下流が**必ず対応すべき**形態なので、compile error
-//!   で強制通知する方が、`#[non_exhaustive]` にして黙って 0px に落とすより安全。
+//! - **Benefit**: downstream code can use exhaustive matches now. We can remove
+//!   the defensive `_ => length(0.0)` in `raikiri-dom`'s `layout.rs`, letting
+//!   type checking catch a class of failures that would otherwise be silent.
+//! - **Cost**: adding `Calc` later requires one coordinated breaking change
+//!   across raikiri-style / raikiri-dom / raikiri.
+//! - **Reason**: downstream code must handle `calc()`. A compile error is safer
+//!   than `#[non_exhaustive]` allowing it to silently fall back to 0px.
 //!
 //! CSS Values 4 §10.11 "Computed Value"
-//! (<https://www.w3.org/TR/css-values-4/#calc-computed-value>) は裏側も
-//! 規定する — "Where percentages are not resolved at computed-value time, they
+//! (<https://www.w3.org/TR/css-values-4/#calc-computed-value>) also states:
+//! "Where percentages are not resolved at computed-value time, they
 //! are not resolved in math functions, e.g. `calc(100% - 100% + 1px)` resolves to
-//! `calc(0% + 1px)`, not to `1px`." すなわち percentage を computed 層に残す
-//! property では calc() 形態が computed value として**残る**。
+//! `calc(0% + 1px)`, not to `1px`." For properties that retain percentages in
+//! the computed layer, the calc() form therefore **survives** as a computed value.
 //!
-//! なお `#[non_exhaustive]` が提供するのは **source 互換** (下流が既存 match に
-//! 新 arm を書き足さずに済む) であり、再 compile の回避ではない — dependency が
-//! 変われば下流の再 compile は当然発生する。
+//! Note that `#[non_exhaustive]` provides **source compatibility** (downstream
+//! matches need no new arm), not immunity from recompilation: changing a
+//! dependency naturally recompiles downstream code.
 //!
-//! [`ComputedLength`] はこの trade の対象外 — 詳細は同型の doc を参照。
+//! [`ComputedLength`] is outside this trade-off; see that type's documentation.
 
 use std::sync::{Arc, OnceLock};
 
@@ -190,13 +188,13 @@ use crate::property::{
 };
 
 // ---------------------------------------------------------------------------
-// computed value 層の value 型
+// Computed-layer value types
 // ---------------------------------------------------------------------------
 
-/// Computed `<length>` — **px 単位の絶対長**。
+/// Computed `<length>` — an **absolute length in px**.
 ///
-/// `font-size` / `border-*-width` のように grammar が `<percentage>` を取らない
-/// property の computed value に使う。
+/// Used for computed values of properties such as `font-size` and
+/// `border-*-width`, whose grammar does not accept `<percentage>`.
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -205,29 +203,30 @@ use crate::property::{
 ///   length (computed length) is the specified length resolved to an absolute
 ///   length, and its unit is not distinguished: it can be represented by any
 ///   absolute length unit (but will be serialized using its canonical unit,
-///   px)." → 本型は「px で表現する」選択を取る。
+///   px)." This type chooses a representation in px.
 /// - CSS Fonts 4 §2.5 "Font size: the font-size property"
 ///   (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>):
-///   "Computed value: an absolute length"。
+///   "Computed value: an absolute length".
 ///
-/// # `#[non_exhaustive]` を付けない理由 (module doc の trade の対象外)
+/// # Why `#[non_exhaustive]` is absent (outside the module doc's trade-off)
 ///
-/// 本型は単一 f32 payload の newtype であり、`calc()` 導入後も表現が変わらない。
-/// `font-size: calc(1em + 2px)` は computed 時に完全な `<length>` へ解決される —
-/// 根拠は上記 CSS Values 4 §6 (「computed length は絶対長へ resolve される」) と
-/// CSS Values 4 §10.11 "Computed Value"
+/// This type is a newtype with one f32 payload; adding `calc()` does not change
+/// its representation. `font-size: calc(1em + 2px)` resolves completely to a
+/// `<length>` at computed-value time. See CSS Values 4 §6 above (computed
+/// lengths resolve to absolute lengths), and CSS Values 4 §10.11 "Computed Value"
 /// (<https://www.w3.org/TR/css-values-4/#calc-computed-value>): "The computed
 /// value of a math function is its calculation tree simplified, using all the
 /// information available at computed value time. (Such as the em to px ratio,
 /// how to resolve percentages in some properties, etc.)"
 ///
-/// **§5.6.1 `#combine-mixed` は本主張の根拠にならない** — 同 section が規定する
-/// のは *percentage 成分と dimension 成分の混合*であり、`1em + 2px` は dimension
-/// 同士の加算なので対象外。
+/// **§5.6.1 `#combine-mixed` does not support this claim**: that section covers
+/// *mixing percentage and dimension components*, whereas `1em + 2px` adds two
+/// dimensions.
 ///
-/// 加えて本型は `pub f32` 1 field の tuple struct であり、`ComputedLength(16.0)`
-/// という位置構築を下流に許したい (`#[non_exhaustive]` はそれを禁じる) —
-/// module doc の product 型の扱いとはこの点で異なる。
+/// This type is also a tuple struct with one `pub f32` field. Downstream code
+/// should be able to construct `ComputedLength(16.0)` positionally;
+/// `#[non_exhaustive]` would prohibit that. This differs from how the module
+/// documentation treats product types.
 ///
 /// ```
 /// use raikiri_style::ComputedLength;
@@ -240,10 +239,10 @@ use crate::property::{
 pub struct ComputedLength(pub f32);
 
 impl ComputedLength {
-    /// `0px`。padding / margin / border-width の spec initial value に対応する。
+    /// `0px`, matching the specified initial value for padding / margin / border-width.
     pub const ZERO: Self = Self(0.0);
 
-    /// px 値を取り出す。
+    /// Return the value in px.
     pub fn px(self) -> f32 {
         self.0
     }
@@ -312,11 +311,12 @@ pub struct ComputedLengthWithCh {
     pub ch_factor: Option<f32>,
 }
 
-/// Computed `<length-percentage>` — px か percentage。
+/// Computed `<length-percentage>` — px or a percentage.
 ///
-/// `padding-*` のように grammar が `<length-percentage>` を取り、percentage の
-/// 参照値が **used value 層**で決まる (containing block width) property に使う。
-/// percentage は computed 層に**そのまま残る**。
+/// Used for properties such as `padding-*` whose grammar accepts
+/// `<length-percentage>` and whose percentage basis (containing-block width) is
+/// determined at the **used-value layer**. Percentages **remain** in the
+/// computed layer.
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -328,17 +328,17 @@ pub struct ComputedLengthWithCh {
 /// - CSS Box 3 `padding-top` propdef
 ///   (<https://www.w3.org/TR/css-box-3/#propdef-padding-top>):
 ///   "Value: `<length-percentage [0,∞]>`" / "Computed value: a computed
-///   `<length-percentage>` value"。
+///   `<length-percentage>` value".
 /// - CSS Cascade 5 §4.5 "Used Values"
-///   (<https://www.w3.org/TR/css-cascade-5/#used>) — containing block width への
-///   解決は used value 層 (raikiri では taffy の責務)。
+///   (<https://www.w3.org/TR/css-cascade-5/#used>): resolving against the
+///   containing-block width belongs to the used-value layer (taffy's job here).
 ///
-/// [`Percent`](Self::Percent) は **authored 数値をそのまま**保持する
-/// (`50%` → `Percent(50.0)`、`/ 100.0` しない) — specified 層の
-/// [`Length::Percent`] と同じ convention。
+/// [`Percent`](Self::Percent) retains the **authored number unchanged**
+/// (`50%` → `Percent(50.0)`, with no `/ 100.0`), matching the convention of
+/// specified-layer [`Length::Percent`].
 ///
-/// `#[non_exhaustive]` を付けない判断とその trade は
-/// [module doc](crate::resolve) を参照。
+/// For the choice not to use `#[non_exhaustive]` and its trade-off, see the
+/// [module doc](crate::resolve).
 ///
 /// ```
 /// use raikiri_style::{
@@ -349,15 +349,15 @@ pub struct ComputedLengthWithCh {
 /// let ctx = ResolveContext::initial();
 /// let font_size = ComputedLength(20.0);
 ///
-/// // percentage は絶対化せず素通し (参照値は used value 層で決まる)。
+/// // Pass the percentage through without absolutizing it (its basis is set at used-value time).
 /// let p = resolve_length_percentage(Length::Percent(50.0), font_size, None, &ctx);
 /// assert_eq!(p, ComputedLengthPercentage::Percent(50.0));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedLengthPercentage {
-    /// 絶対化済みの px 長。
+    /// Absolutized length in px.
     Px(f32),
-    /// Percentage — authored 数値をそのまま保持 (`50%` → `Percent(50.0)`)。
+    /// Percentage — retain the authored number (`50%` → `Percent(50.0)`).
     Percent(f32),
 }
 
@@ -407,32 +407,33 @@ pub struct ComputedLengthPercentageWithCh {
     pub ch_factor: Option<f32>,
 }
 
-/// Computed `<length-percentage> | auto`。
+/// Computed `<length-percentage> | auto`.
 ///
-/// `margin-*` / `width` / `height` の computed value に使う。
+/// Used for computed values of `margin-*` / `width` / `height`.
 ///
 /// # Primary sources (§ title + anchor)
 ///
 /// - CSS Box 3 `margin-top` propdef
 ///   (<https://www.w3.org/TR/css-box-3/#propdef-margin-top>):
 ///   "Value: `<length-percentage> | auto`" / "Computed value: the keyword auto
-///   or a computed `<length-percentage>` value"。
+///   or a computed `<length-percentage>` value".
 /// - CSS Sizing 3 §3.1.1 "Preferred Size Properties: the width and height
 ///   properties"
 ///   (<https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>):
 ///   "Value: auto | `<length-percentage>` | min-content | max-content |
 ///   fit-content(`<length-percentage>`)" / "Computed value: as specified, with
-///   `<length-percentage>` values computed" — 後者が本型 (length は絶対化、
-///   percentage は素通し) の直接の根拠。
-///   (`min-content` / `max-content` / `fit-content()` は specified 層の
-///   [`LengthOrAuto`] が未対応 — 既存 gap、本 module の scope 外。)
+///   `<length-percentage>` values computed". The latter directly justifies
+///   this type: lengths are absolutized and percentages pass through.
+///   (`min-content` / `max-content` / `fit-content()` are unsupported by
+///   specified-layer [`LengthOrAuto`]: an existing gap outside this module.)
 ///
-/// [`Auto`](Self::Auto) の意味は property 依存 (margin は available space の
-/// 分配、width / height は automatic size calculation) — specified 層の
-/// [`LengthOrAuto::Auto`] と同じく variant 側は property-agnostic に保つ。
+/// The meaning of [`Auto`](Self::Auto) depends on the property (distribution
+/// of available space for margins, automatic size calculation for width/height).
+/// Keep the variant property-agnostic, as with specified-layer
+/// [`LengthOrAuto::Auto`].
 ///
-/// `#[non_exhaustive]` を付けない判断とその trade は
-/// [module doc](crate::resolve) を参照。
+/// For the choice not to use `#[non_exhaustive]` and its trade-off, see the
+/// [module doc](crate::resolve).
 ///
 /// ```
 /// use raikiri_style::{
@@ -452,13 +453,13 @@ pub struct ComputedLengthPercentageWithCh {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedLengthPercentageOrAuto {
-    /// 絶対化済みの px 長。
+    /// Absolutized length in px.
     Px(f32),
-    /// Percentage — authored 数値をそのまま保持 (`50%` → `Percent(50.0)`)。
+    /// Percentage — retain the authored number (`50%` → `Percent(50.0)`).
     Percent(f32),
     /// A mixed-unit `calc()` retained for used-value resolution.
     Calc(crate::property::CalcLengthPercentage),
-    /// `auto` keyword。
+    /// The `auto` keyword.
     Auto,
 }
 
@@ -471,193 +472,192 @@ pub enum ComputedColumnWidth {
     Px(f32),
 }
 
-/// Computed `<position>` の 1 軸分の offset ([`crate::property::CssPositionOffset`]
-/// の computed 版)。edge 情報 (`Start`/`End`) はここでも保持し続ける — 実 pixel
-/// 位置への最終変換 (`End` なら `100% - offset`) は background positioning
-/// area のサイズを要する used value 層の責務のまま
-/// ([`crate::property::CssPositionOffset`] doc 参照)。
+/// Offset for one axis of a computed `<position>` (the computed counterpart
+/// of [`crate::property::CssPositionOffset`]). Edge information (`Start`/`End`)
+/// is retained. Converting to a final pixel position (`100% - offset` for `End`)
+/// requires the size of the background-positioning area and remains a used-value
+/// responsibility (see [`crate::property::CssPositionOffset`]).
+///
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ComputedCssPositionOffset {
-    /// Start edge (`left`/`top`) からの offset。
+    /// Offset from the start edge (`left`/`top`).
     Start(ComputedLengthPercentage),
-    /// End edge (`right`/`bottom`) からの offset。
+    /// Offset from the end edge (`right`/`bottom`).
     End(ComputedLengthPercentage),
 }
 
-/// Computed `<position>` ([`crate::property::CssPosition`] の computed 版)。
+/// Computed `<position>` (counterpart of [`crate::property::CssPosition`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct ComputedCssPosition {
-    /// 水平軸の offset。
+    /// Horizontal-axis offset.
     pub horizontal: ComputedCssPositionOffset,
-    /// 垂直軸の offset。
+    /// Vertical-axis offset.
     pub vertical: ComputedCssPositionOffset,
 }
 
-/// Computed `background-size` ([`crate::property::BackgroundSize`] の
-/// computed 版)。
+/// Computed `background-size` (the computed counterpart of
+/// [`crate::property::BackgroundSize`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ComputedBackgroundSize {
-    /// `[ <length-percentage [0,∞]> | auto ]{1,2}` — 各軸独立。
+    /// `[ <length-percentage [0,∞]> | auto ]{1,2}` — each axis independently.
     Explicit {
-        /// 水平軸のサイズ。
+        /// Horizontal-axis size.
         width: ComputedLengthPercentageOrAuto,
-        /// 垂直軸のサイズ。
+        /// Vertical-axis size.
         height: ComputedLengthPercentageOrAuto,
     },
-    /// `cover` keyword。
+    /// The `cover` keyword.
     Cover,
-    /// `contain` keyword。
+    /// The `contain` keyword.
     Contain,
 }
 
-/// Computed `flex-basis`。
+/// Computed `flex-basis`.
 ///
 /// CSS Flexible Box Layout Module Level 1 §7.2.3
 /// (<https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>): "Computed
-/// value: specified keyword or a computed `<length-percentage>` value" —
-/// `auto` / `content` は computed 層でも keyword のまま、それ以外は
-/// [`ComputedLengthPercentage`] と同じ shape (`Px` / `Percent`) に絶対化する。
-/// [`ComputedLengthPercentageOrAuto`] の `content`-keyword 版に相当する。
+/// value: specified keyword or a computed `<length-percentage>` value".
+/// `auto` / `content` remain keywords in the computed layer; other values are
+/// absolutized to the [`ComputedLengthPercentage`] shape (`Px` / `Percent`).
+/// This is the `content`-keyword counterpart of [`ComputedLengthPercentageOrAuto`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedFlexBasis {
-    /// 絶対化済みの px 長。
+    /// Absolutized length in px.
     Px(f32),
-    /// Percentage — authored 数値をそのまま保持。
+    /// Percentage — retain the authored number.
     Percent(f32),
-    /// `auto` keyword。
+    /// The `auto` keyword.
     Auto,
-    /// `content` keyword ([`crate::property::FlexBasisValue`] doc の
-    /// "`content` と `auto` の意味差" 節参照)。
+    /// The `content` keyword (see the distinction from `auto` in the
+    /// [`crate::property::FlexBasisValue`] documentation).
     Content,
-    /// `min-content` keyword — computed 層では区別を保つ。taffy bridge は
-    /// `auto` 近似 (`crates/raikiri-dom/src/layout.rs` の `bridge_flex`
-    /// doc 参照)。
+    /// The `min-content` keyword remains distinct in the computed layer. The taffy bridge
+    /// approximates it as `auto` (see `bridge_flex` in `crates/raikiri-dom/src/layout.rs`).
     MinContent,
-    /// `max-content` keyword — 同上。
+    /// The `max-content` keyword — same approximation.
     MaxContent,
-    /// bare `fit-content` keyword — 同上。
+    /// The bare `fit-content` keyword — same approximation.
     FitContent,
 }
 
-/// Computed `row-gap` / `column-gap`。
+/// Computed `row-gap` / `column-gap`.
 ///
 /// CSS Box Alignment Module Level 3 §8.1 propdef `row-gap`/`column-gap`
 /// (<https://www.w3.org/TR/css-align-3/#propdef-row-gap>): "Computed value:
-/// specified keyword, else a computed `<length-percentage>` value" — `normal`
-/// は computed 層でも keyword のまま残る点が [`ComputedLength`] へ潰す
-/// `letter-spacing`/`word-spacing` の `normal` ([`resolve_length_or_normal`]
-/// doc 参照) と**異なる** (gap は "Computes to: normal" ではなく "specified
-/// keyword" — spec 文言の違いをそのまま型に反映)。
+/// specified keyword, else a computed `<length-percentage>` value". Unlike
+/// `normal` for `letter-spacing`/`word-spacing`, which resolves to
+/// [`ComputedLength`] (see [`resolve_length_or_normal`]), gap's `normal` remains
+/// a keyword in the computed layer. The spec says "specified keyword" here,
+/// not "Computes to: normal"; the type preserves that distinction.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedLengthPercentageOrNormal {
-    /// 絶対化済みの px 長。
+    /// Absolutized length in px.
     Px(f32),
-    /// Percentage — authored 数値をそのまま保持。
+    /// Percentage — retain the authored number.
     Percent(f32),
-    /// `normal` keyword — spec initial value。
+    /// The `normal` keyword — the specified initial value.
     Normal,
 }
 
 /// Computed `<track-breadth>` / `<inflexible-breadth>` (CSS Grid Layout
-/// Module Level 1 §7.2.1)。
+/// Module Level 1 §7.2.1).
 ///
-/// [`crate::property::GridTrackBreadth`] と [`crate::property::GridInflexibleBreadth`]
-/// を computed 層で**単一の型に collapse** する — 両者の specified 層での
-/// 分離は `minmax()` の min 側で `<flex>` (`fr`) を grammar-level に reject
-/// するための parse-time の制約に過ぎず ([`GridTrackSize`] doc の "fixed-size
-/// 制約" 節参照)、parse を通過した時点でその制約は既に enforce 済み —
-/// computed 層で min 側
-/// が [`Self::Flex`] を保持することは構造的に起きない (`resolve_grid_track_size`
-/// の `MinMax` arm は常に [`resolve_grid_inflexible_breadth`] を min 側に
-/// 適用し、その関数は `Flex` variant 自体を持たない
-/// [`crate::property::GridInflexibleBreadth`] からしか呼ばれないため)。
-/// 2 つ目の型を維持する利益が無いため 1 つに畳む判断。
+/// Collapse [`crate::property::GridTrackBreadth`] and
+/// [`crate::property::GridInflexibleBreadth`] into **one computed type**.
+/// Their separation in the specified layer only enforces the parse-time
+/// constraint that `minmax()` rejects `<flex>` (`fr`) on its minimum side
+/// (see the "fixed-size constraint" in [`GridTrackSize`]). After parsing,
+/// that constraint has already been enforced: a minimum cannot structurally
+/// contain [`Self::Flex`]. The `MinMax` arm of `resolve_grid_track_size` always
+/// applies [`resolve_grid_inflexible_breadth`] to its minimum, whose input,
+/// [`crate::property::GridInflexibleBreadth`], cannot contain `Flex`.
+/// There is no benefit in retaining a second computed type.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedGridTrackBreadth {
-    /// 絶対化済みの px 長。
+    /// Absolutized length in px.
     Px(f32),
-    /// Percentage — authored 数値をそのまま保持。
+    /// Percentage — retain the authored number.
     Percent(f32),
-    /// `<flex>` (`fr`) — authored 数値をそのまま保持 (`<number>` 相当、
-    /// 絶対化不要)。
+    /// `<flex>` (`fr`) — retain the authored number (equivalent to `<number>`;
+    /// no absolutization needed).
     Flex(f32),
-    /// `min-content`。
+    /// `min-content`.
     MinContent,
-    /// `max-content`。
+    /// `max-content`.
     MaxContent,
-    /// `auto`。
+    /// `auto`.
     Auto,
 }
 
-/// Computed `<track-size>` (CSS Grid Layout Module Level 1 §7.2.1)。
-/// [`crate::property::GridTrackSize`] の computed 版 — `Length` 系
-/// payload が [`ComputedGridTrackBreadth`] / [`ComputedLengthPercentage`] に
-/// 絶対化される点のみ異なる。
+/// Computed `<track-size>` (CSS Grid Layout Module Level 1 §7.2.1).
+/// The computed counterpart of [`crate::property::GridTrackSize`]; only
+/// `Length`-based payloads change, becoming [`ComputedGridTrackBreadth`] or
+/// [`ComputedLengthPercentage`] after absolutization.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedGridTrackSize {
-    /// bare `<track-breadth>`。
+    /// Bare `<track-breadth>`.
     Breadth(ComputedGridTrackBreadth),
-    /// `minmax( <inflexible-breadth>, <track-breadth> )` — [`ComputedGridTrackBreadth`]
-    /// doc の collapse 注記により両 side が同じ型。
+    /// `minmax( <inflexible-breadth>, <track-breadth> )` — both sides use the same
+    /// type, as explained in the [`ComputedGridTrackBreadth`] documentation.
     MinMax(ComputedGridTrackBreadth, ComputedGridTrackBreadth),
-    /// `fit-content( <length-percentage> )`。
+    /// `fit-content( <length-percentage> )`.
     FitContent(ComputedLengthPercentage),
 }
 
-/// Computed `repeat()` — [`crate::property::GridTrackRepeat`] の computed
-/// 版。`count` (`<integer>`/`auto-fill`/`auto-fit`) と `line_names`
-/// (`<custom-ident>` のみ) は length を運ばないため specified 層の型
-/// ([`crate::property::GridRepeatCount`] / `Vec<Vec<SmolStr>>`) をそのまま
-/// 再利用する。
+/// Computed `repeat()` — the computed counterpart of
+/// [`crate::property::GridTrackRepeat`]. `count` (`<integer>`/`auto-fill`/
+/// `auto-fit`) and `line_names` (`<custom-ident>` only) contain no lengths,
+/// so they reuse their specified-layer types
+/// ([`crate::property::GridRepeatCount`] / `Vec<Vec<SmolStr>>`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedGridTrackRepeat {
-    /// 繰り返し回数 — length を運ばないため specified 層の型を再利用。
+    /// Repeat count — reuse the specified-layer type because it has no lengths.
     pub count: GridRepeatCount,
-    /// interleaved line name — length を運ばないため specified 層のまま。
+    /// Interleaved line names — unchanged from the specified layer.
     pub line_names: Vec<Vec<SmolStr>>,
-    /// 絶対化済みの track sizing function 列。
+    /// Sequence of absolutized track-sizing functions.
     pub tracks: Vec<ComputedGridTrackSize>,
 }
 
-/// Computed track list component — [`crate::property::GridTrackListComponent`]
-/// の computed 版。
+/// Computed track-list component — the computed counterpart of
+/// [`crate::property::GridTrackListComponent`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum ComputedGridTrackListComponent {
-    /// 単独 track sizing function。
+    /// A single track-sizing function.
     Size(ComputedGridTrackSize),
-    /// `repeat()`。
+    /// `repeat()`.
     Repeat(ComputedGridTrackRepeat),
 }
 
-/// Computed track list — [`crate::property::GridTrackList`] の computed 版。
+/// Computed track list — counterpart of [`crate::property::GridTrackList`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedGridTrackList {
-    /// interleaved line name — length を運ばないため specified 層のまま。
+    /// Interleaved line names — unchanged from the specified layer.
     pub line_names: Vec<Vec<SmolStr>>,
-    /// track list の component 列 (絶対化済み)。
+    /// Sequence of absolutized track-list components.
     pub components: Vec<ComputedGridTrackListComponent>,
 }
 
-/// Computed `grid-template-columns` / `grid-template-rows`。
+/// Computed `grid-template-columns` / `grid-template-rows`.
 ///
 /// CSS Grid Layout Module Level 1 §7.2: "Computed value: the keyword `none`
-/// or a computed track list" — [`crate::property::GridTemplateTracks`] の
-/// computed 版、`Arc` wrap も同じ理由 ([`crate::property::GridTemplateTracks`]
-/// doc 参照)。
+/// or a computed track list" — computed counterpart of
+/// [`crate::property::GridTemplateTracks`], with `Arc` for the same reason
+/// (see [`crate::property::GridTemplateTracks`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum ComputedGridTemplateTracks {
-    /// `none` — spec initial value。
+    /// `none` — the specified initial value.
     None,
-    /// 絶対化済みの track list。
+    /// Absolutized track list.
     List(Arc<ComputedGridTrackList>),
 }
 
-/// `grid-auto-columns` / `grid-auto-rows` の spec initial value (`auto`) の
-/// computed 層 shared `Arc` — [`crate::property::initial_grid_auto_track_list`]
-/// の computed 版、同じ perf pattern (per-node allocation 回避)。
+/// Shared computed-layer `Arc` for the `grid-auto-columns` / `grid-auto-rows`
+/// specified initial value (`auto`). This is the computed counterpart of
+/// [`crate::property::initial_grid_auto_track_list`], avoiding per-node allocation.
 pub(crate) fn initial_computed_grid_auto_track_list() -> Arc<Vec<ComputedGridTrackSize>> {
     static INITIAL: std::sync::OnceLock<Arc<Vec<ComputedGridTrackSize>>> =
         std::sync::OnceLock::new();
@@ -670,33 +670,32 @@ pub(crate) fn initial_computed_grid_auto_track_list() -> Arc<Vec<ComputedGridTra
         .clone()
 }
 
-/// Computed `line-height`。
+/// Computed `line-height`.
 ///
 /// # Primary source (§ title + anchor)
 ///
 /// CSS Inline 3 §5.1 "Line Spacing: the line-height property"
-/// (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>) の property
-/// definition table は verbatim で
+/// (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>) specifies in its
+/// property definition table:
 ///
 /// > Value: normal | `<number [0,∞]>` | `<length-percentage [0,∞]>`
 /// > Percentages: computed relative to 1em
 /// > Computed value: the specified keyword, a number, or a computed `<length>`
 /// > value
 ///
-/// と規定する。すなわち **computed 層に percentage は存在しない** —
-/// `<percentage>` は「1em に対する比率」= 自要素の computed font-size
-/// (CSS Values 4 §6.1.1 `em` <https://www.w3.org/TR/css-values-4/#em>
-/// "Equal to the computed value of the font-size property of the element on
-/// which it is used.") に対して computed 時に絶対化される。本型が
-/// `Percent` variant を持たないのはこの Computed value 行の 3 形態に 1:1 で
-/// 対応させた結果である。
+/// Thus **percentages do not exist in the computed layer**: a `<percentage>`
+/// is relative to 1em, the element's own computed font-size (CSS Values 4 §6.1.1,
+/// `em`, <https://www.w3.org/TR/css-values-4/#em>: "Equal to the computed value
+/// of the font-size property of the element on which it is used."). It is
+/// therefore absolutized at computed-value time. The absence of a `Percent`
+/// variant matches the three forms in the spec's Computed value row one-to-one.
 ///
-/// [`Number`](Self::Number) が computed 層でも number のまま残るのは spec 上
-/// load-bearing な distinction — 子は number を inherit して**自分の**
-/// font-size に掛ける。
+/// Retaining [`Number`](Self::Number) as a number in the computed layer is an
+/// important spec distinction: children inherit the number and multiply it by
+/// **their own** font-size.
 ///
-/// `#[non_exhaustive]` を付けない判断とその trade は
-/// [module doc](crate::resolve) を参照。
+/// For the choice not to use `#[non_exhaustive]` and its trade-off, see the
+/// [module doc](crate::resolve).
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ComputedLineHeight, ResolveContext, resolve_line_height};
@@ -705,26 +704,26 @@ pub(crate) fn initial_computed_grid_auto_track_list() -> Arc<Vec<ComputedGridTra
 /// let ctx = ResolveContext::initial();
 /// let font_size = ComputedLength(20.0);
 ///
-/// // `<percentage>` は自要素の computed font-size に対して絶対化される。
+/// // Absolutize `<percentage>` against this element's computed font-size.
 /// let lh = resolve_line_height(LineHeight::Length(Length::Percent(150.0)), font_size, None, &ctx);
 /// assert_eq!(lh, ComputedLineHeight::Length(ComputedLength(30.0)));
 ///
-/// // `<number>` は素通し (子が自分の font-size に掛ける)。
+/// // Pass `<number>` through (a child multiplies it by its own font-size).
 /// let n = resolve_line_height(LineHeight::Number(1.5), font_size, None, &ctx);
 /// assert_eq!(n, ComputedLineHeight::Number(1.5));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedLineHeight {
-    /// `normal` keyword — computed 層でも keyword のまま (font metrics に基づく
-    /// 解決は paint 責務)。
+    /// The `normal` keyword remains a keyword in the computed layer; paint
+    /// resolves it using font metrics.
     Normal,
-    /// `<number>` — unitless multiplier。computed 層でも number のまま。
+    /// `<number>` — a unitless multiplier that remains a number when computed.
     Number(f32),
-    /// 絶対化済みの `<length>`。
+    /// Absolutized `<length>`.
     Length(ComputedLength),
 }
 
-/// Computed `tab-size`。
+/// Computed `tab-size`.
 ///
 /// # Primary source (§ title + anchor)
 ///
@@ -736,15 +735,15 @@ pub enum ComputedLineHeight {
 /// > Percentages: N/A
 /// > Computed value: the specified number or absolute length
 ///
-/// [`Number`](Self::Number) が computed 層でも number のまま残るのは
-/// [`ComputedLineHeight::Number`] と同じ理由 — spec 本文 "A `<number>`
+/// [`Number`](Self::Number) remains a number in the computed layer for the
+/// same reason as [`ComputedLineHeight::Number`]. The spec says "A `<number>`
 /// represents the measure as a multiple of the advance width of the space
-/// character ... of the nearest block container ancestor" という font
-/// metric 依存の解決を、本 crate がまだ持たない downstream text layout
-/// consumer に委ねる ([`crate::property::TabSize`] doc 参照)。
+/// character ... of the nearest block container ancestor". Resolution using
+/// font metrics is left to a downstream text-layout consumer that this crate
+/// does not yet have (see [`crate::property::TabSize`]).
 ///
-/// `#[non_exhaustive]` を付けない判断とその trade は
-/// [module doc](crate::resolve) を参照。
+/// For the choice not to use `#[non_exhaustive]` and its trade-off, see the
+/// [module doc](crate::resolve).
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ComputedTabSize, ResolveContext, resolve_tab_size};
@@ -753,19 +752,19 @@ pub enum ComputedLineHeight {
 /// let ctx = ResolveContext::initial();
 /// let font_size = ComputedLength(20.0);
 ///
-/// // `<length>` は自要素の computed font-size に対して絶対化される。
+/// // Absolutize `<length>` against this element's computed font-size.
 /// let ts = resolve_tab_size(TabSize::Length(Length::Em(2.0)), font_size, None, &ctx);
 /// assert_eq!(ts, ComputedTabSize::Length(ComputedLength(40.0)));
 ///
-/// // `<number>` は素通し (downstream consumer が自分の font metrics に掛ける)。
+/// // Pass `<number>` through (downstream uses its own font metrics).
 /// let n = resolve_tab_size(TabSize::Number(4.0), font_size, None, &ctx);
 /// assert_eq!(n, ComputedTabSize::Number(4.0));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedTabSize {
-    /// `<number>` — computed 層でも number のまま。
+    /// `<number>` — remains a number in the computed layer.
     Number(f32),
-    /// 絶対化済みの `<length>`。
+    /// Absolutized `<length>`.
     Length(ComputedLength),
 }
 
@@ -782,11 +781,11 @@ pub enum ComputedTabSize {
 /// > Percentages: N/A
 /// > Computed value: two absolute lengths
 ///
-/// 両軸とも [`ComputedLength`] (px 単位の絶対長)。specified 層の
-/// [`BorderSpacingValue`] と同じ horizontal / vertical 順。
+/// Both axes are [`ComputedLength`] values (absolute lengths in px), in the
+/// same horizontal / vertical order as specified-layer [`BorderSpacingValue`].
 ///
-/// `#[non_exhaustive]` を付けない判断とその trade は
-/// [module doc](crate::resolve) を参照。
+/// For the choice not to use `#[non_exhaustive]` and its trade-off, see the
+/// [module doc](crate::resolve).
 ///
 /// ```
 /// use raikiri_style::{ComputedBorderSpacing, ComputedLength, ResolveContext, resolve_border_spacing};
@@ -795,7 +794,7 @@ pub enum ComputedTabSize {
 /// let ctx = ResolveContext::initial();
 /// let font_size = ComputedLength(20.0);
 ///
-/// // 各成分は自要素の computed font-size に対して絶対化される。
+/// // Absolutize each component against this element's computed font-size.
 /// let specified = BorderSpacingValue { horizontal: Length::Em(1.0), vertical: Length::Px(5.0) };
 /// let computed = resolve_border_spacing(specified, font_size, None, &ctx);
 /// assert_eq!(
@@ -805,22 +804,22 @@ pub enum ComputedTabSize {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorderSpacing {
-    /// Horizontal (inline-axis) spacing — 絶対化済み。
+    /// Horizontal (inline-axis) spacing — absolutized.
     pub horizontal: ComputedLength,
-    /// Vertical (block-axis) spacing — 絶対化済み。
+    /// Vertical (block-axis) spacing — absolutized.
     pub vertical: ComputedLength,
 }
 
 impl ComputedBorderSpacing {
-    /// Computed value の CSSOM serialization。
+    /// CSSOM serialization of the computed value.
     ///
     /// CSSOM §2.1 "Serializing CSS Values"
     /// (<https://drafts.csswg.org/cssom/#serializing-css-values>):
     /// "If component values can be omitted or replaced with a shorter
     /// representation without changing the meaning of the value,
-    /// omit/replace them." — 両軸が等しいときは第 2 成分を omit する
-    /// (WPT `border-spacing-computed.html` の `"0"` → `"0px"` case が
-    /// check する shortest-serialization 原則 — `"0px 0px"` ではない)。
+    /// omit/replace them." Omit the second component when both axes are equal.
+    /// WPT `border-spacing-computed.html` checks the shortest serialization:
+    /// `"0"` becomes `"0px"`, not `"0px 0px"`.
     pub fn serialized(&self) -> String {
         let h = self.horizontal.px();
         let v = self.vertical.px();
@@ -832,87 +831,81 @@ impl ComputedBorderSpacing {
     }
 }
 
-/// Computed `border-*` (1 side 分の width / style / color)。
+/// Computed `border-*` (width / style / color for one side).
 ///
-/// specified 層の [`Border`] と同じ shape で、`width` のみ
-/// [`ComputedLength`] に置き換わる。`style` / `color` は computed 層でも
-/// specified keyword を保つ ([`BorderColor::CurrentColor`] の
-/// used-value 解決は paint 責務)。
+/// Its shape matches specified-layer [`Border`], except `width` becomes
+/// [`ComputedLength`]. `style` and `color` retain their specified keywords in
+/// the computed layer (paint resolves [`BorderColor::CurrentColor`] at used-value
+/// time).
 ///
 /// # Primary source (§ title + anchor)
 ///
 /// CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
-/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の propdef table:
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) propdef table:
 ///
 /// - "Value: `<line-width>`" (`<line-width> = <length [0,∞]> | thin | medium |
-///   thick`) — grammar に `<percentage>` を含まないため、width は `<length>`
-///   のみ ([`ComputedLength`]) で足りる。
+///   thick`): no `<percentage>` in the grammar, so [`ComputedLength`] suffices.
 /// - "Computed value: absolute length, snapped as a border width; **zero if the
-///   border style is `none` or `hidden`**" — style gating が **computed 層**の
-///   要求であることの根拠。[`resolve_border`] がこれを実装する。
-///   (`snapped as a border width` = device pixel への snap は未実装、
-///   本 module の scope 外。)
+///   border style is `none` or `hidden`**": style gating is required in the
+///   **computed layer**, and [`resolve_border`] implements it. Snapping to device
+///   pixels is not implemented and is outside this module's scope.
 ///
-/// `#[non_exhaustive]` を付ける (module doc 参照) — future field
-/// (`border-image-*` の cascade 統合など) を source 互換で追加できる。specified
-/// 層の [`Border`] と同じ判断。
+/// This type uses `#[non_exhaustive]` (see the module doc) so future fields,
+/// such as integrated `border-image-*` cascade values, can be added without
+/// breaking source compatibility. Specified-layer [`Border`] makes the same
+/// choice.
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ResolveContext, SpecifiedValues, resolve_border};
 /// use raikiri_style::property::BorderStyle;
 ///
 /// let ctx = ResolveContext::initial();
-/// // specified 層の initial border (computed 層の initial は下記のとおり 0px)。
+/// // Initial specified-layer border (the computed initial width is 0px).
 /// let initial = SpecifiedValues::initial().border.top;
 ///
-/// // specified の border-width `medium` = 3px — CSS Backgrounds 3 §3.3 は
+/// // The specified `medium` border-width is 3px. CSS Backgrounds 3 §3.3 says
 /// // "The thin, medium, and thick keywords are equivalent to 1px, 3px, and 5px,
-/// // respectively." と**規範的に**等価を定めている (UA 裁量ではない。UA 依存なのは
-/// // font-size の `medium` で、CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping"
-/// // の別 keyword)。
-/// // ただし initial の border-style は `none` なので computed value は 0px。
+/// // respectively." This is normative, not a UA choice. `medium` font-size is
+/// // UA-dependent instead (CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping").
+/// // Since the initial border-style is `none`, its computed width is still 0px.
 /// assert_eq!(
 ///     resolve_border(initial, ComputedLength(20.0), None, &ctx).width(),
 ///     ComputedLength::ZERO,
 /// );
 ///
-/// // style が visible なら specified width がそのまま絶対化される。
+/// // With a visible style, the specified width is absolutized unchanged.
 /// let mut specified = initial;
 /// specified.style = BorderStyle::Solid;
 /// let computed = resolve_border(specified, ComputedLength(20.0), None, &ctx);
 /// assert_eq!(computed.width(), ComputedLength(3.0));
-/// // style / color は specified keyword をそのまま運ぶ。
+/// // Pass the specified style and color keywords through.
 /// assert_eq!(computed.style(), specified.style);
 /// assert_eq!(computed.color, specified.color);
-/// // `computed.style()` 呼び出しと `computed.color` 直接読み出しは、下記
-/// // write-path check (`# write 経路が無いことの compile-fail pin` 節) の
-/// // non-vacuous control を兼ねる。
+/// // Calls to `computed.style()` and reads of `computed.color` also serve as
+/// // a non-vacuous control for the write-path check below.
 /// ```
 ///
-/// # write 経路が無いことの compile-fail check
+/// # Compile-fail check: no public write path
 ///
-/// `width` / `style` はいずれも `pub(crate)` に絞ってある (各 field doc
-/// 参照)。この narrowing が保たれ続けることは prose の主張のままだと将来の
-/// regression (rename 時の見落とし等) で静かに崩れうる。
-/// [`crate::rule::Declaration`] の `value` field で確立した技法 (同型の
-/// doc comment 参照) をここに転用する。
+/// Both `width` and `style` have `pub(crate)` visibility (see their field docs).
+/// A prose-only assertion that this restriction persists could silently regress,
+/// for example after a rename. We reuse the technique documented for the
+/// `value` field of [`crate::rule::Declaration`].
 ///
-/// `ComputedBorder` にはすでに `#[non_exhaustive]` が付いているため、struct
-/// literal 構築や `..base` functional-update による fence は width / style
-/// 単独の visibility を discriminate **できない** — 発生するエラーは常に
-/// non_exhaustive 由来の `E0639` であり、両 field が将来 `pub` に戻っても
-/// compile-fail し続けてしまう (`Declaration` の doc が指摘する同種の
-/// vacuous check と同じ構造。ただしあちらは「将来 non_exhaustive が付いたら」
-/// という risk だったのに対し、こちらは non_exhaustive が既に付いている現在
-/// の事実であり、非 struct-literal 系 fence を最初から作らない理由になる)。
+/// `ComputedBorder` already has `#[non_exhaustive]`. Struct literals and `..base`
+/// updates **cannot isolate** field visibility: they always fail with `E0639`
+/// due to non-exhaustiveness, even if both fields become `pub`. This is the
+/// vacuous-check risk noted in the `Declaration` documentation, except that
+/// non-exhaustiveness is already present here rather than a future possibility.
+/// We therefore use no struct-literal fence.
 ///
-/// そのため struct literal fence は作らず、[`resolve_border`] が返す
-/// **所有権のある**値への直接 field 代入だけを使う。`resolve_border` が
-/// 参照ではなく値そのものを返すため (上の主 doctest 参照)、`Declaration` の
-/// doc が踏んだ confound (`declarations()` が `&[_]` を返すので
-/// `.clone()` を挟まないと代入が常に `E0594` (immutable な参照への代入) で
-/// vacuous-compile-fail する) は **そもそも発生しない** — 借用を経由しない
-/// ので、代入の成否は各 field 自身の visibility だけで決まる:
+/// Instead, assign directly to a value **owned** by the caller and returned by
+/// [`resolve_border`]. That function returns a value, not a reference (see the
+/// main doctest above). Thus the confounding `E0594` failure described for
+/// `Declaration` cannot occur: `declarations()` returns `&[_]`, so without a
+/// `.clone()`, assignment always fails as a write through an immutable reference.
+/// Here no borrow intervenes; each assignment's success depends only on the
+/// visibility of its own field:
 ///
 /// ```compile_fail
 /// use raikiri_style::{ComputedLength, ResolveContext, SpecifiedValues, resolve_border};
@@ -933,109 +926,105 @@ impl ComputedBorderSpacing {
 /// computed.style = BorderStyle::Solid;
 /// ```
 ///
-/// # 上 2 fence の non-visibility 部分の non-vacuous control
+/// # Non-vacuous control for non-visibility parts of the two fences
 ///
-/// 新しい control doctest はここには追加しない — 上の主 doctest (本 struct
-/// doc 冒頭) がすでに同じ ingredient (`resolve_border` /
-/// `SpecifiedValues::initial` / `ComputedLength` / `BorderStyle`) を使い、
-/// `.width()` / `.style()` accessor 呼び出しに加えて `color` field
-/// (`computed.color` / `specified.color` の比較、今 `pub`)
-/// への直接読み出しまで行った上で compile が通ることを assert している。
-/// ingredient が drift (rename / shape 変更) すれば、まずそちらが
-/// (compile_fail ではなく通常の doctest として) 落ちるので、上 2 fence が
-/// 「意図した理由」で compile-fail し続けているかどうかの drift 検知は
-/// そちらに委ねる。
+/// We do not add another control doctest. The main doctest above already uses
+/// the same ingredients (`resolve_border` / `SpecifiedValues::initial` /
+/// `ComputedLength` / `BorderStyle`). It compiles while calling `.width()` and
+/// `.style()` and directly reading the `pub` `color` field (`computed.color` /
+/// `specified.color`). If these ingredients drift through renaming or a shape
+/// change, that ordinary doctest fails first, exposing a vacuous compile-fail
+/// fence above.
 ///
-/// ただし、この control は `resolve_border` が値ではなく参照を返すよう
-/// 変わった場合の drift を検知しない (`.width()` / `.color` はどちらの
-/// 戻り値型でも同じく compile が通るため) — その変更が width/style の
-/// 可視性緩和と同時に起きると 2 fence は `E0594` で compile-fail し続け、
-/// vacuous 化に気付けない。`resolve_border` の戻り値型を変える際は本 doc
-/// を書き直すこと。
+/// This control cannot detect a change where `resolve_border` returns a
+/// reference instead of a value: `.width()` and `.color` compile for either
+/// return type. If that change coincides with wider visibility of width/style,
+/// both fences would still fail with `E0594` and become vacuous. Revisit this
+/// documentation if `resolve_border`'s return type changes.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorder {
-    /// 絶対化済みの border width。
+    /// Absolutized border width.
     ///
-    /// `style` が [`BorderStyle::None`] / [`BorderStyle::Hidden`] のとき
-    /// [`resolve_border`] は本 field を必ず `ComputedLength::ZERO` にする
-    /// (上記 propdef の gating)。crate 外からの直接書き換えでこの対応関係を
-    /// 崩せないよう `pub(crate)` に絞り、read-only accessor [`Self::width`]
-    /// のみを公開する。
+    /// When `style` is [`BorderStyle::None`] or [`BorderStyle::Hidden`],
+    /// [`resolve_border`] always sets this field to `ComputedLength::ZERO`
+    /// (the propdef's style gating). `pub(crate)` prevents outside callers from
+    /// breaking that invariant by writing directly; [`Self::width`] is the
+    /// public read-only accessor.
     pub(crate) width: ComputedLength,
-    /// `border-*-style` — computed 層でも specified keyword。
+    /// `border-*-style` — the specified keyword remains when computed.
     ///
-    /// `width` と対で `pub(crate)` に絞り、read-only accessor
-    /// [`Self::style`] のみを公開する。
+    /// Restrict writes along with `width` via `pub(crate)`; only the read-only
+    /// accessor [`Self::style`] is public.
     pub(crate) style: BorderStyle,
-    /// `border-*-color` — `currentcolor` keyword を保持したまま computed 層に
-    /// 残る (used-value 解決は paint 責務)。
+    /// `border-*-color` — retain `currentcolor` in the computed layer;
+    /// paint resolves it at used-value time.
     pub color: BorderColor,
 }
 
 impl ComputedBorder {
-    /// 絶対化済みの border width への read-only accessor。
+    /// Read-only accessor for the absolutized border width.
     ///
-    /// [`Self::style`] が [`BorderStyle::None`] / [`BorderStyle::Hidden`] の
-    /// ときは必ず `ComputedLength::ZERO` — [`resolve_border`] が gate する。
+    /// Always `ComputedLength::ZERO` if [`Self::style`] is
+    /// [`BorderStyle::None`] or [`BorderStyle::Hidden`], as enforced by [`resolve_border`].
     pub fn width(&self) -> ComputedLength {
         self.width
     }
 
-    /// `border-*-style` の computed value への read-only accessor。
+    /// Read-only accessor for the computed `border-*-style` value.
     pub fn style(&self) -> BorderStyle {
         self.style
     }
 }
 
-/// `text-shadow` の 1 shadow entry の computed value。
+/// Computed value of one `text-shadow` entry.
 ///
 /// CSS Text Decoration Module Level 3 §4
-/// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property> の
-/// Computed value: "a list, each item consisting of three absolute lengths
-/// plus a computed color"。[`TextShadowItem`] (specified 層、[`crate::property`])
-/// の length 3 本 (`offset_x`/`offset_y`/`blur_radius`) を [`ComputedLength`]
-/// に絶対化したもの — `color` は [`ComputedBorder::color`] / used-value
-/// resolution が paint scope 責務な点も含め同じ扱い ([`TextShadowColor`] doc
-/// 参照)。
+/// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property> defines the
+/// computed value as "a list, each item consisting of three absolute lengths
+/// plus a computed color". The three lengths (`offset_x`/`offset_y`/
+/// `blur_radius`) from specified-layer [`TextShadowItem`] ([`crate::property`])
+/// become [`ComputedLength`]. `color` behaves like
+/// [`ComputedBorder::color`]: paint handles used-value resolution (see
+/// [`TextShadowColor`]).
 ///
-/// `#[non_exhaustive]` — sibling [`ComputedBorder`] と同じ判断 (future field
-/// の non-breaking 追加)。
+/// Use `#[non_exhaustive]` as for sibling [`ComputedBorder`], so future fields
+/// can be added without a breaking change.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedTextShadow {
-    /// 絶対化済みの `offset-x`。
+    /// Absolutized `offset-x`.
     pub offset_x: ComputedLength,
-    /// 絶対化済みの `offset-y`。
+    /// Absolutized `offset-y`.
     pub offset_y: ComputedLength,
-    /// 絶対化済みの `blur-radius`。省略時 (specified 層で `Length::Px(0.0)`
-    /// に eager fill 済み、[`TextShadowItem`] doc 参照) は `ComputedLength::ZERO`。
+    /// Absolutized `blur-radius`; if omitted, its specified-layer value was
+    /// eagerly set to `Length::Px(0.0)` (see [`TextShadowItem`]), yielding `ComputedLength::ZERO`.
     pub blur_radius: ComputedLength,
-    /// `<color>` — `currentcolor` keyword を保持したまま computed 層に残る
-    /// (used-value 解決は paint 責務、[`TextShadowColor`] doc 参照)。
+    /// `<color>` — retain `currentcolor` in the computed layer; paint handles
+    /// used-value resolution (see [`TextShadowColor`]).
     pub color: TextShadowColor,
 }
 
-/// 空 `text-shadow` list (`none`) を表す computed 層の shared Arc —
-/// [`crate::property::empty_text_shadow_list`] の computed-layer counterpart
-/// (同じ `OnceLock` shared-slot pattern、per-node allocation regression 回避)。
-/// specified 層 (`Arc<Vec<TextShadowItem>>`) と computed 層
-/// (`Arc<Vec<ComputedTextShadow>>`) は phase 3 で型が変わる (length が
-/// [`Length`] → [`ComputedLength`] に絶対化される) ため、別 slot が要る。
+/// Shared computed-layer Arc for an empty `text-shadow` list (`none`):
+/// counterpart of [`crate::property::empty_text_shadow_list`], using the same
+/// `OnceLock` shared-slot pattern to avoid per-node allocations.
+/// The specified layer (`Arc<Vec<TextShadowItem>>`) and computed layer
+/// (`Arc<Vec<ComputedTextShadow>>`) need separate slots because phase 3 changes
+/// the type while absolutizing [`Length`] to [`ComputedLength`].
 pub(crate) fn empty_computed_text_shadow_list() -> Arc<Vec<ComputedTextShadow>> {
     static EMPTY: OnceLock<Arc<Vec<ComputedTextShadow>>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
-/// [`TextShadowItem`] (specified) を絶対化して [`ComputedTextShadow`] にする
-/// (**phase 3** — 自 node 基準)。
+/// Absolutize a specified [`TextShadowItem`] into [`ComputedTextShadow`]
+/// (**phase 3**, using this node's basis).
 ///
-/// 3 本の length はいずれも `<length>` (percentage 不可、[`TextShadowItem`]
-/// doc 参照) なので、percentage 対応の [`resolve_length_percentage`] ではなく
-/// percentage 非対応の [`resolve_length`] へ delegate する
-/// ([`resolve_length_or_normal`] が `letter-spacing`/`word-spacing` の
-/// `<length>` 成分を同じ理由で [`resolve_length`] に委譲するのと同型)。
-/// `color` は length を運ばないため素通し。
+/// All three lengths are `<length>` without percentages (see [`TextShadowItem`]).
+/// Delegate to [`resolve_length`], not percentage-aware
+/// [`resolve_length_percentage`]. [`resolve_length_or_normal`] likewise delegates
+/// the `<length>` components of `letter-spacing`/`word-spacing` to
+/// [`resolve_length`] for the same reason. Pass through `color`, which contains
+/// no length.
 pub(crate) fn resolve_text_shadow_length(
     specified: TextShadowLength,
     font_size: ComputedLength,
@@ -1069,12 +1058,13 @@ pub fn resolve_text_shadow_item(
     }
 }
 
-/// 親の computed `text-shadow` 1 item を specified 表現に **lift** する
-/// (inheritance seed 用)。
+/// **Lift** one inherited computed `text-shadow` item into specified form
+/// to seed inheritance.
 ///
-/// [`lift_length_or_normal`] と同じ lossless / 不動点性 — [`resolve_length`]
-/// の `Px` arm は identity なので、lift した値を phase 3 に再度通しても
-/// 二重適用にならない。`color` は length を運ばないため素通し。
+/// As with [`lift_length_or_normal`], this is lossless and idempotent:
+/// [`resolve_length`]'s `Px` arm is the identity, so running the lifted value
+/// through phase 3 again does not apply anything twice. Pass through `color`,
+/// which contains no length.
 pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
     TextShadowItem {
         offset_x: TextShadowLength::Length(Length::Px(computed.offset_x.0)),
@@ -1084,23 +1074,23 @@ pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
     }
 }
 
-/// Computed `border-radius`。length は px へ絶対化し、percentage は
-/// used-value layout まで保持する。
+/// Computed `border-radius`. Absolutize lengths to px and retain percentages
+/// until used-value layout.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorderRadius {
-    /// top-left corner radius。
+    /// Top-left corner radius.
     pub top_left: ComputedLengthPercentage,
-    /// top-right corner radius。
+    /// Top-right corner radius.
     pub top_right: ComputedLengthPercentage,
-    /// bottom-right corner radius。
+    /// Bottom-right corner radius.
     pub bottom_right: ComputedLengthPercentage,
-    /// bottom-left corner radius。
+    /// Bottom-left corner radius.
     pub bottom_left: ComputedLengthPercentage,
 }
 
 impl ComputedBorderRadius {
-    /// 全 corner を同じ computed length で埋める。
+    /// Fill all corners with the same computed length.
     pub fn all(value: ComputedLength) -> Self {
         let value = ComputedLengthPercentage::Px(value.0);
         Self {
@@ -1127,80 +1117,80 @@ impl ComputedBorderRadius {
     }
 }
 
-/// Computed `box-shadow` の 1 entry。
+/// One computed `box-shadow` entry.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBoxShadowItem {
-    /// 絶対化済み horizontal offset。
+    /// Absolutized horizontal offset.
     pub offset_x: ComputedLength,
-    /// 絶対化済み vertical offset。
+    /// Absolutized vertical offset.
     pub offset_y: ComputedLength,
-    /// 絶対化済み blur radius。
+    /// Absolutized blur radius.
     pub blur_radius: ComputedLength,
-    /// 絶対化済み spread distance。
+    /// Absolutized spread distance.
     pub spread_radius: ComputedLength,
-    /// color。`currentcolor` は used-value 層まで保持する。
+    /// Color; retain `currentcolor` until the used-value layer.
     pub color: TextShadowColor,
     /// Whether the shadow is painted inside the border box (`inset`).
     pub inset: bool,
 }
 
-/// Computed `outline` (CSS Basic User Interface Module Level 3 §4)。
+/// Computed `outline` (CSS Basic User Interface Module Level 3 §4).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedOutline {
-    /// 絶対化済み outline width。style が `none` または `hidden` のときは 0。
+    /// Absolutized outline width; zero if the style is `none` or `hidden`.
     pub(crate) width: ComputedLength,
-    /// outline style。
+    /// Outline style.
     pub(crate) style: OutlineStyle,
-    /// outline color (`invert`, `currentcolor`, or a resolved `<color>`)。
+    /// Outline color (`invert`, `currentcolor`, or a resolved `<color>`).
     pub color: OutlineColor,
 }
 
 impl ComputedOutline {
-    /// 絶対化済み outline width を返す。
+    /// Return the absolutized outline width.
     pub fn width(&self) -> ComputedLength {
         self.width
     }
 
-    /// outline style を返す。
+    /// Return the outline style.
     pub fn style(&self) -> OutlineStyle {
         self.style
     }
 }
 
-/// Computed `transform` の 1 function (CSS Transforms Level 1 §9.1 の
-/// computed 版 — [`crate::property::TransformFunction`] の specified 表現に
-/// 対し、`<length-percentage>` slot の length 側だけを絶対化し percentage 側は
-/// symbolic に残す)。
+/// One computed `transform` function (the computed counterpart of
+/// [`crate::property::TransformFunction`] from CSS Transforms Level 1 §9.1).
+/// Absolutize only the length component of each `<length-percentage>` slot;
+/// retain percentages symbolically.
 ///
 /// CSS Transforms Level 1 §4 "The transform property"
-/// <https://www.w3.org/TR/css-transforms-1/#transform-property> は Computed
-/// value を "as specified, but with lengths made absolute" と規定する —
-/// `matrix()` の 6 `<number>` slot と `rotate()`/`skew()`/`skewX()`/
-/// `skewY()` の `<angle>` slot にはこの変換は不要 (前者は既に fully resolved
-/// な `<number>`、後者は spec 上正規化されない `<angle>`)。`translate()`/
-/// `translateX()`/`translateY()` の `Length` だけが対象で、
-/// `ComputedLengthPercentage::Px` / `Percent` のいずれかに絶対化される
-/// (`background-position`/`object-position` の `ComputedCssPosition` と同型の
-/// 部分絶対化)。
+/// <https://www.w3.org/TR/css-transforms-1/#transform-property> defines the
+/// computed value as "as specified, but with lengths made absolute". The six
+/// `<number>` slots in `matrix()` and the `<angle>` slots in `rotate()`/`skew()`/
+/// `skewX()`/`skewY()` need no such conversion: numbers are already resolved,
+/// while the spec does not normalize those angles. Only the lengths in
+/// `translate()`/`translateX()`/`translateY()` are affected, becoming either
+/// `ComputedLengthPercentage::Px` or `Percent`. This is the same partial
+/// absolutization as `ComputedCssPosition` for `background-position` and
+/// `object-position`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedTransformFunction {
-    /// `matrix(<number>{6})` — 6 係数は `<number>` のまま。
+    /// `matrix(<number>{6})` — all six coefficients remain `<number>`.
     Matrix([f32; 6]),
-    /// `translate(<length-percentage>, <length-percentage>)` — 各軸絶対化済み。
+    /// `translate(<length-percentage>, <length-percentage>)` — absolutize each axis.
     Translate(ComputedLengthPercentage, ComputedLengthPercentage),
-    /// `translateX(<length-percentage>)` — 絶対化済み。
+    /// `translateX(<length-percentage>)` — absolutized.
     TranslateX(ComputedLengthPercentage),
-    /// `translateY(<length-percentage>)` — 絶対化済み。
+    /// `translateY(<length-percentage>)` — absolutized.
     TranslateY(ComputedLengthPercentage),
-    /// `scale(<number>, <number>)` — `<number>` のまま。
+    /// `scale(<number>, <number>)` — retain `<number>`.
     Scale(f32, f32),
     /// `scaleX(<number>)`.
     ScaleX(f32),
     /// `scaleY(<number>)`.
     ScaleY(f32),
-    /// `rotate(<angle>)` — `<angle>` のまま (正規化しない)。
+    /// `rotate(<angle>)` — retain `<angle>` without normalization.
     Rotate(Angle),
     /// `skew(<angle>, <angle>)`.
     Skew(Angle, Angle),
@@ -1210,16 +1200,16 @@ pub enum ComputedTransformFunction {
     SkewY(Angle),
 }
 
-/// 空 `transform` list (`none`) の computed 層 shared Arc — `none` は空 list
-/// 表現 ([`crate::property::empty_transform_list`] と同 precedent)。
+/// Shared computed-layer Arc for an empty `transform` list (`none`). The empty list
+/// represents `none`, as in [`crate::property::empty_transform_list`].
 pub(crate) fn empty_computed_transform_list() -> Arc<Vec<ComputedTransformFunction>> {
     static EMPTY: OnceLock<Arc<Vec<ComputedTransformFunction>>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
-/// `transform` の 1 function を自 node の font-size / line-height 基準で
-/// 絶対化する — `<length-percentage>` slot の length 側だけを `Px` へ、
-/// 百分率側は `Percent` のまま残す。
+/// Absolutize one `transform` function against this node's font-size and
+/// line-height. Convert only the length side of `<length-percentage>` slots to
+/// `Px`; retain their percentage side as `Percent`.
 pub fn resolve_transform_function(
     specified: TransformFunction,
     font_size: ComputedLength,
@@ -1248,13 +1238,13 @@ pub fn resolve_transform_function(
     }
 }
 
-/// 空 `box-shadow` list (`none`) の computed 層 shared Arc.
+/// Shared computed-layer Arc for an empty `box-shadow` list (`none`).
 pub(crate) fn empty_computed_box_shadow_list() -> Arc<Vec<ComputedBoxShadowItem>> {
     static EMPTY: OnceLock<Arc<Vec<ComputedBoxShadowItem>>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
-/// `border-radius` の各 corner を自 node の font-size / line-height 基準で絶対化する。
+/// Absolutize each `border-radius` corner against this node's font-size and line-height.
 pub fn resolve_border_radius(
     specified: BorderRadius,
     font_size: ComputedLength,
@@ -1275,7 +1265,7 @@ pub fn resolve_border_radius(
     }
 }
 
-/// `box-shadow` の 1 entry を自 node の font-size / line-height 基準で絶対化する。
+/// Absolutize one `box-shadow` entry against this node's font-size and line-height.
 pub fn resolve_box_shadow_item(
     specified: BoxShadowItem,
     font_size: ComputedLength,
@@ -1292,9 +1282,9 @@ pub fn resolve_box_shadow_item(
     }
 }
 
-/// `outline` の width を絶対化する (CSS Basic User Interface Module Level 3
-/// §4.2)。computed value は style が `none` (または `hidden`) のとき 0、
-/// visible style のときだけ specified width を絶対化する。
+/// Absolutize `outline` width (CSS Basic User Interface Module Level 3
+/// §4.2). Its computed value is zero for `none` or `hidden` styles; only with a
+/// visible style is the specified width absolutized.
 pub fn resolve_outline(
     specified: Outline,
     font_size: ComputedLength,
@@ -1316,12 +1306,12 @@ pub fn resolve_outline(
 // ResolveContext
 // ---------------------------------------------------------------------------
 
-/// 絶対化に必要な document-global の参照値。
+/// Document-global reference values needed for absolutization.
 ///
-/// `rem` の参照値 (root element の computed font-size) と、`rlh` の参照値
-/// (root element の computed line-height を [`used_line_height_length`] で
-/// 絶対長に変換した値、`normal` で解決不能なら `None`) の 2 つ
-/// (後者は後から追加された)。
+/// These are the `rem` basis (the root element's computed font-size) and the
+/// `rlh` basis (the root element's computed line-height converted to an absolute
+/// length by [`used_line_height_length`], or `None` if `normal` cannot be
+/// resolved). The second basis was added later.
 ///
 /// # Primary source (§ title + anchor)
 ///
@@ -1331,30 +1321,30 @@ pub fn resolve_outline(
 /// (<https://www.w3.org/TR/css-values-4/#rlh>): `rlh` — "Equal to the value of
 /// the lh unit on the root element."
 ///
-/// `#[non_exhaustive]` (module doc 参照) — struct 自体は future field を source
-/// 互換で追加できる。下流からの struct literal 構築は [`ResolveContext::new`] /
-/// [`ResolveContext::with_root_line_height`] を使う。
+/// `#[non_exhaustive]` (see the module doc) lets the struct gain fields
+/// without breaking source compatibility. Downstream callers construct it via
+/// [`ResolveContext::new`] or [`ResolveContext::with_root_line_height`].
 ///
-/// **ただし `new` は positional なので `#[non_exhaustive]` の source 互換は
-/// constructor まで及ばない。** `root_line_height` の追加
-/// はこの trade-off の実例 — `new` の signature を破壊せず、`root_line_height`
-/// を明示したい呼び手のためだけに [`ResolveContext::with_root_line_height`] を
-/// 第 2 constructor として追加した (`new` は `root_line_height: None` 固定の
-/// 薄い wrapper のまま)。将来また field が増える場合も同じ判断 (breaking な
-/// `new` signature 変更ではなく第 2 constructor / builder) を踏襲すること。
+/// **But `new` takes positional arguments, so this compatibility does not
+/// extend to its constructor.** Adding `root_line_height` illustrates the
+/// trade-off: rather than change `new`'s signature, we added
+/// [`ResolveContext::with_root_line_height`] for callers who must set it.
+/// `new` remains a thin wrapper with `root_line_height: None`. Follow the same
+/// approach (another constructor or a builder, not a breaking signature change
+/// to `new`) if a field is added later.
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ResolveContext};
 ///
-/// // root element の font-size が確定する前 (および root element 自身の
-/// // `font-size: Nrem`) は initial value 基準。
+/// // Before the root element's font-size is known, and for its own
+/// // `font-size: Nrem`, use the initial-value basis.
 /// assert_eq!(ResolveContext::initial().root_font_size, ComputedLength(16.0));
 /// assert_eq!(
 ///     ResolveContext::new(ComputedLength(20.0)).root_font_size,
 ///     ComputedLength(20.0),
 /// );
-/// // `new` は `root_line_height` を明示しない既存呼び手向けの薄い wrapper —
-/// // `rlh` の参照値は常に「未確定」(`None`) になる。
+/// // `new` is a thin wrapper for existing callers that do not specify
+/// // `root_line_height`; its `rlh` basis is always unresolved (`None`).
 /// assert_eq!(ResolveContext::new(ComputedLength(20.0)).root_line_height, None);
 /// assert_eq!(
 ///     ResolveContext::with_root_line_height(ComputedLength(20.0), Some(ComputedLength(24.0)))
@@ -1365,31 +1355,31 @@ pub fn resolve_outline(
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResolveContext {
-    /// root element の computed font-size。`rem` の参照値。
+    /// Root element's computed font-size: the `rem` basis.
     ///
-    /// 型は [`ComputedLength`] — 本 field が保持するのは**絶対化済の computed
-    /// `<length>`** であり、[`resolve_font_size`] の戻り値をそのまま格納できる。
+    /// This [`ComputedLength`] stores an **absolutized computed `<length>`**;
+    /// it can directly hold the result of [`resolve_font_size`].
     pub root_font_size: ComputedLength,
-    /// root element の `lh` 値 — `rlh` の参照値。
+    /// Root element's `lh` value: the `rlh` basis.
     ///
-    /// [`used_line_height_length`] が root element の
-    /// (computed line-height, computed font-size) から導く**絶対化済の
-    /// px 長**、または `normal` で解決不能なら `None`。`None` は
-    /// [`ComputedLineHeight::Normal`] と同じ「font metrics が style 層に無い」
-    /// wall を表す (`cap`/`rcap` と同じ、[`Length::Lh`] doc 参照) — `0` や
-    /// 他の数値で代用しない (独立実装: 根拠のない比率を捏造しない)。
+    /// An **absolutized length in px** derived by [`used_line_height_length`]
+    /// from the root's computed line-height and font-size, or `None` when
+    /// `normal` cannot be resolved. `None` reflects the same lack of font
+    /// metrics in the style layer as [`ComputedLineHeight::Normal`] (also true
+    /// of `cap`/`rcap`; see [`Length::Lh`]). Do not substitute zero or another
+    /// fabricated ratio.
     ///
     /// [`Length::Lh`]: crate::property::Length::Lh
     pub root_line_height: Option<ComputedLength>,
 }
 
 impl ResolveContext {
-    /// root element の computed font-size を指定して構築する。
+    /// Construct with the root element's computed font-size.
     ///
-    /// `root_line_height` は `None` (未確定) — `rlh` を要する呼び手は
-    /// [`Self::with_root_line_height`] を使うこと。既存呼び手 (`rlh` を扱わない
-    /// tree) の non-breaking な移行のためにこの thin wrapper を残す
-    /// (struct doc の `#[non_exhaustive]` trade-off節 参照)。
+    /// `root_line_height` is unresolved (`None`); use
+    /// [`Self::with_root_line_height`] when an `rlh` basis is needed. This thin
+    /// wrapper preserves compatibility with callers whose trees have no `rlh`
+    /// (see the struct doc's `#[non_exhaustive]` trade-off).
     pub fn new(root_font_size: ComputedLength) -> Self {
         Self {
             root_font_size,
@@ -1397,12 +1387,12 @@ impl ResolveContext {
         }
     }
 
-    /// root element の computed font-size **と** `rlh` の参照値を指定して
-    /// 構築する。
+    /// Construct with both the root element's computed font-size **and** its
+    /// `rlh` basis.
     ///
-    /// `root_line_height` は呼び手が [`used_line_height_length`] で
-    /// あらかじめ絶対化した値 (root element の computed line-height が
-    /// `normal` で解決不能なら `None`) を渡す。
+    /// The caller must first absolutize `root_line_height` with
+    /// [`used_line_height_length`], passing `None` if the root's computed
+    /// line-height is `normal` and cannot be resolved.
     pub fn with_root_line_height(
         root_font_size: ComputedLength,
         root_line_height: Option<ComputedLength>,
@@ -1413,37 +1403,37 @@ impl ResolveContext {
         }
     }
 
-    /// root element の computed font-size が未確定な段階で使う initial context。
+    /// Initial context used before the root element's computed font-size is known.
     ///
-    /// `root_font_size` は `font-size` の initial value (16px) —
-    /// [`crate::computed::ComputedValues::initial`] の `font_size` と同一値。
-    /// `root_line_height` も同様に未確定 (`None`) — root element の line-height
-    /// も同じ「親が無い」条項に従い initial value (`normal`) 基準になるため、
-    /// 本 context の下では `rlh` は常に解決不能 (下記 doc および
-    /// [`SpecifiedValues::finalize_as_root`] 参照)。
+    /// `root_font_size` is the `font-size` initial value (16px), identical to
+    /// [`crate::computed::ComputedValues::initial`]'s `font_size`.
+    /// `root_line_height` is unresolved (`None`) too. Root line-height follows
+    /// the same no-parent rule and uses its initial value (`normal`); `rlh`
+    /// therefore cannot be resolved under this context (see below and
+    /// [`SpecifiedValues::finalize_as_root`]).
     ///
-    /// root element 自身の **`font-size: Nrem`** もこの値を参照する: CSS Values 4
-    /// §6.1.1 "Font-relative Lengths"
-    /// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) の
+    /// The root element's own **`font-size: Nrem`** also uses this basis.
+    /// CSS Values 4 §6.1.1 "Font-relative Lengths"
+    /// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) says:
     /// "When used in the value of any font-* property on the element they refer
     /// to, the font-relative lengths resolve against the computed metrics of the
     /// parent element—or against the computed metrics corresponding to the
     /// initial values of the font and line-height properties, if the element has
-    /// no parent." により、root element では initial value 基準になる。同 §は
-    /// `lh`/`rlh` にも同条項の類似規定を及ぼすが、両者の非対称
-    /// (`lh` は自己参照として扱う、`rlh` は tree-global 定数として扱う) の
-    /// 判断根拠は [`resolve_line_height`] doc が canonical
-    /// (前述の drift 前例により要約に留める) — 結論だけ述べると、root element の
-    /// `line-height: 1lh` / `1rlh` はどちらも「initial line-height
-    /// (`normal`)」基準に帰着し、常に unresolved になる。
+    /// no parent." Thus the root uses the initial-value basis. That section
+    /// applies an analogous rule to `lh`/`rlh`. See [`resolve_line_height`] for
+    /// the canonical explanation of their asymmetry (`lh` is self-referential;
+    /// `rlh` is a tree-global constant). In short, the root element's
+    /// `line-height: 1lh` and `1rlh` both reduce to the initial `normal`
+    /// line-height, so neither can be resolved.
     ///
-    /// **root element の box property (`padding` 等) は対象外** — 上記条項は
-    /// "any font-* property" / "the line-height property" に限定されており、
-    /// `padding: 2rem` の `rem` や `padding: 1rlh` の `rlh` は素の定義どおり
-    /// root element の computed font-size / line-height を参照する。すなわち
-    /// root element でも phase 3 では本 context ではなく
-    /// `ResolveContext::with_root_line_height(自 font-size, 自 rlh 基準)` を使う
-    /// ([`SpecifiedValues::finalize_as_root`] が実装している)。
+    /// **This does not apply to box properties on the root** (such as `padding`).
+    /// The cited rule only covers "any font-* property" and "the line-height
+    /// property". `rem` in `padding: 2rem` and `rlh` in `padding: 1rlh` use the
+    /// root's own computed font-size and line-height by their normal definitions.
+    /// Hence phase 3 must use
+    /// `ResolveContext::with_root_line_height(own font-size, own rlh basis)`
+    /// rather than this initial context, even on the root. This is implemented
+    /// by [`SpecifiedValues::finalize_as_root`].
     ///
     /// [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
     pub fn initial() -> Self {
@@ -1455,65 +1445,65 @@ impl ResolveContext {
 }
 
 // ---------------------------------------------------------------------------
-// 絶対化関数群 (specified → computed)
+// Absolutization functions (specified → computed)
 // ---------------------------------------------------------------------------
 
-/// `pt` → px。`1pt = 1/72in`、CSS で `1in = 96px` なので `1pt = 96/72px = 4/3px`。
+/// Convert `pt` to px: `1pt = 1/72in` and CSS defines `1in = 96px`, so `1pt = 96/72px = 4/3px`.
 ///
 /// CSS Values 4 §6.2 "Absolute Lengths"
 /// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>): "All of the
 /// absolute length units are compatible, and px is their canonical unit."
 ///
-/// 式は `v * 4.0 / 3.0` の形 (乗算を先) で書く — f32 は結合則を満たさないため
-/// `v * (4.0 / 3.0)` に「簡約」すると異なる bit パターンの f32 になる。
-/// **この式の形を変えてはならない。**
+/// Write this as `v * 4.0 / 3.0`, multiplying first. f32 addition and
+/// multiplication are not associative: "simplifying" it to `v * (4.0 / 3.0)`
+/// changes the resulting f32 bit pattern. **Do not change this expression.**
 ///
-/// (以前は `raikiri-dom` の `layout.rs` bridge helper
-/// 群 (padding / width-height / margin の3関数) にも同じ変換 (`Length::Pt(v)`
-/// を受けて `v * 4.0 / 3.0` する arm、返り値の wrapper 型は関数ごとに
-/// `LengthPercentage` / `Dimension` / `LengthPercentageAuto` と異なる) が
-/// 存在し、それらと bit 単位で一致させることもこの評価順を選ぶ理由の
-/// 一つだった。その後 bridge の引数を computed 層の型に切り替えた際に
-/// その arm は3関数とも削除され — pt は cascade phase 3 で既に px に
-/// 絶対化済みのため bridge に届かない — cross-check 対象は今は存在しない。
-/// f32 非結合性という理由だけでこの式の形は独立に正しい。)
+/// (Previously, three bridge helpers in raikiri-dom's `layout.rs` (padding,
+/// width-height, and margin) performed the same conversion from `Length::Pt(v)`
+/// using `v * 4.0 / 3.0`. Their return wrappers differed:
+/// `LengthPercentage`, `Dimension`, and `LengthPercentageAuto`. Bit-for-bit
+/// consistency with them was another reason for this evaluation order. All
+/// three arms were later removed when the bridge began taking computed-layer
+/// types: pt has already become px in cascade phase 3 and never reaches the
+/// bridge. There is no longer a cross-check target, but f32 non-associativity
+/// independently justifies retaining this exact expression.)
 fn pt_to_px(v: f32) -> f32 {
     v * 4.0 / 3.0
 }
 
-/// `in` → px。CSS Values 4 §6.2 "Absolute Lengths"
-/// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) 換算表 verbatim:
-/// "1in = 2.54cm = 96px"。
+/// Convert `in` to px. CSS Values 4 §6.2 "Absolute Lengths"
+/// (<https://www.w3.org/TR/css-values-4/#absolute-lengths>) conversion table, verbatim:
+/// "1in = 2.54cm = 96px".
 fn in_to_px(v: f32) -> f32 {
     v * 96.0
 }
 
-/// `cm` → px。CSS Values 4 §6.2 換算表 verbatim: "1cm = 96px/2.54"。
+/// Convert `cm` to px. CSS Values 4 §6.2 conversion table: "1cm = 96px/2.54".
 fn cm_to_px(v: f32) -> f32 {
     v * 96.0 / 2.54
 }
 
-/// `mm` → px。CSS Values 4 §6.2 換算表 verbatim: "1mm = 1/10th of 1cm"。
-/// spec の連鎖定義どおり [`cm_to_px`] を経由する (`px` と直接の等価式が
-/// spec に無いため — spec が与えるのは `cm` / `in` 起点の比のみ)。
+/// Convert `mm` to px. CSS Values 4 §6.2 conversion table: "1mm = 1/10th of 1cm".
+/// Go through [`cm_to_px`] as specified: the spec provides no direct px
+/// equivalence, only the ratio to cm (and from cm to inches).
 fn mm_to_px(v: f32) -> f32 {
     cm_to_px(v) / 10.0
 }
 
-/// `Q` (quarter-millimeter) → px。CSS Values 4 §6.2 換算表 verbatim:
-/// "1Q = 1/40th of 1cm"。[`mm_to_px`] と同じ理由で [`cm_to_px`] を経由する。
+/// Convert `Q` (quarter-millimeter) to px. CSS Values 4 §6.2 conversion
+/// table: "1Q = 1/40th of 1cm". Go through [`cm_to_px`] as for [`mm_to_px`].
 fn q_to_px(v: f32) -> f32 {
     cm_to_px(v) / 40.0
 }
 
-/// `pc` (pica) → px。CSS Values 4 §6.2 換算表 verbatim: "1pc = 1/6th of 1in"。
-/// [`mm_to_px`] / [`q_to_px`] と同じ理由で [`in_to_px`] を経由する。
+/// Convert `pc` (pica) to px. CSS Values 4 §6.2 conversion table:
+/// "1pc = 1/6th of 1in". Go through [`in_to_px`] as for [`mm_to_px`] / [`q_to_px`].
 fn pc_to_px(v: f32) -> f32 {
     in_to_px(v) / 6.0
 }
 
-/// すでに絶対化済みの [`ComputedLineHeight`] (自要素の、または root element の)
-/// を、`lh` / `rlh` 単位の乗数として使える**絶対長**に変換する。
+/// Convert an already-absolutized [`ComputedLineHeight`] (this element's or
+/// the root's) to an **absolute length** usable as an `lh` / `rlh` multiplier.
 ///
 /// # Primary source (§ title + anchor)
 ///
@@ -1522,40 +1512,39 @@ fn pc_to_px(v: f32) -> f32 {
 /// element on which it is used, converting normal to an absolute length by
 /// using only the metrics of the first available font."
 ///
-/// - [`ComputedLineHeight::Length`] — 既に絶対長なのでそのまま返す。
-/// - [`ComputedLineHeight::Number`] — `<number>` の used value は「この
-///   要素自身の font-size に掛けたもの」(CSS Inline 3 §5.1
-///   <https://www.w3.org/TR/css-inline-3/#propdef-line-height> の unitless
-///   multiplier semantics — line box の高さ計算がまさにこの積を使う)。
-/// - [`ComputedLineHeight::Normal`] — **`None`**。`normal` を絶対長化するには
-///   "the metrics of the first available font" (real font ascent/descent) が
-///   要るが、`raikiri-style` は style 層に font instance を持たない — `cap`/
-///   `rcap` が同じ理由で spin out された wall と同じもの
-///   ([`crate::property::Length::Lh`] doc 参照)。spec はここに font-size 比の
-///   fallback を与えていないため、`ex`/`ch`/`ic` のような比率を捏造しては
-///   ならない (独立実装)。呼び手が消費 property ごとの fallback を選ぶ
-///   ([`resolve_length_percentage`] 等の doc 参照)。
+/// - [`ComputedLineHeight::Length`] — already absolute; return unchanged.
+/// - [`ComputedLineHeight::Number`] — its used value is the number multiplied by
+///   **this element's** font-size (CSS Inline 3 §5.1
+///   <https://www.w3.org/TR/css-inline-3/#propdef-line-height> defines unitless
+///   multiplier semantics; line-box height uses exactly this product).
+/// - [`ComputedLineHeight::Normal`] — return **`None`**. Resolving `normal` to
+///   an absolute length requires "the metrics of the first available font"
+///   (real ascent/descent), but `raikiri-style` has no font instance in the
+///   style layer. This is the same limit that split out `cap` / `rcap` (see
+///   [`crate::property::Length::Lh`]). The spec gives no font-size ratio as a
+///   fallback here; do not invent one like those for `ex`/`ch`/`ic`.
+///   The caller selects a fallback for the consuming property (see
+///   [`resolve_length_percentage`] and related documentation).
 ///
-/// `normal` は `line-height` の **initial value** — この関数が `None` を返す
-/// のは edge case ではなく、`lh`/`rlh` を使う要素の**大半**で起こる common
-/// case である。
+/// `normal` is the **initial value** for `line-height`. Returning `None` is
+/// therefore common for elements using `lh`/`rlh`, not an edge case.
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ComputedLineHeight, used_line_height_length};
 ///
 /// let font_size = ComputedLength(20.0);
 ///
-/// // <length> はそのまま。
+/// // Leave `<length>` unchanged.
 /// assert_eq!(
 ///     used_line_height_length(ComputedLineHeight::Length(ComputedLength(30.0)), font_size),
 ///     Some(ComputedLength(30.0)),
 /// );
-/// // <number> は自要素の font-size に掛ける。
+/// // Multiply `<number>` by this element's font-size.
 /// assert_eq!(
 ///     used_line_height_length(ComputedLineHeight::Number(1.5), font_size),
 ///     Some(ComputedLength(30.0)),
 /// );
-/// // `normal` — font metrics が無いので解決不能。
+/// // Cannot resolve `normal` without font metrics.
 /// assert_eq!(
 ///     used_line_height_length(ComputedLineHeight::Normal, font_size),
 ///     None,
@@ -1572,51 +1561,51 @@ pub fn used_line_height_length(
     }
 }
 
-/// `lh` / `rlh` の authored multiplier に、[`used_line_height_length`] が
-/// 返した基準を掛ける共通 helper。基準が `None` (`normal` で解決不能) なら
-/// `None` を素通しし、各 `resolve_*` 関数が自分の consumer property に
-/// 応じた fallback (`0px` / `Auto` / `normal`) を選ぶ。
+/// Common helper that multiplies an authored `lh` / `rlh` factor by the basis
+/// returned from [`used_line_height_length`]. Pass through `None` when the
+/// basis is unresolved (`normal`). Each `resolve_*` function then chooses a
+/// fallback (`0px` / `Auto` / `normal`) for its consuming property.
 fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<ComputedLength> {
     basis.map(|b| ComputedLength(b.0 * v))
 }
 
-/// `font-size` の specified value を絶対化する (**phase 2** — 親基準)。
+/// Absolutize specified `font-size` (**phase 2**, using the parent basis).
 ///
-/// `parent_font_size` は**親要素の** computed font-size。親がない (root element)
-/// 場合は `font-size` の initial value (16px、
-/// [`ComputedLength`]`(16.0)`) を渡す。
+/// `parent_font_size` is the **parent element's** computed font-size. For the
+/// parentless root element, pass the initial font-size (16px,
+/// [`ComputedLength`]`(16.0)`).
 ///
-/// `self_reference_basis` は**親要素の** used line-height ([`Length::Lh`]
-/// の解決に使う — 下記 `Nlh` 行)。呼び手が
-/// [`used_line_height_length`]`(parent.line_height, parent.font_size)` で
-/// あらかじめ絶対長化したもの。`normal` で解決不能、または親がない (root
-/// element) 場合は `None`。命名は [`resolve_line_height`] の同名引数と揃えた
-/// — 両者とも「自己参照 (`lh`) を解決するための親基準」という同じ役割を持つ
-/// (呼び手側のローカル変数名は `parent_line_height_basis` のままで構わない —
-/// 呼び手が計算したものを指す名前と、この関数が受け取る引数の名前は別の命名
-/// 領域であり、揃えるべきは後者と sibling 関数の対応する引数)。
+/// `self_reference_basis` is the **parent element's** used line-height, used
+/// to resolve [`Length::Lh`] (see the `Nlh` row below). The caller first
+/// converts it to an absolute length via
+/// [`used_line_height_length`]`(parent.line_height, parent.font_size)`.
+/// Pass `None` if `normal` cannot be resolved or there is no parent (root).
+/// Its name matches the corresponding argument of [`resolve_line_height`]:
+/// both are parent bases for self-referential `lh`. The caller's local may
+/// still be named `parent_line_height_basis`: caller and callee names need not
+/// match, whereas corresponding arguments of sibling functions should.
 ///
-/// # 単位ごとの解決
+/// # Resolution by unit
 ///
-/// | specified | computed | 根拠 |
+/// | specified | computed | basis |
 /// |---|---|---|
 /// | `Npx` | `N` px | identity |
-/// | `Npt` / `Ncm` / `Nmm` / `NQ` / `Nin` / `Npc` | 換算表どおり | CSS Values 4 §6.2 <https://www.w3.org/TR/css-values-4/#absolute-lengths> |
-/// | `Nem` / `Nex` / `Nch` | `parent_font_size * N` (`ex`/`ch` は `* 0.5` 追加) | 下記 parent-metrics 条項 + [`Length::Ex`] / [`Length::Ch`] doc の fallback |
-/// | `Nic` | `parent_font_size * N` | 下記 parent-metrics 条項 + [`Length::Ic`] doc の fallback |
-/// | `Nrem` / `Nrex` / `Nrch` / `Nric` | `ctx.root_font_size * N` (`rex`/`rch` は `* 0.5` 追加) | CSS Values 4 §6.1.1 `rem` <https://www.w3.org/TR/css-values-4/#rem> |
+/// | `Npt` / `Ncm` / `Nmm` / `NQ` / `Nin` / `Npc` | per conversion table | CSS Values 4 §6.2 <https://www.w3.org/TR/css-values-4/#absolute-lengths> |
+/// | `Nem` / `Nex` / `Nch` | `parent_font_size * N` (`ex`/`ch`: also `* 0.5`) | parent-metrics clause below + fallback docs for [`Length::Ex`] / [`Length::Ch`] |
+/// | `Nic` | `parent_font_size * N` | parent-metrics clause below + fallback docs for [`Length::Ic`] |
+/// | `Nrem` / `Nrex` / `Nrch` / `Nric` | `ctx.root_font_size * N` (`rex`/`rch`: also `* 0.5`) | CSS Values 4 §6.1.1 `rem` <https://www.w3.org/TR/css-values-4/#rem> |
 /// | `N%` | `parent_font_size * N / 100` | CSS Fonts 4 `font-size` propdef "Percentages: refer to parent element's font size" <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> |
-/// | `Nlh` | `self_reference_basis * N`、基準が `None` なら [`INITIAL_FONT_SIZE_PX`] | 下記「`lh` / `rlh` の自己参照」節 |
-/// | `Nrlh` | `ctx.root_line_height * N`、基準が `None` なら [`INITIAL_FONT_SIZE_PX`] | 同上 |
+/// | `Nlh` | `self_reference_basis * N`, or [`INITIAL_FONT_SIZE_PX`] if the basis is `None` | "Self-reference for `lh` / `rlh`" below |
+/// | `Nrlh` | `ctx.root_line_height * N`, or [`INITIAL_FONT_SIZE_PX`] if the basis is `None` | same |
 ///
-/// `ex` / `rex` / `ch` / `rch` / `ic` / `ric` は style 層に実 font metrics が
-/// 無いため常に spec の unknown-metric fallback を使う — 根拠は各 variant
-/// ([`Length::Ex`] 等) の doc、`font-size` 自身が font-* property のため
-/// **親** 基準になる理由は上記 parent-metrics 条項 (`em` と同じ扱い)。
+/// Without real font metrics in the style layer, `ex` / `rex` / `ch` / `rch` /
+/// `ic` / `ric` always use the spec's unknown-metric fallbacks (see the docs
+/// for their variants, such as [`Length::Ex`]). `font-size` is a font-* property,
+/// so it uses the **parent** basis under the parent-metrics clause, like `em`.
 ///
 /// [`INITIAL_FONT_SIZE_PX`]: crate::computed::INITIAL_FONT_SIZE_PX
 ///
-/// # `lh` / `rlh` の自己参照
+/// # Self-reference for `lh` / `rlh`
 ///
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
 /// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim:
@@ -1625,45 +1614,43 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// against the computed line-height and font metrics of the parent
 /// element—or the computed metrics corresponding to the initial values of
 /// the font and line-height properties, if the element has no parent."
-/// `font-size` はまさにこの font-\* property であり、この条項が発火する。
+/// `font-size` is a font-* property, so this clause applies.
 ///
-/// [`resolve_line_height`] doc の「`Length::Lh` — 自己参照」/「`Length::Rlh`
-/// — 自己参照ではなく tree-global 定数」節と**同じ判断**をここでも採る
-/// (spec 引用が両者を "lh or rlh" と並べて一箇所に述べているため、`line-height`
-/// 自身の自己参照解決とここで判断を変える理由がない — 一貫性を優先する):
+/// Make the **same distinction** as the "`Length::Lh` — self-reference"
+/// and "`Length::Rlh` — a tree-global constant, not self-reference" sections
+/// of [`resolve_line_height`]. The quoted clause mentions "lh or rlh" together,
+/// so line-height and font-size should resolve them consistently:
 ///
-/// - `lh` の素の定義 ("the element on which it is used") は使用要素自身を
-///   常に指すため、`font-size` に使われた `lh` は常に自己参照になる。
-///   fallback 基準は引用のとおり **親** — `self_reference_basis` 引数。
-/// - `rlh` の素の定義 ("the lh unit on the root element") は宣言要素の位置に
-///   依存しない tree-global 定数であり、自己参照になるのは宣言要素自身が
-///   root element のときだけ ([`crate::specified::SpecifiedValues::finalize_as_root`]
-///   が `ctx` に [`ResolveContext::initial`] を渡すことで `ctx.root_line_height`
-///   を必然的に `None` にし、この一点をカバーする)。root **ではない**要素の
-///   `font-size: 1rlh` は既に確定済みの別 node (root) の値を参照するだけで
-///   自己参照ではないため、他の box property 上の `rlh` ([`resolve_length`] 等)
-///   と同じく `ctx.root_line_height` を直接使う — `self_reference_basis`
-///   ではなく `ctx.root_line_height` を読むのはこのため。
+/// - By definition `lh` refers to "the element on which it is used". On
+///   `font-size`, it always refers to itself; fall back to the **parent** basis
+///   passed as `self_reference_basis`.
+/// - `rlh` refers to "the lh unit on the root element", a tree-global value
+///   independent of where it is declared. It is self-referential only when
+///   declared on the root. [`crate::specified::SpecifiedValues::finalize_as_root`]
+///   handles that case by passing [`ResolveContext::initial`] as `ctx`, so
+///   `ctx.root_line_height` is `None`. On a **non-root** element,
+///   `font-size: 1rlh` refers to the separately resolved root node and is not
+///   self-referential. Like `rlh` on box properties (see [`resolve_length`]),
+///   it reads `ctx.root_line_height`, not `self_reference_basis`.
 ///
-/// 基準が `None` (`normal` で解決不能、または root element で親が無い) の
-/// ときは **`font-size` 自身の spec initial** (`medium` = [`INITIAL_FONT_SIZE_PX`]、
-/// CSS Fonts 4 `font-size` propdef "Initial: medium") に倒す —
-/// [`resolve_line_height`] の `Length::Lh` arm が解決不能なとき `line-height`
-/// 自身の spec initial `normal` ([`ComputedLineHeight::Normal`]) に倒すのと
-/// 同じ「解決できない宣言を、宣言されなかったのと同じ値に倒す」方針。
-/// 本関数のような**単一 property 専用の** resolver は、汎用 resolver
-/// ([`resolve_length`] / [`resolve_length_percentage`] — `border-*-width` /
-/// `padding` など**複数** property で共有される) と違い、fallback 先として
-/// 自分の consumer property の真の spec initial を直接返せる立場にある —
-/// [`resolve_length_percentage_or_auto`] が `width`/`height` の fallback を
-/// 汎用な `resolve_length_percentage` の `0px` に丸めず `Auto` (両者の真の
-/// spec initial) に intercept するのと同じ判断。汎用 resolver 側が一律 `0px`
-/// に倒すのは border-width の spec initial (`medium` = 3px) と一致しない
-/// **既知の compromise** ([`resolve_length`] doc の「border-width: 1lh の
-/// 0px fallback — 未解決の設計妥協」節) であって
-/// 「単一 property 専用 resolver でも 0px に倒すべき」という一般原則ではない
-/// — `resolve_font_size` はこの関数が `font-size` の唯一の consumer なので、
-/// その compromise を持ち込む理由がない。
+/// If the basis is `None` (unresolvable `normal`, or no parent for the root),
+/// fall back to **the `font-size` initial value itself** (`medium` =
+/// [`INITIAL_FONT_SIZE_PX`]; CSS Fonts 4 `font-size` propdef: "Initial: medium").
+/// This matches [`resolve_line_height`], whose unresolvable `Length::Lh` falls
+/// back to its own initial `normal` ([`ComputedLineHeight::Normal`]): treat the
+/// invalid declaration as if it had not been made.
+/// A **single-property resolver** can return its consuming property's actual
+/// initial value. General resolvers such as [`resolve_length`] and
+/// [`resolve_length_percentage`] serve **multiple** properties (`border-*-width`,
+/// `padding`, etc.) and cannot always do that. Likewise,
+/// [`resolve_length_percentage_or_auto`] intercepts the general resolver's 0px
+/// fallback to return `Auto`, the actual initial for `width`/`height`.
+/// The general resolver's uniform 0px fallback differs from border-width's
+/// `medium` = 3px initial value: a **known compromise** (see the "0px fallback
+/// for border-width: 1lh — unresolved design compromise" section in the
+/// [`resolve_length`] documentation), not a rule for dedicated resolvers.
+/// Since `resolve_font_size` only serves `font-size`, it need not inherit this
+/// compromise.
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -1672,32 +1659,31 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 ///   in the value of any font-* property on the element they refer to, the
 ///   font-relative lengths resolve against the computed metrics of the parent
 ///   element—or against the computed metrics corresponding to the initial values
-///   of the font and line-height properties, if the element has no parent." →
-///   `font-size` の `em` は **親基準** (自 font-size を参照すると self-reference
-///   になるため)。
+///   of the font and line-height properties, if the element has no parent."
+///   Therefore `em` in `font-size` uses the **parent** basis, avoiding a
+///   reference to its own font-size.
 /// - CSS Fonts 4 §2.5 "Font size: the font-size property"
 ///   (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>):
 ///   "Percentages: refer to parent element's font size" /
-///   "Computed value: an absolute length"。
+///   "Computed value: an absolute length".
 ///
 /// # Caller contract
 ///
-/// **root element の `font-size` を絶対化するときは [`ResolveContext::initial`]
-/// を渡すこと。** `Rem` / `Rex` / `Rch` / `Ric` arm は `ctx.root_font_size` を
-/// 無条件に参照するため、tree 全体で同一の `ResolveContext::new(root_font_size)`
-/// を使い回すと `html { font-size: 2rem }` (同様に `2rex` / `2rch` / `2ric`) が
-/// 自己参照になる (CSS Values 4 §6.1.1 の parent-metrics 条項 — root には親が
-/// ないので initial values 基準)。**同じ理由で `self_reference_basis` にも
-/// `None` を渡すこと** (root には親が無いので self-reference basis は
-/// 「initial values」= `line-height: normal` = 解決不能)。
+/// **Pass [`ResolveContext::initial`] when absolutizing the root element's
+/// `font-size`.** The `Rem` / `Rex` / `Rch` / `Ric` arms always read
+/// `ctx.root_font_size`. Reusing one `ResolveContext::new(root_font_size)` for
+/// the entire tree would make `html { font-size: 2rem }` (likewise `2rex` /
+/// `2rch` / `2ric`) self-referential. Under the parent-metrics clause of CSS
+/// Values 4 §6.1.1, a parentless root instead uses initial values.
+/// **Also pass `None` for `self_reference_basis`**: the parentless root's basis
+/// is the initial `line-height: normal`, which cannot be resolved.
 ///
-/// cascade pipeline ではこの contract を
-/// [`SpecifiedValues::finalize_as_root`] が守る —
-/// end-to-end の check は [`mod@crate::cascade`] の
-/// `rem_on_root_element_resolves_against_initial_font_size` /
-/// `rem_below_root_element_resolves_against_root_computed_font_size` /
-/// `rem_on_root_element_box_property_uses_own_font_size` の 3 本。
-/// 本関数を直接呼ぶ code はこの contract を自分で守ること。
+/// In the cascade pipeline, [`SpecifiedValues::finalize_as_root`] honors this
+/// contract. Three end-to-end checks in [`mod@crate::cascade`] are
+/// `rem_on_root_element_resolves_against_initial_font_size`,
+/// `rem_below_root_element_resolves_against_root_computed_font_size`, and
+/// `rem_on_root_element_box_property_uses_own_font_size`.
+/// Direct callers must honor the contract themselves.
 ///
 /// [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
 ///
@@ -1737,24 +1723,23 @@ pub fn resolve_font_size(
         Length::Pc(v) => ComputedLength(pc_to_px(v)),
         Length::Em(v) => ComputedLength(parent_font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
-        // ex / ch: unknown-metric fallback = 0.5em (`Length::Ex` /
-        // `Length::Ch` doc)。font-size 自身の値なので基準は親
-        // (上記 parent-metrics 条項、`em` と同じ)。
+        // ex / ch: unknown-metric fallback = 0.5em (see `Length::Ex` /
+        // `Length::Ch`). Use the parent basis because this is font-size itself
+        // (parent-metrics clause above, as for `em`).
         Length::Ex(v) | Length::Ch(v) => ComputedLength(parent_font_size.0 * v * 0.5),
-        // ic: unknown-metric fallback = 1em (`Length::Ic` doc)。
+        // ic: unknown-metric fallback = 1em (see `Length::Ic`).
         Length::Ic(v) => ComputedLength(parent_font_size.0 * v),
-        // rex / rch: root 版の同じ fallback、基準は root_font_size (`rem` と同じ)。
+        // rex / rch: use the same fallback against root_font_size (as for `rem`).
         Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
         Length::Ric(v) => ComputedLength(ctx.root_font_size.0 * v),
         // CSS Fonts 4 `font-size` propdef: "Percentages: refer to parent
-        // element's font size" — font-size は §5.5.1 の「percentage は
-        // percentage のまま computed される」原則の明示的な例外。
+        // element's font size". This explicitly exempts font-size from the
+        // §5.5.1 rule that percentages remain percentages when computed.
         Length::Percent(p) => ComputedLength(parent_font_size.0 * p / 100.0),
-        // `lh` / `rlh` — 上記「`lh` / `rlh` の自己参照」
-        // 節。基準が `None` のときの fallback は `font-size` 自身の spec
-        // initial (`INITIAL_FONT_SIZE_PX`) — `resolve_length` /
-        // `resolve_length_percentage` の汎用 `0px` fallback とは**意図的に
-        // 異なる** (同節参照)。
+        // `lh` / `rlh`: see the self-reference section above. If the basis
+        // is `None`, fall back to the initial font-size itself
+        // (`INITIAL_FONT_SIZE_PX`), intentionally unlike the generic 0px
+        // fallback of `resolve_length` / `resolve_length_percentage`.
         Length::Lh(v) => resolve_lh_multiplier(v, self_reference_basis)
             .unwrap_or(ComputedLength(INITIAL_FONT_SIZE_PX)),
         Length::Rlh(v) => resolve_lh_multiplier(v, ctx.root_line_height)
@@ -1762,11 +1747,11 @@ pub fn resolve_font_size(
     }
 }
 
-/// `<length>` のみを取る property (grammar に `<percentage>` を含まないもの) の
-/// specified value を絶対化する (**phase 3** — 自 node 基準)。
+/// Absolutize a specified value for a property that accepts only `<length>`
+/// (no `<percentage>` in its grammar): **phase 3**, using this node's basis.
 ///
-/// `font_size` は**自要素の** computed font-size (phase 2 で確定した値)。
-/// `font-size` 自身の絶対化には [`resolve_font_size`] を使うこと (基準が親)。
+/// `font_size` is **this element's** computed font-size, resolved in phase 2.
+/// Use [`resolve_font_size`] to absolutize `font-size` itself (parent basis).
 ///
 /// # Percentage handling
 ///
@@ -1787,60 +1772,53 @@ pub fn resolve_font_size(
 ///
 /// # `Length::Lh` / `Length::Rlh`
 ///
-/// `own_line_height` は**呼び手が [`used_line_height_length`] であらかじめ
-/// 絶対化した**、この関数が絶対化中の property を持つ要素**自身**の
-/// line-height 基準 (`border-*-width` の呼び手 [`resolve_border`] がそう渡す)。
-/// `rlh` は tree-global な `ctx.root_line_height` を参照する — [`Length::Lh`]
-/// doc の「自己参照」節が対象とするのは `line-height` 自身の値としての
-/// lh/rlh のみで、本関数は `line-height` の `<length>` 成分を delegate されて
-/// も (`resolve_line_height` 参照) その delegation 自体が **すでに `Length::Lh`
-/// / `Length::Rlh` を除外した後**なので、本関数の Lh/Rlh arm が「自己参照」
-/// 問題を踏むことはない。
+/// `own_line_height` is the basis of **the element whose property is being
+/// resolved**, already absolutized by the caller via
+/// [`used_line_height_length`] (as [`resolve_border`] does for `border-*-width`).
+/// `rlh` uses the tree-global `ctx.root_line_height`. The self-reference rule
+/// in [`Length::Lh`] applies only to `lh`/`rlh` used as `line-height` itself.
+/// Even when `resolve_line_height` delegates a `<length>` component here, it
+/// has **already intercepted `Length::Lh` / `Length::Rlh`**, so these arms do
+/// not encounter that self-reference.
 ///
-/// # `border-*-width: 1lh` の `0px` fallback — 未解決の設計妥協 (Finding B)
+/// # 0px fallback for `border-*-width: 1lh`: unresolved design compromise (Finding B)
 ///
-/// 基準が `None` (`normal` で解決不能、cap/rcap と同じ wall) のときは `0px` に
-/// 倒す。**これは上記の `Percent` arm ("grammar 上ありえない入力") と同じ
-/// 理由ではない** — `Length::Lh` / `Length::Rlh` は `border-*-width` の
-/// grammar 上ふつうに到達しうる入力であり、"到達しない" という全域性の
-/// 話ではなく、実際に踏まれうる値が `0px` に落ちるという意味のある挙動である。
+/// When the basis is `None` (`normal` cannot be resolved, as for cap/rcap),
+/// fall back to `0px`. **This is different from the `Percent` arm above**,
+/// whose input is impossible under the grammar. `Length::Lh` / `Length::Rlh`
+/// are valid `border-*-width` inputs. This is an observable fallback, not a
+/// mere completeness case for unreachable input.
 ///
 /// CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
-/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の border-width
-/// 自身の spec initial は `medium` (= 3px、本 crate では
-/// [`crate::specified::INITIAL_BORDER`] が既に扱う) であり、`0` は
-/// `border-style` が `none`/`hidden` のときの gated 結果 (`resolve_border`
-/// が別途処理する) であって、`lh` の解決可能性とは無関係。すなわち
-/// `border-top-style: solid; border-top-width: 1lh` を `line-height: normal`
-/// 下で書くと、意図しない**不可視**の border (`0px`) になる —
-/// `resolve_length_percentage` の `Px(0.0)` fallback (`padding` の真の spec
-/// initial と一致する) と違い、こちらの `0px` は border-width の spec
-/// initial とも一致しない、単なる「他に選びようがなかった値」である。
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) defines the
+/// border-width initial as `medium` (= 3px, handled by
+/// [`crate::specified::INITIAL_BORDER`]). Zero is the separate gated result
+/// when border-style is `none`/`hidden` (handled by `resolve_border`), not a
+/// consequence of whether `lh` can be resolved. Thus
+/// `border-top-style: solid; border-top-width: 1lh` with `line-height: normal`
+/// unexpectedly produces an **invisible** 0px border. Unlike the `Px(0.0)`
+/// fallback for `padding` in `resolve_length_percentage` (its true initial),
+/// this value does not match border-width's initial; it is merely a placeholder.
 ///
-/// **`letter-spacing` / `word-spacing` はこの不一致を持たない** —
-/// [`resolve_length_or_normal`] 経由でこの fallback を踏む場合 (`1lh` を
-/// `line-height: normal` 下で書いた場合)、`0px` は CSS Text 3 §7.2/§7.1 が
-/// 定める `normal` の computed value そのもの ("Computes to zero.") と一致する
-/// — `padding` の `Px(0.0)` fallback と同じ側であり、border-width の
-/// "他に選びようがなかった値" 側ではない。
+/// **`letter-spacing` and `word-spacing` have no such mismatch.** If they
+/// reach this fallback via [`resolve_length_or_normal`] (for `1lh` with
+/// `line-height: normal`), 0px matches their computed `normal` value ("Computes
+/// to zero.", CSS Text 3 §7.2/§7.1). Like padding, these are unlike border-width.
 ///
-/// **`vertical-align: <length>` も同じ側 (`letter-spacing`/`word-spacing`
-/// 寄り)** — [`resolve_vertical_align`] 経由でこの fallback を踏む場合
-/// (`1lh` を `line-height: normal` 下で書いた場合)、`0px` は CSS 2.1
-/// §10.8.1 の `<length>` 自身の spec verbatim ("The value `0cm` means the
-/// same as `baseline`.") と一致する — `0px` shift = `baseline` と同じ
-/// 効果であり、border-width の "他に選びようがなかった値" 側ではない。
+/// **`vertical-align: <length>` is also closer to spacing than border-width.**
+/// If it reaches this fallback via [`resolve_vertical_align`], 0px matches
+/// the spec statement in CSS 2.1 §10.8.1: "The value `0cm` means the same as
+/// `baseline`." A zero shift has the same effect as `baseline`.
 ///
-/// この不整合は認識した上で **今回は直さない** — root 原因は
-/// [`used_line_height_length`] doc の "normal" wall そのもの (real font
-/// metrics が style 層に無い) であり、根本修正 (`ComputedLength` に
-/// "unresolved" を表す手段を持たせる等) は今後の別途対応の範囲として扱う。
-/// border-width 固有の「`medium` 相当へ倒す」代替案 (style gate 済みの
-/// `resolve_border` が既に持つ判定ロジックを再利用できる見込みはある) も
-/// その対応の中で検討することとし、本関数では `Percent` arm と
-/// 同じコードパスに相乗りしない独立した設計判断として `0px` を明示的に
-/// 選んでいる — 比率を捏造しない (独立実装) という一線だけは守るが、
-/// この `0px` 自体が border-width の正しい fallback だと主張するものではない。
+/// We recognize the mismatch but **do not fix it here**. The root cause is
+/// the inability to resolve `normal` without real font metrics in the style
+/// layer (see [`used_line_height_length`]). A proper fix, perhaps allowing
+/// `ComputedLength` to represent "unresolved", is separate future work.
+/// A border-specific fallback to `medium` might reuse the style-gating logic
+/// already in `resolve_border`; consider it as part of that future work.
+/// Here 0px is an explicit independent choice, not a shared path with the
+/// `Percent` arm. It avoids inventing a metric ratio, but is **not** claimed
+/// to be the correct border-width fallback.
 pub(crate) fn resolve_length(
     specified: Length,
     font_size: ComputedLength,
@@ -1857,8 +1835,8 @@ pub(crate) fn resolve_length(
         Length::Pc(v) => ComputedLength(pc_to_px(v)),
         Length::Em(v) => ComputedLength(font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
-        // ex / ch / ic: 自要素基準の unknown-metric fallback
-        // (`resolve_font_size` の同 arm と同じ 0.5em / 1em、基準のみ自要素)。
+        // ex / ch / ic: use unknown-metric fallbacks against this element's
+        // font-size (same 0.5em / 1em as `resolve_font_size`, different basis).
         Length::Ex(v) | Length::Ch(v) => ComputedLength(font_size.0 * v * 0.5),
         Length::Ic(v) => ComputedLength(font_size.0 * v),
         Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
@@ -2013,18 +1991,17 @@ pub fn resolve_word_spacing_with_ch(
     resolve_letter_spacing_with_ch(specified, font_size, own_line_height, ctx)
 }
 
-/// `tab-size` の specified value を絶対化する (**phase 3** — 自 node 基準)。
+/// Absolutize specified `tab-size` (**phase 3**, using this node's basis).
 ///
-/// CSS Text Module Level 3 §4.2 propdef: "Computed value: the specified
-/// number or absolute length" — [`TabSize::Number`] は素通し
-/// ([`ComputedTabSize`] doc / [`crate::property::TabSize`] doc の scope
-/// carving 節参照: 実際の tab stop advance の解決は font metric に依存した
-/// downstream consumer の仕事)。[`TabSize::Length`] 側は [`resolve_length`]
-/// へそのまま delegate する ([`TabSize`] は percentage を持たないため、
-/// [`resolve_length_percentage`] ではなく percentage 非対応の
-/// [`resolve_length`] が正しい delegate 先 — [`resolve_length_or_normal`]
-/// と同型)。[`TabSize::Calc`] 側は `px` + `em * font-size` を解決し、
-/// derived 負値を `0` に clamp する (CSS Values 4 §10.7、arm 内 comment 参照)。
+/// The spec's computed value is a "number or absolute length". Pass
+/// [`TabSize::Number`] through (see [`ComputedTabSize`] and the scope notes in
+/// [`crate::property::TabSize`]: resolving actual tab-stop advances needs font
+/// metrics and belongs to a downstream consumer). Delegate [`TabSize::Length`]
+/// to [`resolve_length`], not [`resolve_length_percentage`], because [`TabSize`]
+/// has no percentages. [`resolve_length_or_normal`] makes the same choice of
+/// [`resolve_length`] for a length-only grammar. For
+/// [`TabSize::Calc`], resolve `px` + `em * font-size` and clamp negative derived
+/// values to zero (CSS Values 4 §10.7; see the arm comment).
 pub fn resolve_tab_size(
     specified: TabSize,
     font_size: ComputedLength,
@@ -2037,36 +2014,33 @@ pub fn resolve_tab_size(
             ComputedTabSize::Length(resolve_length(l, font_size, own_line_height, ctx))
         }
         TabSize::Calc(calc) => {
-            // percentage 項は parse 時に reject 済み ("Percentages: N/A") の
-            // ため `px` + `em` のみ解決する。derived 負値は CSS Values 4
-            // §10.7 ("negative lengths are illegal" な property では computed
-            // が負にならない) により `0` に clamp する — WPT
-            // `tab-size-computed.html` の `"calc(10px - 0.5em)"`
-            // (font-size 40px → `-10px`) → `"0px"` case が check する。
+            // Percentages were rejected when parsed ("Percentages: N/A"), so
+            // resolve only `px` + `em`. CSS Values 4 §10.7 requires clamping
+            // derived negative lengths to zero for properties that disallow
+            // negative lengths. WPT `tab-size-computed.html` checks
+            // `"calc(10px - 0.5em)"` (40px font-size → `-10px`) → `"0px"`.
             let px = calc.px + calc.em * font_size.px();
             ComputedTabSize::Length(ComputedLength(px.max(0.0)))
         }
     }
 }
 
-/// `border-spacing` の specified value を絶対化する (**phase 3** — 自 node 基準)。
+/// Absolutize specified `border-spacing` (**phase 3**, using this node's basis).
 ///
 /// CSS Tables 3 §6.1 propdef: "Computed value: two absolute lengths" —
-/// 両軸を [`resolve_length`] へ delegate する ([`BorderSpacingValue`] は
-/// percentage を持たないため、[`resolve_length_percentage`] ではなく
-/// percentage 非対応の [`resolve_length`] が正しい delegate 先 —
-/// [`resolve_tab_size`] の `Length` arm と同型)。
+/// Delegate both axes to [`resolve_length`], not percentage-aware
+/// [`resolve_length_percentage`], since [`BorderSpacingValue`] has no
+/// percentages. [`resolve_tab_size`] uses [`resolve_length`] for the same
+/// reason in its `Length` arm.
 ///
 /// # Computed-time clamp
 ///
-/// `calc()` 由来の負の computed 値は `0` に clamp する — CSS Values 4
-/// §10.7 の一般則 ("negative lengths are illegal" な property では
-/// computed value が負にならない) の適用であり、WPT
-/// `border-spacing-computed.html` の
-/// `"calc(10px - 0.5em)"` (font-size 40px → `-10px`) → `"0px"` case が
-/// check する。parse 時の authored 負値 (`-20px` 等) は
-/// [`crate::property`] の `parse_border_spacing` が既に reject 済みのため、
-/// ここが clamp するのは calc 経由の derived value のみ。
+/// Clamp negative computed values derived from `calc()` to zero under CSS
+/// Values 4 §10.7 (properties that disallow negative lengths cannot compute
+/// negative values). WPT `border-spacing-computed.html` checks
+/// `"calc(10px - 0.5em)"` (40px font-size → `-10px`) → `"0px"`.
+/// The parser in [`crate::property`] already rejects authored negative values
+/// such as `-20px`; only derived values from calc need clamping here.
 ///
 /// ```
 /// use raikiri_style::{ComputedBorderSpacing, ComputedLength, ResolveContext, resolve_border_spacing};
@@ -2075,10 +2049,10 @@ pub fn resolve_tab_size(
 /// let ctx = ResolveContext::initial();
 /// let font_size = ComputedLength(40.0);
 ///
-/// // 負の derived value は 0 に clamp される (WPT computed case)。
+/// // Clamp negative derived values to zero (WPT computed-value case).
 /// let specified = BorderSpacingValue { horizontal: Length::Em(-0.5), vertical: Length::Em(0.5) };
-/// // NOTE: `-0.5em` は parse 時に reject されるため pipeline 上は到達不能 —
-/// // 本 doctest は clamp 自体の unit check であり、parse 済み値の再現ではない。
+/// // NOTE: parsing rejects `-0.5em`, so the pipeline cannot reach this case.
+/// // This doctest checks the clamp itself, not a parsed input.
 /// let computed = resolve_border_spacing(specified, font_size, None, &ctx);
 /// assert_eq!(computed.horizontal, ComputedLength(0.0));
 /// assert_eq!(computed.vertical, ComputedLength(20.0));
@@ -2097,44 +2071,42 @@ pub fn resolve_border_spacing(
     }
 }
 
-/// `vertical-align: baseline | sub | super | middle | text-top |
-/// text-bottom | <length> | <percentage>` の specified value を絶対化する (**phase 3** —
-/// 自 node 基準)。
+/// Absolutize specified `vertical-align: baseline | sub | super | middle |
+/// text-top | text-bottom | <length> | <percentage>` (**phase 3**, using this
+/// node's basis).
 ///
 /// CSS 2.1 §10.8.1 propdef: "Computed value: for `<percentage>` and
 /// `<length>` the absolute length, otherwise as specified" — bare keywords are
 /// passed through unchanged.
-/// computed 層でもそのまま keyword、`<length>` / `<percentage>` が絶対化対象。
+/// Keywords remain keywords when computed; absolutize `<length>` / `<percentage>`.
 /// Shared math processing also supplies mixed `calc()` expressions as
 /// [`VerticalAlign::Calc`]; this function resolves their percentage term and
 /// returns the result as [`VerticalAlign::Length`] with an absolute px value.
 ///
-/// `<percentage>` は要素自身の used line-height に対する比率として解決する
-/// (propdef "Percentages: refer to the 'line-height' of the element itself")。
-/// `own_line_height` は呼び手が [`used_line_height_length`] であらかじめ
-/// 絶対化した値。`line-height: normal` で `None` のときは `0px` (= `baseline`
-/// 相当) に倒す — [`crate::property::VerticalAlign`] doc の
-/// "実装済み: `<percentage>`" 節および `Length::Lh` の `None` → `0px`
-/// fallback と同型の documented spec-deviation。`0%` 自体は spec 上
-/// `baseline` と同義のため、この fallback は `0%` に対しては spec 準拠、
-/// 非 0 に対してのみ deviation となる。font-metrics source
-/// 獲得後は自然に解消する。
+/// Resolve `<percentage>` against the element's own used line-height
+/// (propdef: "Percentages: refer to the 'line-height' of the element itself").
+/// The caller has already absolutized `own_line_height` with
+/// [`used_line_height_length`]. If `normal` yields `None`, use `0px` (equivalent
+/// to `baseline`). As the [`crate::property::VerticalAlign`] documentation notes
+/// under "Implemented: `<percentage>`", this is a documented spec deviation,
+/// like the `Length::Lh` fallback from `None` to `0px`. Because `0%` itself is
+/// equivalent to `baseline` by spec, only nonzero percentages deviate. Access
+/// to font metrics should eventually remove this limitation.
 ///
-/// # 戻り値が [`VerticalAlign`] 自身であること (別の `ComputedVerticalAlign`
-/// 型を新設しない理由)
+/// # Why return [`VerticalAlign`] instead of a new `ComputedVerticalAlign` type
 ///
-/// [`FlexBasisValue`]/[`ComputedFlexBasis`] のような specified/computed
-/// 型分離パターンをここでは**採らない** — `raikiri-paint` 側 (`walk.rs` の
-/// `vertical_align_shift_px`) が [`crate::computed::ComputedValues::vertical_align`]
-/// の型として [`VerticalAlign`] を直接引数に取っており、別の computed 専用
-/// 型へ差し替えると raikiri-paint 側の signature 変更を要求してしまう。本
-/// crate の scope はこの property の raikiri-paint 側 integration には一切
-/// 触れないことなので、[`Length`] を絶対化した上で同じ [`VerticalAlign`]
-/// enum の [`VerticalAlign::Length`] variant へ詰め直して返す —
-/// [`crate::page`] の `fb` helper が [`ComputedFlexBasis`] を
-/// [`FlexBasisValue`] へ詰め直すのと構造は同じだが、そちら側の型変換
-/// (`Computed* → specified 型`) を経由せず、絶対化前後で常に同じ型のまま
-/// 完結する点が異なる。
+/// We do **not** split specified and computed types here as with
+/// [`FlexBasisValue`]/[`ComputedFlexBasis`]. `raikiri-paint`'s `walk.rs`
+/// (`vertical_align_shift_px`) directly takes [`VerticalAlign`] as the type of
+/// [`crate::computed::ComputedValues::vertical_align`].
+/// Changing the stored [`VerticalAlign`] to a separate computed type
+/// would require changing its signature, while integration with raikiri-paint
+/// is outside this crate's scope for this property. Instead, absolutize
+/// [`Length`] and return it inside the same enum's
+/// [`VerticalAlign::Length`] variant. Structurally, [`crate::page`]'s `fb`
+/// helper repacks [`ComputedFlexBasis`] into [`FlexBasisValue`], but unlike
+/// that helper there is no `Computed* → specified type` conversion: this
+/// function uses the same type before and after absolutization.
 pub fn resolve_vertical_align(
     specified: VerticalAlign,
     font_size: ComputedLength,
@@ -2232,27 +2204,26 @@ pub fn resolve_text_underline_offset(
     }
 }
 
-/// `<length-percentage>` を取る property (`padding-*`) の specified value を
-/// 絶対化する (**phase 3** — 自 node 基準)。
+/// Absolutize a specified `<length-percentage>` property (`padding-*`):
+/// **phase 3**, using this node's basis.
 ///
-/// `Percent` は **絶対化せず素通し** — CSS Values 4 §5.5.1
-/// (<https://www.w3.org/TR/css-values-4/#combine-percentages>) の
-/// "the computed value of a percentage is the specified percentage" のとおり、
-/// containing block width への解決は used value 層 (CSS Cascade 5 §4.5
-/// <https://www.w3.org/TR/css-cascade-5/#used>、raikiri では taffy) の責務。
+/// Pass `Percent` through **without absolutizing it**: CSS Values 4 §5.5.1
+/// (<https://www.w3.org/TR/css-values-4/#combine-percentages>) says "the
+/// computed value of a percentage is the specified percentage". Resolution
+/// against the containing-block width belongs to the used-value layer (CSS
+/// Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>; taffy here).
 ///
 /// # `Length::Lh` / `Length::Rlh`
 ///
-/// `own_line_height` は[`resolve_length`]の同名引数と同じ契約 — 呼び手が
-/// [`used_line_height_length`] であらかじめ絶対化した、この property を持つ
-/// 要素自身の line-height 基準。基準が `None` (`normal` で解決不能) のときは
-/// `padding` の spec initial value である **`0`** に倒す (CSS Box 3 §4
-/// <https://www.w3.org/TR/css-box-3/#padding-physical> "Initial: 0") —
-/// これは font-metrics の比率を捏造した値ではなく、「この crate の style 層
-/// では解決できない宣言を、宣言されなかったのと同じ値に倒す」という
-/// per-property fallback である。**cascade の正式な declaration-drop
-/// (次点候補への fall-through) とは異なる** — winner 選択は既に完了して
-/// おり、本関数はその 1 件だけを initial 相当に倒す。
+/// `own_line_height` has the same contract as in [`resolve_length`]: the
+/// caller already absolutized this element's line-height basis with
+/// [`used_line_height_length`]. If it is `None` (`normal` cannot be resolved),
+/// fall back to the **`0`** specified initial value for `padding` (CSS Box 3 §4).
+/// This is not a fabricated font-metric ratio. It treats a declaration that
+/// the style layer cannot resolve as though it were absent. **It is not a
+/// formal cascade declaration drop** that falls through to the next candidate:
+/// winner selection is complete, and only that winner is replaced by its
+/// initial-equivalent value.
 pub fn resolve_length_percentage(
     specified: Length,
     font_size: ComputedLength,
@@ -2269,7 +2240,7 @@ pub fn resolve_length_percentage(
         Length::Pc(v) => ComputedLengthPercentage::Px(pc_to_px(v)),
         Length::Em(v) => ComputedLengthPercentage::Px(font_size.0 * v),
         Length::Rem(v) => ComputedLengthPercentage::Px(ctx.root_font_size.0 * v),
-        // ex / ch / ic: `resolve_length` と同じ fallback ratio。
+        // ex / ch / ic: same fallback ratios as `resolve_length`.
         Length::Ex(v) | Length::Ch(v) => ComputedLengthPercentage::Px(font_size.0 * v * 0.5),
         Length::Ic(v) => ComputedLengthPercentage::Px(font_size.0 * v),
         Length::Rex(v) | Length::Rch(v) => {
@@ -2328,50 +2299,44 @@ pub fn resolve_length_percentage_with_ch(
     }
 }
 
-/// `<length-percentage> | auto` を取る property (**`width` / `height` /
-/// `flex-basis`** — `margin-*` は [`resolve_margin_length_or_auto`] を
-/// 使うこと、下記 "Finding A" 節参照) の specified value を絶対化する
-/// (**phase 3** — 自 node 基準)。
+/// Absolutize specified `<length-percentage> | auto` for **`width` /
+/// `height` / `flex-basis`** (**phase 3**, using this node's basis).
+/// `margin-*` must use [`resolve_margin_length_or_auto`] instead (Finding A below).
 ///
-/// `flex-basis` ([`resolve_flex_basis`] 経由) が 3 人目の caller なのは
-/// `<'width'>` reuse (CSS Flexible Box Layout Module Level 1 §7.2.3、
-/// [`crate::property::FlexBasisValue`] doc 参照) の直接の帰結 — spec 上の
-/// propdef grammar が文字通り `width` の grammar を再利用しているため、`auto`
-/// / `Lh`/`Rlh` 解決不能時の fallback も `width`/`height` と同じ `Auto` が
-/// 正しい (flex-basis の spec initial も `auto`、"宣言されなかったのと同じ値に
-/// 倒す" という本関数の設計方針がそのまま適用できる — `margin-*` を除外する
-/// 理由とは無関係な独立の一致)。
+/// [`resolve_flex_basis`] makes `flex-basis` the third caller because the spec
+/// reuses `<'width'>` (CSS Flexible Box Layout Module Level 1 §7.2.3; see
+/// [`crate::property::FlexBasisValue`]). Its grammar literally reuses width's,
+/// and its initial is also `auto`. Thus `Auto` is the correct fallback for
+/// unresolved `Lh`/`Rlh` on all three properties. This agreement is separate
+/// from the reason for excluding margins.
 ///
-/// `Auto` は computed 層でも keyword のまま。`Percent` の扱いは
-/// [`resolve_length_percentage`] と同じ (素通し、used value 層で解決)。
+/// `Auto` remains a keyword in the computed layer. Handle `Percent` as in
+/// [`resolve_length_percentage`]: pass it through for used-value resolution.
 ///
-/// # `Length::Lh` / `Length::Rlh` の解決不能 fallback は `Auto`
+/// # `Auto` fallback for unresolved `Length::Lh` / `Length::Rlh`
 ///
-/// [`resolve_length_percentage`] へ丸ごと delegate**しない** — 基準
-/// (`own_line_height` / `ctx.root_line_height`) が `None` (`normal` で解決
-/// 不能) のとき、[`resolve_length_percentage`] は `Px(0.0)` を返すが、`width`/
-/// `height` の spec initial は `auto` であって `0` ではない (CSS Sizing 3
-/// §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
-/// `Px(0.0)` を返すと spec に反するため、本関数は `Lh`/`Rlh` を intercept して
-/// 解決不能な場合 `Auto` を返す — 「解決できない宣言は、宣言されなかったのと
-/// 同じ値に倒す」という [`resolve_length_percentage`] と同じ設計方針を、
-/// `width`/`height` にとって真の spec initial である `Auto` に合わせて
-/// 適用したもの。
+/// Do **not** delegate the whole value to [`resolve_length_percentage`]. If the
+/// basis (`own_line_height` / `ctx.root_line_height`) is `None` because `normal`
+/// cannot be resolved, that function returns `Px(0.0)` (see [`resolve_length_percentage`]). The initial values for
+/// `width`/`height` are `auto`, not zero (CSS Sizing 3 §3.1.1
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>).
+/// Intercept `Lh`/`Rlh` and return `Auto` when unresolved. This follows the
+/// same policy as [`resolve_length_percentage`]—treat an unresolvable
+/// declaration as absent—but uses the correct initial for `width`/`height`.
 ///
-/// # Finding A — `margin-*` は本関数を使わない
+/// # Finding A — `margin-*` does not use this function
 ///
-/// 当初 `margin-*` もこの関数の consumer に含めていたが、spec 指摘により訂正した:
-/// margin の spec initial (CSS Box 3 §3.1
-/// <https://www.w3.org/TR/css-box-3/#margin-physical> "Initial: 0") は
-/// **definite length `0`** であって `auto` ではない — `width`/`height` とは
-/// 逆に `Px(0.0)` こそが margin の真の spec initial である。加えて `auto` は
-/// margin では「available space を分配する」という**実際のレイアウト動作**
-/// (taffy の auto-margin centering、`raikiri-dom/src/layout.rs` の
-/// `length_percentage_auto_to_taffy` 参照) を引き起こす spec keyword であり、
-/// 単なる「無指定を表す中立値」ではない。本関数の `Auto` fallback を margin
-/// にも適用すると、`line-height: normal` という common case
-/// (`<div style="line-height: normal; margin-top: 1lh">`) で spec に無い
-/// 具体的なレイアウト挙動を勝手に発火させてしまう。
+/// Initially margins also used this resolver. The spec says otherwise: the
+/// margin initial (CSS Box 3 §3.1
+/// <https://www.w3.org/TR/css-box-3/#margin-physical>, "Initial: 0") is a
+/// **definite length of zero**, not `auto`. Unlike width/height, `Px(0.0)` is
+/// margin's correct initial. Moreover, `auto` on a margin triggers **real
+/// layout behavior**, distributing available space (taffy's auto-margin
+/// centering; see `length_percentage_auto_to_taffy` in
+/// `raikiri-dom/src/layout.rs`). It is not a neutral "unspecified" value.
+/// Applying this function's `Auto` fallback to margins would spuriously
+/// activate that layout behavior in the common `line-height: normal` case,
+/// such as `<div style="line-height: normal; margin-top: 1lh">`.
 pub fn resolve_length_percentage_or_auto(
     specified: LengthOrAuto,
     font_size: ComputedLength,
@@ -2400,11 +2365,10 @@ pub fn resolve_length_percentage_or_auto(
     }
 }
 
-/// `<position>` の 1 軸分の offset を絶対化する (**phase 3** — 自 node 基準)。
-///
-/// edge (`Start`/`End`) はそのまま保持し、payload の `<length-percentage>`
-/// だけを [`resolve_length_percentage`] に delegate する
-/// ([`ComputedCssPositionOffset`] doc の「なぜ edge を保持し続けるか」節)。
+/// Absolutize a one-axis `<position>` offset (**phase 3**, using this node's
+/// basis). Retain the `Start`/`End` edge and delegate only its
+/// `<length-percentage>` payload to [`resolve_length_percentage`] (see the
+/// reason for retaining edges in [`ComputedCssPositionOffset`]).
 fn resolve_css_position_offset(
     specified: CssPositionOffset,
     font_size: ComputedLength,
@@ -2427,14 +2391,14 @@ fn resolve_css_position_offset(
     }
 }
 
-/// `<position>` (`background-position` 等) の specified value を絶対化する
-/// (**phase 3** — 自 node 基準)。両軸をそれぞれ [`resolve_css_position_offset`]
-/// に delegate する。
+/// Absolutize a specified `<position>` (for `background-position`, etc.)
+/// in **phase 3**, using this node's basis. Delegate each axis to
+/// [`resolve_css_position_offset`].
 ///
-/// [`CssPosition`] が `#[non_exhaustive]` なため、[`resolve_border_radius`] /
-/// [`resolve_box_shadow_item`] / [`resolve_outline`] と同様 doctest は無く
-/// (crate 外から struct literal を構築できない)、代わりに本 module の
-/// `tests` に unit test を持つ (`resolve_css_position_absolutizes_each_offset`)。
+/// Since [`CssPosition`] is `#[non_exhaustive]`, no external doctest can
+/// construct it with a struct literal (as for [`resolve_border_radius`],
+/// [`resolve_box_shadow_item`], and [`resolve_outline`]). Instead, the module's
+/// unit tests include `resolve_css_position_absolutizes_each_offset`.
 pub fn resolve_css_position(
     specified: CssPosition,
     font_size: ComputedLength,
@@ -2452,12 +2416,11 @@ pub fn resolve_css_position(
     }
 }
 
-/// `background-size: <bg-size>` の specified value を絶対化する (**phase 3**
-/// — 自 node 基準)。`cover`/`contain` はそのまま keyword として素通し、
-/// `Explicit` の各軸は [`resolve_length_percentage_or_auto`] (`width`/
-/// `height` と同じ shape、`Lh`/`Rlh` 解決不能時は `Auto` — [`BackgroundSize`]
-/// の spec initial も `auto` なので、この fallback は width/height と同じ
-/// 理由でここでも正しい) に delegate する。
+/// Absolutize specified `background-size: <bg-size>` (**phase 3**, using
+/// this node's basis). Pass `cover`/`contain` through as keywords. Delegate
+/// each `Explicit` axis to [`resolve_length_percentage_or_auto`]. It has the
+/// same shape as `width`/`height`: an unresolved `Lh`/`Rlh` becomes `Auto`.
+/// This is correct because [`BackgroundSize`] also has `auto` as its initial.
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ResolveContext, resolve_background_size};
@@ -2495,19 +2458,19 @@ pub fn resolve_background_size(
     }
 }
 
-/// `background-image` / `mask-image` の `<gradient>` payload を絶対化する
-/// (**phase 3** — 自 node 基準)。
+/// Absolutize a `<gradient>` payload in `background-image` / `mask-image`
+/// (**phase 3**, using this node's basis).
 ///
-/// `None` / `Url(String)` は computed-equivalent で素通し。`Gradient(..)` の
-/// `<length-percentage>` payload (`GradientColorStop::position`,
-/// `RadialSize::Circle`/`Ellipse`, `RadialGradient`/`ConicGradient` の
-/// `CssPosition`) は font-relative 部分のみを `font-size`/`root-font-size`/
-/// `own_line_height` を基準に絶対化し、`<percentage>` は computed 層に残す
-/// (CSS Values 4 §5.5.1)。`<percentage>` の参照値 (gradient box の寸法) は
-/// この crate の scope 外 (paint/used-value 層) なので素通しが正しく、
-/// `Percent` を検出して特別扱いするのではなく [`resolve_length_percentage`]
-/// が既に `Percent` を素通しすることに依拠する — 他の `<length-percentage>`
-/// property (`padding`/`margin`/`background-position` 等) と同じ split。
+/// Pass `None` / `Url(String)` through: they already have computed form.
+/// For a `Gradient(..)`, absolutize only font-relative parts of its
+/// `<length-percentage>` payloads (`GradientColorStop::position`,
+/// `RadialSize::Circle`/`Ellipse`, and `CssPosition` in
+/// `RadialGradient`/`ConicGradient`) using font-size, root-font-size, and
+/// `own_line_height`. Retain `<percentage>` in the computed layer (CSS Values
+/// 4 §5.5.1). Its basis, the gradient-box dimensions, belongs to paint and
+/// used-value resolution outside this crate. Rather than special-case
+/// `Percent`, rely on [`resolve_length_percentage`] to pass it through, as for
+/// `padding`/`margin`/`background-position`.
 pub fn resolve_background_image(
     specified: BackgroundImage,
     font_size: ComputedLength,
@@ -2522,9 +2485,9 @@ pub fn resolve_background_image(
     }
 }
 
-/// `<gradient>` (CSS Images 4 §3) の `<length-percentage>` payload を絶対化する
-/// (**phase 3** — 自 node 基準)。`Percent` は素通し、上記
-/// [`resolve_background_image`] doc参照。
+/// Absolutize a `<gradient>`'s `<length-percentage>` payloads (CSS Images 4
+/// §3) in **phase 3**, using this node's basis. Pass through `Percent` as
+/// documented by [`resolve_background_image`].
 pub fn resolve_gradient(
     specified: Gradient,
     font_size: ComputedLength,
@@ -2669,14 +2632,14 @@ fn resolve_conic_gradient(
     }
 }
 
-/// `flex-basis: content | <'width'>` の specified value を絶対化する
-/// (**phase 3** — 自 node 基準)。
+/// Absolutize specified `flex-basis: content | <'width'>` (**phase 3**,
+/// using this node's basis).
 ///
-/// `content` はそのまま keyword として素通し ([`ComputedFlexBasis::Content`]、
-/// [`crate::property::FlexBasisValue`] doc の scope carving 節参照)。`auto` /
-/// `<length-percentage>` 側は `<'width'>` reuse の通り
-/// [`resolve_length_percentage_or_auto`] と全く同じ shape (`Lh`/`Rlh` 解決
-/// 不能時の `Auto` fallback を含む) — 実装を複製せず delegate する。
+/// Pass `content` through as a keyword (see [`ComputedFlexBasis::Content`] and
+/// the scope notes in [`crate::property::FlexBasisValue`]). Delegate the `auto`
+/// / `<length-percentage>` branch to [`resolve_length_percentage_or_auto`],
+/// matching the `<'width'>` grammar exactly, including its `Auto` fallback for
+/// unresolved `Lh`/`Rlh`. Do not duplicate the implementation.
 pub fn resolve_flex_basis(
     specified: FlexBasisValue,
     font_size: ComputedLength,
@@ -2705,8 +2668,8 @@ pub fn resolve_flex_basis(
     }
 }
 
-/// `<track-breadth>` の specified value を絶対化する (**phase 3** — 自 node
-/// 基準)。`<length-percentage>` 以外の keyword/`<flex>` はそのまま素通し。
+/// Absolutize specified `<track-breadth>` (**phase 3**, using this node's
+/// basis). Pass through keywords and `<flex>`; only `<length-percentage>` changes.
 pub fn resolve_grid_track_breadth(
     specified: GridTrackBreadth,
     font_size: ComputedLength,
@@ -2727,11 +2690,11 @@ pub fn resolve_grid_track_breadth(
     }
 }
 
-/// `<inflexible-breadth>` の specified value を絶対化する (**phase 3** —
-/// 自 node 基準)。[`ComputedGridTrackBreadth`] doc の collapse 注記の通り、
-/// 戻り値の型は [`resolve_grid_track_breadth`] と同じ —
-/// [`crate::property::GridInflexibleBreadth`] に `<flex>` variant が
-/// 無いため [`ComputedGridTrackBreadth::Flex`] を返すことは構造的に無い。
+/// Absolutize specified `<inflexible-breadth>` (**phase 3**, using this node's
+/// basis). As explained by [`ComputedGridTrackBreadth`], the result type matches
+/// [`resolve_grid_track_breadth`]. Since
+/// [`crate::property::GridInflexibleBreadth`] has no `<flex>` variant, this
+/// function cannot structurally return [`ComputedGridTrackBreadth::Flex`].
 pub fn resolve_grid_inflexible_breadth(
     specified: GridInflexibleBreadth,
     font_size: ComputedLength,
@@ -2751,8 +2714,7 @@ pub fn resolve_grid_inflexible_breadth(
     }
 }
 
-/// `<track-size>` の specified value を絶対化する (**phase 3** — 自 node
-/// 基準)。
+/// Absolutize specified `<track-size>` (**phase 3**, using this node's basis).
 pub fn resolve_grid_track_size(
     specified: GridTrackSize,
     font_size: ComputedLength,
@@ -2776,9 +2738,9 @@ pub fn resolve_grid_track_size(
     }
 }
 
-/// [`crate::property::GridTrackList`] の specified value を絶対化する
-/// (**phase 3** — 自 node 基準)。`line_names` は length を運ばないため
-/// clone してそのまま持ち越す。
+/// Absolutize specified [`crate::property::GridTrackList`] (**phase 3**,
+/// using this node's basis). Clone and carry `line_names` unchanged: they
+/// contain no lengths.
 pub fn resolve_grid_track_list(
     specified: &GridTrackList,
     font_size: ComputedLength,
@@ -2812,9 +2774,10 @@ pub fn resolve_grid_track_list(
     }
 }
 
-/// `grid-template-columns` / `grid-template-rows`: `none | <track-list> |
-/// <auto-track-list>` の specified value を絶対化する (**phase 3** — 自
-/// node 基準)。`none` はそのまま keyword として素通し。
+/// Absolutize specified `grid-template-columns` / `grid-template-rows`
+/// values of `none | <track-list> | <auto-track-list>` (**phase 3**,
+/// using this node's basis).
+/// Pass through `none` as a keyword.
 pub fn resolve_grid_template_tracks(
     specified: GridTemplateTracks,
     font_size: ComputedLength,
@@ -2829,8 +2792,8 @@ pub fn resolve_grid_template_tracks(
     }
 }
 
-/// `grid-auto-columns` / `grid-auto-rows`: `<track-size>+` の specified
-/// value を絶対化する (**phase 3** — 自 node 基準)。
+/// Absolutize `grid-auto-columns` / `grid-auto-rows` specified `<track-size>+`
+/// values (**phase 3**, using this node's basis).
 pub fn resolve_grid_auto_track_list(
     specified: &[GridTrackSize],
     font_size: ComputedLength,
@@ -2846,15 +2809,15 @@ pub fn resolve_grid_auto_track_list(
     )
 }
 
-/// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` の
-/// specified value を絶対化する (**phase 3** — 自 node 基準)。
+/// Absolutize specified `row-gap` / `column-gap` values of
+/// `normal | <length-percentage [0,∞]>` (**phase 3**, using this node's basis).
 ///
-/// `normal` は computed 層でも keyword のまま残る
-/// ([`ComputedLengthPercentageOrNormal`] doc 参照、`letter-spacing`/
-/// `word-spacing` の `normal → ComputedLength::ZERO`
-/// ([`resolve_length_or_normal`]) とは異なる spec 文言のため意図的に
-/// 別関数)。`<length-percentage>` 側は [`resolve_length_percentage`] へ
-/// delegate (percentage は素通し — used value 層は下流 (taffy) 責務)。
+/// `normal` stays a keyword when computed (see
+/// [`ComputedLengthPercentageOrNormal`]). This deliberately differs from the
+/// `normal → ComputedLength::ZERO` behavior for `letter-spacing`/`word-spacing`
+/// in [`resolve_length_or_normal`], because the specs use different wording.
+/// Delegate `<length-percentage>` to [`resolve_length_percentage`]; percentages
+/// pass through for downstream used-value resolution (taffy).
 pub fn resolve_length_percentage_or_normal(
     specified: LengthOrNormal,
     font_size: ComputedLength,
@@ -2874,23 +2837,19 @@ pub fn resolve_length_percentage_or_normal(
     }
 }
 
-/// `<length-percentage> | auto` を取る **`margin-*`専用** の absolutization
-/// (Finding A)。
+/// Absolutize **only `margin-*`** specified `<length-percentage> | auto`.
 ///
-/// [`resolve_length_percentage_or_auto`] と shape は同じ (`Auto` keyword は
-/// そのまま、`<length-percentage>` は [`resolve_length_percentage`] に
-/// delegate) だが、**`Lh`/`Rlh` 専用の intercept を持たない** — その結果、
-/// 解決不能 (`normal`) なときの fallback は [`resolve_length_percentage`]
-/// がそのまま返す `Px(0.0)` になる。これは margin の spec initial (CSS Box 3
-/// §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical> "Initial: 0")
-/// そのものであり、`resolve_length_percentage_or_auto` が `width`/`height`
-/// のために返す `Auto` (margin にとっては spec 上根拠のない値かつ、taffy の
-/// auto-margin centering という実際のレイアウト動作を誘発する) とは意図的に
-/// 異なる。共有関数 [`resolve_length_percentage_or_auto`] 自体の fallback は
-/// 変えない — 外部から見える public API の挙動を、根拠の無い margin 側の
-/// 都合で `width`/`height` の呼び手ごと変えるのは影響範囲が広すぎる
-/// (この関数は pub なので margin/width/height 以外の将来の呼び手が居ても
-/// 安全なよう、変更は margin 専用の本関数に閉じる)。
+/// This has the same shape as [`resolve_length_percentage_or_auto`]: pass the
+/// `Auto` keyword through, and delegate `<length-percentage>` to
+/// [`resolve_length_percentage`]. But it **does not intercept `Lh`/`Rlh`**.
+/// When the basis (`normal`) cannot be resolved, that delegate ([`resolve_length_percentage`]) returns
+/// `Px(0.0)`. This is precisely margin's specified initial value (CSS Box 3
+/// §3.1), unlike the `Auto` fallback for `width`/`height` in
+/// [`resolve_length_percentage_or_auto`]. For margins, `Auto` is neither the
+/// correct initial nor harmless: it triggers real auto-margin centering in
+/// taffy. Do not change the shared public resolver's fallback for margins:
+/// that would also change behavior for its width/height callers and any future
+/// callers. Keep the margin-specific change in this function.
 pub fn resolve_margin_length_or_auto(
     specified: LengthOrAuto,
     font_size: ComputedLength,
@@ -2911,27 +2870,27 @@ pub fn resolve_margin_length_or_auto(
     }
 }
 
-/// `line-height` の specified value を絶対化する (**phase 3 / phase 2.5** —
-/// 自 node 基準。呼び手の doc "phase 2.5" 節参照 —
-/// [`crate::specified::SpecifiedValues::finalize`] /
-/// [`crate::specified::SpecifiedValues::finalize_as_root`])。
+/// Absolutize specified `line-height` (**phase 3 / phase 2.5**, using
+/// this node's basis; see the caller's "phase 2.5" documentation in
+/// [`crate::specified::SpecifiedValues::finalize`] and
+/// [`crate::specified::SpecifiedValues::finalize_as_root`]).
 ///
-/// - `normal` / `<number>` は素通し。`<number>` を computed 層に残すのは spec 上
-///   load-bearing な distinction (子は number を inherit して**自分の**
-///   font-size に掛ける)。
-/// - `<percentage>` は **自要素の** computed font-size に対して絶対化する —
+/// - Pass `normal` / `<number>` through. Keeping `<number>` in the computed
+///   layer matters: children inherit the number and multiply by **their own**
+///   font-size.
+/// - Absolutize `<percentage>` against **this element's** computed font-size:
 ///   CSS Inline 3 §5.1 (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>)
 ///   "Percentages: computed relative to 1em" + CSS Values 4 §6.1.1 `em`
 ///   (<https://www.w3.org/TR/css-values-4/#em>) "Equal to the computed value of
 ///   the font-size property of the element on which it is used."
-/// - `<length>` (`Lh` / `Rlh` を除く) は [`resolve_length`] と同じ規則で
-///   絶対化する。
+/// - Absolutize `<length>` (other than `Lh` / `Rlh`) under the same rules as
+///   [`resolve_length`].
 ///
-/// # `Length::Lh` — 自己参照
+/// # `Length::Lh` — self-reference
 ///
-/// `line-height: 1lh` は「自分の computed line-height」を自分の値として
-/// 使う自己参照になる — `lh` の素の定義 ("the element on which it is used")
-/// は常に「使用要素自身」を指すため、この自己参照は**あらゆる要素**で起こる。
+/// `line-height: 1lh` would use this element's computed line-height as its
+/// own value. `lh` always means "the element on which it is used", so this
+/// self-reference occurs on **every element**.
 /// CSS Values 4 §6.1.1 "Font-relative Lengths"
 /// (<https://www.w3.org/TR/css-values-4/#font-relative-lengths>) verbatim:
 /// "Similarly, when lh or rlh units are used in the value of the line-height
@@ -2940,33 +2899,31 @@ pub fn resolve_margin_length_or_auto(
 /// element—or the computed metrics corresponding to the initial values of
 /// the font and line-height properties, if the element has no parent."
 ///
-/// `self_reference_basis` は呼び手があらかじめ [`used_line_height_length`]
-/// で絶対化した**親の** line-height (親が無い root element では `None` —
-/// 「initial values」= `line-height: normal` は解決不能なので `None` が
-/// そのまま正しい基準になる、[`ResolveContext::initial`] doc 参照)。基準が
-/// `None` のときは `line-height` 自身の spec initial value である
-/// **`normal`** ([`ComputedLineHeight::Normal`]) に倒す —
-/// [`resolve_length_percentage`] の `0px` fallback と同じ「解決できない
-/// 宣言を宣言前の状態に倒す」方針を、`line-height` にとって最も自然な
-/// 「無指定」状態に適用したもの。
+/// The caller has already absolutized the **parent's** line-height with
+/// [`used_line_height_length`] and passed it as `self_reference_basis`. For a
+/// parentless root, pass `None`: the initial `line-height: normal` cannot be
+/// resolved (see [`ResolveContext::initial`]). If the basis is `None`, return
+/// line-height's own initial, **`normal`** ([`ComputedLineHeight::Normal`]).
+/// As with the 0px fallback in [`resolve_length_percentage`], treat an
+/// unresolvable declaration like an absent one, using line-height's own
+/// natural "unspecified" value.
 ///
-/// # `Length::Rlh` — 自己参照ではなく tree-global 定数 (`Lh` と非対称)
+/// # `Length::Rlh` — tree-global constant, not self-reference (unlike `Lh`)
 ///
-/// 上記引用は "lh or rlh" と両方を並べているが、**`rlh` はこの crate では
-/// 自己参照として扱わない** — `rlh` の素の定義 ("Equal to the value of the
-/// lh unit **on the root element**") は宣言要素の位置に依存しない tree-global
-/// な定数であり、循環参照が起こり得るのは宣言要素自身が root element の
-/// ときだけ ([`crate::specified::SpecifiedValues::finalize_as_root`] が
-/// その一点をカバーする — root では `ctx` に
-/// [`ResolveContext::initial`] を渡すため `ctx.root_line_height` は
-/// 必然的に `None`)。root **ではない**要素の `line-height: 1rlh` は
-/// 既に確定済みの別 node (root) の値を参照するだけで自己参照ではないため、
-/// 他の box property 上の `rlh` と同じく `ctx.root_line_height` を直接
-/// 使う — `self_reference_basis` (**親**の line-height) を使うと `rlh` の
-/// 素の定義に反する誤った基準 (親の line-height) を使ってしまう。
-/// 引用文の "Similarly" は「自己参照が起こり得る場面では同じ fallback 構造を
-/// 使う」ことを述べているに過ぎず、`rlh` について「循環しない場面でも親を
-/// 参照せよ」と読むのは `rlh` 自身の定義と矛盾するため採らない。
+/// Although the quote above mentions "lh or rlh" together, this crate
+/// does **not** generally treat `rlh` as self-referential. By definition it
+/// is "Equal to the value of the lh unit **on the root element**", a tree-global
+/// constant independent of the declaring node. A cycle can arise only when
+/// the declaration is on the root itself. The root case is handled by
+/// [`crate::specified::SpecifiedValues::finalize_as_root`], which passes
+/// [`ResolveContext::initial`] as `ctx`, necessarily setting
+/// `ctx.root_line_height` to `None`. On a **non-root** node,
+/// `line-height: 1rlh` simply refers to the already resolved root node.
+/// Like `rlh` in a box property, use `ctx.root_line_height` directly;
+/// `self_reference_basis` is the **parent's** line-height and would contradict
+/// the definition of `rlh`. The quote's "Similarly" prescribes the same
+/// fallback when a self-reference exists; it does not require using the
+/// parent basis when `rlh` has no cycle.
 pub fn resolve_line_height(
     specified: LineHeight,
     font_size: ComputedLength,
@@ -2988,98 +2945,96 @@ pub fn resolve_line_height(
         }
         LineHeight::Length(len) => ComputedLineHeight::Length(match len {
             // CSS Inline 3 §5.1 "Percentages: computed relative to 1em" —
-            // percentage は宣言要素の computed font-size で絶対化される
-            // (`resolve_length` の grammar-unreachable な 0px arm には
-            // 落とさない)。
+            // Absolutize percentages against the declaring element's computed
+            // font-size; do not use `resolve_length`'s grammar-unreachable
+            // 0px arm.
             Length::Percent(p) => ComputedLength(font_size.0 * p / 100.0),
-            // `Lh` / `Rlh` は上の arm で既に払い出し済み — ここに来る `other`
-            // が Lh/Rlh になることはない (`own_line_height: None` は死に引数)。
+            // `Lh` / `Rlh` were handled above, so `other` cannot contain
+            // either (and `own_line_height: None` is a dead argument).
             other => resolve_length(other, font_size, None, ctx),
         }),
     }
 }
 
-/// `border-*` 1 side 分の specified value を絶対化する (**phase 3** — 自 node
-/// 基準)。
+/// Absolutize one specified `border-*` side (**phase 3**, using this
+/// node's basis).
 ///
-/// `width` を絶対化し、`style` / `color` は specified keyword をそのまま運ぶ。
+/// Absolutize `width`; pass through the specified `style` / `color` keywords.
 ///
-/// # style gating は computed 層の要求
+/// # Style gating belongs in the computed layer
 ///
-/// `style` が `none` / `hidden` のとき `width` は **0px** になる。CSS Backgrounds
-/// 3 §3.3 "Line Thickness: the border-width properties"
-/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の propdef table が
+/// If `style` is `none` or `hidden`, `width` becomes **0px**. The CSS
+/// Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) propdef table says
 /// "Computed value: absolute length, snapped as a border width; zero if the
-/// border style is `none` or `hidden`" と規定するとおり、これは used 層ではなく
-/// **computed 層**の要求である (**TR 版**; version marker は下記の
-/// "version marker" 節参照)。
+/// border style is `none` or `hidden`". This is a **computed-layer**, not
+/// used-layer, requirement in the **TR version** (see "version marker" below).
 ///
-/// **spec tension (silently 解決しない)**: 同 §3.3 の非規範 Note は "Although the
-/// initial width is medium, the initial style is none; therefore the used initial
-/// width is 0." と **used** 層で述べる一方、規範な propdef table は **computed**
-/// 層を指定している。Note は非規範なので propdef table が governs。
+/// **Spec tension (do not silently resolve it)**: the non-normative Note in
+/// §3.3 says "Although the initial width is medium, the initial style is none;
+/// therefore the used initial width is 0." It describes the **used** layer,
+/// whereas the normative propdef table names the **computed** layer. The
+/// normative table governs.
 ///
-/// **version marker**: 上記は TR
-/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の記述。ED
-/// (<https://drafts.csswg.org/css-backgrounds-3/#border-width>) は CSSWG
-/// [Issue 11494](https://github.com/w3c/csswg-drafts/issues/11494) により
-/// この gate を **computed → resolved/used 層へ移動**する規定変更を経ている
-/// (computed value 行から
-/// "zero if the border style is `none` or `hidden`" 節が消え、代わりに
+/// **Version marker**: the statement above is from the TR version
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>). The ED
+/// (<https://drafts.csswg.org/css-backgrounds-3/#border-width>) moved this
+/// gate from the **computed layer to the resolved/used layer** under CSSWG
+/// [Issue 11494](https://github.com/w3c/csswg-drafts/issues/11494).
+/// It removed "zero if the border style is `none` or `hidden`" from the
+/// Computed value row and instead added:
 /// "The resolved value for the border-width properties is the used value.
 /// If the border-style corresponding to a given border-width is none or
-/// hidden, then the used width is 0." が本文に追加されている)。**本関数の
-/// gate 位置は TR に従っており、ED には未追随** — TR が現行 Recommendation-
-/// track の版であり、ED 追随は W3C process 上いつになるか不明なため
-/// (緊急度は低いと判断済: 現行の paged-media path では resolved value は
-/// 両版とも 0 になるため observable な差は無く、animation の
-/// "by computed value" 補間の起点のみが異なる)。TR に追随する既定の gate 位置
-/// (computed 層、本関数) が変わる場合は raikiri-dom 側の `used_border_width`
-/// 相当を復活させる判断が要る — used 層に戻すのはこの issue の対象外であり、
-/// 決定なしに変更しないこと。
+/// hidden, then the used width is 0." **This function follows the TR, not yet
+/// the ED.** The TR is the current Recommendation-track version; timing for
+/// ED adoption in the W3C process is unknown. Priority is low: current
+/// paged-media paths yield a resolved zero under either version, with only
+/// the "by computed value" animation interpolation starting point differing.
+/// Moving this gate from the computed layer to the used layer would also
+/// require bringing back a `used_border_width` equivalent in raikiri-dom.
+/// That change is outside this issue; do not make it without a decision.
 ///
-/// **本関数は gate の単一 source である (element 経路 / page 経路の両方)** —
-/// `raikiri-dom` の `layout.rs` は以前、同じ gating を used 層
-/// (`used_border_width` helper) で 1 層遅れて行っていたが、`layout.rs` を
-/// [`ComputedBorder`] consumer に migrate した際に削除した。
-/// 下流に同じ判定を再実装してはならない (spec 規則の二重実装は片方だけ直す
-/// drift を生む)。
+/// **This function is the sole source of gating for both element and page
+/// paths.** Previously raikiri-dom's `layout.rs` applied the same gate a layer
+/// later with its `used_border_width` helper. It was removed when `layout.rs`
+/// moved to consuming [`ComputedBorder`]. Do not reimplement the decision
+/// downstream: duplicate spec rules can drift when only one is updated.
 ///
-/// page 経路 (`@page`) は `PropertyValue` の bag を運ぶが、
-/// [`crate::page::cascade_page`] の phase 3 が `border-*-width` longhand を
-/// [`Border`] に組み直して**本関数へ funnel する** — `matches!(style, None |
-/// Hidden)` を page 側で書き直してはならない。longhand には color が無いので
-/// placeholder を渡すが、本関数は width の判定に color を読まない。
-/// `border-*-style` **未宣言**時の基準は [`crate::specified::INITIAL_BORDER`] の
-/// `style` (= `none`) であり、CSS Paged Media 3 §6 "Page Properties"
-/// <https://www.w3.org/TR/css-page-3/#page-properties> の "both the page context
-/// and the margin context have a computed value for every property" が根拠。
+/// The page path (`@page`) carries a bag of `PropertyValue`s.
+/// Phase 3 in [`crate::page::cascade_page`] reassembles `border-*-width`
+/// longhands into [`Border`] and **funnels them through this function**;
+/// do not repeat `matches!(style, None | Hidden)` on the page path.
+/// Longhands lack color, so the caller supplies a placeholder, but this
+/// function does not read color to determine width. For an **undeclared**
+/// `border-*-style`, use [`crate::specified::INITIAL_BORDER`]'s `style` (= `none`).
+/// CSS Paged Media 3 §6 "Page Properties"
+/// <https://www.w3.org/TR/css-page-3/#page-properties> says "both the page context
+/// and the margin context have a computed value for every property".
 ///
 /// # CAVEAT: border-image
 ///
 /// CSS Backgrounds 3 §3.2 "Line Patterns: the border-style properties"
-/// (<https://www.w3.org/TR/css-backgrounds-3/#border-style>) の `none` 定義は
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-style>) defines `none`:
 /// "No border. Color and width are ignored (i.e., the border has width 0). Note
 /// this means that the initial value of `border-image-width` will also resolve to
-/// zero." であり、§3.3 の Computed value 行と整合する (border-image に対する
-/// 例外を作らない)。`border-image-*` は未着手
-/// (`ComputedValues::border` doc の Non-goals) なので現状 gate 位置の再検討は
-/// 不要だが、着手時には両 section を読み直すこと。
-/// `own_line_height` — 呼び手が [`used_line_height_length`]
-/// であらかじめ絶対化した、この border を持つ要素自身の line-height 基準。
-/// `border-*-width: 1lh` の resolve に使う ([`resolve_length`] の同名引数と
-/// 同じ契約)。`None` (`normal` で解決不能) のときは `resolve_length` が
-/// `0px` に倒す。
+/// zero." This agrees with the §3.3 Computed value row, without a border-image
+/// exception. `border-image-*` is not yet implemented (see the Non-goals in
+/// `ComputedValues::border`). No reassessment of this gate is needed now, but
+/// reread both sections when implementing border-image.
+/// `own_line_height` is the basis of this border's element, already absolutized
+/// by the caller through [`used_line_height_length`]. It resolves
+/// `border-*-width: 1lh` (same contract as [`resolve_length`]). If it is `None`
+/// because `normal` cannot be resolved, `resolve_length` returns `0px`.
 pub fn resolve_border(
     specified: Border,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorder {
-    // `matches!` + else 枝: 未知の future `BorderStyle` variant は「visible な
-    // style」側に落として specified width を透過させる (spec 上 visible な style
-    // が追加されたときに width が黙って 0 にならないよう fail-safe に倒す)。
-    // (下流の `layout.rs` は本 gate の結果を受け取るだけで再判定しない。)
+    // `matches!` + else: pass the specified width through for any unknown
+    // future `BorderStyle` variant, treating it as visible. This fail-safe
+    // prevents a newly added visible style from silently getting zero width.
+    // Downstream `layout.rs` consumes the result without repeating the gate.
     let width = if matches!(specified.style, BorderStyle::None | BorderStyle::Hidden) {
         ComputedLength::ZERO
     } else {
@@ -3093,23 +3048,23 @@ pub fn resolve_border(
 }
 
 // ---------------------------------------------------------------------------
-// computed → specified の lift (inheritance seed 用)
+// Lift computed → specified values (inheritance seeds)
 // ---------------------------------------------------------------------------
 
-/// 親の computed `font-size` を specified 表現に **lift** する
-/// (inheritance seed 用)。
+/// **Lift** the parent's computed `font-size` into specified form to seed
+/// inheritance.
 ///
-/// 3 phase 構成では phase 1 (winner の staging) の入力が specified 型なので、
-/// inheritance で運ばれてきた親の computed value を specified 表現に戻す必要が
-/// ある。CSS Values 4 §6 (<https://www.w3.org/TR/css-values-4/#lengths>) が
-/// computed length を「任意の絶対単位で表現してよい」としており、px として
-/// 表現するのは**値の恒等変換**なので lossless。
+/// In the three-phase pipeline, phase 1 stages winners in specified types, so
+/// an inherited computed value must be converted back to specified form.
+/// CSS Values 4 §6 (<https://www.w3.org/TR/css-values-4/#lengths>) permits
+/// representing a computed length in any absolute unit. Representing it in
+/// px is a **value-preserving identity conversion**, so this lift is lossless.
 ///
-/// かつ `Px` は絶対化の**不動点** ([`resolve_font_size`] の `Px` arm は identity)
-/// なので、lift した値を **phase 2** (font-size の絶対化) に通しても二重適用に
-/// ならない。`font-size` の絶対化は phase 2 であり phase 3 ではない —
-/// phase 3 (`resolve_length` 系) が基準として受け取るのは、この phase 2 が
-/// 確定させた自 node の computed font-size である。
+/// `Px` is also a **fixed point** of absolutization ([`resolve_font_size`]'s
+/// `Px` arm is the identity). Passing the lifted value through **phase 2**
+/// cannot apply it twice. Font-size is absolutized in phase 2, not phase 3:
+/// phase-3 resolvers (`resolve_length` and others) use the computed font-size
+/// of this node, established by phase 2, as their basis.
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ResolveContext, lift_font_size, resolve_font_size};
@@ -3117,7 +3072,7 @@ pub fn resolve_border(
 /// let ctx = ResolveContext::initial();
 /// let inherited = ComputedLength(24.0);
 ///
-/// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
+/// // Lift → absolutize is an identity round trip (`Px` is a fixed point).
 /// let lifted = lift_font_size(inherited);
 /// assert_eq!(resolve_font_size(lifted, ComputedLength(16.0), None, &ctx), inherited);
 /// ```
@@ -3125,22 +3080,21 @@ pub fn lift_font_size(computed: ComputedLength) -> Length {
     Length::Px(computed.0)
 }
 
-/// 親の computed `line-height` を specified 表現に **lift** する
-/// (inheritance seed 用)。
+/// **Lift** the parent's computed `line-height` into specified form to
+/// seed inheritance.
 ///
-/// [`lift_font_size`] と同じ lossless 性が [`ComputedLineHeight`] の **3 variant
-/// すべて**で成立する。
+/// As with [`lift_font_size`], all **three variants** of [`ComputedLineHeight`]
+/// lift losslessly:
 ///
-/// - `Length(ComputedLength(30.0))` → `Length(Length::Px(30.0))`。
-///   phase 3 を通しても `30px` のまま — すなわち **font-size がより小さい子は
-///   30px をそのまま継承し、percentage を再解決しない**。これは CSS Inline 3
-///   §5.1 (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>) の
-///   `Computed value: … a computed <length> value` が要求する挙動である
-///   (percentage は宣言要素で絶対化され、子はその length を継承する)。
-///   **「子の font-size で再 resolve すべき」ではない。**
-/// - `Number(1.5)` は素通しで、子自身の font-size に掛かる (spec 上
-///   load-bearing な distinction)。
-/// - `Normal` は素通し。keyword のまま継承され、used value 層で解決される。
+/// - `Length(30px)` remains `30px` through phase 3. A child with a smaller
+///   font-size inherits **the same 30px**, rather than resolving the original
+///   percentage again. CSS Inline 3 §5.1
+///   (<https://www.w3.org/TR/css-inline-3/#propdef-line-height>) specifies
+///   "Computed value: … a computed `&lt;length&gt;` value": the percentage is resolved
+///   on the declaring element, then the child inherits that length.
+///   **Do not re-resolve it against the child's font-size.**
+/// - `Number(1.5)` passes through and multiplies the child's own font-size.
+/// - `Normal` passes through as a keyword for used-value resolution.
 ///
 /// ```
 /// use raikiri_style::{
@@ -3151,7 +3105,7 @@ pub fn lift_font_size(computed: ComputedLength) -> Length {
 ///
 /// let ctx = ResolveContext::initial();
 ///
-/// // 宣言要素 (font-size 20px) で `line-height: 150%` を絶対化 → 30px
+/// // Resolve `line-height: 150%` on its declaring element (20px font-size) → 30px.
 /// let declared = resolve_line_height(
 ///     LineHeight::Length(Length::Percent(150.0)),
 ///     ComputedLength(20.0),
@@ -3160,7 +3114,7 @@ pub fn lift_font_size(computed: ComputedLength) -> Length {
 /// );
 /// assert_eq!(declared, ComputedLineHeight::Length(ComputedLength(30.0)));
 ///
-/// // 子 (font-size 10px) は 30px を **そのまま** 継承する (15px ではない)。
+/// // Child (10px font-size) inherits the **same** 30px, not 15px.
 /// let child = resolve_line_height(lift_line_height(declared), ComputedLength(10.0), None, &ctx);
 /// assert_eq!(child, ComputedLineHeight::Length(ComputedLength(30.0)));
 /// ```
@@ -3199,20 +3153,20 @@ pub fn lift_text_indent(computed: ComputedTextIndent) -> TextIndentLength {
     }
 }
 
-/// 親の computed `letter-spacing` / `word-spacing` を specified 表現に
-/// **lift** する (inheritance seed 用)。
+/// **Lift** the parent's computed `letter-spacing` / `word-spacing` into
+/// specified form to seed inheritance.
 ///
-/// [`lift_font_size`] と同じ lossless / fixed-point 性 — [`resolve_length_or_normal`]
-/// の `Length` branch は [`resolve_length`] へ delegate し、その `Px` arm は
-/// identity (`ComputedLength(v) -> Length::Px(v)` を素通し) なので、lift した
-/// 値を phase 3 に再度通しても二重適用にならない。
+/// This has the same lossless fixed-point property as [`lift_font_size`].
+/// [`resolve_length_or_normal`]'s `Length` branch delegates to
+/// [`resolve_length`], whose `Px` arm is the identity:
+/// `ComputedLength(v) -> Length::Px(v)` passes unchanged through phase 3.
 ///
-/// [`lift_line_height`] とは異なり `Normal` を復元しない — `letter-spacing: normal`
-/// / `word-spacing: normal` の computed value は spec 上すでに `0` (an absolute
-/// length、[`resolve_length_or_normal`] doc 参照) であり、`Normal` keyword は
-/// computed 層に一切現れないため、"lift 元" の情報として残っていない
-/// ([`ComputedLineHeight`] が `Normal` variant を保持し続けるのとの違いは
-/// [`resolve_length_or_normal`] doc 参照)。
+/// Unlike [`lift_line_height`], this cannot restore `Normal`:
+/// `letter-spacing: normal` and `word-spacing: normal` already compute to zero
+/// (an absolute length; see [`resolve_length_or_normal`]). This resolver
+/// maps `normal` to zero (see [`resolve_length_or_normal`] for details). No `Normal` keyword
+/// survives in the computed layer to identify the original declaration.
+/// By contrast, [`ComputedLineHeight`] retains its `Normal` variant.
 ///
 /// ```
 /// use raikiri_style::{ComputedLength, ResolveContext, lift_length_or_normal, resolve_length_or_normal};
@@ -3221,7 +3175,7 @@ pub fn lift_text_indent(computed: ComputedTextIndent) -> TextIndentLength {
 /// let ctx = ResolveContext::initial();
 /// let inherited = ComputedLength(2.0);
 ///
-/// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
+/// // Lift → absolutize is an identity round trip (`Px` is a fixed point).
 /// let lifted = lift_length_or_normal(inherited);
 /// assert_eq!(
 ///     resolve_length_or_normal(lifted, ComputedLength(16.0), None, &ctx),
@@ -3257,14 +3211,14 @@ pub fn lift_word_spacing(computed: ComputedWordSpacing) -> WordSpacingValue {
     lift_letter_spacing(computed)
 }
 
-/// 親の [`ComputedTabSize`] を specified 表現 ([`TabSize`]) に **lift** する
-/// (inheritance seed 用) — [`lift_line_height`] と同じ lossless / 不動点性。
+/// **Lift** the parent's [`ComputedTabSize`] into specified [`TabSize`]
+/// for inheritance; as with [`lift_line_height`], this is lossless and stable.
 ///
-/// - `Number(n)` → `TabSize::Number(n)`。[`resolve_tab_size`] の `Number`
-///   arm は identity なので不動点。
-/// - `Length(l)` → `TabSize::Length(Length::Px(l.px()))`。
-///   [`resolve_length`] の `Px` arm は identity なので不動点
-///   ([`lift_font_size`] と同じ根拠)。
+/// - `Number(n)` → `TabSize::Number(n)`. The `Number` arm of
+///   [`resolve_tab_size`] is the identity, so this is a fixed point.
+/// - `Length(l)` → `TabSize::Length(Length::Px(l.px()))`.
+///   [`resolve_length`]'s `Px` arm is the identity, so this is a fixed point
+///   for the same reason as [`lift_font_size`].
 ///
 /// ```
 /// use raikiri_style::{
@@ -3274,12 +3228,12 @@ pub fn lift_word_spacing(computed: ComputedWordSpacing) -> WordSpacingValue {
 /// let ctx = ResolveContext::initial();
 /// let font_size = ComputedLength(16.0);
 ///
-/// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
+/// // Lift → absolutize is an identity round trip (`Px` is a fixed point).
 /// let inherited = ComputedTabSize::Length(ComputedLength(32.0));
 /// let lifted = lift_tab_size(inherited);
 /// assert_eq!(resolve_tab_size(lifted, font_size, None, &ctx), inherited);
 ///
-/// // `Number` も素通しのまま不動点。
+/// // `Number` also passes through as a fixed point.
 /// let inherited_number = ComputedTabSize::Number(4.0);
 /// assert_eq!(
 ///     resolve_tab_size(lift_tab_size(inherited_number), font_size, None, &ctx),
@@ -3293,10 +3247,11 @@ pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
     }
 }
 
-/// 親の [`ComputedBorderSpacing`] を specified 表現 ([`BorderSpacingValue`])
-/// に **lift** する (inheritance seed 用) — [`lift_tab_size`] の `Length`
-/// arm と同じ lossless / 不動点性 ([`resolve_length`] の `Px` arm は
-/// identity、かつ lift 元は既に clamp 済みなので再 clamp も no-op)。
+/// **Lift** the parent's [`ComputedBorderSpacing`] into specified
+/// [`BorderSpacingValue`] for inheritance. Like the `Length` arm of
+/// [`lift_tab_size`], this is lossless and stable: [`resolve_length`]'s `Px`
+/// arm is the identity and the lifted value is already clamped, so clamping
+/// again is a no-op.
 ///
 /// ```
 /// use raikiri_style::{
@@ -3307,7 +3262,7 @@ pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
 /// let ctx = ResolveContext::initial();
 /// let font_size = ComputedLength(16.0);
 ///
-/// // lift → 絶対化 の round trip は恒等 (Px が不動点、clamp が no-op)。
+/// // Lift → absolutize is an identity round trip (`Px` is fixed; clamping is a no-op).
 /// let inherited = ComputedBorderSpacing {
 ///     horizontal: ComputedLength(10.0),
 ///     vertical: ComputedLength(20.0),

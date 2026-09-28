@@ -5,12 +5,12 @@ use super::*;
 #[test]
 fn unknown_property_returns_none() {
     // `background-color` / `padding` / `margin` / `width` / `height` /
-    // `float` が順次実装済 = ここから除外。
+    // `float` has since been implemented, so exclude it here.
     // `cursor` (CSS Basic User Interface Module Level 3
-    // <https://www.w3.org/TR/css-ui-3/#cursor>) は現時点で
-    // parse_value dispatch に未登録 → fall-through で None が返る
-    // canonical unknown-property canary。実装され次第、別の未実装
-    // property 名へ再び移設すること。
+    // <https://www.w3.org/TR/css-ui-3/#cursor>) is currently
+    // not registered in the parse_value dispatcher, so fall-through returns None:
+    // the canonical unknown-property canary. Once implemented, move this test
+    // to another unsupported property name.
     assert_eq!(parse("pointer", "cursor"), None);
 }
 

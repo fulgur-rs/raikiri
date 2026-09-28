@@ -11,58 +11,57 @@ use raikiri_traits::StylesheetKind;
 
 use crate::UncascadedDocument;
 
-/// UA + Consumer 提供 stylesheet を Document から取り出し、Origin を割り当てて
-/// RuleTree を組み、raikiri-html が parse 時に集約した inline `<style>` element
-/// と fetched `<link rel="stylesheet">` source を Author として追加した上で cascade
-/// を実行する cascade orchestration entry point。
+/// Take the UA and consumer-supplied stylesheets from the Document, assign
+/// origins, build a RuleTree, add inline `<style>` elements collected by
+/// raikiri-html during parsing and fetched `<link rel="stylesheet">` sources as
+/// Author stylesheets, then run the cascade.
 ///
-/// 現状 `raikiri_style::cascade` は常に `Ok` を返すため、内部で `expect` する
-/// (将来 Result 反映を検討)。
+/// Currently `raikiri_style::cascade` always returns `Ok`, so we call `expect`
+/// internally. Consider exposing its Result if that changes.
 ///
-/// Consumer は [`crate::parse`](fn@crate::parse) → [`build_cascaded`] の 2 step だけで
-/// per-node ComputedValues を得られる。
+/// Consumers obtain per-node ComputedValues in two steps:
+/// [`crate::parse`](fn@crate::parse) followed by [`build_cascaded`].
 ///
-/// # DOM `<style>` の集約 scope
+/// # Collection scope for DOM `<style>` elements
 ///
-/// `UncascadedDocument::stylesheet_sources` を Author として消費する。
-/// この Vec は parse 時に [`crate::parse`](fn@crate::parse) 内の `extract_inline_stylesheets`
-/// が head の stylesheet-bearing elements を元の順序で集約し、その後に
-/// head 外の inline `<style>` elements を document order で追加する。
-/// HTML/XHTML と SVG の `<style>` は対象だが、MathML の同名 element は対象外。
-/// `<template>` subtree は spec §14.1 の inertness に従って skip 済み。
+/// Consume `UncascadedDocument::stylesheet_sources` as Author stylesheets.
+/// During [`crate::parse`](fn@crate::parse), `extract_inline_stylesheets` first
+/// collects stylesheet-bearing head elements in their original order, then
+/// appends inline `<style>` elements outside the head in document order.
+/// HTML/XHTML and SVG `<style>` elements are included; MathML `<style>` is not.
+/// `<template>` subtrees have already been skipped per spec §14.1 inertness.
 ///
 /// # DOM `<style>` (Author) vs `extra_stylesheets` (User)
 ///
-/// `Document.stylesheets()` (parse 時に注入された UA + `extra_stylesheets`) が
-/// 先に RuleTree に流し込まれ、次に `stylesheet_sources` (head/body の inline
-/// styles と head の fetched links) が Author として追加される。従来は
-/// `extra_stylesheets`
-/// も `Author` としてタグされており、DOM `<style>` との勝敗は同一 origin 内の
-/// source_order tie-break (後から来た方が勝つ) に依存していた。その後
-/// `extra_stylesheets` は [`Origin::User`] に retag された
-/// ため、両者はもはや同一 origin ではない — 勝敗は origin rank の差で
-/// specificity / source_order を問わず決まる。
+/// `Document.stylesheets()` (UA plus `extra_stylesheets`, inserted during parsing)
+/// enters the RuleTree first. Next, `stylesheet_sources` (inline styles in the
+/// head/body and fetched head links) enters as Author. Previously,
+/// `extra_stylesheets` was also tagged `Author`, so conflicts with DOM `<style>`
+/// were resolved by source-order tie-breaking within one origin
+/// (later sources won). Since
+/// `extra_stylesheets` was retagged [`Origin::User`], the two sources now have
+/// different origins: origin rank determines the winner, regardless of
+/// specificity or source order.
 ///
-/// **normal 同士なら** [`Origin::Author`] (normal rank 3) > [`Origin::User`]
-/// (normal rank 1) なので **DOM `<style>` が `extra_stylesheets` を上書きする**
-/// — 旧実装判断が偶然同一 origin tie-break で
-/// 実現していたのと同じ勝敗だが、根拠が「同 origin tie-break」から「別
-/// origin の rank 差」に変わった。
+/// **For normal declarations**, [`Origin::Author`] (rank 3) outranks [`Origin::User`]
+/// (rank 1), so **DOM `<style>` overrides `extra_stylesheets`**.
+/// This matches the old outcome, which was incidental to same-origin source-order
+/// tie-breaking; the reason is now the difference between origin ranks.
 ///
-/// **`!important` が絡むとこの勝敗は反転しうる** (CSS Cascading L4 §6.3 の
-/// importance による origin 順反転)。`extra_stylesheets` 側が `!important`
-/// を持てば ([`Origin::User`] important rank 6) DOM `<style>` 側の
-/// importance に関係なく (`Author` は normal rank 3 / important rank 4、
-/// いずれも 6 未満) `extra_stylesheets` が勝つ。逆に `extra_stylesheets` 側
-/// が normal (rank 1) なら DOM `<style>` は normal/important いずれでも
-/// (rank 3 / 4、いずれも 1 より上) 勝つ — 実質、勝敗は `extra_stylesheets`
-/// 側の importance だけで決まる。
+/// **`!important` can reverse the outcome** (CSS Cascading L4 §6.3 reverses
+/// origin order for important declarations). If `extra_stylesheets` declares
+/// `!important` ([`Origin::User`] important rank 6), it wins regardless of the
+/// DOM `<style>` importance (Author normal rank 3 or important rank 4,
+/// both below 6). Conversely, if `extra_stylesheets` is normal (rank 1),
+/// DOM `<style>` wins whether normal or important (rank 3 or 4).
+/// In practice, only the importance of `extra_stylesheets` decides the outcome
+/// between these two sources.
 ///
-/// # Dep 方向
+/// # Dependency direction
 ///
-/// `StylesheetKind → Origin` の翻訳は raikiri-style にも raikiri-dom にも置かず、
-/// 両者の上位にある本 crate (raikiri-html) 内で明示的に書く。これにより下位
-/// crate 間の逆依存を発生させない。
+/// Translate `StylesheetKind → Origin` here in raikiri-html, which sits above
+/// both raikiri-style and raikiri-dom, rather than in either lower crate.
+/// This avoids a reverse dependency between the lower crates.
 pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
     build_cascaded_with_media_context(doc, &MediaContext::default())
 }
@@ -148,15 +147,15 @@ pub fn build_rule_tree_with_consumer_properties(
 ) -> RuleTree {
     let mut tree = RuleTree::empty_with_consumer_properties(consumer_properties);
 
-    // Document に associate されている全 stylesheet を kind に応じて Origin
-    // に map。呼び出し順 (=注入順) が cascade の source_order を決める。
+    // Map every stylesheet associated with the Document to an Origin by kind.
+    // Call order (insertion order) determines cascade source_order.
     for (source, kind) in doc.dom.stylesheets() {
         let origin = stylesheet_kind_to_origin(kind);
         tree.add_stylesheet(source, origin);
     }
 
-    // raikiri-html が parse 時に template-inert filter 越しに集約した
-    // head/body inline style と fetched head links を Author として追加。
+    // Add the head/body inline styles and fetched head links collected through
+    // raikiri-html's template-inert filter during parsing as Author stylesheets.
     for source in &doc.stylesheet_sources {
         tree.add_stylesheet(source, Origin::Author);
     }
@@ -164,22 +163,22 @@ pub fn build_rule_tree_with_consumer_properties(
     tree
 }
 
-/// dom-level の [`StylesheetKind`] (raikiri-traits) を cascade-level の
-/// [`Origin`] (raikiri-style) に翻訳。dep 方向を保つため本 crate 内で保持。
+/// Translate DOM-level [`StylesheetKind`] (raikiri-traits) into cascade-level
+/// [`Origin`] (raikiri-style) here to preserve dependency direction.
 ///
-/// `StylesheetKind` は他 crate の `#[non_exhaustive]` enum のため exhaustive match
-/// はできないが、将来 variant が追加された場合の silent misroute を防ぐため
-/// `_` arm は `unreachable!` で loud fail させる (現時点で
-/// UserAgent / User / Author の 3 variant で網羅済み)。
+/// `StylesheetKind` is `#[non_exhaustive]` in another crate, so an exhaustive match
+/// is impossible. To prevent silent misrouting if a variant is added later,
+/// make the `_` arm fail loudly with `unreachable!` (the three current variants
+/// UserAgent, User, and Author are handled explicitly).
 fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
     match kind {
         StylesheetKind::UserAgent => Origin::UserAgent,
         StylesheetKind::User => Origin::User,
         StylesheetKind::Author => Origin::Author,
-        // `StylesheetKind` は `#[non_exhaustive]`。現時点で
-        // UserAgent / User / Author の 3 variant を上で網羅済み。将来別の variant が
-        // 追加された時点で対応が漏れるとここに到達し、silent misroute を防ぐため
-        // panic で loud fail する (dev が cascade origin map の更新に気付ける)。
+        // `StylesheetKind` is `#[non_exhaustive]`. The UserAgent, User, and Author
+        // variants are all handled above. If a future variant is not mapped here,
+        // execution reaches this arm; panic rather than silently assigning a wrong
+        // origin so developers notice that this mapping must be updated.
         // cov:ignore: defensive `_` arm for a cross-crate `#[non_exhaustive]` enum —
         // unreachable by construction while all 3 current variants are matched above;
         // only becomes reachable if a future variant is added upstream without a
@@ -190,9 +189,9 @@ fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
     }
 }
 
-/// Cascade orchestration が Document 内 `<style>` を Author 経路で使うこと、および
-/// Document.stylesheets 経由の UA CSS がここに二重計上されないことを再確認する
-/// smoke-test は tests/build_cascaded.rs 側で担当する。
+/// Smoke tests in tests/build_cascaded.rs confirm that cascade orchestration
+/// uses Document `<style>` sources as Author, without counting UA CSS from
+/// Document.stylesheets a second time.
 #[cfg(test)]
 mod smoke_tests {
     use super::*;

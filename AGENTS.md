@@ -1,5 +1,13 @@
 # Agent Instructions
 
+## Source comment language
+
+Write code comments in English, including `//`, `///`, `//!`, block comments,
+CSS comments, and comments in scripts and manifests. Translate explanations,
+not program text. Keep exact Unicode glyphs in examples, test fixtures, and
+quoted specification text when their spelling is necessary to explain behavior.
+Do not translate string literals or user-facing content under this rule.
+
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
 > **Architecture in one line:** Issues live in a local Dolt database

@@ -15,15 +15,15 @@ use crate::resolve::{
     ComputedTextIndent, ComputedTextShadow, ComputedTextUnderlineOffset,
 };
 
-/// `root_font_size` = 16px の共通 context。
+/// Shared context with `root_font_size` = 16px.
 const CTX: ResolveContext = ResolveContext {
     root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
     root_line_height: None,
 };
 
-/// `finalize` の `parent: &ComputedValues` として渡す、font-size だけ
-/// 差し替えた fixture (旧 `PARENT_FS: ComputedLength` の後継)。`text_align` / `direction` は本 module の phase 2/3 length 系
-/// test では無関係なので initial (`Start` / `Ltr`) のまま。
+/// Fixture passed as `parent: &ComputedValues` to `finalize`, with only its font size changed
+/// (replacing the old `PARENT_FS: ComputedLength`). `text_align` and `direction` are irrelevant
+/// to these phase 2/3 length tests, so they retain their initial values (`Start` / `Ltr`).
 fn parent_with_font_size(px: f32) -> ComputedValues {
     ComputedValues {
         font_size: ComputedLength(px),
@@ -81,10 +81,9 @@ fn box_ch_provenance_keeps_authored_factor_and_font() {
     assert!(ordinary.margin_ch.top.is_none());
 }
 
-/// specified の border initial は `medium` (3px) / `none` / `currentcolor` で、
-/// computed 層では style gating により width が 0px に潰れる
-/// (CSS Backgrounds 3 §3.3 "Computed value: … zero if the border style is
-/// `none` or `hidden`")。
+/// The specified initial border has `medium` (3px) / `none` / `currentcolor`; style gating
+/// reduces its width to 0px in the computed layer (CSS Backgrounds 3 §3.3: "Computed value: …
+/// zero if the border style is `none` or `hidden`").
 #[test]
 fn initial_border_width_is_gated_to_zero_at_computed_layer() {
     assert_eq!(SpecifiedValues::initial().border.top.width, Length::Px(3.0));
@@ -94,11 +93,10 @@ fn initial_border_width_is_gated_to_zero_at_computed_layer() {
     );
 }
 
-/// CSS Color 4 §3.3: 範囲外の specified `opacity` は phase 3
-/// ([`SpecifiedValues::finalize`]) で `[0, 1]` に clamp される —
-/// `border` の style gating (直上の test) と同型の「specified 層では
-/// 保持、computed 層で変換」pattern。end-to-end (実 cascade 経由) の
-/// 同じ主張は `mod@crate::cascade` の `opacity_*` test が check する。
+/// CSS Color 4 §3.3: phase 3 ([`SpecifiedValues::finalize`]) clamps out-of-range specified
+/// `opacity` to `[0, 1]`. Like the border style gating tested above, this preserves the specified
+/// value and transforms it at the computed layer. The `opacity_*` tests in `mod@crate::cascade`
+/// also check this end-to-end through the real cascade.
 #[test]
 fn opacity_out_of_range_specified_clamps_at_finalize() {
     let over = SpecifiedValues {
@@ -122,9 +120,8 @@ fn opacity_out_of_range_specified_clamps_at_finalize() {
     );
 }
 
-/// CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: どちらも常に
-/// keyword で、`finalize` は素通しするだけ (`opacity` のような
-/// range-clamp transform は無い)。
+/// CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: both are always keywords and pass through
+/// `finalize` unchanged; neither needs range clamping like `opacity`.
 #[test]
 fn isolation_and_mix_blend_mode_pass_through_finalize_unchanged() {
     let specified = SpecifiedValues {
@@ -172,8 +169,8 @@ fn transform_and_filter_pass_through_finalize_unchanged() {
         ..SpecifiedValues::initial()
     };
     let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
-    // `transform` の length 側だけが absolutize される — 2em は own font-size
-    // 16px 基準で 32px へ。`filter` は "as specified" なので素通し。
+    // Only the length part of `transform` is absolutized: 2em becomes 32px against this node's
+    // 16px font size. `filter` passes through "as specified".
     assert_eq!(
         computed.transform,
         Arc::new(vec![crate::resolve::ComputedTransformFunction::TranslateX(
@@ -184,7 +181,7 @@ fn transform_and_filter_pass_through_finalize_unchanged() {
 }
 
 // -----------------------------------------------------------------
-// inherit_from — inherited / non-inherited の分類
+// inherit_from — inherited versus non-inherited properties
 // -----------------------------------------------------------------
 
 fn parent_fixture() -> ComputedValues {
@@ -446,8 +443,8 @@ fn parent_fixture() -> ComputedValues {
         justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
         orphans: 5,
         widows: 7,
-        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
-        // non-inherited なので、initial と異なる値にしておく。
+        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: these are all
+        // non-inherited, so the fixture sets them to non-initial values.
         background_repeat: BackgroundRepeat {
             x: BackgroundRepeatKeyword::Round,
             y: BackgroundRepeatKeyword::Space,
@@ -464,11 +461,11 @@ fn parent_fixture() -> ComputedValues {
                 ComputedLengthPercentage::Percent(25.0),
             ),
         },
-        // CSS Backgrounds and Borders 3 §2.3: non-inherited, initial と
-        // 異なる値にしておく (fixture の趣旨どおり)。
+        // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
+        // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".to_string()),
-        // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited なので、
-        // initial (`fill` / `50% 50%`) と異なる値にしておく。
+        // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited; set values other than the
+        // initial `fill` / `50% 50%`.
         object_fit: ObjectFit::Cover,
         object_position: crate::resolve::ComputedCssPosition {
             horizontal: crate::resolve::ComputedCssPositionOffset::Start(
@@ -478,45 +475,39 @@ fn parent_fixture() -> ComputedValues {
                 ComputedLengthPercentage::Percent(10.0),
             ),
         },
-        // CSS Color 4 §3.3: non-inherited なので initial (`1`) と
-        // 異なる値にしておく。
+        // CSS Color 4 §3.3: non-inherited; set a value other than the initial `1`.
         opacity: 0.25,
-        // CSS Compositing and Blending Level 1 §3.4.2: non-inherited
-        // なので initial (`auto`) と異なる値にしておく。
+        // CSS Compositing and Blending Level 1 §3.4.2: non-inherited; set a value other than the
+        // initial `auto`.
         isolation: Isolation::Isolate,
-        // CSS Compositing and Blending Level 1 §3.4.1: non-inherited
-        // なので initial (`normal`) と異なる値にしておく。
+        // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
+        // initial `normal`.
         mix_blend_mode: MixBlendMode::Multiply,
-        // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited なので
-        // initial (`none`) と異なる値にしておく。
+        // CSS Masking Level 1 §7.1/§5.1: both are non-inherited; set values other than the
+        // initial `none`.
         mask_image: MaskImage::Url("mask.svg".to_string()),
         clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
-        // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
-        // 両方 non-inherited なので initial (`none` = 空 list) と
-        // 異なる値にしておく。
         transform_origin: ComputedValues::initial().transform_origin,
         transform_origin_z: crate::resolve::ComputedLength(0.0),
+        // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5: both are non-inherited; set
+        // values other than the initial `none` (an empty list).
         transform: Arc::new(vec![crate::resolve::ComputedTransformFunction::TranslateX(
             crate::resolve::ComputedLengthPercentage::Px(48.0),
         )]),
         filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
-        // CSS Tables 3 §4: table-layout は non-inherited なので initial
-        // (`auto`) と異なる値にしておく。
+        // CSS Tables 3 §4: table-layout is non-inherited; set a value other than the initial `auto`.
         table_layout: TableLayoutValue::Fixed,
-        // CSS Tables 3 §6: border-collapse は inherited なので initial
-        // (`separate`) と異なる値にしておく。
+        // CSS Tables 3 §6: border-collapse is inherited; set a value other than the initial `separate`.
         border_collapse: BorderCollapseValue::Collapse,
-        // CSS Tables 3 §6.1: border-spacing は inherited なので initial
-        // (両軸 `0px`) と異なる値にしておく。
+        // CSS Tables 3 §6.1: border-spacing is inherited; set values other than the initial `0px`
+        // on both axes.
         border_spacing: crate::resolve::ComputedBorderSpacing {
             horizontal: crate::resolve::ComputedLength(10.0),
             vertical: crate::resolve::ComputedLength(20.0),
         },
-        // CSS Tables 3 §7: caption-side は inherited なので initial
-        // (`top`) と異なる値にしておく。
+        // CSS Tables 3 §7: caption-side is inherited; set a value other than the initial `top`.
         caption_side: CaptionSideValue::Bottom,
-        // CSS Tables 3 §8: empty-cells は inherited なので initial
-        // (`show`) と異なる値にしておく。
+        // CSS Tables 3 §8: empty-cells is inherited; set a value other than the initial `show`.
         empty_cells: EmptyCellsValue::Hide,
         column_count: ColumnCountValue::Count(3),
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
@@ -566,28 +557,28 @@ fn inherit_from_copies_inherited_fields() {
     let child = SpecifiedValues::inherit_from(&parent);
     assert_eq!(child.color, parent.color);
     assert_eq!(child.font_family, parent.font_family);
-    // `inherit_from` の `parent.font_family.clone()` は Arc reference-count increment —
-    // deep-clone regression なら ptr_eq が false になる (`Arc::ptr_eq`
-    // behavioral-proxy methodology、`mod@crate::cascade` test 群と同型)。
+    // `inherit_from` calls `parent.font_family.clone()` to increment the Arc reference count. A
+    // regression to deep cloning would make ptr_eq false (an `Arc::ptr_eq` behavioral proxy, as
+    // in the tests under `mod@crate::cascade`).
     assert!(Arc::ptr_eq(&child.font_family, &parent.font_family));
     assert_eq!(child.font_weight, 700.0);
     // CSS Lists 3 §3: both list-style longhands are inherited.
     assert_eq!(child.list_style_type, parent.list_style_type);
     assert_eq!(child.list_style_position, parent.list_style_position);
-    // CSS Text 3 §6.1: text-align は inherited。
+    // CSS Text 3 §6.1: text-align is inherited.
     assert_eq!(child.text_align, TextAlign::Center);
-    // CSS Text 3 §8.2.1: hanging-punctuation は inherited。
+    // CSS Text 3 §8.2.1: hanging-punctuation is inherited.
     assert_eq!(child.hanging_punctuation, HangingPunctuation::First);
-    // CSS Text 4: text-autospace は inherited。
+    // CSS Text 4: text-autospace is inherited.
     assert_eq!(child.text_autospace, TextAutospace::NoAutospace);
-    // CSS Text 4: word-space-transform は inherited。
+    // CSS Text 4: word-space-transform is inherited.
     assert_eq!(
         child.word_space_transform,
         WordSpaceTransform::SpaceAutoPhrase
     );
-    // CSS Text Decoration 4: text-decoration-skip-ink は inherited。
+    // CSS Text Decoration 4: text-decoration-skip-ink is inherited.
     assert_eq!(child.text_decoration_skip_ink, TextDecorationSkipInk::All);
-    // CSS Text Decoration 4: text-decoration-skip-spaces は inherited。
+    // CSS Text Decoration 4: text-decoration-skip-spaces is inherited.
     assert_eq!(
         child.text_decoration_skip_spaces,
         TextDecorationSkipSpaces::End
@@ -601,15 +592,15 @@ fn inherit_from_copies_inherited_fields() {
     assert_eq!(child.text_emphasis_position, parent.text_emphasis_position);
     // CSS Text 4: text-spacing-trim is inherited.
     assert_eq!(child.text_spacing_trim, TextSpacingTrim::TrimBoth);
-    // CSS Writing Modes 4 §2.1: direction は inherited。
+    // CSS Writing Modes 4 §2.1: direction is inherited.
     assert_eq!(child.direction, Direction::Rtl);
-    // CSS Writing Modes 4 §3.2: writing-mode は inherited。この staging
-    // 層 (`SpecifiedValues::inherit_from`) は `resolve_writing_mode` を
-    // 呼ばない素通しコピーなので、`computed::tests::non_initial_parent`
-    // の同種 assertion と異なりここでは verbatim 一致を期待してよい
-    // (`parent_fixture` の doc comment参照)。
+    // CSS Writing Modes 4 §3.2: writing-mode is inherited. This staging layer
+    // (`SpecifiedValues::inherit_from`) copies it verbatim without calling
+    // `resolve_writing_mode`. Unlike the analogous assertion in
+    // `computed::tests::non_initial_parent`, exact equality is appropriate here (see the
+    // `parent_fixture` docs).
     assert_eq!(child.writing_mode, WritingMode::VerticalRl);
-    // CSS Fonts 4 §2.4: font-style は inherited。
+    // CSS Fonts 4 §2.4: font-style is inherited.
     assert_eq!(child.font_style, FontStyle::Italic);
     // CSS Fonts 3 `font-kerning` is inherited.
     assert_eq!(child.font_kerning, FontKerning::Normal);
@@ -646,18 +637,18 @@ fn inherit_from_copies_inherited_fields() {
         child.font_palette,
         FontPaletteValue::Palette(SmolStr::new("--parent"))
     );
-    // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited.
+    // CSS Fonts Module Level 3 §6.6: font-variant-caps is inherited.
     assert_eq!(child.font_variant_caps, FontVariantCaps::SmallCaps);
-    // CSS Text Module Level 3 §2.1: text-transform は inherited。
+    // CSS Text Module Level 3 §2.1: text-transform is inherited.
     assert_eq!(child.text_transform, TextTransform::Uppercase);
     assert_eq!(child.text_combine_upright, TextCombineUpright::All);
     assert_eq!(child.unicode_bidi, UnicodeBidi::Normal);
     // CSS Writing Modes 3 §5.1: text-orientation is inherited.
     assert_eq!(child.text_orientation, TextOrientation::Sideways);
-    // CSS Display 3 §4: visibility は inherited。
+    // CSS Display 3 §4: visibility is inherited.
     assert_eq!(child.visibility, Visibility::Hidden);
-    // CSS Text 3 §8.1: text-indent は inherited — computed → specified
-    // の lift (`lift_text_indent`)。
+    // CSS Text 3 §8.1: text-indent is inherited. Lift it from computed to specified
+    // (`lift_text_indent`).
     assert_eq!(child.text_indent, TextIndentLength::Length(Length::Px(9.0)),);
     // CSS Text Decoration 4 §2.8: the fixed computed offset lifts back
     // to a specified `px` length without being re-based on the child.
@@ -668,29 +659,28 @@ fn inherit_from_copies_inherited_fields() {
     // CSS Text 3 §8.1: hanging/each-line flags inherit like the length.
     assert!(child.text_indent_hanging);
     assert!(!child.text_indent_each_line);
-    // CSS Text 3 §5.1: word-break は inherited。
+    // CSS Text 3 §5.1: word-break is inherited.
     assert_eq!(child.word_break, WordBreak::KeepAll);
-    // CSS Text 3 §5.4: overflow-wrap は inherited。
+    // CSS Text 3 §5.4: overflow-wrap is inherited.
     assert_eq!(child.overflow_wrap, OverflowWrap::Anywhere);
-    // CSS Text 3 §3: white-space は inherited。
+    // CSS Text 3 §3: white-space is inherited.
     assert_eq!(child.white_space, WhiteSpace::Pre);
     // CSS Text 4: white-space-collapse is inherited.
     assert_eq!(
         child.white_space_collapse,
         WhiteSpaceCollapse::PreserveBreaks
     );
-    // CSS Text 3 §5.3: hyphens は inherited。
+    // CSS Text 3 §5.3: hyphens is inherited.
     assert_eq!(child.hyphens, Hyphens::None);
     // CSS Text 4: hyphenate-character is inherited as the decoded string.
     assert_eq!(child.hyphenate_character, parent.hyphenate_character);
     // CSS Text 4: hyphenate-limit-chars inherits its computed triple.
     assert_eq!(child.hyphenate_limit_chars, parent.hyphenate_limit_chars);
-    // computed → specified の lift (px 表現)。
+    // Lift from computed to specified (as px).
     assert_eq!(child.font_size, Length::Px(24.0));
     assert_eq!(child.line_height, LineHeight::Number(1.5));
-    // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing は共に
-    // inherited。computed → specified の lift (px 表現、`lift_font_size`
-    // と同型)。
+    // CSS Text 3 §7.2 / §7.1: both letter-spacing and word-spacing are inherited. Lift from
+    // computed to specified (as px, as with `lift_font_size`).
     assert_eq!(
         child.letter_spacing,
         LetterSpacingValue::Length(Length::Px(2.0))
@@ -699,19 +689,17 @@ fn inherit_from_copies_inherited_fields() {
         child.word_spacing,
         WordSpacingValue::Length(Length::Px(4.0))
     );
-    // CSS Text Module Level 3 §4.2: tab-size は inherited。computed
-    // `<length>` → specified `Px` の lift (`lift_tab_size` 経由、
-    // `lift_font_size` と同型)。
+    // CSS Text Module Level 3 §4.2: tab-size is inherited. Lift computed `<length>` to specified
+    // `Px` via `lift_tab_size`, as with `lift_font_size`.
     assert_eq!(child.tab_size, TabSize::Length(Length::Px(11.0)));
-    // CSS Content 3 §2.4.1: quotes は inherited。`inherit_from` の
-    // `parent.quotes.clone()` は Arc reference-count increment —
-    // deep-clone regression なら ptr_eq が false になる (`font_family`
-    // 同 assertion と同じ methodology)。
+    // CSS Content 3 §2.4.1: quotes is inherited. `inherit_from` calls `parent.quotes.clone()` to
+    // increment the Arc reference count. A regression to deep cloning would make ptr_eq false
+    // (the same proxy as the `font_family` assertion).
     assert_eq!(child.quotes, parent.quotes);
     assert!(Arc::ptr_eq(&child.quotes, &parent.quotes));
-    // CSS Text Decoration Module Level 3 §4: text-shadow は
-    // inherited。computed → specified の per-item lift
-    // (`lift_text_shadow_item`、px 表現) — `<color>` は素通し。
+    // CSS Text Decoration Module Level 3 §4: text-shadow is inherited. Lift each item from
+    // computed to specified via `lift_text_shadow_item` (as px); `<color>` passes through
+    // unchanged.
     assert_eq!(
         *child.text_shadow,
         vec![TextShadowItem {
@@ -721,13 +709,11 @@ fn inherit_from_copies_inherited_fields() {
             color: TextShadowColor::Resolved(CssColor::BLACK),
         }]
     );
-    // CSS Fragmentation Module Level 3 §3.3: orphans / widows は共に
-    // inherited。
+    // CSS Fragmentation Module Level 3 §3.3: both orphans and widows are inherited.
     assert_eq!(child.orphans, 5);
     assert_eq!(child.widows, 7);
-    // CSS Tables 3 §6.1: border-spacing は inherited。computed
-    // two-length → specified `Px` の lift (`lift_border_spacing` 経由、
-    // `lift_tab_size` と同型)。
+    // CSS Tables 3 §6.1: border-spacing is inherited. Lift both computed lengths to specified
+    // `Px` via `lift_border_spacing`, as with `lift_tab_size`.
     assert_eq!(
         child.border_spacing,
         BorderSpacingValue {
@@ -735,9 +721,9 @@ fn inherit_from_copies_inherited_fields() {
             vertical: Length::Px(20.0),
         }
     );
-    // CSS Tables 3 §7: caption-side は inherited (素朴なコピー)。
+    // CSS Tables 3 §7: caption-side is inherited (copied directly).
     assert_eq!(child.caption_side, CaptionSideValue::Bottom);
-    // CSS Tables 3 §8: empty-cells は inherited (素朴なコピー)。
+    // CSS Tables 3 §8: empty-cells is inherited (copied directly).
     assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
 }
 
@@ -827,47 +813,43 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     assert_eq!(child.column_count, initial.column_count);
     assert_eq!(child.column_width, initial.column_width);
     assert_eq!(child.box_sizing, BoxSizing::ContentBox);
-    // CSS Overflow 3 §3.1: overflow-x/overflow-y は
-    // non-inherited。
+    // CSS Overflow 3 §3.1: overflow-x and overflow-y are non-inherited.
     assert_eq!(child.overflow, initial.overflow);
-    // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3:
-    // text-decoration-line/-style/-color は non-inherited。
+    // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3: text-decoration-line, -style and -color
+    // are non-inherited.
     assert_eq!(child.text_decoration_line, initial.text_decoration_line);
     assert_eq!(child.text_decoration_style, initial.text_decoration_style);
     assert_eq!(child.text_decoration_color, initial.text_decoration_color);
     assert_eq!(child.text_decoration_inset, initial.text_decoration_inset);
-    // CSS 2.1 §10.8.1: vertical-align は non-inherited。
+    // CSS 2.1 §10.8.1: vertical-align is non-inherited.
     assert_eq!(child.vertical_align, initial.vertical_align);
-    // CSS2 §9.9.1: z-index は non-inherited。
+    // CSS2 §9.9.1: z-index is non-inherited.
     assert_eq!(child.z_index, initial.z_index);
-    // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
-    // break-after / break-inside は non-inherited。
+    // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before, break-after and break-inside
+    // are non-inherited.
     assert_eq!(child.break_before, initial.break_before);
     assert_eq!(child.break_after, initial.break_after);
     assert_eq!(child.break_inside, initial.break_inside);
-    // CSS2 §9.5.1 / §9.5.2: float / clear は共に non-inherited。
+    // CSS2 §9.5.1 / §9.5.2: both float and clear are non-inherited.
     assert_eq!(child.float, initial.float);
     assert_eq!(child.clear, initial.clear);
-    // CSS Flexible Box Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/
-    // §7.2.3: flex-* は non-inherited。
+    // CSS Flexible Box Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/§7.2.3: flex-* properties
+    // are non-inherited.
     assert_eq!(child.flex_direction, initial.flex_direction);
     assert_eq!(child.flex_wrap, initial.flex_wrap);
     assert_eq!(child.flex_grow, initial.flex_grow);
     assert_eq!(child.flex_shrink, initial.flex_shrink);
     assert_eq!(child.flex_basis, initial.flex_basis);
-    // CSS Box Alignment Module Level 3 §5.1 (justify-content /
-    // align-content) / §7.2 (align-items) / §6.2 (align-self): all
-    // non-inherited。
+    // CSS Box Alignment Module Level 3 §5.1 (justify-content / align-content) / §7.2
+    // (align-items) / §6.2 (align-self): all are non-inherited.
     assert_eq!(child.justify_content, initial.justify_content);
     assert_eq!(child.align_content, initial.align_content);
     assert_eq!(child.align_items, initial.align_items);
     assert_eq!(child.align_self, initial.align_self);
-    // CSS Box Alignment Module Level 3 §8.1: row-gap / column-gap は
-    // non-inherited。
+    // CSS Box Alignment Module Level 3 §8.1: row-gap and column-gap are non-inherited.
     assert_eq!(child.row_gap, initial.row_gap);
     assert_eq!(child.column_gap, initial.column_gap);
-    // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3: grid-*
-    // は全て non-inherited。
+    // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3: all grid-* properties are non-inherited.
     assert_eq!(child.grid_template_columns, initial.grid_template_columns);
     assert_eq!(child.grid_template_rows, initial.grid_template_rows);
     assert_eq!(child.grid_template_areas, initial.grid_template_areas);
@@ -878,12 +860,10 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     assert_eq!(child.grid_row_end, initial.grid_row_end);
     assert_eq!(child.grid_column_start, initial.grid_column_start);
     assert_eq!(child.grid_column_end, initial.grid_column_end);
-    // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
-    // justify-self は共に non-inherited。
+    // CSS Box Alignment Module Level 3 §7.1/§6.1: both justify-items and justify-self are non-inherited.
     assert_eq!(child.justify_items, initial.justify_items);
     assert_eq!(child.justify_self, initial.justify_self);
-    // CSS Backgrounds and Borders 3 §2.3/§2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
-    // non-inherited。
+    // CSS Backgrounds and Borders 3 §2.3/§2.4/§2.5/§2.6/§2.7/§2.8/§2.9: all are non-inherited.
     assert_eq!(child.background_repeat, initial.background_repeat);
     assert_eq!(child.background_attachment, initial.background_attachment);
     assert_eq!(child.background_clip, initial.background_clip);
@@ -891,27 +871,25 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     assert_eq!(child.background_size, initial.background_size);
     assert_eq!(child.background_position, initial.background_position);
     assert_eq!(child.background_image, initial.background_image);
-    // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited。
+    // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited.
     assert_eq!(child.object_fit, initial.object_fit);
     assert_eq!(child.object_position, initial.object_position);
-    // CSS Color 4 §3.3: opacity は non-inherited。
+    // CSS Color 4 §3.3: opacity is non-inherited.
     assert_eq!(child.opacity, initial.opacity);
-    // CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: 両方
-    // non-inherited。
+    // CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: both are non-inherited.
     assert_eq!(child.isolation, initial.isolation);
     assert_eq!(child.mix_blend_mode, initial.mix_blend_mode);
-    // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited。
+    // CSS Masking Level 1 §7.1/§5.1: both are non-inherited.
     assert_eq!(child.mask_image, initial.mask_image);
     assert_eq!(child.clip_path, initial.clip_path);
-    // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5: 両方
-    // non-inherited。
+    // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5: both are non-inherited.
     assert_eq!(child.transform, initial.transform);
     assert_eq!(child.filter, initial.filter);
 }
 
-/// `line-height: 150%` を親が宣言していた場合、親の computed は
-/// `Length(ComputedLength(px))` であり、子は**その length をそのまま**継承する
-/// (CSS Inline 3 §5.1 — percentage は宣言要素で絶対化される)。
+/// When the parent declares `line-height: 150%`, its computed value is
+/// `Length(ComputedLength(px))`. The child inherits **that length unchanged** (CSS Inline 3 §5.1:
+/// percentages are absolutized on the declaring element).
 #[test]
 fn inherit_from_lifts_computed_line_height_length_without_re_resolving() {
     let parent = ComputedValues {
@@ -920,7 +898,7 @@ fn inherit_from_lifts_computed_line_height_length_without_re_resolving() {
     };
     let child = SpecifiedValues::inherit_from(&parent);
     assert_eq!(child.line_height, LineHeight::Length(Length::Px(30.0)));
-    // 子の font-size が 10px でも 15px にはならない。
+    // Even if the child's font size is 10px, the inherited line height does not become 15px.
     let computed = child.finalize(&parent_with_font_size(10.0), &CTX);
     assert_eq!(
         computed.line_height,
@@ -929,13 +907,12 @@ fn inherit_from_lifts_computed_line_height_length_without_re_resolving() {
 }
 
 // -----------------------------------------------------------------
-// finalize — phase 2 / phase 3 の基準
+// finalize — phase 2 / phase 3 reference values
 // -----------------------------------------------------------------
 
-/// CSS Tables 3 §6.1: `border-spacing` の各軸は自 node の font-size
-/// 基準で絶対化される (phase 3、`tab_size` の `Length` arm と同型)。
-/// WPT border-spacing-computed.html の `"10px 20px"` (two lengths の
-/// まま) と `"0"` → `"0px"` (shortest serialization) の pin。
+/// CSS Tables 3 §6.1: phase 3 absolutizes each `border-spacing` axis against this node's font
+/// size, like the `Length` arm of `tab_size`. Pin the two-length form (`"10px 20px"`) and the
+/// shortest serialization (`"0"` → `"0px"`) in WPT border-spacing-computed.html.
 #[test]
 fn finalize_resolves_border_spacing_against_own_font_size() {
     let mut sv = SpecifiedValues::initial();
@@ -948,13 +925,13 @@ fn finalize_resolves_border_spacing_against_own_font_size() {
     assert_eq!(cv.border_spacing.horizontal, ComputedLength(20.0));
     assert_eq!(cv.border_spacing.vertical, ComputedLength(10.0));
     assert_eq!(cv.border_spacing.serialized(), "20px 10px");
-    // initial (`0`) は shortest-serializable。
+    // The initial value (`0`) uses the shortest serialization.
     let initial_cv = SpecifiedValues::initial().finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(initial_cv.border_spacing.serialized(), "0px");
 }
 
-/// CSS Tables 3 §7 / §8: `caption-side` / `empty-cells` は keyword の
-/// ため `finalize` を素通しする (`border_collapse` と同じ)。
+/// CSS Tables 3 §7 / §8: `caption-side` and `empty-cells` are keywords and pass through
+/// `finalize` unchanged, like `border_collapse`.
 #[test]
 fn finalize_passes_caption_side_and_empty_cells_through_unchanged() {
     let mut sv = SpecifiedValues::initial();
@@ -965,31 +942,29 @@ fn finalize_passes_caption_side_and_empty_cells_through_unchanged() {
     assert_eq!(cv.empty_cells, EmptyCellsValue::Hide);
 }
 
-/// phase 2 の `em` は **親** の font-size 基準、phase 3 の `em` は
-/// **自 node の (phase 2 で確定した)** font-size 基準
-/// (CSS Values 4 §6.1.1)。両者を取り違えると padding が 32px になる。
+/// In phase 2, `em` uses the **parent's** font size. In phase 3, it uses **this node's font
+/// size**, already determined in phase 2 (CSS Values 4 §6.1.1). Confusing the two would give 32px
+/// of padding.
 #[test]
 fn finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest() {
     let mut sv = SpecifiedValues::initial();
-    sv.font_size = Length::Em(2.0); // 親 16px → 32px
-    sv.padding = Sides::all(Length::Em(1.0)); // 自 32px → 32px
+    sv.font_size = Length::Em(2.0); // Parent 16px → 32px
+    sv.padding = Sides::all(Length::Em(1.0)); // Own 32px → 32px
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.font_size, ComputedLength(32.0));
     assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
 }
 
-/// 追加した `ex` も `em` と同じ parent/own 非対称を
-/// 持つ (unknown-metric fallback `0.5em`、`Length::Ex` doc)。数値は
-/// `finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest`
-/// と揃える (`32px` / `32px`) — multiplier を変えて `ex` の `0.5` 係数を
-/// 通しても同じ基準規則になることを示す。padding 側に **親** (16px) を
-/// 誤って使うと `16 * 0.5 * 2 = 16px` になり、`32px` にならないため
-/// parent/own の取り違えを検出できる。
+/// The added `ex` unit has the same parent/own distinction as `em` (unknown-metric fallback
+/// `0.5em`; see the `Length::Ex` docs). Choose the same expected values (32px / 32px) as
+/// `finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest`, with different
+/// multipliers to exercise the `0.5` factor. Incorrectly using the **parent** (16px) for padding
+/// would yield `16 * 0.5 * 2 = 16px`, not 32px, exposing the reference-size mix-up.
 #[test]
 fn finalize_resolves_ex_against_parent_for_font_size_and_own_for_padding() {
     let mut sv = SpecifiedValues::initial();
-    sv.font_size = Length::Ex(4.0); // 親 16px 基準 → 0.5 * 4 * 16 = 32px
-    sv.padding = Sides::all(Length::Ex(2.0)); // 自 (phase 2 で確定した) 32px 基準 → 0.5 * 2 * 32 = 32px
+    sv.font_size = Length::Ex(4.0); // Parent 16px reference → 0.5 * 4 * 16 = 32px
+    sv.padding = Sides::all(Length::Ex(2.0)); // Own 32px reference (set in phase 2) → 0.5 * 2 * 32 = 32px
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.font_size, ComputedLength(32.0));
     assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
@@ -1051,7 +1026,7 @@ fn finalize_vertical_align_percentage_falls_back_to_zero_when_line_height_normal
 #[test]
 fn finalize_resolves_lh_against_own_line_height_for_padding() {
     let mut sv = SpecifiedValues::initial();
-    sv.line_height = LineHeight::Number(2.0); // 自 font-size (16px, inherited) 基準 → used 32px
+    sv.line_height = LineHeight::Number(2.0); // Own font size (inherited 16px) → used 32px
     sv.padding = Sides::all(Length::Lh(1.5)); // 1.5 * 32 = 48px
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.line_height, ComputedLineHeight::Number(2.0));
@@ -1060,8 +1035,7 @@ fn finalize_resolves_lh_against_own_line_height_for_padding() {
 
 /// When the own line-height is unresolvable (`normal`, the initial value
 /// — the common case, not an edge case), `1lh` falls back to padding's
-/// own spec initial `0` rather than a fabricated length (独立実装: see
-/// `crate::resolve::resolve_length_percentage` doc for why). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+/// own specified initial value `0`, not a fabricated length (independent implementation: see the `crate::resolve::resolve_length_percentage` docs for why). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test] item docs) — rustdoc does not inspect this position, confirmed by deliberately breaking a link
 #[test]
 fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
     let mut sv = SpecifiedValues::initial(); // line_height stays `normal`
@@ -1071,9 +1045,9 @@ fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
     assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
 }
 
-/// `<percentage>` は property ごとに扱いが違う: `font-size` は length に
-/// なり、`padding` / `margin` / `width` / `height` は computed 層に
-/// percentage のまま残る (CSS Values 4 §5.5.1 + CSS Box 3 の各 propdef)。
+/// `<percentage>` is handled differently by property: `font-size` becomes a length, while
+/// `padding`, `margin`, `width`, and `height` retain percentages in the computed layer (CSS
+/// Values 4 §5.5.1 and the respective CSS Box 3 property definitions).
 #[test]
 fn finalize_keeps_box_percentages_and_resolves_font_size_percentage() {
     let mut sv = SpecifiedValues::initial();
@@ -1091,8 +1065,8 @@ fn finalize_keeps_box_percentages_and_resolves_font_size_percentage() {
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Percent(50.0));
 }
 
-/// `rem` は phase 2 / phase 3 のどちらでも `ctx.root_font_size` 基準
-/// (CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>)。
+/// Both phase 2 and phase 3 resolve `rem` against `ctx.root_font_size` (CSS Values 4 §6.1.1
+/// <https://www.w3.org/TR/css-values-4/#rem>).
 #[test]
 fn finalize_resolves_rem_against_context_root_font_size() {
     let ctx = ResolveContext::new(ComputedLength(20.0));
@@ -1240,13 +1214,11 @@ fn inherit_from_then_finalize_preserves_cssom_writing_mode() {
     assert_eq!(child.cssom_writing_mode, WritingMode::VerticalRl);
 }
 
-/// root element では `rem` の基準が phase 2 と phase 3 で異なる
-/// (`SpecifiedValues::finalize_as_root` の doc に spec verbatim)。
+/// On the root element, `rem` uses different references in phase 2 and phase 3 (see the spec
+/// quotation in the `SpecifiedValues::finalize_as_root` docs).
 ///
-/// - `font-size: 2rem` → **32px** (initial 16px 基準 — font-\* property 上の
-///   自己参照 unit なので parent-metrics 条項が発火する)
-/// - `padding: 2rem` → **40px** (自 font-size 20px 基準 — box property は
-///   条項の対象外で `rem` は素の定義「root element の computed font-size」)
+/// - `font-size: 2rem` → **32px** (initial 16px, because the parent-metrics clause applies to the self-referential unit on a font-* property).
+/// - `padding: 2rem` → **40px** (its own 20px font size; the clause does not apply to box properties, so `rem` has its usual meaning: the root element's computed font size).
 #[test]
 fn finalize_as_root_uses_initial_for_font_size_and_own_for_box_properties() {
     let mut fs_case = SpecifiedValues::initial();
@@ -1261,7 +1233,7 @@ fn finalize_as_root_uses_initial_for_font_size_and_own_for_box_properties() {
     assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(40.0));
 }
 
-/// root element の `font-size: Nem` も親が無いので initial 16px 基準。
+/// The root element also resolves `font-size: Nem` against the initial 16px, because it has no parent.
 #[test]
 fn finalize_as_root_resolves_em_font_size_against_initial() {
     let mut sv = SpecifiedValues::initial();
@@ -1269,13 +1241,12 @@ fn finalize_as_root_resolves_em_font_size_against_initial() {
     assert_eq!(sv.finalize_as_root().font_size, ComputedLength(24.0));
 }
 
-/// root element の **box property** の `1rlh` は自分の確定済 line-height
-/// を基準にする (`rem_on_root_element_box_property_uses_own_font_size`
-/// の `rem` と同じ非対称の `rlh` 版。self-reference 条項の対象は
-/// `line-height` 自身の値だけで、`padding` はその対象外)。
-/// `finalize_as_root` は own line-height を phase 2.5 で確定させてから
-/// `ResolveContext::with_root_line_height` を組み立てる — この test は
-/// その配線がここまで届くことを直接 check する。
+/// On the root element, `1rlh` on a **box property** uses the element's resolved line height.
+/// This is the `rlh` counterpart of `rem_on_root_element_box_property_uses_own_font_size`: the
+/// self-reference rule applies to `line-height` itself, not to `padding`. `finalize_as_root`
+/// determines the root line height in phase 2.5 before constructing
+/// `ResolveContext::with_root_line_height`. This test checks that the context reaches the box
+/// property.
 #[test]
 fn finalize_as_root_resolves_rlh_using_own_line_height_basis() {
     let mut sv = SpecifiedValues::initial();
@@ -1287,12 +1258,11 @@ fn finalize_as_root_resolves_rlh_using_own_line_height_basis() {
     assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(60.0));
 }
 
-/// root element には親が無いので、`line-height` 自身の値としての
-/// `1lh`/`1rlh` (自己参照) は常に「initial values」= `normal` 基準に
-/// 帰着し、常に unresolved になる (CSS Values 4 §6.1.1 "if the element
-/// has no parent" — `finalize_as_root` doc 参照)。上の test と対で、
-/// 「box property の rlh は自分の line-height を使う」「line-height 自身の
-/// lh/rlh は self-reference で常に normal」の 2 つの非対称を区別する。
+/// With no parent, `1lh` / `1rlh` on the root element's own `line-height` are self-referential
+/// and always fall back to the "initial values" (`normal`), so they cannot be resolved (CSS
+/// Values 4 §6.1.1, "if the element has no parent"; see the `finalize_as_root` docs). Along with
+/// the preceding test, this distinguishes two cases: `rlh` on a box property uses the element's
+/// own line height, while `lh` / `rlh` on `line-height` itself use `normal`.
 #[test]
 fn finalize_as_root_line_height_self_reference_is_always_normal() {
     let mut sv = SpecifiedValues::initial();
@@ -1310,7 +1280,7 @@ fn finalize_as_root_line_height_self_reference_is_always_normal() {
     );
 }
 
-/// 全 4 side が独立に絶対化される (`Sides::map` が side を取り違えない)。
+/// All four sides are absolutized independently (`Sides::map` must not swap sides).
 #[test]
 fn finalize_absolutizes_each_side_independently() {
     let mut sv = SpecifiedValues::initial();
@@ -1327,12 +1297,11 @@ fn finalize_absolutizes_each_side_independently() {
     assert_eq!(cv.padding.left, ComputedLengthPercentage::Percent(5.0));
 }
 
-/// `text-shadow` の list-shaped phase 3 — 直上
-/// `finalize_absolutizes_each_side_independently` の `Sides<Length>`
-/// precedent を可変長 list に一般化したもの。各 item の
-/// 3 length (`offset_x`/`offset_y`/`blur_radius`) が own-node font-size
-/// basis で独立に絶対化される (`resolve_text_shadow_item`)、`<color>` は
-/// 素通し ([`TextShadowColor`] doc)。
+/// The list-shaped phase 3 of `text-shadow` generalizes the `Sides<Length>` precedent in
+/// `finalize_absolutizes_each_side_independently` above to a variable-length list. Each item
+/// independently absolutizes three lengths (`offset_x`, `offset_y`, `blur_radius`) against this
+/// node's font size via `resolve_text_shadow_item`; `<color>` passes through (see the
+/// [`TextShadowColor`] docs).
 #[test]
 fn finalize_absolutizes_each_text_shadow_item_independently() {
     let mut sv = SpecifiedValues::initial();
@@ -1373,8 +1342,8 @@ fn finalize_absolutizes_each_text_shadow_item_independently() {
     );
 }
 
-/// 空 list (`none`) は allocation せず shared computed-empty-Arc slot を
-/// 再利用する — [`Self::absolutize_with`] の `text_shadow` arm doc 参照。
+/// The empty list (`none`) reuses the shared computed-empty-Arc slot without allocation; see the
+/// `text_shadow` arm of [`Self::absolutize_with`].
 #[test]
 fn finalize_empty_text_shadow_list_reuses_shared_computed_empty_arc() {
     let sv = SpecifiedValues::initial();
