@@ -1,25 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use raikiri_js::runtime::{Abort, RunReport};
 use raikiri_js_wasmtime_harness::SINK_SYMBOL_DESCRIPTION;
 
 use super::*;
 
-/// A stand-in for `resources/testharness.js` with the three entry points the
-/// report script uses, plus `report(tests, status)`: a page calls it to have
-/// `tests` and `status` delivered to every completion callback on `load`.
-const FAKE_HARNESS: &str = r#"
-var __callbacks = [];
-function setup(options) { window.__setup_options = options; }
-function add_completion_callback(callback) { __callbacks.push(callback); }
-function report(tests, status) {
-    window.addEventListener("load", function () {
-        for (var i = 0; i < __callbacks.length; i++) {
-            __callbacks[i](tests, status);
-        }
-    });
-}
-"#;
+/// Shared fake `resources/testharness.js` stand-in, covering the entry points
+/// the report script uses, plus `report(tests, status)`: a page calls it to
+/// have `tests` and `status` delivered to every completion callback on `load`.
+const FAKE_HARNESS: &str = include_str!("../../tests/fixtures/fake-testharness.js");
 
 const HARNESS_TAGS: &str = "<script src=/resources/testharness.js></script>\
      <script src=/resources/testharnessreport.js></script>";
@@ -462,9 +451,7 @@ fn abort_outranks_host_failures_which_outrank_the_harness() {
 // checkout, copied into a temp root next to the page.
 
 fn real_harness() -> String {
-    let path: PathBuf =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt/resources/testharness.js");
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+    crate::test_support::read_real_testharness_js()
 }
 
 fn run_real(body: &str) -> Result<Vec<SubtestOutcome>, PageError> {
