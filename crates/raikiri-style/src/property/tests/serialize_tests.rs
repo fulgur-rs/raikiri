@@ -583,6 +583,82 @@ fn percentages_format_their_own_number_without_scaling_error() {
 }
 
 #[test]
+fn serialize_value_canonicalizes_single_keyword_properties() {
+    // Each entry is (property name, mixed-case input, canonical serialization).
+    // Parsing is ASCII case-insensitive, so serialization must be the
+    // canonical lowercase keyword rather than an echo of the raw input.
+    // Every variant of these 18 properties round-trips through its keyword
+    // table with no legacy remap (see the arm comment in `serialize_value`),
+    // so no variant is excluded here.
+    let cases = [
+        ("text-align", "CENTER", "center"),
+        ("text-align", "Match-Parent", "match-parent"),
+        ("text-align", "JUSTIFY-ALL", "justify-all"),
+        ("direction", "RTL", "rtl"),
+        ("word-break", "Break-All", "break-all"),
+        ("word-break", "BREAK-WORD", "break-word"),
+        ("overflow-wrap", "ANYWHERE", "anywhere"),
+        ("white-space", "PRE-WRAP", "pre-wrap"),
+        ("white-space", "Break-Spaces", "break-spaces"),
+        ("white-space-collapse", "Preserve-Breaks", "preserve-breaks"),
+        ("text-wrap-mode", "NOWRAP", "nowrap"),
+        ("text-wrap-style", "BALANCE", "balance"),
+        ("hyphens", "MANUAL", "manual"),
+        ("line-break", "STRICT", "strict"),
+        ("text-justify", "Inter-Word", "inter-word"),
+        // `distribute` keeps its legacy keyword at the specified-value layer;
+        // the computed layer remaps it to `inter-character`.
+        ("text-justify", "DISTRIBUTE", "distribute"),
+        ("text-align-last", "JUSTIFY", "justify"),
+        ("text-combine-upright", "ALL", "all"),
+        ("text-orientation", "UPRIGHT", "upright"),
+        ("unicode-bidi", "Bidi-Override", "bidi-override"),
+        ("unicode-bidi", "Isolate-Override", "isolate-override"),
+        ("unicode-bidi", "PLAINTEXT", "plaintext"),
+        ("font-variant-caps", "Small-Caps", "small-caps"),
+        ("font-variant-caps", "ALL-PETITE-CAPS", "all-petite-caps"),
+        ("writing-mode", "Vertical-RL", "vertical-rl"),
+        ("writing-mode", "SIDEWAYS-LR", "sideways-lr"),
+    ];
+    for (name, input, expected) in cases {
+        let value = parse_entire(input, name)
+            .unwrap_or_else(|| panic!("{name}: {input:?} should parse"));
+        assert_eq!(
+            serialize_value(&value),
+            Some(expected.to_owned()),
+            "{name}: {input:?}"
+        );
+    }
+}
+
+#[test]
+fn serialize_value_normalizes_text_transform_component_order() {
+    // `text-transform` accepts its case/width components in any order; the
+    // serialization is always the table order (case, `full-width`,
+    // `full-size-kana`).
+    let cases = [
+        ("NONE", "none"),
+        ("Capitalize", "capitalize"),
+        ("FULL-WIDTH CAPITALIZE", "capitalize full-width"),
+        ("Full-Size-Kana Uppercase", "uppercase full-size-kana"),
+        (
+            "full-size-kana full-width lowercase",
+            "lowercase full-width full-size-kana",
+        ),
+        ("MATH-AUTO", "math-auto"),
+    ];
+    for (input, expected) in cases {
+        let value = parse_entire(input, "text-transform")
+            .unwrap_or_else(|| panic!("text-transform: {input:?} should parse"));
+        assert_eq!(
+            serialize_value(&value),
+            Some(expected.to_owned()),
+            "text-transform: {input:?}"
+        );
+    }
+}
+
+#[test]
 fn negative_zero_serializes_without_a_sign() {
     use cssparser::ToCss as _;
 
