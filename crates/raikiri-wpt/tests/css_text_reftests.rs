@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use raikiri_wpt::reftest::{
-    ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair, run_pair_with_images,
+    ReftestConfig, ReftestKind, discover_pairs_for_file_with_wpt_root, run_pair,
+    run_pair_with_images,
 };
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
@@ -772,4 +773,53 @@ fn word_space_transform_without_auto_phrase_exact() {
         result.outcome,
         result.mismatched_pixels
     );
+}
+
+/// `no-autospace` differs from `normal` in both WPT match and mismatch pairs.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_autospace_no_vs_normal_both_pairs_exact() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/css-text/text-autospace/text-autospace-no-001.html");
+    let pairs =
+        discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pairs");
+    assert_eq!(
+        pairs.len(),
+        2,
+        "exercise both match and mismatch references"
+    );
+    assert_eq!(
+        pairs
+            .iter()
+            .filter(|pair| pair.kind == ReftestKind::Match)
+            .count(),
+        1
+    );
+    assert_eq!(
+        pairs
+            .iter()
+            .filter(|pair| pair.kind == ReftestKind::Mismatch)
+            .count(),
+        1
+    );
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let mut failures = Vec::new();
+    for (index, pair) in pairs.iter().enumerate() {
+        let result = run_pair(pair, config).expect("run WPT pair");
+        eprintln!(
+            "pair {index} {:?}: mismatches={}",
+            pair.kind, result.mismatched_pixels
+        );
+        if !matches!(result.outcome, TestOutcome::Pass) {
+            failures.push(format!(
+                "pair {index}: outcome={:?}, mismatches={}",
+                result.outcome, result.mismatched_pixels
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("; "));
 }
