@@ -684,7 +684,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text no-autospace vs normal exact match+mismatch slice (+1).
     // + CSS Text ideograph-numeric text-autospace Ahem exact slice (+1).
     // + CSS Text supplementary ideograph text-autospace exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1355);
+    // + CSS Text full-width collapsed spaces Ahem exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1356);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
