@@ -2906,3 +2906,48 @@ fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
         b_loc.y
     );
 }
+
+#[test]
+fn multicol_style_resolves_normal_gap_to_one_em() {
+    // CSS Multi-column Layout Module Level 1 section 5 Column Gaps and Rules
+    // https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
+    // gives column-gap normal a used value of 1em on a multicol container.
+    // The nested fragmentation seam carries that used gap in MulticolStyle,
+    // so normal must resolve against the container font size here too, not
+    // collapse to 0 like the flex and grid gap bridge does.
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let default_container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;width:200px"),
+    );
+    let large_container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;width:200px;font-size:32px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let default_style =
+        multicol_style_from_computed(&cascade.computed[default_container]).expect("multicol style");
+    assert!(
+        (default_style.gap - 16.0).abs() < 0.01,
+        "default font-size 16px gives 16px gap, got {:?}",
+        default_style
+    );
+    assert_eq!(default_style.gap_percent, None);
+    let large_style =
+        multicol_style_from_computed(&cascade.computed[large_container]).expect("multicol style");
+    assert!(
+        (large_style.gap - 32.0).abs() < 0.01,
+        "font-size 32px gives 32px gap, got {:?}",
+        large_style
+    );
+    assert_eq!(large_style.gap_percent, None);
+}
