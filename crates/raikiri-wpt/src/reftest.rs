@@ -1724,6 +1724,7 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_wpt_inner_html_fragment(
     markup: &str,
     context_tag: &str,
