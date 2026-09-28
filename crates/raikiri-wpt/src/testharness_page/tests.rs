@@ -39,7 +39,7 @@ fn page_root(harness: &str, body: &str) -> tempfile::TempDir {
     dir
 }
 
-fn run_fake(body: &str) -> Result<Vec<TestOutcome>, PageError> {
+fn run_fake(body: &str) -> Result<Vec<SubtestOutcome>, PageError> {
     let dir = page_root(FAKE_HARNESS, body);
     run_testharness_page(Path::new("css/t/page.html"), dir.path())
 }
@@ -102,8 +102,8 @@ fn oversized_final_document_without_abort_remains_a_host_error() {
     assert!(matches!(result, Err(PageError::Host(message)) if message.contains("transport cap")));
 }
 
-fn outcome(name: &str, passed: bool, message: &str) -> TestOutcome {
-    TestOutcome {
+fn outcome(name: &str, passed: bool, message: &str) -> SubtestOutcome {
+    SubtestOutcome {
         name: name.to_owned(),
         passed,
         message: message.to_owned(),
@@ -466,7 +466,7 @@ fn real_harness() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
-fn run_real(body: &str) -> Result<Vec<TestOutcome>, PageError> {
+fn run_real(body: &str) -> Result<Vec<SubtestOutcome>, PageError> {
     let dir = page_root(&real_harness(), body);
     run_testharness_page(Path::new("css/t/page.html"), dir.path())
 }

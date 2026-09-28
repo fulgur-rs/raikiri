@@ -2,7 +2,6 @@
 use boa_engine::object::FunctionObjectBuilder;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{Context, JsResult, JsString, JsSymbol, JsValue, NativeFunction, js_string};
-use raikiri_js::TestOutcome;
 use raikiri_js::runtime::{DomRuntime, RunReport, RuntimeError};
 pub const SINK_SYMBOL_DESCRIPTION: &str = "raikiri testharness report sink";
 
@@ -35,9 +34,25 @@ pub const DOCUMENT_FONTS_SCRIPT: &str = r#"(function () {
 
 pub const MAX_DELIVERED_TESTS: u64 = 100_000;
 
+/// One WPT testharness subtest's outcome, as reported by the harness.
+///
+/// This is WPT-specific: it lives in this harness support crate (shared by
+/// the native and isolated page runners) rather than in `raikiri-js`, which
+/// is a general document-script runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubtestOutcome {
+    /// The subtest's name, verbatim.
+    pub name: String,
+    /// Whether the subtest passed.
+    pub passed: bool,
+    /// The harness's message for the subtest, usually empty when `passed`
+    /// is true.
+    pub message: String,
+}
+
 #[derive(Debug, Default)]
 pub struct Delivery {
-    pub tests: Vec<TestOutcome>,
+    pub tests: Vec<SubtestOutcome>,
     pub harness_status: f64,
     pub harness_message: String,
 }
@@ -118,7 +133,7 @@ pub fn deliver(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
                 .get(js_string!("status"), context)?
                 .to_number(context)?;
             let message = string_property(&test, "message", context)?;
-            delivery.tests.push(test_outcome(name, status, message));
+            delivery.tests.push(subtest_outcome(name, status, message));
         }
     }
     if let Some(status) = status_value.as_object() {
@@ -158,14 +173,14 @@ pub fn status_word(status: f64) -> Option<&'static str> {
     })
 }
 
-pub fn test_outcome(name: String, status: f64, message: String) -> TestOutcome {
+pub fn subtest_outcome(name: String, status: f64, message: String) -> SubtestOutcome {
     match status_word(status) {
-        None => TestOutcome {
+        None => SubtestOutcome {
             name,
             passed: true,
             message,
         },
-        Some(word) => TestOutcome {
+        Some(word) => SubtestOutcome {
             name,
             passed: false,
             message: format!("{word}: {message}"),

@@ -11,9 +11,7 @@
 use std::fs;
 use std::path::Path;
 
-use raikiri_js::TestOutcome;
-
-use crate::testharness_page::{PageError, run_testharness_page_with_preamble};
+use crate::testharness_page::{PageError, SubtestOutcome, run_testharness_page_with_preamble};
 
 /// Known-valid, property-agnostic sanity check run before any of the page's
 /// scripts: `color: red` must round-trip through an element's inline
@@ -40,7 +38,7 @@ pub struct ParsingFileOutcome {
     pub test_id: String,
     /// One entry per `test()` call the file's scripts registered, in
     /// registration order.
-    pub outcomes: Vec<TestOutcome>,
+    pub outcomes: Vec<SubtestOutcome>,
 }
 
 impl ParsingFileOutcome {
@@ -156,7 +154,7 @@ fn run_page_after_control(
     wpt_root: &Path,
     relative_path: &Path,
     control: &str,
-) -> Result<Vec<TestOutcome>, ParsingFileError> {
+) -> Result<Vec<SubtestOutcome>, ParsingFileError> {
     run_testharness_page_with_preamble(relative_path, wpt_root, control).map_err(
         |error| match error {
             PageError::Preamble(message) => ParsingFileError::PositiveControl(message),
