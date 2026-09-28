@@ -1598,3 +1598,5 @@ css/css-text/word-space-transform/word-space-transform-006.html
 css/css-text/word-space-transform/word-space-transform-028.html
 # --- css-text text-autospace no/normal match+mismatch exact 800x600 PASS-only (+1) ---
 css/css-text/text-autospace/text-autospace-no-001.html
+# --- css-text text-autospace ideograph-numeric Ahem exact 800x600 PASS-only (+1) ---
+css/css-text/text-autospace/text-autospace-ideograph-numeric-001.html
