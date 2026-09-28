@@ -682,7 +682,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text word-space-transform:space inline enable exact slice (+1).
     // + CSS Text no virtual boundaries without auto-phrase exact slice (+1).
     // + CSS Text no-autospace vs normal exact match+mismatch slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1353);
+    // + CSS Text ideograph-numeric text-autospace Ahem exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1354);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
