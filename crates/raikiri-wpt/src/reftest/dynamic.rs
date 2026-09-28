@@ -99,7 +99,10 @@ pub(super) fn prepare(
         runtime
             .evaluate(preamble)
             .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
-        let report = runtime.run_document();
+        let report = runtime.run_document_with_callback(
+            raikiri_js_wasmtime_harness::SINK_SYMBOL_DESCRIPTION,
+            raikiri_js_wasmtime_harness::deliver,
+        );
         let host = runtime.into_host();
         serialize(host.document(), &report)
     }

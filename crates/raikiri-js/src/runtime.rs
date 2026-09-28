@@ -5,7 +5,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use boa_engine::{Context, JsObject, JsValue, Source};
+use boa_engine::object::FunctionObjectBuilder;
+use boa_engine::property::{PropertyDescriptor, PropertyKey};
+use boa_engine::{
+    Context, JsNativeError, JsObject, JsResult, JsString, JsSymbol, JsValue, NativeFunction, Source,
+};
 
 pub(crate) mod collections;
 pub(crate) mod dispatch;
@@ -109,6 +113,106 @@ pub(crate) fn shared(context: &Context) -> Shared {
         .get_data::<Shared>()
         .cloned()
         .expect("DomRuntime installs its shared state before running scripts")
+}
+
+/// The embedder closures [`DomRuntime::evaluate_with_callback`] and
+/// [`DomRuntime::run_document_with_callback`] accept.
+type CallbackFn = Box<dyn FnMut(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue>>;
+
+/// A native Rust callback installed for script to call, owned by
+/// [`DomRuntime::evaluate_with_callback`] and
+/// [`DomRuntime::run_document_with_callback`].
+///
+/// Boa's safe native-function constructors only accept `Copy` closures
+/// ([`NativeFunction::from_copy_closure`]) or raw function pointers, so an
+/// embedder's `FnMut` closure cannot live in the function object itself.
+/// Instead the function object holds the [`callback_trampoline`] function
+/// pointer, which looks this slot back up from the context's host data on
+/// every call. The slot is plain Rust heap (`Rc<RefCell<..>>`), never seen
+/// by Boa's garbage collector -- the same way [`State`] already keeps
+/// `JsObject` wrappers alive outside the collector -- so capturing script
+/// values in the closure is as safe here as it is there.
+///
+/// Installing a new callback replaces the previous slot: retained
+/// references to the old function object then throw (see
+/// [`callback_trampoline`]) instead of reaching the new closure.
+#[derive(Clone)]
+struct CallbackSlot {
+    callback: Rc<RefCell<CallbackFn>>,
+}
+
+/// The function pointer behind every callback installed by
+/// [`DomRuntime::evaluate_with_callback`] and
+/// [`DomRuntime::run_document_with_callback`]: looks the embedder's closure
+/// back up from the context's host data and calls it.
+///
+/// A call with no slot installed -- script kept a reference to a one-shot
+/// [`DomRuntime::evaluate_with_callback`] function past its evaluation's
+/// return, or a newer callback replaced the slot -- throws a `TypeError`
+/// instead of touching freed state, and a reentrant call -- the callback
+/// running script that calls the same callback again before the outer call
+/// returned -- throws a `TypeError` instead of panicking on the slot's
+/// `RefCell`.
+fn callback_trampoline(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let Some(slot) = context.get_data::<CallbackSlot>().cloned() else {
+        return Err(JsNativeError::typ()
+            .with_message("native callback is no longer installed")
+            .into());
+    };
+    let mut callback = match slot.callback.try_borrow_mut() {
+        Ok(callback) => callback,
+        Err(_) => {
+            return Err(JsNativeError::typ()
+                .with_message("native callback was reentered")
+                .into());
+        }
+    };
+    callback(this, args, context)
+}
+
+/// Store `callback` in the context's host data and build the script-visible
+/// function object for it (named `name`, taking any number of arguments).
+/// The caller installs the returned object on the global object and removes
+/// both the property and the slot when the callback's scope ends.
+fn native_callback_object<F>(context: &mut Context, name: &str, callback: F) -> JsObject
+where
+    F: FnMut(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue> + 'static,
+{
+    let slot = CallbackSlot {
+        callback: Rc::new(RefCell::new(Box::new(callback) as CallbackFn)),
+    };
+    let _ = context.insert_data(slot);
+    FunctionObjectBuilder::new(
+        context.realm(),
+        NativeFunction::from_fn_ptr(callback_trampoline),
+    )
+    .name(JsString::from(name))
+    .length(0)
+    .build()
+    .into()
+}
+
+/// Install `callback` on the realm's global object under `key` as a
+/// non-enumerable, non-writable, configurable property: invisible to
+/// `Object.keys` and assignment, removable afterwards.
+fn define_callback_property(
+    context: &mut Context,
+    key: impl Into<PropertyKey>,
+    function: JsObject,
+) {
+    let descriptor = PropertyDescriptor::builder()
+        .value(function)
+        .writable(false)
+        .enumerable(false)
+        .configurable(true);
+    context
+        .global_object()
+        .define_property_or_throw(key, descriptor, context)
+        .expect("defining a fresh callback property on the realm's global object does not fail");
 }
 
 /// Why a script evaluation failed.
@@ -246,6 +350,59 @@ impl DomRuntime {
         })
     }
 
+    /// Evaluate a classic script with a native Rust callback visible to it
+    /// under `name`, then remove `name` again.
+    ///
+    /// This is the typed alternative to reaching for
+    /// [`DomRuntime::context_mut`] and building the function object by hand
+    /// with `boa_engine` directly: the callback is installed as a
+    /// non-enumerable, non-writable, configurable global just before
+    /// evaluation and deleted just after, whether evaluation succeeded or
+    /// not, so a later script never sees it. A script that keeps its own
+    /// reference to the function and calls it afterwards gets a `TypeError`.
+    /// Otherwise evaluation works exactly like [`DomRuntime::evaluate`],
+    /// including the microtask checkpoint and the [`RuntimeError::Host`] /
+    /// [`RuntimeError::Aborted`] precedence.
+    ///
+    /// `name` must not already exist as an own property of the global
+    /// object: overwriting (and then deleting) a page's own global would
+    /// silently clobber it, so that is [`RuntimeError::JavaScript`] instead.
+    /// Installing replaces any callback an earlier call left installed (see
+    /// [`DomRuntime::run_document_with_callback`]). The callback may capture
+    /// Rust state (`FnMut`); it must not call itself reentrantly (a callback
+    /// that runs script which calls the same callback again throws a
+    /// `TypeError` instead of panicking).
+    pub fn evaluate_with_callback<F>(
+        &mut self,
+        source: &str,
+        name: &str,
+        callback: F,
+    ) -> Result<JsValue, RuntimeError>
+    where
+        F: FnMut(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue> + 'static,
+    {
+        let key = JsString::from(name);
+        let defined = self
+            .context
+            .global_object()
+            .has_own_property(key.clone(), &mut self.context)
+            .expect("reading an own property of the realm's global object does not fail");
+        if defined {
+            return Err(RuntimeError::JavaScript(format!(
+                "callback name {name:?} is already defined on the global object"
+            )));
+        }
+        let function = native_callback_object(&mut self.context, name, callback);
+        define_callback_property(&mut self.context, key.clone(), function);
+        let result = self.evaluate(source);
+        let _ = self
+            .context
+            .global_object()
+            .delete_property_or_throw(key, &mut self.context);
+        self.context.remove_data::<CallbackSlot>();
+        result
+    }
+
     /// Run tasks and microtasks until both queues are empty or a limit is hit.
     ///
     /// Each turn takes the task due earliest (registration order breaks
@@ -287,12 +444,75 @@ impl DomRuntime {
         report
     }
 
+    /// Run the document end to end like [`DomRuntime::run_document`], with
+    /// a native Rust callback installed for the whole run under a fresh
+    /// symbol, then remove the symbol again.
+    ///
+    /// This is the [`DomRuntime::run_document`] counterpart of
+    /// [`DomRuntime::evaluate_with_callback`], for harnesses whose delivery
+    /// script runs mid-document as one of the page's own `<script>` elements
+    /// rather than as a single evaluated string: `symbol_description` is the
+    /// fresh symbol's description, so the delivery script finds it by
+    /// scanning `Object.getOwnPropertySymbols(globalThis)` for that
+    /// description, claims it (and deletes it) for itself. A page script
+    /// running before the delivery script can observe the symbol the same
+    /// way; that window is inherent to handing a value to mid-document
+    /// scripts through the global object. If no script claims it, this
+    /// removes it after the run instead, so no property leaks either way.
+    ///
+    /// The callback slot itself stays installed after the run, so a delivery
+    /// script that kept its own reference (for example, a testharness
+    /// completion callback the timeout probe triggers after the run) can
+    /// still deliver; only the global-object property is removed. A later
+    /// callback install replaces the slot, and teardown drops it with the
+    /// runtime.
+    ///
+    /// If [`DomRuntime::run_document`] already ran, this returns its cached
+    /// [`RunReport`] without invoking the callback, the same idempotency
+    /// [`DomRuntime::run_document`] itself has. The callback's reentrancy
+    /// rule is the same as [`DomRuntime::evaluate_with_callback`]'s.
+    pub fn run_document_with_callback<F>(
+        &mut self,
+        symbol_description: &str,
+        callback: F,
+    ) -> RunReport
+    where
+        F: FnMut(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue> + 'static,
+    {
+        // Idempotent like `run_document`: a cached report means the
+        // document already ran, so there is nothing to hand the callback to.
+        if self.report.is_some() {
+            return self.run_document();
+        }
+        let key = JsSymbol::new(Some(JsString::from(symbol_description)))
+            .expect("symbol ids run out only after 2^64 symbols");
+        let function = native_callback_object(&mut self.context, symbol_description, callback);
+        define_callback_property(&mut self.context, key.clone(), function);
+        let report = self.run_document();
+        let _ = self
+            .context
+            .global_object()
+            .delete_property_or_throw(key, &mut self.context);
+        // The slot stays: a delivery script that kept its own reference
+        // still delivers afterwards (see the method doc comment). The
+        // property above is what must not leak, and it is gone.
+        report
+    }
+
     /// The virtual clock, in milliseconds since the runtime was created.
     pub fn now(&self) -> f64 {
         shared(&self.context).0.borrow().event_loop.now
     }
 
-    /// The underlying Boa context, for harness adapters.
+    /// The underlying Boa context, for harness adapters that need raw
+    /// engine access (for example, reading back context host data).
+    ///
+    /// To pass a native Rust callback into evaluated code, prefer
+    /// [`DomRuntime::evaluate_with_callback`] or
+    /// [`DomRuntime::run_document_with_callback`]: they install the function
+    /// object, hide it from string-key enumeration, and remove it again,
+    /// without the caller touching `boa_engine`'s function, symbol, or
+    /// property machinery directly.
     pub fn context_mut(&mut self) -> &mut Context {
         &mut self.context
     }

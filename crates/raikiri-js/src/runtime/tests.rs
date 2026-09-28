@@ -540,3 +540,145 @@ fn element_attribute_mutations_round_trip_through_native_bindings() {
         "line.getAttribute('data-count') === null && !line.hasAttribute('data-count')",
     ));
 }
+
+// ---- evaluate_with_callback ----
+
+/// [`DomRuntime::evaluate_with_callback`]'s callback runs when the script
+/// calls it, sees the script's arguments, and hands its return value back.
+/// The closure is `FnMut`: incrementing the directly-captured counter only
+/// compiles under an `FnMut` bound, and the returned value proves it ran.
+#[test]
+fn callback_is_invoked_with_script_arguments_and_returns_a_value() {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let calls = Rc::new(Cell::new(0u32));
+    let seen: Rc<RefCell<Vec<(f64, String)>>> = Rc::default();
+    let mut direct_count = 0u32;
+    let result = rt
+        .evaluate_with_callback("sink(40 + 2, 'x')", "sink", {
+            let calls = Rc::clone(&calls);
+            let seen = Rc::clone(&seen);
+            move |_this, args, context| {
+                direct_count += 1;
+                calls.set(calls.get() + 1);
+                let number = args[0].to_number(context)?;
+                let text = args[1].to_string(context)?.to_std_string_escaped();
+                seen.borrow_mut().push((number, text));
+                Ok(JsValue::from(number + f64::from(direct_count)))
+            }
+        })
+        .unwrap();
+    assert_eq!(result.to_number(rt.context_mut()).unwrap(), 43.0);
+    assert_eq!(calls.get(), 1);
+    assert_eq!(*seen.borrow(), vec![(42.0, "x".to_owned())]);
+}
+
+/// The callback is visible by name while its script runs (but hidden from
+/// `Object.keys`) and gone afterwards: no global leaks into later scripts.
+#[test]
+fn callback_global_is_visible_during_evaluation_and_removed_after() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let visible = rt
+        .evaluate_with_callback(
+            "typeof sink === 'function' && !Object.keys(globalThis).includes('sink')",
+            "sink",
+            |_this, _args, _context| Ok(JsValue::undefined()),
+        )
+        .unwrap();
+    assert!(visible.to_boolean());
+    assert!(eval_bool(&mut rt, "typeof sink === 'undefined'"));
+    assert!(eval_bool(
+        &mut rt,
+        "!Object.getOwnPropertyNames(globalThis).includes('sink')"
+    ));
+}
+
+/// A callback exception reaches the caller as [`RuntimeError::JavaScript`],
+/// and the global is still removed.
+#[test]
+fn callback_exception_is_reported_as_a_javascript_error() {
+    use boa_engine::JsNativeError;
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let result = rt.evaluate_with_callback("sink();", "sink", |_this, _args, _context| {
+        Err(JsNativeError::typ().with_message("boom").into())
+    });
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(message)) if message.contains("boom")),
+        "{result:?}"
+    );
+    assert!(eval_bool(&mut rt, "typeof sink === 'undefined'"));
+}
+
+/// Installing over an existing global is refused instead of clobbering it,
+/// and the runtime keeps working afterwards.
+#[test]
+fn callback_name_colliding_with_an_existing_global_is_an_error() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var sink = 41;").unwrap();
+    let result = rt.evaluate_with_callback("sink;", "sink", |_this, _args, _context| {
+        Ok(JsValue::undefined())
+    });
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(_))),
+        "{result:?}"
+    );
+    assert!(eval_bool(&mut rt, "sink === 41"));
+}
+
+/// A function reference the script kept throws a `TypeError` when called
+/// after the installing evaluation returned, instead of reaching freed
+/// state.
+#[test]
+fn callback_reference_kept_by_script_throws_after_return() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate_with_callback(
+        "var stashed = sink; stashed(1);",
+        "sink",
+        |_this, _args, _context| Ok(JsValue::undefined()),
+    )
+    .unwrap();
+    let result = rt.evaluate("stashed(1);");
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(message)) if message.contains("no longer installed")),
+        "{result:?}"
+    );
+}
+
+/// A callback that runs script which calls the same callback again throws a
+/// `TypeError` instead of panicking on the slot's `RefCell`.
+#[test]
+fn reentrant_callback_throws_instead_of_panicking() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let entries = Rc::new(Cell::new(0u32));
+    let result = rt.evaluate_with_callback("sink(function () { sink(2); });", "sink", {
+        let entries = Rc::clone(&entries);
+        move |_this, args, context| {
+            entries.set(entries.get() + 1);
+            match args.first().and_then(|value| value.as_object()) {
+                Some(hook) => hook
+                    .call(&JsValue::undefined(), &[], context)
+                    .map(|_| JsValue::undefined()),
+                None => Ok(JsValue::from(2)),
+            }
+        }
+    });
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(message)) if message.contains("was reentered")),
+        "{result:?}"
+    );
+    // The inner call reached the trampoline (which rejected it) without
+    // ever entering the closure body a second time.
+    assert_eq!(entries.get(), 1);
+}
