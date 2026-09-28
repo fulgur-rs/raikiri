@@ -5203,11 +5203,11 @@ pub(crate) fn preshape_text(
         tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
     }
 
-    // The in-flow inline `<wbr>` under `word-space-transform: space` becomes
-    // an advance-bearing inline item. The element has no Text node to shape;
-    // measuring its own font's space keeps the following run in place without
-    // changing the authored DOM or manufacturing a text node.  This is the
-    // single-line spacing subset, not general `<wbr>` wrapping behavior.
+    // The in-flow inline `<wbr>` under `word-space-transform: space` or
+    // `ideographic-space` becomes an advance-bearing inline item. The element
+    // has no Text node to shape; measuring its own font's space keeps the
+    // following run in place without changing the authored DOM or making a
+    // text node. This covers single-line spacing, not general `<wbr>` wrapping.
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].tag_name() != Some("wbr") || !doc.nodes[idx].is_in_document() {
             continue;
@@ -5215,23 +5215,24 @@ pub(crate) fn preshape_text(
         let cv = &cascade.computed[idx];
         if cv.display != DisplayValue::Inline
             || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-            || cv.word_space_transform != WordSpaceTransform::Space
         {
             continue;
         }
+        let space = match cv.word_space_transform {
+            WordSpaceTransform::Space if text_transform_has_full_width(cv.text_transform) => {
+                "\u{3000}"
+            }
+            WordSpaceTransform::Space => " ",
+            WordSpaceTransform::IdeographicSpace => "\u{3000}",
+            _ => continue,
+        };
         let family = cv
             .font_family
             .iter()
             .map(|family| family.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        // A full-width text transform also applies to the space that
-        // replaces `<wbr>`; measure the same glyph as an inserted U+200B.
-        let space = if text_transform_has_full_width(cv.text_transform) {
-            "\u{3000}"
-        } else {
-            " "
-        };
+        // Match the glyph inserted for U+200B, including full-width transforms.
         let advance = probe_text_full_width(
             fonts,
             layout_cx,
@@ -5426,8 +5427,12 @@ pub(crate) fn preshape_text(
         // The explicit separator is inserted after phase-one white-space
         // collapse, so it does not merge with adjacent authored spaces. Keep
         // the DOM text unchanged; the inserted space is shaped by Parley.
-        if cv.word_space_transform == WordSpaceTransform::Space {
-            text = text.replace(ZERO_WIDTH_SPACE, " ");
+        match cv.word_space_transform {
+            WordSpaceTransform::Space => text = text.replace(ZERO_WIDTH_SPACE, " "),
+            WordSpaceTransform::IdeographicSpace => {
+                text = text.replace(ZERO_WIDTH_SPACE, "\u{3000}");
+            }
+            _ => {}
         }
         // CSS text transforms run on the post-collapse text. In particular,
         // `full-width` must see only the surviving U+0020 space; applying it

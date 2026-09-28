@@ -5786,8 +5786,9 @@ css_keywords!(TextJustify {
 
 /// CSS Text 4 `word-space-transform` computed value.
 ///
-/// The inline text layout consumes `space` for interior U+200B and in-flow
-/// inline `<wbr>` in the single-line spacing subset. Other values are data-only.
+/// The inline text layout consumes `space` and `ideographic-space` for
+/// interior U+200B and in-flow inline `<wbr>` in the single-line spacing
+/// subset. Other values are data-only.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WordSpaceTransform {

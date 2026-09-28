@@ -3967,3 +3967,79 @@ fn word_space_transform_space_uses_wbr_own_computed_value() {
     assert_eq!(authored, taffy::Dimension::length(100.0));
     assert_eq!(inline_block, authored);
 }
+
+#[test]
+fn word_space_transform_ideographic_space_shapes_both_separator_kinds() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("font-size:32px;word-space-transform:ideographic-space"),
+    );
+    doc.append_text(block, "あ");
+    let wbr = doc.append_element(Some(block), "wbr", Style::default(), None::<&str>);
+    let text = doc.append_text(block, "い\u{200B}う");
+    let reference = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("font-size:32px;word-space-transform:none"),
+    );
+    let reference_text = doc.append_text(reference, "い\u{3000}う");
+    let disabled_wbr = doc.append_element(
+        Some(block),
+        "wbr",
+        Style::default(),
+        Some("word-space-transform:none"),
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    apply_computed_to_style(&mut doc, &cascade);
+    let disabled_width = doc.nodes[disabled_wbr].style.size.width;
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    preshape_text(&mut doc, &cascade, &mut fonts, &mut layout_cx, 800.0, 800.0);
+
+    assert_eq!(
+        doc.nodes[text].text_content().expect("original text"),
+        "い\u{200B}う"
+    );
+    let shaped = doc.nodes[text].text_layout().expect("shaped").full_width();
+    let expected = doc.nodes[reference_text]
+        .text_layout()
+        .expect("shaped reference")
+        .full_width();
+    assert!((shaped - expected).abs() < 0.01);
+    let actual_wbr = doc.nodes[wbr]
+        .style
+        .size
+        .width
+        .into_option()
+        .expect("space width");
+    let family = cascade.computed[wbr]
+        .font_family
+        .iter()
+        .map(|family| family.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let expected_wbr = probe_text_full_width(
+        &mut fonts,
+        &mut layout_cx,
+        "\u{3000}",
+        TextProbeStyle {
+            family_str: &family,
+            font_size_px: cascade.computed[wbr].font_size.px(),
+            font_weight: cascade.computed[wbr].font_weight,
+            font_style: cascade.computed[wbr].font_style,
+            letter_spacing: cascade.computed[wbr].letter_spacing.px(),
+            word_spacing: cascade.computed[wbr].word_spacing.px(),
+        },
+    );
+    assert!((actual_wbr - expected_wbr).abs() < 0.01);
+    assert_eq!(doc.nodes[disabled_wbr].style.size.width, disabled_width);
+}
