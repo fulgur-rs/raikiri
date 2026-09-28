@@ -88,10 +88,7 @@ fn dispatch(request: GuestRequest) -> Result<GuestValue, String> {
             }
             GuestOperation::RunDocument => Ok(GuestValue::Report(
                 runtime
-                    .run_document_with_callback(
-                        harness::SINK_SYMBOL_DESCRIPTION,
-                        harness::deliver,
-                    )
+                    .run_document_with_callback(harness::SINK_SYMBOL_DESCRIPTION, harness::deliver)
                     .into(),
             )),
             GuestOperation::ProbeTimeout(r) => {
