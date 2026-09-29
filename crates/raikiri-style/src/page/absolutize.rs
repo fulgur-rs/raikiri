@@ -589,7 +589,6 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::BackgroundClip(_)
         | PropertyValue::BackgroundOrigin(_)
 
-        | PropertyValue::ObjectFit(_)
         | PropertyValue::MixBlendMode(_)
 
         | PropertyValue::ClipPath(_)

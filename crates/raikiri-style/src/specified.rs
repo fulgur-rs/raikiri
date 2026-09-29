@@ -42,9 +42,9 @@ use crate::property::{
     GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
     HyphenateCharacter, HyphenateLimitChars, Hyphens, Length, LengthOrAuto, LengthOrNormal,
     LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage,
-    MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides, SpecifiedTable,
-    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    MixBlendMode, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides, SpecifiedTable, TabSize,
+    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
     TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
@@ -571,9 +571,6 @@ pub struct SpecifiedValues {
     /// Percentages pass through because they need the gradient box dimensions at paint /
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
-    /// Staging value for [`ComputedValues::object_fit`]; computed-equivalent because `ObjectFit`
-    /// carries no lengths.
-    pub object_fit: ObjectFit,
     /// **Specified** `object-position`; phase 3 absolutizes `<length-percentage>` in each offset,
     /// as for `background_position`, reusing the [`CssPosition`] type.
     pub object_position: CssPosition,
@@ -921,8 +918,6 @@ impl SpecifiedValues {
             },
             // CSS Backgrounds and Borders 3 §2.3: background-image is initially `none`.
             background_image: BackgroundImage::None,
-            // CSS Images Module Level 3 §5.1: object-fit is initially `fill`.
-            object_fit: ObjectFit::Fill,
             // CSS Images Module Level 3 §5.2: object-position is initially `50% 50%`, unlike
             // background-position (`0% 0%`).
             object_position: CssPosition {
@@ -1294,10 +1289,8 @@ impl SpecifiedValues {
                 vertical: CssPositionOffset::Start(Length::Percent(0.0)),
             },
             background_image: BackgroundImage::None,
-            // non-inherited (CSS Images Module Level 3 §5.1/§5.2, both
-            // "Inherited: no") — child starts from spec initial, same as
-            // `background_repeat` above.
-            object_fit: ObjectFit::Fill,
+            // non-inherited (CSS Images Module Level 3 §5.2 "Inherited: no") —
+            // child starts from spec initial, same as `background_repeat` above.
             object_position: CssPosition {
                 horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                 vertical: CssPositionOffset::Start(Length::Percent(50.0)),
@@ -1795,9 +1788,6 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            // CSS Images Module Level 3 §5.1: the computed value is the specified keyword with no
-            // lengths, like background_repeat.
-            object_fit: self.object_fit,
             transform_origin: resolve_css_position(
                 self.transform_origin,
                 font_size,

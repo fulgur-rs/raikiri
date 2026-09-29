@@ -2096,12 +2096,6 @@ pub(super) fn parse_background_attachment(
     BackgroundAttachment::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// Parse `object-fit: <fit>` (see the [`ObjectFit`] grammar:
-/// `fill | contain | cover | none | scale-down`).
-pub(super) fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> {
-    ObjectFit::from_css_ident(input.expect_ident().ok()?)
-}
-
 /// Parse `mix-blend-mode: <blend-mode>` (see the [`MixBlendMode`]
 /// grammar: 16 keywords).
 pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlendMode> {

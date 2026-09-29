@@ -7316,50 +7316,6 @@ pub struct BackgroundShorthand {
     pub origin: VisualBox,
 }
 
-/// Specified value of `object-fit`.
-///
-/// CSS Images Module Level 3 §5.1 "Sizing the replaced element: the
-/// object-fit property"
-/// <https://www.w3.org/TR/css-images-3/#the-object-fit>. Grammar: `fill |
-/// contain | cover | none | scale-down`. Applies to: replaced elements
-/// only. **Non-inherited**. Computed value = specified keyword — no length
-/// payload (the same shape as `BackgroundAttachment`).
-///
-/// It pairs with `object-position` (CSS Images 3 §5.2; reuses [`CssPosition`]) as a
-/// property, but these five keywords describe how the concrete object size of a replaced element
-/// is determined by a layout-time algorithm (in §5.3 of the same spec,
-/// "Sizing the replaced element", the default-object-size / concrete-object-size
-/// procedure). This crate does not implement that layout application algorithm —
-/// this variant stores only the cascade/computed-value keyword.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ObjectFit {
-    /// `fill` — the spec's initial value. Stretch replaced content to fit the content box
-    /// (without preserving its aspect ratio).
-    Fill,
-    /// `contain` — preserve the aspect ratio and scale to the largest size that fits
-    /// within the content box.
-    Contain,
-    /// `cover` — preserve the aspect ratio and scale to the smallest size that covers
-    /// the content box (possibly overflowing the box on one axis).
-    Cover,
-    /// `none` — do not resize the content. The concrete object size is the
-    /// intrinsic size (or, if absent, the result of the spec's default object size
-    /// algorithm), used unchanged.
-    None,
-    /// `scale-down` — of the concrete object sizes produced by `none` and `contain`,
-    /// choose the smaller one.
-    ScaleDown,
-}
-
-css_keywords!(ObjectFit {
-    Fill => "fill",
-    Contain => "contain",
-    Cover => "cover",
-    None => "none",
-    ScaleDown => "scale-down",
-});
-
 /// Specified value of `mix-blend-mode`.
 ///
 /// CSS Compositing and Blending Level 1 §3.4.1 "Mix Blend Mode: the
@@ -9023,7 +8979,6 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-position" => PropertyKey::BackgroundPosition,
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,
-        "object-fit" => PropertyKey::ObjectFit,
         "object-position" => PropertyKey::ObjectPosition,
         "opacity" => PropertyKey::Opacity,
         "mix-blend-mode" => PropertyKey::MixBlendMode,

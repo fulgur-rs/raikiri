@@ -1524,10 +1524,6 @@ mod decl {
         /// matter. Avoiding shifts of existing variants takes priority (see the
         /// declaration-order section of [`PropertyKey`]).
         Background(BackgroundShorthand),
-        /// `object-fit` — **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
-        /// Images 3 §5.1; see [`ObjectFit`]). Appended as a new 1:1 disjoint field
-        /// under the placement rule in [`PropertyKey`].
-        ObjectFit(ObjectFit),
         /// `object-position` — **non-inherited**, initial: `50% 50%` (CSS Images
         /// 3 §5.2 "Initial: 50% 50%"; see [`CssPosition`]). It reuses the same
         /// [`CssPosition`] type as `background-position` (see the section about
@@ -2144,13 +2140,11 @@ mod decl {
         // key is appended, see the PropertyValue::Background docs: shorthands do
         // not reach the cascade stage, so discriminant order does not matter.
         Background,
-        // object-fit / object-position (CSS Images Module Level 3 §5.1/§5.2,
-        // semantics on the matching PropertyValue::ObjectFit /
-        // PropertyValue::ObjectPosition variants; sibling PropertyKey variants
-        // carry no per-variant docs per crate convention). Appended for the same
-        // reason as background-repeat: new fields disjoint one-to-one from
-        // existing fields.
-        ObjectFit,
+        // object-position (CSS Images Module Level 3 §5.2, semantics on the
+        // matching PropertyValue::ObjectPosition variant; sibling PropertyKey
+        // variants carry no per-variant docs per crate convention). Appended for
+        // the same reason as background-repeat: a new field disjoint one-to-one
+        // from existing fields.
         ObjectPosition,
         // opacity (CSS Color 4 §3.3, semantics on the matching
         // PropertyValue::Opacity variant; sibling PropertyKey variants carry no
@@ -2330,6 +2324,42 @@ mod decl {
                 Isolate,
             ],
             initial: Auto,
+            inherited: no,
+        },
+        /// CSS Images Module Level 3 §5.1 "Sizing the replaced element: the
+        /// object-fit property" <https://www.w3.org/TR/css-images-3/#the-object-fit>.
+        /// Grammar: `fill | contain | cover | none | scale-down`. Applies to:
+        /// replaced elements only. **Non-inherited**, initial `fill`. The computed
+        /// value is the specified keyword (no length payload).
+        ///
+        /// It pairs with `object-position` (CSS Images 3 §5.2; reuses
+        /// [`CssPosition`]) as a property, but these five keywords describe how the
+        /// concrete object size of a replaced element is determined by a
+        /// layout-time algorithm (§5.3 of the same spec, the default-object-size /
+        /// concrete-object-size procedure). This crate does not implement that
+        /// layout application algorithm: it stores only the cascaded/computed
+        /// keyword.
+        "object-fit" => ObjectFit {
+            keywords: [
+                /// `fill` — the spec's initial value. Stretch replaced content to fit
+                /// the content box (without preserving its aspect ratio).
+                Fill,
+                /// `contain` — preserve the aspect ratio and scale to the largest
+                /// size that fits within the content box.
+                Contain,
+                /// `cover` — preserve the aspect ratio and scale to the smallest size
+                /// that covers the content box (possibly overflowing the box on one
+                /// axis).
+                Cover,
+                /// `none` — do not resize the content. The concrete object size is
+                /// the intrinsic size (or, if absent, the result of the spec's
+                /// default object size algorithm), used unchanged.
+                None,
+                /// `scale-down` — of the concrete object sizes produced by `none` and
+                /// `contain`, choose the smaller one.
+                ScaleDown,
+            ],
+            initial: Fill,
             inherited: no,
         },
     }

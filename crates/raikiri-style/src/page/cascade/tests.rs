@@ -38,8 +38,8 @@ use crate::property::{
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
     HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Length, LengthOrAuto, LengthOrNormal,
     LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
-    ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
+    ListStyleType, MaskImage, MixBlendMode, Outline, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
     PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
     StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll, TextAlignLast, TextAutospace,
     TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
@@ -3592,11 +3592,6 @@ crate::property::with_longhand_samples!(property_key_samples {
         clip: VisualBox::PaddingBox,
         origin: VisualBox::ContentBox,
     }),
-    // CSS Images Module Level 3 §5.1 — keyword-only, carries no length.
-    // `Contain` is the non-initial worst case (`fill` is the spec
-    // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
-    // sample above).
-    ObjectFit => PropertyValue::ObjectFit(ObjectFit::Contain),
     // CSS Images Module Level 3 §5.2 — `Em`/`Rem` worst-case payload on
     // both `Start` and `End` (distinct edges), same convention as
     // `BackgroundPosition` above; type itself (`CssPosition`) is
@@ -4067,7 +4062,6 @@ crate::property::with_longhand_variants!(property_value_variant_registry {
     BackgroundPosition,
     BackgroundImage,
     Background,
-    ObjectFit,
     ObjectPosition,
     Opacity,
     MixBlendMode,
@@ -4735,12 +4729,6 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::BackgroundClip(_)
             | PropertyValue::BackgroundOrigin(_)
 
-            // `object-fit` (CSS Images Module Level 3 §5.1) carries no
-            // length either — keyword-only payload, same shape as
-            // `BackgroundRepeat` above. `object-position` (§5.2) does carry
-            // `<length-percentage>` (reuses `CssPosition`) and gets its own
-            // arm below, next to `BackgroundPosition`.
-            | PropertyValue::ObjectFit(_)
             // `opacity` (CSS Color 4 §3.3) carries a bare `f32`, not a
             // `Length` — this detector only checks for *length* residue, so
             // it reports `None` unconditionally regardless of the value's
@@ -4755,10 +4743,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // unlike `Opacity`'s `f32`) — always `None`.
             | PropertyValue::MixBlendMode(_)
             // Table-declared longhands (`properties!` in property/decl.rs).
-            // Every one of them so far (`isolation`) carries a keyword
-            // payload with no `Length` — always `None`. A table entry that
-            // carries a length needs its own arm above this one, or this
-            // detector goes blind to its residue.
+            // Every one of them so far (`isolation`, `object-fit`) carries
+            // a keyword payload with no `Length` — always `None`. A table
+            // entry that carries a length needs its own arm above this one,
+            // or this detector goes blind to its residue.
             | crate::property::longhand_value_pat!()
 
             // `clip-path` (§5.1) — no embedded length at all (no

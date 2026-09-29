@@ -545,7 +545,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BackgroundPosition(..)
         | PropertyValue::BackgroundImage(..)
         | PropertyValue::Background(..)
-        | PropertyValue::ObjectFit(..)
         | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(..)

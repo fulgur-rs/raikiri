@@ -4,7 +4,7 @@ use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
 use crate::property::{
     ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox, Isolation,
+    FontVariationSetting, FontVariationSettings, GeometryBox, Isolation, ObjectFit,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -464,9 +464,8 @@ fn parent_fixture() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".to_string()),
-        // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited; set values other than the
-        // initial `fill` / `50% 50%`.
-        object_fit: ObjectFit::Cover,
+        // CSS Images Module Level 3 §5.2: non-inherited; set a value other than the initial
+        // `50% 50%`.
         object_position: crate::resolve::ComputedCssPosition {
             horizontal: crate::resolve::ComputedCssPositionOffset::Start(
                 ComputedLengthPercentage::Px(3.0),
@@ -477,10 +476,12 @@ fn parent_fixture() -> ComputedValues {
         },
         // CSS Color 4 §3.3: non-inherited; set a value other than the initial `1`.
         opacity: 0.25,
-        // Table-declared longhands: CSS Compositing and Blending Level 1 §3.4.2 isolation is
-        // non-inherited; set a value other than the initial `auto`.
+        // Table-declared longhands: CSS Compositing and Blending Level 1 §3.4.2 isolation and CSS
+        // Images Module Level 3 §5.1 object-fit are non-inherited; set values other than the
+        // initial `auto` / `fill`.
         longhands: ComputedTable {
             isolation: Isolation::Isolate,
+            object_fit: ObjectFit::Cover,
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.

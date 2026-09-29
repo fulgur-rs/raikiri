@@ -2,7 +2,7 @@ use super::*;
 use crate::property::{
     ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
     FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
-    HyphenateLimitCharsValue, Isolation, Length, TextShadowColor,
+    HyphenateLimitCharsValue, Isolation, Length, ObjectFit, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -583,10 +583,9 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
         // different from the initial `None` (as required for non_initial_parent).
         background_image: BackgroundImage::Url("fixture.png".into()),
-        // CSS Images Module Level 3 §5.1/§5.2: all are non-inherited,
-        // so give them values different from the initial `fill` / `50% 50%`
-        // (as required for non_initial_parent).
-        object_fit: ObjectFit::Cover,
+        // CSS Images Module Level 3 §5.2: non-inherited, so use a value
+        // different from the initial `50% 50%` (as required for
+        // non_initial_parent).
         object_position: ComputedCssPosition {
             horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
             vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
@@ -595,10 +594,12 @@ fn non_initial_parent() -> ComputedValues {
         // from the initial `1` (as required for non_initial_parent).
         opacity: 0.75,
         // Table-declared longhands: CSS Compositing and Blending Level 1
-        // §3.4.2 isolation is non-inherited, so use a value different from
-        // the initial `auto` (as required for non_initial_parent).
+        // §3.4.2 isolation and CSS Images Module Level 3 §5.1 object-fit are
+        // non-inherited, so use values different from the initial `auto` /
+        // `fill` (as required for non_initial_parent).
         longhands: ComputedTable {
             isolation: Isolation::Isolate,
+            object_fit: ObjectFit::Cover,
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
         // a value different from the initial `normal` (as above).

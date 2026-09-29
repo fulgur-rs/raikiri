@@ -1599,10 +1599,6 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Font(_)
-        // object-fit (CSS Images Module Level 3 §5.1) — non-inherited,
-        // keyword-only, same "nothing for phase 2 to resolve" shape as
-        // `BackgroundRepeat` above.
-        | PropertyValue::ObjectFit(_)
         // object-position (CSS Images Module Level 3 §5.2) — non-inherited,
         // reuses `CssPosition` (`background-position`'s type); its
         // `<length-percentage>` absolutization is phase 3's job, same as
@@ -1618,7 +1614,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Opacity(_)
         // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) —
         // non-inherited, bare keyword payload with no phase-2 dependency,
-        // same shape as `ObjectFit` above.
+        // same "nothing for phase 2 to resolve" shape as `BackgroundRepeat`
+        // above.
         | PropertyValue::MixBlendMode(_)
         // mask-image (CSS Masking Level 1 §7.1) / clip-path (§5.1) —
         // non-inherited, `<url>`/`<gradient>`/`<geometry-box>` payloads
@@ -2045,7 +2042,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, |v| apply_value(v, target)),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),
         PropertyValue::Font(shorthand) => expand_font(&shorthand, |v| apply_value(v, target)),
-        PropertyValue::ObjectFit(v) => target.object_fit = v,
         PropertyValue::ObjectPosition(v) => target.object_position = v,
         PropertyValue::Opacity(v) => target.opacity = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
