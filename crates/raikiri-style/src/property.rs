@@ -10,6 +10,9 @@
 mod types;
 pub use types::*;
 
+mod decl;
+pub use decl::*;
+
 mod parse;
 pub use parse::*;
 
