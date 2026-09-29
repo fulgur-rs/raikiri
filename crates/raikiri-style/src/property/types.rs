@@ -663,6 +663,9 @@ pub struct LengthPercentageCalc {
     pub px: f32,
     /// `em` coefficient resolved against the element's computed font size.
     pub em: f32,
+    /// `ch` coefficient, measured against the declaring font's `0` advance by
+    /// the layout consumer; style computes only a `0.5em` fallback for it.
+    pub ch: f32,
 }
 /// Specified `text-underline-offset` value.
 ///

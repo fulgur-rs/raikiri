@@ -1081,6 +1081,35 @@ fn relayout_text_for_width_rebuilds_pre_taffy_indent_state() {
 }
 
 #[test]
+fn text_indent_calc_ch_adds_absolute_offset_to_measured_indent() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    fn prepared_indent(indent: &str) -> f32 {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let style = format!("display:block;width:80px;font-size:16px;text-indent:{indent}");
+        let p = doc.append_element(Some(body), "p", Style::default(), Some(style.as_str()));
+        let text = doc.append_text(p, "00 00");
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+        match &doc.nodes[text].data {
+            crate::node::NodeData::Text(text) => text.text_indent_px.expect("indent prepared"),
+            _ => unreachable!("appended node is text"),
+        }
+    }
+
+    let plain = prepared_indent("1ch");
+    let calc = prepared_indent("calc(1ch + 7px)");
+    assert!(
+        (calc - plain - 7.0).abs() < 0.01,
+        "plain ch={plain}, calc={calc}"
+    );
+}
+
+#[test]
 fn ch_box_values_reach_taffy_before_percentage_children() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
