@@ -491,6 +491,18 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::BorderRightColor(_)
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
+        | PropertyValue::BorderTopWidthCssWide(_)
+        | PropertyValue::BorderRightWidthCssWide(_)
+        | PropertyValue::BorderBottomWidthCssWide(_)
+        | PropertyValue::BorderLeftWidthCssWide(_)
+        | PropertyValue::BorderTopStyleCssWide(_)
+        | PropertyValue::BorderRightStyleCssWide(_)
+        | PropertyValue::BorderBottomStyleCssWide(_)
+        | PropertyValue::BorderLeftStyleCssWide(_)
+        | PropertyValue::BorderTopColorCssWide(_)
+        | PropertyValue::BorderRightColorCssWide(_)
+        | PropertyValue::BorderBottomColorCssWide(_)
+        | PropertyValue::BorderLeftColorCssWide(_)
         | PropertyValue::OutlineStyle(_)
         | PropertyValue::OutlineColor(_)
         | PropertyValue::BoxSizing(_)
@@ -687,6 +699,8 @@ pub(super) fn absolutize_in_page_context(
         }
         // Each side gates on the style it carries itself, not on `border_styles`.
         PropertyValue::Border(sides) => PropertyValue::Border(sides.map(|b| basis.border(b))),
+        PropertyValue::BorderRight(border) => PropertyValue::BorderRight(basis.border(border)),
+        v @ (PropertyValue::BorderCssWide(_) | PropertyValue::BorderRightCssWide(_)) => v,
         PropertyValue::BorderStyle(sides) => PropertyValue::BorderStyle(sides),
         PropertyValue::BorderWidth(sides) => {
             PropertyValue::BorderWidth(Sides {

@@ -1565,6 +1565,83 @@ fn cascade_page_border_width_is_gated_by_border_style_none() {
 
 /// `hidden` gates identically to `none` (same §3.3 clause).
 #[test]
+fn cascade_page_border_css_wide_inherit_takes_root() {
+    // `@page` with `border-right: inherit` takes the root element's computed right side.
+    // Covers `resolve_border_page_*` helpers for inherit.
+    let mut root = ComputedValues::initial();
+    root.border.right = crate::resolve::resolve_border(
+        Border {
+            width: Length::Px(7.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        },
+        root.font_size,
+        None,
+        &crate::resolve::ResolveContext::initial(),
+    );
+    let result = page("@page { border-right: inherit }", &root);
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(7.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightStyle),
+        Some(&PropertyValue::BorderRightStyle(BorderStyle::Solid))
+    );
+    // `border: initial` clears to initial (covers initial/unset arms for all sides).
+    let result2 = page("@page { border: initial }", &root);
+    assert_eq!(
+        result2.declarations().get(&PropertyKey::BorderRightStyle),
+        Some(&PropertyValue::BorderRightStyle(BorderStyle::None))
+    );
+    // `revert` with no lower origin falls back to initial (covers revert fallback).
+    let result3 = page("@page { border-right-width: revert }", &root);
+    assert_eq!(
+        result3.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(0.0)))
+    );
+}
+
+#[test]
+fn cascade_page_border_all_sides_css_wide() {
+    // Cover `resolve_border_page_*` left/top/bottom branches: each side's inherit
+    // takes its own root side; initial clears.
+    let mut root = ComputedValues::initial();
+    root.border.top.width = crate::resolve::ComputedLength(1.0);
+    root.border.top.style = BorderStyle::Solid;
+    root.border.right.width = crate::resolve::ComputedLength(2.0);
+    root.border.right.style = BorderStyle::Solid;
+    root.border.bottom.width = crate::resolve::ComputedLength(3.0);
+    root.border.bottom.style = BorderStyle::Solid;
+    root.border.left.width = crate::resolve::ComputedLength(4.0);
+    root.border.left.style = BorderStyle::Solid;
+    let result = page(
+        "@page { border-top-width: inherit; border-right-width: inherit; \
+         border-bottom-width: inherit; border-left-width: inherit; \
+         border-top-style: inherit; border-right-style: inherit; \
+         border-bottom-style: inherit; border-left-style: inherit; \
+         border-left-color: inherit }",
+        &root,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(1.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(2.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderBottomWidth),
+        Some(&PropertyValue::BorderBottomWidth(Length::Px(3.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderLeftWidth),
+        Some(&PropertyValue::BorderLeftWidth(Length::Px(4.0)))
+    );
+}
+
+#[test]
 fn cascade_page_border_width_is_gated_by_border_style_hidden() {
     let root = ComputedValues::initial();
     let result = page(
@@ -2935,7 +3012,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 143;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 157;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3064,6 +3141,11 @@ property_key_samples! {
         style: BorderStyle::Solid,
         color: BorderColor::CurrentColor,
     })),
+    BorderRight => PropertyValue::BorderRight(Border {
+        width: Length::Em(1.0),
+        style: BorderStyle::Solid,
+        color: BorderColor::CurrentColor,
+    }),
     BorderStyle => PropertyValue::BorderStyle(Sides::all(BorderStyle::Double)),
     BorderWidth => PropertyValue::BorderWidth(Sides::all(Length::Em(2.0))),
     BorderColor => PropertyValue::BorderColor(Sides::all(BorderColor::CurrentColor)),
@@ -3687,7 +3769,9 @@ property_key_samples! {
 /// here for each new non-1:1 variant. `property_value_variant_registry!`
 /// and `page_corpus_covers_every_registered_property_value_variant` catch omissions.
 fn key_sharing_extras() -> Vec<PropertyValue> {
-    use crate::property::{DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand};
+    use crate::property::{
+        CssWideKeyword, DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand,
+    };
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
         PropertyValue::CounterResetInherit,
@@ -3697,6 +3781,20 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::MarginLeftInherit,
         PropertyValue::MarginInherit,
         PropertyValue::BorderRadiusInherit,
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftColorCssWide(CssWideKeyword::Inherit),
         PropertyValue::Deferred(DeferredValue {
             property: "width".into(),
             value: "calc(1px + 1px)".into(),
@@ -3848,6 +3946,21 @@ property_value_variant_registry! {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    BorderRight,
+    BorderCssWide,
+    BorderRightCssWide,
+    BorderTopWidthCssWide,
+    BorderRightWidthCssWide,
+    BorderBottomWidthCssWide,
+    BorderLeftWidthCssWide,
+    BorderTopStyleCssWide,
+    BorderRightStyleCssWide,
+    BorderBottomStyleCssWide,
+    BorderLeftStyleCssWide,
+    BorderTopColorCssWide,
+    BorderRightColorCssWide,
+    BorderBottomColorCssWide,
+    BorderLeftColorCssWide,
     BorderStyle,
     BorderWidth,
     BorderColor,
@@ -4411,6 +4524,21 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 start_end(*p, length_or_auto)
             }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            PropertyValue::BorderRight(b) => length(b.width),
+            PropertyValue::BorderCssWide(_)
+            | PropertyValue::BorderRightCssWide(_)
+            | PropertyValue::BorderTopWidthCssWide(_)
+            | PropertyValue::BorderRightWidthCssWide(_)
+            | PropertyValue::BorderBottomWidthCssWide(_)
+            | PropertyValue::BorderLeftWidthCssWide(_)
+            | PropertyValue::BorderTopStyleCssWide(_)
+            | PropertyValue::BorderRightStyleCssWide(_)
+            | PropertyValue::BorderBottomStyleCssWide(_)
+            | PropertyValue::BorderLeftStyleCssWide(_)
+            | PropertyValue::BorderTopColorCssWide(_)
+            | PropertyValue::BorderRightColorCssWide(_)
+            | PropertyValue::BorderBottomColorCssWide(_)
+            | PropertyValue::BorderLeftColorCssWide(_) => None,
             // Shorthand fall-throughs — styles/colors carry no length.
             PropertyValue::BorderStyle(_)
             | PropertyValue::BorderColor(_) => None,

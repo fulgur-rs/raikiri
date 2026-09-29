@@ -216,6 +216,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         PropertyValue::PaddingInline(pair) => expand_padding_inline(pair, push_longhand),
         PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, push_longhand),
         PropertyValue::Border(sides) => expand_border(sides, push_longhand),
+        PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, push_longhand),
+        PropertyValue::BorderRight(sides) => expand_border_right(sides, push_longhand),
+        PropertyValue::BorderRightCssWide(kw) => expand_border_right_css_wide(kw, push_longhand),
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, push_longhand),
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, push_longhand),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, push_longhand),
@@ -285,17 +288,29 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::MarginLeft(_)
         | PropertyValue::MarginLeftInherit
         | PropertyValue::BorderTopWidth(_)
+        | PropertyValue::BorderTopWidthCssWide(_)
         | PropertyValue::BorderRightWidth(_)
+        | PropertyValue::BorderRightWidthCssWide(_)
         | PropertyValue::BorderBottomWidth(_)
+        | PropertyValue::BorderBottomWidthCssWide(_)
         | PropertyValue::BorderLeftWidth(_)
+        | PropertyValue::BorderLeftWidthCssWide(_)
         | PropertyValue::BorderTopStyle(_)
+        | PropertyValue::BorderTopStyleCssWide(_)
         | PropertyValue::BorderRightStyle(_)
+        | PropertyValue::BorderRightStyleCssWide(_)
         | PropertyValue::BorderBottomStyle(_)
+        | PropertyValue::BorderBottomStyleCssWide(_)
         | PropertyValue::BorderLeftStyle(_)
+        | PropertyValue::BorderLeftStyleCssWide(_)
         | PropertyValue::BorderTopColor(_)
+        | PropertyValue::BorderTopColorCssWide(_)
         | PropertyValue::BorderRightColor(_)
+        | PropertyValue::BorderRightColorCssWide(_)
         | PropertyValue::BorderBottomColor(_)
+        | PropertyValue::BorderBottomColorCssWide(_)
         | PropertyValue::BorderLeftColor(_)
+        | PropertyValue::BorderLeftColorCssWide(_)
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
         | PropertyValue::MaxWidth(_)
@@ -542,6 +557,11 @@ fn expand_deferred(
             PropertyKey::BorderLeftStyle,
             PropertyKey::BorderLeftColor,
         ],
+        PropertyKey::BorderRight => &[
+            PropertyKey::BorderRightWidth,
+            PropertyKey::BorderRightStyle,
+            PropertyKey::BorderRightColor,
+        ],
         PropertyKey::BorderStyle => &[
             PropertyKey::BorderTopStyle,
             PropertyKey::BorderRightStyle,
@@ -734,6 +754,57 @@ pub(crate) fn expand_border(sides: Sides<Border>, mut push: impl FnMut(PropertyV
     push(PropertyValue::BorderLeftWidth(sides.left.width));
     push(PropertyValue::BorderLeftStyle(sides.left.style));
     push(PropertyValue::BorderLeftColor(sides.left.color));
+}
+
+/// Expand `border-right: <line-width> || <line-style> || <color>` into three
+/// right-side longhands.
+///
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines the single-side shorthand as setting its three sub-properties as if
+/// expanded in place (see [`expand_shorthand_into`]). Order is width, style, color —
+/// the per-side order [`expand_border`] uses — so declaration ordering is preserved
+/// and later longhands in the same block win per CSS Cascading 4 §6.1 order of appearance.
+#[inline(never)]
+pub(crate) fn expand_border_right(border: Border, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderRightWidth(border.width));
+    push(PropertyValue::BorderRightStyle(border.style));
+    push(PropertyValue::BorderRightColor(border.color));
+}
+
+/// Expand `border: <css-wide-keyword>` into twelve longhand CSS-wide markers.
+///
+/// CSS Cascading 4 §3 requires a shorthand with a CSS-wide keyword to set every
+/// longhand to that keyword as if expanded in place. Order matches [`expand_border`]
+/// so per-side, per-sub-property winners resolve deterministically.
+#[inline(never)]
+pub(crate) fn expand_border_css_wide(
+    kw: crate::property::CssWideKeyword,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::BorderTopWidthCssWide(kw));
+    push(PropertyValue::BorderTopStyleCssWide(kw));
+    push(PropertyValue::BorderTopColorCssWide(kw));
+    push(PropertyValue::BorderRightWidthCssWide(kw));
+    push(PropertyValue::BorderRightStyleCssWide(kw));
+    push(PropertyValue::BorderRightColorCssWide(kw));
+    push(PropertyValue::BorderBottomWidthCssWide(kw));
+    push(PropertyValue::BorderBottomStyleCssWide(kw));
+    push(PropertyValue::BorderBottomColorCssWide(kw));
+    push(PropertyValue::BorderLeftWidthCssWide(kw));
+    push(PropertyValue::BorderLeftStyleCssWide(kw));
+    push(PropertyValue::BorderLeftColorCssWide(kw));
+}
+
+/// Expand `border-right: <css-wide-keyword>` into three right-side longhand CSS-wide
+/// markers (see [`expand_border_right`] for ordering).
+#[inline(never)]
+pub(crate) fn expand_border_right_css_wide(
+    kw: crate::property::CssWideKeyword,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::BorderRightWidthCssWide(kw));
+    push(PropertyValue::BorderRightStyleCssWide(kw));
+    push(PropertyValue::BorderRightColorCssWide(kw));
 }
 
 /// Cold helper expanding `border-style` into four longhands (`border-*-style`);
@@ -1122,6 +1193,7 @@ mod tests {
                     PropertyKey::Margin
                         | PropertyKey::Padding
                         | PropertyKey::Border
+                        | PropertyKey::BorderRight
                         | PropertyKey::BorderStyle
                         | PropertyKey::BorderWidth
                         | PropertyKey::BorderColor
@@ -1177,6 +1249,14 @@ mod tests {
                     PropertyKey::BorderLeftWidth,
                     PropertyKey::BorderLeftStyle,
                     PropertyKey::BorderLeftColor,
+                ],
+            ),
+            (
+                PropertyKey::BorderRight,
+                &[
+                    PropertyKey::BorderRightWidth,
+                    PropertyKey::BorderRightStyle,
+                    PropertyKey::BorderRightColor,
                 ],
             ),
             (

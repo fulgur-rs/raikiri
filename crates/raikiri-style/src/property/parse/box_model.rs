@@ -448,6 +448,31 @@ fn parse_border_color_res<'i>(
     parse_border_color(input).ok_or_else(|| input.new_custom_error(()))
 }
 
+/// Parse a single CSS-wide keyword (`inherit` / `initial` / `unset` / `revert` /
+/// `revert-layer`) ASCII case-insensitively.
+///
+/// CSS Cascading 4 §7.3 and CSS Cascading 5 §7.3.5 require every property to accept
+/// these keywords as a lone value. Border longhands and the `border` / `border-right`
+/// shorthands implement that contract through [`CssWideKeyword`]; other properties
+/// keep their existing silent-drop behavior. The caller decides the payload mapping;
+/// this helper only recognizes the keyword.
+///
+/// Returns `None` for any other identifier so the caller can fall through to its
+/// component grammar. A CSS-wide keyword combined with other components
+/// (`border-right: inherit solid`) is rejected downstream by the caller's
+/// `expect_exhausted` (see [`crate::rule`] `DeclParser`), not here.
+pub(super) fn parse_css_wide_keyword(input: &mut Parser<'_, '_>) -> Option<CssWideKeyword> {
+    let ident = input.expect_ident().ok()?.clone();
+    CssWideKeyword::from_css_ident(ident.as_ref())
+}
+
+/// `Result` version of [`parse_css_wide_keyword`] for `try_parse`.
+pub(super) fn parse_css_wide_keyword_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssWideKeyword, ParseError<'i, ()>> {
+    parse_css_wide_keyword(input).ok_or_else(|| input.new_custom_error(()))
+}
+
 /// Parse `border-style: <line-style>{1,4}` (CSS Backgrounds 3 §3.4). Expand values as in
 /// [`parse_padding_shorthand`]: one for all sides, two for vertical/horizontal, three for
 /// top/horizontal/bottom, or four clockwise. The caller's `expect_exhausted` rejects a fifth value.
@@ -662,6 +687,62 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
         color: color.unwrap_or(BorderColor::CurrentColor),
     };
     Some(Sides::all(border))
+}
+
+/// Parse `border-right: <line-width> || <line-style> || <color>` single-side shorthand.
+///
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines `border-right` as the three right-side longhands with the same `||`
+/// component grammar as [`parse_border_shorthand`]. Only the expansion target differs:
+/// one [`Border`] for the right side instead of [`Sides::all`] for all four.
+///
+/// The `||` loop, occupied-slot rejection, empty-declaration drop, and omitted-component
+/// initial fill all match [`parse_border_shorthand`]. CSS-wide keywords are not accepted
+/// here; the `parse_value` dispatch tries [`parse_css_wide_keyword`] first and maps it
+/// to [`PropertyValue::BorderRightCssWide`], so a lone `inherit` never reaches this
+/// function. A combined `inherit solid` therefore fails `expect_exhausted` downstream
+/// rather than being silently truncated.
+pub(crate) fn parse_border_right_shorthand(input: &mut Parser<'_, '_>) -> Option<Border> {
+    let mut width: Option<Length> = None;
+    let mut style: Option<BorderStyle> = None;
+    let mut color: Option<BorderColor> = None;
+
+    loop {
+        if width.is_some() && style.is_some() && color.is_some() {
+            break;
+        }
+        if width.is_none()
+            && let Ok(v) = input.try_parse(parse_border_width_side_res)
+        {
+            width = Some(v);
+            continue;
+        }
+        if style.is_none()
+            && let Ok(s) = input.try_parse(|i| -> Result<BorderStyle, ParseError<'_, ()>> {
+                parse_border_style_side(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            style = Some(s);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
+                parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(c);
+            continue;
+        }
+        break;
+    }
+    if width.is_none() && style.is_none() && color.is_none() {
+        return None;
+    }
+    Some(Border {
+        width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
+        style: style.unwrap_or(BorderStyle::None),
+        color: color.unwrap_or(BorderColor::CurrentColor),
+    })
 }
 
 /// Parse `height: <length-percentage [0,∞]> | auto`.

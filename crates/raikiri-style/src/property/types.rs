@@ -1125,6 +1125,48 @@ impl Default for Border {
     }
 }
 
+/// A CSS-wide keyword (CSS Cascading 4 §7.3 "Explicit Defaulting"
+/// <https://www.w3.org/TR/css-cascade-4/#defaulting-keywords> and CSS Cascading 5
+/// §7.3.5 "Rolling Back Cascade Layers: the revert-layer keyword"
+/// <https://www.w3.org/TR/css-cascade-5/#revert-layer>).
+///
+/// Every border longhand and the `border` / `border-right` shorthands accept exactly
+/// these five keywords as a single-token value. The shorthand forms expand to their
+/// longhands with the same keyword preserved (see [`PropertyValue::Border`] and
+/// [`PropertyValue::BorderRight`]).
+///
+/// Resolution follows CSS Cascading 4 §7.3 for the non-inherited border properties
+/// (all `border-*` are `Inherited: no` per CSS Backgrounds 3 §3):
+/// - `Inherit` takes the parent's computed value for that longhand.
+/// - `Initial` takes the property's initial value (see [`crate::specified::INITIAL_BORDER`]).
+/// - `Unset` behaves as `Initial` for these non-inherited properties.
+/// - `Revert` rolls back to the previous origin's winner (see [`crate::cascade::cascade_rank`]).
+/// - `RevertLayer` rolls back to the previous cascade layer; this crate stores no
+///   style layers for element rules, so it falls back to the `Revert` origin rollback.
+///   `@page` rules do carry a layer order and use it (see [`crate::page::cascade_page`]).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CssWideKeyword {
+    /// `inherit`.
+    Inherit,
+    /// `initial`.
+    Initial,
+    /// `unset`.
+    Unset,
+    /// `revert`.
+    Revert,
+    /// `revert-layer`.
+    RevertLayer,
+}
+
+css_keywords!(CssWideKeyword {
+    Inherit => "inherit",
+    Initial => "initial",
+    Unset => "unset",
+    Revert => "revert",
+    RevertLayer => "revert-layer",
+});
+
 /// The **specified** value of the `font-weight` property.
 ///
 /// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
@@ -7657,7 +7699,9 @@ pub enum FilterFunction {
 /// <https://www.w3.org/TR/css-cascade-4/#defaulting-keywords>; `revert-layer`
 /// — CSS Cascade 5 §7.3.5 "Rolling Back Cascade Layers: the revert-layer
 /// keyword" <https://www.w3.org/TR/css-cascade-5/#revert-layer>) is not yet
-/// implemented in this crate.
+/// implemented in this crate, except for the border longhands and the `border` /
+/// `border-right` shorthands, which accept all five keywords through
+/// [`CssWideKeyword`] (see that type's docs for resolution).
 ///
 /// Unlike unsupported units, this missing support has no single code arm: each
 /// `parse_*` function simply does not recognize these idents and rejects them
@@ -8299,6 +8343,44 @@ pub enum PropertyValue {
     /// (`parse_border_color`: `currentcolor`, named, hash, or function).
     /// The 1–4-value expansion follows the margin precedent.
     BorderColor(Sides<BorderColor>),
+    /// `border-right: <line-width> || <line-style> || <color>` — single-side shorthand
+    /// for the three right-side longhands (CSS Backgrounds 3 §3.4
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>).
+    ///
+    /// The `||` grammar, omitted-component initial fill, and declaration-ordering
+    /// contract match [`Self::Border`]; only the expansion target differs (three
+    /// right-side longhands instead of twelve). See [`crate::rule::expand_border_right`].
+    BorderRight(Border),
+    /// `border: <css-wide-keyword>` — expands to twelve longhand CSS-wide markers
+    /// (see [`CssWideKeyword`]).
+    BorderCssWide(CssWideKeyword),
+    /// `border-right: <css-wide-keyword>` — expands to three right-side longhand
+    /// CSS-wide markers (see [`CssWideKeyword`]).
+    BorderRightCssWide(CssWideKeyword),
+    /// `border-top-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderTopWidthCssWide(CssWideKeyword),
+    /// `border-right-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderRightWidthCssWide(CssWideKeyword),
+    /// `border-bottom-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderBottomWidthCssWide(CssWideKeyword),
+    /// `border-left-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderLeftWidthCssWide(CssWideKeyword),
+    /// `border-top-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderTopStyleCssWide(CssWideKeyword),
+    /// `border-right-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderRightStyleCssWide(CssWideKeyword),
+    /// `border-bottom-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderBottomStyleCssWide(CssWideKeyword),
+    /// `border-left-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderLeftStyleCssWide(CssWideKeyword),
+    /// `border-top-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderTopColorCssWide(CssWideKeyword),
+    /// `border-right-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderRightColorCssWide(CssWideKeyword),
+    /// `border-bottom-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderBottomColorCssWide(CssWideKeyword),
+    /// `border-left-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+    BorderLeftColorCssWide(CssWideKeyword),
     /// `width: auto | <length-percentage [0,∞]>` — non-inherited,
     /// initial: `auto` (CSS Sizing 3 §3.1.1
     /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>).
@@ -9359,6 +9441,9 @@ pub enum PropertyKey {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    // `border-right` single-side shorthand key (semantics on the matching
+    // PropertyValue::BorderRight variant).
+    BorderRight,
     // `border-style` / `border-width` / `border-color` shorthand keys
     // (semantics on the matching PropertyValue variants above).
     BorderStyle,
@@ -9839,19 +9924,46 @@ impl PropertyValue {
             PropertyValue::Margin(_) | PropertyValue::MarginInherit => PropertyKey::Margin,
             PropertyValue::MarginInline(_) => PropertyKey::MarginInline,
             PropertyValue::MarginBlock(_) => PropertyKey::MarginBlock,
-            PropertyValue::BorderTopWidth(_) => PropertyKey::BorderTopWidth,
-            PropertyValue::BorderRightWidth(_) => PropertyKey::BorderRightWidth,
-            PropertyValue::BorderBottomWidth(_) => PropertyKey::BorderBottomWidth,
-            PropertyValue::BorderLeftWidth(_) => PropertyKey::BorderLeftWidth,
-            PropertyValue::BorderTopStyle(_) => PropertyKey::BorderTopStyle,
-            PropertyValue::BorderRightStyle(_) => PropertyKey::BorderRightStyle,
-            PropertyValue::BorderBottomStyle(_) => PropertyKey::BorderBottomStyle,
-            PropertyValue::BorderLeftStyle(_) => PropertyKey::BorderLeftStyle,
-            PropertyValue::BorderTopColor(_) => PropertyKey::BorderTopColor,
-            PropertyValue::BorderRightColor(_) => PropertyKey::BorderRightColor,
-            PropertyValue::BorderBottomColor(_) => PropertyKey::BorderBottomColor,
-            PropertyValue::BorderLeftColor(_) => PropertyKey::BorderLeftColor,
-            PropertyValue::Border(_) => PropertyKey::Border,
+            PropertyValue::BorderTopWidth(_) | PropertyValue::BorderTopWidthCssWide(_) => {
+                PropertyKey::BorderTopWidth
+            }
+            PropertyValue::BorderRightWidth(_) | PropertyValue::BorderRightWidthCssWide(_) => {
+                PropertyKey::BorderRightWidth
+            }
+            PropertyValue::BorderBottomWidth(_) | PropertyValue::BorderBottomWidthCssWide(_) => {
+                PropertyKey::BorderBottomWidth
+            }
+            PropertyValue::BorderLeftWidth(_) | PropertyValue::BorderLeftWidthCssWide(_) => {
+                PropertyKey::BorderLeftWidth
+            }
+            PropertyValue::BorderTopStyle(_) | PropertyValue::BorderTopStyleCssWide(_) => {
+                PropertyKey::BorderTopStyle
+            }
+            PropertyValue::BorderRightStyle(_) | PropertyValue::BorderRightStyleCssWide(_) => {
+                PropertyKey::BorderRightStyle
+            }
+            PropertyValue::BorderBottomStyle(_) | PropertyValue::BorderBottomStyleCssWide(_) => {
+                PropertyKey::BorderBottomStyle
+            }
+            PropertyValue::BorderLeftStyle(_) | PropertyValue::BorderLeftStyleCssWide(_) => {
+                PropertyKey::BorderLeftStyle
+            }
+            PropertyValue::BorderTopColor(_) | PropertyValue::BorderTopColorCssWide(_) => {
+                PropertyKey::BorderTopColor
+            }
+            PropertyValue::BorderRightColor(_) | PropertyValue::BorderRightColorCssWide(_) => {
+                PropertyKey::BorderRightColor
+            }
+            PropertyValue::BorderBottomColor(_) | PropertyValue::BorderBottomColorCssWide(_) => {
+                PropertyKey::BorderBottomColor
+            }
+            PropertyValue::BorderLeftColor(_) | PropertyValue::BorderLeftColorCssWide(_) => {
+                PropertyKey::BorderLeftColor
+            }
+            PropertyValue::Border(_) | PropertyValue::BorderCssWide(_) => PropertyKey::Border,
+            PropertyValue::BorderRight(_) | PropertyValue::BorderRightCssWide(_) => {
+                PropertyKey::BorderRight
+            }
             PropertyValue::BorderStyle(_) => PropertyKey::BorderStyle,
             PropertyValue::BorderWidth(_) => PropertyKey::BorderWidth,
             PropertyValue::BorderColor(_) => PropertyKey::BorderColor,
@@ -11042,6 +11154,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-bottom-color" => PropertyKey::BorderBottomColor,
         "border-left-color" => PropertyKey::BorderLeftColor,
         "border" => PropertyKey::Border,
+        "border-right" => PropertyKey::BorderRight,
         "border-style" => PropertyKey::BorderStyle,
         "border-width" => PropertyKey::BorderWidth,
         "border-color" => PropertyKey::BorderColor,

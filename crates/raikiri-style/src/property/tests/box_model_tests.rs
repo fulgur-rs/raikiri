@@ -1702,14 +1702,42 @@ fn border_width_rejects_unknown_keyword() {
 }
 
 #[test]
-fn border_width_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet; silently drop them.
-    // Canonical reference: the "CSS-wide keyword" section of the PropertyValue doc.
-    assert_eq!(parse("inherit", "border-top-width"), None);
-    assert_eq!(parse("initial", "border-top-width"), None);
-    assert_eq!(parse("unset", "border-top-width"), None);
-    assert_eq!(parse("revert", "border-top-width"), None);
-    assert_eq!(parse("revert-layer", "border-top-width"), None);
+fn border_width_accepts_css_wide_keyword() {
+    // CSS Cascading 4 §7.3 + CSS Cascading 5 §7.3.5: every `border-*-width` longhand
+    // accepts the five CSS-wide keywords as a lone value (see `CssWideKeyword`).
+    assert_eq!(
+        parse("inherit", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
+    assert_eq!(
+        parse("initial", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::Initial
+        ))
+    );
+    assert_eq!(
+        parse("unset", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Unset))
+    );
+    assert_eq!(
+        parse("revert", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Revert))
+    );
+    assert_eq!(
+        parse("revert-layer", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::RevertLayer
+        ))
+    );
+    // ASCII case-insensitive (CSS Values 3 §3.1).
+    assert_eq!(
+        parse("INHERIT", "border-right-width"),
+        Some(PropertyValue::BorderRightWidthCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
 }
 
 #[test]
@@ -1917,14 +1945,41 @@ fn border_style_rejects_unknown_keyword() {
 }
 
 #[test]
-fn border_style_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet; silently drop them.
-    // Canonical reference: the "CSS-wide keyword" section of the PropertyValue doc.
-    assert_eq!(parse("inherit", "border-top-style"), None);
-    assert_eq!(parse("initial", "border-top-style"), None);
-    assert_eq!(parse("unset", "border-top-style"), None);
-    assert_eq!(parse("revert", "border-top-style"), None);
-    assert_eq!(parse("revert-layer", "border-top-style"), None);
+fn border_style_accepts_css_wide_keyword() {
+    // CSS Cascading 4 §7.3 + CSS Cascading 5 §7.3.5: every `border-*-style` longhand
+    // accepts the five CSS-wide keywords as a lone value (see `CssWideKeyword`).
+    assert_eq!(
+        parse("inherit", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
+    assert_eq!(
+        parse("initial", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::Initial
+        ))
+    );
+    assert_eq!(
+        parse("unset", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Unset))
+    );
+    assert_eq!(
+        parse("revert", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Revert))
+    );
+    assert_eq!(
+        parse("revert-layer", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::RevertLayer
+        ))
+    );
+    assert_eq!(
+        parse("INHERIT", "border-right-style"),
+        Some(PropertyValue::BorderRightStyleCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
 }
 
 #[test]
@@ -2950,4 +3005,264 @@ fn outline_offset_parses_length_and_rejects_non_length() {
     // `auto` / `none` are not valid for this property.
     assert_eq!(parse("auto", "outline-offset"), None);
     assert_eq!(parse("none", "outline-offset"), None);
+}
+
+#[test]
+fn border_right_shorthand_parses_width_style_color() {
+    // CSS Backgrounds 3 §3.4 single-side shorthand: `border-right` accepts the same
+    // `||` components as `border` but targets only the right side.
+    let expected = Border {
+        width: Length::Px(2.0),
+        style: BorderStyle::Dashed,
+        color: BorderColor::CurrentColor,
+    };
+    assert_eq!(
+        parse("2px dashed", "border-right"),
+        Some(PropertyValue::BorderRight(expected))
+    );
+    // Any order, omitted components fill with initial values.
+    assert_eq!(
+        parse("dashed 2px", "border-right"),
+        Some(PropertyValue::BorderRight(expected))
+    );
+    assert_eq!(
+        parse("dashed", "border-right"),
+        Some(PropertyValue::BorderRight(Border {
+            width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+            style: BorderStyle::Dashed,
+            color: BorderColor::CurrentColor,
+        }))
+    );
+    assert_eq!(
+        parse("2px", "border-right").unwrap().key(),
+        PropertyKey::BorderRight
+    );
+}
+
+#[test]
+fn border_and_border_right_accept_css_wide_keywords() {
+    // CSS Cascading 4 §7.3 + CSS Cascading 5 §7.3.5: `border` and `border-right`
+    // accept the five CSS-wide keywords as a lone value.
+    for (kw, expected) in [
+        ("inherit", CssWideKeyword::Inherit),
+        ("initial", CssWideKeyword::Initial),
+        ("unset", CssWideKeyword::Unset),
+        ("revert", CssWideKeyword::Revert),
+        ("revert-layer", CssWideKeyword::RevertLayer),
+    ] {
+        assert_eq!(
+            parse(kw, "border"),
+            Some(PropertyValue::BorderCssWide(expected)),
+            "border: {kw}"
+        );
+        assert_eq!(
+            parse(kw, "border-right"),
+            Some(PropertyValue::BorderRightCssWide(expected)),
+            "border-right: {kw}"
+        );
+        // Longhands share the same contract.
+        assert_eq!(
+            parse(kw, "border-right-width"),
+            Some(PropertyValue::BorderRightWidthCssWide(expected))
+        );
+        assert_eq!(
+            parse(kw, "border-right-style"),
+            Some(PropertyValue::BorderRightStyleCssWide(expected))
+        );
+        assert_eq!(
+            parse(kw, "border-right-color"),
+            Some(PropertyValue::BorderRightColorCssWide(expected))
+        );
+    }
+    // Case-insensitive.
+    assert_eq!(
+        parse("INHERIT", "border-right"),
+        Some(PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit))
+    );
+}
+
+#[test]
+fn border_css_wide_combined_with_components_is_invalid() {
+    // A CSS-wide keyword must be the lone value: `border-right: inherit solid`
+    // and `border: inherit solid` leave a leftover token for the caller's
+    // `expect_exhausted`, which drops the declaration. `parse_entire` models that
+    // exhaustiveness here; `parse` alone would return the prefix.
+    assert_eq!(parse_entire("inherit solid", "border-right"), None);
+    assert_eq!(parse_entire("inherit solid", "border"), None);
+    assert_eq!(parse_entire("solid inherit", "border-right"), None);
+    assert_eq!(parse_entire("1px inherit", "border"), None);
+    // Shorthand keys for the CSS-wide forms share the shorthand key so cascade
+    // winners compete per shorthand before expansion.
+    assert_eq!(
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit).key(),
+        PropertyKey::Border
+    );
+    assert_eq!(
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit).key(),
+        PropertyKey::BorderRight
+    );
+}
+
+#[test]
+fn border_right_expansion_preserves_declaration_order() {
+    // CSS Cascading 4 §3 + §6.1 order of appearance: expanding `border-right`
+    // in place as width, style, color preserves declaration order so a later
+    // longhand in the same block wins (see `crate::rule::expand_border_right`).
+    use crate::rule::{expand_border_right, expand_border_right_css_wide};
+    let border = Border {
+        width: Length::Px(2.0),
+        style: BorderStyle::Dashed,
+        color: BorderColor::CurrentColor,
+    };
+    let mut values = Vec::new();
+    expand_border_right(border, |v| values.push(v));
+    assert_eq!(
+        values,
+        vec![
+            PropertyValue::BorderRightWidth(Length::Px(2.0)),
+            PropertyValue::BorderRightStyle(BorderStyle::Dashed),
+            PropertyValue::BorderRightColor(BorderColor::CurrentColor),
+        ]
+    );
+    let mut wide = Vec::new();
+    expand_border_right_css_wide(CssWideKeyword::Inherit, |v| wide.push(v));
+    assert_eq!(
+        wide,
+        vec![
+            PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
+            PropertyValue::BorderRightStyleCssWide(CssWideKeyword::Inherit),
+            PropertyValue::BorderRightColorCssWide(CssWideKeyword::Inherit),
+        ]
+    );
+}
+
+#[test]
+fn css_wide_keyword_roundtrips_through_all() {
+    // Pin `CssWideKeyword::ALL` (generated by `css_keywords!`) so the dead-code
+    // lint stays quiet and future keyword additions force an explicit update here.
+    assert_eq!(CssWideKeyword::ALL.len(), 5);
+    for kw in CssWideKeyword::ALL {
+        assert_eq!(CssWideKeyword::from_css_ident(kw.as_css_str()), Some(*kw));
+    }
+}
+
+#[test]
+#[allow(clippy::type_complexity)]
+fn border_all_longhands_accept_css_wide_keywords() {
+    // Cover every `border-*-width/style/color` dispatch arm in `parse_value`
+    // (see `parse_css_wide_keyword`): all twelve longhands accept all five keywords.
+    let cases: &[(&str, fn(CssWideKeyword) -> PropertyValue)] = &[
+        ("border-top-width", PropertyValue::BorderTopWidthCssWide),
+        ("border-right-width", PropertyValue::BorderRightWidthCssWide),
+        (
+            "border-bottom-width",
+            PropertyValue::BorderBottomWidthCssWide,
+        ),
+        ("border-left-width", PropertyValue::BorderLeftWidthCssWide),
+        ("border-top-style", PropertyValue::BorderTopStyleCssWide),
+        ("border-right-style", PropertyValue::BorderRightStyleCssWide),
+        (
+            "border-bottom-style",
+            PropertyValue::BorderBottomStyleCssWide,
+        ),
+        ("border-left-style", PropertyValue::BorderLeftStyleCssWide),
+        ("border-top-color", PropertyValue::BorderTopColorCssWide),
+        ("border-right-color", PropertyValue::BorderRightColorCssWide),
+        (
+            "border-bottom-color",
+            PropertyValue::BorderBottomColorCssWide,
+        ),
+        ("border-left-color", PropertyValue::BorderLeftColorCssWide),
+    ];
+    for (name, ctor) in cases {
+        for kw in CssWideKeyword::ALL {
+            assert_eq!(
+                parse(kw.as_css_str(), name),
+                Some(ctor(*kw)),
+                "{name}: {kw:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn border_css_wide_serializes_to_keyword() {
+    // Cover `serialize_value`'s `CssWideKeyword` arm for every border variant.
+    for kw in CssWideKeyword::ALL {
+        let expected = kw.as_css_str().to_owned();
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+    }
+    // `border-right` shorthand itself is not canonically serialized (expanded first).
+    assert_eq!(
+        crate::property::serialize_value(&PropertyValue::BorderRight(Border {
+            width: Length::Px(2.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        })),
+        None
+    );
+}
+
+#[test]
+fn border_right_shorthand_rejects_empty_and_unknown() {
+    // Cover `parse_border_right_shorthand`'s empty-declaration guard (see
+    // `parse_border_shorthand`'s `||` contract): empty and unknown-only drop.
+    assert_eq!(parse("", "border-right"), None);
+    assert_eq!(parse("garbage", "border-right"), None);
+    assert_eq!(parse_entire("1px 2px", "border-right"), None);
 }
