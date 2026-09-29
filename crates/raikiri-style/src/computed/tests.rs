@@ -587,11 +587,14 @@ fn non_initial_parent() -> ComputedValues {
         // object-fit and CSS Compositing and Blending Level 1 §3.4.2
         // isolation (non-inherited), and CSS Tables 3 §8 empty-cells
         // (inherited), get values different from the initial `fill` /
-        // `auto` / `show` (as required for non_initial_parent).
+        // `auto` / `show` (as required for non_initial_parent). CSS Color 4
+        // §3.3 opacity is non-inherited, so use a value different from the
+        // initial `1` (as above).
         longhands: ComputedTable {
             object_fit: ObjectFit::Cover,
             isolation: Isolation::Isolate,
             empty_cells: EmptyCellsValue::Hide,
+            opacity: 0.75,
         },
         // CSS Images Module Level 3 §5.2: non-inherited, so use a value
         // different from the initial `50% 50%` (as required for
@@ -600,9 +603,6 @@ fn non_initial_parent() -> ComputedValues {
             horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
             vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
         },
-        // CSS Color 4 §3.3: non-inherited, so use a value different
-        // from the initial `1` (as required for non_initial_parent).
-        opacity: 0.75,
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
         // a value different from the initial `normal` (as required for
         // non_initial_parent).

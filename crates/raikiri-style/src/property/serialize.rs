@@ -547,7 +547,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Background(..)
         | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)
-        | PropertyValue::Opacity(..)
         | PropertyValue::MixBlendMode(..)
         | PropertyValue::MaskImage(..)
         | PropertyValue::ClipPath(..)

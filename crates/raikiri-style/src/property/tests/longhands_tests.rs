@@ -113,7 +113,7 @@ fn longhand_value_pat_matches_table_variants_only() {
     for value in &table {
         assert!(matches!(value, longhand_value_pat!()), "{value:?}");
     }
-    let other = PropertyValue::Opacity(0.5);
+    let other = PropertyValue::MixBlendMode(MixBlendMode::Multiply);
     assert!(!matches!(&other, longhand_value_pat!()));
 }
 
@@ -197,4 +197,24 @@ fn empty_cells_cascades_from_parent_to_child() {
     parent.empty_cells = EmptyCellsValue::Hide;
     let child = crate::computed::ComputedValues::inherit_from(&parent);
     assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
+}
+
+#[test]
+fn via_entry_computes_in_the_table_and_the_page_context() {
+    let ctx = crate::resolve::ResolveContext::initial();
+    let cx = AbsolutizeCx::initial(&ctx);
+    let mut table = SpecifiedTable::initial();
+    table.apply(PropertyValue::Opacity(2.0));
+    // specified preserves, computed clamps (CSS Color 4 §3.3)
+    assert_eq!(table.opacity, 2.0);
+    assert_eq!(table.absolutize(&cx).opacity, 1.0);
+    assert_eq!(ComputedTable::initial().opacity, 1.0);
+    assert_eq!(
+        longhand_page_absolutize(PropertyValue::Opacity(-0.5), &cx),
+        PropertyValue::Opacity(0.0)
+    );
+    assert_eq!(
+        longhand_page_absolutize(PropertyValue::Isolation(Isolation::Isolate), &cx),
+        PropertyValue::Isolation(Isolation::Isolate)
+    );
 }

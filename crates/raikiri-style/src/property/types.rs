@@ -8886,7 +8886,6 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,
         "object-position" => PropertyKey::ObjectPosition,
-        "opacity" => PropertyKey::Opacity,
         "mix-blend-mode" => PropertyKey::MixBlendMode,
         "mask-image" => PropertyKey::MaskImage,
         "clip-path" => PropertyKey::ClipPath,

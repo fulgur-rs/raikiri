@@ -865,8 +865,6 @@ pub(super) fn absolutize_in_page_context(
             basis.css_position(position),
             Length::Px(resolve_length(z, font_size, own_line_height, ctx).px()),
         ),
-        // ── opacity ───────────────────────────────────────────────────────
-        PropertyValue::Opacity(o) => PropertyValue::Opacity(o.clamp(0.0, 1.0)),
         // ── overflow-x / overflow-y ──────────────────────────────────────────
         // Cross-axis coupling: each axis resolves against the other axis's winner.
         PropertyValue::OverflowX(v) => PropertyValue::OverflowX(

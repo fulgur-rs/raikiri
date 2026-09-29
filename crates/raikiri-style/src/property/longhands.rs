@@ -1316,21 +1316,6 @@ longhands! {
             /// Since it contains `<length-percentage>`, absolutization is deferred to
             /// phase 3.
             ObjectPosition(CssPosition),
-            /// `opacity` — **non-inherited**, initial: `1` (CSS Color 4 §3.3
-            /// "Transparency: the opacity property"
-            /// <https://www.w3.org/TR/css-color-4/#transparency>, "Value:
-            /// `<opacity-value>`", "Inherited: no"). Grammar: `<opacity-value> =
-            /// <number> | <percentage>`.
-            ///
-            /// This payload **retains the specified value without clamping**. The spec
-            /// says: "Opacity values outside the range \[0, 1\] are not invalid, and
-            /// are preserved in specified values, but are clamped to the range
-            /// \[0, 1\] in computed values." Clamping belongs to phase 3
-            /// ([`crate::specified::SpecifiedValues::absolutize_with`] /
-            /// [`crate::page`]'s `absolutize_in_page_context`); this variant carries
-            /// even out-of-range values (for example, `opacity: 2`). Appended as a new
-            /// 1:1 disjoint field under the placement rule in [`PropertyKey`].
-            Opacity(f32),
             /// `mix-blend-mode` — **non-inherited**, initial:
             /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1 §3.4.1;
             /// see [`MixBlendMode`]). Appended as a new 1:1 disjoint field under the
@@ -1922,11 +1907,6 @@ longhands! {
             // the same reason as background-repeat: a new field disjoint one-to-one
             // from existing fields.
             ObjectPosition,
-            // opacity (CSS Color 4 §3.3, semantics on the matching
-            // PropertyValue::Opacity variant; sibling PropertyKey variants carry no
-            // per-variant docs per crate convention). Appended for the same reason as
-            // background-repeat: a new field disjoint one-to-one from existing fields.
-            Opacity,
             // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1,
             // semantics on the matching PropertyValue::MixBlendMode variant; sibling
             // PropertyKey variants carry no per-variant docs per crate convention).
@@ -2278,7 +2258,6 @@ longhands! {
         PropertyValue::BackgroundImage(_) => PropertyKey::BackgroundImage,
         PropertyValue::Background(_) => PropertyKey::Background,
         PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
-        PropertyValue::Opacity(_) => PropertyKey::Opacity,
         PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
         PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
         PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
@@ -2385,4 +2364,67 @@ longhands! {
         // case (`show` is the initial value).
         sample: EmptyCellsValue::Hide,
     }
+
+    /// `opacity`: **non-inherited**, initial `1` (CSS Color 4 §3.3
+    /// "Transparency: the opacity property"
+    /// <https://www.w3.org/TR/css-color-4/#transparency>). Grammar:
+    /// `<opacity-value> = <number> | <percentage>`.
+    ///
+    /// # Specified preserves, computed clamps
+    ///
+    /// Same §: "Opacity values outside the range \[0, 1\] are not invalid,
+    /// and are preserved in specified values, but are clamped to the range
+    /// \[0, 1\] in computed values." The `PropertyValue` payload and the
+    /// specified field keep the authored number (for example `opacity: 2`);
+    /// the computed field is clamped by `clamp_opacity`, both in the element
+    /// cascade and in page-context absolutization.
+    ///
+    /// Through the parse and cascade pipeline the value is never NaN: the
+    /// numeric-token acquisition corrects the one tokenizer artifact that
+    /// could produce it (a zero-mantissa, huge-exponent literal such as
+    /// `opacity: 0e999`), and [`parse_opacity_value`] rejects NaN as
+    /// defense-in-depth while letting `+Inf`/`-Inf` through to the clamp.
+    /// That is not a type-level invariant: code that assigns the public field
+    /// directly can still store NaN or an out-of-range value, and
+    /// `f32::clamp` passes a NaN through unchanged.
+    ///
+    /// Applying the value as a paint-time alpha group belongs to
+    /// raikiri-paint, which consumes the computed value as plain data.
+    "opacity" => Opacity {
+        value: f32,
+        initial: 1.0,
+        inherited: no,
+        parse: parse_opacity_value,
+        computed: via OpacityLonghand -> f32,
+        field: opacity,
+        // Out of range on purpose, not just non-initial: `2.0` clamps to
+        // `1.0`, so the page-cascade corpus counts it as transformed rather
+        // than pass-through. An in-range sample such as `0.5` would clamp to
+        // itself and wrongly inflate the pass-through count.
+        sample: 2.0,
+    }
+}
+
+/// Computed-value behavior of `opacity`: clamp to `[0, 1]`, and the clamped
+/// number is its own specified form.
+pub(crate) struct OpacityLonghand;
+
+impl Longhand for OpacityLonghand {
+    type Specified = f32;
+    type Computed = f32;
+
+    fn compute(specified: f32, cx: &AbsolutizeCx<'_>) -> f32 {
+        run_hook(clamp_opacity, specified, cx)
+    }
+
+    fn lift(computed: f32) -> f32 {
+        computed
+    }
+}
+
+/// CSS Color 4 §3.3: computed opacity is clamped to `[0, 1]`. `f32::clamp`
+/// maps `+Inf`/`-Inf` to `1.0`/`0.0` without panicking (only NaN bounds
+/// panic, and neither bound is NaN).
+fn clamp_opacity(value: f32) -> f32 {
+    value.clamp(0.0, 1.0)
 }

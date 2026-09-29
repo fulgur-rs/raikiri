@@ -53,7 +53,7 @@ use super::text::*;
 /// here. **NaN is different** — `f32::clamp` returns `self` unchanged when
 /// `self` is NaN (only a NaN *bound* panics), so an unguarded NaN would
 /// sail through the clamp and reach
-/// [`crate::computed::ComputedValues::opacity`] — this guard is what keeps
+/// [`crate::property::ComputedTable::opacity`] — this guard is what keeps
 /// that field NaN-free for values that go through this parser (see that
 /// field's doc for the "ordinary parse -> cascade pipeline" scoping of
 /// that guarantee). An earlier iteration of this guard used `is_finite()`,
@@ -71,9 +71,9 @@ use super::text::*;
 /// this function ever sees the value, so in ordinary use `n`/`pct` here
 /// are never `NaN`. This `!is_nan()` check is kept as defense-in-depth —
 /// it costs nothing when the value isn't `NaN` and still protects
-/// [`crate::computed::ComputedValues::opacity`]'s NaN-free invariant if
+/// [`crate::property::ComputedTable::opacity`]'s NaN-free invariant if
 /// that upstream recovery is ever bypassed or extended incorrectly.
-pub(super) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
+pub(crate) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
     let val = if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         if pct.is_nan() {
             return None;

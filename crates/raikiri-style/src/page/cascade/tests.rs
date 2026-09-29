@@ -3604,17 +3604,6 @@ crate::property::with_longhand_samples!(property_key_samples {
         horizontal: CssPositionOffset::Start(Length::Em(2.0)),
         vertical: CssPositionOffset::End(Length::Rem(1.0)),
     }),
-    // CSS Color 4 §3.3 — worst case is an out-of-range value (`2.0`,
-    // not just non-initial), so this sample actually exercises the
-    // `Opacity` arm's `[0, 1]` clamp in
-    // `phase_3_variant_classification_matches_the_documented_counts`
-    // (that test counts corpus entries where `absolutize_in_page_context`
-    // is a no-op; `2.0` clamps to `1.0` and is therefore correctly
-    // *not* counted as pass-through — an in-range sample like `0.5`
-    // would clamp to itself and wrongly inflate
-    // `PHASE_3_PASS_THROUGH_VARIANTS`, same load-bearing-fixture
-    // convention as that test's own `Solid`/`Hidden` choices).
-    Opacity => PropertyValue::Opacity(2.0),
     // CSS Compositing and Blending Level 1 §3.4.1 — non-initial
     // (`multiply`, not `normal`) so a would-be pass-through regression
     // (accidentally routing this arm through a transform) is visible.
@@ -4060,7 +4049,6 @@ crate::property::with_longhand_variants!(property_value_variant_registry {
     BackgroundImage,
     Background,
     ObjectPosition,
-    Opacity,
     MixBlendMode,
     MaskImage,
     ClipPath,
@@ -4726,22 +4714,20 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::BackgroundOrigin(_)
 
             // Properties declared in the `longhands!` table (such as
-            // `object-fit`) carry keyword-only payloads with no length, same
-            // shape as `BackgroundRepeat` above. This arm assumes every table
-            // payload is length-free; revisit it when a table property
-            // carries a length. `object-position` (CSS Images 3 §5.2) does
-            // carry `<length-percentage>` (reuses `CssPosition`) and gets its
-            // own arm below, next to `BackgroundPosition`.
-            | crate::property::longhand_value_pat!()
-            // `opacity` (CSS Color 4 §3.3) carries a bare `f32`, not a
-            // `Length` — this detector only checks for *length* residue, so
-            // it reports `None` unconditionally regardless of the value's
-            // range. The `[0,1]` clamp is real phase-3 work
-            // (`absolutize_in_page_context`'s `Opacity` arm), same as
+            // `object-fit`) carry payloads with no length, same shape as
+            // `BackgroundRepeat` above. This arm assumes every table payload
+            // is length-free; revisit it when a table property carries a
+            // length. `object-position` (CSS Images 3 §5.2) does carry
+            // `<length-percentage>` (reuses `CssPosition`) and gets its own
+            // arm below, next to `BackgroundPosition`. `opacity` (CSS Color 4
+            // §3.3) carries a bare `f32`, not a `Length`: this detector only
+            // checks for *length* residue, so it reports `None` regardless
+            // of the value's range. The `[0,1]` clamp is real phase-3 work
+            // (the table's `computed: via` hook), same as
             // `OverflowX`/`WritingMode` above — see
-            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
-            // is accounted for.
-            | PropertyValue::Opacity(_)
+            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that is
+            // accounted for.
+            | crate::property::longhand_value_pat!()
             // `mix-blend-mode` (CSS Compositing and Blending Level 1 §3.4.1)
             // carries a bare keyword payload (no `Length` at all, unlike
             // `Opacity`'s `f32`) — always `None`.

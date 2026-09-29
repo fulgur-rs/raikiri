@@ -1604,14 +1604,6 @@ pub(crate) fn resolve_against_inherited(
         // `<length-percentage>` absolutization is phase 3's job, same as
         // `BackgroundPosition` above.
         | PropertyValue::ObjectPosition(_)
-        // opacity (CSS Color 4 §3.3) — non-inherited, carries a bare
-        // `<number>`/`<percentage>`-derived `f32`, not a length, and does
-        // not depend on the inheritance parent — nothing for phase 2 to
-        // resolve here. The `[0,1]` clamp (CSS Color 4 §3.3's "computed
-        // value: … clamped" rule) is phase 3's job
-        // (`crate::specified::SpecifiedValues::absolutize_with`), same
-        // split `FlexGrow`/`ZIndex` use for their own phase-3-only work.
-        | PropertyValue::Opacity(_)
         // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) —
         // non-inherited, bare keyword payload with no phase-2 dependency,
         // same shape as `BackgroundRepeat` above.
@@ -2039,7 +2031,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),
         PropertyValue::Font(shorthand) => expand_font(&shorthand, |v| apply_value(v, target)),
         PropertyValue::ObjectPosition(v) => target.object_position = v,
-        PropertyValue::Opacity(v) => target.opacity = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
