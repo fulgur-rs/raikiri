@@ -8,7 +8,7 @@ Compatibility is validated with paged-media CSS and W3C Web Platform Tests (WPT)
 Unlike general-purpose layout engines, raikiri treats pagination and typesetting-oriented architecture as first-class concepts.
 
 > **Status:** Under active development. The API and implementation scope may change.
-> `plan` and `render_streaming` currently expose API shapes only and return `RenderError::Unimplemented`.
+> `layout()` returns retained pages and fragments for consumers to inspect and draw.
 
 ## For users
 
@@ -85,7 +85,6 @@ Use `html_to_png_with_fonts` when reproducible fonts are required for VRT.
 | [`raikiri-dom`](crates/raikiri-dom) | DOM arena, taffy layout, parley text processing, and page state |
 | [`raikiri-net`](crates/raikiri-net) | `NetworkProvider`, image resolver, and PNG decoding |
 | [`raikiri-paint`](crates/raikiri-paint) | Builds anyrender paint scenes from page fragments |
-| [`raikiri-blitz-compat`](crates/raikiri-blitz-compat) | blitz-compatible type shapes and adapters |
 | [`raikiri-vrt`](crates/raikiri-vrt) | Fixtures and diff infrastructure for visual regression tests (private crate) |
 | [`raikiri-wpt`](crates/raikiri-wpt) | WPT runner, reftests, blitz oracle, and expectations lint (private crate) |
 

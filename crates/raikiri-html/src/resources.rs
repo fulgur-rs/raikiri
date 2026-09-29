@@ -174,15 +174,15 @@ impl ResourceLimits {
 /// Consumer-supplied inputs and resource policy shared by parse and render.
 ///
 /// Use the same value with [`crate::parse_html_with_resources`] and
-/// [`crate::RenderOptions::resources`] so both phases share stylesheet
+/// [`crate::LayoutOptions::resources`] so both phases share stylesheet
 /// sources, base URL, network provider, policy, fonts, resolver, and limits.
 /// CSS background sources fetched during rendering are kept in an image cache
 /// shared by clones, bounded to 128 MiB of decoded raster data.
 ///
 /// `FontContext::new()` is retained as the default for compatibility with the
 /// existing consumer behavior. For deterministic rendering, supply a context
-/// built with the `raikiri` crate's `FontContextBuilder`, which disables system font
-/// discovery and applies bundled fonts in a stable fallback order.
+/// built with [`crate::FontContextBuilder`], which disables system font discovery
+/// by default and applies bundled fonts in a stable fallback order.
 #[derive(Clone)]
 pub struct RenderResources<'a> {
     extra_stylesheets: Vec<String>,
@@ -1487,7 +1487,7 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
 }
 
 /// Parse HTML using the same renderer-neutral resource configuration later
-/// accepted by [`crate::RenderOptions::resources`].
+/// accepted by [`crate::LayoutOptions::resources`].
 pub fn parse_html_with_resources<R: Read>(
     input: R,
     resources: &RenderResources<'_>,

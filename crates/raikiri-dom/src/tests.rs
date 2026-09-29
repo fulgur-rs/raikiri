@@ -350,9 +350,9 @@ fn detach_from_parent_removes_child_and_returns_parent() {
 #[test]
 fn empty_display_none_leaf_produces_hidden_layout() {
     // Case 1: empty (leaf) element with display:none — this is the case
-    // Finding #1 caught (is_leaf was checked before display, so an empty
+    // It previously checked is_leaf before display, so an empty
     // display:none leaf took the leaf-layout path instead of
-    // LayoutOutput::HIDDEN).
+    // LayoutOutput::HIDDEN.
     // A fixed size is set deliberately: if the buggy `is_leaf`-before-`display`
     // check regresses, the leaf-layout path would honor this explicit size
     // and produce a non-zero layout instead of LayoutOutput::HIDDEN's zero size.
@@ -678,7 +678,7 @@ fn node_accessors_are_callable_from_external_call_site() {
 /// child's layout confirms exactly that (finite, non-default output),
 /// rather than silently relying on it.
 ///
-/// # Finding
+/// # Regression
 ///
 /// No hang: `compute_root_layout` returns well within the 10s bound for
 /// every non-finite field this test sets (width/height `+Inf`/`NaN`,

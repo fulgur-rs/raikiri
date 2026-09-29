@@ -47,6 +47,7 @@ mod diag;
 mod fragment;
 mod image_resolve;
 mod node;
+mod page_projection;
 mod phase_b;
 mod running;
 mod target;
@@ -65,22 +66,16 @@ pub use fonts::{
 };
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
-    PageMargins, PageSlice, first_page_name, layout_page_fragments, layout_pages,
-    layout_pages_with_page_geometry, layout_pages_with_page_geometry_and_resolver,
+    PageMargins, PageSlice, first_page_name, layout_pages, layout_pages_with_page_geometry,
+    layout_pages_with_page_geometry_and_resolver,
     layout_pages_with_page_geometry_and_resolver_and_base_url, layout_pages_with_page_steps,
     layout_pages_with_resolver, layout_pages_with_resolver_and_base_url, layout_single_page,
     layout_single_page_with_resolver, layout_single_page_with_resolver_and_base_url,
-    page_content_insets, page_fragment_events_from_pages, page_fragment_geometry_table,
-    page_fragments_from_slices, page_fragments_from_slices_with_page_geometry, page_margins,
-    relayout_text_for_width, resolve_initial_page_context, resolve_page_fragment_geometry,
+    page_content_insets, page_margins, relayout_text_for_width, resolve_initial_page_context,
 };
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
-pub use raikiri_traits::{
-    NodeKind, PageFragment, PageFragmentEvent, PageFragmentGeometry, PageFragmentGeometryTable,
-    PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
-    PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation, PageFragmentPageGeometry,
-    PageFragmentRect, QuirksMode,
-};
+pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
+pub use raikiri_traits::{NodeKind, QuirksMode};
 pub use target::{CounterSnapshot, counter_snapshots};
 
 #[cfg(feature = "logical-snapshot")]

@@ -115,6 +115,7 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
 /// element at index 1 or later, as a child of root index 0.
 #[derive(Debug, Clone)]
 pub struct Document {
+    pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
@@ -210,6 +211,7 @@ impl Document {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
         Self {
+            page_projection: crate::page_projection::PageProjection::default(),
             nodes,
             root: 0,
             layout_dirty: false,
@@ -585,6 +587,7 @@ impl Document {
         ns: Option<SmolStr>,
         prefix: Option<SmolStr>,
     ) {
+        self.page_projection.clear();
         let (namespace_changed, affects_tree_flags, affects_layout) = {
             let e = self.nodes[id]
                 .data
@@ -622,6 +625,7 @@ impl Document {
     ///
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
+        self.page_projection.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -652,6 +656,7 @@ impl Document {
             return Err("invalid namespace-qualified attribute name".to_owned());
         }
         let value = value.into();
+        self.page_projection.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -682,6 +687,7 @@ impl Document {
     ///
     /// This updates attribute metadata only; like [`Document::set_element_attributes`],
     /// it does not invalidate layout caches or mark tree membership dirty.
+    /// Stored page placements and links are cleared.
     ///
     /// Returns an error when `local` is not an XML name. HTML-namespace element
     /// names are ASCII-lowercased; foreign-content names preserve their case.
@@ -697,6 +703,7 @@ impl Document {
         if !is_valid_xml_name(local.as_str()) {
             return Err(format!("invalid attribute name: {local}"));
         }
+        self.page_projection.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("set_element_attribute called on non-Element");
         };
@@ -760,6 +767,7 @@ impl Document {
     ///
     /// This updates attribute metadata only; it does not invalidate layout
     /// caches or mark tree membership dirty.
+    /// Stored page placements and links are cleared.
     ///
     /// Returns an error when `local` is not an XML name. HTML-namespace element
     /// names are ASCII-lowercased; foreign-content names preserve their case.
@@ -773,6 +781,7 @@ impl Document {
         if !is_valid_xml_name(local) {
             return Err(format!("invalid attribute name: {local}"));
         }
+        self.page_projection.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("remove_element_attribute called on non-Element");
         };
@@ -1308,6 +1317,7 @@ impl Document {
     ///
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
+        self.page_projection.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -1677,6 +1687,7 @@ impl Document {
     /// `compute_child_layout` (via taffy_impl) clears it lazily. Each mutation
     /// costs O(1); each layout batch incurs amortized O(N) clearing.
     pub(crate) fn invalidate_layout_cache(&mut self) {
+        self.page_projection.clear();
         self.layout_dirty = true;
     }
 
