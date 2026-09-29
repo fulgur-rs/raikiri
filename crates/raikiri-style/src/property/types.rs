@@ -948,6 +948,19 @@ pub enum BorderStyle {
     Outset,
 }
 
+css_keywords!(BorderStyle {
+    None => "none",
+    Hidden => "hidden",
+    Dotted => "dotted",
+    Dashed => "dashed",
+    Solid => "solid",
+    Double => "double",
+    Groove => "groove",
+    Ridge => "ridge",
+    Inset => "inset",
+    Outset => "outset",
+});
+
 /// Keyword payload for `outline-style`.
 ///
 /// CSS Basic User Interface Module Level 3 §4.3
@@ -989,6 +1002,20 @@ pub enum OutlineStyle {
     /// `auto` — UA-dependent automatic outline rendering.
     Auto,
 }
+
+css_keywords!(OutlineStyle {
+    None => "none",
+    Hidden => "hidden",
+    Dotted => "dotted",
+    Dashed => "dashed",
+    Solid => "solid",
+    Double => "double",
+    Groove => "groove",
+    Ridge => "ridge",
+    Inset => "inset",
+    Outset => "outset",
+    Auto => "auto",
+});
 
 /// Computed value for `border-*-color`: the static cascade preserves the
 /// distinction between the specified `currentcolor` keyword and resolved `<color>`.
@@ -3498,6 +3525,11 @@ pub enum BoxSizing {
     BorderBox,
 }
 
+css_keywords!(BoxSizing {
+    ContentBox => "content-box",
+    BorderBox => "border-box",
+});
+
 /// `hanging-punctuation` property value.
 ///
 /// CSS Text 3 §8.2.1
@@ -3848,6 +3880,14 @@ pub enum OverflowValue {
     /// separate computed-value variant.
     Auto,
 }
+
+css_keywords!(OverflowValue {
+    Visible => "visible",
+    Hidden => "hidden",
+    Clip => "clip",
+    Scroll => "scroll",
+    Auto => "auto",
+});
 
 /// A pair holding `overflow-x` and `overflow-y`.
 ///
