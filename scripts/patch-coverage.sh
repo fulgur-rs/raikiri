@@ -10,8 +10,9 @@
 # Approach (workspace lcov → merge-base diff → gated-crate judgment, per
 # gate.md §8.1.1, modeled on flpdf's patch-coverage.sh):
 #
-#   1. Run the *whole workspace* test suite under cargo-llvm-cov
-#      instrumentation, export lcov.
+#   1. `cargo llvm-cov clean --workspace`, then run the *whole workspace*
+#      test suite under cargo-llvm-cov instrumentation, export lcov (the
+#      clean is required: incremental runs report stale line tables).
 #   2. Diff merge-base(<base>, HEAD)..HEAD for *.rs, in -U0 form, to get the
 #      exact added-line set per file (git.md §8.1.4's canonical merge-base
 #      handling: base is resolved once via `git merge-base`, not a bare
@@ -101,6 +102,14 @@ echo "base sha  : $BASE_SHA"
 echo "TMPDIR    : $TMPDIR"
 echo
 
+# `cargo llvm-cov clean --workspace` first in both branches below: an
+# incremental run reuses stale profile data and, after comment-only edits,
+# reports false uncovered lines (off by one onto the line above a
+# cov:ignore). A clean run re-builds and re-runs the whole workspace suite,
+# so it is slower, but the line tables then match HEAD. The clean only
+# touches this worktree's own target/ dir (TMPDIR scratch from
+# scripts/lib/tmpdir.sh is unaffected), so concurrent worktrees just pay
+# their own rebuild cost.
 if [[ "${RAIKIRI_COVERAGE_INCLUDE_IGNORED:-0}" == "1" ]]; then
   echo "-- cargo llvm-cov (normal + --ignored, accumulated) --"
   cargo llvm-cov clean --workspace
@@ -113,7 +122,8 @@ if [[ "${RAIKIRI_COVERAGE_INCLUDE_IGNORED:-0}" == "1" ]]; then
   cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --no-report -- --ignored
   cargo llvm-cov report --lcov --output-path "$LCOV_OUT"
 else
-  echo "-- cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --"
+  echo "-- cargo llvm-cov clean + --workspace --features raikiri-net/http-ureq --locked --lcov --"
+  cargo llvm-cov clean --workspace
   cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --output-path "$LCOV_OUT"
 fi
 echo
