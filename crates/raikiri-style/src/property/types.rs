@@ -7560,6 +7560,11 @@ pub enum FillRule {
     EvenOdd,
 }
 
+css_keywords!(FillRule {
+    NonZero => "nonzero",
+    EvenOdd => "evenodd",
+});
+
 /// `<shape-radius>` for [`BasicShape::Circle`] / [`BasicShape::Ellipse`].
 ///
 /// CSS Shapes Module Level 1 §3.1
