@@ -27,6 +27,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         ContentPart,
         ContentTextKeyword,
         Direction,
+        DisplayValue,
         EmptyCellsValue,
         FlexDirectionValue,
         FlexWrapValue,
