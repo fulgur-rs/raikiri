@@ -284,6 +284,16 @@ fn table_names_have_no_hand_written_arm() {
     }
 }
 
+/// The hand-written list stays sorted on its own, so an entry added out of
+/// order is caught even though the merged list is re-sorted.
+#[test]
+fn hand_written_names_are_sorted() {
+    assert!(
+        super::HAND_WRITTEN_NAMES.is_sorted(),
+        "HAND_WRITTEN_NAMES must be sorted"
+    );
+}
+
 /// The merged list holds each name once: a declared longhand's name is not
 /// also written into the hand-written list.
 #[test]
