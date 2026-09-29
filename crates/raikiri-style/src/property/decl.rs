@@ -1,5 +1,66 @@
-//! The hand-written [`PropertyValue`] and [`PropertyKey`] enums and the
-//! [`PropertyValue::key`] projection between them.
+//! The property declarations: the [`PropertyValue`] and [`PropertyKey`]
+//! enums, and the `properties!` table of longhands that `#[longhands]`
+//! (from `raikiri-style-macros`) turns into generated code.
+//!
+//! The hand-written variants come first; `#[longhands]` appends one
+//! `PropertyValue` and one `PropertyKey` variant per table entry after them,
+//! so a new entry never shifts a hand-written key's discriminant. It also
+//! generates [`PropertyValue::key`]: a hand-written variant maps to the key
+//! of the same name unless it carries `#[key(OtherKey)]` or
+//! `#[key(with = f)]`. The table syntax, its defaults and the full list of
+//! generated items are documented on the macro crate
+//! (`raikiri_style_macros`); this page covers what this crate needs.
+//!
+//! # Adding a keyword longhand
+//!
+//! 1. Add an entry to the `properties!` block below, with a doc comment
+//!    citing the specification (a missing doc comment is a compile error):
+//!
+//!    ```text
+//!    /// CSS Compositing and Blending Level 1 §3.4.2 <https://..>. ..
+//!    "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },
+//!    ```
+//!
+//!    This declares the keyword enum, the `PropertyValue` / `PropertyKey`
+//!    variants, the `SpecifiedTable` / `ComputedTable` fields (reachable on
+//!    `SpecifiedValues` / `ComputedValues` through `Deref`), initial value,
+//!    inheritance, cascade application, parsing, name lookup,
+//!    [`supported_property_names`](super::supported_property_names), the
+//!    page-context pass-through, and the page-cascade test registries.
+//! 2. Add the new field to the two exhaustive `ComputedTable { .. }`
+//!    fixtures, `non_initial_parent` in `computed/tests.rs` and
+//!    `parent_fixture` in `specified/tests.rs`, with a non-initial value
+//!    (the compiler reports both).
+//! 3. Bump `PHASE_3_PASS_THROUGH_VARIANTS` in `page/cascade/tests.rs` by one
+//!    when the entry's `sample:` value (by default the first non-initial
+//!    keyword) passes through page-context absolutization unchanged, which
+//!    every keyword entry does (the
+//!    `phase_3_variant_classification_matches_the_documented_counts` test
+//!    reports it). Moving an existing hand-written property into the table
+//!    keeps the count, since its hand-written sample goes away.
+//! 4. Add the property's own parse and cascade tests, as for any property.
+//!
+//! Nothing else is hand-written for a keyword longhand: do not add a
+//! `parse_value` or `property_key_for_name` arm or a
+//! `supported_property_names` entry (a test rejects a table name that also
+//! has one).
+//!
+//! # Limits of the generated pass-through
+//!
+//! Every table-declared value takes the same arm, [`longhand_value_pat!`],
+//! in the shorthand expansion, the phase-2 `resolve_against_inherited`
+//! step, `serialize_value` (no serialization) and the page-cascade test's
+//! `specified_layer_residue` detector (reports no residue). That is right
+//! for keyword payloads. A longhand whose payload carries lengths needs its
+//! own residue arm in that detector, and a longhand whose value depends on
+//! the parent needs its own phase-2 arm.
+//!
+//! # Links to table fields
+//!
+//! rustdoc does not resolve fields through `Deref`, so an intra-doc link to
+//! a table-declared field must name the table:
+//! [`ComputedTable::isolation`], [`SpecifiedTable::isolation`], not
+//! `ComputedValues::isolation`.
 
 use std::sync::Arc;
 
@@ -8,7 +69,6 @@ use smol_str::SmolStr;
 
 // Not `use super::*`: that glob would also import this file's own module name
 // `decl`, which would then be ambiguous with the macro-expanded inline `decl`.
-#[allow(unused_imports)]
 use super::parse::*;
 use super::types::*;
 
