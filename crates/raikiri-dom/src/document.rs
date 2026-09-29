@@ -93,6 +93,164 @@ fn push_xml_escaped(output: &mut String, value: &str, attribute: bool) {
     }
 }
 
+/// Strip foreign calc handles from an externally supplied style.
+///
+/// With the `calc` feature enabled, taffy length types hold a raw pointer
+/// through a compact tagged representation. The safe constructor for those
+/// handles takes a plain pointer, so any caller can build a style that
+/// points outside the document arena. Storing such a style would break the
+/// ownership premise behind the `Send` impl, which requires every calc
+/// pointer in the arena to point into the same document's stable payload
+/// storage. The layout bridge rebuilds owned handles from computed values
+/// before each layout pass, so discarding foreign handles here changes no
+/// valid behavior: styles without calc pass through untouched.
+///
+/// Each calc-capable scalar that holds a foreign handle is replaced with a
+/// safe keyword fallback. `Dimension` and `LengthPercentageAuto` fall back
+/// to `auto`, `LengthPercentage` to zero length, and grid track functions
+/// to `auto`. Grid template repetitions keep their count and line names
+/// and only have their track functions sanitized.
+///
+/// The exhaustive field check below pins coverage against future taffy
+/// fields. If taffy adds a style field, this function fails to compile
+/// until the new field is classified here.
+fn sanitize_external_style(mut style: Style) -> Style {
+    fn sanitize_dimension(value: taffy::Dimension) -> taffy::Dimension {
+        if value.into_raw().is_calc() {
+            taffy::Dimension::auto()
+        } else {
+            value
+        }
+    }
+    fn sanitize_length_percentage_auto(
+        value: taffy::LengthPercentageAuto,
+    ) -> taffy::LengthPercentageAuto {
+        if value.into_raw().is_calc() {
+            taffy::LengthPercentageAuto::auto()
+        } else {
+            value
+        }
+    }
+    fn sanitize_length_percentage(value: taffy::LengthPercentage) -> taffy::LengthPercentage {
+        if value.into_raw().is_calc() {
+            taffy::LengthPercentage::length(0.0)
+        } else {
+            value
+        }
+    }
+    fn sanitize_track(value: taffy::TrackSizingFunction) -> taffy::TrackSizingFunction {
+        let min = if value.min.into_raw().is_calc() {
+            taffy::MinTrackSizingFunction::auto()
+        } else {
+            value.min
+        };
+        let max = if value.max.into_raw().is_calc() {
+            taffy::MaxTrackSizingFunction::auto()
+        } else {
+            value.max
+        };
+        taffy::TrackSizingFunction { min, max }
+    }
+
+    {
+        let Style {
+            dummy: _,
+            display: _,
+            item_is_table: _,
+            item_is_replaced: _,
+            box_sizing: _,
+            direction: _,
+            overflow: _,
+            scrollbar_width: _,
+            contain: _,
+            float: _,
+            clear: _,
+            position: _,
+            inset: _,
+            size: _,
+            min_size: _,
+            max_size: _,
+            aspect_ratio: _,
+            margin: _,
+            padding: _,
+            border: _,
+            align_items: _,
+            align_self: _,
+            justify_items: _,
+            justify_self: _,
+            align_content: _,
+            justify_content: _,
+            gap: _,
+            text_align: _,
+            flex_direction: _,
+            flex_wrap: _,
+            flex_basis: _,
+            flex_grow: _,
+            flex_shrink: _,
+            grid_template_rows: _,
+            grid_template_columns: _,
+            grid_auto_rows: _,
+            grid_auto_columns: _,
+            grid_auto_flow: _,
+            grid_template_areas: _,
+            grid_template_column_names: _,
+            grid_template_row_names: _,
+            grid_row: _,
+            grid_column: _,
+        } = &style;
+    }
+
+    style.size.width = sanitize_dimension(style.size.width);
+    style.size.height = sanitize_dimension(style.size.height);
+    style.min_size.width = sanitize_length_percentage_auto(style.min_size.width);
+    style.min_size.height = sanitize_length_percentage_auto(style.min_size.height);
+    style.max_size.width = sanitize_length_percentage_auto(style.max_size.width);
+    style.max_size.height = sanitize_length_percentage_auto(style.max_size.height);
+    style.inset.left = sanitize_length_percentage_auto(style.inset.left);
+    style.inset.right = sanitize_length_percentage_auto(style.inset.right);
+    style.inset.top = sanitize_length_percentage_auto(style.inset.top);
+    style.inset.bottom = sanitize_length_percentage_auto(style.inset.bottom);
+    style.margin.left = sanitize_length_percentage_auto(style.margin.left);
+    style.margin.right = sanitize_length_percentage_auto(style.margin.right);
+    style.margin.top = sanitize_length_percentage_auto(style.margin.top);
+    style.margin.bottom = sanitize_length_percentage_auto(style.margin.bottom);
+    style.padding.left = sanitize_length_percentage(style.padding.left);
+    style.padding.right = sanitize_length_percentage(style.padding.right);
+    style.padding.top = sanitize_length_percentage(style.padding.top);
+    style.padding.bottom = sanitize_length_percentage(style.padding.bottom);
+    style.border.left = sanitize_length_percentage(style.border.left);
+    style.border.right = sanitize_length_percentage(style.border.right);
+    style.border.top = sanitize_length_percentage(style.border.top);
+    style.border.bottom = sanitize_length_percentage(style.border.bottom);
+    style.gap.width = sanitize_length_percentage(style.gap.width);
+    style.gap.height = sanitize_length_percentage(style.gap.height);
+    style.flex_basis = sanitize_dimension(style.flex_basis);
+    for component in style
+        .grid_template_rows
+        .iter_mut()
+        .chain(style.grid_template_columns.iter_mut())
+    {
+        match component {
+            taffy::GridTemplateComponent::Single(track) => {
+                *track = sanitize_track(*track);
+            }
+            taffy::GridTemplateComponent::Repeat(repetition) => {
+                for track in repetition.tracks.iter_mut() {
+                    *track = sanitize_track(*track);
+                }
+            }
+        }
+    }
+    for track in style
+        .grid_auto_rows
+        .iter_mut()
+        .chain(style.grid_auto_columns.iter_mut())
+    {
+        *track = sanitize_track(*track);
+    }
+    style
+}
+
 fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
     namespace.is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI)
         && matches!(
@@ -255,6 +413,12 @@ impl Document {
     /// need no explicit call. Direct cascade callers must synchronize explicitly.
     ///
     /// Returns: the arena index of the added node.
+    ///
+    /// Foreign calc handles in `style` are replaced with safe keyword
+    /// fallbacks before storage, so the arena never holds a pointer it
+    /// does not own. Styles without calc pass through untouched, and the
+    /// layout bridge rebuilds owned calc handles from computed values
+    /// before each layout pass.
     pub fn append_element(
         &mut self,
         parent: Option<usize>,
@@ -262,6 +426,7 @@ impl Document {
         style: Style,
         inline_style: Option<impl Into<SmolStr>>,
     ) -> usize {
+        let style = sanitize_external_style(style);
         let id = self.nodes.len();
         self.nodes.push(Node::new_element(
             tag.into(),
@@ -891,6 +1056,11 @@ impl Document {
     /// Existing children are detached together by clearing their parent's
     /// child list. Tree changes mark layout caches and flat-tree membership
     /// dirty in the usual way. The source document is not modified.
+    ///
+    /// Copied styles pass through the same foreign calc sanitization as
+    /// `append_element`, so the target never takes ownership of the source
+    /// arena's calc pointers. The layout bridge rebuilds owned calc handles
+    /// from computed values before the next layout pass.
     pub fn replace_children_from(
         &mut self,
         target_parent: usize,
