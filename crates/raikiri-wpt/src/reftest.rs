@@ -1659,6 +1659,60 @@ pub(crate) fn prepare_wpt_live_document(
     })
 }
 
+/// Whether `node_id` is a stylesheet-bearing `<style>` element for the live path.
+///
+/// Matches the fragment parser's `stylesheet_sources` projection, which keeps
+/// HTML/XHTML and SVG-namespace `<style>` text. The previous live reconcile
+/// used [`raikiri_dom::Node::is_non_rendered_html_element`], which rejects
+/// SVG-namespace elements, so an `innerHTML`-inserted SVG `<style>` never
+/// reached the cascade.
+fn is_live_stylesheet_style(document: &raikiri_dom::Document, node_id: usize) -> bool {
+    let Some(node) = document.get_node(node_id) else {
+        return false;
+    };
+    if node.tag_name() != Some("style") {
+        return false;
+    }
+    matches!(
+        document.element_namespace_uri(node_id),
+        Some("http://www.w3.org/1999/xhtml") | Some("http://www.w3.org/2000/svg")
+    )
+}
+
+/// Raw CSS text of a live `<style>` element, with the XHTML CDATA wrapper
+/// removed the same way the fragment parser's projection does.
+fn live_stylesheet_text(document: &raikiri_dom::Document, node_id: usize) -> String {
+    let Some(node) = document.get_node(node_id) else {
+        return String::new();
+    };
+    let mut text = String::new();
+    for &child in &node.children {
+        if let Some(value) = document
+            .get_node(child)
+            .and_then(|child| child.text_content())
+        {
+            text.push_str(value);
+        }
+    }
+    let trimmed = text.trim();
+    trimmed
+        .strip_prefix("<![CDATA[")
+        .and_then(|inner| inner.strip_suffix("]]>"))
+        .map_or_else(|| text.clone(), ToOwned::to_owned)
+}
+
+fn live_stylesheet_has_content(document: &raikiri_dom::Document, node_id: usize) -> bool {
+    let Some(node) = document.get_node(node_id) else {
+        return false;
+    };
+    node.children.iter().any(|&child| {
+        document
+            .get_node(child)
+            .and_then(|child| child.text_content())
+            .is_some_and(|text| !text.is_empty())
+    })
+}
+
 pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
     document: &raikiri_dom::Document,
     target: usize,
@@ -1666,8 +1720,7 @@ pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
     let Some(target_node) = document.get_node(target) else {
         return Vec::new();
     };
-    let target_is_style =
-        target_node.tag_name() == Some("style") && target_node.is_non_rendered_html_element();
+    let target_is_style = is_live_stylesheet_style(document, target);
     let mut pending = if target_is_style {
         vec![target]
     } else {
@@ -1678,13 +1731,15 @@ pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
         let Some(node) = document.get_node(node_id) else {
             continue; // cov:ignore: child indices in a valid append-only document always name arena nodes.
         };
-        if node.tag_name() == Some("style") && node.is_non_rendered_html_element() {
-            let source = node
-                .children
-                .iter()
-                .filter_map(|&child| document.get_node(child)?.text_content())
-                .collect();
-            sources.push(source);
+        if is_live_stylesheet_style(document, node_id) {
+            if live_stylesheet_has_content(document, node_id) {
+                let source = live_stylesheet_text(document, node_id);
+                if !source.is_empty() {
+                    sources.push(source);
+                }
+            }
+            // `<style>` contents are CSS text, not nested HTML elements.
+            continue;
         }
         pending.extend(node.children.iter().rev().copied());
     }
@@ -1693,20 +1748,28 @@ pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
 
 pub(crate) fn update_live_wpt_stylesheet_sources(
     setup: &mut LiveWptSetup,
-    removed_sources: Vec<String>,
-    added_sources: Vec<String>,
+    previous_sources: &[String],
+    current_sources: &[String],
     wpt_root: &Path,
 ) {
-    let mut stylesheet_sources = setup.uncascaded.stylesheet_sources.clone();
-    for removed in removed_sources {
-        if let Some(index) = stylesheet_sources
-            .iter()
-            .position(|source| source == &removed)
-        {
-            stylesheet_sources.remove(index);
+    if previous_sources == current_sources {
+        return;
+    }
+    // Preserve parser-loaded `<link>` sheets: they are the author entries that
+    // did not come from connected `<style>` elements. Removing the previous
+    // inline sheets in multiset order leaves them in their original order.
+    let mut remaining = setup.uncascaded.stylesheet_sources.clone();
+    for previous in previous_sources {
+        if let Some(index) = remaining.iter().position(|source| source == previous) {
+            remaining.remove(index);
         }
     }
-    stylesheet_sources.extend(added_sources);
+    // Author order follows tree order. The previous diff appended added sheets
+    // at the end, so a script-connected `<style>` preceding an existing sheet
+    // never matched document order. Rebuilding from the current tree order
+    // fixes that; link sheets stay untouched at the front.
+    let mut stylesheet_sources = remaining;
+    stylesheet_sources.extend(current_sources.iter().cloned());
     if setup.uncascaded.stylesheet_sources == stylesheet_sources {
         return;
     }

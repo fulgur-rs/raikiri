@@ -14,6 +14,7 @@ mod cascade;
 mod document;
 mod document_parse;
 mod import;
+pub use import::expand_live_stylesheet_imports;
 mod parse;
 mod render;
 mod resources;

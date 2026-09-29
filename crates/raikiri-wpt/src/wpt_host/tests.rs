@@ -648,6 +648,52 @@ fn deep_offset_top_reads_through_cached_extents() {
     );
 }
 
+/// An `innerHTML`-inserted `<style>` keeps the fragment parser's `@import`
+/// expansion when the host reconciles at flush. Without expansion the import
+/// stays opaque and the probe keeps height 0.
+#[test]
+fn inner_html_style_expands_leading_import() {
+    let (dir, mut rt) = runtime("<div id=t></div>");
+    std::fs::write(dir.path().join("imported.css"), "#t { height: 33px }").unwrap();
+    rt.evaluate(r#"document.head.innerHTML = '<style>@import "imported.css";</style>';"#)
+        .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        33.0
+    );
+}
+
+/// An SVG-namespace `<style>` connected by script reaches the cascade like the
+/// fragment parser's `stylesheet_sources` projection, which keeps SVG styles.
+#[test]
+fn svg_namespace_style_connected_by_script_applies() {
+    let (_dir, mut rt) = runtime("<div id=t></div>");
+    rt.evaluate(
+        "var s = document.createElementNS('http://www.w3.org/2000/svg', 'style');          s.textContent = '#t { height: 21px }'; document.body.appendChild(s);",
+    )
+    .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        21.0
+    );
+}
+
+/// Author order follows tree order. A script-connected `<style>` inserted
+/// before an existing sheet loses to it; appending the same buggy behavior
+/// at the end of the author list would let the earlier sheet win instead.
+#[test]
+fn inserted_style_before_existing_sheet_follows_tree_order() {
+    let (_dir, mut rt) = runtime("<style id=a>#t { height: 5px }</style><div id=t></div>");
+    rt.evaluate(
+        "var s = document.createElement('style'); s.textContent = '#t { height: 12px }';          var a = document.getElementById('a'); a.parentNode.insertBefore(s, a);",
+    )
+    .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        5.0
+    );
+}
+
 /// The `DocumentHost` downcast hooks recover the concrete WPT host from a
 /// runtime or a boxed trait object, with its mutated document.
 #[test]
