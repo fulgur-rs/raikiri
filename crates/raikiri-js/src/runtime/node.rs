@@ -343,16 +343,13 @@ fn namespace_uri(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResu
 /// property": getter steps run the fragment serializing algorithm): a live
 /// serialization of the element's children, computed fresh on every read
 /// from the current arena state rather than a retained source string. An
-/// error means some element under `index` carries an attribute name
-/// `Document::serialize_inner_html` rejects as not a valid XML `Name`.
-/// The HTML fragment serialization algorithm itself never re-validates
-/// attribute names that way (that check is specific to `Element.setAttribute`,
-/// DOM §4.9); an HTML-parsed attribute name only needs to avoid a handful of
-/// forbidden characters, a much larger set than valid XML `Name`s, so a
-/// real HTML fragment parser can legitimately produce a name this fails on.
+/// error means malformed arena state under `index` (out-of-range index,
+/// non-container parent, bad template fragment link, or a Document child).
+/// HTML fragment serialization never validates attribute names (name checks
+/// belong to `Element.setAttribute`, DOM §4.9), so digit-leading and other
+/// non-XML names serialize as stored.
 /// Treated as a host failure, the same as the setter's own fragment-parse
-/// failure, until raikiri-dom's serializer stops applying that check here.
-/// `Document::serialize_inner_html`'s own message names the offending arena
+/// failure. `Document::serialize_inner_html`'s own message may name an arena
 /// index; that index is an implementation detail and must never be
 /// observable from script, so the exception thrown into script carries a
 /// fixed message instead, while the harness-facing host failure keeps the
@@ -365,7 +362,7 @@ fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
         Err(message) => Err(host_failure_with_message(
             context,
             HostError(message),
-            "innerHTML serialization failed: invalid attribute name",
+            "innerHTML serialization failed", // cov:ignore: serialize_inner_html fails only for malformed arena unreachable via public JS API
         )),
     }
 }

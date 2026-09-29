@@ -961,23 +961,32 @@ impl Document {
     /// state. This is suitable for reading live `innerHTML`; it does not use or
     /// retain an original source string.
     ///
-    /// Element attributes and the separate inline-style slot are escaped and
-    /// emitted from their current values. Text is escaped, comments and
-    /// processing instructions are preserved, and HTML void elements are
-    /// emitted without end tags. Template elements serialize their contents
-    /// fragment rather than ordinary children.
+    /// Follows the HTML fragment serializing algorithm (HTML Standard section
+    /// 13.3, serialising HTML fragments): attribute names are emitted as stored
+    /// without validation, attribute values and text use the escaping-a-string
+    /// algorithm, comments and processing instructions are preserved, and HTML
+    /// void elements are emitted without end tags. Template elements serialize
+    /// their contents fragment rather than ordinary children.
+    ///
+    /// Escaping replaces `&` with `&amp;` and no-break space (U+00A0) with
+    /// `&nbsp;` in both modes; attribute mode additionally replaces `"` with
+    /// `&quot;`, while text mode replaces `<` with `&lt;` and `>` with `&gt;`.
+    /// In particular `<`, `>` and `'` stay as-is inside attribute values and
+    /// `'` stays as-is in text.
     ///
     /// Returns an error for an out-of-range parent, a non-container parent, or
     /// malformed child/template-fragment indices in the arena.
     pub fn serialize_inner_html(&self, parent: usize) -> Result<String, String> {
         fn push_escaped(output: &mut String, value: &str, attribute: bool) {
+            // HTML escaping-a-string (section 13.3): `&` and U+00A0 in both
+            // modes, `"` only in attribute mode, `<` and `>` only in text mode.
             for ch in value.chars() {
                 match ch {
                     '&' => output.push_str("&amp;"),
-                    '<' => output.push_str("&lt;"),
-                    '>' => output.push_str("&gt;"),
+                    '\u{a0}' => output.push_str("&nbsp;"),
                     '"' if attribute => output.push_str("&quot;"),
-                    '\'' if attribute => output.push_str("&#39;"),
+                    '<' if !attribute => output.push_str("&lt;"),
+                    '>' if !attribute => output.push_str("&gt;"),
                     _ => output.push(ch),
                 }
             }
@@ -1051,14 +1060,10 @@ impl Document {
                             for attr in &element.attributes {
                                 // `style` is represented by inline_style and
                                 // must have only one serialized source.
+                                // Attribute names are emitted as stored: HTML
+                                // fragment serialization never validates them.
                                 if attr.local.as_str() == "style" {
                                     continue;
-                                }
-                                if !is_valid_xml_name(attr.local.as_str()) {
-                                    return Err(format!(
-                                        "invalid attribute name {:?} on innerHTML node {id}",
-                                        attr.local
-                                    ));
                                 }
                                 output.push(' ');
                                 output.push_str(attr.local.as_str());
