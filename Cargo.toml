@@ -43,10 +43,10 @@ raikiri-js           = { version = "0.1.0", path = "./crates/raikiri-js" }
 # ── Proc-macro support (raikiri-style-macros) ────────────────────────
 # Host-only and Pure Rust. These versions are already in the build graph
 # through cssparser-macros and other derive crates, so declaring them here
-# adds no new package to Cargo.lock.
-syn         = { version = "2", features = ["full", "extra-traits"] }
-quote       = "1"
-proc-macro2 = "1"
+# adds no new package to Cargo.lock. The minimums are the locked versions.
+syn         = { version = "2.0.118", features = ["full", "extra-traits"] }
+quote       = "1.0.47"
+proc-macro2 = "1.0.106"
 
 # ── Servo (cssparser + selectors) ──────────────────────────────────────
 cssparser = "0.37"
