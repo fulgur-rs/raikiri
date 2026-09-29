@@ -122,6 +122,10 @@ rustup show active-toolchain
 cargo build --workspace --locked
 ```
 
+To have `git blame` skip commits that only move code, run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once. Lines moved to
+another file are traced back only with copy detection: `git blame -w -C -C`.
+
 Install the `rustfmt` and `clippy` components specified by `rust-toolchain.toml` with rustup.
 If font-related dependencies fail to build, install the Debian/Ubuntu packages:
 
