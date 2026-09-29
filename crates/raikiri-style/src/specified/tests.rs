@@ -101,14 +101,14 @@ fn initial_border_width_is_gated_to_zero_at_computed_layer() {
 #[test]
 fn opacity_out_of_range_specified_clamps_at_finalize() {
     let mut over = SpecifiedValues::initial();
-    over.opacity = 2.0;
+    over.longhands.opacity = 2.0;
     assert_eq!(
         over.finalize(&ComputedValues::initial(), &ResolveContext::initial())
             .opacity,
         1.0
     );
     let mut under = SpecifiedValues::initial();
-    under.opacity = -0.5;
+    under.longhands.opacity = -0.5;
     assert_eq!(
         under
             .finalize(&ComputedValues::initial(), &ResolveContext::initial())
@@ -125,7 +125,7 @@ fn isolation_and_mix_blend_mode_pass_through_finalize_unchanged() {
         mix_blend_mode: MixBlendMode::Multiply,
         ..SpecifiedValues::initial()
     };
-    specified.isolation = Isolation::Isolate;
+    specified.longhands.isolation = Isolation::Isolate;
     let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
     assert_eq!(computed.isolation, Isolation::Isolate);
     assert_eq!(computed.mix_blend_mode, MixBlendMode::Multiply);
@@ -734,8 +734,8 @@ fn inherit_from_copies_inherited_fields() {
 #[test]
 fn table_inherit_from_copies_inherited_entries_and_resets_the_others() {
     let mut parent = ComputedValues::initial();
-    parent.empty_cells = EmptyCellsValue::Hide;
-    parent.isolation = Isolation::Isolate;
+    parent.longhands.empty_cells = EmptyCellsValue::Hide;
+    parent.longhands.isolation = Isolation::Isolate;
 
     let table = SpecifiedTable::inherit_from(&parent.longhands);
     assert_eq!(table.empty_cells, EmptyCellsValue::Hide);
@@ -959,7 +959,7 @@ fn finalize_resolves_border_spacing_against_own_font_size() {
 fn finalize_passes_caption_side_and_empty_cells_through_unchanged() {
     let mut sv = SpecifiedValues::initial();
     sv.caption_side = CaptionSideValue::Bottom;
-    sv.empty_cells = EmptyCellsValue::Hide;
+    sv.longhands.empty_cells = EmptyCellsValue::Hide;
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.caption_side, CaptionSideValue::Bottom);
     assert_eq!(cv.empty_cells, EmptyCellsValue::Hide);
