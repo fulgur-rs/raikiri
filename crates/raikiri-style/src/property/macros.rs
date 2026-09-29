@@ -84,12 +84,16 @@ macro_rules! css_keywords {
 ///   parses through its `from_css_ident`. `parse:` must then be omitted.
 /// - `value: SomeType` reuses an existing type and requires `parse: some_fn`,
 ///   a `fn(&mut Parser) -> Option<SomeType>` path.
-/// - `initial`, `inherited` and `computed` are validated at compile time but
-///   not consumed yet.
+/// - `initial` and `inherited` are validated at compile time but not consumed
+///   yet. `computed:` accepts only `as_specified`; any other hook is a
+///   `compile_error!` until hooks are consumed.
 ///
 /// Also generated: `longhand_key_for_name`, `parse_longhand_value` and
 /// `LONGHAND_NAMES`, which the hand-written name lookup and `parse_value`
-/// dispatch fall through to.
+/// dispatch fall through to, and `longhand_value_pat!()`, a pattern matching
+/// every table variant, which the pass-through arms of the exhaustive matches
+/// in `rule.rs`, `cascade/inherit.rs`, `page/absolutize.rs` and
+/// `serialize.rs` use.
 ///
 /// # Adding a property
 ///
@@ -97,22 +101,23 @@ macro_rules! css_keywords {
 ///
 /// 1. Add a block to this invocation in `longhands.rs` with the property's CSS
 ///    name, variant name, value type, initial value, inherited status, and
-///    computed function. Follow the format of existing entries like
+///    `computed: as_specified`. Follow the format of existing entries like
 ///    `"isolation" => Isolation { .. }`, using `value: keywords { .. }` for
 ///    keyword enums or `value: SomeType` with `parse: some_fn` for other types.
 /// 2. Add the property's CSS name to `supported_property_names()` in `names.rs`,
 ///    maintaining alphabetical order.
 /// 3. Hand edits are required at `property_key_samples!` and
 ///    `property_value_variant_registry!` in `page/cascade/tests.rs`. A new
-///    variant also fails to compile until exhaustive patterns and field accesses
-///    are handled in `rule.rs`, `cascade/inherit.rs`, `page/absolutize.rs`,
-///    `specified.rs`, `computed.rs`, and `serialize.rs`. These sites are the
-///    remaining per-property implementation locations.
+///    variant also fails to compile until its field accesses are handled in
+///    `apply_value` (`cascade/inherit.rs`), `specified.rs` and `computed.rs`.
+///    These sites are the remaining per-property implementation locations.
 ///
 /// A table block currently generates only the PropertyKey and PropertyValue
-/// enum variants, the key() projection, the name-to-key lookup, and the value
-/// parsing dispatch. Computed-value computation, inheritance, absolute-length
-/// conversion, and serialization are handled by the remaining per-property sites.
+/// enum variants, the key() projection, the name-to-key lookup, the value
+/// parsing dispatch, and the pass-through pattern. Computed-value computation
+/// and inheritance are handled by the remaining per-property sites; table
+/// properties are passed through unchanged by shorthand expansion and
+/// absolute-length conversion, and `serialize_value` returns `None` for them.
 macro_rules! longhands {
     // ---- helpers -------------------------------------------------------
     (@ty $V:ident keywords { $($kw:tt)* }) => { $V };
@@ -161,15 +166,11 @@ macro_rules! longhands {
     (@inherited no) => {};
 
     (@computed as_specified) => {};
-    (@computed $f:ident $(:: $rest:ident)+) => {
-        const _: () = {
-            let _ = $f $(:: $rest)+;
-        };
-    };
-    (@computed $f:ident) => {
-        const _: () = {
-            let _ = $f;
-        };
+    (@computed $f:ident $(:: $rest:ident)*) => {
+        compile_error!(
+            "`computed:` hooks are not consumed yet; use `computed: as_specified` \
+             and keep this property's computed-value handling in the hand-written sites"
+        );
     };
 
     // ---- entry ---------------------------------------------------------
@@ -232,6 +233,14 @@ macro_rules! longhands {
         /// Every property name declared in the table, lowercase.
         #[cfg_attr(not(test), allow(dead_code))]
         pub(crate) const LONGHAND_NAMES: &[&str] = &[$($css),*];
+
+        /// Pattern matching every table-declared `PropertyValue` variant,
+        /// for the exhaustive matches whose table properties all take the
+        /// same pass-through arm.
+        macro_rules! longhand_value_pat {
+            () => { $( PropertyValue::$V(..) )|+ };
+        }
+        pub(crate) use longhand_value_pat;
 
         /// Name lookup for table-declared properties; `normalized_name` must
         /// already be ASCII-lowercase.

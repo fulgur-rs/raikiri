@@ -102,3 +102,17 @@ fn object_fit_is_declared_through_a_parse_fn() {
         PropertyKey::ObjectFit
     );
 }
+
+#[test]
+fn longhand_value_pat_matches_table_variants_only() {
+    use crate::property::longhand_value_pat;
+    let table = [
+        PropertyValue::Isolation(Isolation::Isolate),
+        PropertyValue::ObjectFit(ObjectFit::Contain),
+    ];
+    for value in &table {
+        assert!(matches!(value, longhand_value_pat!()), "{value:?}");
+    }
+    let other = PropertyValue::Opacity(0.5);
+    assert!(!matches!(&other, longhand_value_pat!()));
+}

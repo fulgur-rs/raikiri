@@ -10,6 +10,7 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
+use crate::property::longhand_value_pat;
 use crate::property::{
     BackgroundShorthand, Border, BorderColor, BorderStyle, CustomProperty, DeferredValue, FlexFlow,
     FlexShorthand, FontKerning, FontLanguageOverride, FontOpticalSizing, FontShorthand,
@@ -446,19 +447,17 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::BackgroundSize(_)
         | PropertyValue::BackgroundPosition(_)
         | PropertyValue::BackgroundImage(_)
-        // object-fit / object-position (CSS Images Module Level 3 §5.1/§5.2)
-        // / opacity (CSS Color 4 §3.3): likewise have no expansion longhands
-        // (standalone properties without shorthands).
-        | PropertyValue::ObjectFit(_)
+        // object-position (CSS Images Module Level 3 §5.2) / opacity (CSS
+        // Color 4 §3.3): likewise have no expansion longhands (standalone
+        // properties without shorthands).
         | PropertyValue::ObjectPosition(_)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(_)
-        // isolation / mix-blend-mode (CSS Compositing and Blending Level 1
-        // §3.4.2/§3.4.1) — same shape as object-fit/opacity above.
-        | PropertyValue::Isolation(_)
+        // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) —
+        // same shape as object-position/opacity above.
         | PropertyValue::MixBlendMode(_)
         // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1) — same
-        // shape as isolation/mix-blend-mode above (`mask`/`mask-border`
+        // shape as mix-blend-mode above (`mask`/`mask-border`
         // shorthands stay unimplemented, pre-existing silent drop).
         | PropertyValue::MaskImage(_)
         | PropertyValue::ClipPath(_)
@@ -475,7 +474,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
         | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) | PropertyValue::Page(_)
-        | PropertyValue::ColumnCount(_) | PropertyValue::ColumnWidth(_) => expand_none(d, push),
+        | PropertyValue::ColumnCount(_) | PropertyValue::ColumnWidth(_)
+        // Table-declared properties (see `longhands!`) take this arm.
+        | longhand_value_pat!() => expand_none(d, push),
         PropertyValue::Columns(shorthand) => {
             push(Declaration {
                 value: PropertyValue::ColumnWidth(shorthand.width),

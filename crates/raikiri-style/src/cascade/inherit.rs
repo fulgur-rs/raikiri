@@ -5,6 +5,7 @@ use crate::PseudoElem;
 use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
+use crate::property::longhand_value_pat;
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
@@ -1598,10 +1599,6 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Font(_)
-        // object-fit (CSS Images Module Level 3 §5.1) — non-inherited,
-        // keyword-only, same "nothing for phase 2 to resolve" shape as
-        // `BackgroundRepeat` above.
-        | PropertyValue::ObjectFit(_)
         // object-position (CSS Images Module Level 3 §5.2) — non-inherited,
         // reuses `CssPosition` (`background-position`'s type); its
         // `<length-percentage>` absolutization is phase 3's job, same as
@@ -1615,11 +1612,9 @@ pub(crate) fn resolve_against_inherited(
         // (`crate::specified::SpecifiedValues::absolutize_with`), same
         // split `FlexGrow`/`ZIndex` use for their own phase-3-only work.
         | PropertyValue::Opacity(_)
-        // isolation (CSS Compositing and Blending Level 1 §3.4.2) /
-        // mix-blend-mode (§3.4.1) — both non-inherited, bare keyword
-        // payloads with no phase-2 dependency, same shape as `ObjectFit`
-        // above.
-        | PropertyValue::Isolation(_)
+        // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) —
+        // non-inherited, bare keyword payload with no phase-2 dependency,
+        // same shape as `BackgroundRepeat` above.
         | PropertyValue::MixBlendMode(_)
         // mask-image (CSS Masking Level 1 §7.1) / clip-path (§5.1) —
         // non-inherited, `<url>`/`<gradient>`/`<geometry-box>` payloads
@@ -1662,7 +1657,9 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Page(_)
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
-        | PropertyValue::Columns(_)) => v,
+        | PropertyValue::Columns(_)
+        // Table-declared properties (see `longhands!`) take this arm.
+        | longhand_value_pat!()) => v,
     })
 }
 

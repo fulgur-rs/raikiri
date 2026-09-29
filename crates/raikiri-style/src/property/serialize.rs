@@ -6,6 +6,7 @@ use super::calc_serialize::{
 };
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
+use crate::property::longhand_value_pat;
 
 fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
     if value.spelling_error || value.grammar_error {
@@ -544,11 +545,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BackgroundPosition(..)
         | PropertyValue::BackgroundImage(..)
         | PropertyValue::Background(..)
-        | PropertyValue::ObjectFit(..)
         | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(..)
-        | PropertyValue::Isolation(..)
         | PropertyValue::MixBlendMode(..)
         | PropertyValue::MaskImage(..)
         | PropertyValue::ClipPath(..)
@@ -570,7 +569,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::HyphenateLimitChars(..)
         | PropertyValue::TextSpacingShorthand(..)
         | PropertyValue::TextEmphasisColor(..)
-        | PropertyValue::TextEmphasis(..) => None,
+        | PropertyValue::TextEmphasis(..)
+        // Table-declared properties (see `longhands!`) take this arm.
+        | longhand_value_pat!() => None,
     }
 }
 
