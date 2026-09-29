@@ -647,3 +647,27 @@ fn deep_offset_top_reads_through_cached_extents() {
         "deep read must flush once, not per ancestor"
     );
 }
+
+/// The `DocumentHost` downcast hooks recover the concrete WPT host from a
+/// runtime or a boxed trait object, with its mutated document.
+#[test]
+fn concrete_wpt_host_recovers_from_the_runtime() {
+    use raikiri_js::runtime::DocumentHost;
+
+    let (_dir, mut rt) = runtime("<div id=t></div>");
+    rt.evaluate("document.getElementById('t').textContent = 'hi';")
+        .unwrap();
+    let host: WptDocumentHost = rt
+        .try_into_host::<WptDocumentHost>()
+        .unwrap_or_else(|_| panic!("expected the runtime to hold a WptDocumentHost"));
+    let found = find_by_id(host.document(), "t");
+    assert_eq!(
+        host.document().element_text_content(found).as_deref(),
+        Some("hi")
+    );
+    let (_dir, rt) = runtime("<div></div>");
+    let mut boxed = rt.into_host();
+    assert!(boxed.downcast_ref::<WptDocumentHost>().is_some());
+    assert!(boxed.downcast_mut::<WptDocumentHost>().is_some());
+    assert!(boxed.downcast::<WptDocumentHost>().is_ok());
+}

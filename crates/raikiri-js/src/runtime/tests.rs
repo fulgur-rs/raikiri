@@ -828,10 +828,16 @@ fn try_into_host_type_mismatch_returns_runtime_untouched() {
     let mut rt = rt;
     assert!(rt.evaluate("1 + 1").is_ok());
     assert!(rt.try_into_host::<StubHost>().is_ok());
-    // The boxed form reports the same mismatch without consuming the box.
+    // The boxed form reports the same mismatch without consuming the box,
+    // and the owned downcast hands the box back on a mismatch.
     let (host, ..) = StubHost::page();
     let boxed = DomRuntime::new(host).unwrap().into_host();
     assert!(boxed.downcast_ref::<OtherHost>().is_none());
+    let boxed = match boxed.downcast::<OtherHost>() {
+        Ok(_) => panic!("expected a boxed type mismatch"),
+        Err(boxed) => boxed,
+    };
+    assert!(boxed.downcast::<StubHost>().is_ok());
 }
 
 /// A host failure recorded through `context_mut` between evaluations stays
