@@ -50,6 +50,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         QuoteKeyword,
         TableLayoutValue,
         TextAlign,
+        TextAlignAll,
         TextAlignLast,
         TextCombineUpright,
         TextDecorationSkipInk,
