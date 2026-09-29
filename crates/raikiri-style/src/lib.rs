@@ -321,8 +321,7 @@ impl NonTSPseudoClass for PseudoClass {
 }
 
 /// Pseudo-elements resolved by this crate's cascade into a per-`(element,
-/// pseudo)` [`ComputedValues`](crate::ComputedValues) entry (see
-/// `CascadeResult::pseudo`).
+/// pseudo)` [`ComputedValues`] entry (see `CascadeResult::pseudo`).
 ///
 /// `::before` / `::after` / `::marker` are tree-abiding pseudo-elements (CSS
 /// Pseudo-Elements Module Level 4 §4.1 `#treelike`; `::marker` also CSS Lists
