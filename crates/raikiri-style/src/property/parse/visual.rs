@@ -2093,63 +2093,25 @@ pub(crate) fn parse_background_repeat(input: &mut Parser<'_, '_>) -> Option<Back
 pub(super) fn parse_background_attachment(
     input: &mut Parser<'_, '_>,
 ) -> Option<BackgroundAttachment> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "scroll" => Some(BackgroundAttachment::Scroll),
-        "fixed" => Some(BackgroundAttachment::Fixed),
-        "local" => Some(BackgroundAttachment::Local),
-        _ => None,
-    }
+    BackgroundAttachment::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `object-fit: <fit>` (see the [`ObjectFit`] grammar:
 /// `fill | contain | cover | none | scale-down`).
 pub(super) fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "fill" => Some(ObjectFit::Fill),
-        "contain" => Some(ObjectFit::Contain),
-        "cover" => Some(ObjectFit::Cover),
-        "none" => Some(ObjectFit::None),
-        "scale-down" => Some(ObjectFit::ScaleDown),
-        _ => None,
-    }
+    ObjectFit::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `isolation: <isolation-mode>` (see the [`Isolation`]
 /// grammar: `auto | isolate`).
 pub(super) fn parse_isolation(input: &mut Parser<'_, '_>) -> Option<Isolation> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(Isolation::Auto),
-        "isolate" => Some(Isolation::Isolate),
-        _ => None,
-    }
+    Isolation::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `mix-blend-mode: <blend-mode>` (see the [`MixBlendMode`]
 /// grammar: 16 keywords).
 pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlendMode> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(MixBlendMode::Normal),
-        "multiply" => Some(MixBlendMode::Multiply),
-        "screen" => Some(MixBlendMode::Screen),
-        "overlay" => Some(MixBlendMode::Overlay),
-        "darken" => Some(MixBlendMode::Darken),
-        "lighten" => Some(MixBlendMode::Lighten),
-        "color-dodge" => Some(MixBlendMode::ColorDodge),
-        "color-burn" => Some(MixBlendMode::ColorBurn),
-        "hard-light" => Some(MixBlendMode::HardLight),
-        "soft-light" => Some(MixBlendMode::SoftLight),
-        "difference" => Some(MixBlendMode::Difference),
-        "exclusion" => Some(MixBlendMode::Exclusion),
-        "hue" => Some(MixBlendMode::Hue),
-        "saturation" => Some(MixBlendMode::Saturation),
-        "color" => Some(MixBlendMode::Color),
-        "luminosity" => Some(MixBlendMode::Luminosity),
-        _ => None,
-    }
+    MixBlendMode::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `<visual-box>` (see the [`VisualBox`] grammar:
@@ -2157,15 +2119,7 @@ pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlen
 /// `background-origin`; differences in their initial values are handled in
 /// `specified.rs`/`computed.rs`, not by the caller.
 pub(super) fn parse_visual_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "border-box" => Some(VisualBox::BorderBox),
-        "padding-box" => Some(VisualBox::PaddingBox),
-        "content-box" => Some(VisualBox::ContentBox),
-        "border-area" => Some(VisualBox::BorderArea),
-        "text" => Some(VisualBox::Text),
-        _ => None,
-    }
+    VisualBox::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// One axis of `<bg-size>`: `<length-percentage [0,∞]> | auto`.

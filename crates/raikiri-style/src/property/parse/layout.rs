@@ -15,27 +15,14 @@ use super::common::*;
 /// <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>).
 /// Uses the same single-ident, ASCII case-insensitive approach as [`parse_display`].
 pub(super) fn parse_flex_direction(input: &mut Parser<'_, '_>) -> Option<FlexDirectionValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "row" => Some(FlexDirectionValue::Row),
-        "row-reverse" => Some(FlexDirectionValue::RowReverse),
-        "column" => Some(FlexDirectionValue::Column),
-        "column-reverse" => Some(FlexDirectionValue::ColumnReverse),
-        _ => None,
-    }
+    FlexDirectionValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `flex-wrap: nowrap | wrap | wrap-reverse` (CSS Flexible Box
 /// Layout Module Level 1 §5.2
 /// <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>).
 pub(super) fn parse_flex_wrap(input: &mut Parser<'_, '_>) -> Option<FlexWrapValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "nowrap" => Some(FlexWrapValue::NoWrap),
-        "wrap" => Some(FlexWrapValue::Wrap),
-        "wrap-reverse" => Some(FlexWrapValue::WrapReverse),
-        _ => None,
-    }
+    FlexWrapValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `<number [0,∞]>` for both `flex-grow` and `flex-shrink`.
@@ -1232,16 +1219,7 @@ pub(crate) fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<P
 /// `inherit` because of the "CSS-wide keyword (canonical)" policy described
 /// above. ASCII case-insensitive matching follows sibling `parse_word_break`.
 pub(super) fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(FloatValue::None),
-        "left" => Some(FloatValue::Left),
-        "right" => Some(FloatValue::Right),
-        "inline-start" => Some(FloatValue::InlineStart),
-        "inline-end" => Some(FloatValue::InlineEnd),
-        "footnote" => Some(FloatValue::Footnote),
-        _ => None,
-    }
+    FloatValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `clear: <ident>` (CSS2 §9.5.2
@@ -1252,16 +1230,7 @@ pub(super) fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
 /// `inherit` because of the "CSS-wide keyword (canonical)" policy described
 /// above. ASCII case-insensitive matching follows sibling `parse_float`.
 pub(super) fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(ClearValue::None),
-        "left" => Some(ClearValue::Left),
-        "right" => Some(ClearValue::Right),
-        "both" => Some(ClearValue::Both),
-        "inline-start" => Some(ClearValue::InlineStart),
-        "inline-end" => Some(ClearValue::InlineEnd),
-        _ => None,
-    }
+    ClearValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `table-layout: <ident>` (CSS Tables 3 §4
@@ -1273,12 +1242,7 @@ pub(super) fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
 /// (`rule.rs::DeclParser`) drops any extra tokens, such as
 /// `table-layout: auto fixed`.
 pub(super) fn parse_table_layout(input: &mut Parser<'_, '_>) -> Option<TableLayoutValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TableLayoutValue::Auto),
-        "fixed" => Some(TableLayoutValue::Fixed),
-        _ => None,
-    }
+    TableLayoutValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `border-collapse: <ident>` (CSS Tables 3 §6
@@ -1288,12 +1252,7 @@ pub(super) fn parse_table_layout(input: &mut Parser<'_, '_>) -> Option<TableLayo
 /// Value grammar: `collapse | separate`. Matching follows the same rules as
 /// sibling [`parse_table_layout`].
 pub(super) fn parse_border_collapse(input: &mut Parser<'_, '_>) -> Option<BorderCollapseValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "collapse" => Some(BorderCollapseValue::Collapse),
-        "separate" => Some(BorderCollapseValue::Separate),
-        _ => None,
-    }
+    BorderCollapseValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `border-spacing: <length>{1,2}` (CSS Tables 3 §6.1
@@ -1330,12 +1289,7 @@ pub(super) fn parse_border_spacing(input: &mut Parser<'_, '_>) -> Option<BorderS
 /// (`rule.rs::DeclParser`) drops extra tokens such as
 /// `caption-side: top bottom`.
 pub(super) fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSideValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "top" => Some(CaptionSideValue::Top),
-        "bottom" => Some(CaptionSideValue::Bottom),
-        _ => None,
-    }
+    CaptionSideValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `empty-cells: <ident>` (CSS Tables 3 §8
@@ -1345,46 +1299,11 @@ pub(super) fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSi
 /// Value grammar: `show | hide`. Matching follows the same rules as sibling
 /// [`parse_caption_side`].
 pub(super) fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCellsValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "show" => Some(EmptyCellsValue::Show),
-        "hide" => Some(EmptyCellsValue::Hide),
-        _ => None,
-    }
+    EmptyCellsValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
-    // Follow the sibling multi-keyword approach in parse_string_fetch,
-    // parse_content_part, and parse_content_text_keyword. Match ASCII case
-    // insensitively through to_ascii_lowercase(), allocating once per declaration.
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "block" => Some(DisplayValue::Block),
-        "inline" => Some(DisplayValue::Inline),
-        "inline-block" => Some(DisplayValue::InlineBlock),
-        "flow-root" => Some(DisplayValue::FlowRoot),
-        "none" => Some(DisplayValue::None),
-        // The current layout bridge models the outer display type as block,
-        // so inline-flex/inline-grid share the corresponding formatting
-        // context until inline-level shrink-to-fit support is added.
-        "flex" => Some(DisplayValue::Flex),
-        "inline-flex" => Some(DisplayValue::InlineFlex),
-        "grid" => Some(DisplayValue::Grid),
-        "inline-grid" => Some(DisplayValue::InlineGrid),
-        "list-item" => Some(DisplayValue::ListItem),
-        "contents" => Some(DisplayValue::Contents),
-        "table" => Some(DisplayValue::Table),
-        "inline-table" => Some(DisplayValue::InlineTable),
-        "table-row-group" => Some(DisplayValue::TableRowGroup),
-        "table-header-group" => Some(DisplayValue::TableHeaderGroup),
-        "table-footer-group" => Some(DisplayValue::TableFooterGroup),
-        "table-row" => Some(DisplayValue::TableRow),
-        "table-column-group" => Some(DisplayValue::TableColumnGroup),
-        "table-column" => Some(DisplayValue::TableColumn),
-        "table-cell" => Some(DisplayValue::TableCell),
-        "table-caption" => Some(DisplayValue::TableCaption),
-        _ => None,
-    }
+    DisplayValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_list_style_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {

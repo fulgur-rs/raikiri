@@ -2680,6 +2680,30 @@ pub enum DisplayValue {
     TableCaption,
 }
 
+css_keywords!(DisplayValue {
+    Block => "block",
+    Inline => "inline",
+    InlineBlock => "inline-block",
+    FlowRoot => "flow-root",
+    None => "none",
+    Flex => "flex",
+    InlineFlex => "inline-flex",
+    Grid => "grid",
+    InlineGrid => "inline-grid",
+    ListItem => "list-item",
+    Contents => "contents",
+    Table => "table",
+    InlineTable => "inline-table",
+    TableRowGroup => "table-row-group",
+    TableHeaderGroup => "table-header-group",
+    TableFooterGroup => "table-footer-group",
+    TableRow => "table-row",
+    TableColumnGroup => "table-column-group",
+    TableColumn => "table-column",
+    TableCell => "table-cell",
+    TableCaption => "table-caption",
+});
+
 /// The value of the `flex-direction` property.
 ///
 /// CSS Flexible Box Layout Module Level 1 §5.1 "Flex Flow Direction: the
@@ -2709,6 +2733,13 @@ pub enum FlexDirectionValue {
     ColumnReverse,
 }
 
+css_keywords!(FlexDirectionValue {
+    Row => "row",
+    RowReverse => "row-reverse",
+    Column => "column",
+    ColumnReverse => "column-reverse",
+});
+
 /// The value of the `flex-wrap` property.
 ///
 /// CSS Flexible Box Layout Module Level 1 §5.2 "Flex Line Wrapping: the
@@ -2726,6 +2757,12 @@ pub enum FlexWrapValue {
     /// `wrap-reverse` — multiple lines, stacked in reverse order from `wrap`.
     WrapReverse,
 }
+
+css_keywords!(FlexWrapValue {
+    NoWrap => "nowrap",
+    Wrap => "wrap",
+    WrapReverse => "wrap-reverse",
+});
 
 /// The specified value of the `flex-basis` property.
 ///
@@ -5375,6 +5412,15 @@ pub enum FloatValue {
     Footnote,
 }
 
+css_keywords!(FloatValue {
+    None => "none",
+    Left => "left",
+    Right => "right",
+    InlineStart => "inline-start",
+    InlineEnd => "inline-end",
+    Footnote => "footnote",
+});
+
 /// The value of the `clear` property.
 ///
 /// CSS2 §9.5.2 "Controlling flow next to floats: the 'clear' property"
@@ -5439,6 +5485,15 @@ pub enum ClearValue {
     /// writing direction (CSS Logical Properties §4). Maps to `right` in LTR.
     InlineEnd,
 }
+
+css_keywords!(ClearValue {
+    None => "none",
+    Left => "left",
+    Right => "right",
+    Both => "both",
+    InlineStart => "inline-start",
+    InlineEnd => "inline-end",
+});
 
 /// When `float` is not `none`, resolve the computed-value transformation of
 /// `display` required by CSS2 §9.7 "Relationships between
@@ -6202,6 +6257,11 @@ pub enum TableLayoutValue {
     Fixed,
 }
 
+css_keywords!(TableLayoutValue {
+    Auto => "auto",
+    Fixed => "fixed",
+});
+
 /// The value of the `border-collapse` property.
 ///
 /// CSS Tables 3 §6 "Borders"
@@ -6226,6 +6286,11 @@ pub enum BorderCollapseValue {
     /// `collapse` — collapsing borders model.
     Collapse,
 }
+
+css_keywords!(BorderCollapseValue {
+    Separate => "separate",
+    Collapse => "collapse",
+});
 
 /// The value of the `caption-side` property.
 ///
@@ -6252,6 +6317,11 @@ pub enum CaptionSideValue {
     Bottom,
 }
 
+css_keywords!(CaptionSideValue {
+    Top => "top",
+    Bottom => "bottom",
+});
+
 /// The value of the `empty-cells` property.
 ///
 /// CSS Tables 3 §8 "Empty Cells: the empty-cells property"
@@ -6277,6 +6347,11 @@ pub enum EmptyCellsValue {
     /// `hide` — hides an empty cell's border and background.
     Hide,
 }
+
+css_keywords!(EmptyCellsValue {
+    Show => "show",
+    Hide => "hide",
+});
 
 /// The specified value of `border-spacing`.
 ///
@@ -7045,6 +7120,12 @@ pub enum BackgroundAttachment {
     Local,
 }
 
+css_keywords!(BackgroundAttachment {
+    Scroll => "scroll",
+    Fixed => "fixed",
+    Local => "local",
+});
+
 /// Box keyword shared by `background-clip` and `background-origin`
 /// (CSS Backgrounds and Borders 3 §2.7 "Painting Area: the
 /// background-clip property" / "Positioning Area: the
@@ -7070,6 +7151,14 @@ pub enum VisualBox {
     /// `text` — clips to the shape of the text (CSS Backgrounds 4 §2.6, `background-clip: text`).
     Text,
 }
+
+css_keywords!(VisualBox {
+    BorderBox => "border-box",
+    PaddingBox => "padding-box",
+    ContentBox => "content-box",
+    BorderArea => "border-area",
+    Text => "text",
+});
 
 /// Specified value of `background-size`.
 ///
@@ -7259,6 +7348,14 @@ pub enum ObjectFit {
     ScaleDown,
 }
 
+css_keywords!(ObjectFit {
+    Fill => "fill",
+    Contain => "contain",
+    Cover => "cover",
+    None => "none",
+    ScaleDown => "scale-down",
+});
+
 /// Specified value of `isolation`.
 ///
 /// CSS Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
@@ -7282,6 +7379,11 @@ pub enum Isolation {
     /// blending to its subtree.
     Isolate,
 }
+
+css_keywords!(Isolation {
+    Auto => "auto",
+    Isolate => "isolate",
+});
 
 /// Specified value of `mix-blend-mode`.
 ///
@@ -7336,6 +7438,25 @@ pub enum MixBlendMode {
     /// `luminosity` — see §3.2.15.
     Luminosity,
 }
+
+css_keywords!(MixBlendMode {
+    Normal => "normal",
+    Multiply => "multiply",
+    Screen => "screen",
+    Overlay => "overlay",
+    Darken => "darken",
+    Lighten => "lighten",
+    ColorDodge => "color-dodge",
+    ColorBurn => "color-burn",
+    HardLight => "hard-light",
+    SoftLight => "soft-light",
+    Difference => "difference",
+    Exclusion => "exclusion",
+    Hue => "hue",
+    Saturation => "saturation",
+    Color => "color",
+    Luminosity => "luminosity",
+});
 
 /// `clip-path`'s `<geometry-box>` component (CSS Masking Level 1 §5.1,
 /// "Basic Shapes: the clip-path property"
