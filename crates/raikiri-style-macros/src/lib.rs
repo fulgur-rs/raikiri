@@ -203,7 +203,44 @@
 //!   `crate::computed::ComputedValues`, each with a `longhands` field of the
 //!   generated table type;
 //! - the `cssparser` crate as a dependency, and `Debug` on `PropertyValue`
-//!   and `PropertyKey`.
+//!   and `PropertyKey` (the generated `unreachable!` messages of `apply`,
+//!   `longhand_page_absolutize` and `longhand_sample` format them with
+//!   `{:?}`);
+//! - `Clone`, `Debug` and `PartialEq` on every specified and computed value
+//!   type (the `Longhand` bounds, and the derives of the generated tables).
+//!
+//! ## Wiring the module
+//!
+//! These rules come from name resolution rather than from the macro, so the
+//! compiler reports a violation, not the macro:
+//!
+//! - **No glob import of the parent in the enclosing file module.** When
+//!   the annotated inline module sits in a file module of the same name
+//!   (`property/decl.rs` holding `#[longhands] mod decl { .. }`), that file
+//!   module must not `use super::*`. The glob would import the file
+//!   module's own name `decl` from its parent, and the inline `decl` is a
+//!   macro-expanded item, which cannot shadow a glob import: every use of
+//!   `decl` (including a `pub use decl::*` re-export) becomes ambiguous
+//!   (E0659). Import what the table and the hand-written enums need by
+//!   name or from sibling modules instead (`use super::types::*;`,
+//!   `use super::parse::*;`). Inside the annotated module itself,
+//!   `use super::*` is fine.
+//! - **Parser and hook visibility.** `parse:`, `compute:`, `computed: ..
+//!   via` and `lift:` paths are resolved in the annotated module, so each
+//!   function must be visible there. A parser defined in a sibling module
+//!   (such as a `parse/` submodule, where parsers are typically
+//!   `pub(super)`) must be widened to the common ancestor, e.g.
+//!   `pub(in crate::property)`; a missing widening is a privacy error at the
+//!   path in the table.
+//! - **Generated names.** Each entry adds `pub mod <field>` (the value type
+//!   aliases and the `Property` marker) and, for `keywords`, `enum
+//!   <Variant>` to the annotated module. A module, type or trait of the
+//!   same name already in that module is a duplicate definition. Where the annotated module
+//!   is re-exported with a glob (`pub use decl::*`), an item of the same
+//!   name in the re-exporting module is not an error: it silently shadows
+//!   the generated one there, and a glob-imported item of that name from
+//!   elsewhere makes the name ambiguous at its uses. Give the entry another
+//!   `field:` or rename the existing item.
 //!
 //! # Diagnostics
 //!
