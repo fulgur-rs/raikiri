@@ -5,7 +5,6 @@ use crate::property::TextShadowColor;
 use crate::property::{
     ComputedTable, EmptyCellsValue, FontSynthesisStyle, FontVariantEastAsianVariant,
     FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox, Isolation,
-    ObjectFit,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -461,26 +460,10 @@ fn parent_fixture() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".to_string()),
-        // Table-declared longhands: CSS Compositing and Blending Level 1 §3.4.2 isolation, CSS
-        // Images Module Level 3 §5.1 object-fit / §5.2 object-position and CSS Color 4 §3.3
-        // opacity are non-inherited; set values other than the initial `auto` / `fill` /
-        // `50% 50%` / `1`.
-        // CSS Tables 3 §8 empty-cells is inherited; set a value other than the initial `show` as
-        // well.
-        longhands: ComputedTable {
-            isolation: Isolation::Isolate,
-            object_fit: ObjectFit::Cover,
-            empty_cells: EmptyCellsValue::Hide,
-            opacity: 0.25,
-            object_position: crate::resolve::ComputedCssPosition {
-                horizontal: crate::resolve::ComputedCssPositionOffset::Start(
-                    ComputedLengthPercentage::Px(3.0),
-                ),
-                vertical: crate::resolve::ComputedCssPositionOffset::End(
-                    ComputedLengthPercentage::Percent(10.0),
-                ),
-            },
-        },
+        // Table-declared longhands, inherited or not: every entry's `sample:` computed in the
+        // initial context, which differs from the computed initial value in every entry
+        // (`table_samples_differ_from_the_initial_values` below checks it).
+        longhands: ComputedTable::sample(),
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.
         mix_blend_mode: MixBlendMode::Multiply,
@@ -748,6 +731,31 @@ fn table_inherit_from_copies_inherited_entries_and_resets_the_others() {
     let computed = ComputedValues::inherit_from(&parent);
     assert_eq!(computed.empty_cells, EmptyCellsValue::Hide);
     assert_eq!(computed.isolation, Isolation::Auto);
+}
+
+/// Every table entry's `sample:` differs from its initial value, both as
+/// specified and once computed in the initial context, so the exhaustive
+/// fixtures built from `ComputedTable::sample()` (`parent_fixture` here and
+/// `non_initial_parent` in `computed/tests.rs`) hold a non-initial value in
+/// every table field. A failure names the entries whose `sample:` needs
+/// another value.
+#[test]
+fn table_samples_differ_from_the_initial_values() {
+    assert_eq!(
+        SpecifiedTable::sample().equal_fields(&SpecifiedTable::initial()),
+        Vec::<&str>::new(),
+        "specified sample equals the initial value"
+    );
+    assert_eq!(
+        ComputedTable::sample().equal_fields(&ComputedTable::initial()),
+        Vec::<&str>::new(),
+        "computed sample equals the computed initial value"
+    );
+    // The check itself is not vacuous: a table equals itself in every entry.
+    assert_eq!(
+        ComputedTable::initial().equal_fields(&ComputedTable::initial()),
+        crate::property::LONGHAND_NAMES
+    );
 }
 
 #[test]

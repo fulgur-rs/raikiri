@@ -1,8 +1,8 @@
 use super::*;
 use crate::property::{
-    ComputedTable, EmptyCellsValue, FontSynthesisStyle, FontVariantEastAsianVariant,
-    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox,
-    HyphenateLimitChars, HyphenateLimitCharsValue, Isolation, Length, ObjectFit, TextShadowColor,
+    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
+    HyphenateLimitCharsValue, Length, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -583,23 +583,12 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
         // different from the initial `None` (as required for non_initial_parent).
         background_image: BackgroundImage::Url("fixture.png".into()),
-        // Table-declared longhands: CSS Compositing and Blending Level 1
-        // §3.4.2 isolation, CSS Images Module Level 3 §5.1 object-fit /
-        // §5.2 object-position and CSS Color 4 §3.3 opacity are
-        // non-inherited, so use values different from the initial `auto` /
-        // `fill` / `50% 50%` / `1` (as required for non_initial_parent).
-        // CSS Tables 3 §8 empty-cells is inherited, so use a value different
-        // from the initial `show` as well.
-        longhands: ComputedTable {
-            isolation: Isolation::Isolate,
-            object_fit: ObjectFit::Cover,
-            empty_cells: EmptyCellsValue::Hide,
-            opacity: 0.75,
-            object_position: ComputedCssPosition {
-                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
-                vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
-            },
-        },
+        // Table-declared longhands, inherited or not: every entry's `sample:`
+        // computed in the initial context, which differs from the computed
+        // initial value in every entry (as required for non_initial_parent;
+        // `table_samples_differ_from_the_initial_values` in
+        // `specified/tests.rs` checks it).
+        longhands: ComputedTable::sample(),
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
         // a value different from the initial `normal` (as above).
         mix_blend_mode: MixBlendMode::Multiply,

@@ -27,11 +27,14 @@
 //!    their `longhands` field), initial value,
 //!    inheritance, cascade application, parsing, name lookup,
 //!    [`supported_property_names`](super::supported_property_names), the
-//!    page-context pass-through, and the page-cascade test registries.
-//! 2. Add the new field to the two exhaustive `ComputedTable { .. }`
-//!    fixtures, `non_initial_parent` in `computed/tests.rs` and
-//!    `parent_fixture` in `specified/tests.rs`, with a non-initial value
-//!    (the compiler reports both).
+//!    page-context pass-through, the page-cascade test registries, and the
+//!    field of the exhaustive fixtures `non_initial_parent`
+//!    (`computed/tests.rs`) and `parent_fixture` (`specified/tests.rs`),
+//!    which take every table field from `ComputedTable::sample()`.
+//! 2. Make sure the entry's `sample:` (by default the first non-initial
+//!    keyword) differs from `initial:` both as specified and once computed;
+//!    `table_samples_differ_from_the_initial_values` in
+//!    `specified/tests.rs` names an entry whose sample does not.
 //! 3. Bump `PHASE_3_PASS_THROUGH_VARIANTS` in `page/cascade/tests.rs` by one
 //!    when the entry's `sample:` value (by default the first non-initial
 //!    keyword) passes through page-context absolutization unchanged, which
@@ -131,7 +134,7 @@
 //!
 //! In the page-cascade bookkeeping (`page/cascade/tests.rs`), a sample the
 //! hook changes is not counted in `PHASE_3_PASS_THROUGH_VARIANTS`; when that
-//! sample also carries no length residue (like `opacity`'s `2.0`), it
+//! sample also carries no length residue (like `opacity`'s `-0.5`), it
 //! counts in `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`.
 //!
 //! # Limits of the generated pass-through
@@ -2472,10 +2475,13 @@ mod decl {
             parse: parse_opacity_value,
             compute: clamp_opacity,
             // Deliberately out of range, so that the page-cascade corpus
-            // exercises the clamp: `2.0` is transformed (to `1.0`), where an
+            // exercises the clamp: `-0.5` is transformed (to `0.0`), where an
             // in-range sample would clamp to itself and count as a
-            // pass-through.
-            sample: 2.0,
+            // pass-through. Below the range rather than above it, because the
+            // sample also fills the test fixture `ComputedTable::sample()`,
+            // whose computed values must differ from the initial ones: an
+            // over-range sample would clamp to the initial `1`.
+            sample: -0.5,
         },
         /// CSS Images Module Level 3 §5.2 "Positioning the replaced element:
         /// the object-position property"
