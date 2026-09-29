@@ -91,16 +91,23 @@ macro_rules! css_keywords {
 ///   a `fn(&mut Parser) -> Option<SomeType>` path.
 /// - `initial` supplies the field's initial value in `SpecifiedTable` and
 ///   `ComputedTable`, and `inherited` decides whether `inherit_from` copies the
-///   parent's value or resets to the initial one. `computed:` accepts only
-///   `as_specified`; any other hook is a `compile_error!` until hooks are
-///   consumed.
+///   parent's value or resets to the initial one.
+/// - `computed:` is either `as_specified` (the computed value is the
+///   specified value, same type) or `via Marker -> ComputedType`, where
+///   `Marker` is a hand-written unit type implementing
+///   [`Longhand`](crate::property::Longhand) with
+///   `Specified` = the `value:` type and `Computed` = `ComputedType`. The
+///   computed type is spelled out because the `ComputedTable` field is public
+///   and `Longhand` is not; a mismatch with the impl is a type error. A bare
+///   hook function name is a `compile_error!`: call it from the marker's
+///   `compute` through [`run_hook`](crate::property::run_hook) instead.
 /// - `sample:` is the test-only worst-case value used by the page-cascade
 ///   corpus: pick a non-initial value, so a regression that silently resets
 ///   or transforms the property is visible. It is an expression of the value
 ///   type and is compiled only under `cfg(test)`.
 /// - `field:` names the property's field in the generated `SpecifiedTable`
 ///   and `ComputedTable` structs, which are built from `initial`, `inherited`
-///   and `computed: as_specified`. They are embedded as
+///   and `computed:`. They are embedded as
 ///   `SpecifiedValues::longhands` and `ComputedValues::longhands`, and the
 ///   generated `Deref`/`DerefMut` impls keep `values.<field>` working.
 ///
@@ -108,8 +115,10 @@ macro_rules! css_keywords {
 /// `LONGHAND_NAMES`, which the hand-written name lookup and `parse_value`
 /// dispatch fall through to, and `longhand_value_pat!()`, a pattern matching
 /// every table variant, which the pass-through arms of the exhaustive matches
-/// in `rule.rs`, `cascade/inherit.rs`, `page/absolutize.rs` and
-/// `serialize.rs` use.
+/// in `rule.rs`, `cascade/inherit.rs` and `serialize.rs` use.
+/// `page/absolutize.rs` routes the same pattern to the generated
+/// `longhand_page_absolutize`, which applies `lift(compute(..))` to `via`
+/// entries and passes `as_specified` entries through.
 ///
 /// Test-only: `longhand_samples()` pairs each CSS name with its `sample:`
 /// value, and `with_longhand_samples!` / `with_longhand_variants!` feed the
@@ -134,7 +143,36 @@ macro_rules! css_keywords {
 ///    `longhand_names_are_supported_property_names` test).
 ///
 /// That is all a simple keyword property needs; everything else below is
-/// generated from the block.
+/// generated from the block. A property whose computed value differs from
+/// the specified one also needs its `Longhand` marker and hook function,
+/// written next to the table:
+///
+/// ```ignore
+/// "opacity" => Opacity {
+///     value: f32,
+///     initial: 1.0,
+///     inherited: no,
+///     parse: parse_opacity_value,
+///     computed: via OpacityLonghand -> f32,
+///     field: opacity,
+///     sample: 2.0,
+/// }
+///
+/// pub(crate) struct OpacityLonghand;
+/// impl Longhand for OpacityLonghand {
+///     type Specified = f32;
+///     type Computed = f32;
+///     fn compute(specified: f32, cx: &AbsolutizeCx<'_>) -> f32 {
+///         run_hook(clamp_opacity, specified, cx)
+///     }
+///     fn lift(computed: f32) -> f32 { computed }
+/// }
+/// fn clamp_opacity(value: f32) -> f32 { value.clamp(0.0, 1.0) }
+/// ```
+///
+/// A hook's parameters after the specified value are extracted from the
+/// [`AbsolutizeCx`](crate::property::AbsolutizeCx) by type: `FontSize`,
+/// `OwnLineHeight` and `&ResolveContext`.
 ///
 /// `field:` must not equal the name of a hand-written field of `SpecifiedValues`
 /// or `ComputedValues`: the inherent field would shadow the `Deref` target, so
@@ -151,8 +189,11 @@ macro_rules! css_keywords {
 ///
 /// Limits of the generated table:
 ///
-/// - `computed:` hooks are rejected for now, so table payloads must be
-///   `computed: as_specified` and free of lengths needing absolutization.
+/// - The test-only length-residue detector in `page/cascade/tests.rs` treats
+///   every table payload as length-free; a `via` entry whose specified type
+///   carries lengths needs its own arm there.
+/// - The initial computed value of a `via` entry is `compute(initial)` in
+///   the initial context (`ResolveContext::initial()`, no own line height).
 /// - Table fields are readable and writable as `values.field` through
 ///   `Deref`/`DerefMut`, but struct patterns cannot destructure them, and an
 ///   exhaustive struct literal of `SpecifiedValues` or `ComputedValues` must
@@ -172,7 +213,8 @@ macro_rules! css_keywords {
 /// the value parsing dispatch (`parse_longhand_value`); the
 /// `longhand_value_pat!()` pass-through pattern macro (used by `rule.rs`,
 /// `cascade/inherit.rs`, `page/absolutize.rs`, `serialize_value`, and the
-/// test-only residue detector in `page/cascade/tests.rs`); the
+/// test-only residue detector in `page/cascade/tests.rs`); the page-context
+/// absolutization (`longhand_page_absolutize`); the
 /// `LONGHAND_NAMES` constant; the test registries' macros
 /// (`with_longhand_samples` and `with_longhand_variants`); a field of
 /// `SpecifiedTable` and `ComputedTable` (with their `initial`, `inherit_from`,
