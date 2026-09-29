@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use raikiri_dom::Document;
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, HostError};
 use raikiri_js_wasmtime_protocol::*;
@@ -78,5 +80,14 @@ impl DocumentHost for RpcDocumentHost {
                 .map_err(|e| HostError(e.to_string())),
             _ => Err(HostError("fragment response kind".into())),
         }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }

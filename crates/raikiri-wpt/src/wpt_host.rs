@@ -6,6 +6,7 @@
 //! External scripts are read from the WPT checkout on disk; nothing outside
 //! the checkout root is ever read (see [`WptDocumentHost::script_source`]).
 
+use std::any::Any;
 use std::path::{Component, Path, PathBuf};
 
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
@@ -297,6 +298,15 @@ impl DocumentHost for WptDocumentHost {
         )
         .map_err(HostError)?; // cov:ignore: UTF-8 markup is parsed from memory; its reader and parser recover without I/O/encoding errors.
         Ok(fragment.dom)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }
 

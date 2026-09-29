@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use boa_engine::JsString;
 use boa_engine::property::Attribute;
 use raikiri_dom::Document;
@@ -96,6 +98,15 @@ impl DocumentHost for DefaultFetchHost {
     }
     fn document_url(&self) -> Option<String> {
         self.0.document_url()
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }
 
