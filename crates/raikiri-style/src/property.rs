@@ -7,6 +7,9 @@
 //!
 //! `parse_value` is called from `DeclParser::parse_value` in rule.rs.
 
+#[macro_use]
+mod macros;
+
 mod types;
 pub use types::*;
 
