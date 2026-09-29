@@ -2682,6 +2682,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "raikiri-style-macros"
+version = "0.1.0"
+dependencies = [
+ "cssparser",
+ "insta",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "raikiri-svg"
 version = "0.1.0"
 dependencies = [
