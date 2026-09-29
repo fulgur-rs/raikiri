@@ -30,7 +30,7 @@
 //!         "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },
 //!         /// CSS Color 4 §3.3
 //!         "opacity" => Opacity: f32 { initial: 1.0, inherited: no, parse: parse_opacity_value,
-//!                                     compute: clamp_opacity, sample: 2.0 },
+//!                                     compute: clamp_opacity, sample: -0.5 },
 //!     }
 //! }
 //! ```
