@@ -350,17 +350,27 @@ impl DomRuntime {
             },
             Ok(_) => event_loop::microtask_checkpoint(&mut self.context),
         };
+        // Map the thrown value before reading the host-failure slot:
+        // stringifying runs script (a custom toString or an Error message
+        // getter) which can itself record a host failure. Reading the slot
+        // first would leave that failure for the next call to report.
+        let mapped = result.map_err(|error| match error_message(&error, &mut self.context) {
+            Ok(message) => RuntimeError::JavaScript(message),
+            Err(reason) => RuntimeError::Aborted(reason),
+        });
         let failure = webidl::take_host_failure(&mut self.context);
         if let Err(reason) = checkpoint {
             return Err(RuntimeError::Aborted(reason));
         }
+        // A limit hit while stringifying outranks a host failure, the same
+        // as the checkpoint above does.
+        if let Err(RuntimeError::Aborted(_)) = &mapped {
+            return mapped;
+        }
         if let Some(message) = failure {
             return Err(RuntimeError::Host(message));
         }
-        result.map_err(|error| match error_message(&error, &mut self.context) {
-            Ok(message) => RuntimeError::JavaScript(message),
-            Err(reason) => RuntimeError::Aborted(reason),
-        })
+        mapped
     }
 
     /// Evaluate a classic script with a native Rust callback visible to it

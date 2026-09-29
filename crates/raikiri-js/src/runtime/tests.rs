@@ -682,3 +682,46 @@ fn reentrant_callback_throws_instead_of_panicking() {
     // ever entering the closure body a second time.
     assert_eq!(entries.get(), 1);
 }
+
+// ---- hostile stringification during error mapping ----
+
+/// A custom `toString` that records a host failure while [`DomRuntime::evaluate`]
+/// stringifies the thrown value must be attributed to the throwing call
+/// itself, not to the next call. The failure slot is read after mapping the
+/// error, so the stringification-time failure is reported here and the slot
+/// is empty for what follows.
+#[test]
+fn hostile_tostring_host_failure_belongs_to_the_throwing_call() {
+    let (mut host, ..) = StubHost::page();
+    host.fail_geometry = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let err = rt.evaluate(
+        "throw { toString() { document.body.getBoundingClientRect(); return 'oops'; } };",
+    );
+    assert_eq!(
+        err,
+        Err(RuntimeError::Host("stub geometry failure".into())),
+        "{err:?}"
+    );
+    // No stale failure leaks into the next evaluation.
+    assert_eq!(rt.evaluate("1 + 1").unwrap(), JsValue::from(2));
+}
+
+/// Same as above through an `Error` message getter instead of `toString`:
+/// reading `message` during stringification runs script, which can record a
+/// host failure that must belong to the current call.
+#[test]
+fn hostile_error_message_getter_host_failure_belongs_to_the_throwing_call() {
+    let (mut host, ..) = StubHost::page();
+    host.fail_geometry = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let err = rt.evaluate(
+        "throw (() => {              let e = new Error('orig');              Object.defineProperty(e, 'message', {                get() { document.body.getBoundingClientRect(); return 'hacked'; }              });              return e;          })();",
+    );
+    assert_eq!(
+        err,
+        Err(RuntimeError::Host("stub geometry failure".into())),
+        "{err:?}"
+    );
+    assert_eq!(rt.evaluate("1 + 1").unwrap(), JsValue::from(2));
+}
