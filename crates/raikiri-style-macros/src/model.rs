@@ -89,7 +89,7 @@ pub(crate) fn build(raw: Vec<RawEntry>, hand_written: &[Ident], errors: &mut Err
             continue;
         };
         let variant = entry.variant.to_string();
-        if hand_written.iter().any(|v| *v == entry.variant) {
+        if hand_written.contains(&entry.variant) {
             errors.push(syn::Error::new(
                 entry.variant.span(),
                 format!(
@@ -171,9 +171,7 @@ fn docs_only(attrs: Vec<Attribute>, what: &str, errors: &mut Errors) -> Vec<Attr
 /// A bare identifier (`Auto`), if `expr` is one.
 fn bare_ident(expr: &Expr) -> Option<&Ident> {
     match expr {
-        Expr::Path(path) if path.qself.is_none() && path.attrs.is_empty() => {
-            path.path.get_ident()
-        }
+        Expr::Path(path) if path.qself.is_none() && path.attrs.is_empty() => path.path.get_ident(),
         _ => None,
     }
 }

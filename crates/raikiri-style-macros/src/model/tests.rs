@@ -90,10 +90,7 @@ fn parsed_entry_defaults() {
     let opacity = &entries[1];
     assert_eq!(opacity.field, "alpha");
     assert_eq!(text(opacity.initial.as_ref()), "1.0");
-    assert_eq!(
-        opacity.compute.to_token_stream().to_string(),
-        "clamp"
-    );
+    assert_eq!(opacity.compute.to_token_stream().to_string(), "clamp");
 }
 
 #[test]

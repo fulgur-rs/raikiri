@@ -52,7 +52,10 @@ fn render(src: &str, errors: &[syn::Error]) -> String {
     for error in errors {
         let span = error.span();
         let (start, end) = (span.start(), span.end());
-        let line = lines.get(start.line.saturating_sub(1)).copied().unwrap_or("");
+        let line = lines
+            .get(start.line.saturating_sub(1))
+            .copied()
+            .unwrap_or("");
         let width = if end.line == start.line {
             end.column.saturating_sub(start.column).max(1)
         } else {

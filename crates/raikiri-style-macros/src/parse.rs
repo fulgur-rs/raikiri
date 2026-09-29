@@ -59,12 +59,6 @@ pub(crate) enum Slot<T> {
     Present(Ident, T),
 }
 
-impl<T> Default for Slot<T> {
-    fn default() -> Self {
-        Self::Absent
-    }
-}
-
 impl<T> Slot<T> {
     /// The key as written, when it was written at all.
     pub(crate) fn key(&self) -> Option<&Ident> {
@@ -211,9 +205,9 @@ fn skip_to_entry_start(input: ParseStream) {
 fn parse_entry(input: ParseStream, errors: &mut Errors) -> syn::Result<RawEntry> {
     let attrs = input.call(Attribute::parse_outer)?;
     if !input.peek(LitStr) {
-        return Err(input.error(
-            "expected a longhand entry: `\"css-name\" => Variant { key: value, .. }`",
-        ));
+        return Err(
+            input.error("expected a longhand entry: `\"css-name\" => Variant { key: value, .. }`")
+        );
     }
     let name: LitStr = input.parse()?;
     input.parse::<Token![=>]>()?;
@@ -253,9 +247,7 @@ fn parse_entry(input: ParseStream, errors: &mut Errors) -> syn::Result<RawEntry>
         input.parse::<Token![,]>()?;
     } else if !input.is_empty() {
         errors.push(input.error("expected `,` after this entry's `}`"));
-        if !input.cursor().punct().is_some_and(|(p, _)| p.as_char() == '#')
-            && !at_entry_start(input.cursor())
-        {
+        if !at_entry_start(input.cursor()) {
             skip_to_entry_start(input);
         }
     }
@@ -348,9 +340,12 @@ fn store<T>(
 }
 
 fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) -> syn::Result<()> {
-    let key = content
-        .call(Ident::parse_any)
-        .map_err(|_| content.error(format!("expected `key: value`; the keys are {}", key_list())))?;
+    let key = content.call(Ident::parse_any).map_err(|_| {
+        content.error(format!(
+            "expected `key: value`; the keys are {}",
+            key_list()
+        ))
+    })?;
     if !content.peek(Token![:]) || content.peek(Token![::]) {
         return Err(content.error(format!("expected `:` after `{key}`")));
     }
@@ -358,20 +353,76 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
     let had = &mut entry.had_errors;
     let k = key.clone();
     let stored = match key.to_string().as_str() {
-        "keywords" => store(&mut entry.keywords, k, parse_keywords(content), content, had, errors),
-        "initial" => store(&mut entry.initial, k, content.parse::<Expr>(), content, had, errors),
-        "inherited" => store(&mut entry.inherited, k, parse_yes_no(content), content, had, errors),
-        "parse" => store(&mut entry.parse, k, parse_fn_path(content), content, had, errors),
-        "compute" => store(&mut entry.compute, k, parse_fn_path(content), content, had, errors),
-        "computed" => store(&mut entry.computed, k, parse_computed(content), content, had, errors),
-        "lift" => store(&mut entry.lift, k, parse_fn_path(content), content, had, errors),
+        "keywords" => store(
+            &mut entry.keywords,
+            k,
+            parse_keywords(content),
+            content,
+            had,
+            errors,
+        ),
+        "initial" => store(
+            &mut entry.initial,
+            k,
+            content.parse::<Expr>(),
+            content,
+            had,
+            errors,
+        ),
+        "inherited" => store(
+            &mut entry.inherited,
+            k,
+            parse_yes_no(content),
+            content,
+            had,
+            errors,
+        ),
+        "parse" => store(
+            &mut entry.parse,
+            k,
+            parse_fn_path(content),
+            content,
+            had,
+            errors,
+        ),
+        "compute" => store(
+            &mut entry.compute,
+            k,
+            parse_fn_path(content),
+            content,
+            had,
+            errors,
+        ),
+        "computed" => store(
+            &mut entry.computed,
+            k,
+            parse_computed(content),
+            content,
+            had,
+            errors,
+        ),
+        "lift" => store(
+            &mut entry.lift,
+            k,
+            parse_fn_path(content),
+            content,
+            had,
+            errors,
+        ),
         "field" => {
             let value = content
                 .call(Ident::parse_any)
                 .map_err(|_| content.error("expected a field name, e.g. `field: object_fit`"));
             store(&mut entry.field, k, value, content, had, errors)
         }
-        "sample" => store(&mut entry.sample, k, content.parse::<Expr>(), content, had, errors),
+        "sample" => store(
+            &mut entry.sample,
+            k,
+            content.parse::<Expr>(),
+            content,
+            had,
+            errors,
+        ),
         _ => {
             *had = true;
             errors.push(syn::Error::new(
@@ -424,7 +475,10 @@ fn parse_yes_no(content: ParseStream) -> syn::Result<bool> {
         let word = if lit.value { "yes" } else { "no" };
         return Err(syn::Error::new(
             lit.span(),
-            format!("expected `yes` or `no`; write `{word}` instead of `{}`", lit.value),
+            format!(
+                "expected `yes` or `no`; write `{word}` instead of `{}`",
+                lit.value
+            ),
         ));
     }
     let ident = content
@@ -457,7 +511,10 @@ fn parse_computed(content: ParseStream) -> syn::Result<ComputedSpec> {
     let ty: Type = content.parse().map_err(|_| {
         content.error("expected `as_specified` or `Type via hook`, e.g. `computed: ComputedLength via absolutize_length`")
     })?;
-    let via_ok = content.cursor().ident().is_some_and(|(ident, _)| ident == "via");
+    let via_ok = content
+        .cursor()
+        .ident()
+        .is_some_and(|(ident, _)| ident == "via");
     if !via_ok {
         return Err(syn::Error::new_spanned(
             &ty,

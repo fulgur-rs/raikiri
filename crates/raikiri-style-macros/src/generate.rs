@@ -137,7 +137,8 @@ fn type_module(entry: &Entry) -> TokenStream {
     };
     let specified_doc = format!(" Specified value of {name}.");
     let computed_doc = format!(" Computed value of {name}.");
-    let marker_doc = format!(" The {name} longhand, as a type implementing the crate's `Longhand` trait.");
+    let marker_doc =
+        format!(" The {name} longhand, as a type implementing the crate's `Longhand` trait.");
     quote! {
         #doc
         pub mod #field {
@@ -284,12 +285,12 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
     let variants: Vec<_> = entries.iter().map(|e| &e.variant).collect();
     let fields: Vec<_> = entries.iter().map(|e| &e.field).collect();
     let projections: Vec<_> = entries.iter().map(projection).collect();
-    let specified_docs = entries.iter().map(|e| {
-        docs(&format!("Specified {}.", code_name(e)), &e.docs)
-    });
-    let computed_docs = entries.iter().map(|e| {
-        docs(&format!("Computed {}.", code_name(e)), &e.docs)
-    });
+    let specified_docs = entries
+        .iter()
+        .map(|e| docs(&format!("Specified {}.", code_name(e)), &e.docs));
+    let computed_docs = entries
+        .iter()
+        .map(|e| docs(&format!("Computed {}.", code_name(e)), &e.docs));
     let listed: Vec<&Entry> = entries.iter().filter(|e| e.name_listed).collect();
     let listed_names: Vec<_> = listed.iter().map(|e| &e.name).collect();
     let listed_variants: Vec<_> = listed.iter().map(|e| &e.variant).collect();

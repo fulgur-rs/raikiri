@@ -21,7 +21,8 @@ enum KeyRule {
     Invalid,
 }
 
-const KEY_ATTR_HELP: &str = "expected `#[key(OtherKey)]` or `#[key(with = <fn(&Payload) -> PropertyKey>)]`";
+const KEY_ATTR_HELP: &str =
+    "expected `#[key(OtherKey)]` or `#[key(with = <fn(&Payload) -> PropertyKey>)]`";
 
 fn parse_key_attr(attr: &syn::Attribute) -> syn::Result<KeyRule> {
     let syn::Meta::List(list) = &attr.meta else {
@@ -42,9 +43,7 @@ fn parse_key_attr(attr: &syn::Attribute) -> syn::Result<KeyRule> {
                 "write a closure as `#[key(with = |payload| ..)]`; it receives `&Payload`",
             ));
         }
-        let key: Ident = input
-            .parse()
-            .map_err(|_| input.error(KEY_ATTR_HELP))?;
+        let key: Ident = input.parse().map_err(|_| input.error(KEY_ATTR_HELP))?;
         if !input.is_empty() {
             return Err(input.error(KEY_ATTR_HELP));
         }
