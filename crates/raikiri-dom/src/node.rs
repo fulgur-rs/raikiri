@@ -317,6 +317,23 @@ pub struct Node {
     pub(crate) grid_column_count: usize,
     /// Child arena indices (`usize` indices into `Document::nodes`).
     pub children: Vec<usize>,
+    /// Arena index of the parent holding this node in its `children`, or
+    /// `None` for the Document root and detached nodes.
+    ///
+    /// This is the O(1) backing store for [`crate::Document::parent_of`].
+    /// Every tree mutation primitive in `document.rs` / `document/mutation.rs`
+    /// (`append_*` / `attach_child` / `insert_child_before` /
+    /// `detach_from_parent` / `reparent_children` / `retain_children` /
+    /// `set_element_text_content` / `replace_children_from` /
+    /// `from_logical_snapshot`) keeps it in sync with the parent's
+    /// `children` list. It tracks only `children` edges, not a `<template>`
+    /// element's `template_contents` slot (that host link is not a parent).
+    ///
+    /// Direct `children` pushes outside those primitives bypass this field.
+    /// In-crate test setups that do so must also set `parent` (or use the
+    /// primitives) to keep the invariant
+    /// `parent_of(child) == Some(p)` iff `nodes[p].children.contains(&child)`.
+    pub(crate) parent: Option<usize>,
     /// Per-node Taffy layout cache.
     pub(crate) cache: Cache,
     /// Taffy layout result, populated by compute_root_layout.
@@ -389,6 +406,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -423,6 +441,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -459,6 +478,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -502,6 +522,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -532,6 +553,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -564,6 +586,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,

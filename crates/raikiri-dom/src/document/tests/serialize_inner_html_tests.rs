@@ -253,11 +253,13 @@ fn serialize_inner_html_flattens_fragment_children_and_rejects_document_children
     let fragment = doc.nodes.len();
     doc.nodes.push(Node::new_document_fragment());
     doc.nodes[host].children.push(fragment);
+    doc.nodes[fragment].parent = Some(host);
     doc.append_text(fragment, "fragment child");
     assert_eq!(doc.serialize_inner_html(host).unwrap(), "fragment child");
 
     let document_root = doc.root_index();
     doc.nodes[host].children.push(document_root);
+    doc.nodes[document_root].parent = Some(host);
     assert!(
         doc.serialize_inner_html(host)
             .unwrap_err()
