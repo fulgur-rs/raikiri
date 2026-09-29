@@ -31,7 +31,7 @@ fn serialize_inner_html_uses_live_attributes_escapes_content_and_omits_void_end_
 
     assert_eq!(
         doc.serialize_inner_html(host).unwrap(),
-        "<p data-empty=\"\" title=\"a&amp;b&quot;c&#39;d\" style=\"color: red\">A &lt; B &amp; C &gt; D<!--note--><?target data?><br></p>",
+        "<p data-empty=\"\" title=\"a&amp;b&quot;c'd\" style=\"color: red\">A &lt; B &amp; C &gt; D<!--note--><?target data?><br></p>",
         "serialize attributes, text, comments, processing instructions, and void elements in order" // cov:ignore: assert_eq! formats this diagnostic only on failure.
     );
     assert!(doc.serialize_inner_html(doc.nodes.len()).is_err());
@@ -42,7 +42,7 @@ fn serialize_inner_html_uses_live_attributes_escapes_content_and_omits_void_end_
 }
 
 #[test]
-fn serializes_raw_text_and_rejects_invalid_attribute_names() {
+fn serializes_raw_text_and_keeps_setter_validation() {
     let mut doc = Document::new();
     let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let script = doc.append_element(Some(host), "script", Style::default(), None::<&str>);
@@ -56,6 +56,8 @@ fn serializes_raw_text_and_rejects_invalid_attribute_names() {
         doc.serialize_inner_html(host).unwrap(),
         "<script>if (a < b && c > d) {}</script>"
     );
+    // Single-attribute setter validation (DOM `setAttribute`) stays: a quote
+    // in the name is still rejected there.
     assert!(
         doc.set_element_attribute(host, "x\" onmouseover=\"bad", "1")
             .is_err()
@@ -64,15 +66,69 @@ fn serializes_raw_text_and_rejects_invalid_attribute_names() {
         doc.serialize_inner_html(host).unwrap(),
         "<script>if (a < b && c > d) {}</script>"
     );
-    let malformed = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
-    doc.set_element_attributes(
-        malformed,
+}
+
+#[test]
+fn serialize_inner_html_keeps_digit_leading_attribute_names() {
+    // A real HTML parser can produce a digit-leading name; the fragment
+    // serializer emits it as stored instead of turning the read into an error.
+    // Planted via the plural setter (no name check, like the parse sink) to
+    // model parser output without going through single-setter validation.
+    let mut doc = Document::new();
+    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+    doc.set_element_attributes(span, vec![(SmolStr::new("1bad"), SmolStr::new("x"))]);
+    assert_eq!(
+        doc.serialize_inner_html(host).unwrap(),
+        "<span 1bad=\"x\"></span>"
+    );
+    // The single setter still rejects the same name: that check belongs to
+    // DOM `setAttribute`, not to fragment serialization.
+    assert!(doc.set_element_attribute(span, "2bad", "y").is_err());
+
+    let mut spaced = Document::new();
+    let spaced_host =
+        spaced.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let spaced_span =
+        spaced.append_element(Some(spaced_host), "span", Style::default(), None::<&str>);
+    spaced.set_element_attributes(
+        spaced_span,
         vec![(SmolStr::new("bad name"), SmolStr::new("value"))],
     );
-    assert!(
-        doc.serialize_inner_html(host)
-            .unwrap_err()
-            .contains("invalid attribute name")
+    assert_eq!(
+        spaced.serialize_inner_html(spaced_host).unwrap(),
+        "<span bad name=\"value\"></span>"
+    );
+}
+
+#[test]
+fn serialize_inner_html_attribute_mode_keeps_angle_brackets_and_apostrophe() {
+    // HTML escaping-a-string: attribute mode escapes only `&` (plus NBSP and
+    // `"`); `<`, `>` and `'` stay raw. Text mode escapes `&`, `<`, `>` (plus
+    // NBSP) and leaves both quotes raw.
+    let mut doc = Document::new();
+    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let para = doc.append_element(Some(host), "p", Style::default(), None::<&str>);
+    doc.set_element_attribute(para, "title", "a<b>c'd\"e&f")
+        .unwrap();
+    doc.append_text(para, "a<b>c'd\"e&f");
+    assert_eq!(
+        doc.serialize_inner_html(host).unwrap(),
+        "<p title=\"a<b>c'd&quot;e&amp;f\">a&lt;b&gt;c'd\"e&amp;f</p>"
+    );
+}
+
+#[test]
+fn serialize_inner_html_escapes_nbsp_in_text_and_attributes() {
+    // U+00A0 becomes `&nbsp;` in both text and attribute modes.
+    let mut doc = Document::new();
+    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let para = doc.append_element(Some(host), "p", Style::default(), None::<&str>);
+    doc.set_element_attribute(para, "title", "a\u{a0}b").unwrap();
+    doc.append_text(para, "x\u{a0}y");
+    assert_eq!(
+        doc.serialize_inner_html(host).unwrap(),
+        "<p title=\"a&nbsp;b\">x&nbsp;y</p>"
     );
 }
 
