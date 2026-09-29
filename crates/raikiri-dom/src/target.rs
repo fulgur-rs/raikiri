@@ -873,8 +873,13 @@ mod tests {
             Some("counter-increment: visible"),
         );
         let template = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+        // The probe lives in the detached contents fragment (the parser's
+        // shape): it is unreachable, so snapshots skip it. An ordinary
+        // light-DOM child appended directly under the template element would
+        // stay in-document instead.
+        let frag = doc.allocate_template_fragment_root(template);
         let inert_child = doc.append_element(
-            Some(template),
+            Some(frag),
             "div",
             Style::default(),
             Some("counter-increment: inert"),

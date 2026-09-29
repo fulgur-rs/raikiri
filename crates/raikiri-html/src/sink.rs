@@ -133,8 +133,8 @@ impl TreeSink for RaikiriTreeSink {
         //   the is_in_document() and Element gates.
         // - All cascade and paint traversals skip them through the same gates.
         //
-        // Clear IS_IN_DOCUMENT on template subtrees, detached nodes (transient foster
-        // parenting), and Comment/PI nodes. Do this before
+        // Clear IS_IN_DOCUMENT on detached template contents, detached nodes
+        // (transient foster parenting), and Comment/PI nodes. Do this before
         // extract_inline_stylesheets, which skips them through the
         // is_in_document() gate.
         document.mark_in_document_flags();
@@ -311,9 +311,9 @@ impl TreeSink for RaikiriTreeSink {
         //
         // Defensive fallback: directly built elements (for example, in unit tests)
         // may lack a wired `template_contents` slot. Return `*target` as before.
-        // The existing Node::is_in_document() gate still covers direct construction
-        // because `mark_in_document_flags` skips templates in that path, so this
-        // does not cause a silent bug.
+        // Nodes appended through this fallback become ordinary light-DOM
+        // children of the template element, which stay in-document per the
+        // template-contents contract (only the wired fragment is inert).
         let doc = self.document.borrow();
         doc.get_node(*target)
             .and_then(|n| n.template_contents())

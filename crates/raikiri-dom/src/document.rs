@@ -5,7 +5,7 @@
 //!
 //! Every tree mutation primitive (`append_*` / `attach_child` /
 //! `insert_child_before` / `detach_from_parent` / `reparent_children` /
-//! `retain_children` / `set_element_namespace` for template elements) sets
+//! `retain_children` / `set_element_namespace` for svg elements) sets
 //! [`Document::flags_dirty`] to `true`. Callers observing `Node::is_in_document()`
 //! must call [`Document::mark_in_document_flags`] before observation to
 //! resynchronize the bit. `mark_in_document_flags` is an O(1) no-op when
@@ -562,8 +562,12 @@ impl Document {
                 .as_element_mut()
                 .expect("set_element_namespace called on non-Element");
             let changed = e.namespace != ns;
-            let affects_tree_flags =
-                changed && (e.tag_name.as_str() == "template" || e.tag_name.as_str() == "svg");
+            // Only `<svg>` affects the tree flags: the inline-SVG subtree bits
+            // depend on the SVG namespace. A `<template>` element's namespace
+            // no longer affects membership — ordinary light-DOM children stay
+            // in-document regardless, and the inert contents fragment is
+            // unreachable from the Document root in any namespace.
+            let affects_tree_flags = changed && e.tag_name.as_str() == "svg";
             let affects_layout = changed && e.tag_name.as_str() == "svg";
             e.namespace = ns;
             e.prefix = prefix;
@@ -1295,10 +1299,20 @@ impl Document {
     ///
     /// **Nodes whose bits are cleared** (postcondition):
     /// - Nodes unreachable from the Document root (detached / unreachable).
-    /// - Descendants of `<template>` elements (the element itself stays set).
+    ///   This includes a `<template>` element's contents: the parser stores
+    ///   them under a detached `NodeData::DocumentFragment` root (see
+    ///   [`Document::allocate_template_fragment_root`]), never as children of
+    ///   the `<template>` element itself, so the DFS below cannot reach them.
     /// - `NodeData::Comment` / `NodeData::ProcessingInstruction` variant
     ///   (**cleared even when reachable**: unrendered kinds are consistently
     ///   skipped during flat tree rendering traversal).
+    ///
+    /// Ordinary light-DOM children appended directly under a `<template>`
+    /// element (for example via DOM `appendChild`) stay set: per HTML §4.12.3
+    /// the template contents fragment is a separate node rather than the
+    /// element's children, so those children are in the document tree like
+    /// any other reachable node. Only the associated contents fragment is
+    /// inert.
     ///
     /// `NodeData::DocumentFragment` is usually detached, so the DFS in step 2
     /// cannot reach it and its bit remains cleared from step 1. No kind-based
@@ -1307,25 +1321,10 @@ impl Document {
     /// Algorithm:
     /// 1. Clear every arena node's bit first, so detached or unreachable nodes
     ///    do not retain the default value of true.
-    /// 2. Set bits with an iterative DFS from the Document root. Set the bit
-    ///    on a template element but skip its descendants, leaving them cleared.
+    /// 2. Set bits with an iterative DFS from the Document root.
     ///    Do not set Comment / PI bits even when reachable (kind gate).
     ///
-    /// Note: When parsing through the sink, template contents go into a
-    /// fragment-root subtree that is unreachable from the Document root. The
-    /// step 2 DFS therefore cannot reach them (the in_template branch does not
-    /// run). Keep step 2's "detect template, then skip descendants" logic for
-    /// paths that manually call `append_element(Some(tmpl), ...)` (raikiri-dom
-    /// tests, raikiri-paint hello-world setup, and future mutation runtimes
-    /// adding contents without a fragment root). These paths place children
-    /// directly under the template, so this preserves inertness as a safeguard.
-    ///
     /// Detailed implementation contracts:
-    /// - `<template>` detection requires the HTML namespace and
-    ///   local == "template" (case-sensitive). It relies on html5ever providing
-    ///   a lowercased local name. A hypothetical SVG `<template>` in another
-    ///   namespace is not skipped. SVG defines no `<template>`, but a raw
-    ///   parser could introduce one, so this distinction is defensive.
     /// - During foster parenting, `Document::retain_children` or
     ///   `detach_from_parent` can remove only an arena child pointer, leaving a
     ///   node transiently detached. Step 1 clears every node, so such a node
@@ -1369,14 +1368,14 @@ impl Document {
         // DocumentFragment is detached and unreachable by DFS, so its bit stays
         // cleared from step 1 without extra handling.
         let root = self.root_index();
-        let mut stack: Vec<(usize, bool, bool)> = vec![(root, false, false)];
-        while let Some((id, in_template, in_svg_subtree)) = stack.pop() {
+        let mut stack: Vec<(usize, bool)> = vec![(root, false)];
+        while let Some((id, in_svg_subtree)) = stack.pop() {
             let node = &mut self.nodes[id];
             let is_unrendered_by_kind = matches!(
                 node.data,
                 NodeData::Comment(_) | NodeData::ProcessingInstruction { .. }
             );
-            node.set_in_document(!in_template && !is_unrendered_by_kind);
+            node.set_in_document(!is_unrendered_by_kind);
             let is_svg_element = matches!(
                 &node.data,
                 NodeData::Element(element)
@@ -1386,19 +1385,12 @@ impl Document {
             let svg_subtree_here = in_svg_subtree || is_svg_element;
             node.set_inline_svg_content(svg_subtree_here);
             node.set_inline_svg_root(is_svg_element && !in_svg_subtree);
-            let is_template_here = match &node.data {
-                NodeData::Element(element) => {
-                    element.tag_name.as_str() == "template" && element.namespace.is_none()
-                }
-                _ => false,
-            };
-            let child_in_template = in_template || is_template_here;
             // Borrow the child IDs directly to avoid a temporary Vec per parent.
             stack.extend(
                 node.children
                     .iter()
                     .rev()
-                    .map(|&child| (child, child_in_template, svg_subtree_here)),
+                    .map(|&child| (child, svg_subtree_here)),
             );
         }
         // Step 3: Mark the layout cache dirty because Taffy's effective child

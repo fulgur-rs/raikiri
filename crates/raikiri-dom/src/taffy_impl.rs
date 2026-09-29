@@ -41,7 +41,8 @@ fn leaf_intrinsic_size(
 }
 
 /// Taffy child iterator: filter nodes with `is_in_document() == false`
-/// (such as `<template>` descendants) from the raw arena children.
+/// (such as a detached `<template>` contents fragment) from the raw arena
+/// children.
 ///
 /// The taffy layout tree is the web-spec “flat tree,” so layout must treat
 /// template contents as nonexistent. Skipping them only at paint time would

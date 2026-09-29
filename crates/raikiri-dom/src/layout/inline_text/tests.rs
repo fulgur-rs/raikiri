@@ -161,7 +161,10 @@ fn boundary_shaping_adjacency_uses_the_characters_on_the_boundary() {
     let _br = doc.append_element(Some(br_block), "br", Style::default(), None::<&str>);
     let _br_right = doc.append_text(br_block, "ع");
 
-    // Comments and template contents render nothing inline.
+    // Comments and template contents render nothing inline. The template
+    // text lives in the detached contents fragment (the parser's shape), so
+    // the shaping walk never reaches it; an ordinary light-DOM child of the
+    // template element would stay in-document instead.
     let skipped_block = block(&mut doc);
     let skipped_left = doc.append_text(skipped_block, "ع");
     let _comment = doc.append_comment(Some(skipped_block), "x");
@@ -171,7 +174,8 @@ fn boundary_shaping_adjacency_uses_the_characters_on_the_boundary() {
         Style::default(),
         Some("display:inline"),
     );
-    let _template_text = doc.append_text(template, "A");
+    let frag = doc.allocate_template_fragment_root(template);
+    let _template_text = doc.append_text(frag, "A");
     let _skipped_right = doc.append_text(skipped_block, "ع");
 
     // An authored ZWJ at the neighbor's edge still continues the context.

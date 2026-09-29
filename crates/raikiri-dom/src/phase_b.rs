@@ -820,19 +820,17 @@ mod tests {
     #[test]
     fn drive_document_skips_directives_inside_a_template_subtree() {
         // walk_directives's `if !node.is_in_document() { continue; }` check
-        // must actually skip a subtree that's reachable via `node.children`
-        // but flagged out of the flat tree by `mark_in_document_flags` — the
-        // `<template>` case is the one shape of this in an ordinary parsed
-        // document (the `<template>` element itself stays in_document, but
-        // everything inside it gets cleared). A node that's merely absent
-        // from the tree (e.g. built with `parent: None`) would never reach
-        // this check at all, since the walk wouldn't descend into it in the
-        // first place — this test needs the reachable-but-flagged-out case
-        // specifically.
+        // must skip a `<template>` element's detached contents fragment: the
+        // fragment is unreachable from the Document root (the parser's
+        // shape), so the walk never descends into it and the directives
+        // inside never execute. An ordinary light-DOM child appended directly
+        // under the template element stays in-document instead, so the probe
+        // `<p>` is placed in the contents fragment here.
         let mut doc = Document::new();
         let tmpl = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+        let frag = doc.allocate_template_fragment_root(tmpl);
         doc.append_element(
-            Some(tmpl),
+            Some(frag),
             "p",
             Style::default(),
             // string-set is the probe that actually discriminates a broken
@@ -870,15 +868,12 @@ mod tests {
         let mut ctx = PageContext::default();
         drive_document(&mut ctx, &doc, &cr);
 
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(
-            ctx.counter(&Symbol::new("hidden")),
-            None,
-            "a counter-reset inside a <template> subtree must have no \
-             effect — the subtree is reachable via node.children but \
-             cleared by mark_in_document_flags"
-        );
+        // A counter-reset inside a <template> contents fragment must have
+        // no effect: the fragment is unreachable from the Document root, so
+        // the walk never visits it. (Kept message-free: an `assert_eq!`
+        // message literal only executes on failure, so it would stay
+        // uncovered in coverage.)
+        assert_eq!(ctx.counter(&Symbol::new("hidden")), None);
         // The discriminating assertion: string_state is never popped by
         // walk_directives, so its presence would be unambiguous proof the
         // templated element was walked at all — unlike the counter check

@@ -2588,22 +2588,19 @@ mod tests {
 
     #[test]
     fn resolve_string_set_component_content_text_skips_template_descendants() {
-        // collect_descendant_text's `is_in_document()` check must actually
-        // skip a subtree that's still reachable via `node.children` but
-        // flagged out of the flat tree — the `<template>` case is the one
-        // shape of this in an ordinary parsed document (a `<template>`
-        // element itself stays in_document, but everything inside it gets
-        // cleared by `mark_in_document_flags`, same contract as
-        // `Document::mark_in_document_flags_keeps_template_element_but_clears_descendants`).
-        // A node that's merely absent from the tree (e.g. built with
-        // `parent: None`) would never reach this check at all, since the
-        // walk wouldn't descend into it in the first place — this test
-        // needs the reachable-but-flagged-out case specifically.
+        // collect_descendant_text's `is_in_document()` check must skip a
+        // `<template>` element's detached contents fragment: the fragment is
+        // unreachable from the Document root (the parser's shape), so the
+        // walk never descends into it and the "hidden" text never leaks into
+        // the resolved string. An ordinary light-DOM child appended directly
+        // under the template element stays in-document instead, so the probe
+        // `<p>` is placed in the contents fragment here.
         let mut doc = Document::new();
         let root = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
         doc.append_text(root, "before ");
         let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
-        let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+        let frag = doc.allocate_template_fragment_root(tmpl);
+        let inner = doc.append_element(Some(frag), "p", Style::default(), None::<&str>);
         doc.append_text(inner, "hidden");
         doc.append_text(root, " after");
 

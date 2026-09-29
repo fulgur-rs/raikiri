@@ -43,12 +43,16 @@ bitflags::bitflags! {
         /// Table formatting context root, reserved for future use at the same
         /// bit position as blitz.
         const IS_TABLE_ROOT = 1 << 1;
-        /// Whether this node belongs to the flat tree. Clear for descendants
-        /// of a `<template>` element; set for nodes reachable from the Document
-        /// root through flat-tree parents. Future shadow DOM / slot support will
-        /// use this bit for "shadow-including tree" semantics, including direct
-        /// host children not assigned to a slot and light-DOM descendants outside
-        /// the shadow root.
+        /// Whether this node belongs to the flat tree. Clear for nodes
+        /// unreachable from the Document root (detached subtrees, including a
+        /// `<template>` element's contents fragment) and for Comment /
+        /// ProcessingInstruction nodes; set for nodes reachable from the
+        /// Document root through flat-tree parents. Ordinary light-DOM
+        /// children appended directly under a `<template>` element stay set —
+        /// only the associated contents fragment is inert. Future shadow DOM /
+        /// slot support will use this bit for "shadow-including tree"
+        /// semantics, including direct host children not assigned to a slot
+        /// and light-DOM descendants outside the shadow root.
         ///
         /// Maintenance points:
         /// - Parse: a single-pass DFS sets or clears it in the
@@ -825,9 +829,9 @@ impl Node {
     /// - Filtering the `[hidden]` and `inert` attributes is outside this
     ///   predicate's scope (planned for the cascade path behind
     ///   `is_display_none()`).
-    /// - The `is_in_document() == false` gate already skips `<template>`, but
-    ///   this predicate includes it for defense in depth (both gates fail
-    ///   closed independently).
+    /// - The `is_in_document() == false` gate already skips a `<template>`
+    ///   element's detached contents, but this predicate includes the element
+    ///   itself for defense in depth (both gates fail closed independently).
     #[inline]
     pub fn is_non_rendered_html_element(&self) -> bool {
         let NodeData::Element(e) = &self.data else {
