@@ -264,3 +264,52 @@ fn is_supported_property_name_covers_expanding_shorthands() {
         assert!(is_supported_property_name(name), "{name}");
     }
 }
+
+/// A name declared in the `properties!` table must not also keep a
+/// hand-written arm or list entry: the hand-written matches run first, so a
+/// stale arm would silently win over the table-declared longhand.
+#[test]
+fn table_names_have_no_hand_written_arm_or_entry() {
+    let dispatch = parse_value_dispatch_names();
+    let key_arms = property_key_for_name_names();
+    for name in crate::property::LONGHAND_NAMES {
+        assert!(
+            !dispatch.contains(*name),
+            "{name} is declared in `properties!` but still has a parse_value arm"
+        );
+        assert!(
+            !key_arms.contains(*name),
+            "{name} is declared in `properties!` but still has a property_key_for_name arm"
+        );
+        assert!(
+            !super::HAND_WRITTEN_NAMES.contains(name),
+            "{name} is declared in `properties!` but is also written into HAND_WRITTEN_NAMES"
+        );
+    }
+}
+
+/// The hand-written list stays sorted on its own, so an entry added out of
+/// order is caught even though the merged list is re-sorted.
+#[test]
+fn hand_written_names_are_sorted() {
+    assert!(
+        super::HAND_WRITTEN_NAMES.is_sorted(),
+        "HAND_WRITTEN_NAMES must be sorted"
+    );
+}
+
+/// The merged list holds each name once and includes every table-declared
+/// longhand.
+#[test]
+fn supported_property_names_are_unique_and_include_table_names() {
+    let names = supported_property_names();
+    let unique: BTreeSet<&str> = names.iter().copied().collect();
+    assert_eq!(unique.len(), names.len(), "duplicate names: {names:?}");
+    for name in crate::property::LONGHAND_NAMES {
+        assert!(
+            unique.contains(name),
+            "{name} is missing from the merged list"
+        );
+        assert!(is_supported_property_name(name), "{name}");
+    }
+}
