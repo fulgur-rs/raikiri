@@ -196,6 +196,8 @@ mod property {
             /// CSS Color 4 §3.3
             "opacity" => Opacity: f32 {
                 initial: 1.0, inherited: no, parse: parse_number,
+                // Deliberately clamps to the initial value, against the crate
+                // docs' advice, so that `equal_fields` has a clamp to catch.
                 compute: clamp_opacity, sample: 2.0,
             },
             /// An inherited keyword longhand with explicit spellings.

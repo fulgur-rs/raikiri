@@ -183,6 +183,11 @@
 //!   entries whose fields are equal, for checking such a fixture against
 //!   `initial()`.
 //!
+//! A host's tests need not use every one of these `cfg(test)` items: rustc
+//! does not report `dead_code` inside another crate's macro expansion, so
+//! an unused one (raikiri-style never calls `longhand_samples()`, for
+//! example) passes `clippy --all-targets -D warnings` without an `allow`.
+//!
 //! # Host crate
 //!
 //! The expansion assumes these items of the crate it is used in:
@@ -235,12 +240,12 @@
 //! - **Generated names.** Each entry adds `pub mod <field>` (the value type
 //!   aliases and the `Property` marker) and, for `keywords`, `enum
 //!   <Variant>` to the annotated module. A module, type or trait of the
-//!   same name already in that module is a duplicate definition. Where the annotated module
-//!   is re-exported with a glob (`pub use decl::*`), an item of the same
-//!   name in the re-exporting module is not an error: it silently shadows
-//!   the generated one there, and a glob-imported item of that name from
-//!   elsewhere makes the name ambiguous at its uses. Give the entry another
-//!   `field:` or rename the existing item.
+//!   same name already in that module is a duplicate definition. Where the
+//!   annotated module is re-exported with a glob (`pub use decl::*`), an
+//!   item of the same name in the re-exporting module is not an error: it
+//!   silently shadows the generated one there, and a glob-imported item of
+//!   that name from elsewhere makes the name ambiguous at its uses. Give
+//!   the entry another `field:` or rename the existing item.
 //!
 //! # Diagnostics
 //!
