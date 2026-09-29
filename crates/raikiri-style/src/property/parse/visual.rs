@@ -771,12 +771,7 @@ fn parse_basic_shape(input: &mut Parser<'_, '_>) -> Option<BasicShape> {
 }
 
 fn parse_fill_rule(input: &mut Parser<'_, '_>) -> Option<FillRule> {
-    let ident = input.expect_ident().ok()?.as_ref().to_ascii_lowercase();
-    match ident.as_str() {
-        "nonzero" => Some(FillRule::NonZero),
-        "evenodd" => Some(FillRule::EvenOdd),
-        _ => None,
-    }
+    FillRule::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Try to parse `<shape-radius>` as `closest-side` / `farthest-side` or `<length-percentage [0,∞]>`.
