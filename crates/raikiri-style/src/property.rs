@@ -10,6 +10,12 @@
 mod types;
 pub use types::*;
 
+// Unused until a `properties!` table declares a longhand.
+#[allow(dead_code)]
+mod longhand_trait;
+#[allow(unused_imports)]
+pub(crate) use longhand_trait::{AbsolutizeCx, Longhand};
+
 mod decl;
 pub use decl::*;
 
