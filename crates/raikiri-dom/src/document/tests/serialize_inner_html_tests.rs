@@ -87,8 +87,7 @@ fn serialize_inner_html_keeps_digit_leading_attribute_names() {
     assert!(doc.set_element_attribute(span, "2bad", "y").is_err());
 
     let mut spaced = Document::new();
-    let spaced_host =
-        spaced.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let spaced_host = spaced.append_element(Some(0), "div", Style::default(), None::<&str>);
     let spaced_span =
         spaced.append_element(Some(spaced_host), "span", Style::default(), None::<&str>);
     spaced.set_element_attributes(
@@ -124,7 +123,8 @@ fn serialize_inner_html_escapes_nbsp_in_text_and_attributes() {
     let mut doc = Document::new();
     let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let para = doc.append_element(Some(host), "p", Style::default(), None::<&str>);
-    doc.set_element_attribute(para, "title", "a\u{a0}b").unwrap();
+    doc.set_element_attribute(para, "title", "a\u{a0}b")
+        .unwrap();
     doc.append_text(para, "x\u{a0}y");
     assert_eq!(
         doc.serialize_inner_html(host).unwrap(),

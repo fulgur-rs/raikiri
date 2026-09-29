@@ -353,7 +353,10 @@ fn inner_html_getter_serializes_digit_leading_attribute_names() {
         doc.set_element_attributes(child, vec![("1bad".into(), "x".into())]);
     })
     .unwrap();
-    ok(&mut rt, "document.body.innerHTML === '<div 1bad=\"x\"></div>'");
+    ok(
+        &mut rt,
+        "document.body.innerHTML === '<div 1bad=\"x\"></div>'",
+    );
 }
 
 /// HTML escaping-a-string (section 13.3) through the `innerHTML` getter:
