@@ -1524,7 +1524,9 @@ pub struct ComputedValues {
     /// own dimensions (paint/used-value layer, see
     /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
-    /// Table-declared property values (see `longhands!`); reachable as fields through `Deref`.
+    /// Computed values of the properties declared in the `longhands!` table.
+    /// Each is reachable as a field of `ComputedValues` through `Deref` (for
+    /// example `values.isolation`); see [`ComputedTable`] for the fields.
     pub longhands: ComputedTable,
     /// `object-position`. **non-inherited**, initial: `50% 50%` (CSS Images
     /// Module Level 3 §5.2 "Positioning the replaced element: the
@@ -2082,8 +2084,9 @@ impl ComputedValues {
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation; for the table-declared properties held in
     /// [`Self::longhands`] (such as `object_fit` and `isolation`), it is the
-    /// `inherited:` entry of the property's `longhands!` block. Inherited fields are copied from the parent's computed
-    /// values; non-inherited fields retain their initial values.
+    /// `inherited:` entry of the property's `longhands!` block. Inherited
+    /// fields are copied from the parent's computed values; non-inherited
+    /// fields retain their initial values.
     ///
     pub fn inherit_from(parent: &Self) -> Self {
         let mut child = crate::specified::SpecifiedValues::inherit_from(parent).finalize(

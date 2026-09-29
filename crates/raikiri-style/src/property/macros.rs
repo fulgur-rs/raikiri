@@ -129,29 +129,47 @@ macro_rules! css_keywords {
 /// 2. Add the property's CSS name to `supported_property_names()` in `names.rs`,
 ///    maintaining alphabetical order (pinned by the
 ///    `longhand_names_are_supported_property_names` test).
-/// 3. Give the new field a non-initial value in the `longhands: ComputedTable { .. }`
-///    initializer of the full `ComputedValues` test fixtures in `computed/tests.rs`
-///    and `specified/tests.rs` (the compiler points at them). The `SpecifiedValues` /
-///    `ComputedValues` storage, their initial / `inherit_from` / `absolutize_with`
-///    initializers, the `apply_value` store in `cascade/inherit.rs`, the pass-through
-///    matches in `rule.rs`, the resolve step in `cascade/inherit.rs`,
-///    `page/absolutize.rs`, the `serialize_value` `None` arm, and the test-only
-///    residue detector in `page/cascade/tests.rs` are covered by the table, as are
-///    the two page-cascade registries. `computed:` hooks are rejected for now; table
-///    payloads must be free of lengths needing absolutization.
 ///
-/// A table block currently generates: `PropertyKey` and `PropertyValue` enum
-/// variants; the `key()` projection; the name-to-key lookup
-/// (`longhand_key_for_name`); the value parsing dispatch (`parse_longhand_value`);
-/// the `longhand_value_pat!()` pass-through pattern macro (used by `rule.rs`,
+/// That is all a simple keyword property needs; everything else below is
+/// generated from the block.
+///
+/// One follow-up remains in tests: every full
+/// `ComputedValues { longhands: ComputedTable { .. }, .. }` literal, such as
+/// the non-initial parent fixtures in `computed/tests.rs` and
+/// `specified/tests.rs`, must list the new field (the compiler points at
+/// them). Give it a non-initial value there so inheritance tests can tell it
+/// from the default.
+///
+/// Limits of the generated table:
+///
+/// - `computed:` hooks are rejected for now, so table payloads must be
+///   `computed: as_specified` and free of lengths needing absolutization.
+/// - Table fields are readable and writable as `values.field` through
+///   `Deref`/`DerefMut`, but struct patterns cannot destructure them, and an
+///   exhaustive struct literal of `SpecifiedValues` or `ComputedValues` must
+///   set them through its `longhands` field.
+/// - Intra-doc links to a table field must target `ComputedTable::field` or
+///   `SpecifiedTable::field`; rustdoc cannot resolve fields through `Deref`,
+///   so `ComputedValues::field` would be a broken link.
+///
+/// Properties outside the table stay hand-written: their storage in
+/// `SpecifiedValues` / `ComputedValues`, their initial / `inherit_from` /
+/// `absolutize_with` handling, the `apply_value` arm in `cascade/inherit.rs`,
+/// the name lookup and `parse_value` arm, the `serialize_value` arm, and their
+/// own `PropertyKey` / `PropertyValue` variants in the `manual` sections.
+///
+/// A table block generates: `PropertyKey` and `PropertyValue` enum variants;
+/// the `key()` projection; the name-to-key lookup (`longhand_key_for_name`);
+/// the value parsing dispatch (`parse_longhand_value`); the
+/// `longhand_value_pat!()` pass-through pattern macro (used by `rule.rs`,
 /// `cascade/inherit.rs`, `page/absolutize.rs`, `serialize_value`, and the
-/// test-only residue detector in `page/cascade/tests.rs`); the `LONGHAND_NAMES`
-/// constant; the test registries' macros (`with_longhand_samples` and
-/// `with_longhand_variants`); a field of `SpecifiedTable` and `ComputedTable`
-/// (with their `initial`, `inherit_from`, `absolutize` and `apply`, and the
-/// `Deref`/`DerefMut` impls that expose them on `SpecifiedValues` and
-/// `ComputedValues`); and for
-/// keyword value blocks, the value enum with its `INITIAL` constant.
+/// test-only residue detector in `page/cascade/tests.rs`); the
+/// `LONGHAND_NAMES` constant; the test registries' macros
+/// (`with_longhand_samples` and `with_longhand_variants`); a field of
+/// `SpecifiedTable` and `ComputedTable` (with their `initial`, `inherit_from`,
+/// `absolutize` and `apply`, and the `Deref`/`DerefMut` impls that expose them
+/// on `SpecifiedValues` and `ComputedValues`); and, for keyword value blocks,
+/// the value enum with its `INITIAL` constant.
 macro_rules! longhands {
     // ---- helpers -------------------------------------------------------
     (@ty $V:ident keywords { $($kw:tt)* }) => { $V };

@@ -570,7 +570,9 @@ pub struct SpecifiedValues {
     /// Percentages pass through because they need the gradient box dimensions at paint /
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
-    /// Table-declared property values (see `longhands!`); reachable as fields through `Deref`.
+    /// Specified values of the properties declared in the `longhands!` table.
+    /// Each is reachable as a field of `SpecifiedValues` through `Deref` (for
+    /// example `values.isolation`); see [`SpecifiedTable`] for the fields.
     pub longhands: SpecifiedTable,
     /// **Specified** `object-position`; phase 3 absolutizes `<length-percentage>` in each offset,
     /// as for `background_position`, reusing the [`CssPosition`] type.
