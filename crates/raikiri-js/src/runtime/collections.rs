@@ -144,9 +144,7 @@ fn cached_item(
     index: usize,
     context: &mut Context,
 ) -> JsResult<Option<JsValue>> {
-    match with_live_nodes(source, cache, context, |_, nodes| {
-        nodes.get(index).copied()
-    })? {
+    match with_live_nodes(source, cache, context, |_, nodes| nodes.get(index).copied())? {
         Some(node) => Ok(Some(wrap(context, node)?.into())),
         None => Ok(None),
     }

@@ -352,7 +352,10 @@ fn mutation_bumps_generation_and_invalidates_the_cache() {
     ok(&mut rt, "tag.length === 1 && cls.length === 0");
     assert_eq!(live_walks(&mut rt), walks_before + 2);
     // Same generation: both collections hit their caches.
-    ok(&mut rt, "tag.length === 1 && cls.length === 0 && tag[0].localName === 'p'");
+    ok(
+        &mut rt,
+        "tag.length === 1 && cls.length === 0 && tag[0].localName === 'p'",
+    );
     assert_eq!(live_walks(&mut rt), walks_before + 2);
     assert_eq!(generation(&mut rt), gen_before);
     // A structural mutation invalidates both.
@@ -362,7 +365,10 @@ fn mutation_bumps_generation_and_invalidates_the_cache() {
         generation(&mut rt) > gen_before,
         "appendChild must bump the generation"
     );
-    ok(&mut rt, "tag.length === 2 && cls.length === 1 && cls[0] === tag[1]");
+    ok(
+        &mut rt,
+        "tag.length === 2 && cls.length === 1 && cls[0] === tag[1]",
+    );
     assert_eq!(live_walks(&mut rt), walks_before + 4);
     // An attribute mutation that changes class matching invalidates too.
     rt.evaluate("q.className = 'other';").unwrap();
@@ -412,7 +418,8 @@ fn each_collection_caches_independently() {
         walks_before + 2,
         "each collection reuses its own cache"
     );
-    rt.evaluate("b.appendChild(document.createElement('a'));").unwrap();
+    rt.evaluate("b.appendChild(document.createElement('a'));")
+        .unwrap();
     ok(&mut rt, "first.length === 2 && second.length === 1");
     assert_eq!(live_walks(&mut rt), walks_before + 4);
 }
