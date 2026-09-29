@@ -271,15 +271,14 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
 ///   border and padding keep `i`'s 7px top margin from collapsing through
 ///   it (CSS 2.1 §8.3.1), so `i`'s border edge sits 5 + 7 = 12 below `o`'s
 ///   top padding edge and 5 (the left padding) right of its left one.
-/// - `o.offsetTop`/`o.offsetLeft` are both 10, `o`'s own margin, because
-///   its offsetParent is the body and the result is relative to the
-///   initial containing block. CSS 2.1 with the UA stylesheet's
-///   `body { margin: 8px }` gives 10 at the top only through margin
-///   collapsing (max(8, 10)) and 8 + 10 = 18 at the left, but this layout
-///   places the body box at the origin with the viewport's full size, so
-///   the body's margins never reach the geometry (a lone `margin: 5px`
-///   block sits at 5, not 8). The measured values are pinned so a layout
-///   change there is noticed.
+/// - `o.offsetTop` is 10 and `o.offsetLeft` is 18, because its offsetParent
+///   is the body and the result is relative to the initial containing block.
+///   CSS 2.1 with the UA stylesheet's `body { margin: 8px }` gives 10 at the
+///   top through margin collapsing (max(8, 10) per section 8.3.1) and
+///   8 + 10 = 18 at the left (horizontal margins never collapse). The page
+///   scene carries the body margin in `body_offset_pt`, so a lone
+///   `margin: 5px` block sits at 8 (max(8, 5)) vertically and 13 (8 + 5)
+///   horizontally.
 /// - `i` (100 x 200) fits horizontally inside `o`'s 110px padding box, so
 ///   `scrollWidth` is the padding box width. Vertically, `i`'s border box
 ///   ends 5 + 7 + 200 = 212 below `o`'s top padding edge, and scrollable
@@ -301,7 +300,7 @@ fn cssom_view_metrics_follow_the_css_box_model() {
         ("i.offsetTop", 12.0),
         ("i.offsetLeft", 5.0),
         ("o.offsetTop", 10.0),
-        ("o.offsetLeft", 10.0),
+        ("o.offsetLeft", 18.0),
         ("o.offsetWidth", 116.0),
         ("o.offsetHeight", 66.0),
         ("o.clientTop", 3.0),
@@ -322,6 +321,34 @@ fn cssom_view_metrics_follow_the_css_box_model() {
         rt.evaluate(
             "i.offsetParent === o && o.offsetParent === document.body \
              && document.getElementById('s').offsetWidth > 0"
+        )
+        .unwrap()
+        .as_boolean(),
+        Some(true)
+    );
+}
+
+/// An unstyled block sits at the UA body margin.
+///
+/// This is the `data-offset-x=8` shape that WPT check-layout fixtures pin:
+/// with `body { margin: 8px }` from the UA sheet and no author margin, the
+/// border edge is 8px from the initial containing block on both axes, and
+/// `getBoundingClientRect` reports the same origin.
+#[test]
+fn body_margin_places_unstyled_block_at_8px() {
+    let (_dir, mut rt) = runtime("<div id=b style='width:10px; height:10px'></div>");
+    for (src, expected) in [
+        ("document.getElementById('b').offsetLeft", 8.0),
+        ("document.getElementById('b').offsetTop", 8.0),
+        ("document.getElementById('b').offsetWidth", 10.0),
+        ("document.getElementById('b').offsetHeight", 10.0),
+    ] {
+        assert_eq!(num(&mut rt, src), expected, "{src}");
+    }
+    assert_eq!(
+        rt.evaluate(
+            "var r = document.getElementById('b').getBoundingClientRect(); \
+             r.left === 8 && r.top === 8 && r.width === 10 && r.height === 10"
         )
         .unwrap()
         .as_boolean(),
