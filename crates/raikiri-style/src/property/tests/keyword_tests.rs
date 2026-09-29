@@ -34,6 +34,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         FloatValue,
         FontKerning,
         FontOpticalSizing,
+        FontStyle,
         FontVariantCaps,
         FontVariantEmoji,
         FontVariantLigatures,

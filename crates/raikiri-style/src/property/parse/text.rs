@@ -924,13 +924,7 @@ pub(super) fn parse_font_variation_settings(
 }
 
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(FontStyle::Normal),
-        "italic" => Some(FontStyle::Italic),
-        "oblique" => Some(FontStyle::Oblique),
-        _ => None,
-    }
+    FontStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `font-variant-caps: <ident>` (CSS Fonts Module Level 3 §6.6,

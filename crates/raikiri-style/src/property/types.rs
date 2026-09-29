@@ -1707,6 +1707,12 @@ pub enum FontStyle {
     Oblique,
 }
 
+css_keywords!(FontStyle {
+    Normal => "normal",
+    Italic => "italic",
+    Oblique => "oblique",
+});
+
 /// The value of the `font-variant-caps` property.
 ///
 /// CSS Fonts Module Level 3 §6.6 "Capitalization: the font-variant-caps
