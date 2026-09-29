@@ -3633,6 +3633,11 @@ pub enum HangingPunctuation {
     First,
 }
 
+css_keywords!(HangingPunctuation {
+    None => "none",
+    First => "first",
+});
+
 /// The value of the `text-align` property.
 ///
 /// CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
