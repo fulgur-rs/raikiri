@@ -2102,12 +2102,6 @@ pub(super) fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> 
     ObjectFit::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// Parse `isolation: <isolation-mode>` (see the [`Isolation`]
-/// grammar: `auto | isolate`).
-pub(super) fn parse_isolation(input: &mut Parser<'_, '_>) -> Option<Isolation> {
-    Isolation::from_css_ident(input.expect_ident().ok()?)
-}
-
 /// Parse `mix-blend-mode: <blend-mode>` (see the [`MixBlendMode`]
 /// grammar: 16 keywords).
 pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlendMode> {

@@ -3,12 +3,17 @@
 
 use std::sync::Arc;
 
+use raikiri_style_macros::longhands;
 use smol_str::SmolStr;
 
-use super::*;
+// Not `use super::*`: that glob would also import this file's own module name
+// `decl`, which would then be ambiguous with the macro-expanded inline `decl`.
+#[allow(unused_imports)]
+use super::parse::*;
+use super::types::*;
 
-// The declarations sit in an inline module so that an attribute macro can
-// read and extend them as one item.
+// `#[longhands]` can only read an inline module, hence the nested `decl`.
+#[longhands]
 #[allow(clippy::module_inception)]
 mod decl {
     use super::*;
@@ -102,8 +107,10 @@ mod decl {
     pub enum PropertyValue {
         /// A `--<ident>` custom property. The value remains token-preserving until
         /// the computed-value stage, where `var()` references are resolved.
+        #[key(Custom)]
         CustomProperty(CustomProperty),
         /// A known property value containing `var()` or a math function.
+        #[key(with = |value| value.key)]
         Deferred(DeferredValue),
         /// `color: <color>` — inherited, initial: black.
         Color(CssColor),
@@ -182,6 +189,11 @@ mod decl {
         /// [`crate::cascade::resolve_against_inherited`] performs the same resolution;
         /// by the time a value reaches [`crate::page::PageCascadeResult::declarations`],
         /// it has likewise become [`Self::FontSize`] (`Length::Px`).
+        // `larger` / `smaller` belong to the same property as `font-size`.
+        // Map them to the same `PropertyKey` so cascade winner selection
+        // correctly makes `font-size: 12px` and `font-size: larger` compete.
+        // Separate keys would let both win, which the spec does not allow.
+        #[key(FontSize)]
         FontSizeRelative(RelativeFontSize),
         /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited,
         /// initial: `Absolute(400.0)`. CSS Fonts 4 §2.2
@@ -243,6 +255,7 @@ mod decl {
         /// CSS-wide `counter-reset: inherit` retained for page-context resolution.
         /// The page-margin used-value pass resolves this marker against the
         /// enclosing page counter scope.
+        #[key(CounterReset)]
         CounterResetInherit,
         /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
         /// non-inherited. The spec's initial value is `none` (CSS Lists 3 §4.2), which
@@ -497,24 +510,29 @@ mod decl {
         MarginTop(LengthOrAuto),
         /// Page-context-only marker for `margin-top: inherit`. The page parser
         /// resolves this against the root element before exposing declarations.
+        #[key(MarginTop)]
         MarginTopInherit,
         /// `margin-right: <length-percentage> | auto` — non-inherited, initial: 0
         /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>).
         MarginRight(LengthOrAuto),
         /// Page-context-only marker for `margin-right: inherit`.
+        #[key(MarginRight)]
         MarginRightInherit,
         /// `margin-bottom: <length-percentage> | auto` — non-inherited, initial: 0
         /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>).
         MarginBottom(LengthOrAuto),
         /// Page-context-only marker for `margin-bottom: inherit`.
+        #[key(MarginBottom)]
         MarginBottomInherit,
         /// `margin-left: <length-percentage> | auto` — non-inherited, initial: 0
         /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>).
         MarginLeft(LengthOrAuto),
         /// Page-context-only marker for `margin-left: inherit`.
+        #[key(MarginLeft)]
         MarginLeftInherit,
         /// Page-context-only marker for the `margin: inherit` shorthand. It is
         /// expanded into four side markers before page-context cascade.
+        #[key(Margin)]
         MarginInherit,
         /// `margin: <'margin-top'>{1,4}` shorthand — sets all four sides
         /// (CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>).
@@ -673,33 +691,47 @@ mod decl {
         BorderRight(Border),
         /// `border: <css-wide-keyword>` — expands to twelve longhand CSS-wide markers
         /// (see [`CssWideKeyword`]).
+        #[key(Border)]
         BorderCssWide(CssWideKeyword),
         /// `border-right: <css-wide-keyword>` — expands to three right-side longhand
         /// CSS-wide markers (see [`CssWideKeyword`]).
+        #[key(BorderRight)]
         BorderRightCssWide(CssWideKeyword),
         /// `border-top-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderTopWidth)]
         BorderTopWidthCssWide(CssWideKeyword),
         /// `border-right-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderRightWidth)]
         BorderRightWidthCssWide(CssWideKeyword),
         /// `border-bottom-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderBottomWidth)]
         BorderBottomWidthCssWide(CssWideKeyword),
         /// `border-left-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderLeftWidth)]
         BorderLeftWidthCssWide(CssWideKeyword),
         /// `border-top-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderTopStyle)]
         BorderTopStyleCssWide(CssWideKeyword),
         /// `border-right-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderRightStyle)]
         BorderRightStyleCssWide(CssWideKeyword),
         /// `border-bottom-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderBottomStyle)]
         BorderBottomStyleCssWide(CssWideKeyword),
         /// `border-left-style: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderLeftStyle)]
         BorderLeftStyleCssWide(CssWideKeyword),
         /// `border-top-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderTopColor)]
         BorderTopColorCssWide(CssWideKeyword),
         /// `border-right-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderRightColor)]
         BorderRightColorCssWide(CssWideKeyword),
         /// `border-bottom-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderBottomColor)]
         BorderBottomColorCssWide(CssWideKeyword),
         /// `border-left-color: <css-wide-keyword>` (see [`CssWideKeyword`]).
+        #[key(BorderLeftColor)]
         BorderLeftColorCssWide(CssWideKeyword),
         /// `width: auto | <length-percentage [0,∞]>` — non-inherited,
         /// initial: `auto` (CSS Sizing 3 §3.1.1
@@ -999,6 +1031,7 @@ mod decl {
         TextWrap(TextWrapMode),
         /// CSS Text 4 `text-wrap` shorthand, expanded into its two longhands before
         /// cascade.
+        #[key(TextWrap)]
         TextWrapShorthand(TextWrapShorthand),
         /// CSS Text 4 `text-wrap-style` computed keyword; no wrapping behavior is
         /// attached to this value in the current style slice.
@@ -1195,6 +1228,7 @@ mod decl {
         /// elliptical form is unsupported.
         BorderRadius(BorderRadius),
         /// `border-radius: inherit` — resolved from the parent computed corners.
+        #[key(BorderRadius)]
         BorderRadiusInherit,
         /// `border-top-left-radius` longhand (circular `<length>` subset).
         BorderRadiusTopLeft(Length),
@@ -1423,10 +1457,6 @@ mod decl {
         /// even out-of-range values (for example, `opacity: 2`). Appended as a new
         /// 1:1 disjoint field under the placement rule in [`PropertyKey`].
         Opacity(f32),
-        /// `isolation` — **non-inherited**, initial: [`Isolation::Auto`] (CSS
-        /// Compositing and Blending Level 1 §3.4.2; see [`Isolation`]). Appended
-        /// as a new 1:1 disjoint field under the placement rule in [`PropertyKey`].
-        Isolation(Isolation),
         /// `mix-blend-mode` — **non-inherited**, initial:
         /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1 §3.4.1;
         /// see [`MixBlendMode`]). Appended as a new 1:1 disjoint field under the
@@ -1581,6 +1611,7 @@ mod decl {
         /// and does not enable layout or rendering behavior.
         TextSpacingTrim(TextSpacingTrim),
         /// CSS Text 4 `text-spacing` shorthand; expanded into its two longhands.
+        #[key(TextSpacing)]
         TextSpacingShorthand(TextSpacingShorthand),
         /// CSS Text 4 `word-space-transform` — inherited, initial `none`.
         /// The value is preserved without adding text transformation behavior.
@@ -2029,13 +2060,11 @@ mod decl {
         // per-variant docs per crate convention). Appended for the same reason as
         // background-repeat: a new field disjoint one-to-one from existing fields.
         Opacity,
-        // isolation / mix-blend-mode (CSS Compositing and Blending Level 1
-        // §3.4.1/§3.4.2, semantics on the matching PropertyValue::Isolation /
-        // PropertyValue::MixBlendMode variants; sibling PropertyKey variants
-        // carry no per-variant docs per crate convention). Appended for the same
-        // reason as background-repeat: new fields disjoint one-to-one from
-        // existing fields.
-        Isolation,
+        // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1,
+        // semantics on the matching PropertyValue::MixBlendMode variant; sibling
+        // PropertyKey variants carry no per-variant docs per crate convention).
+        // Appended for the same reason as background-repeat: a new field
+        // disjoint one-to-one from existing fields.
         MixBlendMode,
         // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1, semantics on
         // the matching PropertyValue::MaskImage / PropertyValue::ClipPath
@@ -2183,262 +2212,29 @@ mod decl {
         FontVariationSettings,
     }
 
-    impl PropertyValue {
-        /// Returns the property key for this value.
+    properties! {
+        /// CSS Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
+        /// property" <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
+        /// `auto | isolate`. **Non-inherited**, initial `auto`. The computed value
+        /// is the specified keyword (no length payload).
         ///
-        /// Used as the discriminant for selecting one winner per property in the
-        /// cascade, and as the key in the `@page` cascade result map.
-        pub fn key(&self) -> PropertyKey {
-            match self {
-                PropertyValue::CustomProperty(_) => PropertyKey::Custom,
-                PropertyValue::Deferred(value) => value.key,
-                PropertyValue::Grid(_) => PropertyKey::Grid,
-                PropertyValue::GridArea(_) => PropertyKey::GridArea,
-                PropertyValue::Color(_) => PropertyKey::Color,
-                PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
-                PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
-                PropertyValue::FontSize(_) => PropertyKey::FontSize,
-                // `larger` / `smaller` belong to the same property as `font-size`.
-                // Map them to the same `PropertyKey` so cascade winner selection
-                // correctly makes `font-size: 12px` and `font-size: larger` compete.
-                // Separate keys would let both win, which the spec does not allow.
-                PropertyValue::FontSizeRelative(_) => PropertyKey::FontSize,
-                PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
-                PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
-                PropertyValue::Display(_) => PropertyKey::Display,
-                PropertyValue::ListStyleType(_) => PropertyKey::ListStyleType,
-                PropertyValue::ListStylePosition(_) => PropertyKey::ListStylePosition,
-                PropertyValue::ListStyleImage(_) => PropertyKey::ListStyleImage,
-                PropertyValue::CounterReset(_) | PropertyValue::CounterResetInherit => {
-                    PropertyKey::CounterReset
-                }
-                PropertyValue::CounterIncrement(_) => PropertyKey::CounterIncrement,
-                PropertyValue::CounterSet(_) => PropertyKey::CounterSet,
-                PropertyValue::Content(_) => PropertyKey::Content,
-                PropertyValue::StringSet(_) => PropertyKey::StringSet,
-                PropertyValue::Position(_) => PropertyKey::Position,
-                PropertyValue::Top(_) => PropertyKey::Top,
-                PropertyValue::Right(_) => PropertyKey::Right,
-                PropertyValue::Bottom(_) => PropertyKey::Bottom,
-                PropertyValue::Left(_) => PropertyKey::Left,
-                PropertyValue::TextAlign(_) => PropertyKey::TextAlign,
-                PropertyValue::HangingPunctuation(_) => PropertyKey::HangingPunctuation,
-                PropertyValue::TextIndent(_) => PropertyKey::TextIndent,
-                PropertyValue::PaddingTop(_) => PropertyKey::PaddingTop,
-                PropertyValue::PaddingRight(_) => PropertyKey::PaddingRight,
-                PropertyValue::PaddingBottom(_) => PropertyKey::PaddingBottom,
-                PropertyValue::PaddingLeft(_) => PropertyKey::PaddingLeft,
-                PropertyValue::Padding(_) => PropertyKey::Padding,
-                PropertyValue::PaddingInline(_) => PropertyKey::PaddingInline,
-                PropertyValue::PaddingBlock(_) => PropertyKey::PaddingBlock,
-                PropertyValue::MarginTop(_) | PropertyValue::MarginTopInherit => {
-                    PropertyKey::MarginTop
-                }
-                PropertyValue::MarginRight(_) | PropertyValue::MarginRightInherit => {
-                    PropertyKey::MarginRight
-                }
-                PropertyValue::MarginBottom(_) | PropertyValue::MarginBottomInherit => {
-                    PropertyKey::MarginBottom
-                }
-                PropertyValue::MarginLeft(_) | PropertyValue::MarginLeftInherit => {
-                    PropertyKey::MarginLeft
-                }
-                PropertyValue::Margin(_) | PropertyValue::MarginInherit => PropertyKey::Margin,
-                PropertyValue::MarginInline(_) => PropertyKey::MarginInline,
-                PropertyValue::MarginBlock(_) => PropertyKey::MarginBlock,
-                PropertyValue::BorderTopWidth(_) | PropertyValue::BorderTopWidthCssWide(_) => {
-                    PropertyKey::BorderTopWidth
-                }
-                PropertyValue::BorderRightWidth(_) | PropertyValue::BorderRightWidthCssWide(_) => {
-                    PropertyKey::BorderRightWidth
-                }
-                PropertyValue::BorderBottomWidth(_)
-                | PropertyValue::BorderBottomWidthCssWide(_) => PropertyKey::BorderBottomWidth,
-                PropertyValue::BorderLeftWidth(_) | PropertyValue::BorderLeftWidthCssWide(_) => {
-                    PropertyKey::BorderLeftWidth
-                }
-                PropertyValue::BorderTopStyle(_) | PropertyValue::BorderTopStyleCssWide(_) => {
-                    PropertyKey::BorderTopStyle
-                }
-                PropertyValue::BorderRightStyle(_) | PropertyValue::BorderRightStyleCssWide(_) => {
-                    PropertyKey::BorderRightStyle
-                }
-                PropertyValue::BorderBottomStyle(_)
-                | PropertyValue::BorderBottomStyleCssWide(_) => PropertyKey::BorderBottomStyle,
-                PropertyValue::BorderLeftStyle(_) | PropertyValue::BorderLeftStyleCssWide(_) => {
-                    PropertyKey::BorderLeftStyle
-                }
-                PropertyValue::BorderTopColor(_) | PropertyValue::BorderTopColorCssWide(_) => {
-                    PropertyKey::BorderTopColor
-                }
-                PropertyValue::BorderRightColor(_) | PropertyValue::BorderRightColorCssWide(_) => {
-                    PropertyKey::BorderRightColor
-                }
-                PropertyValue::BorderBottomColor(_)
-                | PropertyValue::BorderBottomColorCssWide(_) => PropertyKey::BorderBottomColor,
-                PropertyValue::BorderLeftColor(_) | PropertyValue::BorderLeftColorCssWide(_) => {
-                    PropertyKey::BorderLeftColor
-                }
-                PropertyValue::Border(_) | PropertyValue::BorderCssWide(_) => PropertyKey::Border,
-                PropertyValue::BorderRight(_) | PropertyValue::BorderRightCssWide(_) => {
-                    PropertyKey::BorderRight
-                }
-                PropertyValue::BorderStyle(_) => PropertyKey::BorderStyle,
-                PropertyValue::BorderWidth(_) => PropertyKey::BorderWidth,
-                PropertyValue::BorderColor(_) => PropertyKey::BorderColor,
-                PropertyValue::Width(_) => PropertyKey::Width,
-                PropertyValue::Height(_) => PropertyKey::Height,
-                PropertyValue::MaxWidth(_) => PropertyKey::MaxWidth,
-                PropertyValue::MaxHeight(_) => PropertyKey::MaxHeight,
-                PropertyValue::MinWidth(_) => PropertyKey::MinWidth,
-                PropertyValue::MinHeight(_) => PropertyKey::MinHeight,
-                PropertyValue::MinBlockSize(_) => PropertyKey::MinBlockSize,
-                PropertyValue::TextUnderlineOffset(_) => PropertyKey::TextUnderlineOffset,
-                PropertyValue::TextAutospace(_) => PropertyKey::TextAutospace,
-                PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
-                PropertyValue::Direction(_) => PropertyKey::Direction,
-                PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
-                PropertyValue::OverflowY(_) => PropertyKey::OverflowY,
-                PropertyValue::Overflow(_) => PropertyKey::Overflow,
-                PropertyValue::TextDecorationLine(_) => PropertyKey::TextDecorationLine,
-                PropertyValue::TextDecorationStyle(_) => PropertyKey::TextDecorationStyle,
-                PropertyValue::TextDecorationColor(_) => PropertyKey::TextDecorationColor,
-                PropertyValue::TextDecoration(_) => PropertyKey::TextDecoration,
-                PropertyValue::VerticalAlign(_) => PropertyKey::VerticalAlign,
-                PropertyValue::FontStyle(_) => PropertyKey::FontStyle,
-                PropertyValue::TextTransform(_) => PropertyKey::TextTransform,
-                PropertyValue::Visibility(_) => PropertyKey::Visibility,
-                PropertyValue::ZIndex(_) => PropertyKey::ZIndex,
-                PropertyValue::WordBreak(_) => PropertyKey::WordBreak,
-                PropertyValue::OverflowWrap(_) => PropertyKey::OverflowWrap,
-                PropertyValue::LetterSpacing(_) => PropertyKey::LetterSpacing,
-                PropertyValue::WordSpacing(_) => PropertyKey::WordSpacing,
-                PropertyValue::BreakBefore(_) => PropertyKey::BreakBefore,
-                PropertyValue::BreakAfter(_) => PropertyKey::BreakAfter,
-                PropertyValue::BreakInside(_) => PropertyKey::BreakInside,
-                PropertyValue::Float(_) => PropertyKey::Float,
-                PropertyValue::Clear(_) => PropertyKey::Clear,
-                PropertyValue::WhiteSpace(_) => PropertyKey::WhiteSpace,
-                PropertyValue::WhiteSpaceCollapse(_) => PropertyKey::WhiteSpaceCollapse,
-                PropertyValue::TextWrap(_) => PropertyKey::TextWrap,
-                PropertyValue::TextWrapShorthand(_) => PropertyKey::TextWrap,
-                PropertyValue::TextWrapStyle(_) => PropertyKey::TextWrapStyle,
-                PropertyValue::FlexDirection(_) => PropertyKey::FlexDirection,
-                PropertyValue::FlexWrap(_) => PropertyKey::FlexWrap,
-                PropertyValue::FlexGrow(_) => PropertyKey::FlexGrow,
-                PropertyValue::FlexShrink(_) => PropertyKey::FlexShrink,
-                PropertyValue::FlexBasis(_) => PropertyKey::FlexBasis,
-                PropertyValue::Flex(_) => PropertyKey::Flex,
-                PropertyValue::FlexFlow(_) => PropertyKey::FlexFlow,
-                PropertyValue::Order(_) => PropertyKey::Order,
-                PropertyValue::JustifyContent(_) => PropertyKey::JustifyContent,
-                PropertyValue::AlignContent(_) => PropertyKey::AlignContent,
-                PropertyValue::AlignItems(_) => PropertyKey::AlignItems,
-                PropertyValue::AlignSelf(_) => PropertyKey::AlignSelf,
-                PropertyValue::RowGap(_) => PropertyKey::RowGap,
-                PropertyValue::ColumnGap(_) => PropertyKey::ColumnGap,
-                PropertyValue::Gap(_) => PropertyKey::Gap,
-                PropertyValue::PlaceContent(_) => PropertyKey::PlaceContent,
-                PropertyValue::Hyphens(_) => PropertyKey::Hyphens,
-                PropertyValue::TabSize(_) => PropertyKey::TabSize,
-                PropertyValue::LineBreak(_) => PropertyKey::LineBreak,
-                PropertyValue::TextJustify(_) => PropertyKey::TextJustify,
-                PropertyValue::TextAlignAll(_) => PropertyKey::TextAlignAll,
-                PropertyValue::TextAlignLast(_) => PropertyKey::TextAlignLast,
-                PropertyValue::TextCombineUpright(_) => PropertyKey::TextCombineUpright,
-                PropertyValue::TextOrientation(_) => PropertyKey::TextOrientation,
-                PropertyValue::UnicodeBidi(_) => PropertyKey::UnicodeBidi,
-                PropertyValue::FontVariantCaps(_) => PropertyKey::FontVariantCaps,
-                PropertyValue::Quotes(_) => PropertyKey::Quotes,
-                PropertyValue::TextShadow(_) => PropertyKey::TextShadow,
-                PropertyValue::GridTemplateColumns(_) => PropertyKey::GridTemplateColumns,
-                PropertyValue::GridTemplateRows(_) => PropertyKey::GridTemplateRows,
-                PropertyValue::GridTemplateAreas(_) => PropertyKey::GridTemplateAreas,
-                PropertyValue::GridAutoColumns(_) => PropertyKey::GridAutoColumns,
-                PropertyValue::GridAutoRows(_) => PropertyKey::GridAutoRows,
-                PropertyValue::GridAutoFlow(_) => PropertyKey::GridAutoFlow,
-                PropertyValue::GridRowStart(_) => PropertyKey::GridRowStart,
-                PropertyValue::GridRowEnd(_) => PropertyKey::GridRowEnd,
-                PropertyValue::GridColumnStart(_) => PropertyKey::GridColumnStart,
-                PropertyValue::GridColumnEnd(_) => PropertyKey::GridColumnEnd,
-                PropertyValue::GridRow(_) => PropertyKey::GridRow,
-                PropertyValue::GridColumn(_) => PropertyKey::GridColumn,
-                PropertyValue::JustifyItems(_) => PropertyKey::JustifyItems,
-                PropertyValue::JustifySelf(_) => PropertyKey::JustifySelf,
-                PropertyValue::PlaceItems(_) => PropertyKey::PlaceItems,
-                PropertyValue::PlaceSelf(_) => PropertyKey::PlaceSelf,
-                PropertyValue::Orphans(_) => PropertyKey::Orphans,
-                PropertyValue::Widows(_) => PropertyKey::Widows,
-                PropertyValue::BorderRadius(_) | PropertyValue::BorderRadiusInherit => {
-                    PropertyKey::BorderRadius
-                }
-                PropertyValue::BorderRadiusTopLeft(_) => PropertyKey::BorderRadiusTopLeft,
-                PropertyValue::BorderRadiusTopRight(_) => PropertyKey::BorderRadiusTopRight,
-                PropertyValue::BorderRadiusBottomRight(_) => PropertyKey::BorderRadiusBottomRight,
-                PropertyValue::BorderRadiusBottomLeft(_) => PropertyKey::BorderRadiusBottomLeft,
-                PropertyValue::BoxShadow(_) => PropertyKey::BoxShadow,
-                PropertyValue::Outline(_) => PropertyKey::Outline,
-                PropertyValue::OutlineWidth(_) => PropertyKey::OutlineWidth,
-                PropertyValue::OutlineStyle(_) => PropertyKey::OutlineStyle,
-                PropertyValue::OutlineColor(_) => PropertyKey::OutlineColor,
-                PropertyValue::OutlineOffset(_) => PropertyKey::OutlineOffset,
-                PropertyValue::WritingMode(_) => PropertyKey::WritingMode,
-                PropertyValue::RubyPosition(_) => PropertyKey::RubyPosition,
-                PropertyValue::BackgroundRepeat(_) => PropertyKey::BackgroundRepeat,
-                PropertyValue::BackgroundAttachment(_) => PropertyKey::BackgroundAttachment,
-                PropertyValue::BackgroundClip(_) => PropertyKey::BackgroundClip,
-                PropertyValue::BackgroundOrigin(_) => PropertyKey::BackgroundOrigin,
-                PropertyValue::BackgroundSize(_) => PropertyKey::BackgroundSize,
-                PropertyValue::BackgroundPosition(_) => PropertyKey::BackgroundPosition,
-                PropertyValue::BackgroundImage(_) => PropertyKey::BackgroundImage,
-                PropertyValue::Background(_) => PropertyKey::Background,
-                PropertyValue::ObjectFit(_) => PropertyKey::ObjectFit,
-                PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
-                PropertyValue::Opacity(_) => PropertyKey::Opacity,
-                PropertyValue::Isolation(_) => PropertyKey::Isolation,
-                PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
-                PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
-                PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
-                PropertyValue::Transform(_) => PropertyKey::Transform,
-                PropertyValue::TransformOrigin(..) => PropertyKey::TransformOrigin,
-                PropertyValue::Filter(_) => PropertyKey::Filter,
-                PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
-                PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
-                PropertyValue::BorderSpacing(_) => PropertyKey::BorderSpacing,
-                PropertyValue::CaptionSide(_) => PropertyKey::CaptionSide,
-                PropertyValue::EmptyCells(_) => PropertyKey::EmptyCells,
-                PropertyValue::Font(_) => PropertyKey::Font,
-                PropertyValue::TextDecorationSkipInk(_) => PropertyKey::TextDecorationSkipInk,
-                PropertyValue::TextDecorationSkipSpaces(_) => PropertyKey::TextDecorationSkipSpaces,
-                PropertyValue::TextDecorationThickness(_) => PropertyKey::TextDecorationThickness,
-                PropertyValue::TextDecorationInset(_) => PropertyKey::TextDecorationInset,
-                PropertyValue::TextEmphasisPosition(_) => PropertyKey::TextEmphasisPosition,
-                PropertyValue::TextUnderlinePosition(_) => PropertyKey::TextUnderlinePosition,
-                PropertyValue::Page(_) => PropertyKey::Page,
-                PropertyValue::ColumnCount(_) => PropertyKey::ColumnCount,
-                PropertyValue::ColumnWidth(_) => PropertyKey::ColumnWidth,
-                PropertyValue::Columns(_) => PropertyKey::Columns,
-                PropertyValue::HyphenateCharacter(_) => PropertyKey::HyphenateCharacter,
-                PropertyValue::HyphenateLimitChars(_) => PropertyKey::HyphenateLimitChars,
-                PropertyValue::TextSpacingTrim(_) => PropertyKey::TextSpacingTrim,
-                PropertyValue::TextSpacingShorthand(_) => PropertyKey::TextSpacing,
-                PropertyValue::WordSpaceTransform(_) => PropertyKey::WordSpaceTransform,
-                PropertyValue::TextEmphasisStyle(_) => PropertyKey::TextEmphasisStyle,
-                PropertyValue::TextEmphasisColor(_) => PropertyKey::TextEmphasisColor,
-                PropertyValue::TextEmphasis(_) => PropertyKey::TextEmphasis,
-                PropertyValue::FontKerning(_) => PropertyKey::FontKerning,
-                PropertyValue::FontOpticalSizing(_) => PropertyKey::FontOpticalSizing,
-                PropertyValue::FontVariantEmoji(_) => PropertyKey::FontVariantEmoji,
-                PropertyValue::FontLanguageOverride(_) => PropertyKey::FontLanguageOverride,
-                PropertyValue::FontVariantLigatures(_) => PropertyKey::FontVariantLigatures,
-                PropertyValue::FontSynthesis(_) => PropertyKey::FontSynthesis,
-                PropertyValue::FontVariantPosition(_) => PropertyKey::FontVariantPosition,
-                PropertyValue::FontPalette(_) => PropertyKey::FontPalette,
-                PropertyValue::FontVariantNumeric(_) => PropertyKey::FontVariantNumeric,
-                PropertyValue::FontVariantEastAsian(_) => PropertyKey::FontVariantEastAsian,
-                PropertyValue::FontVariationSettings(_) => PropertyKey::FontVariationSettings,
-            }
-        }
+        /// The spec gives detailed conditions for whether `isolation` creates a
+        /// stacking context / group (element types, SVG containers, etc.), but
+        /// this crate does not implement that application algorithm: it stores
+        /// only the cascaded/computed keyword. Creating compositing groups
+        /// belongs to raikiri-paint.
+        "isolation" => Isolation {
+            keywords: [
+                /// `auto` — the spec's initial value. The element itself does not
+                /// force an independent stacking context / group.
+                Auto,
+                /// `isolate` — make the element an independent stacking context and
+                /// confine `mix-blend-mode` blending to its subtree.
+                Isolate,
+            ],
+            initial: Auto,
+            inherited: no,
+        },
     }
 }
 pub use decl::*;

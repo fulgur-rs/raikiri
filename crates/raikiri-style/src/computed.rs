@@ -16,13 +16,13 @@ use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition, ListStyleType,
+    ComputedTable, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
+    EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
+    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, LineBreak, ListStylePosition, ListStyleType,
     MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue,
     TextAlign, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
@@ -1584,18 +1584,18 @@ pub struct ComputedValues {
     /// paint output is out of this crate's scope — `raikiri-paint`
     /// consumes it as plain data.
     pub opacity: f32,
-    /// `isolation`. **non-inherited**, initial: [`Isolation::Auto`] (CSS
-    /// Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
-    /// property" <https://www.w3.org/TR/compositing-1/#isolation>). Always
-    /// a keyword — no phase-3 transform, identity pass-through from
-    /// [`crate::specified::SpecifiedValues::isolation`] (same shape as
-    /// [`Self::object_fit`]).
-    pub isolation: Isolation,
+    /// Computed values of the longhands declared in the `properties!` table
+    /// of `property/decl.rs` (such as `isolation`). Each is also reachable as
+    /// a field of `ComputedValues` itself through `Deref` (for example
+    /// `values.isolation`); see [`ComputedTable`] for the fields.
+    pub longhands: ComputedTable,
     /// `mix-blend-mode`. **non-inherited**, initial:
     /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1
     /// §3.4.1 "Mix Blend Mode: the mix-blend-mode property"
-    /// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>). Same shape
-    /// as [`Self::isolation`] above — actual blending compositing is
+    /// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>). Always a
+    /// keyword — no phase-3 transform, identity pass-through from
+    /// [`crate::specified::SpecifiedValues::mix_blend_mode`] (same shape as
+    /// [`Self::object_fit`]) — actual blending compositing is
     /// `raikiri-paint`'s responsibility, this field is plain data.
     pub mix_blend_mode: MixBlendMode,
     /// `mask-image`. **non-inherited**, initial: [`MaskImage::None`] (CSS
@@ -2051,9 +2051,8 @@ impl ComputedValues {
             },
             // CSS Color 4 §3.3: initial opacity is `1`.
             opacity: 1.0,
-            // CSS Compositing and Blending 1 §3.4.2: initial isolation
-            // is `auto`.
-            isolation: Isolation::Auto,
+            // Each table-declared longhand at its initial value.
+            longhands: ComputedTable::initial(),
             // CSS Compositing and Blending 1 §3.4.1: initial
             // mix-blend-mode is `normal`.
             mix_blend_mode: MixBlendMode::Normal,
@@ -2108,11 +2107,13 @@ impl ComputedValues {
     /// The field documentation on [`Self`] is the canonical source for each
     /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout).
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout; and the table-declared `isolation`).
     ///
     /// The inherited/non-inherited classification is defined by each field's
-    /// documentation. Inherited fields are copied from the parent's computed
-    /// values; non-inherited fields retain their initial values.
+    /// documentation; for the table-declared longhands held in
+    /// [`Self::longhands`], it is the `inherited:` key of the property's
+    /// `properties!` entry. Inherited fields are copied from the parent's
+    /// computed values; non-inherited fields retain their initial values.
     ///
     pub fn inherit_from(parent: &Self) -> Self {
         let mut child = crate::specified::SpecifiedValues::inherit_from(parent).finalize(

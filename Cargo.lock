@@ -2676,6 +2676,7 @@ dependencies = [
  "criterion",
  "cssparser",
  "precomputed-hash",
+ "raikiri-style-macros",
  "rustc-hash",
  "selectors",
  "smol_str",

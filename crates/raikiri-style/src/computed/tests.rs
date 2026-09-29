@@ -1,8 +1,8 @@
 use super::*;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
     FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
-    HyphenateLimitCharsValue, Length, TextShadowColor,
+    HyphenateLimitCharsValue, Isolation, Length, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -594,10 +594,14 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Color 4 §3.3: non-inherited, so use a value different
         // from the initial `1` (as required for non_initial_parent).
         opacity: 0.75,
-        // CSS Compositing and Blending Level 1 §3.4.2/§3.4.1: both are
-        // non-inherited, so use values different from the initial `auto`/`normal`
-        // (as required for non_initial_parent).
-        isolation: Isolation::Isolate,
+        // Table-declared longhands: CSS Compositing and Blending Level 1
+        // §3.4.2 isolation is non-inherited, so use a value different from
+        // the initial `auto` (as required for non_initial_parent).
+        longhands: ComputedTable {
+            isolation: Isolation::Isolate,
+        },
+        // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
+        // a value different from the initial `normal` (as above).
         mix_blend_mode: MixBlendMode::Multiply,
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited,
         // so use values different from the initial `none`

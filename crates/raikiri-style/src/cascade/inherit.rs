@@ -5,6 +5,7 @@ use crate::PseudoElem;
 use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
+use crate::property::longhand_value_pat;
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
@@ -1615,11 +1616,9 @@ pub(crate) fn resolve_against_inherited(
         // (`crate::specified::SpecifiedValues::absolutize_with`), same
         // split `FlexGrow`/`ZIndex` use for their own phase-3-only work.
         | PropertyValue::Opacity(_)
-        // isolation (CSS Compositing and Blending Level 1 §3.4.2) /
-        // mix-blend-mode (§3.4.1) — both non-inherited, bare keyword
-        // payloads with no phase-2 dependency, same shape as `ObjectFit`
-        // above.
-        | PropertyValue::Isolation(_)
+        // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) —
+        // non-inherited, bare keyword payload with no phase-2 dependency,
+        // same shape as `ObjectFit` above.
         | PropertyValue::MixBlendMode(_)
         // mask-image (CSS Masking Level 1 §7.1) / clip-path (§5.1) —
         // non-inherited, `<url>`/`<gradient>`/`<geometry-box>` payloads
@@ -1662,7 +1661,11 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Page(_)
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
-        | PropertyValue::Columns(_)) => v,
+        | PropertyValue::Columns(_)
+        // Table-declared longhands (`properties!` in property/decl.rs) have
+        // no phase-2 dependency: a parent-dependent value would need its own
+        // arm here.
+        | longhand_value_pat!()) => v,
     })
 }
 
@@ -2045,7 +2048,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ObjectFit(v) => target.object_fit = v,
         PropertyValue::ObjectPosition(v) => target.object_position = v,
         PropertyValue::Opacity(v) => target.opacity = v,
-        PropertyValue::Isolation(v) => target.isolation = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
@@ -2072,6 +2074,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         // Resolved before ordinary winners reach this function.
         PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_) => {}
+        v @ longhand_value_pat!() => target.longhands.apply(v),
     }
 }
 

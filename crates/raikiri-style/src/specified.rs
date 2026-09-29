@@ -27,6 +27,7 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate};
+use crate::property::AbsolutizeCx;
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
@@ -39,10 +40,10 @@ use crate::property::{
     FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
     FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, Length, LengthOrAuto, LengthOrNormal,
+    LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
+    OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides, SpecifiedTable,
     TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
@@ -580,10 +581,13 @@ pub struct SpecifiedValues {
     /// preserves, computed clamps" in the [`ComputedValues::opacity`] docs). Phase 3
     /// ([`Self::absolutize_with`]) clamps it.
     pub opacity: f32,
-    /// **Specified** `isolation`; always a keyword. It passes through without absolutization, as
-    /// with `object_fit`.
-    pub isolation: Isolation,
-    /// **Specified** `mix-blend-mode`; same pass-through shape as `isolation`.
+    /// Specified values of the longhands declared in the `properties!` table of
+    /// `property/decl.rs` (such as `isolation`). Each is also reachable as a field of
+    /// `SpecifiedValues` itself through `Deref` (for example `values.isolation`); see
+    /// [`SpecifiedTable`] for the fields.
+    pub longhands: SpecifiedTable,
+    /// **Specified** `mix-blend-mode`; always a keyword. It passes through without
+    /// absolutization, as with `object_fit`.
     pub mix_blend_mode: MixBlendMode,
     /// **Specified** `mask-image`; `None` / `Url(String)` are computed-equivalent. As for
     /// `background_image`, phase 3 absolutizes font-relative parts of `<length-percentage>` in
@@ -927,8 +931,8 @@ impl SpecifiedValues {
             },
             // CSS Color 4 §3.3: opacity is initially `1`.
             opacity: 1.0,
-            // CSS Compositing and Blending Level 1 §3.4.2: isolation is initially `auto`.
-            isolation: Isolation::Auto,
+            // Each table-declared longhand at its initial value.
+            longhands: SpecifiedTable::initial(),
             // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode is initially `normal`.
             mix_blend_mode: MixBlendMode::Normal,
             // CSS Masking Level 1 §7.1: mask-image is initially `none`.
@@ -1300,9 +1304,9 @@ impl SpecifiedValues {
             },
             // non-inherited (CSS Color 4 §3.3 "Inherited: no").
             opacity: 1.0,
-            // non-inherited (CSS Compositing and Blending Level 1 §3.4.2
-            // "Inherited: no").
-            isolation: Isolation::Auto,
+            // Table-declared longhands: each entry's `inherited:` key decides
+            // between the parent's computed value and the initial value.
+            longhands: SpecifiedTable::inherit_from(&parent.longhands),
             // non-inherited (CSS Compositing and Blending Level 1 §3.4.1
             // "Inherited: no").
             mix_blend_mode: MixBlendMode::Normal,
@@ -2100,11 +2104,14 @@ impl SpecifiedValues {
             // direct-construction case, only against the pipeline's own
             // out-of-range values.
             opacity: self.opacity.clamp(0.0, 1.0),
-            // CSS Compositing and Blending Level 1 §3.4.2: always a keyword; pass through without
+            // Table-declared longhands: each goes through its own `Longhand::compute`.
+            longhands: self.longhands.absolutize(&AbsolutizeCx::new(
+                font_size,
+                own_line_height,
+                ctx,
+            )),
+            // CSS Compositing and Blending Level 1 §3.4.1: always a keyword; pass through without
             // a phase 3 transform, as for object_fit.
-            isolation: self.isolation,
-            // CSS Compositing and Blending Level 1 §3.4.1: same shape as
-            // `isolation` above.
             mix_blend_mode: self.mix_blend_mode,
             // CSS Masking Level 1 §7.1: `None` and `Url(String)` are computed-equivalent. As for
             // background_image, phase 3 absolutizes font-relative parts of `<length-percentage>`

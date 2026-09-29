@@ -4,6 +4,7 @@ use super::calc_serialize::{
     CalcNode, CalcUnitKind, format_css_number, parse_calc_or_plain, serialize_calc_node,
     serialize_calc_node_as_angle,
 };
+use super::longhand_value_pat;
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
 
@@ -548,7 +549,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(..)
-        | PropertyValue::Isolation(..)
         | PropertyValue::MixBlendMode(..)
         | PropertyValue::MaskImage(..)
         | PropertyValue::ClipPath(..)
@@ -570,7 +570,10 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::HyphenateLimitChars(..)
         | PropertyValue::TextSpacingShorthand(..)
         | PropertyValue::TextEmphasisColor(..)
-        | PropertyValue::TextEmphasis(..) => None,
+        | PropertyValue::TextEmphasis(..)
+        // Table-declared longhands (`properties!` in decl.rs) have no
+        // serializer yet.
+        | longhand_value_pat!() => None,
     }
 }
 

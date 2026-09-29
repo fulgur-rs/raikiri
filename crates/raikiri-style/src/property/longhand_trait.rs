@@ -56,8 +56,13 @@ impl<'a> AbsolutizeCx<'a> {
 /// `<field>::Property` of each entry; nothing implements it by hand.
 pub(crate) trait Longhand {
     /// The property name, lowercase.
+    // The generated code spells names and inheritance as literals per entry,
+    // so these two constants are only read by tests and by code that
+    // inspects a longhand generically.
+    #[allow(dead_code)]
     const NAME: &'static str;
     /// Whether the property is inherited.
+    #[allow(dead_code)]
     const INHERITED: bool;
     /// The specified value type (the `PropertyValue` payload).
     type Specified: Clone + core::fmt::Debug + PartialEq;

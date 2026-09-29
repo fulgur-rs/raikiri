@@ -2305,7 +2305,8 @@ fn isolation_rejects_unknown_keyword() {
 
 #[test]
 fn isolation_rejects_trailing_garbage() {
-    // `parse_isolation` itself only consumes one ident token — a second
+    // The table-generated `isolation` parser (`Longhand::parse`, one
+    // `from_css_ident` keyword) itself only consumes one ident token — a second
     // keyword is leftover input the property parser doesn't reject on
     // its own (this crate's convention: the declaration-level
     // `expect_exhausted` check, exercised here via `parse_entire`,

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use crate::cascade::{ResolvedAgainstInherited, resolve_relative_font_size};
+use crate::property::{AbsolutizeCx, longhand_page_absolutize, longhand_value_pat};
 use crate::property::{
     BackgroundShorthand, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle,
     BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset,
@@ -589,7 +590,6 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::BackgroundOrigin(_)
 
         | PropertyValue::ObjectFit(_)
-        | PropertyValue::Isolation(_)
         | PropertyValue::MixBlendMode(_)
 
         | PropertyValue::ClipPath(_)
@@ -599,6 +599,11 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)) => v,
+        // Table-declared longhands (`properties!` in property/decl.rs): each
+        // one's own computed-value step, lifted back into `PropertyValue`.
+        v @ longhand_value_pat!() => {
+            longhand_page_absolutize(v, &AbsolutizeCx::new(font_size, own_line_height, ctx))
+        }
         // Preserve specified order until the page context produces its computed value.
         PropertyValue::FontVariationSettings(settings) => {
             PropertyValue::FontVariationSettings(settings.canonicalized())

@@ -7360,35 +7360,6 @@ css_keywords!(ObjectFit {
     ScaleDown => "scale-down",
 });
 
-/// Specified value of `isolation`.
-///
-/// CSS Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
-/// property" <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
-/// `auto | isolate`. **Non-inherited**. Computed value = specified keyword —
-/// no length payload (the same shape as `ObjectFit`).
-///
-/// The spec gives detailed conditions for whether `isolation` creates a
-/// stacking context / group (element types, SVG containers, etc.), but
-/// this crate does not implement that application algorithm. This variant
-/// stores only the cascaded/computed keyword. Creating compositing groups
-/// belongs to raikiri-paint; the `ObjectFit` documentation similarly
-/// leaves the property’s application algorithm to layout.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Isolation {
-    /// `auto` — the spec's initial value. The element itself does not force an independent stacking context /
-    /// group.
-    Auto,
-    /// `isolate` — make the element an independent stacking context and confine `mix-blend-mode`
-    /// blending to its subtree.
-    Isolate,
-}
-
-css_keywords!(Isolation {
-    Auto => "auto",
-    Isolate => "isolate",
-});
-
 /// Specified value of `mix-blend-mode`.
 ///
 /// CSS Compositing and Blending Level 1 §3.4.1 "Mix Blend Mode: the
@@ -9055,13 +9026,13 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "object-fit" => PropertyKey::ObjectFit,
         "object-position" => PropertyKey::ObjectPosition,
         "opacity" => PropertyKey::Opacity,
-        "isolation" => PropertyKey::Isolation,
         "mix-blend-mode" => PropertyKey::MixBlendMode,
         "mask-image" => PropertyKey::MaskImage,
         "clip-path" => PropertyKey::ClipPath,
         "transform" => PropertyKey::Transform,
         "transform-origin" => PropertyKey::TransformOrigin,
         "filter" => PropertyKey::Filter,
-        _ => return None,
+        // Longhands declared in a `properties!` table (decl.rs).
+        _ => return longhand_key_for_name(&normalized_name),
     })
 }
