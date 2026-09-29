@@ -4,6 +4,7 @@ exclude = ["tools/raikiri-js-wasmtime"]
 members = [
     "crates/raikiri-traits",
     "crates/raikiri-svg",
+    "crates/raikiri-style-macros",
     "crates/raikiri-style",
     "crates/raikiri-net",
     "crates/raikiri-dom",
@@ -28,6 +29,7 @@ repository = "https://github.com/fulgur-rs/raikiri"
 raikiri-traits       = { version = "0.2.0", path = "./crates/raikiri-traits" }
 raikiri-svg          = { version = "0.1.0", path = "./crates/raikiri-svg" }
 raikiri-style        = { version = "0.1.0", path = "./crates/raikiri-style" }
+raikiri-style-macros = { version = "0.1.0", path = "./crates/raikiri-style-macros" }
 raikiri-net          = { version = "0.1.0", path = "./crates/raikiri-net" }
 raikiri-dom          = { version = "0.1.0", path = "./crates/raikiri-dom" }
 raikiri-html         = { version = "0.1.0", path = "./crates/raikiri-html" }
@@ -37,6 +39,14 @@ raikiri-blitz-compat = { version = "0.1.0", path = "./crates/raikiri-blitz-compa
 raikiri-wpt          = { version = "0.1.0", path = "./crates/raikiri-wpt" }
 raikiri-vrt          = { version = "0.1.0", path = "./crates/raikiri-vrt" }
 raikiri-js           = { version = "0.1.0", path = "./crates/raikiri-js" }
+
+# ── Proc-macro support (raikiri-style-macros) ────────────────────────
+# Host-only, Pure Rust, and already in the build graph at these versions
+# through cssparser-macros / derive_more-impl / phf_macros, so declaring
+# them here adds no new package to Cargo.lock.
+syn         = { version = "2", features = ["full", "extra-traits"] }
+quote       = "1"
+proc-macro2 = "1"
 
 # ── Servo (cssparser + selectors) ──────────────────────────────────────
 cssparser = "0.37"

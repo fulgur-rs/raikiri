@@ -2676,9 +2676,19 @@ dependencies = [
  "criterion",
  "cssparser",
  "precomputed-hash",
+ "raikiri-style-macros",
  "rustc-hash",
  "selectors",
  "smol_str",
+]
+
+[[package]]
+name = "raikiri-style-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

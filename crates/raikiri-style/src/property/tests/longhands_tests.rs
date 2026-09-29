@@ -31,7 +31,7 @@ fn parse_decl(name: &str, source: &str) -> Option<PropertyValue> {
 #[test]
 fn isolation_is_declared_in_the_table() {
     assert!(LONGHAND_NAMES.contains(&"isolation"));
-    assert_eq!(Isolation::INITIAL, Isolation::Auto);
+    assert_eq!(<Isolation as Longhand>::initial(), Isolation::Auto);
     assert_eq!(
         Isolation::from_css_ident("ISOLATE"),
         Some(Isolation::Isolate)
@@ -197,6 +197,42 @@ fn empty_cells_cascades_from_parent_to_child() {
     parent.empty_cells = EmptyCellsValue::Hide;
     let child = crate::computed::ComputedValues::inherit_from(&parent);
     assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
+}
+
+/// A keyword longhand that is not part of the table, to pin the derive's
+/// keyword spellings and trait items.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, crate::property::Longhand)]
+#[longhand(name = "x-fixture", initial = ScaleDown, inherited = true, sample = Other)]
+enum Fixture {
+    ScaleDown,
+    #[css("other-name")]
+    Other,
+}
+
+#[test]
+fn derive_longhand_spells_keywords_in_kebab_case_or_as_overridden() {
+    assert_eq!(<Fixture as Longhand>::NAME, "x-fixture");
+    assert_eq!([<Fixture as Longhand>::INHERITED], [true]);
+    assert_eq!(<Fixture as Longhand>::initial(), Fixture::ScaleDown);
+    assert_eq!(<Fixture as Longhand>::sample(), Fixture::Other);
+    assert_eq!(Fixture::ScaleDown.as_css_str(), "scale-down");
+    assert_eq!(Fixture::Other.as_css_str(), "other-name");
+    assert_eq!(Fixture::from_css_ident("Other-Name"), Some(Fixture::Other));
+    assert_eq!(Fixture::from_css_ident("other"), None);
+    assert_eq!(Fixture::ALL, &[Fixture::ScaleDown, Fixture::Other]);
+    let mut input = ParserInput::new("SCALE-DOWN");
+    let mut parser = Parser::new(&mut input);
+    assert_eq!(
+        <Fixture as Longhand>::parse(&mut parser),
+        Some(Fixture::ScaleDown)
+    );
+    let ctx = crate::resolve::ResolveContext::initial();
+    let cx = AbsolutizeCx::initial(&ctx);
+    assert_eq!(
+        <Fixture as Longhand>::compute(Fixture::Other, &cx),
+        Fixture::Other
+    );
+    assert_eq!(<Fixture as Longhand>::lift(Fixture::Other), Fixture::Other);
 }
 
 #[test]

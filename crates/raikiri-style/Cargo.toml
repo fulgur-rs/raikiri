@@ -25,6 +25,10 @@ rustc-hash = { workspace = true }
 # promote to `[workspace.dependencies]` then.
 precomputed-hash = "0.1"
 
+# Declares the CSS longhands (`#[derive(Longhand)]` and `#[longhands]` in
+# `property/longhands.rs`).
+raikiri-style-macros = { workspace = true }
+
 [dev-dependencies]
 # `criterion` backs `benches/cascade.rs` — the regression detector for the
 # *per-declaration constant* of the cascade hot loop (a +22% regression

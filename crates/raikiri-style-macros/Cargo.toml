@@ -1,0 +1,21 @@
+[package]
+name = "raikiri-style-macros"
+version = "0.1.0"
+description = "Procedural macros that declare raikiri-style's CSS longhand properties (crate-internal to raikiri-style)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# The expansion names raikiri-style's own items (`crate::property::..`),
+# so these macros are only usable from inside raikiri-style.
+syn         = { workspace = true }
+quote       = { workspace = true }
+proc-macro2 = { workspace = true }
+
+[lints]
+workspace = true

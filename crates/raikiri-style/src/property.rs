@@ -18,6 +18,7 @@ mod longhand_trait;
 pub(crate) use longhand_trait::{
     AbsolutizeCx, FontSize, FromCx, HookFn, Longhand, OwnLineHeight, run_hook,
 };
+pub(crate) use raikiri_style_macros::Longhand;
 
 mod longhands;
 pub use longhands::*;

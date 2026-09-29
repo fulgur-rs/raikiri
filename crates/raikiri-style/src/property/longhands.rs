@@ -2309,16 +2309,10 @@ longhands! {
     /// or group are not implemented here; this variant carries only the
     /// cascaded keyword and compositing groups belong to raikiri-paint.
     "isolation" => Isolation {
-        value: keywords {
-            /// `auto`: the initial value; the element does not itself force an
-            /// independent stacking context or group.
-            Auto => "auto",
-            /// `isolate`: make the element an independent stacking context and
-            /// confine `mix-blend-mode` blending to its subtree.
-            Isolate => "isolate",
-        },
-        initial: Auto,
+        value: Isolation,
+        initial: Isolation::Auto,
         inherited: no,
+        parse: Isolation::parse,
         computed: as_specified,
         field: isolation,
         // Non-initial (`isolate`, not `auto`) so a would-be pass-through
@@ -2405,13 +2399,51 @@ longhands! {
     }
 }
 
+/// `isolation`: **non-inherited**, initial [`Isolation::Auto`] (CSS
+/// Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
+/// property" <https://www.w3.org/TR/compositing-1/#isolation>). Grammar:
+/// `auto | isolate`. The computed value is the specified keyword.
+///
+/// The spec's conditions for when `isolation` creates a stacking context
+/// or group are not implemented here; this value carries only the
+/// cascaded keyword and compositing groups belong to raikiri-paint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Longhand)]
+// `isolate` is non-initial, so a would-be pass-through regression
+// (accidentally routing this variant through a transform) is visible in the
+// page-cascade corpus.
+#[longhand(name = "isolation", initial = Auto, inherited = false, sample = Isolate)]
+#[non_exhaustive]
+pub enum Isolation {
+    /// `auto`: the initial value; the element does not itself force an
+    /// independent stacking context or group.
+    Auto,
+    /// `isolate`: make the element an independent stacking context and
+    /// confine `mix-blend-mode` blending to its subtree.
+    Isolate,
+}
+
 /// Computed-value behavior of `opacity`: clamp to `[0, 1]`, and the clamped
 /// number is its own specified form.
 pub(crate) struct OpacityLonghand;
 
 impl Longhand for OpacityLonghand {
+    const NAME: &'static str = "opacity";
+    const INHERITED: bool = false;
     type Specified = f32;
     type Computed = f32;
+
+    fn initial() -> f32 {
+        1.0
+    }
+
+    fn parse(input: &mut Parser<'_, '_>) -> Option<f32> {
+        parse_opacity_value(input)
+    }
+
+    #[cfg(test)]
+    fn sample() -> f32 {
+        2.0
+    }
 
     fn compute(specified: f32, cx: &AbsolutizeCx<'_>) -> f32 {
         run_hook(clamp_opacity, specified, cx)
