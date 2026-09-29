@@ -231,20 +231,46 @@ macro_rules! longhands {
 
     // Inherited properties take the parent's computed value; the rest reset
     // to their initial value.
-    (@inherit yes $parent:ident $field:ident $V:ident $vt:ident $({ $($kw:tt)* })? ; $init:expr) => {
-        ::core::clone::Clone::clone(&$parent.$field)
+    // A `via` entry lifts the parent's computed value back to its specified
+    // form.
+    (@inherit yes $comp:tt $parent:ident $field:ident $V:ident $vt:ident $({ $($kw:tt)* })? ; $init:expr) => {
+        longhands!(@lift $comp ::core::clone::Clone::clone(&$parent.$field))
     };
-    (@inherit no $parent:ident $field:ident $V:ident $vt:ident $({ $($kw:tt)* })? ; $init:expr) => {
+    (@inherit no $comp:tt $parent:ident $field:ident $V:ident $vt:ident $({ $($kw:tt)* })? ; $init:expr) => {
         longhands!(@initial_value $V $vt $({ $($kw)* })? $init)
     };
 
     (@computed as_specified) => {};
-    (@computed $f:ident $(:: $rest:ident)*) => {
+    (@computed via $T:ty) => {};
+    (@computed $f:ident $($rest:ty)?) => {
         compile_error!(
-            "`computed:` hooks are not consumed yet; use `computed: as_specified` \
-             and keep this property's computed-value handling in the hand-written sites"
+            "`computed:` takes `as_specified` or `via <Type>` naming a type that \
+             implements `Longhand`; call a hook function from that type's `compute`"
         );
     };
+
+    // Per-entry computed-value behavior. `$comp` is the parenthesized
+    // `computed:` spec. The catch-all arms only keep a rejected spec from
+    // adding match errors on top of the `@computed` `compile_error!`.
+    (@computed_ty (via $T:ty) $st:ty) => { <$T as crate::property::Longhand>::Computed };
+    (@computed_ty $comp:tt $st:ty) => { $st };
+
+    (@compute (via $T:ty) $e:expr, $cx:ident) => {
+        <$T as crate::property::Longhand>::compute($e, $cx)
+    };
+    (@compute $comp:tt $e:expr, $cx:ident) => { $e };
+
+    (@lift (via $T:ty) $e:expr) => { <$T as crate::property::Longhand>::lift($e) };
+    (@lift $comp:tt $e:expr) => { $e };
+
+    // Page-context absolutization keeps the value in `PropertyValue`, so a
+    // `via` entry is computed and lifted back to its specified form.
+    (@page (via $T:ty) $e:expr, $cx:ident) => {
+        <$T as crate::property::Longhand>::lift(
+            <$T as crate::property::Longhand>::compute($e, $cx),
+        )
+    };
+    (@page $comp:tt $e:expr, $cx:ident) => { $e };
 
     // Test-only callback macros feeding table entries into the page-cascade
     // registries. `$d` is a literal `$` token, so the nested macro can declare
@@ -293,7 +319,7 @@ macro_rules! longhands {
                 initial: $init:expr,
                 inherited: $inh:ident,
                 $(parse: $parse:path,)?
-                computed: $comp:ident $(:: $comp_rest:ident)*,
+                computed: $comp:ident $($hook:ty)?,
                 field: $field:ident,
                 sample: $sample:expr $(,)?
             }
@@ -331,7 +357,7 @@ macro_rules! longhands {
             longhands!(@value_enum $V $css $vt $({ $($kw)* })?);
             longhands!(@initial $V $vt $({ $($kw)* })? $init);
             longhands!(@inherited $inh);
-            longhands!(@computed $comp $(:: $comp_rest)*);
+            longhands!(@computed $comp $($hook)?);
         )*
 
         /// Table-declared specified values, embedded as
@@ -349,7 +375,10 @@ macro_rules! longhands {
         #[derive(Clone, Debug, PartialEq)]
         #[non_exhaustive]
         pub struct ComputedTable {
-            $( $(#[$m])* pub $field: longhands!(@ty $V $vt $({ $($kw)* })?), )*
+            $(
+                $(#[$m])*
+                pub $field: longhands!(@computed_ty ($comp $($hook)?) longhands!(@ty $V $vt $({ $($kw)* })?)),
+            )*
         }
 
         #[allow(clippy::clone_on_copy)]
@@ -365,13 +394,18 @@ macro_rules! longhands {
             #[allow(unused_variables)]
             pub(crate) fn inherit_from(parent: &ComputedTable) -> Self {
                 Self {
-                    $( $field: longhands!(@inherit $inh parent $field $V $vt $({ $($kw)* })? ; $init), )*
+                    $( $field: longhands!(@inherit $inh ($comp $($hook)?) parent $field $V $vt $({ $($kw)* })? ; $init), )*
                 }
             }
 
-            /// Specified to computed: every table property is computed as specified.
-            pub(crate) fn absolutize(self) -> ComputedTable {
-                ComputedTable { $( $field: self.$field, )* }
+            /// Specified to computed: `as_specified` fields move over
+            /// unchanged, `via` fields go through their `Longhand::compute`.
+            // `cx` is unused when every table entry is `as_specified`.
+            #[allow(unused_variables)]
+            pub(crate) fn absolutize(self, cx: &crate::property::AbsolutizeCx<'_>) -> ComputedTable {
+                ComputedTable {
+                    $( $field: longhands!(@compute ($comp $($hook)?) self.$field, cx), )*
+                }
             }
 
             /// Stores a cascade winner in its field. `value` must be a table variant.
@@ -384,9 +418,38 @@ macro_rules! longhands {
         }
 
         impl ComputedTable {
-            /// Every field at its initial value.
+            /// Every field at its initial value; a `via` field holds its
+            /// initial value computed in the initial context.
+            // `cx` is unused when every table entry is `as_specified`.
+            #[allow(unused_variables)]
             pub(crate) fn initial() -> Self {
-                Self { $( $field: longhands!(@initial_value $V $vt $({ $($kw)* })? $init), )* }
+                let ctx = crate::resolve::ResolveContext::initial();
+                let cx = &crate::property::AbsolutizeCx::initial(&ctx);
+                Self {
+                    $(
+                        $field: longhands!(
+                            @compute ($comp $($hook)?)
+                            longhands!(@initial_value $V $vt $({ $($kw)* })? $init),
+                            cx
+                        ),
+                    )*
+                }
+            }
+        }
+
+        /// Page-context absolutization of one table value. `PropertyValue`
+        /// keeps its specified payload type, so a `via` value is computed and
+        /// lifted back; `as_specified` values pass through. `value` must be a
+        /// table variant.
+        // `cx` is unused when every table entry is `as_specified`.
+        #[allow(unused_variables)]
+        pub(crate) fn longhand_page_absolutize(
+            value: PropertyValue,
+            cx: &crate::property::AbsolutizeCx<'_>,
+        ) -> PropertyValue {
+            match value {
+                $( PropertyValue::$V(v) => PropertyValue::$V(longhands!(@page ($comp $($hook)?) v, cx)), )*
+                other => unreachable!("not a table-declared property value: {other:?}"),
             }
         }
 

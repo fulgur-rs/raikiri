@@ -27,6 +27,7 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate};
+use crate::property::AbsolutizeCx;
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
@@ -1772,7 +1773,11 @@ impl SpecifiedValues {
                 ctx,
             ),
             // Table-declared properties: see `longhands!` for each property's computed value.
-            longhands: self.longhands.absolutize(),
+            longhands: self.longhands.absolutize(&AbsolutizeCx::new(
+                font_size,
+                own_line_height,
+                ctx,
+            )),
             transform_origin: resolve_css_position(
                 self.transform_origin,
                 font_size,

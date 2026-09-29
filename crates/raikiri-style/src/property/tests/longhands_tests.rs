@@ -153,7 +153,8 @@ fn table_apply_sets_the_matching_field() {
 fn table_absolutize_copies_as_specified_values() {
     let mut table = SpecifiedTable::initial();
     table.apply(PropertyValue::Isolation(Isolation::Isolate));
-    let computed = table.absolutize();
+    let ctx = crate::resolve::ResolveContext::initial();
+    let computed = table.absolutize(&AbsolutizeCx::initial(&ctx));
     assert_eq!(computed.isolation, Isolation::Isolate);
     assert_eq!(computed.object_fit, ObjectFit::Fill);
 }
