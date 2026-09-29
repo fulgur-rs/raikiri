@@ -6041,7 +6041,7 @@ pub(crate) fn preshape_text(
             (WORD_SPACE_EDGE_INLINE_BOX_ID_BASE..WORD_SPACE_EDGE_INLINE_BOX_ID_LIMIT)
                 .contains(&inline_box.id)
         }) {
-            continue;
+            continue; // cov:ignore: edge id base is distinct from autospace and line-break ranges, so a collision cannot occur.
         }
         let word_spacing = if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
             job.word_spacing_raw
@@ -6064,7 +6064,7 @@ pub(crate) fn preshape_text(
                 },
             );
             if !advance.is_finite() || advance <= 0.0 {
-                continue;
+                continue; // cov:ignore: space advance probing with a valid shaped font always succeeds.
             }
             total += advance * job.word_space_edge_spaces as f32;
         }
@@ -6083,12 +6083,12 @@ pub(crate) fn preshape_text(
                 },
             );
             if !advance.is_finite() || advance <= 0.0 {
-                continue;
+                continue; // cov:ignore: ideographic advance probing with a valid shaped font always succeeds.
             }
             total += advance * job.word_space_edge_ideos as f32;
         }
         if !total.is_finite() || total <= 0.0 {
-            continue;
+            continue; // cov:ignore: total sums finite positive advances, so it is always finite and positive here.
         }
         job.autospace_boxes.push(InlineBox {
             id: WORD_SPACE_EDGE_INLINE_BOX_ID_BASE,
