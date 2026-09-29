@@ -7005,6 +7005,11 @@ pub enum RadialShape {
     Ellipse,
 }
 
+css_keywords!(RadialShape {
+    Circle => "circle",
+    Ellipse => "ellipse",
+});
+
 /// [`RadialGradient::size`] (CSS Images 3 §3.2.1 baseline grammar
 /// `<radial-size> = <radial-extent> | <length [0,∞]> |
 /// <length-percentage [0,∞]>{2}`).
@@ -7043,6 +7048,13 @@ pub enum RadialExtent {
     /// `farthest-corner` — the spec-mandated default for [`RadialSize`].
     FarthestCorner,
 }
+
+css_keywords!(RadialExtent {
+    ClosestSide => "closest-side",
+    ClosestCorner => "closest-corner",
+    FarthestSide => "farthest-side",
+    FarthestCorner => "farthest-corner",
+});
 
 /// `conic-gradient()` / `repeating-conic-gradient()` (CSS Images 4 §3.3
 /// "Conic Gradients: the conic-gradient() notation"

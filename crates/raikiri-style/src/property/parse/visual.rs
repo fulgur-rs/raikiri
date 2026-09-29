@@ -1751,23 +1751,11 @@ fn parse_linear_gradient_body<'i>(
 fn parse_radial_shape_keyword<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<RadialShape, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "circle" => Ok(RadialShape::Circle),
-        "ellipse" => Ok(RadialShape::Ellipse),
-        _ => Err(input.new_custom_error(())),
-    }
+    RadialShape::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 fn parse_radial_extent<'i>(input: &mut Parser<'i, '_>) -> Result<RadialExtent, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "closest-side" => Ok(RadialExtent::ClosestSide),
-        "closest-corner" => Ok(RadialExtent::ClosestCorner),
-        "farthest-side" => Ok(RadialExtent::FarthestSide),
-        "farthest-corner" => Ok(RadialExtent::FarthestCorner),
-        _ => Err(input.new_custom_error(())),
-    }
+    RadialExtent::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// Authored form of [`RadialSize`]: an intermediate representation before

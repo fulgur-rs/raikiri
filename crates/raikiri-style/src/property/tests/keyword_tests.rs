@@ -57,6 +57,8 @@ fn keyword_tables_round_trip_through_their_parsers() {
         OverflowValue,
         OverflowWrap,
         QuoteKeyword,
+        RadialExtent,
+        RadialShape,
         RubyPosition,
         TableLayoutValue,
         TextAlign,
