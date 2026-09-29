@@ -1,8 +1,8 @@
 use super::*;
 use crate::property::{
-    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
-    HyphenateLimitCharsValue, Isolation, Length, ObjectFit, TextShadowColor,
+    ComputedTable, EmptyCellsValue, FontSynthesisStyle, FontVariantEastAsianVariant,
+    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Isolation, Length, ObjectFit, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -597,9 +597,12 @@ fn non_initial_parent() -> ComputedValues {
         // §3.4.2 isolation and CSS Images Module Level 3 §5.1 object-fit are
         // non-inherited, so use values different from the initial `auto` /
         // `fill` (as required for non_initial_parent).
+        // CSS Tables 3 §8 empty-cells is inherited, so use a value different
+        // from the initial `show` as well.
         longhands: ComputedTable {
             isolation: Isolation::Isolate,
             object_fit: ObjectFit::Cover,
+            empty_cells: EmptyCellsValue::Hide,
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
         // a value different from the initial `normal` (as above).
@@ -634,9 +637,6 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Tables 3 §7: caption-side is inherited, so use a value
         // different from the initial `top` (as above).
         caption_side: CaptionSideValue::Bottom,
-        // CSS Tables 3 §8: empty-cells is inherited, so use a value
-        // different from the initial `show` (as above).
-        empty_cells: EmptyCellsValue::Hide,
         // CSS Multi-column Layout 1: non-inherited fields use non-initial
         // values so `inherit_from` assertions exercise the reset.
         column_count: ColumnCountValue::Count(3),

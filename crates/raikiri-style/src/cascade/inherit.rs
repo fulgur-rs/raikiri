@@ -1639,11 +1639,10 @@ pub(crate) fn resolve_against_inherited(
         // `border-spacing` (CSS Tables 3 §6.1): absolutizing `<length>{1,2}`
         // needs the declaring node's own font-size, so it belongs in phase 3
         // (like the "nothing for phase 2" `Padding`/`Margin` arms).
-        // `caption-side` (§7) / `empty-cells` (§8) hold bare keywords and have
-        // no phase-2 dependency (like `BorderCollapse`).
+        // `caption-side` (§7) holds a bare keyword and has no phase-2
+        // dependency (like `BorderCollapse`).
         | PropertyValue::BorderSpacing(_)
         | PropertyValue::CaptionSide(_)
-        | PropertyValue::EmptyCells(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::Grid(_)
@@ -2057,7 +2056,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
         PropertyValue::BorderSpacing(v) => target.border_spacing = v,
         PropertyValue::CaptionSide(v) => target.caption_side = v,
-        PropertyValue::EmptyCells(v) => target.empty_cells = v,
         // Parsed but not yet staged for elements.
         PropertyValue::TextAlignAll(_) => {}
         PropertyValue::Page(value) => target.page = value,

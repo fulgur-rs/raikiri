@@ -34,12 +34,12 @@ use crate::property::{
     BorderColor, BorderRadius, BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
-    CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
+    CssPositionOffset, Direction, DisplayValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, FontFamilyName, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
+    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
+    FontVariantPosition, FontVariationSettings, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
     HyphenateCharacter, HyphenateLimitChars, Hyphens, Length, LengthOrAuto, LengthOrNormal,
     LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage,
     MixBlendMode, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
@@ -639,13 +639,6 @@ pub struct SpecifiedValues {
     /// `Self::inherit_from` seeds it by directly copying the parent's computed value, with no
     /// lift needed for a keyword, as for [`Self::visibility`].
     pub caption_side: CaptionSideValue,
-    /// **Specified** `empty-cells`; **inherited**, initially [`EmptyCellsValue::Show`] (CSS
-    /// Tables 3 §8 <https://www.w3.org/TR/css-tables-3/#empty-cells-property>). The computed
-    /// value is the specified keyword, so staging for
-    /// [`crate::computed::ComputedValues::empty_cells`] passes through unchanged.
-    /// `Self::inherit_from` seeds it by directly copying the parent's computed value, with no
-    /// lift needed for a keyword, as for [`Self::visibility`].
-    pub empty_cells: EmptyCellsValue,
     /// `column-count` specified value; non-inherited.
     pub column_count: ColumnCountValue,
     /// `column-width` specified value; non-inherited.
@@ -957,9 +950,6 @@ impl SpecifiedValues {
             // CSS Tables 3 §7: caption-side is initially `top`. For nodes with a parent,
             // `Self::inherit_from` replaces it with the inherited value.
             caption_side: CaptionSideValue::Top,
-            // CSS Tables 3 §8: empty-cells is initially `show`. For nodes with a parent,
-            // `Self::inherit_from` replaces it with the inherited value.
-            empty_cells: EmptyCellsValue::Show,
             column_count: ColumnCountValue::Auto,
             column_width: ColumnWidthValue::Auto,
         }
@@ -1112,9 +1102,6 @@ impl SpecifiedValues {
             // CSS Tables 3 §7: caption-side is an inherited keyword; copy it directly without a
             // lift, as for visibility.
             caption_side: parent.caption_side,
-            // CSS Tables 3 §8: empty-cells is an inherited keyword; copy it directly without a
-            // lift, as for visibility.
-            empty_cells: parent.empty_cells,
             // CSS Multi-column Layout 1: both longhands are non-inherited.
             column_count: ColumnCountValue::Auto,
             column_width: ColumnWidthValue::Auto,
@@ -2152,9 +2139,6 @@ impl SpecifiedValues {
             // The computed value is the specified keyword (see CaptionSideValue docs); no lengths
             // need resolution. Pass through this node's winner or inherited parent value.
             caption_side: self.caption_side,
-            // The computed value is the specified keyword (see EmptyCellsValue docs); likewise,
-            // pass through this node's winner or inherited parent value.
-            empty_cells: self.empty_cells,
             // CSS Multi-column Layout 1: non-inherited count passes through;
             // width is absolutized against the element's own font metrics.
             column_count: self.column_count,

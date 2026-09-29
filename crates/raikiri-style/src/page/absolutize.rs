@@ -596,8 +596,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
-        | PropertyValue::CaptionSide(_)
-        | PropertyValue::EmptyCells(_)) => v,
+        | PropertyValue::CaptionSide(_)) => v,
         // Table-declared longhands (`properties!` in property/decl.rs): each
         // one's own computed-value step, lifted back into `PropertyValue`.
         v @ longhand_value_pat!() => {

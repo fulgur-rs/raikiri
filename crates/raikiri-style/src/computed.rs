@@ -17,13 +17,13 @@ use crate::property::{
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ComputedTable, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
-    EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
-    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
-    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, LineBreak, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
+    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
+    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
+    HyphenateLimitChars, Hyphens, LineBreak, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
     PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign,
     TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
     TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
@@ -1683,19 +1683,6 @@ pub struct ComputedValues {
     /// is layout-time behavior (raikiri-dom scope) — [`Self::table_layout`]
     /// doc's split applies here as well.
     pub caption_side: CaptionSideValue,
-    /// `empty-cells`. **inherited**, initial:
-    /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8 "Empty Cells"
-    /// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>,
-    /// "Initial: show" / "Inherited: yes"). Computed value = specified
-    /// keyword ([`EmptyCellsValue`] doc — no length payload).
-    ///
-    /// # Scope carving
-    ///
-    /// This field carries the cascaded value only. Empty-cell border /
-    /// background painting is layout/paint-time behavior (raikiri-dom /
-    /// raikiri-paint scope) — [`Self::table_layout`] doc's split applies
-    /// here as well.
-    pub empty_cells: EmptyCellsValue,
     /// `column-count` — non-inherited multicol container setting.
     pub column_count: ColumnCountValue,
     /// Computed `column-width` — non-inherited multicol container setting.
@@ -2077,9 +2064,6 @@ impl ComputedValues {
             // CSS Tables 3 §7: initial caption-side is `top`
             // (inherited; used to seed the root).
             caption_side: CaptionSideValue::Top,
-            // CSS Tables 3 §8: initial empty-cells is `show`
-            // (inherited; used to seed the root).
-            empty_cells: EmptyCellsValue::Show,
             // CSS Multi-column Layout 1: both longhands initially `auto`.
             column_count: ColumnCountValue::Auto,
             column_width: ComputedColumnWidth::Auto,
@@ -2095,7 +2079,7 @@ impl ComputedValues {
     /// - Keep **non-inherited** properties at their `initial()` values.
     ///
     /// The field documentation on [`Self`] is the canonical source for each
-    /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
+    /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side;
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_position / opacity / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout; and the longhands declared in `properties!`, according to their `inherited:` key).
     ///

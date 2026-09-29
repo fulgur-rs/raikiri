@@ -2816,6 +2816,34 @@ fn empty_cells_inherits_from_parent_element() {
     );
 }
 
+/// `empty-cells` (CSS Tables 3 §8, inherited) and `isolation` (CSS Compositing
+/// and Blending Level 1 §3.4.2, non-inherited) share the generated longhand
+/// table: a child with no declaration inherits the first and resets the
+/// second, and a child's own `empty-cells: show` wins over the parent's `hide`.
+#[test]
+fn empty_cells_inherits_through_the_table_while_isolation_resets() {
+    use crate::property::{EmptyCellsValue, Isolation};
+    let mut doc = TestDoc::new();
+    let table = doc.push_element(0, "table", Some("empty-cells: hide; isolation: isolate"));
+    let inheriting = doc.push_element(table, "td", None);
+    let overriding = doc.push_element(table, "td", Some("empty-cells: show"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(r.computed[table].empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(r.computed[table].isolation, Isolation::Isolate);
+
+    assert_eq!(r.computed[inheriting].empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(
+        r.computed[inheriting].isolation,
+        Isolation::Auto,
+        "isolation is not inherited (CSS Compositing and Blending Level 1 §3.4.2)"
+    );
+
+    assert_eq!(r.computed[overriding].empty_cells, EmptyCellsValue::Show);
+    assert_eq!(r.computed[overriding].isolation, Isolation::Auto);
+}
+
 #[test]
 fn word_break_wired_through_cascade_from_inline_style() {
     use crate::property::WordBreak;

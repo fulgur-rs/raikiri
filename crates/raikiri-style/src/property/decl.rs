@@ -1602,11 +1602,6 @@ mod decl {
         /// Computed value: the specified keyword (no relative lengths to resolve).
         /// (Appended for the same reason as [`Self::TableLayout`].)
         CaptionSide(CaptionSideValue),
-        /// `empty-cells: show | hide` — **inherited**, initial:
-        /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8; see [`EmptyCellsValue`]).
-        /// Computed value: the specified keyword (no relative lengths to resolve).
-        /// (Appended for the same reason as [`Self::TableLayout`].)
-        EmptyCells(EmptyCellsValue),
         /// `font` shorthand — **inherited**. Retains six grammar components
         /// (style/variant-caps/weight/size/line-height/family; see
         /// [`FontShorthand`]). Its subset of CSS Fonts 4 §2.1
@@ -2208,12 +2203,6 @@ mod decl {
         // reason as background-repeat: a new field disjoint one-to-one from
         // existing fields.
         CaptionSide,
-        // empty-cells (CSS Tables 3 §8, semantics on the matching
-        // PropertyValue::EmptyCells variant; sibling PropertyKey variants
-        // carry no per-variant docs per crate convention). Appended for the same
-        // reason as background-repeat: a new field disjoint one-to-one from
-        // existing fields.
-        EmptyCells,
         // font shorthand (CSS Fonts 4 §2.1, semantics on the matching
         // PropertyValue::Font variant; sibling PropertyKey variants carry no
         // per-variant docs per crate convention). For this appended placement, see the background-repeat
@@ -2361,6 +2350,20 @@ mod decl {
             ],
             initial: Fill,
             inherited: no,
+        },
+        /// CSS Tables 3 §8 "Empty Cells: the empty-cells property"
+        /// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>. Grammar:
+        /// `show | hide`. **Inherited**, initial `show`. The computed value is the
+        /// specified keyword (no length payload); see [`EmptyCellsValue`].
+        ///
+        /// This crate carries the cascaded value only. Empty-cell border /
+        /// background painting is layout/paint-time behavior (raikiri-dom /
+        /// raikiri-paint scope), as for `table-layout`.
+        "empty-cells" => EmptyCells: EmptyCellsValue {
+            initial: Show,
+            inherited: yes,
+            parse: parse_empty_cells,
+            sample: Hide,
         },
     }
 }

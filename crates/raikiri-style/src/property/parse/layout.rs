@@ -1297,8 +1297,12 @@ pub(super) fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSi
 /// [`EmptyCellsValue`] docs.
 ///
 /// Value grammar: `show | hide`. Matching follows the same rules as sibling
-/// [`parse_caption_side`].
-pub(super) fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCellsValue> {
+/// [`parse_caption_side`]. Named by the `empty-cells` entry of the
+/// `properties!` table in `property/decl.rs`, hence visible to the whole
+/// `property` module.
+pub(in crate::property) fn parse_empty_cells(
+    input: &mut Parser<'_, '_>,
+) -> Option<EmptyCellsValue> {
     EmptyCellsValue::from_css_ident(input.expect_ident().ok()?)
 }
 

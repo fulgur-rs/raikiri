@@ -26,15 +26,15 @@ use crate::property::{
     BorderColor, BorderRadius, BorderSpacingValue, BoxShadowItem, BoxSizing, BreakBetween,
     BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue, ContentComponent, CssColor,
-    CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand, FlexWrapValue,
-    FloatValue, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
-    FontShorthand, FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps,
-    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-    FontVariantPosition, FontVariationSetting, FontVariationSettings, FontWeightValue,
-    GapShorthand, GeometryBox, GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth,
-    GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
-    GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue, FilterFunction,
+    FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand, FlexWrapValue, FloatValue,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand,
+    FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
+    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
+    FontVariationSetting, FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox,
+    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
+    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
     HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Length, LengthOrAuto, LengthOrNormal,
     LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
@@ -3660,9 +3660,6 @@ crate::property::with_longhand_samples!(property_key_samples {
     // CSS Tables 3 §7 caption-side — non-initial (`bottom`, not `top`),
     // same rationale as `TableLayout` above.
     CaptionSide => PropertyValue::CaptionSide(CaptionSideValue::Bottom),
-    // CSS Tables 3 §8 empty-cells — non-initial (`hide`, not `show`),
-    // same rationale as `TableLayout` above.
-    EmptyCells => PropertyValue::EmptyCells(EmptyCellsValue::Hide),
     // CSS Fonts 4 §2.1 — shorthand fall-through (`Background` above
     // uses the same "sample a shorthand with a length-bearing
     // component" shape). `size`/`line-height` carry the lengths; the
@@ -4073,7 +4070,6 @@ crate::property::with_longhand_variants!(property_value_variant_registry {
     BorderCollapse,
     BorderSpacing,
     CaptionSide,
-    EmptyCells,
     Top,
     Right,
     Bottom,
@@ -4743,8 +4739,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // unlike `Opacity`'s `f32`) — always `None`.
             | PropertyValue::MixBlendMode(_)
             // Table-declared longhands (`properties!` in property/decl.rs).
-            // Every one of them so far (`isolation`, `object-fit`) carries
-            // a keyword payload with no `Length` — always `None`. A table
+            // Every one of them so far (`isolation`, `object-fit`,
+            // `empty-cells`) carries a keyword payload with no `Length` — always `None`. A table
             // entry that carries a length needs its own arm above this one,
             // or this detector goes blind to its residue.
             | crate::property::longhand_value_pat!()
@@ -4767,14 +4763,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             }),
             | PropertyValue::Filter(_) => None,
             // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS
-            // Tables 3 §6) / `caption-side` (§7) / `empty-cells` (§8) carry
-            // bare keyword payloads (no `Length` at all, unlike `Opacity`'s
-            // `f32`) — always `None` (the `MixBlendMode` sibling arm above
-            // uses the same reasoning).
+            // Tables 3 §6) / `caption-side` (§7) carry bare keyword payloads
+            // (no `Length` at all, unlike `Opacity`'s `f32`) — always `None`
+            // (the `MixBlendMode` sibling arm above uses the same reasoning).
             | PropertyValue::TableLayout(_)
             | PropertyValue::BorderCollapse(_)
-            | PropertyValue::CaptionSide(_)
-            | PropertyValue::EmptyCells(_) => None,
+            | PropertyValue::CaptionSide(_) => None,
             // `border-spacing` (CSS Tables 3 §6.1) carries two `<length>`
             // payloads — report the first specified-layer residue found
             // (`Gap`'s row-then-column arm above uses the same shape, with

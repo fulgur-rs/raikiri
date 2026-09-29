@@ -3,8 +3,9 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
 use crate::property::{
-    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox, Isolation, ObjectFit,
+    ComputedTable, EmptyCellsValue, FontSynthesisStyle, FontVariantEastAsianVariant,
+    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox, Isolation,
+    ObjectFit,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -479,9 +480,12 @@ fn parent_fixture() -> ComputedValues {
         // Table-declared longhands: CSS Compositing and Blending Level 1 §3.4.2 isolation and CSS
         // Images Module Level 3 §5.1 object-fit are non-inherited; set values other than the
         // initial `auto` / `fill`.
+        // CSS Tables 3 §8 empty-cells is inherited; set a value other than the initial `show` as
+        // well.
         longhands: ComputedTable {
             isolation: Isolation::Isolate,
             object_fit: ObjectFit::Cover,
+            empty_cells: EmptyCellsValue::Hide,
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.
@@ -510,8 +514,6 @@ fn parent_fixture() -> ComputedValues {
         },
         // CSS Tables 3 §7: caption-side is inherited; set a value other than the initial `top`.
         caption_side: CaptionSideValue::Bottom,
-        // CSS Tables 3 §8: empty-cells is inherited; set a value other than the initial `show`.
-        empty_cells: EmptyCellsValue::Hide,
         column_count: ColumnCountValue::Count(3),
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
         custom_properties: crate::computed::empty_custom_properties(),
@@ -728,6 +730,30 @@ fn inherit_from_copies_inherited_fields() {
     assert_eq!(child.caption_side, CaptionSideValue::Bottom);
     // CSS Tables 3 §8: empty-cells is inherited (copied directly).
     assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
+}
+
+/// The generated table's `inherit_from` follows each entry's `inherited:` key:
+/// the inherited `empty-cells` (CSS Tables 3 §8) takes the parent's value, and
+/// the non-inherited `isolation` (CSS Compositing and Blending Level 1 §3.4.2)
+/// in the same table resets to its initial value. Checked on the table itself
+/// and through `SpecifiedValues::inherit_from` / `ComputedValues::inherit_from`.
+#[test]
+fn table_inherit_from_copies_inherited_entries_and_resets_the_others() {
+    let mut parent = ComputedValues::initial();
+    parent.empty_cells = EmptyCellsValue::Hide;
+    parent.isolation = Isolation::Isolate;
+
+    let table = SpecifiedTable::inherit_from(&parent.longhands);
+    assert_eq!(table.empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(table.isolation, Isolation::Auto);
+
+    let specified = SpecifiedValues::inherit_from(&parent);
+    assert_eq!(specified.empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(specified.isolation, Isolation::Auto);
+
+    let computed = ComputedValues::inherit_from(&parent);
+    assert_eq!(computed.empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(computed.isolation, Isolation::Auto);
 }
 
 #[test]

@@ -91,7 +91,6 @@ const HAND_WRITTEN_NAMES: &[&str] = &[
     "counter-set",
     "direction",
     "display",
-    "empty-cells",
     "filter",
     "flex",
     "flex-basis",
