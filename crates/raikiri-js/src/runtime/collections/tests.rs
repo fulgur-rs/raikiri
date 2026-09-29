@@ -1,5 +1,14 @@
 use crate::runtime::DomRuntime;
 use crate::runtime::test_host::StubHost;
+use crate::runtime::webidl::with_state;
+
+fn generation(rt: &mut DomRuntime) -> u64 {
+    with_state(rt.context_mut(), |s| s.generation).unwrap()
+}
+
+fn live_walks(rt: &mut DomRuntime) -> usize {
+    with_state(rt.context_mut(), |s| s.live_walks).unwrap()
+}
 
 fn rt() -> DomRuntime {
     let (h, ..) = StubHost::page();
@@ -297,4 +306,120 @@ fn prototype_can_be_read_and_replaced_through_the_proxy() {
         &mut rt,
         "Object.getPrototypeOf(c) === p && !(c instanceof NodeList) && Object.isExtensible(c)",
     );
+}
+
+#[test]
+fn repeated_access_within_one_generation_walks_once() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body;          b.append(document.createElement('a'), document.createElement('b'), document.createElement('c'));          var col = b.children;",
+    )
+    .unwrap();
+    let walks_before = live_walks(&mut rt);
+    ok(&mut rt, "col.length === 3 && col[0].localName === 'a'");
+    assert_eq!(
+        live_walks(&mut rt),
+        walks_before + 1,
+        "first access resolves once"
+    );
+    // Ten more length reads plus an index loop in the O(n^2) shape
+    // (`for(i<c.length) c[i]`): every one must hit the cache.
+    ok(
+        &mut rt,
+        "var s = 0; for (var i = 0; i < 10; i++) s += col.length; s === 30",
+    );
+    ok(
+        &mut rt,
+        "var t = ''; for (var i = 0; i < col.length; i++) t += col[i].localName; t === 'abc'",
+    );
+    ok(&mut rt, "col.item(2) === col[2] && col.length === 3");
+    assert_eq!(
+        live_walks(&mut rt),
+        walks_before + 1,
+        "repeated length/index access must not re-walk"
+    );
+}
+
+#[test]
+fn mutation_bumps_generation_and_invalidates_the_cache() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body;          b.appendChild(document.createElement('p'));          var tag = document.getElementsByTagName('p');          var cls = document.getElementsByClassName('k');",
+    )
+    .unwrap();
+    let gen_before = generation(&mut rt);
+    let walks_before = live_walks(&mut rt);
+    ok(&mut rt, "tag.length === 1 && cls.length === 0");
+    assert_eq!(live_walks(&mut rt), walks_before + 2);
+    // Same generation: both collections hit their caches.
+    ok(
+        &mut rt,
+        "tag.length === 1 && cls.length === 0 && tag[0].localName === 'p'",
+    );
+    assert_eq!(live_walks(&mut rt), walks_before + 2);
+    assert_eq!(generation(&mut rt), gen_before);
+    // A structural mutation invalidates both.
+    rt.evaluate("var q = document.createElement('p'); q.className = 'k'; b.appendChild(q);")
+        .unwrap();
+    assert!(
+        generation(&mut rt) > gen_before,
+        "appendChild must bump the generation"
+    );
+    ok(
+        &mut rt,
+        "tag.length === 2 && cls.length === 1 && cls[0] === tag[1]",
+    );
+    assert_eq!(live_walks(&mut rt), walks_before + 4);
+    // An attribute mutation that changes class matching invalidates too.
+    rt.evaluate("q.className = 'other';").unwrap();
+    ok(&mut rt, "cls.length === 0 && tag.length === 2");
+    assert_eq!(live_walks(&mut rt), walks_before + 6);
+}
+
+#[test]
+fn flush_does_not_bump_generation_or_invalidate_the_cache() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; var el = document.createElement('d'); b.appendChild(el);          var col = b.children;",
+    )
+    .unwrap();
+    ok(&mut rt, "col.length === 1");
+    let walks_after_first = live_walks(&mut rt);
+    let gen_after_first = generation(&mut rt);
+    // A layout read flushes the host (clearing `dirty`) without touching the
+    // tree; the cached collection must survive it.
+    rt.evaluate("el.getBoundingClientRect();").unwrap();
+    assert_eq!(
+        generation(&mut rt),
+        gen_after_first,
+        "a flush must not bump the generation"
+    );
+    ok(&mut rt, "col.length === 1 && col[0] === el");
+    assert_eq!(
+        live_walks(&mut rt),
+        walks_after_first,
+        "reads after a flush must still hit the cache"
+    );
+}
+
+#[test]
+fn each_collection_caches_independently() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body;          b.append(document.createElement('a'), document.createElement('b'));          var first = document.getElementsByTagName('a');          var second = document.getElementsByTagName('b');",
+    )
+    .unwrap();
+    let walks_before = live_walks(&mut rt);
+    ok(&mut rt, "first.length === 1 && second.length === 1");
+    assert_eq!(live_walks(&mut rt), walks_before + 2);
+    ok(&mut rt, "first.length === 1 && second[0].localName === 'b'");
+    assert_eq!(
+        live_walks(&mut rt),
+        walks_before + 2,
+        "each collection reuses its own cache"
+    );
+    rt.evaluate("b.appendChild(document.createElement('a'));")
+        .unwrap();
+    ok(&mut rt, "first.length === 2 && second.length === 1");
+    assert_eq!(live_walks(&mut rt), walks_before + 4);
 }

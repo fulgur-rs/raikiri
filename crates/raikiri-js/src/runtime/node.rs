@@ -10,9 +10,15 @@ use super::webidl::{
     this_element, this_node, throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
-/// Record that the DOM changed so the next layout-dependent read flushes.
+/// Record that the DOM changed so the next layout-dependent read flushes,
+/// and bump the live-collection generation so cached collections re-walk.
+/// `dirty` alone cannot serve live collections: a successful flush clears it
+/// while the DOM stays changed.
 pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
-    with_state(context, |s| s.dirty = true)
+    with_state(context, |s| {
+        s.dirty = true;
+        s.generation = s.generation.wrapping_add(1);
+    })
 }
 
 pub(crate) fn js_str(s: &str) -> JsValue {
