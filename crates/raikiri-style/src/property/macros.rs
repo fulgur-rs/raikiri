@@ -113,23 +113,28 @@ macro_rules! css_keywords {
 ///
 /// 1. Add a block to this invocation in `longhands.rs` with the property's CSS
 ///    name, variant name, value type, initial value, inherited status,
-///    `computed: as_specified` and a non-initial `sample:`. Follow the format of existing entries like
-///    `"isolation" => Isolation { .. }`, using `value: keywords { .. }` for
-///    keyword enums or `value: SomeType` with `parse: some_fn` for other types.
+///    `computed: as_specified`, and a non-initial `sample:` (for test coverage).
+///    Follow the format of existing entries like `"isolation" => Isolation { .. }`,
+///    using `value: keywords { .. }` for keyword enums or `value: SomeType` with
+///    `parse: some_fn` for other types.
 /// 2. Add the property's CSS name to `supported_property_names()` in `names.rs`,
-///    maintaining alphabetical order.
-/// 3. A new variant fails to compile until its field accesses are handled in
-///    `apply_value` (`cascade/inherit.rs`), `specified.rs` and `computed.rs`.
-///    These sites are the remaining per-property implementation locations.
-///    The page-cascade test registries pick the property up from the table.
+///    maintaining alphabetical order (pinned by the
+///    `longhand_names_are_supported_property_names` test).
+/// 3. The `apply_value` arm in `cascade/inherit.rs` and the `SpecifiedValues` and
+///    `ComputedValues` fields in `specified.rs` and `computed.rs` remain hand-written
+///    until those sites are generated. Pass-through matches in `rule.rs`, the resolve
+///    step in `cascade/inherit.rs`, `page/absolutize.rs`, and `serialize_value`'s
+///    `None` arm are covered by the table, as are the two page-cascade registries.
+///    `computed:` hooks are rejected for now; table payloads must be free of
+///    lengths needing absolutization.
 ///
-/// A table block currently generates only the PropertyKey and PropertyValue
-/// enum variants, the key() projection, the name-to-key lookup, the value
-/// parsing dispatch, the pass-through pattern, and the test registries'
-/// entries. Computed-value computation
-/// and inheritance are handled by the remaining per-property sites; table
-/// properties are passed through unchanged by shorthand expansion and
-/// absolute-length conversion, and `serialize_value` returns `None` for them.
+/// A table block currently generates: `PropertyKey` and `PropertyValue` enum
+/// variants; the `key()` projection; the name-to-key lookup
+/// (`longhand_key_for_name`); the value parsing dispatch (`parse_longhand_value`);
+/// the `longhand_value_pat!()` pass-through pattern macro; the `LONGHAND_NAMES`
+/// constant; the test registries' macros (`with_longhand_samples` and
+/// `with_longhand_variants`); and for keyword value blocks, the value enum with
+/// its `INITIAL` constant.
 macro_rules! longhands {
     // ---- helpers -------------------------------------------------------
     (@ty $V:ident keywords { $($kw:tt)* }) => { $V };
