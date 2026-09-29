@@ -54,8 +54,11 @@ fn build_page_scene_populates_metadata_from_hello_world() {
             "fragments must have at least one entry for each id in node_ids ({id:?})",
         );
     }
-    // Currently: no @page margin; body_offset_pt = (0, 0).
-    assert_eq!(scene.body_offset_pt, (0.0, 0.0));
+    // No @page margin, but the UA sheet keeps `body { margin: 8px }`.
+    // The hello-world `<p>` has its top margin zeroed by the quirks-mode
+    // collapsing quirk (HTML LS section 15.3.9), so the vertical collapse is
+    // max(0, 8, 0) = 8 and the horizontal offset is the plain 8px sum.
+    assert_eq!(scene.body_offset_pt, (8.0, 8.0));
     // Page metadata reflects A4
     assert_eq!(
         scene.page_metadata.size,
@@ -151,6 +154,100 @@ fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
             .values()
             .any(|p| p.line_count > 0),
         "at least one ParagraphEntry must have line_count > 0 for shaped \"Hi\" text"
+    );
+}
+
+/// Body UA margin reaches page-absolute geometry.
+///
+/// CSS 2.1 section 8.3.1 never collapses horizontal margins, so a child with
+/// `margin: 10px` inside the UA `body { margin: 8px }` sits at 8 + 10 = 18
+/// from the initial containing block. Vertically the same pair collapses to
+/// max(8, 10) = 10. A plain block with no margin sits at 8 on both axes,
+/// which is the `data-offset-x=8` shape that WPT check-layout fixtures pin.
+#[test]
+fn body_margin_horizontal_sum_and_vertical_collapse() {
+    for (html, expected_offset, expected_frag, expected_abs) in [
+        (
+            "<div id=o style='margin:10px; width:10px; height:10px'></div>",
+            (8.0, 0.0),
+            (10.0, 10.0),
+            (18.0, 10.0),
+        ),
+        (
+            "<div id=b style='width:10px; height:10px'></div>",
+            (8.0, 8.0),
+            (0.0, 0.0),
+            (8.0, 8.0),
+        ),
+    ] {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
+        let cascade = build_cascaded(&uncascaded);
+        let mut dom = uncascaded.dom;
+        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
+            .expect("layout Ok");
+        let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+        assert_eq!(
+            scene.body_offset_pt, expected_offset,
+            "body_offset for {html:?}"
+        );
+        let id = if html.contains("id=o") { "o" } else { "b" };
+        let idx = (0..dom.node_count())
+            .find(|&i| dom.element_attribute(i, "id") == Some(id))
+            .expect("probe element resolves");
+        let frag = scene
+            .fragments
+            .get(&NodeId::new(idx as u64))
+            .and_then(|v| v.first())
+            .expect("probe has a fragment");
+        assert_eq!((frag.x, frag.y), expected_frag, "fragment for {html:?}");
+        assert_eq!(
+            (frag.x + scene.body_offset_pt.0, frag.y + scene.body_offset_pt.1),
+            expected_abs,
+            "page-absolute geometry for {html:?}"
+        );
+    }
+}
+
+/// A lone `margin: 5px` block collapses with the UA body margin.
+///
+/// Horizontally the result is the sum 8 + 5 = 13. Vertically the adjoining
+/// margins collapse to max(8, 5) = 8, so the page-absolute top is 8 even
+/// though the body-relative fragment keeps its own 5px margin.
+#[test]
+fn body_margin_lone_5px_collapses_to_8px() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let html = "<div id=a style='margin:5px; width:10px; height:10px'></div>";
+    let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
+    let cascade = build_cascaded(&uncascaded);
+    let mut dom = uncascaded.dom;
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout Ok");
+    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    assert_eq!(scene.body_offset_pt, (8.0, 3.0));
+    let idx = (0..dom.node_count())
+        .find(|&i| dom.element_attribute(i, "id") == Some("a"))
+        .expect("probe resolves");
+    let frag = scene
+        .fragments
+        .get(&NodeId::new(idx as u64))
+        .and_then(|v| v.first())
+        .expect("probe has a fragment");
+    assert_eq!((frag.x, frag.y), (5.0, 5.0));
+    assert_eq!(
+        (
+            frag.x + scene.body_offset_pt.0,
+            frag.y + scene.body_offset_pt.1
+        ),
+        (13.0, 8.0)
     );
 }
 
