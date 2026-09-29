@@ -1334,12 +1334,7 @@ pub(super) fn parse_list_style_type(input: &mut Parser<'_, '_>) -> Option<ListSt
 
 /// Parse `list-style-position: inside | outside`.
 pub(super) fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<ListStylePosition> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "inside" => Some(ListStylePosition::Inside),
-        "outside" => Some(ListStylePosition::Outside),
-        _ => None,
-    }
+    ListStylePosition::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses the value of `orphans` / `widows: <integer>` (CSS Fragmentation

@@ -2053,6 +2053,11 @@ pub enum ListStylePosition {
     Inside,
 }
 
+css_keywords!(ListStylePosition {
+    Outside => "outside",
+    Inside => "inside",
+});
+
 /// The optional second argument of `string()`:
 /// `[ first | start | last | first-except ]?`.
 ///
