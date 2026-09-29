@@ -2395,6 +2395,19 @@ fn remap_boxes_through_tab_rewrite(original: &str, tab_lens: &[usize], boxes: &m
 const LINE_BREAK_NBSP_INLINE_BOX_ID_BASE: u64 = 1 << 62;
 const LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT: u64 = 1 << 63;
 
+/// Advance-only box for a trailing `word-space-transform` separator that faces
+/// inline content (CSS Text 4, issue um59.29).
+///
+/// A trailing U+200B at a text-node edge becomes a trailing ASCII space (or
+/// U+3000) after phase-1 collapsing, but Parley `width()` excludes trailing
+/// whitespace while `full_width()` includes it. Taffy measures `width()`, so
+/// the inter-node advance would be lost. Stripping that trailing run and
+/// re-adding it as an `InFlow` box keeps the advance in `width()` while
+/// preserving the soft-wrap opportunity: Parley always allows a break after
+/// an inline box, unlike an NBSP migration which forbids it.
+const WORD_SPACE_EDGE_INLINE_BOX_ID_BASE: u64 = 1 << 61;
+const WORD_SPACE_EDGE_INLINE_BOX_ID_LIMIT: u64 = 1 << 62;
+
 /// Replace U+00A0 in Parley's input with a nonpainting advance box.
 ///
 /// Existing inline-box offsets are based on the source string and must move
@@ -5303,6 +5316,13 @@ pub(crate) fn preshape_text(
         // preserved newline is the sole sibling.
         simple_preserved_run: bool,
         tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
+        // Trailing `word-space-transform` separators stripped from `text`
+        // because Parley `width()` excludes them (see
+        // `WORD_SPACE_EDGE_INLINE_BOX_ID_BASE`). Re-added as one wrapping
+        // advance box after `ch`/tab/NBSP resolution so the measured advance
+        // uses the resolved spacing.
+        word_space_edge_spaces: u32,
+        word_space_edge_ideos: u32,
     }
 
     // The in-flow inline `<wbr>` under `word-space-transform: space` or
@@ -5586,6 +5606,48 @@ pub(crate) fn preshape_text(
         if cv.hyphens == Hyphens::None {
             text.retain(|c| c != '\u{00AD}');
         }
+        // Phase-2 edge spacing for `word-space-transform` (issue um59.29):
+        // a trailing U+200B at a text-node edge becomes a trailing ASCII
+        // space (or U+3000) after phase-1 collapsing, but Parley `width()`
+        // excludes trailing whitespace while `full_width()` includes it.
+        // Taffy measures `width()`, so the inter-node advance would be lost.
+        // Strip that trailing run here and re-add it as one wrapping
+        // advance box after `ch`/tab/NBSP resolution. An `InFlow` box keeps
+        // the advance in `width()` and still allows a break after it, unlike
+        // an NBSP migration which forbids soft wrap. Only mid-line trailing
+        // (facing inline content) is preserved; at a block end trimming
+        // correctly drops it, so no box is kept there.
+        let mut word_space_edge_spaces: u32 = 0;
+        let mut word_space_edge_ideos: u32 = 0;
+        if matches!(
+            cv.word_space_transform,
+            WordSpaceTransform::Space | WordSpaceTransform::IdeographicSpace
+        ) && has_inline_adjacent(doc, cascade, &parent_of, idx, 1)
+        {
+            let mut spaces: u32 = 0;
+            let mut ideos: u32 = 0;
+            for c in text.chars().rev() {
+                if c == ' ' {
+                    spaces += 1;
+                } else if c == '\u{3000}' {
+                    ideos += 1;
+                } else {
+                    break;
+                }
+            }
+            if spaces + ideos > 0 {
+                let strip_bytes: usize = text
+                    .chars()
+                    .rev()
+                    .take_while(|&c| c == ' ' || c == '\u{3000}')
+                    .map(|c| c.len_utf8())
+                    .sum();
+                let new_len = text.len().saturating_sub(strip_bytes);
+                text.truncate(new_len);
+                word_space_edge_spaces = spaces;
+                word_space_edge_ideos = ideos;
+            }
+        }
         let family_str: String = family_str_of(cv);
         // Tab-stop metrics use the block-container ancestor's font (CSS Text 3 §4.2).
         // If none exists, use this element's font (a fail-safe matching old behavior).
@@ -5758,6 +5820,8 @@ pub(crate) fn preshape_text(
             simple_pre_block,
             simple_preserved_run,
             tab_spacing_ranges: Vec::new(),
+            word_space_edge_spaces,
+            word_space_edge_ideos,
         });
     }
 
@@ -5956,6 +6020,83 @@ pub(crate) fn preshape_text(
             }
             None => job.line_break_override_enabled = false,
         }
+    }
+
+    // Re-add stripped trailing `word-space-transform` separators as one
+    // wrapping advance box (issue um59.29). The text run keeps its stripped
+    // form so `width()` already includes the edge; the box supplies the exact
+    // trailing advance measured with the resolved spacing. A plain trailing
+    // space would be excluded from `width()` and lost by Taffy, while an NBSP
+    // would forbid the soft-wrap opportunity the CSS Text 4 transform must
+    // keep (013/014 keep-all cases).
+    for job in &mut jobs {
+        if job.word_space_edge_spaces == 0 && job.word_space_edge_ideos == 0 {
+            continue;
+        }
+        // Defensive: the stripping site only keeps edge boxes facing inline
+        // content, but a later tab/NBSP rewrite could have emptied the run in
+        // an unexpected way. An edge box on an empty run is still the correct
+        // lone-separator advance, so only guard the id range and measurements.
+        if job.autospace_boxes.iter().any(|inline_box| {
+            (WORD_SPACE_EDGE_INLINE_BOX_ID_BASE..WORD_SPACE_EDGE_INLINE_BOX_ID_LIMIT)
+                .contains(&inline_box.id)
+        }) {
+            continue;
+        }
+        let word_spacing = if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
+            job.word_spacing_raw
+        } else {
+            0.0
+        };
+        let mut total = 0.0f32;
+        if job.word_space_edge_spaces > 0 {
+            let advance = probe_text_full_width(
+                fonts,
+                layout_cx,
+                " ",
+                TextProbeStyle {
+                    family_str: &job.family_str,
+                    font_size_px: job.font_size_raw,
+                    font_weight: job.font_weight_raw,
+                    font_style: job.font_style,
+                    letter_spacing: job.letter_spacing_raw,
+                    word_spacing,
+                },
+            );
+            if !advance.is_finite() || advance <= 0.0 {
+                continue;
+            }
+            total += advance * job.word_space_edge_spaces as f32;
+        }
+        if job.word_space_edge_ideos > 0 {
+            let advance = probe_text_full_width(
+                fonts,
+                layout_cx,
+                "\u{3000}",
+                TextProbeStyle {
+                    family_str: &job.family_str,
+                    font_size_px: job.font_size_raw,
+                    font_weight: job.font_weight_raw,
+                    font_style: job.font_style,
+                    letter_spacing: job.letter_spacing_raw,
+                    word_spacing,
+                },
+            );
+            if !advance.is_finite() || advance <= 0.0 {
+                continue;
+            }
+            total += advance * job.word_space_edge_ideos as f32;
+        }
+        if !total.is_finite() || total <= 0.0 {
+            continue;
+        }
+        job.autospace_boxes.push(InlineBox {
+            id: WORD_SPACE_EDGE_INLINE_BOX_ID_BASE,
+            kind: InlineBoxKind::InFlow,
+            index: job.text.len(),
+            width: total,
+            height: 0.0,
+        });
     }
 
     // Copy original FontContext once; each rayon task clones from this base.

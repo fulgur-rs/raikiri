@@ -4148,3 +4148,239 @@ fn word_space_transform_ideographic_space_shapes_both_separator_kinds() {
     assert!((actual_wbr - expected_wbr).abs() < 0.01);
     assert_eq!(doc.nodes[disabled_wbr].style.size.width, disabled_width);
 }
+
+#[test]
+fn word_space_transform_space_trailing_edge_preserves_inter_node_advance() {
+    // Trailing U+200B at a text-node edge becomes a trailing ASCII space
+    // after phase-1 collapsing, but Parley `width()` excludes trailing
+    // whitespace while `full_width()` includes it. Taffy measures `width()`,
+    // so the inter-node advance would be lost without phase-2 edge spacing.
+    // This pins the wrapping advance box (not an NBSP migration, which would
+    // forbid soft wrap) and asserts layout positions, since `full_width`
+    // alone cannot prove the following sibling is placed after the edge.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:space"),
+    );
+    let first = doc.append_text(block, "a\u{200B}");
+    let second = doc.append_text(block, "b");
+    // Reference single `a` in the same font for the no-edge advance.
+    let reference_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:none"),
+    );
+    let reference = doc.append_text(reference_block, "a");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let first_layout = doc.nodes[first].text_layout().expect("first shaped");
+    let reference_layout = doc.nodes[reference]
+        .text_layout()
+        .expect("reference shaped");
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        first_layout.width() > reference_layout.width() + 0.5,
+        "trailing edge must add a space advance: first={} reference={}",
+        first_layout.width(),
+        reference_layout.width()
+    );
+    // The edge is a wrapping advance box, not an NBSP migration.
+    let mut has_edge_box = false;
+    for line in first_layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item
+                && inline_box.id == (1u64 << 61)
+            {
+                // cov:ignore: panic-message literal only executed on assertion failure.
+                assert!(
+                    matches!(inline_box.kind, parley::InlineBoxKind::InFlow),
+                    "edge box must stay wrappable (InFlow), not suppress soft wrap"
+                );
+                // cov:ignore: panic-message literal only executed on assertion failure.
+                assert!(
+                    inline_box.width > 0.0,
+                    "edge box must carry the trailing space advance"
+                );
+                has_edge_box = true;
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        has_edge_box,
+        "trailing edge must shape as a wrapping advance box"
+    );
+
+    // Layout positions prove the inter-node advance: the following sibling
+    // starts after the edge, not overlapping the trailing space.
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "edge siblings must sit on the same line, got first.y={} second.y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (second_loc.location.x - (first_loc.location.x + first_loc.size.width)).abs() < 1.0,
+        "second must start at first right edge (edge advance preserved), got first.x={} first.w={} second.x={}",
+        first_loc.location.x,
+        first_loc.size.width,
+        second_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        second_loc.location.x > first_loc.location.x + reference_layout.width() + 0.5,
+        "second must sit after the trailing space, not at the no-edge advance: second.x={} first.x={} ref_w={}",
+        second_loc.location.x,
+        first_loc.location.x,
+        reference_layout.width()
+    );
+}
+
+#[test]
+fn word_space_transform_space_trailing_edge_trimmed_at_block_end() {
+    // Phase-2 trimming still drops a trailing separator at a block end: no
+    // following inline content means no inter-node advance to preserve.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:space"),
+    );
+    let trailing = doc.append_text(block, "a\u{200B}");
+    let reference_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:none"),
+    );
+    let reference = doc.append_text(reference_block, "a");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let layout = doc.nodes[trailing].text_layout().expect("shaped");
+    let reference_layout = doc.nodes[reference]
+        .text_layout()
+        .expect("reference shaped");
+    for line in layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item {
+                // cov:ignore: panic-message literal only executed on assertion failure.
+                assert!(
+                    inline_box.id != (1u64 << 61),
+                    "block-end trailing must not keep an edge advance box"
+                );
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (layout.width() - reference_layout.width()).abs() < 0.5,
+        "block-end trailing must trim like plain `a`: got {} reference {}",
+        layout.width(),
+        reference_layout.width()
+    );
+}
+
+#[test]
+fn word_space_transform_ideographic_space_trailing_edge_preserves_advance() {
+    // Same edge rule for `ideographic-space`: trailing U+200B becomes U+3000,
+    // which Parley also excludes from `width()`. Preserve it as a wrapping
+    // box and prove the following sibling is placed after it.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:ideographic-space"),
+    );
+    let first = doc.append_text(block, "\u{3042}\u{200B}");
+    let second = doc.append_text(block, "\u{3044}");
+    let reference_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:none"),
+    );
+    let reference = doc.append_text(reference_block, "\u{3042}");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let first_layout = doc.nodes[first].text_layout().expect("first shaped");
+    let reference_layout = doc.nodes[reference]
+        .text_layout()
+        .expect("reference shaped");
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        first_layout.width() > reference_layout.width() + 0.5,
+        "ideographic trailing edge must add advance: first={} reference={}",
+        first_layout.width(),
+        reference_layout.width()
+    );
+    let mut has_edge_box = false;
+    for line in first_layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item
+                && inline_box.id == (1u64 << 61)
+            {
+                has_edge_box = true;
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        has_edge_box,
+        "ideographic trailing edge must shape as an advance box"
+    );
+
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "edge siblings must share a line, got first.y={} second.y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        second_loc.location.x > first_loc.location.x + reference_layout.width() + 0.5,
+        "second must sit after the ideographic edge: second.x={} first.x={} ref_w={}",
+        second_loc.location.x,
+        first_loc.location.x,
+        reference_layout.width()
+    );
+}
