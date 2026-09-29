@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use cssparser::{ParseError, Parser, ParserInput, Token};
 
+use super::longhands::parse_longhand_value;
 use super::types::*;
 
 mod box_model;
@@ -1140,7 +1141,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::Filter(Arc::new(v))
             }
         }),
-        _ => None,
+        _ => parse_longhand_value(normalized_name.as_str(), input),
     }
 }
 

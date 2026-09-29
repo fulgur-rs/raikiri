@@ -13,6 +13,9 @@ mod macros;
 mod types;
 pub use types::*;
 
+mod longhands;
+pub use longhands::*;
+
 mod parse;
 pub use parse::*;
 

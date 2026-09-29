@@ -37,3 +37,181 @@ macro_rules! css_keywords {
         }
     };
 }
+
+/// Declares the property enums and their table-driven projections in one place.
+///
+/// The invocation is the definition site of [`PropertyValue`], [`PropertyKey`]
+/// and [`PropertyValue::key`], because a macro cannot add variants to an enum
+/// declared elsewhere. Properties not yet moved to the table pass through
+/// verbatim in the `manual` sections; table blocks are appended after them.
+///
+/// Appending is safe for cascade ordering: table variants are 1:1 with
+/// disjoint fields and are never shorthands, so the load-bearing
+/// declaration-order rule documented on [`PropertyKey`] does not apply to them.
+///
+/// A block reads like the property's definition table:
+///
+/// ```ignore
+/// /// CSS Compositing and Blending Level 1 §3.4.2
+/// "isolation" => Isolation {
+///     value: keywords {
+///         /// `auto`: the initial value.
+///         Auto => "auto",
+///         Isolate => "isolate",
+///     },
+///     initial: Auto,
+///     inherited: no,
+///     computed: as_specified,
+/// }
+/// ```
+///
+/// - `value: keywords { .. }` defines the value enum named after the block and
+///   parses through its `from_css_ident`. `parse:` must then be omitted.
+/// - `value: SomeType` reuses an existing type and requires `parse: some_fn`,
+///   a `fn(&mut Parser) -> Option<SomeType>` path.
+/// - `initial`, `inherited` and `computed` are validated at compile time but
+///   not consumed yet.
+///
+/// Also generated: `longhand_key_for_name`, `parse_longhand_value` and
+/// `LONGHAND_NAMES`, which the hand-written name lookup and `parse_value`
+/// dispatch fall through to.
+macro_rules! longhands {
+    // ---- helpers -------------------------------------------------------
+    (@ty $V:ident keywords { $($kw:tt)* }) => { $V };
+    (@ty $V:ident $ty:ident) => { $ty };
+
+    (@value_enum $V:ident $css:literal keywords {
+        $( $(#[$vm:meta])* $Var:ident => $kw:literal ),+ $(,)?
+    }) => {
+        #[doc = concat!("Specified value of `", $css, "`; see [`PropertyValue::", stringify!($V), "`].")]
+        #[non_exhaustive]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum $V {
+            $( $(#[$vm])* $Var, )+
+        }
+        css_keywords!($V { $( $Var => $kw ),+ });
+    };
+    (@value_enum $V:ident $css:literal $ty:ident) => {};
+
+    (@parse $V:ident $input:ident keywords { $($kw:tt)* }) => {
+        $input
+            .expect_ident()
+            .ok()
+            .and_then(|ident| $V::from_css_ident(ident))
+            .map(PropertyValue::$V)
+    };
+    (@parse $V:ident $input:ident $ty:ident $parse:path) => {
+        $parse($input).map(PropertyValue::$V)
+    };
+
+    (@initial $V:ident keywords { $($kw:tt)* } $init:expr) => {
+        impl $V {
+            /// The property's initial value.
+            #[allow(dead_code)]
+            pub(crate) const INITIAL: $V = {
+                #[allow(unused_imports)]
+                use $V::*;
+                $init
+            };
+        }
+    };
+    (@initial $V:ident $ty:ident $init:expr) => {
+        const _: fn() -> $ty = || $init;
+    };
+
+    (@inherited yes) => {};
+    (@inherited no) => {};
+
+    (@computed as_specified) => {};
+    (@computed $f:path) => {
+        const _: () = {
+            let _ = $f;
+        };
+    };
+
+    // ---- entry ---------------------------------------------------------
+    (
+        property_value {
+            $(#[$pvm:meta])*
+            manual { $($manual_value:tt)* }
+        }
+        property_key {
+            $(#[$pkm:meta])*
+            manual { $($manual_key:tt)* }
+        }
+        key_arms { $($manual_key_arm:tt)* }
+        $(
+            $(#[$m:meta])*
+            $css:literal => $V:ident {
+                value: $vt:ident $({ $($kw:tt)* })?,
+                initial: $init:expr,
+                inherited: $inh:ident,
+                $(parse: $parse:path,)?
+                computed: $comp:tt $(,)?
+            }
+        )*
+    ) => {
+        $(#[$pvm])*
+        pub enum PropertyValue {
+            $($manual_value)*
+            $(
+                $(#[$m])*
+                $V(longhands!(@ty $V $vt $({ $($kw)* })?)),
+            )*
+        }
+
+        $(#[$pkm])*
+        pub enum PropertyKey {
+            $($manual_key)*
+            $( $V, )*
+        }
+
+        impl PropertyValue {
+            /// Returns the property key for this value.
+            ///
+            /// Used as the discriminant for selecting one winner per property in the
+            /// cascade, and as the key in the `@page` cascade result map.
+            pub fn key(&self) -> PropertyKey {
+                match self {
+                    $($manual_key_arm)*
+                    $( PropertyValue::$V(_) => PropertyKey::$V, )*
+                }
+            }
+        }
+
+        $(
+            longhands!(@value_enum $V $css $vt $({ $($kw)* })?);
+            longhands!(@initial $V $vt $({ $($kw)* })? $init);
+            longhands!(@inherited $inh);
+            longhands!(@computed $comp);
+        )*
+
+        /// Every property name declared in the table, lowercase.
+        #[cfg_attr(not(test), allow(dead_code))]
+        pub(crate) const LONGHAND_NAMES: &[&str] = &[$($css),*];
+
+        /// Name lookup for table-declared properties; `normalized_name` must
+        /// already be ASCII-lowercase.
+        #[allow(unused_variables)]
+        pub(crate) fn longhand_key_for_name(normalized_name: &str) -> Option<PropertyKey> {
+            match normalized_name {
+                $( $css => Some(PropertyKey::$V), )*
+                _ => None,
+            }
+        }
+
+        /// Value parsing for table-declared properties; `normalized_name` must
+        /// already be ASCII-lowercase. `None` covers both an unknown name and
+        /// an invalid value, like `parse_value`.
+        #[allow(unused_variables)]
+        pub(crate) fn parse_longhand_value(
+            normalized_name: &str,
+            input: &mut Parser<'_, '_>,
+        ) -> Option<PropertyValue> {
+            match normalized_name {
+                $( $css => longhands!(@parse $V input $vt $({ $($kw)* })? $($parse)?), )*
+                _ => None,
+            }
+        }
+    };
+}

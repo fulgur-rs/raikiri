@@ -37,6 +37,7 @@ mod content_tests;
 mod hyphenate_limit_chars_tests;
 mod keyword_tests;
 mod layout_tests;
+mod longhands_tests;
 mod misc_tests;
 mod serialize_tests;
 mod text_indent_calc_tests;

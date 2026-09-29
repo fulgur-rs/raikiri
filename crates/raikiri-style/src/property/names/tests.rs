@@ -5,19 +5,24 @@ use crate::property::is_supported_property_name;
 
 /// `parse_value`'s dispatch match, `crates/raikiri-style/src/property/parse/mod.rs`:
 /// the scanned block starts right after `match normalized_name.as_str() {`
-/// and ends at that match's closing arm and braces (`_ => None,` / `}` /
-/// `}`, at the 8/4/0-space indents the source uses for them).
+/// and ends at that match's closing fall-through arm into the `longhands!`
+/// table and braces (`_ => parse_longhand_value(..),` / `}` / `}`, at the
+/// 8/4/0-space indents the source uses for them). Only the hand-written arms
+/// are scanned; table-declared properties are not part of this block.
 const PARSE_MOD_SOURCE: &str = include_str!("../parse/mod.rs");
 const PARSE_VALUE_START_MARKER: &str = "match normalized_name.as_str() {\n";
-const PARSE_VALUE_END_MARKER: &str = "\n        _ => None,\n    }\n}";
+const PARSE_VALUE_END_MARKER: &str =
+    "\n        _ => parse_longhand_value(normalized_name.as_str(), input),\n    }\n}";
 
 /// `property_key_for_name`'s match, `crates/raikiri-style/src/property/types.rs`:
 /// the scanned block starts right after `Some(match normalized_name.as_str() {`
-/// and ends at that match's closing arm and braces (`_ => return None,` /
-/// `})` / `}`).
+/// and ends at that match's closing fall-through arm into the `longhands!`
+/// table and braces (`_ => return longhand_key_for_name(..),` / `})` / `}`).
+/// Only the hand-written arms are scanned.
 const TYPES_SOURCE: &str = include_str!("../types.rs");
 const PROPERTY_KEY_START_MARKER: &str = "Some(match normalized_name.as_str() {\n";
-const PROPERTY_KEY_END_MARKER: &str = "\n        _ => return None,\n    })\n}";
+const PROPERTY_KEY_END_MARKER: &str =
+    "\n        _ => return longhand_key_for_name(&normalized_name),\n    })\n}";
 
 /// Every `"name"` (or `"a" | "b" | ...`) that is the pattern of a match arm
 /// on `line` -- i.e. `line`, once its leading whitespace is trimmed, starts
