@@ -65,6 +65,21 @@ macro_rules! css_keywords {
 /// }
 /// ```
 ///
+/// A block that reuses an existing value type supplies `parse:` instead:
+///
+/// ```ignore
+/// "object-fit" => ObjectFit {
+///     value: ObjectFit,
+///     initial: ObjectFit::Fill,
+///     inherited: no,
+///     parse: parse_object_fit,
+///     computed: as_specified,
+/// }
+/// ```
+///
+/// The field order is fixed: `value`, `initial`, `inherited`, `parse` (when
+/// present), then `computed`. `value:` accepts a single identifier type only.
+///
 /// - `value: keywords { .. }` defines the value enum named after the block and
 ///   parses through its `from_css_ident`. `parse:` must then be omitted.
 /// - `value: SomeType` reuses an existing type and requires `parse: some_fn`,
@@ -146,7 +161,12 @@ macro_rules! longhands {
     (@inherited no) => {};
 
     (@computed as_specified) => {};
-    (@computed $f:path) => {
+    (@computed $f:ident $(:: $rest:ident)+) => {
+        const _: () = {
+            let _ = $f $(:: $rest)+;
+        };
+    };
+    (@computed $f:ident) => {
         const _: () = {
             let _ = $f;
         };
@@ -170,7 +190,7 @@ macro_rules! longhands {
                 initial: $init:expr,
                 inherited: $inh:ident,
                 $(parse: $parse:path,)?
-                computed: $comp:tt $(,)?
+                computed: $comp:ident $(:: $comp_rest:ident)* $(,)?
             }
         )*
     ) => {
@@ -206,7 +226,7 @@ macro_rules! longhands {
             longhands!(@value_enum $V $css $vt $({ $($kw)* })?);
             longhands!(@initial $V $vt $({ $($kw)* })? $init);
             longhands!(@inherited $inh);
-            longhands!(@computed $comp);
+            longhands!(@computed $comp $(:: $comp_rest)*);
         )*
 
         /// Every property name declared in the table, lowercase.

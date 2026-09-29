@@ -264,3 +264,22 @@ fn is_supported_property_name_covers_expanding_shorthands() {
         assert!(is_supported_property_name(name), "{name}");
     }
 }
+
+/// A name declared in the `longhands!` table must not also keep a hand-written
+/// arm: the hand-written match runs first, so a stale arm would silently win
+/// over the table entry.
+#[test]
+fn table_names_have_no_hand_written_arm() {
+    let dispatch = parse_value_dispatch_names();
+    let key_arms = property_key_for_name_names();
+    for name in crate::property::LONGHAND_NAMES {
+        assert!(
+            !dispatch.contains(*name),
+            "{name} is in the longhands! table but still has a parse_value arm"
+        );
+        assert!(
+            !key_arms.contains(*name),
+            "{name} is in the longhands! table but still has a property_key_for_name arm"
+        );
+    }
+}
