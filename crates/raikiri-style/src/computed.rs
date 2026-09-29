@@ -1525,9 +1525,11 @@ pub struct ComputedValues {
     /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
     /// Computed values of the longhands declared in the `properties!` table
-    /// of `property/decl.rs` (such as `isolation`). Each is also reachable as
+    /// of `property/decl.rs` (such as `isolation`). Each can also be read as
     /// a field of `ComputedValues` itself through `Deref` (for example
-    /// `values.isolation`); see [`ComputedTable`] for the fields.
+    /// `values.isolation`); writes go through this field
+    /// (`values.longhands.isolation = ..`), since no `DerefMut` is provided.
+    /// See [`ComputedTable`] for the fields.
     pub longhands: ComputedTable,
     /// `mix-blend-mode`. **non-inherited**, initial:
     /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1

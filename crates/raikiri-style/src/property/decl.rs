@@ -22,8 +22,9 @@
 //!    ```
 //!
 //!    This declares the keyword enum, the `PropertyValue` / `PropertyKey`
-//!    variants, the `SpecifiedTable` / `ComputedTable` fields (reachable on
-//!    `SpecifiedValues` / `ComputedValues` through `Deref`), initial value,
+//!    variants, the `SpecifiedTable` / `ComputedTable` fields (readable on
+//!    `SpecifiedValues` / `ComputedValues` through `Deref`, written through
+//!    their `longhands` field), initial value,
 //!    inheritance, cascade application, parsing, name lookup,
 //!    [`supported_property_names`](super::supported_property_names), the
 //!    page-context pass-through, and the page-cascade test registries.
@@ -83,7 +84,9 @@
 //! still compiles and only fails `names/tests.rs`. A leftover public
 //! `SpecifiedValues` / `ComputedValues` field of the same name compiles
 //! silently and shadows the table field reached through `Deref`, so check
-//! for it by hand.
+//! for it by hand. Writes cannot split that way: the table has no
+//! `DerefMut`, so a write to a table field always names the table
+//! (`values.longhands.field = ..`, or `values.longhands.apply(..)`).
 //!
 //! `keywords:` names the generated value enum after the variant
 //! (`"isolation" => Isolation` generates `enum Isolation`). An existing

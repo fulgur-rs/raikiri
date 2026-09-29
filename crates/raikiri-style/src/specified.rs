@@ -577,9 +577,11 @@ pub struct SpecifiedValues {
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
     /// Specified values of the longhands declared in the `properties!` table of
-    /// `property/decl.rs` (such as `isolation`). Each is also reachable as a field of
-    /// `SpecifiedValues` itself through `Deref` (for example `values.isolation`); see
-    /// [`SpecifiedTable`] for the fields.
+    /// `property/decl.rs` (such as `isolation`). Each can also be read as a field of
+    /// `SpecifiedValues` itself through `Deref` (for example `values.isolation`); writes go
+    /// through this field (`values.longhands.isolation = ..`, or
+    /// `values.longhands.apply(..)` for a cascade winner), since no `DerefMut` is provided.
+    /// See [`SpecifiedTable`] for the fields.
     pub longhands: SpecifiedTable,
     /// **Specified** `mix-blend-mode`; always a keyword. It passes through without
     /// absolutization, as with `background_repeat`.
