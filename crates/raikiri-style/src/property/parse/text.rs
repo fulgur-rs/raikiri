@@ -1509,13 +1509,7 @@ pub(super) fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMo
 
 /// Parse `ruby-position` keywords (CSS Ruby Layout 1 §3).
 pub(super) fn parse_ruby_position(input: &mut Parser<'_, '_>) -> Option<RubyPosition> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "over" => Some(RubyPosition::Over),
-        "under" => Some(RubyPosition::Under),
-        "inter-character" => Some(RubyPosition::InterCharacter),
-        _ => None,
-    }
+    RubyPosition::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `text-decoration-line: none | [ underline || overline || line-through ||
