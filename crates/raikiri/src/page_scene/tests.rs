@@ -403,6 +403,38 @@ fn body_margin_helpers_cover_first_child_blockers() {
     assert!(super::first_in_flow_top_margin(&dom, &cascade, usize::MAX, 800.0).is_none());
 }
 
+/// Defensive computed-missing and display-mismatch fallbacks.
+///
+/// A truncated cascade (fewer computed entries than DOM nodes) skips the
+/// child, and a computed `display: none` that disagrees with the bridged
+/// style also skips it. Both are caller-responsibility violations that the
+/// scene treats as no adjoining margin.
+#[test]
+fn body_margin_helpers_cover_computed_fallbacks() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded =
+        parse(&b"<div id=b style='margin-top:10px'></div>"[..], &opts).expect("parse Ok");
+    let mut cascade = build_cascaded(&uncascaded);
+    let mut dom = uncascaded.dom;
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout Ok");
+    let body_idx = (0..dom.node_count())
+        .find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("body"))
+        .expect("body resolves");
+    let empty_uncascaded = parse(&b""[..], &opts).expect("parse Ok");
+    let empty_cascade = build_cascaded(&empty_uncascaded);
+    assert!(super::first_in_flow_top_margin(&dom, &empty_cascade, body_idx, 800.0).is_none());
+    let child_idx = (0..dom.node_count())
+        .find(|&i| dom.element_attribute(i, "id") == Some("b"))
+        .expect("probe resolves");
+    cascade.computed[child_idx].display = raikiri_style::property::DisplayValue::None;
+    assert!(super::first_in_flow_top_margin(&dom, &cascade, body_idx, 800.0).is_none());
+}
+
 /// `<html>` barriers fall back to the plain sum.
 ///
 /// An `<html>` top border disables `<html>`/`<body>` collapsing per CSS 2.1

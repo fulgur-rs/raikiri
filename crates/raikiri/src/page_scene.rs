@@ -399,7 +399,7 @@ fn first_in_flow_top_margin(
     let body = dom.get_node(body_idx)?;
     for &child_idx in &body.children {
         let Some(child) = dom.get_node(child_idx) else {
-            continue;
+            continue; // cov:ignore: body children indices are always valid in a well-formed Document
         };
         if !child.is_in_document()
             || child.is_non_rendered_html_element()
@@ -433,7 +433,7 @@ fn first_in_flow_top_margin(
                 }
                 return Some(used_margin_px(computed.margin.top, content_width));
             }
-            _ => continue,
+            _ => continue, // cov:ignore: body children via parsing are only Text or Element
         }
     }
     None
