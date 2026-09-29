@@ -241,31 +241,36 @@ macro_rules! longhands {
     };
 
     (@computed as_specified) => {};
-    (@computed via $T:ty) => {};
-    (@computed $f:ident $($rest:ty)?) => {
+    (@computed via $T:ident -> $C:ty) => {};
+    (@computed $f:ident $($T:ident -> $C:ty)?) => {
         compile_error!(
-            "`computed:` takes `as_specified` or `via <Type>` naming a type that \
-             implements `Longhand`; call a hook function from that type's `compute`"
+            "`computed:` takes `as_specified` or `via Marker -> ComputedType`, where \
+             `Marker` implements `Longhand`; call a hook function from that type's `compute`"
         );
     };
 
     // Per-entry computed-value behavior. `$comp` is the parenthesized
     // `computed:` spec. The catch-all arms only keep a rejected spec from
     // adding match errors on top of the `@computed` `compile_error!`.
-    (@computed_ty (via $T:ty) $st:ty) => { <$T as crate::property::Longhand>::Computed };
+    //
+    // The computed field type is the one spelled in the table, not
+    // `<Marker as Longhand>::Computed`: `Longhand` is crate-private and the
+    // field is public. The two must agree, or `compute`'s result does not
+    // type-check against the field.
+    (@computed_ty (via $T:ident -> $C:ty) $st:ty) => { $C };
     (@computed_ty $comp:tt $st:ty) => { $st };
 
-    (@compute (via $T:ty) $e:expr, $cx:ident) => {
+    (@compute (via $T:ident -> $C:ty) $e:expr, $cx:ident) => {
         <$T as crate::property::Longhand>::compute($e, $cx)
     };
     (@compute $comp:tt $e:expr, $cx:ident) => { $e };
 
-    (@lift (via $T:ty) $e:expr) => { <$T as crate::property::Longhand>::lift($e) };
+    (@lift (via $T:ident -> $C:ty) $e:expr) => { <$T as crate::property::Longhand>::lift($e) };
     (@lift $comp:tt $e:expr) => { $e };
 
     // Page-context absolutization keeps the value in `PropertyValue`, so a
     // `via` entry is computed and lifted back to its specified form.
-    (@page (via $T:ty) $e:expr, $cx:ident) => {
+    (@page (via $T:ident -> $C:ty) $e:expr, $cx:ident) => {
         <$T as crate::property::Longhand>::lift(
             <$T as crate::property::Longhand>::compute($e, $cx),
         )
@@ -319,7 +324,7 @@ macro_rules! longhands {
                 initial: $init:expr,
                 inherited: $inh:ident,
                 $(parse: $parse:path,)?
-                computed: $comp:ident $($hook:ty)?,
+                computed: $comp:ident $($hook:ident -> $cty:ty)?,
                 field: $field:ident,
                 sample: $sample:expr $(,)?
             }
@@ -357,7 +362,7 @@ macro_rules! longhands {
             longhands!(@value_enum $V $css $vt $({ $($kw)* })?);
             longhands!(@initial $V $vt $({ $($kw)* })? $init);
             longhands!(@inherited $inh);
-            longhands!(@computed $comp $($hook)?);
+            longhands!(@computed $comp $($hook -> $cty)?);
         )*
 
         /// Table-declared specified values, embedded as
@@ -377,7 +382,7 @@ macro_rules! longhands {
         pub struct ComputedTable {
             $(
                 $(#[$m])*
-                pub $field: longhands!(@computed_ty ($comp $($hook)?) longhands!(@ty $V $vt $({ $($kw)* })?)),
+                pub $field: longhands!(@computed_ty ($comp $($hook -> $cty)?) longhands!(@ty $V $vt $({ $($kw)* })?)),
             )*
         }
 
@@ -394,7 +399,7 @@ macro_rules! longhands {
             #[allow(unused_variables)]
             pub(crate) fn inherit_from(parent: &ComputedTable) -> Self {
                 Self {
-                    $( $field: longhands!(@inherit $inh ($comp $($hook)?) parent $field $V $vt $({ $($kw)* })? ; $init), )*
+                    $( $field: longhands!(@inherit $inh ($comp $($hook -> $cty)?) parent $field $V $vt $({ $($kw)* })? ; $init), )*
                 }
             }
 
@@ -404,7 +409,7 @@ macro_rules! longhands {
             #[allow(unused_variables)]
             pub(crate) fn absolutize(self, cx: &crate::property::AbsolutizeCx<'_>) -> ComputedTable {
                 ComputedTable {
-                    $( $field: longhands!(@compute ($comp $($hook)?) self.$field, cx), )*
+                    $( $field: longhands!(@compute ($comp $($hook -> $cty)?) self.$field, cx), )*
                 }
             }
 
@@ -428,7 +433,7 @@ macro_rules! longhands {
                 Self {
                     $(
                         $field: longhands!(
-                            @compute ($comp $($hook)?)
+                            @compute ($comp $($hook -> $cty)?)
                             longhands!(@initial_value $V $vt $({ $($kw)* })? $init),
                             cx
                         ),
@@ -448,7 +453,7 @@ macro_rules! longhands {
             cx: &crate::property::AbsolutizeCx<'_>,
         ) -> PropertyValue {
             match value {
-                $( PropertyValue::$V(v) => PropertyValue::$V(longhands!(@page ($comp $($hook)?) v, cx)), )*
+                $( PropertyValue::$V(v) => PropertyValue::$V(longhands!(@page ($comp $($hook -> $cty)?) v, cx)), )*
                 other => unreachable!("not a table-declared property value: {other:?}"),
             }
         }

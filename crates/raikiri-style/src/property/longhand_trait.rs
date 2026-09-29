@@ -19,6 +19,9 @@ use crate::resolve::{ComputedLength, ResolveContext};
 /// element's (or page context's) own computed `font-size`, its own used
 /// line height for `lh` (`None` for `line-height: normal`), and the
 /// tree-global [`ResolveContext`].
+// The length inputs are read only through extractors; no table hook asks
+// for them outside tests yet.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AbsolutizeCx<'a> {
     pub(crate) font_size: ComputedLength,
@@ -71,10 +74,12 @@ pub(crate) trait FromCx<'a>: Sized {
 }
 
 /// The element's own computed `font-size`.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FontSize(pub(crate) ComputedLength);
 
 /// The element's own used line height (`None` for `line-height: normal`).
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct OwnLineHeight(pub(crate) Option<ComputedLength>);
 
