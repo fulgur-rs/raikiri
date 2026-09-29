@@ -2962,6 +2962,19 @@ pub enum ContentAlignmentValue {
     FlexEnd,
 }
 
+css_keywords!(ContentAlignmentValue {
+    Normal => "normal",
+    Stretch => "stretch",
+    SpaceBetween => "space-between",
+    SpaceEvenly => "space-evenly",
+    SpaceAround => "space-around",
+    Center => "center",
+    Start => "start",
+    End => "end",
+    FlexStart => "flex-start",
+    FlexEnd => "flex-end",
+});
+
 /// `align-items` value (a "self-alignment" keyword set based on CSS Box
 /// Alignment 3 §4.1 `<self-position>`).
 ///
