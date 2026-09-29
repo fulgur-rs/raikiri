@@ -608,6 +608,15 @@ impl Node {
         }
     }
 
+    /// Element namespace URI, or `None` for non-elements and the HTML namespace.
+    #[inline]
+    pub fn namespace_uri(&self) -> Option<&str> {
+        match &self.data {
+            NodeData::Element(element) => element.namespace.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Return a null-namespace element attribute value, if present.
     ///
     /// The `style` attribute is stored separately from the ordinary attribute

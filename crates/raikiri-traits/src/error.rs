@@ -52,8 +52,8 @@ pub enum RenderError {
         /// 観測された実 value。
         actual: u64,
     },
-    /// Consumer の sink method (accept_page / finish_render) が Err を返した。
-    Sink(std::io::Error),
+    /// A consumer property observer returned an IO error.
+    Observer(std::io::Error),
     /// Config 不整合 (BatchConfig.initial_registry が不正 等)。
     Configuration(String),
     /// target-* が `max_target_iterations` 内に収束しなかった (round 6 review #5
@@ -76,7 +76,7 @@ pub enum RenderError {
     /// 利用できない API への call。実装完了時にこの variant は
     /// **削除される** (breaking change として release notes に明記)。Consumer
     /// は API が未実装の期間のみ pattern match し、実装完了時に arm 削除でよい。
-    /// `feature` は呼ばれた unimplemented API の識別 (`"plan"`, `"render_streaming"` 等)。
+    /// `feature` は呼ばれた unimplemented API の識別 (a feature name)。
     Unimplemented {
         /// unimplemented API の名前。
         feature: &'static str,
@@ -104,7 +104,7 @@ impl std::fmt::Display for RenderError {
                     "Render limit exceeded: {kind:?} (limit={limit}, actual={actual})"
                 )
             }
-            Self::Sink(_) => write!(f, "Sink returned I/O error"),
+            Self::Observer(_) => write!(f, "Observer returned I/O error"),
             Self::Configuration(msg) => write!(f, "Configuration error: {msg}"),
             Self::TargetDidNotConverge { iterations } => {
                 write!(f, "target-* did not converge in {iterations} iterations")
@@ -138,7 +138,7 @@ impl std::error::Error for RenderError {
             Self::Resolver(e) => Some(e),
             Self::Network(e) => Some(e),
             Self::Policy(v) => Some(&**v),
-            Self::Sink(e) | Self::Io(e) => Some(e),
+            Self::Observer(e) | Self::Io(e) => Some(e),
             Self::LimitExceeded { .. }
             | Self::Configuration(_)
             | Self::TargetDidNotConverge { .. }
@@ -193,20 +193,6 @@ pub enum LimitKind {
     /// 巨大 HTML を送りつけて OOM を誘発する DoS 対策としては `InputBytes` の
     /// 方が直接的。
     InputBytes,
-}
-
-/// AbortSignal による graceful shutdown を error と別カテゴリで表現。
-/// `render_*` は `Result<RenderStatus, RenderError>` を返す。
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum RenderStatus {
-    /// 全ページ emit 完了、`finish_render` も成功。
-    Completed(RenderSummary),
-    /// AbortSignal による中断。直前まで emit 済み、`finish_render` は呼ばれない。
-    Aborted {
-        /// 中断前に commit されたページ数。
-        partial_pages: u32,
-    },
 }
 
 /// Render 完了 summary (Finding #4 completion protocol)。
@@ -492,57 +478,4 @@ impl std::fmt::Display for LayoutError {
 impl std::error::Error for LayoutError {}
 
 #[cfg(test)]
-mod unimplemented_variant_tests {
-    use super::*;
-
-    #[test]
-    fn unimplemented_display_includes_feature_and_hint() {
-        let err = RenderError::Unimplemented {
-            feature: "plan",
-            migration_hint: "pagination 実装後に populate予定",
-        };
-        let s = format!("{err}");
-        assert!(
-            s.contains("plan"),
-            "display must include feature: got {s:?}"
-        );
-        assert!(
-            s.contains("pagination"),
-            "display must include hint: got {s:?}"
-        );
-        assert!(
-            s.contains("not implemented"),
-            "display must include 'not implemented': got {s:?}"
-        );
-    }
-
-    #[test]
-    fn unimplemented_source_is_none() {
-        use std::error::Error;
-        let err = RenderError::Unimplemented {
-            feature: "render_streaming",
-            migration_hint: "hint",
-        };
-        assert!(err.source().is_none(), "Unimplemented has no inner cause");
-    }
-
-    #[test]
-    fn page_geometry_nonconvergence_is_structured_and_terminal() {
-        use std::error::Error;
-
-        let err = RenderError::PageGeometryDidNotConverge { iterations: 3 };
-        assert_eq!(
-            err.to_string(),
-            "page geometry did not converge in 3 iterations"
-        );
-        assert!(err.source().is_none());
-    }
-
-    #[test]
-    fn layout_error_resolver_variant_converts_to_render_error_resolver() {
-        let re = ResolverError::Decode("bad PNG".into());
-        let le = LayoutError::Resolver(re);
-        let render_err: RenderError = le.into();
-        assert!(matches!(render_err, RenderError::Resolver(_)));
-    }
-}
+mod tests;

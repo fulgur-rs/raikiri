@@ -18,8 +18,6 @@ fn nodeid_construct() {
 
 #[test]
 fn page_placeholders_default_construct() {
-    let _ = PageFragment::default();
-    let _ = PageFragment::new();
     let _ = PageBox::default();
     let _ = PageContext::default();
     let _ = LayoutBuffer::default();
@@ -33,14 +31,11 @@ fn page_placeholders_default_construct() {
 #[test]
 fn dyn_traits_are_object_safe() {
     fn _assert<T: ?Sized>() {}
-    _assert::<dyn RenderSink>();
-    _assert::<dyn PageEventObserver>();
-    _assert::<dyn PagePaintSink>();
     _assert::<dyn ReplacedResolver>();
     _assert::<dyn ImagePixelSource>();
     _assert::<dyn NetworkProvider>();
     _assert::<dyn ResourcePolicy>();
-    // Strategy traits (LookaheadPolicy / TargetResolver / EmissionPolicy /
+    // Strategy traits (LookaheadPolicy / TargetResolver /
     // ReflowPolicy) は generic param 経由で受ける (§4 `render_with<L,T,E,R>`
     // 設計) ため object-safety は要件外。将来 dyn 化が必要なら判断。
     //
@@ -105,9 +100,8 @@ fn all_configs_default_construct() {
     let _ = LookaheadConfig::default();
     let _ = RenderLimits::default();
     let _ = RenderLimits::new();
-    let _ = StreamingConfig::default();
+    let _ = LayoutConfig::default();
     let _ = BatchConfig::default();
-    let _ = PlanConfig::default();
 }
 
 #[test]
@@ -191,7 +185,7 @@ fn render_limits_max_parse_warnings_builder_roundtrip() {
 fn streaming_config_builder_roundtrip() {
     let limits = RenderLimits::builder().max_document_pages(Some(50)).build();
     let controller = AbortController::new();
-    let cfg = StreamingConfig::builder()
+    let cfg = LayoutConfig::builder()
         .limits(limits)
         .signal(Some(controller.signal.clone()))
         .build();
@@ -204,13 +198,6 @@ fn batch_config_builder_roundtrip() {
     let limits = RenderLimits::builder().max_document_pages(Some(30)).build();
     let cfg = BatchConfig::builder().limits(limits).build();
     assert_eq!(cfg.limits.max_document_pages, Some(30));
-}
-
-#[test]
-fn plan_config_builder_roundtrip() {
-    let lookahead = LookaheadConfig::builder().widow_line_buffer(3).build();
-    let cfg = PlanConfig::builder().lookahead(lookahead).build();
-    assert_eq!(cfg.lookahead.widow_line_buffer, 3);
 }
 
 // ── Plan placeholders ───────────────────────────────────────
@@ -635,23 +622,6 @@ fn render_error_network_policy_nested_source_chain() {
     );
 }
 
-// ── RenderStatus::Aborted contract ─
-
-/// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
-/// field が Consumer から観測可能で、round-trip することを固定する。
-/// 実 render pipeline 経由での partial_pages 追跡は将来
-/// (`abort-signal-integration` / `renderstatus-aborted-impl`) で verify。
-#[test]
-fn render_status_aborted_carries_partial_pages() {
-    let s = RenderStatus::Aborted { partial_pages: 7 };
-    match s {
-        RenderStatus::Aborted { partial_pages } => assert_eq!(partial_pages, 7),
-        RenderStatus::Completed(_) => panic!("expected Aborted"),
-    }
-}
-
-// ── Element trait extension ──────
-
 #[test]
 fn element_defaults_return_none_or_false() {
     use crate::Element;
@@ -777,4 +747,23 @@ fn stylesheet_kind_is_copy_send_eq() {
     assert_ne!(StylesheetKind::UserAgent, StylesheetKind::Author);
     assert_ne!(StylesheetKind::UserAgent, StylesheetKind::User);
     assert_ne!(StylesheetKind::User, StylesheetKind::Author);
+}
+
+#[test]
+fn layout_config_media_defaults_and_builder() {
+    use raikiri_style::{MediaContext, MediaType};
+    assert_eq!(LayoutConfig::default().media_context, MediaContext::print());
+    let media = MediaContext::with_viewport(MediaType::Print, 261, 161);
+    let config = LayoutConfig::builder().media_context(media).build();
+    assert_eq!(config.media_context, media);
+    assert_eq!(config.media_context.viewport_width(), 261);
+    assert_eq!(config.media_context.viewport_height(), 161);
+}
+
+#[test]
+fn observer_error_preserves_source() {
+    use std::error::Error;
+    let error = RenderError::Observer(std::io::Error::other("observer failed"));
+    assert_eq!(error.source().unwrap().to_string(), "observer failed");
+    assert!(error.to_string().contains("Observer"));
 }

@@ -2080,8 +2080,10 @@ fn layout_page_fragments_classifies_replaced_and_skips_non_rendered_nodes() {
 
 #[test]
 fn page_fragment_geometry_table_groups_fragments_by_node_id() {
-    let mut first_page = PageFragment::default();
-    first_page.page_index = 0;
+    let mut first_page = PageFragment {
+        page_index: 0,
+        ..Default::default()
+    };
     first_page.items.push(PageFragmentItem::new(
         NodeId::new(9),
         PageFragmentRect::new(0.0, 0.0, 10.0, 4.0),
@@ -2090,8 +2092,10 @@ fn page_fragment_geometry_table_groups_fragments_by_node_id() {
         2,
         false,
     ));
-    let mut second_page = PageFragment::default();
-    second_page.page_index = 1;
+    let mut second_page = PageFragment {
+        page_index: 1,
+        ..Default::default()
+    };
     second_page.items.push(PageFragmentItem::new(
         NodeId::new(9),
         PageFragmentRect::new(0.0, 0.0, 10.0, 4.0),
@@ -2840,3 +2844,5 @@ fn layout_single_page_resolves_direct_absolute_auto_width_with_margin() {
     let layout = doc.nodes[abs].unrounded_layout;
     assert!((layout.size.width - 80.0).abs() < 0.001);
 }
+
+mod page_fragments_tests;

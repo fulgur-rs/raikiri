@@ -6,13 +6,14 @@
 //! - Document layer: [`parse_html`] / [`parse_html_with_limits`] /
 //!   [`parse_html_with_resources`] assemble a cascaded [`HtmlDocument`];
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
-//! - Render layer: [`render_streaming`] is the single page-streaming entry
-//!   point; [`RenderOptions`] combines the consumer resource handoff
-//!   ([`RenderResources`]) with page-event and consumer-property observers.
+//! - Layout layer: [`layout`] returns an owned [`DocumentLayout`] with
+//!   borrowed [`Page`] and [`Fragment`] views for drawing consumers.
 
 mod cascade;
 mod document;
+mod document_layout;
 mod document_parse;
+mod font_context;
 mod import;
 mod parse;
 mod render;
@@ -28,9 +29,15 @@ pub use cascade::{
     build_rule_tree_with_consumer_properties,
 };
 pub use document::HtmlDocument;
+pub use document_layout::{
+    Anchor, AnchorIndex, DocumentLayout, DomView, Fragment, FragmentKind, LayoutOptions,
+    LayoutStatus, Link, Page, PageGeometry, PageMode, RepeatKind, layout,
+};
 pub use document_parse::{parse_html, parse_html_with_limits};
+pub use font_context::{
+    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES,
+};
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
-pub use render::{RenderOptions, plan, render_streaming};
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
     ResourceLimits, parse_html_with_resources,
@@ -44,8 +51,13 @@ pub use ua::MINIMAL_UA_CSS;
 // them without depending on the style or text-layout implementation crates.
 pub use parley::FontContext;
 pub use raikiri_style::{
-    CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext,
-    PageContextQuery,
+    CascadeResult, ComputedValues, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
+    MediaContext, MediaType, PageCascadeResult, PageContextQuery,
+};
+
+pub use raikiri_traits::{
+    ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, LayoutConfigBuilder, NodeId,
+    NodeKind, PageDefaults, PaintInsets, PaintRect, RenderError, RenderWarning,
 };
 
 #[cfg(test)]

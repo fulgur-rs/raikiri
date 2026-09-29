@@ -1,14 +1,8 @@
-//! Strategy traits — Streaming と Batch で切り替わる per-render policy。
-//!
-//! raikiri-dom が各 trait の default 実装群 (BoundedLookahead, UnboundedLookahead,
-//! PlaceholderTargetResolver, RegistryTargetResolver, ImmediateEmission,
-//! DeferredEmission, AggressiveCommit) を提供する。Consumer は
-//! `render_with()` 経由で任意 strategy を組み合わせられる (§4 参照)。
+//! Layout lookahead, target resolution, and reflow strategy contracts.
 
 use std::marker::PhantomData;
 
-use crate::page::{PageContext, PageFragment};
-use crate::sink::RenderSink;
+use crate::page::PageContext;
 
 /// LayoutBuffer の lookahead 幅を制御する strategy trait。
 pub trait LookaheadPolicy {
@@ -32,15 +26,6 @@ pub trait LookaheadPolicy {
 pub trait TargetResolver {
     /// 1 target 参照を resolve。
     fn resolve(&mut self, req: TargetRequest<'_>, ctx: &PageContext) -> ResolvedTarget;
-}
-
-/// PageFragment の emit タイミング (immediate / deferred)。
-pub trait EmissionPolicy {
-    /// 1 ページの emit。
-    fn emit(&mut self, page: PageFragment, sink: &mut dyn RenderSink) -> std::io::Result<()>;
-
-    /// 全ページ emit 完了通知。
-    fn finish(&mut self, sink: &mut dyn RenderSink) -> std::io::Result<()>;
 }
 
 /// probe 限界到達時の挙動、および dirty tracking の余地。
