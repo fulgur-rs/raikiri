@@ -2406,7 +2406,6 @@ const LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT: u64 = 1 << 63;
 /// preserving the soft-wrap opportunity: Parley always allows a break after
 /// an inline box, unlike an NBSP migration which forbids it.
 const WORD_SPACE_EDGE_INLINE_BOX_ID_BASE: u64 = 1 << 61;
-const WORD_SPACE_EDGE_INLINE_BOX_ID_LIMIT: u64 = 1 << 62;
 
 /// Replace U+00A0 in Parley's input with a nonpainting advance box.
 ///
@@ -6033,16 +6032,9 @@ pub(crate) fn preshape_text(
         if job.word_space_edge_spaces == 0 && job.word_space_edge_ideos == 0 {
             continue;
         }
-        // Defensive: the stripping site only keeps edge boxes facing inline
-        // content, but a later tab/NBSP rewrite could have emptied the run in
-        // an unexpected way. An edge box on an empty run is still the correct
-        // lone-separator advance, so only guard the id range and measurements.
-        if job.autospace_boxes.iter().any(|inline_box| {
-            (WORD_SPACE_EDGE_INLINE_BOX_ID_BASE..WORD_SPACE_EDGE_INLINE_BOX_ID_LIMIT)
-                .contains(&inline_box.id)
-        }) {
-            continue; // cov:ignore: edge id base is distinct from autospace and line-break ranges, so a collision cannot occur.
-        }
+        // Edge id base (1<<61) is distinct from autospace (u64::MAX-...) and
+        // line-break NBSP (1<<62..1<<63) ranges, so a collision cannot occur.
+        // No guard is needed; the single edge box per layout keeps its fixed id.
         let word_spacing = if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
             job.word_spacing_raw
         } else {

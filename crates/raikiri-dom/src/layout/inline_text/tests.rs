@@ -4384,3 +4384,64 @@ fn word_space_transform_ideographic_space_trailing_edge_preserves_advance() {
         reference_layout.width()
     );
 }
+
+#[test]
+fn word_space_transform_space_trailing_edge_with_negative_word_spacing() {
+    // Negative `word-spacing` flows into the edge advance probe (matching the
+    // Parley builder, which pushes negative lengths). This covers the
+    // `word_spacing` true arm in edge-box measurement and proves the edge
+    // still preserves inter-node advance when spacing is negative.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:space;word-spacing:-2px"),
+    );
+    let first = doc.append_text(block, "a\u{200B}");
+    let second = doc.append_text(block, "b");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let first_layout = doc.nodes[first].text_layout().expect("first shaped");
+    let mut has_edge_box = false;
+    for line in first_layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item
+                && inline_box.id == (1u64 << 61)
+            {
+                has_edge_box = true;
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        has_edge_box,
+        "negative word-spacing edge must still shape as an advance box"
+    );
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "edge siblings must share a line, got first.y={} second.y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        second_loc.location.x >= first_loc.location.x + first_loc.size.width - 1.0,
+        "second must start at first right edge even with negative spacing, got first.x={} first.w={} second.x={}",
+        first_loc.location.x,
+        first_loc.size.width,
+        second_loc.location.x
+    );
+}
