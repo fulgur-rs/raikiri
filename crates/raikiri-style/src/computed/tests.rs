@@ -590,19 +590,18 @@ fn non_initial_parent() -> ComputedValues {
             horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
             vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
         },
-        // CSS Color 4 §3.3: non-inherited, so use a value different
-        // from the initial `1` (as required for non_initial_parent).
-        opacity: 0.75,
         // Table-declared longhands: CSS Compositing and Blending Level 1
-        // §3.4.2 isolation and CSS Images Module Level 3 §5.1 object-fit are
-        // non-inherited, so use values different from the initial `auto` /
-        // `fill` (as required for non_initial_parent).
+        // §3.4.2 isolation, CSS Images Module Level 3 §5.1 object-fit and
+        // CSS Color 4 §3.3 opacity are non-inherited, so use values
+        // different from the initial `auto` / `fill` / `1` (as required for
+        // non_initial_parent).
         // CSS Tables 3 §8 empty-cells is inherited, so use a value different
         // from the initial `show` as well.
         longhands: ComputedTable {
             isolation: Isolation::Isolate,
             object_fit: ObjectFit::Cover,
             empty_cells: EmptyCellsValue::Hide,
+            opacity: 0.75,
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
         // a value different from the initial `normal` (as above).
@@ -909,4 +908,15 @@ fn inherit_from_initial_parent_yields_initial() {
         ComputedValues::inherit_from(&ComputedValues::initial()),
         ComputedValues::initial(),
     );
+}
+
+/// `ComputedTable::initial()` computes each hooked entry's initial value
+/// through its `compute` step in the initial context; the result must be
+/// the property's computed initial value.
+#[test]
+fn computed_table_initial_computes_hooked_initials() {
+    let initial = ComputedTable::initial();
+    // CSS Color 4 §3.3: initial `1` (already inside the clamp range).
+    assert_eq!(initial.opacity, 1.0);
+    assert_eq!(ComputedValues::initial().opacity, 1.0);
 }

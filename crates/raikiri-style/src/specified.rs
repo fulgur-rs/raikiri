@@ -574,10 +574,6 @@ pub struct SpecifiedValues {
     /// **Specified** `object-position`; phase 3 absolutizes `<length-percentage>` in each offset,
     /// as for `background_position`, reusing the [`CssPosition`] type.
     pub object_position: CssPosition,
-    /// **Specified** `opacity`; retains even out-of-range values without clamping (see "specified
-    /// preserves, computed clamps" in the [`ComputedValues::opacity`] docs). Phase 3
-    /// ([`Self::absolutize_with`]) clamps it.
-    pub opacity: f32,
     /// Specified values of the longhands declared in the `properties!` table of
     /// `property/decl.rs` (such as `isolation`). Each is also reachable as a field of
     /// `SpecifiedValues` itself through `Deref` (for example `values.isolation`); see
@@ -917,8 +913,6 @@ impl SpecifiedValues {
                 horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                 vertical: CssPositionOffset::Start(Length::Percent(50.0)),
             },
-            // CSS Color 4 §3.3: opacity is initially `1`.
-            opacity: 1.0,
             // Each table-declared longhand at its initial value.
             longhands: SpecifiedTable::initial(),
             // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode is initially `normal`.
@@ -1282,8 +1276,6 @@ impl SpecifiedValues {
                 horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                 vertical: CssPositionOffset::Start(Length::Percent(50.0)),
             },
-            // non-inherited (CSS Color 4 §3.3 "Inherited: no").
-            opacity: 1.0,
             // Table-declared longhands: each entry's `inherited:` key decides
             // between the parent's computed value and the initial value.
             longhands: SpecifiedTable::inherit_from(&parent.longhands),
@@ -2054,33 +2046,6 @@ impl SpecifiedValues {
             // winner or inherited value.
             orphans: self.orphans,
             widows: self.widows,
-            // CSS Color 4 §3.3: "Opacity values outside the range `[0, 1]`
-            // are not invalid, and are preserved in specified values, but
-            // are clamped to the range `[0, 1]` in computed values." — the
-            // one place this crate performs that clamp (`ComputedValues::opacity`
-            // doc's "specified preserves, computed clamps" note). `f32::clamp`
-            // correctly maps the `+Inf`/`-Inf` a huge literal (`opacity:
-            // 1e40`/`opacity: -1e40`) can produce to `1.0`/`0.0` without
-            // panicking (only NaN bounds panic, and neither bound here is
-            // NaN). When `self` was built through the ordinary parse ->
-            // cascade pipeline, `self.opacity` also never carries NaN by
-            // the time it reaches here: `property.rs`'s numeric-token
-            // acquisition already corrects the one cssparser artifact that
-            // could otherwise produce it (a huge-*exponent* literal like
-            // `opacity: 0e999`, `property.rs` module doc's "Numeric-token
-            // NaN stabilization" section), and `parse_opacity_value`'s
-            // `!is_nan()` guard — narrower than `is_finite()` specifically
-            // so `+Inf`/`-Inf` still reach this clamp — remains as
-            // defense-in-depth on top of that (`parse_opacity_value` doc's
-            // "`!is_nan()` guard" section is canonical). But
-            // `self.opacity` is a public field on a `pub fn` — a caller
-            // that builds a `SpecifiedValues` directly and assigns `NaN`
-            // here bypasses that parse-time guard entirely, and
-            // `f32::clamp` passes a NaN `self` through unchanged (only a
-            // NaN *bound* panics); this arm does not protect against that
-            // direct-construction case, only against the pipeline's own
-            // out-of-range values.
-            opacity: self.opacity.clamp(0.0, 1.0),
             // Table-declared longhands: each goes through its own `Longhand::compute`.
             longhands: self.longhands.absolutize(&AbsolutizeCx::new(
                 font_size,

@@ -1092,13 +1092,6 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (`parse_position_branch3_strict` doc's "Why" section).
         "object-position" => parse_position_strict(input).map(PropertyValue::ObjectPosition),
         "transform-origin" => parse_transform_origin(input),
-        // CSS Color 4 §3.3
-        // <https://www.w3.org/TR/css-color-4/#transparency>. Value:
-        // `<opacity-value> = <number> | <percentage>`. The parsed number is
-        // stored verbatim, out-of-range included — see
-        // `PropertyValue::Opacity` doc's "specified preserves, computed
-        // clamps" note and `parse_opacity_value` doc.
-        "opacity" => parse_opacity_value(input).map(PropertyValue::Opacity),
         // CSS Compositing and Blending Level 1 §3.4.1
         // <https://www.w3.org/TR/compositing-1/#mix-blend-mode>. Grammar:
         // `<blend-mode>` — see `MixBlendMode` doc for the 16-keyword list.

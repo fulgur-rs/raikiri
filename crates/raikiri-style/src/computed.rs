@@ -1538,44 +1538,6 @@ pub struct ComputedValues {
     /// `<length-percentage>` payload is absolutized against font-size/
     /// line-height only, not against a box size.
     pub object_position: ComputedCssPosition,
-    /// `opacity`. **non-inherited**, initial: `1` (CSS Color 4 §3.3
-    /// "Transparency: the opacity property"
-    /// <https://www.w3.org/TR/css-color-4/#transparency>, "Value:
-    /// `<opacity-value>`", "Inherited: no"). Grammar: `<opacity-value> =
-    /// <number> | <percentage>`.
-    ///
-    /// # Specified preserves, computed clamps
-    ///
-    /// Same §, verbatim: "Opacity values outside the range \[0, 1\] are not
-    /// invalid, and are preserved in specified values, but are clamped to
-    /// the range \[0, 1\] in computed values." A value produced by the
-    /// ordinary parse -> cascade pipeline through this field always lands
-    /// in `[0.0, 1.0]`: this crate's `property` module numeric-token
-    /// acquisition (`expect_number_stable`/`expect_percentage_stable`)
-    /// corrects the one cssparser tokenizer artifact that could otherwise
-    /// produce a NaN parse (a huge-exponent, zero-mantissa literal like
-    /// `opacity: 0e999`), and `parse_opacity_value`'s `!is_nan()` guard
-    /// remains on top as defense-in-depth; the `[0, 1]` clamp for every
-    /// other out-of-range value (including `+Inf`/`-Inf`) happens in
-    /// [`crate::specified::SpecifiedValues::absolutize_with`] (phase 3) and
-    /// its page-context sibling in [`crate::page`]; the corresponding
-    /// specified-layer field
-    /// ([`crate::specified::SpecifiedValues::opacity`]) is the one that
-    /// preserves an out-of-range parse (still NaN-free), per
-    /// [`crate::property::PropertyValue::Opacity`]'s doc.
-    ///
-    /// This is **not** a type-level invariant this public field enforces
-    /// against direct construction — [`Self`] has no private state guarding
-    /// it, so code in this crate (or, via a future non-`#[non_exhaustive]`
-    /// bump, outside it) that builds a `ComputedValues` by struct literal
-    /// and assigns this field directly (bypassing `finalize`/
-    /// `absolutize_in_page_context`) can still put a NaN or out-of-range
-    /// `f32` here; it only describes what the pipeline itself guarantees.
-    ///
-    /// The actual alpha-blend application of this value against a node's
-    /// paint output is out of this crate's scope — `raikiri-paint`
-    /// consumes it as plain data.
-    pub opacity: f32,
     /// Computed values of the longhands declared in the `properties!` table
     /// of `property/decl.rs` (such as `isolation`). Each is also reachable as
     /// a field of `ComputedValues` itself through `Deref` (for example
@@ -2026,8 +1988,6 @@ impl ComputedValues {
                 )),
                 vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
             },
-            // CSS Color 4 §3.3: initial opacity is `1`.
-            opacity: 1.0,
             // Each table-declared longhand at its initial value.
             longhands: ComputedTable::initial(),
             // CSS Compositing and Blending 1 §3.4.1: initial
@@ -2081,7 +2041,7 @@ impl ComputedValues {
     /// The field documentation on [`Self`] is the canonical source for each
     /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side;
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_position / opacity / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout; and the longhands declared in `properties!`, according to their `inherited:` key).
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_position / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout; and the longhands declared in `properties!`, according to their `inherited:` key).
     ///
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation; for the table-declared longhands held in

@@ -100,19 +100,15 @@ fn initial_border_width_is_gated_to_zero_at_computed_layer() {
 /// also check this end-to-end through the real cascade.
 #[test]
 fn opacity_out_of_range_specified_clamps_at_finalize() {
-    let over = SpecifiedValues {
-        opacity: 2.0,
-        ..SpecifiedValues::initial()
-    };
+    let mut over = SpecifiedValues::initial();
+    over.opacity = 2.0;
     assert_eq!(
         over.finalize(&ComputedValues::initial(), &ResolveContext::initial())
             .opacity,
         1.0
     );
-    let under = SpecifiedValues {
-        opacity: -0.5,
-        ..SpecifiedValues::initial()
-    };
+    let mut under = SpecifiedValues::initial();
+    under.opacity = -0.5;
     assert_eq!(
         under
             .finalize(&ComputedValues::initial(), &ResolveContext::initial())
@@ -475,17 +471,16 @@ fn parent_fixture() -> ComputedValues {
                 ComputedLengthPercentage::Percent(10.0),
             ),
         },
-        // CSS Color 4 §3.3: non-inherited; set a value other than the initial `1`.
-        opacity: 0.25,
-        // Table-declared longhands: CSS Compositing and Blending Level 1 §3.4.2 isolation and CSS
-        // Images Module Level 3 §5.1 object-fit are non-inherited; set values other than the
-        // initial `auto` / `fill`.
+        // Table-declared longhands: CSS Compositing and Blending Level 1 §3.4.2 isolation, CSS
+        // Images Module Level 3 §5.1 object-fit and CSS Color 4 §3.3 opacity are non-inherited;
+        // set values other than the initial `auto` / `fill` / `1`.
         // CSS Tables 3 §8 empty-cells is inherited; set a value other than the initial `show` as
         // well.
         longhands: ComputedTable {
             isolation: Isolation::Isolate,
             object_fit: ObjectFit::Cover,
             empty_cells: EmptyCellsValue::Hide,
+            opacity: 0.25,
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.

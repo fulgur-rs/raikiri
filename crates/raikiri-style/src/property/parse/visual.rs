@@ -28,9 +28,9 @@ use super::text::*;
 /// parse time) — must preserve an out-of-range parse as-is. The two helpers
 /// are kept separate rather than shared despite the identical grammar,
 /// because sharing would silently store an already-clamped value at the
-/// specified layer. The actual clamp lives in
-/// [`crate::specified::SpecifiedValues::absolutize_with`] (phase 3) and its
-/// page-context sibling.
+/// specified layer. The actual clamp is the `compute:` hook of the `opacity`
+/// entry of the `properties!` table (phase 3), which both the element path
+/// and the page context apply.
 ///
 /// # `!is_nan()` guard — NaN, but *not* `+Inf`/`-Inf`, must be rejected
 ///
@@ -53,10 +53,10 @@ use super::text::*;
 /// here. **NaN is different** — `f32::clamp` returns `self` unchanged when
 /// `self` is NaN (only a NaN *bound* panics), so an unguarded NaN would
 /// sail through the clamp and reach
-/// [`crate::computed::ComputedValues::opacity`] — this guard is what keeps
-/// that field NaN-free for values that go through this parser (see that
-/// field's doc for the "ordinary parse -> cascade pipeline" scoping of
-/// that guarantee). An earlier iteration of this guard used `is_finite()`,
+/// [`ComputedTable::opacity`](crate::property::ComputedTable::opacity) —
+/// this guard is what keeps that field NaN-free for values that go through
+/// this parser (see the `opacity` entry of the `properties!` table for the
+/// "ordinary parse -> cascade pipeline" scoping of that guarantee). An earlier iteration of this guard used `is_finite()`,
 /// which rejects `+Inf`/`-Inf` too and wrongly dropped `-1e40`-shaped
 /// declarations — this helper deliberately does **not** reuse
 /// [`parse_nonneg_finite_number`](super::layout::parse_nonneg_finite_number)'s `is_finite()` pattern for that reason;
@@ -71,9 +71,13 @@ use super::text::*;
 /// this function ever sees the value, so in ordinary use `n`/`pct` here
 /// are never `NaN`. This `!is_nan()` check is kept as defense-in-depth —
 /// it costs nothing when the value isn't `NaN` and still protects
-/// [`crate::computed::ComputedValues::opacity`]'s NaN-free invariant if
-/// that upstream recovery is ever bypassed or extended incorrectly.
-pub(super) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
+/// [`ComputedTable::opacity`](crate::property::ComputedTable::opacity)'s
+/// NaN-free invariant if that upstream recovery is ever bypassed or extended
+/// incorrectly.
+///
+/// Named by the `opacity` entry of the `properties!` table in
+/// `property/decl.rs`, hence visible to the whole `property` module.
+pub(in crate::property) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
     let val = if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         if pct.is_nan() {
             return None;

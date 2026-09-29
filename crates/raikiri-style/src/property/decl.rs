@@ -106,8 +106,17 @@ use smol_str::SmolStr;
 
 // Not `use super::*`: that glob would also import this file's own module name
 // `decl`, which would then be ambiguous with the macro-expanded inline `decl`.
+use super::AbsolutizeCx;
 use super::parse::*;
 use super::types::*;
+
+// Hooks named by `compute:` / `computed: .. via` / `lift:` in the table below.
+
+/// `opacity`'s specified-to-computed step: clamp to `[0, 1]` (CSS Color 4
+/// §3.3; see the `"opacity"` entry for the NaN / infinity rationale).
+fn clamp_opacity(value: f32, _cx: &AbsolutizeCx<'_>) -> f32 {
+    value.clamp(0.0, 1.0)
+}
 
 // `#[longhands]` can only read an inline module, hence the nested `decl`.
 #[longhands]
@@ -1535,21 +1544,6 @@ mod decl {
         /// Since it contains `<length-percentage>`, absolutization is deferred to
         /// phase 3.
         ObjectPosition(CssPosition),
-        /// `opacity` — **non-inherited**, initial: `1` (CSS Color 4 §3.3
-        /// "Transparency: the opacity property"
-        /// <https://www.w3.org/TR/css-color-4/#transparency>, "Value:
-        /// `<opacity-value>`", "Inherited: no"). Grammar: `<opacity-value> =
-        /// <number> | <percentage>`.
-        ///
-        /// This payload **retains the specified value without clamping**. The spec
-        /// says: "Opacity values outside the range \[0, 1\] are not invalid, and
-        /// are preserved in specified values, but are clamped to the range
-        /// \[0, 1\] in computed values." Clamping belongs to phase 3
-        /// ([`crate::specified::SpecifiedValues::absolutize_with`] /
-        /// [`crate::page`]'s `absolutize_in_page_context`); this variant carries
-        /// even out-of-range values (for example, `opacity: 2`). Appended as a new
-        /// 1:1 disjoint field under the placement rule in [`PropertyKey`].
-        Opacity(f32),
         /// `mix-blend-mode` — **non-inherited**, initial:
         /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1 §3.4.1;
         /// see [`MixBlendMode`]). Appended as a new 1:1 disjoint field under the
@@ -2141,11 +2135,6 @@ mod decl {
         // the same reason as background-repeat: a new field disjoint one-to-one
         // from existing fields.
         ObjectPosition,
-        // opacity (CSS Color 4 §3.3, semantics on the matching
-        // PropertyValue::Opacity variant; sibling PropertyKey variants carry no
-        // per-variant docs per crate convention). Appended for the same reason as
-        // background-repeat: a new field disjoint one-to-one from existing fields.
-        Opacity,
         // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1,
         // semantics on the matching PropertyValue::MixBlendMode variant; sibling
         // PropertyKey variants carry no per-variant docs per crate convention).
@@ -2364,6 +2353,55 @@ mod decl {
             inherited: yes,
             parse: parse_empty_cells,
             sample: Hide,
+        },
+        /// CSS Color 4 §3.3 "Transparency: the opacity property"
+        /// <https://www.w3.org/TR/css-color-4/#transparency>. Grammar:
+        /// `<opacity-value> = <number> | <percentage>` (parsed by
+        /// [`parse_opacity_value`]). **Non-inherited**, initial `1`.
+        ///
+        /// # Specified preserves, computed clamps
+        ///
+        /// Same §, verbatim: "Opacity values outside the range \[0, 1\] are not
+        /// invalid, and are preserved in specified values, but are clamped to
+        /// the range \[0, 1\] in computed values." The specified value (the
+        /// `PropertyValue` payload and [`SpecifiedTable::opacity`]) therefore
+        /// carries even out-of-range values such as `opacity: 2`; the computed
+        /// value ([`ComputedTable::opacity`]) is clamped by this entry's
+        /// `compute:` hook, `clamp_opacity`, both in the element path
+        /// ([`SpecifiedValues::finalize`](crate::specified::SpecifiedValues::finalize))
+        /// and in the page context, where the clamped value is lifted back
+        /// into `PropertyValue::Opacity`.
+        ///
+        /// The clamp is [`f32::clamp`]: it maps the `+Inf` / `-Inf` a huge
+        /// literal (`opacity: 1e40` / `opacity: -1e40`) can produce to `1.0` /
+        /// `0.0` without panicking (only a NaN bound panics, and neither bound
+        /// is NaN), and passes a NaN value through unchanged. The ordinary
+        /// parse -> cascade pipeline never produces NaN: the crate's
+        /// numeric-token acquisition (`expect_number_stable` /
+        /// `expect_percentage_stable`) corrects the one cssparser tokenizer
+        /// artifact that could (a huge-exponent, zero-mantissa literal like
+        /// `opacity: 0e999`; see the "Numeric-token NaN stabilization" section
+        /// of the `property` module docs), and the `!is_nan()` guard of
+        /// [`parse_opacity_value`] (narrower than `is_finite()` so that `+Inf`
+        /// / `-Inf` still reach the clamp) remains as defense-in-depth. The
+        /// fields are public, though: a caller that builds a
+        /// `SpecifiedValues` or `ComputedValues` directly and stores NaN or an
+        /// out-of-range value bypasses both guarantees; they describe what the
+        /// pipeline guarantees, not a type-level invariant.
+        ///
+        /// The alpha-blend application of the value against a node's paint
+        /// output is out of this crate's scope: `raikiri-paint` consumes it as
+        /// plain data.
+        "opacity" => Opacity: f32 {
+            initial: 1.0,
+            inherited: no,
+            parse: parse_opacity_value,
+            compute: clamp_opacity,
+            // Deliberately out of range, so that the page-cascade corpus
+            // exercises the clamp: `2.0` is transformed (to `1.0`), where an
+            // in-range sample would clamp to itself and count as a
+            // pass-through.
+            sample: 2.0,
         },
     }
 }
