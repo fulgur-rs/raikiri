@@ -75,6 +75,29 @@ macro_rules! css_keywords {
 /// Also generated: `longhand_key_for_name`, `parse_longhand_value` and
 /// `LONGHAND_NAMES`, which the hand-written name lookup and `parse_value`
 /// dispatch fall through to.
+///
+/// # Adding a property
+///
+/// To add a new property to the table:
+///
+/// 1. Add a block to this invocation in `longhands.rs` with the property's CSS
+///    name, variant name, value type, initial value, inherited status, and
+///    computed function. Follow the format of existing entries like
+///    `"isolation" => Isolation { .. }`, using `value: keywords { .. }` for
+///    keyword enums or `value: SomeType` with `parse: some_fn` for other types.
+/// 2. Add the property's CSS name to `supported_property_names()` in `names.rs`,
+///    maintaining alphabetical order.
+/// 3. Hand edits are required at `property_key_samples!` and
+///    `property_value_variant_registry!` in `page/cascade/tests.rs`. A new
+///    variant also fails to compile until exhaustive patterns and field accesses
+///    are handled in `rule.rs`, `cascade/inherit.rs`, `page/absolutize.rs`,
+///    `specified.rs`, `computed.rs`, and `serialize.rs`. These sites are the
+///    remaining per-property implementation locations.
+///
+/// A table block currently generates only the PropertyKey and PropertyValue
+/// enum variants, the key() projection, the name-to-key lookup, and the value
+/// parsing dispatch. Computed-value computation, inheritance, absolute-length
+/// conversion, and serialization are handled by the remaining per-property sites.
 macro_rules! longhands {
     // ---- helpers -------------------------------------------------------
     (@ty $V:ident keywords { $($kw:tt)* }) => { $V };
