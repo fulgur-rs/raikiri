@@ -5,10 +5,10 @@ use crate::property::is_supported_property_name;
 
 /// `parse_value`'s dispatch match, `crates/raikiri-style/src/property/parse/mod.rs`:
 /// the scanned block starts right after `match normalized_name.as_str() {`
-/// and ends at that match's closing fall-through arm into the `longhands!`
-/// table and braces (`_ => parse_longhand_value(..),` / `}` / `}`, at the
+/// and ends at that match's closing fall-through arm into the declared
+/// longhands and braces (`_ => parse_longhand_value(..),` / `}` / `}`, at the
 /// 8/4/0-space indents the source uses for them). Only the hand-written arms
-/// are scanned; table-declared properties are not part of this block.
+/// are scanned; declared longhands are not part of this block.
 const PARSE_MOD_SOURCE: &str = include_str!("../parse/mod.rs");
 const PARSE_VALUE_START_MARKER: &str = "match normalized_name.as_str() {\n";
 const PARSE_VALUE_END_MARKER: &str =
@@ -16,8 +16,8 @@ const PARSE_VALUE_END_MARKER: &str =
 
 /// `property_key_for_name`'s match, `crates/raikiri-style/src/property/types.rs`:
 /// the scanned block starts right after `Some(match normalized_name.as_str() {`
-/// and ends at that match's closing fall-through arm into the `longhands!`
-/// table and braces (`_ => return longhand_key_for_name(..),` / `})` / `}`).
+/// and ends at that match's closing fall-through arm into the declared
+/// longhands and braces (`_ => return longhand_key_for_name(..),` / `})` / `}`).
 /// Only the hand-written arms are scanned.
 const TYPES_SOURCE: &str = include_str!("../types.rs");
 const PROPERTY_KEY_START_MARKER: &str = "Some(match normalized_name.as_str() {\n";
@@ -265,9 +265,9 @@ fn is_supported_property_name_covers_expanding_shorthands() {
     }
 }
 
-/// A name declared in the `longhands!` table must not also keep a hand-written
+/// A name declared through `Longhand` must not also keep a hand-written
 /// arm: the hand-written match runs first, so a stale arm would silently win
-/// over the table entry.
+/// over the declared longhand.
 #[test]
 fn table_names_have_no_hand_written_arm() {
     let dispatch = parse_value_dispatch_names();
@@ -275,11 +275,26 @@ fn table_names_have_no_hand_written_arm() {
     for name in crate::property::LONGHAND_NAMES {
         assert!(
             !dispatch.contains(*name),
-            "{name} is in the longhands! table but still has a parse_value arm"
+            "{name} is a declared longhand but still has a parse_value arm"
         );
         assert!(
             !key_arms.contains(*name),
-            "{name} is in the longhands! table but still has a property_key_for_name arm"
+            "{name} is a declared longhand but still has a property_key_for_name arm"
+        );
+    }
+}
+
+/// The merged list holds each name once: a declared longhand's name is not
+/// also written into the hand-written list.
+#[test]
+fn supported_property_names_are_unique() {
+    let names = supported_property_names();
+    let unique: BTreeSet<&str> = names.iter().copied().collect();
+    assert_eq!(unique.len(), names.len(), "duplicate names: {names:?}");
+    for name in crate::property::LONGHAND_NAMES {
+        assert!(
+            unique.contains(name),
+            "{name} is missing from the merged list"
         );
     }
 }

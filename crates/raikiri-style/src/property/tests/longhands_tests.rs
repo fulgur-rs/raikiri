@@ -1,4 +1,5 @@
-//! Tests for the `longhands!` declaration table (`property/longhands.rs`).
+//! Tests for the declared longhands (`#[derive(Longhand)]` and the
+//! `#[longhands]` module in `property/longhands.rs`).
 
 use super::*;
 use cssparser::{Parser, ParserInput};
@@ -8,7 +9,7 @@ fn longhand_names_are_supported_property_names() {
     for name in LONGHAND_NAMES {
         assert!(
             is_supported_property_name(name),
-            "{name} is declared in longhands! but missing from supported_property_names()"
+            "{name} is a declared longhand but missing from supported_property_names()"
         );
     }
 }
