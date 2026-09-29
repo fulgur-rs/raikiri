@@ -284,20 +284,7 @@ pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
 /// the `left`/`right` values specific to justify-content remain unmatched:
 /// two-token sequences and unsupported idents return `_ => None`.
 pub(super) fn parse_content_alignment(input: &mut Parser<'_, '_>) -> Option<ContentAlignmentValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(ContentAlignmentValue::Normal),
-        "stretch" => Some(ContentAlignmentValue::Stretch),
-        "space-between" => Some(ContentAlignmentValue::SpaceBetween),
-        "space-evenly" => Some(ContentAlignmentValue::SpaceEvenly),
-        "space-around" => Some(ContentAlignmentValue::SpaceAround),
-        "center" => Some(ContentAlignmentValue::Center),
-        "start" => Some(ContentAlignmentValue::Start),
-        "end" => Some(ContentAlignmentValue::End),
-        "flex-start" => Some(ContentAlignmentValue::FlexStart),
-        "flex-end" => Some(ContentAlignmentValue::FlexEnd),
-        _ => None,
-    }
+    ContentAlignmentValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// The `Result` form of [`parse_content_alignment`], following the wrapper
