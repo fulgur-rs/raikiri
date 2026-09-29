@@ -2889,6 +2889,136 @@ fn absolutize_in_page_context_covers_opacity_arm_clamp() {
     );
 }
 
+/// The page-context result of `object-position` for the corpus of
+/// `object_position_element_characterization` (cascade/inherit/tests.rs), in
+/// the same basis: the root has `font-size: 10px; line-height: 12px` (`rem`
+/// = 10px, `rlh` = 12px) and the page context declares `font-size: 20px;
+/// line-height: 30px` (`em` = 20px, `ex`/`ch` = 10px, `lh` = 30px). The page
+/// result keeps the specified-value type `CssPosition`, with lengths
+/// absolutized to `px` and percentages kept.
+#[test]
+fn object_position_page_context_characterization() {
+    use CssPositionOffset as O;
+    let root = ComputedValues {
+        font_size: ComputedLength(10.0),
+        line_height: ComputedLineHeight::Length(ComputedLength(12.0)),
+        ..ComputedValues::initial()
+    };
+    let cases: &[(&str, O, O)] = &[
+        (
+            "10px 20px",
+            O::Start(Length::Px(10.0)),
+            O::Start(Length::Px(20.0)),
+        ),
+        (
+            "2em 3em",
+            O::Start(Length::Px(40.0)),
+            O::Start(Length::Px(60.0)),
+        ),
+        (
+            "1rem 2rem",
+            O::Start(Length::Px(10.0)),
+            O::Start(Length::Px(20.0)),
+        ),
+        (
+            "25% 75%",
+            O::Start(Length::Percent(25.0)),
+            O::Start(Length::Percent(75.0)),
+        ),
+        (
+            "12pt 1in",
+            O::Start(Length::Px(16.0)),
+            O::Start(Length::Px(96.0)),
+        ),
+        (
+            "2ex 4ch",
+            O::Start(Length::Px(20.0)),
+            O::Start(Length::Px(40.0)),
+        ),
+        (
+            "1lh 2rlh",
+            O::Start(Length::Px(30.0)),
+            O::Start(Length::Px(24.0)),
+        ),
+        (
+            "right 1em bottom 2rem",
+            O::End(Length::Px(20.0)),
+            O::End(Length::Px(20.0)),
+        ),
+        // The parser folds a percentage offset from the end edge into the
+        // start edge (`right 10%` is `90%`).
+        (
+            "right 10% bottom 3px",
+            O::Start(Length::Percent(90.0)),
+            O::End(Length::Px(3.0)),
+        ),
+        (
+            "left 1em top 25%",
+            O::Start(Length::Px(20.0)),
+            O::Start(Length::Percent(25.0)),
+        ),
+        (
+            "left top",
+            O::Start(Length::Percent(0.0)),
+            O::Start(Length::Percent(0.0)),
+        ),
+        (
+            "center",
+            O::Start(Length::Percent(50.0)),
+            O::Start(Length::Percent(50.0)),
+        ),
+        (
+            "right bottom",
+            O::Start(Length::Percent(100.0)),
+            O::Start(Length::Percent(100.0)),
+        ),
+    ];
+    for (source, horizontal, vertical) in cases {
+        let css =
+            format!("@page {{ font-size: 20px; line-height: 30px; object-position: {source} }}");
+        let result = page(&css, &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::ObjectPosition),
+            Some(&PropertyValue::ObjectPosition(CssPosition {
+                horizontal: *horizontal,
+                vertical: *vertical,
+            })),
+            "object-position: {source}",
+        );
+    }
+
+    // Direct phase-3 input: without an own line height, `lh` falls back to 0.
+    let ctx = ResolveContext::new(ComputedLength(10.0));
+    let absolutize = |own_line_height| {
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: O::End(Length::Lh(1.0)),
+                vertical: O::Start(Length::Em(2.0)),
+            })),
+            ComputedLength(20.0),
+            own_line_height,
+            &ctx,
+            Sides::all(BorderStyle::None),
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        )
+    };
+    assert_eq!(
+        absolutize(None),
+        PropertyValue::ObjectPosition(CssPosition {
+            horizontal: O::End(Length::Px(0.0)),
+            vertical: O::Start(Length::Px(40.0)),
+        }),
+    );
+    assert_eq!(
+        absolutize(Some(ComputedLength(30.0))),
+        PropertyValue::ObjectPosition(CssPosition {
+            horizontal: O::End(Length::Px(30.0)),
+            vertical: O::Start(Length::Px(40.0)),
+        }),
+    );
+}
+
 #[test]
 fn cascade_page_computes_border_radius_box_shadow_and_outline() {
     let root = root_with_font_size(20.0);
