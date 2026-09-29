@@ -489,3 +489,161 @@ fn fetch_script_reports_read_failures_and_a_missing_root() {
         .unwrap_err();
     assert!(error.0.contains("the WPT root does not exist"), "{error:?}");
 }
+
+#[test]
+fn scroll_content_extents_match_a_brute_force_walk() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<div id=o style='position:relative; border:3px solid; padding:5px; width:100px; height:50px'>\
+         <div id=i style='margin-top:7px; height:200px'></div>\
+         <div id=hidden style='display:none'><div id=inner style='height:99px'></div></div></div>",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    host.flush().unwrap();
+    let count = host.document().node_count();
+    assert_eq!(host.scroll_content_extents.len(), count);
+    for node in 0..count {
+        let (expected_right, expected_bottom) = {
+            let scene = host.page_scene.as_ref().unwrap();
+            let document = host.document();
+            let (mut expected_right, mut expected_bottom) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+            let mut pending: Vec<usize> = document
+                .get_node(node)
+                .map(|n| n.children.clone())
+                .unwrap_or_default();
+            while let Some(index) = pending.pop() {
+                if let Some(descendant) = super::border_box_of(scene, index) {
+                    expected_right = expected_right.max(descendant.right);
+                    expected_bottom = expected_bottom.max(descendant.bottom);
+                }
+                if let Some(n) = document.get_node(index) {
+                    pending.extend(n.children.iter().copied());
+                }
+            }
+            (expected_right, expected_bottom)
+        };
+        let (cached_right, cached_bottom) = host.scroll_content_extents[node];
+        assert_eq!(cached_right, expected_right, "right content of node {node}");
+        assert_eq!(
+            cached_bottom, expected_bottom,
+            "bottom content of node {node}"
+        );
+        let geometry = host.box_geometry(node).unwrap();
+        if let Some(geometry) = geometry {
+            let padding = host
+                .document()
+                .get_node(node)
+                .map(|n| n.unrounded_layout.padding)
+                .unwrap_or_default();
+            let right = geometry
+                .padding_box
+                .right
+                .max(expected_right + f64::from(padding.right));
+            let bottom = geometry
+                .padding_box
+                .bottom
+                .max(expected_bottom + f64::from(padding.bottom));
+            assert_eq!(
+                geometry.scroll_width,
+                right - geometry.padding_box.left,
+                "scroll width of node {node}"
+            );
+            assert_eq!(
+                geometry.scroll_height,
+                bottom - geometry.padding_box.top,
+                "scroll height of node {node}"
+            );
+        }
+    }
+}
+
+#[test]
+fn scroll_extents_are_cached_per_flush_and_invalidated_by_flush() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<div id=o style='width:100px; height:50px'><div id=i style='height:200px'></div></div>",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    host.flush().unwrap();
+    let before = host.scroll_content_extents.clone();
+    assert_eq!(before.len(), host.document().node_count());
+    let o = find_by_id(host.document(), "o");
+    let first = host.box_geometry(o).unwrap().unwrap();
+    for _ in 0..10 {
+        let geometry = host.box_geometry(o).unwrap().unwrap();
+        assert_eq!(geometry.scroll_width, first.scroll_width);
+        assert_eq!(geometry.scroll_height, first.scroll_height);
+    }
+    assert_eq!(
+        host.scroll_content_extents, before,
+        "geometry reads must not recompute the cache"
+    );
+    let tall = host.document_mut().create_detached_element("div").unwrap();
+    host.document_mut()
+        .set_element_attribute(tall, "style", "height:400px")
+        .unwrap();
+    host.document_mut().append_child(o, tall).unwrap();
+    host.flush().unwrap();
+    let after = host.box_geometry(o).unwrap().unwrap();
+    assert!(
+        after.scroll_height > first.scroll_height,
+        "expected growth, first {} then {}",
+        first.scroll_height,
+        after.scroll_height
+    );
+    assert_ne!(
+        host.scroll_content_extents, before,
+        "a flush must recompute the cache"
+    );
+}
+
+#[test]
+fn deep_offset_top_reads_through_cached_extents() {
+    const DEPTH: usize = 150;
+    let mut html = String::from("<div id=o0 style='position:relative'>");
+    for i in 1..DEPTH {
+        html.push_str(&format!("<div id=o{i}>"));
+    }
+    html.push_str("<div id=deep style='height:5px'>x</div>");
+    for _ in 1..DEPTH {
+        html.push_str("</div>");
+    }
+    html.push_str("</div>");
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        &html,
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let host = WptDocumentHost::new(setup, dir.path());
+    let flushes = host.flushes.clone();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let top = num(&mut rt, "document.getElementById('deep').offsetTop");
+    assert!(top.is_finite(), "deep offsetTop did not resolve");
+    assert_eq!(
+        rt.evaluate(
+            "document.getElementById('deep').offsetParent === document.getElementById('o0')"
+        )
+        .unwrap()
+        .as_boolean(),
+        Some(true)
+    );
+    assert_eq!(
+        flushes.get(),
+        1,
+        "deep read must flush once, not per ancestor"
+    );
+}
