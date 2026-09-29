@@ -128,6 +128,42 @@ pub(crate) fn expand_stylesheet_imports_with_budget(
     expander.expand(source, normalized_base.as_ref(), 0)
 }
 
+/// Expand `@import` in live `<style>` sources collected from a mutated DOM.
+///
+/// The live `parse_fragment` path already expands imports into its own
+/// `stylesheet_sources`, but live-DOM consumers keep only the fragment DOM
+/// and re-derive author sheets from connected `<style>` text at flush.
+/// Expanding here keeps an `innerHTML`-inserted `@import` working the same
+/// way as a parsed one.
+///
+/// Shares one document-wide budget across `sources`, like the document parse
+/// does. Fetch diagnostics are discarded: the fragment path also drops them
+/// with the fragment's own warnings, keeping only the expanded text.
+pub fn expand_live_stylesheet_imports(
+    sources: Vec<String>,
+    base_url: Option<&Url>,
+    network: Option<&dyn NetworkProvider>,
+) -> Vec<String> {
+    let Some(network) = network else {
+        return sources;
+    };
+    let mut warnings = Vec::new();
+    let mut budget = ImportBudget::default();
+    sources
+        .iter()
+        .map(|source| {
+            expand_stylesheet_imports_with_budget(
+                source,
+                base_url,
+                None,
+                Some(network),
+                &mut warnings,
+                &mut budget,
+            )
+        })
+        .collect()
+}
+
 impl ImportExpander<'_> {
     fn expand(&mut self, source: &str, base_url: Option<&Url>, depth: u32) -> String {
         if depth >= self.max_depth {

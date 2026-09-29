@@ -41,10 +41,35 @@ pub(crate) struct WptDocumentHost {
     pub(crate) flushes: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
+/// Expand connected `<style>` text the way the fragment parser does.
+///
+/// The fragment parser's `stylesheet_sources` already expands `@import` and
+/// keeps SVG-namespace `<style>` text. The live host keeps only the fragment
+/// DOM, so it expands the reconciled text here with the same document base
+/// and checkout network; without this an `innerHTML`-inserted `@import`
+/// would stay opaque.
+fn expand_live_style_sources(
+    raw: Vec<String>,
+    base_url: Option<&raikiri::Url>,
+    wpt_root: &Path,
+) -> Vec<String> {
+    if std::fs::canonicalize(wpt_root).is_err() {
+        return raw;
+    }
+    let network = raikiri_net::FileNetworkProvider;
+    raikiri_html::expand_live_stylesheet_imports(
+        raw,
+        base_url,
+        Some(&network as &dyn raikiri_traits::NetworkProvider),
+    )
+}
+
 impl WptDocumentHost {
     pub(crate) fn new(setup: LiveWptSetup, wpt_root: &Path) -> Self {
         let root = setup.uncascaded.dom.root_index();
-        let style_sources = live_wpt_stylesheet_sources_in_subtree(&setup.uncascaded.dom, root);
+        let raw = live_wpt_stylesheet_sources_in_subtree(&setup.uncascaded.dom, root);
+        let style_sources =
+            expand_live_style_sources(raw, setup.document_base_url.as_ref(), wpt_root);
         Self {
             setup,
             wpt_root: wpt_root.to_path_buf(),
@@ -115,25 +140,24 @@ impl WptDocumentHost {
         Err(refuse("no such file inside the WPT root"))
     }
 
-    /// Diff the connected `<style>` sources against the last flush and apply
+    /// Reconcile connected `<style>` sources against the last flush and apply
     /// the change to the setup's author stylesheet list. Parser-loaded
-    /// `<link>` sheets in that list are left untouched.
+    /// `<link>` sheets in that list are left untouched at the front; inline
+    /// sheets follow in tree order.
     fn resync_stylesheets(&mut self) {
         let root = self.setup.uncascaded.dom.root_index();
-        let current = live_wpt_stylesheet_sources_in_subtree(&self.setup.uncascaded.dom, root);
-        let mut removed = self.style_sources.clone();
-        let mut added = Vec::new();
-        for source in &current {
-            if let Some(i) = removed.iter().position(|s| s == source) {
-                removed.remove(i);
-            } else {
-                added.push(source.clone());
-            }
+        let raw = live_wpt_stylesheet_sources_in_subtree(&self.setup.uncascaded.dom, root);
+        let current =
+            expand_live_style_sources(raw, self.setup.document_base_url.as_ref(), &self.wpt_root);
+        if current != self.style_sources {
+            let previous = std::mem::replace(&mut self.style_sources, current.clone());
+            update_live_wpt_stylesheet_sources(
+                &mut self.setup,
+                &previous,
+                &current,
+                &self.wpt_root,
+            );
         }
-        if !removed.is_empty() || !added.is_empty() {
-            update_live_wpt_stylesheet_sources(&mut self.setup, removed, added, &self.wpt_root);
-        }
-        self.style_sources = current;
     }
 }
 
