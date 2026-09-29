@@ -717,3 +717,28 @@ fn concrete_wpt_host_recovers_from_the_runtime() {
     assert!(boxed.downcast_mut::<WptDocumentHost>().is_some());
     assert!(boxed.downcast::<WptDocumentHost>().is_ok());
 }
+
+#[test]
+fn parsed_body_onload_and_inner_html_onclick_wire_handlers() {
+    // Real parser path for raikiri-spike-4nhl.129.1: <body onload> from
+    // parsed HTML fires on the window load event, and an innerHTML-inserted
+    // onclick attribute dispatches.
+    let (_dir, mut rt) = runtime("<body onload=\"window.fired = true\"><div id=t></div></body>");
+    assert!(
+        rt.evaluate("window.fired === undefined")
+            .unwrap()
+            .to_boolean()
+    );
+    let report = rt.run_document();
+    assert_eq!(report.aborted, None, "{report:?}");
+    assert!(rt.evaluate("window.fired === true").unwrap().to_boolean());
+    rt.evaluate("document.body.innerHTML = '<div id=x onclick=\"window.n = 41\"></div>';")
+        .unwrap();
+    assert!(
+        rt.evaluate(
+            "document.getElementById('x').dispatchEvent(new Event('click')); window.n === 41"
+        )
+        .unwrap()
+        .to_boolean()
+    );
+}

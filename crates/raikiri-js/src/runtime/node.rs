@@ -288,6 +288,7 @@ fn set_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let name = dom_string(args, 0, context)?;
     let value = dom_string(args, 1, context)?;
     write_attribute(context, index, &name, &value)?;
+    super::dispatch::sync_event_handler_for_attribute(context, index, &name, Some(&value))?;
     Ok(JsValue::undefined())
 }
 
@@ -304,6 +305,7 @@ fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     })?;
     if matches!(removed, Ok(Some(_))) {
         mark_dirty(context)?;
+        super::dispatch::sync_event_handler_for_attribute(context, index, &name, None)?;
     }
     Ok(JsValue::undefined())
 }
@@ -406,6 +408,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
             .replace_children_from(index, &fragment, root);
     })?;
     mark_dirty(context)?;
+    super::dispatch::sync_event_handlers_in_subtree(context, index)?;
     Ok(JsValue::undefined())
 }
 
