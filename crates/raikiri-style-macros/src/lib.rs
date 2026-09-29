@@ -1,5 +1,170 @@
 //! Procedural macros that declare raikiri-style's CSS longhands from a
 //! table.
+//!
+//! The only macro is [`macro@longhands`]. It is applied to the inline module
+//! that declares raikiri-style's `PropertyValue` and `PropertyKey` enums,
+//! reads the `properties! { .. }` tables inside it, and generates every item
+//! a table-declared longhand needs. The expansion names raikiri-style's own
+//! items through `crate::` paths (see [Host crate](#host-crate)), so the
+//! macro is only usable from inside that crate.
+//!
+//! ```ignore
+//! #[longhands]
+//! mod decl {
+//!     use super::*;
+//!
+//!     pub enum PropertyValue {
+//!         Color(CssColor),
+//!         #[key(Custom)]
+//!         CustomProperty(CustomProperty),
+//!         #[key(with = |value| value.key)]
+//!         Deferred(DeferredValue),
+//!     }
+//!
+//!     pub enum PropertyKey { Color, Custom }
+//!
+//!     properties! {
+//!         /// CSS Compositing 1 §3.4.2
+//!         "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },
+//!         /// CSS Images 3 §5.1
+//!         "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },
+//!         /// CSS Color 4 §3.3
+//!         "opacity" => Opacity: f32 { initial: 1.0, inherited: no, parse: parse_opacity_value,
+//!                                     compute: clamp_opacity, sample: 2.0 },
+//!     }
+//! }
+//! ```
+//!
+//! # The module
+//!
+//! `#[longhands]` must be the outermost attribute of an inline module (an
+//! attribute macro cannot read an out-of-line `mod decl;`). The module
+//! declares `enum PropertyValue` and `enum PropertyKey` as ordinary Rust, so
+//! rustfmt formats them. The macro appends one variant per table entry to
+//! each enum, after the hand-written variants, so the discriminants of the
+//! hand-written `PropertyKey` variants do not change.
+//!
+//! `PropertyValue::key()` is generated. A hand-written `PropertyValue`
+//! variant maps to the `PropertyKey` variant of the same name, unless it
+//! carries one of these helper attributes (removed during expansion):
+//!
+//! - `#[key(Other)]`: maps to `PropertyKey::Other`.
+//! - `#[key(with = f)]`: for a variant with one unnamed field of type `T`,
+//!   the key is `f(&payload)`. `f` is any expression that coerces to
+//!   `fn(&T) -> PropertyKey`, such as a path or a non-capturing closure
+//!   (`#[key(with = |value| value.key)]`).
+//!
+//! The module may contain any number of `properties! { .. }` blocks (one per
+//! domain, say) among its other items. They are removed during expansion,
+//! and their entries are declared in source order.
+//!
+//! # Entries
+//!
+//! ```text
+//! /// <doc comments citing the specification>
+//! "css-name" => Variant[: ValueType] { key: value, .. },
+//! ```
+//!
+//! Keys may appear in any order; trailing commas are optional after the last
+//! key and the last entry.
+//!
+//! | Key | Value | Default |
+//! |---|---|---|
+//! | `keywords` | `[Auto, ScaleDown, Pre = "pre-line", ..]` | none |
+//! | `parse` | path to `fn(&mut cssparser::Parser) -> Option<Specified>` | none |
+//! | `initial` | expression of the specified type | required |
+//! | `inherited` | `yes` or `no` | required |
+//! | `compute` | path to `fn(Specified, &AbsolutizeCx) -> Specified` | identity |
+//! | `computed` | `as_specified`, or `Type via path` with `fn(Specified, &AbsolutizeCx) -> Type` | `as_specified` |
+//! | `lift` | path to `fn(Computed) -> Specified` | `Into::into` |
+//! | `field` | identifier | snake case of `Variant` |
+//! | `sample` | expression of the specified type (test only) | first non-initial keyword |
+//!
+//! - Exactly one of `keywords` and `parse` is required. `keywords` generates
+//!   a `Copy` enum named `Variant` with one variant per keyword; each
+//!   keyword's CSS spelling is its name in kebab case (`ScaleDown` is
+//!   `scale-down`) unless written as `Name = "spelling"`. Doc comments may
+//!   precede a keyword. A `keywords` entry takes no `: ValueType`.
+//! - Without `keywords`, the specified type is `ValueType`, or the type
+//!   named `Variant` when `: ValueType` is omitted.
+//! - In `initial` and `sample`, a bare identifier names a keyword of a
+//!   `keywords` entry (`Auto` is `Isolation::Auto`) or an associated item of
+//!   the value type (`Fill` is `<ObjectFit>::Fill`). Write a path or any
+//!   other expression for anything else.
+//! - The computed type equals the specified type, and `compute` (when
+//!   given) maps one to the other. When they differ, `computed: Type via
+//!   hook` names both the computed type and the hook; `compute` must then be
+//!   omitted. `lift` turns a computed value back into a specified one, for
+//!   inheritance and page-context absolutization; it only applies with
+//!   `computed: Type via hook`.
+//! - `sample` is the non-initial worst-case value of the page-cascade test
+//!   corpus, compiled only under `cfg(test)`. Every entry without
+//!   `keywords` must supply one.
+//! - Each entry needs at least one doc comment (the specification
+//!   reference). Other attributes are rejected.
+//!
+//! Hook and parser paths are coerced to the fn-pointer types above, so a
+//! wrong signature is reported at the path in the table.
+//!
+//! # Generated items
+//!
+//! In the annotated module, for each entry (`field` is the entry's field
+//! name):
+//!
+//! - the `PropertyValue::Variant(field::Specified)` and `PropertyKey::Variant`
+//!   variants, documented from the entry's doc comments;
+//! - for `keywords`, `enum Variant` with `as_css_str`, `from_css_ident`
+//!   (ASCII case-insensitive) and a `cfg(test)` `ALL`;
+//! - `pub mod field` with `type Specified` and `type Computed` (aliases of
+//!   the written types, so rustdoc shows the real payload types) and
+//!   `Property`, an uninhabited marker implementing `crate::property::Longhand`.
+//!
+//! and once for the module:
+//!
+//! - `PropertyValue::key()`;
+//! - `SpecifiedTable` and `ComputedTable` (`#[non_exhaustive]`, one field per
+//!   entry) with `SpecifiedTable::{initial, inherit_from, absolutize, apply}`
+//!   and `ComputedTable::initial`, and `Deref`/`DerefMut` from
+//!   `SpecifiedValues` / `ComputedValues` to them;
+//! - `longhand_page_absolutize(value, cx)`: `lift(compute(value))` for one
+//!   table value;
+//! - `longhand_key_for_name(name)` and `parse_longhand_value(name, input)`,
+//!   the fall-through targets of the hand-written name lookup and parse
+//!   dispatch, and `LONGHAND_NAMES`;
+//! - `longhand_value_pat!()`, a pattern matching every table variant;
+//! - under `cfg(test)`: `longhand_samples()`, `longhand_sample(key)`,
+//!   `with_longhand_samples!` and `with_longhand_variants!`.
+//!
+//! # Host crate
+//!
+//! The expansion assumes these items of the crate it is used in:
+//!
+//! - `crate::property::Longhand`, a trait with `const NAME: &'static str`,
+//!   `const INHERITED: bool`, `type Specified`, `type Computed`,
+//!   `fn initial() -> Specified`,
+//!   `fn parse(&mut cssparser::Parser<'_, '_>) -> Option<Specified>`,
+//!   `fn compute(Specified, &AbsolutizeCx<'_>) -> Computed`,
+//!   `fn lift(Computed) -> Specified` and `#[cfg(test)] fn sample() -> Specified`;
+//! - `crate::property::AbsolutizeCx<'a>` with
+//!   `AbsolutizeCx::initial(&ResolveContext) -> AbsolutizeCx<'_>`, and
+//!   `crate::resolve::ResolveContext::initial()`;
+//! - `crate::property::{PropertyValue, PropertyKey, longhand_sample}`
+//!   reachable (a re-export of the annotated module), for the generated
+//!   `macro_rules!` that expand elsewhere;
+//! - `crate::specified::SpecifiedValues` and
+//!   `crate::computed::ComputedValues`, each with a `longhands` field of the
+//!   generated table type;
+//! - the `cssparser` crate as a dependency, and `Debug` on `PropertyValue`
+//!   and `PropertyKey`.
+//!
+//! # Diagnostics
+//!
+//! The macro never panics. Every mistake is a compile error on the tokens
+//! that caused it, and one mistake produces one error: parsing resumes at
+//! the next key or entry, and an entry with an error is still declared (its
+//! broken parts expand to `unreachable!()`), so code using its variant,
+//! field or types does not fail as well. A duplicate CSS name, variant or
+//! field is reported at the later entry.
 
 mod case;
 mod diag;
@@ -12,7 +177,9 @@ mod tests;
 
 use proc_macro::TokenStream;
 
-/// Declares the longhand table of the annotated inline module.
+/// Declares the longhands of the annotated inline module from its
+/// `properties! { .. }` tables; see the [crate documentation](crate) for
+/// the table syntax, the generated items and the host-crate requirements.
 #[proc_macro_attribute]
 pub fn longhands(args: TokenStream, item: TokenStream) -> TokenStream {
     expand::expand(args.into(), item.into()).into()
