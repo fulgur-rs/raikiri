@@ -44,6 +44,16 @@ pub(crate) struct State {
     pub wrappers: Vec<Option<JsObject>>,
     /// Set by every DOM mutation; cleared by a successful host flush.
     pub dirty: bool,
+    /// Monotonic DOM mutation generation, bumped by every mutation alongside
+    /// `dirty`. Live collections cache against this, not `dirty`: a
+    /// successful host flush clears `dirty` while the DOM stays changed, so
+    /// `dirty` alone cannot tell a cached collection it is stale.
+    pub generation: u64,
+    /// Live-collection tree walks since the runtime was created. Counts cache
+    /// misses (fresh walks) only, never cache hits; tests use it to prove
+    /// repeated `length`/index accesses do not re-walk.
+    #[cfg(test)]
+    pub live_walks: usize,
     /// First host failure seen during the current evaluation.
     pub host_failure: Option<String>,
     /// Per-element `style` objects so `el.style === el.style`.
@@ -267,6 +277,9 @@ impl DomRuntime {
             host: Box::new(host),
             wrappers: vec![None; node_count],
             dirty: true,
+            generation: 0,
+            #[cfg(test)]
+            live_walks: 0,
             host_failure: None,
             style_objects: HashMap::new(),
             computed_style_objects: HashMap::new(),
