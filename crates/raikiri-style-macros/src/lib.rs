@@ -1,11 +1,12 @@
 //! Procedural macros that declare raikiri-style's CSS longhands from a
 //! table.
 
-// The parser has no caller until the expansion lands.
+// The parser and model have no caller until the expansion lands.
 #![allow(dead_code)]
 
 mod case;
 mod diag;
+mod model;
 mod parse;
 
 use proc_macro::TokenStream;
