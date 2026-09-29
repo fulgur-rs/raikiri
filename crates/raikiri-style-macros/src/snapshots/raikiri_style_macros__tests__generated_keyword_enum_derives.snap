@@ -1,0 +1,18 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "pretty(item_tokens(&expanded, \"AMode\"))"
+---
+# [doc = " Specified value of `a-mode`; see [`PropertyValue::AMode`]."]
+# [doc = ""]
+# [doc = " A keyword longhand whose initial keyword is not the first."]
+# [non_exhaustive]
+# [derive (Clone , Copy , Debug , PartialEq , Eq , Hash , core :: default :: Default)]
+pub enum AMode {
+    # [doc = " `no-autospace`"]
+    NoAutospace ,
+    # [doc = " `auto`"]
+    Auto ,
+    # [doc = " `normal`"]
+    # [default]
+    Normal ,
+}

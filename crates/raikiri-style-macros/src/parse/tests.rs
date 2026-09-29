@@ -183,3 +183,46 @@ fn garbage_does_not_loop() {
     assert!(!errors.is_empty());
     assert_eq!(entries.len(), 1);
 }
+
+#[test]
+fn parses_derive_paths() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A { keywords: [X, Y], derive: [Hash, core::default::Default,], initial: X },
+        "b" => B { keywords: [X, Y], derive: [], initial: X },
+        "#,
+    );
+    assert_eq!(errors, Vec::<String>::new());
+    let derives: Vec<String> = entries[0]
+        .derive
+        .value()
+        .expect("derive")
+        .iter()
+        .map(|p| p.to_token_stream().to_string())
+        .collect();
+    assert_eq!(derives, ["Hash", "core :: default :: Default"]);
+    assert_eq!(entries[1].derive.value().map(Vec::len), Some(0));
+}
+
+#[test]
+fn a_malformed_derive_list_is_one_error() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A { keywords: [X, Y], derive: Hash, initial: X },
+        "b" => B { keywords: [X, Y], derive: [Hash, 1], initial: X },
+        "#,
+    );
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(
+        errors[0].starts_with("expected a list of derives"),
+        "{errors:?}"
+    );
+    assert!(
+        errors[1].starts_with("expected the path of a derive macro"),
+        "{errors:?}"
+    );
+    assert!(matches!(entries[0].derive, Slot::Invalid(_)));
+    assert_eq!(tokens(&entries[0].initial), "X");
+    assert!(matches!(entries[1].derive, Slot::Invalid(_)));
+    assert_eq!(tokens(&entries[1].initial), "X");
+}

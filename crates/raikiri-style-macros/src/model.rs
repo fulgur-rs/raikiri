@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use proc_macro2::{Span, TokenStream};
 use quote::quote_spanned;
 use syn::spanned::Spanned as _;
-use syn::{Attribute, Expr, ExprPath, Ident, LitStr, Type};
+use syn::{Attribute, Expr, ExprPath, Ident, LitStr, Path, Type};
 
 use crate::case::split_camel;
 use crate::diag::Errors;
@@ -52,6 +52,9 @@ pub(crate) enum Lift {
     /// `lift:` was malformed (already reported).
     Broken,
 }
+
+/// The derives every generated keyword enum has; `derive:` appends to them.
+pub(crate) const FIXED_DERIVES: [&str; 5] = ["Clone", "Copy", "Debug", "PartialEq", "Eq"];
 
 /// The names the per-entry type module defines itself; a written value type
 /// with one of these names would resolve to the alias instead.
@@ -95,6 +98,12 @@ pub(crate) struct Entry {
     pub(crate) field: Ident,
     /// The specified value.
     pub(crate) value: Value,
+    /// Extra derives of the generated keyword enum (`derive:`), appended to
+    /// [`FIXED_DERIVES`]; empty for a `parse:` entry.
+    pub(crate) derives: Vec<Path>,
+    /// The keyword marked `#[default]`: the `initial:` keyword when
+    /// `derive:` lists `Default`.
+    pub(crate) default_keyword: Option<Ident>,
     /// Span used for errors about the specified type (the written type, or
     /// the variant name when the type defaults to it).
     pub(crate) value_span: Span,
@@ -227,6 +236,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         variant,
         value_ty,
         keywords,
+        derive,
         initial,
         inherited,
         parse,
@@ -321,6 +331,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         _ => variant.span(),
     };
 
+    let initial_written = matches!(initial, Slot::Present(..));
     let initial_expr = match initial {
         Slot::Present(_, expr) => resolve_value_expr(&expr, &value, &variant, "initial", errors),
         Slot::Invalid(_) => None,
@@ -328,6 +339,54 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
             missing("initial", "<value>", errors);
             None
         }
+    };
+    let (derives, default_keyword) = match derive {
+        Slot::Present(key, paths) => match &value {
+            Value::Keywords(list) => {
+                let mut derives = check_derives(paths, errors);
+                let default_keyword = derives
+                    .iter()
+                    .find(|path| last_segment_is(path, "Default"))
+                    .and_then(|default| {
+                        // A missing or unresolved `initial:` has been
+                        // reported already; so has an empty keyword list.
+                        if !initial_written || initial_expr.is_none() || list.is_empty() {
+                            return None;
+                        }
+                        let initial = initial_keyword(initial_expr.as_ref());
+                        let found = list
+                            .iter()
+                            .find(|k| initial.as_deref() == Some(&*k.ident.to_string()));
+                        if found.is_none() {
+                            errors.push(syn::Error::new_spanned(
+                                default,
+                                format!(
+                                    "`Default` marks the `initial:` keyword with `#[default]`, but the {entry_name} entry's `initial:` is not one of its keywords"
+                                ),
+                            ));
+                        }
+                        found.map(|k| k.ident.clone())
+                    });
+                if default_keyword.is_none() {
+                    // `derive(Default)` without a `#[default]` variant would
+                    // only repeat the error reported above.
+                    derives.retain(|path| !last_segment_is(path, "Default"));
+                }
+                (derives, default_keyword)
+            }
+            Value::Parsed { .. } => {
+                // Without `keywords:` or `parse:` the entry has been reported
+                // already.
+                if !parse.is_absent() {
+                    errors.push(syn::Error::new(
+                        key.span(),
+                        "`derive:` only applies to the enum a `keywords:` entry generates; derive on the value type where it is declared",
+                    ));
+                }
+                (Vec::new(), None)
+            }
+        },
+        Slot::Invalid(_) | Slot::Absent => (Vec::new(), None),
     };
     let inherited = match inherited {
         Slot::Present(_, value) => value,
@@ -421,6 +480,8 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         variant,
         field,
         value,
+        derives,
+        default_keyword,
         value_span,
         initial: initial_expr,
         inherited,
@@ -430,6 +491,48 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         sample: sample_expr,
         name_listed: true,
     }
+}
+
+/// Whether the last segment of `path` is `name` (`Hash` and
+/// `core::hash::Hash` both name `Hash`).
+fn last_segment_is(path: &Path, name: &str) -> bool {
+    path.segments.last().is_some_and(|s| s.ident == name)
+}
+
+/// Keeps the extra derives of `derive:`, reporting (and dropping) one the
+/// generated enum already has and one listed twice. Derives are compared
+/// by their last path segment.
+fn check_derives(paths: Vec<Path>, errors: &mut Errors) -> Vec<Path> {
+    let mut out: Vec<Path> = Vec::with_capacity(paths.len());
+    for path in paths {
+        let Some(last) = path.segments.last() else {
+            continue;
+        };
+        let name = last.ident.to_string();
+        if FIXED_DERIVES.contains(&name.as_str()) {
+            errors.push(syn::Error::new_spanned(
+                &path,
+                format!(
+                    "`{name}` is always derived for a keyword enum (with {}); remove it from `derive:`",
+                    FIXED_DERIVES
+                        .iter()
+                        .map(|d| format!("`{d}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ));
+            continue;
+        }
+        if out.iter().any(|p| last_segment_is(p, &name)) {
+            errors.push(syn::Error::new_spanned(
+                &path,
+                format!("`{name}` is listed twice in `derive:`"),
+            ));
+            continue;
+        }
+        out.push(path);
+    }
+    out
 }
 
 /// The keyword name of a resolved `Variant::Keyword` initial value (the

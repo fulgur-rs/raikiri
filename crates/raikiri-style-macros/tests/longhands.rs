@@ -201,6 +201,7 @@ mod property {
             /// An inherited keyword longhand with explicit spellings.
             "text-case" => TextCase {
                 inherited: yes,
+                derive: [Hash, Default],
                 keywords: [
                     /// No transformation.
                     None = "none",
@@ -224,6 +225,7 @@ mod property {
             /// A keywords longhand whose initial value is written as a path.
             "break-mode" => BreakMode {
                 keywords: [Auto, Always, Avoid], initial: BreakMode::Always, inherited: no,
+                derive: [core::default::Default, core::hash::Hash, PartialOrd, Ord],
             },
         }
     }
@@ -284,6 +286,23 @@ fn keyword_enum_has_spellings_and_all() {
         TextCase::from_css_ident("Small-Caps"),
         Some(TextCase::SmallCaps)
     );
+}
+
+/// `derive:` adds derives to the generated enum; with `Default`, the
+/// `initial:` keyword (bare or written as a path) is the default.
+#[test]
+fn keyword_enums_take_extra_derives_and_default_to_their_initial() {
+    use std::collections::HashSet;
+
+    assert_eq!(TextCase::default(), TextCase::None);
+    assert_eq!(BreakMode::default(), BreakMode::Always);
+    let set: HashSet<TextCase> = TextCase::ALL.iter().copied().collect();
+    assert_eq!(set.len(), 3);
+    let set: HashSet<BreakMode> = [BreakMode::Avoid, BreakMode::Avoid].into_iter().collect();
+    assert_eq!(set.len(), 1);
+    // `PartialOrd` / `Ord` follow the declaration order.
+    assert!(BreakMode::Auto < BreakMode::Avoid);
+    assert_eq!(BreakMode::ALL.iter().max(), Some(&BreakMode::Avoid));
 }
 
 #[test]

@@ -12,7 +12,7 @@ use quote::{ToTokens as _, format_ident, quote, quote_spanned};
 use syn::spanned::Spanned as _;
 use syn::{Ident, Variant};
 
-use crate::model::{Entry, Lift, Value, is_reserved_type};
+use crate::model::{Entry, FIXED_DERIVES, Lift, Value, is_reserved_type};
 
 /// A local identifier invisible to user tokens.
 fn local(name: &str) -> Ident {
@@ -86,8 +86,17 @@ fn keyword_enum(entry: &Entry) -> TokenStream {
             let docs = &k.docs;
             quote!(#(#docs)*)
         };
-        quote!(#kw_doc #kw,)
+        let default = if entry.default_keyword.as_ref() == Some(kw) {
+            quote!(#[default])
+        } else {
+            TokenStream::new()
+        };
+        quote!(#kw_doc #default #kw,)
     });
+    let fixed = FIXED_DERIVES
+        .iter()
+        .map(|name| Ident::new(name, Span::call_site()));
+    let derives = &entry.derives;
     let kws: Vec<_> = list.iter().map(|k| &k.ident).collect();
     let css: Vec<_> = list.iter().map(|k| &k.css).collect();
     let this = local("this");
@@ -95,7 +104,7 @@ fn keyword_enum(entry: &Entry) -> TokenStream {
     quote! {
         #doc
         #[non_exhaustive]
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[derive(#(#fixed),* #(, #derives)*)]
         pub enum #ident {
             #(#variants)*
         }

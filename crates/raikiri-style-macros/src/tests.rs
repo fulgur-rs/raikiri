@@ -212,6 +212,38 @@ fn generates_parsed_and_hook_entries() {
     insta::assert_snapshot!("generated_parsed_and_hook_entries", pretty(expanded));
 }
 
+/// The item named `name` in an expanded module, as tokens.
+fn item_tokens(expanded: &TokenStream, name: &str) -> TokenStream {
+    let module: syn::ItemMod = syn::parse2(expanded.clone()).expect("expansion is a module");
+    let (_, items) = module.content.expect("inline module");
+    items
+        .into_iter()
+        .find_map(|item| match item {
+            syn::Item::Enum(e) if e.ident == name => Some(quote::ToTokens::into_token_stream(e)),
+            _ => None,
+        })
+        .expect("item present")
+}
+
+#[test]
+fn generates_extra_derives_and_the_default_keyword() {
+    let src = module(
+        r#"        /// A keyword longhand whose initial keyword is not the first.
+        "a-mode" => AMode {
+            keywords: [NoAutospace, Auto, Normal],
+            derive: [Hash, core::default::Default],
+            initial: Normal,
+            inherited: yes,
+        },"#,
+    );
+    let (expanded, errors) = expand(&src);
+    assert!(errors.is_empty(), "{}", render(&src, &errors));
+    insta::assert_snapshot!(
+        "generated_keyword_enum_derives",
+        pretty(item_tokens(&expanded, "AMode"))
+    );
+}
+
 #[test]
 fn several_blocks_append_in_order_after_hand_written_variants() {
     let src = r#"mod decl {
@@ -358,6 +390,22 @@ fn keyword_mistakes() {
     ));
     assert_eq!(count, 8);
     insta::assert_snapshot!("keyword_mistakes", rendered);
+}
+
+#[test]
+fn derive_mistakes() {
+    let (rendered, count) = diagnostics(&module(
+        r#"        /// A.
+        "a-prop" => AProp { keywords: [X, Y], derive: [Clone, Hash, Hash], initial: X, inherited: no },
+        /// B.
+        "b-prop" => BProp: f32 { derive: [Default], initial: 1.0, inherited: no, parse: p, sample: 2.0 },
+        /// C.
+        "c-prop" => CProp { keywords: [X, Y], derive: [Default], initial: CProp::Q, inherited: no },
+        /// D.
+        "d-prop" => DProp { keywords: [X, Y], derive: Hash, initial: X, inherited: no },"#,
+    ));
+    assert_eq!(count, 5);
+    insta::assert_snapshot!("derive_mistakes", rendered);
 }
 
 #[test]

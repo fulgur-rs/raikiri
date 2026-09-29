@@ -22,13 +22,14 @@ use syn::buffer::Cursor;
 use syn::ext::IdentExt as _;
 use syn::parse::{ParseStream, Parser as _};
 use syn::punctuated::Punctuated;
-use syn::{Attribute, Expr, ExprPath, Ident, LitBool, LitStr, Token, Type, bracketed, token};
+use syn::{Attribute, Expr, ExprPath, Ident, LitBool, LitStr, Path, Token, Type, bracketed, token};
 
 use crate::diag::Errors;
 
 /// Every key an entry accepts, in the order the documentation lists them.
-pub(crate) const KEYS: [&str; 9] = [
+pub(crate) const KEYS: [&str; 10] = [
     "keywords",
+    "derive",
     "initial",
     "inherited",
     "parse",
@@ -120,6 +121,8 @@ pub(crate) struct RawEntry {
     pub(crate) value_ty: Option<Type>,
     /// `keywords: [..]`.
     pub(crate) keywords: Slot<Vec<Keyword>>,
+    /// `derive: [Path, ..]`: extra derives of the generated keyword enum.
+    pub(crate) derive: Slot<Vec<Path>>,
     /// `initial: <expr>`.
     pub(crate) initial: Slot<Expr>,
     /// `inherited: yes | no`.
@@ -230,6 +233,7 @@ fn parse_entry(input: ParseStream, errors: &mut Errors) -> syn::Result<RawEntry>
         variant,
         value_ty,
         keywords: Slot::Absent,
+        derive: Slot::Absent,
         initial: Slot::Absent,
         inherited: Slot::Absent,
         parse: Slot::Absent,
@@ -353,6 +357,13 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             content,
             errors,
         ),
+        "derive" => store(
+            &mut entry.derive,
+            k,
+            parse_derives(content),
+            content,
+            errors,
+        ),
         "initial" => store(
             &mut entry.initial,
             k,
@@ -460,6 +471,33 @@ fn parse_keywords(content: ParseStream) -> syn::Result<Vec<Keyword>> {
         Ok(Keyword { attrs, ident, css })
     })?;
     Ok(list.into_iter().collect())
+}
+
+/// `[Path, ..]`: derive macro paths without generic arguments (`Hash`,
+/// `core::hash::Hash`).
+fn parse_derives(content: ParseStream) -> syn::Result<Vec<Path>> {
+    if !content.peek(token::Bracket) {
+        return Err(content.error("expected a list of derives, e.g. `derive: [Hash, Default]`"));
+    }
+    let inner;
+    bracketed!(inner in content);
+    let list = Punctuated::<Path, Token![,]>::parse_terminated_with(&inner, |input| {
+        input.call(Path::parse_mod_style).map_err(|_| {
+            input.error("expected the path of a derive macro, e.g. `Hash` or `core::hash::Hash`")
+        })
+    });
+    if list.is_err() {
+        // Consume the rest of the list, so that syn does not report its
+        // unparsed tokens as a second error.
+        let _ = inner.step(|cursor| {
+            let mut rest = *cursor;
+            while let Some((_, next)) = rest.token_tree() {
+                rest = next;
+            }
+            Ok(((), rest))
+        });
+    }
+    Ok(list?.into_iter().collect())
 }
 
 fn parse_yes_no(content: ParseStream) -> syn::Result<bool> {

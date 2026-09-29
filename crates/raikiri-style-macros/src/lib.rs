@@ -74,6 +74,7 @@
 //! | Key | Value | Default |
 //! |---|---|---|
 //! | `keywords` | `[Auto, ScaleDown, Pre = "pre-line", ..]` | none |
+//! | `derive` | `[Hash, Default, ..]` (paths of derive macros; `keywords` only) | none |
 //! | `parse` | path to `fn(&mut cssparser::Parser) -> Option<Specified>` | none |
 //! | `initial` | expression of the specified type | required |
 //! | `inherited` | `yes` or `no` | required |
@@ -88,6 +89,17 @@
 //!   keyword's CSS spelling is its name in kebab case (`ScaleDown` is
 //!   `scale-down`) unless written as `Name = "spelling"`. Doc comments may
 //!   precede a keyword. A `keywords` entry takes no `: ValueType`.
+//! - The keyword enum always derives `Clone, Copy, Debug, PartialEq, Eq`.
+//!   `derive: [..]` appends more derives (`derive: [Hash, Default]`); each
+//!   is a path without generic arguments (`Hash` or `core::hash::Hash`).
+//!   Derives are compared by their last path segment: one of the five
+//!   above, or one listed twice, is an error. `derive` on an entry without
+//!   `keywords` is an error too (derive on the value type where it is
+//!   declared).
+//! - With `Default` in `derive`, the keyword `initial` names (written bare
+//!   or as a path, `Auto` or `Isolation::Auto`) is marked `#[default]`, so
+//!   `Default::default()` is the initial value. An `initial` that is not
+//!   one of the entry's keywords is then an error.
 //! - Without `keywords`, the specified type is `ValueType`, or the type
 //!   named `Variant` when `: ValueType` is omitted.
 //! - In `initial` and `sample`, a bare identifier names a keyword of a
@@ -123,8 +135,9 @@
 //!
 //! - the `PropertyValue::Variant(field::Specified)` and `PropertyKey::Variant`
 //!   variants, documented from the entry's doc comments;
-//! - for `keywords`, `enum Variant` with `as_css_str`, `from_css_ident`
-//!   (ASCII case-insensitive) and a `cfg(test)` `ALL`;
+//! - for `keywords`, `#[non_exhaustive] enum Variant` with the derives
+//!   described above, `as_css_str`, `from_css_ident` (ASCII
+//!   case-insensitive) and a `cfg(test)` `ALL`;
 //! - `pub mod field` with `type Specified` and `type Computed` (aliases of
 //!   the written types, so rustdoc shows the real payload types) and
 //!   `Property`, an uninhabited marker implementing `crate::property::Longhand`.

@@ -1,0 +1,33 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: expected a list of derives, e.g. `derive: [Hash, Default]`
+  --> 19:55
+   |
+19 |         "d-prop" => DProp { keywords: [X, Y], derive: Hash, initial: X, inherited: no },
+   |                                                       ^^^^
+
+error: `Clone` is always derived for a keyword enum (with `Clone`, `Copy`, `Debug`, `PartialEq`, `Eq`); remove it from `derive:`
+  --> 13:56
+   |
+13 |         "a-prop" => AProp { keywords: [X, Y], derive: [Clone, Hash, Hash], initial: X, inherited: no },
+   |                                                        ^^^^^
+
+error: `Hash` is listed twice in `derive:`
+  --> 13:69
+   |
+13 |         "a-prop" => AProp { keywords: [X, Y], derive: [Clone, Hash, Hash], initial: X, inherited: no },
+   |                                                                     ^^^^
+
+error: `derive:` only applies to the enum a `keywords:` entry generates; derive on the value type where it is declared
+  --> 15:34
+   |
+15 |         "b-prop" => BProp: f32 { derive: [Default], initial: 1.0, inherited: no, parse: p, sample: 2.0 },
+   |                                  ^^^^^^
+
+error: `Default` marks the `initial:` keyword with `#[default]`, but the "c-prop" entry's `initial:` is not one of its keywords
+  --> 17:56
+   |
+17 |         "c-prop" => CProp { keywords: [X, Y], derive: [Default], initial: CProp::Q, inherited: no },
+   |                                                        ^^^^^^^
