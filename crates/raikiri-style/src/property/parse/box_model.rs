@@ -418,20 +418,7 @@ fn parse_border_width_side_res<'i>(
 /// - **(b) Unsupported**: CSS-wide keywords are not yet implemented and are silently dropped. The
 ///   "CSS-wide keyword" section of the [`PropertyValue`] doc lists the five keywords and explains why.
 pub(super) fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(BorderStyle::None),
-        "hidden" => Some(BorderStyle::Hidden),
-        "dotted" => Some(BorderStyle::Dotted),
-        "dashed" => Some(BorderStyle::Dashed),
-        "solid" => Some(BorderStyle::Solid),
-        "double" => Some(BorderStyle::Double),
-        "groove" => Some(BorderStyle::Groove),
-        "ridge" => Some(BorderStyle::Ridge),
-        "inset" => Some(BorderStyle::Inset),
-        "outset" => Some(BorderStyle::Outset),
-        _ => None,
-    }
+    BorderStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `Result` version of `parse_border_style_side` (for `try_parse`).
@@ -953,12 +940,7 @@ pub(super) fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto>
 /// - **(a) Spec-invalid**: Other keywords such as `padding-box` (from a CSS-UI 3 draft, removed from
 ///   css-sizing-3) and `margin-box` silently return `None`.
 pub(super) fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "content-box" => Some(BoxSizing::ContentBox),
-        "border-box" => Some(BoxSizing::BorderBox),
-        _ => None,
-    }
+    BoxSizing::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `overflow-x` / `overflow-y: <ident>` (CSS Overflow 3 §3.1
@@ -976,15 +958,13 @@ pub(super) fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> 
 /// - **(b) Unsupported**: CSS-wide keywords are not yet implemented and are silently dropped. The
 ///   "CSS-wide keyword" section of the [`PropertyValue`] doc lists the five keywords and explains why.
 pub(super) fn parse_overflow_value(input: &mut Parser<'_, '_>) -> Option<OverflowValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "visible" => Some(OverflowValue::Visible),
-        "hidden" => Some(OverflowValue::Hidden),
-        "clip" => Some(OverflowValue::Clip),
-        "scroll" => Some(OverflowValue::Scroll),
-        "auto" | "overlay" => Some(OverflowValue::Auto),
-        _ => None,
+    let ident = input.expect_ident().ok()?;
+    // The legacy `overlay` spelling is an alias for `auto` with no separate
+    // computed-value variant (see `OverflowValue`).
+    if ident.eq_ignore_ascii_case("overlay") {
+        return Some(OverflowValue::Auto);
     }
+    OverflowValue::from_css_ident(ident)
 }
 
 /// `overflow: <'overflow-block'>{1,2}` shorthand — 1-2 value expansion.
@@ -1319,23 +1299,12 @@ pub(super) fn parse_outline_color(input: &mut Parser<'_, '_>) -> Option<OutlineC
 /// Parse one `outline-style` keyword. The outline shorthand and longhand share
 /// this helper so `auto` cannot accidentally become valid for border styles.
 pub(super) fn parse_outline_style_side(input: &mut Parser<'_, '_>) -> Option<OutlineStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(OutlineStyle::None),
+    match OutlineStyle::from_css_ident(input.expect_ident().ok()?) {
         // Keep the existing `outline: hidden` rejection. The enum retains the
         // keyword for representation completeness, but this parser scope does
         // not accept it.
-        "hidden" => None,
-        "dotted" => Some(OutlineStyle::Dotted),
-        "dashed" => Some(OutlineStyle::Dashed),
-        "solid" => Some(OutlineStyle::Solid),
-        "double" => Some(OutlineStyle::Double),
-        "groove" => Some(OutlineStyle::Groove),
-        "ridge" => Some(OutlineStyle::Ridge),
-        "inset" => Some(OutlineStyle::Inset),
-        "outset" => Some(OutlineStyle::Outset),
-        "auto" => Some(OutlineStyle::Auto),
-        _ => None,
+        Some(OutlineStyle::Hidden) => None,
+        other => other,
     }
 }
 

@@ -18,6 +18,8 @@ macro_rules! assert_keyword_round_trip {
 #[test]
 fn keyword_tables_round_trip_through_their_parsers() {
     assert_keyword_round_trip!(
+        BorderStyle,
+        BoxSizing,
         Direction,
         FontKerning,
         FontOpticalSizing,
@@ -27,6 +29,8 @@ fn keyword_tables_round_trip_through_their_parsers() {
         FontVariantPosition,
         Hyphens,
         LineBreak,
+        OutlineStyle,
+        OverflowValue,
         OverflowWrap,
         TextAlign,
         TextAlignLast,
