@@ -1,10 +1,10 @@
 use super::*;
 
-/// PNG magic bytes: \x89 P N G \r \n \x1A \n (raikiri-vrt tests と同じ pinning)
+/// PNG magic bytes: \x89 P N G \r \n \x1A \n (same pin as raikiri-vrt tests).
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
 
-/// `html_to_png_with_fonts` が `html_to_png` と同じ output を返す
-/// (`FontContext::new()` を渡した場合)。DRY delegate 経路の regression check。
+/// Check that `html_to_png_with_fonts` returns the same output as
+/// `html_to_png` when given `FontContext::new()` (DRY delegation).
 #[test]
 fn html_to_png_with_fonts_delegates_to_impl() {
     let input = br#"<p>x</p>"#;
@@ -41,17 +41,17 @@ fn html_to_png_uses_first_page_size_descriptor_for_png_dimensions() {
     assert_eq!((width, height), (300, 50));
 }
 
-/// `html_to_png_with_resolver` が `<img>` の intrinsic size resolve →
-/// layout → decode 済み pixel の実描画までを end-to-end で通す
-/// (resolver/pixel-source の配線が実際に paint するところまで証明する —
-/// 単に呼び出しが成功するだけでは検出できない、下の `assert_ne!` 参照)。
+/// Exercise `<img>` intrinsic-size resolution, layout, pixel decoding,
+/// and painting end to end through `html_to_png_with_resolver`.
+/// The `assert_ne!` below proves the resolver/pixel source actually
+/// paints pixels, not merely that the call succeeds.
 #[test]
 fn html_to_png_with_resolver_paints_an_img_element() {
     use raikiri_net::{FileNetworkProvider, ImageResolver};
     use std::io::Write;
 
-    // 2x1 PNG, red then green pixel (raikiri-net の image_resolver.rs
-    // `TINY_PNG` と同じバイト列)。
+    // 2x1 PNG with red and green pixels (identical bytes to
+    // `TINY_PNG` in raikiri-net's image_resolver.rs).
     const PNG_BYTES: &[u8] = &[
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 1, 8, 6,
         0, 0, 0, 244, 34, 127, 138, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 249, 207, 192, 240,

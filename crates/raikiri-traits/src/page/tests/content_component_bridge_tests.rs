@@ -1,10 +1,10 @@
 //! [`TryFrom<ContentComponent> for ContentValueItem`] roundtrip pins
 //! (canonical taxonomy conversion; Image/Contents/Quote/Leader arms
-//! added as a 1:1 mirror of raikiri-style `ContentComponent`)。
+//! added as a 1:1 mirror of raikiri-style `ContentComponent`).
 //!
-//! Coverage: 13 of 14 [`ContentValueItem`] variants — [`Element`] は
-//! [`ContentComponent::Element`] 未実装のため bridge 経路では現在到達
-//! 不能。variant 追加時に arm を extend する。
+//! Coverage: 13 of 14 [`ContentValueItem`] variants — [`Element`] is
+//! unreachable through the bridge because [`ContentComponent::Element`]
+//! is not yet implemented. Extend an arm when a variant is added.
 
 use super::super::*;
 
@@ -33,9 +33,9 @@ fn counter_bridge_wraps_name_in_symbol() {
 
 #[test]
 fn counters_bridge_preserves_separator_field_name() {
-    // ContentComponent::Counters は `separator`、ContentValueItem::Counters も
-    // `separator` (design doc §7.1 line 1929 verbatim)。両者同名なので
-    // straight mapping。
+    // Both ContentComponent::Counters and ContentValueItem::Counters have
+    // a `separator` field (design doc §7.1 line 1929 verbatim), so the
+    // mapping is direct.
     let cc = ContentComponent::Counters {
         name: SmolStr::new("section"),
         separator: String::from("."),
@@ -103,9 +103,9 @@ fn target_counter_bridge_parses_url() {
 
 #[test]
 fn target_counters_bridge_maps_separator_to_sep() {
-    // ContentComponent::TargetCounters は `separator`、design doc §7.1
-    // line 1935 の ContentValueItem::TargetCounters は `sep` — bridge
-    // で名称変換される。
+    // ContentComponent::TargetCounters uses `separator`; design doc §7.1
+    // line 1935 names ContentValueItem::TargetCounters' field `sep`, so the
+    // bridge converts the field name.
     let cc = ContentComponent::TargetCounters {
         url: String::from("https://example.com/#foo"),
         name: SmolStr::new("section"),
@@ -145,10 +145,10 @@ fn target_text_bridge_parses_url() {
 #[test]
 fn content_bridge_maps_text_keyword_to_content_part() {
     // ContentTextKeyword::Text (GCPM 3 §1.1.1.1) →
-    // ContentPart::Content (CSS Content 3 §2.6.3): 両者とも「要素の
-    // string value 全体」を指す同一概念への canonical mapping
-    // (spec の "default" 宣言には依らない — 詳細は
-    // content_text_keyword_to_content_part の doc comment 参照)。
+    // Canonical mapping to ContentPart::Content (CSS Content 3 §2.6.3):
+    // both denote the element's entire string value
+    // (not based on a spec "default" statement; see the docs for
+    // content_text_keyword_to_content_part).
     let cc = ContentComponent::Content {
         keyword: ContentTextKeyword::Text,
     };
@@ -163,7 +163,7 @@ fn content_bridge_maps_text_keyword_to_content_part() {
 
 #[test]
 fn content_bridge_maps_before_after_first_letter_verbatim() {
-    // 非-default keyword は同名の ContentPart 値に mapping。
+    // Map non-default keywords to ContentPart values with the same names.
     for (kw, expected) in [
         (ContentTextKeyword::Before, ContentPart::Before),
         (ContentTextKeyword::After, ContentPart::After),
@@ -234,8 +234,8 @@ fn leader_bridge_passes_type_through() {
 
 #[test]
 fn image_bridge_returns_invalid_url_error() {
-    // Invalid URL (relative URL に base 無し) は InvalidUrl error
-    // (sibling target_counter_bridge_returns_invalid_url_error と同じ pattern)。
+    // Invalid URL (relative URL without a base) yields InvalidUrl
+    // (same pattern as sibling target_counter_bridge_returns_invalid_url_error).
     let cc = ContentComponent::Image {
         url: String::from("not a url"),
     };
@@ -245,7 +245,7 @@ fn image_bridge_returns_invalid_url_error() {
 
 #[test]
 fn target_counter_bridge_returns_invalid_url_error() {
-    // Invalid URL (relative URL に base 無し) は InvalidUrl error。
+    // Invalid URL (relative URL without a base) yields InvalidUrl.
     let cc = ContentComponent::TargetCounter {
         url: String::from("not a url"),
         name: SmolStr::new("chapter"),
@@ -280,13 +280,13 @@ fn target_text_bridge_propagates_url_parse_error() {
 #[test]
 fn convert_error_display_and_source_chain() {
     use std::error::Error as _;
-    // InvalidUrl は source() で url::ParseError を surface。
+    // InvalidUrl exposes url::ParseError through source().
     let parse_err = Url::parse("not a url").expect_err("invalid URL");
     let err = ContentValueConvertError::InvalidUrl(parse_err);
     assert!(err.to_string().contains("invalid URL"));
     assert!(err.source().is_some());
 
-    // UnsupportedVariant は source() none、Display で origin cite。
+    // UnsupportedVariant has no source(); Display cites its origin.
     let uv = ContentValueConvertError::UnsupportedVariant;
     assert!(uv.to_string().contains("unsupported ContentComponent"));
     assert!(uv.source().is_none());

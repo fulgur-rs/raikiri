@@ -21,8 +21,8 @@ fn content_source_new_wraps_vec() {
 
 #[test]
 fn content_source_struct_update_from_default() {
-    // #[non_exhaustive] public struct の consumer construct pattern
-    // (sibling PageBox の struct-update pattern 継承)。
+    // Consumer construction pattern for a #[non_exhaustive] public struct
+    // (following sibling PageBox's struct-update pattern).
     let cs = ContentSource {
         items: vec![ContentValueItem::Literal(String::from("hello"))],
         ..Default::default()

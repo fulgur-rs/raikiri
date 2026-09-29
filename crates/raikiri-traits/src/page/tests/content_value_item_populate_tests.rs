@@ -1,9 +1,9 @@
-//! ContentValueItem canonical 10 variant construction pins と、
-//! Image/Contents/Quote/Leader 4 variant construction pins
-//! (design doc §7.1 canonical 10 の外、raikiri-style
-//! `ContentComponent` 1:1 mirror)。
+//! Pin construction of the 10 canonical ContentValueItem variants and
+//! construction of the four Image/Contents/Quote/Leader variants
+//! (the latter four are outside the canonical 10 from design doc §7.1
+//! and mirror raikiri-style `ContentComponent` one-to-one).
 //!
-//! design doc §7.1 line 1926-1937 verbatim shape (canonical 10 分)。
+//! Verbatim shape for the canonical 10 from design doc §7.1 lines 1926-1937.
 
 use super::super::*;
 
@@ -132,7 +132,7 @@ fn target_counter_url_payload() {
 
 #[test]
 fn target_counters_sep_field_name_matches_design_doc() {
-    // design doc §7.1 line 1935: `sep: String` (not `separator`)。
+    // design doc §7.1 line 1935: `sep: String` (not `separator`).
     // Regression check for the deliberate field-name deviation from
     // ContentComponent::TargetCounters (which uses `separator`).
     let url = Url::parse("https://example.com/#foo").expect("valid URL");

@@ -8,7 +8,7 @@ fn hello_world_doc() -> HtmlDocument {
     };
     let uncascaded = crate::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
     let cascade = build_cascaded(&uncascaded);
-    // 内部 field 直接 construct (crate-internal test なので pub(crate) field OK)
+    // Construct internal fields directly (pub(crate) fields are accessible in crate-internal tests).
     HtmlDocument {
         uncascaded,
         cascade,
@@ -34,7 +34,7 @@ fn consumer_property_cascade_wrapper_accepts_registration() {
 #[test]
 fn html_document_accessors_expose_underlying_types() {
     let doc = hello_world_doc();
-    // accessor が inner field と identity 一致 (別 heap 割当てなし)
+    // The accessor has the same identity as the inner field (no separate heap allocation).
     let dom_ref: &raikiri_dom::Document = doc.dom();
     let cascade_ref: &CascadeResult = doc.cascade();
     let sources_ref: &[String] = doc.stylesheet_sources();
@@ -73,7 +73,7 @@ fn html_document_cascade_populated_after_construct() {
         !doc.cascade().computed.is_empty(),
         "cascade must be populated (build_cascaded produces per-node ComputedValues)"
     );
-    // node_count と cascade.computed.len() 契約
+    // Contract between node_count and cascade.computed.len().
     assert_eq!(
         doc.cascade().computed.len(),
         doc.dom().node_count(),

@@ -2,7 +2,7 @@ use super::super::*;
 
 #[test]
 fn a4_dimensions_match_css_px_conversion() {
-    // 210mm × 297mm を CSS px (1/96 in) 換算:
+    // Convert 210mm × 297mm to CSS px (1/96 in):
     //   width  = 210mm × 96/25.4 ≈ 793.7008
     //   height = 297mm × 96/25.4 ≈ 1122.5197
     assert!(

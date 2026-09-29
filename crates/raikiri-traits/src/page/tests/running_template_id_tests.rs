@@ -12,8 +12,8 @@ fn running_template_id_copy_hash_eq_derives() {
     let id1 = RunningTemplateId::new(NodeId::new(1));
     let id2 = id1; // Copy
     assert_eq!(id1, id2);
-    // Hash + Eq — HashMap key として使える (raikiri-dom
-    // RunningTemplateStore.parsed_templates keying rationale)。
+    // Hash + Eq: usable as a HashMap key (raikiri-dom
+    // RunningTemplateStore.parsed_templates keying rationale).
     let mut m: HashMap<RunningTemplateId, &'static str> = HashMap::new();
     m.insert(id1, "template-1");
     assert_eq!(m.get(&id2), Some(&"template-1"));

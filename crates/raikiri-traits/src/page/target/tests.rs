@@ -1176,7 +1176,7 @@ fn flush_pending_counters_variant_joins_stack() {
 
 #[test]
 fn begin_page_resets_sequence_and_advances_page_index() {
-    // Design §7.6 "Slot ID の安定性保証": sequence is page-local
+    // Design §7.6 "Slot ID stability guarantee": sequence is page-local
     // (0-indexed within the page), so a page-boundary call must restart
     // the local count. The same local sequence value on two different
     // pages must therefore produce two distinct TargetSlotIds.

@@ -1,8 +1,8 @@
-//! GcpmDirective canonical 6 variant construction pins。
+//! GcpmDirective canonical 6 variant construction pins.
 //!
-//! design doc §7.1 line 1913-1920 verbatim shape。variant 追加 / rename /
-//! payload type 変更で fail、`#[non_exhaustive]` catch-all は無し
-//! (crate-local match は non_exhaustive の enforce 外)。
+//! Verbatim shape from design doc §7.1 lines 1913-1920; adding / renaming
+//! variants or changing payload types fails; no `#[non_exhaustive]` catch-all
+//! (crate-local matches are not subject to non_exhaustive enforcement).
 
 use super::super::*;
 

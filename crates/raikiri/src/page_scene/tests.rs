@@ -3,8 +3,9 @@ use crate::build_cascaded;
 use parley::FontContext;
 use raikiri_html::{ParseOptions, parse};
 
-/// hello-world 相当 HTML を parse → cascade → layout し、post-layout Document
-/// + CascadeResult を返す。build_page_scene の smoke test 共通 setup。
+/// Parse, cascade, and lay out a hello-world HTML document, then return
+/// the post-layout Document and CascadeResult. Shared smoke-test setup
+/// for build_page_scene.
 fn hello_world_post_layout() -> (Document, CascadeResult) {
     let opts = ParseOptions {
         extra_stylesheets: &[],
@@ -19,10 +20,10 @@ fn hello_world_post_layout() -> (Document, CascadeResult) {
     (dom, cascade)
 }
 
-/// build_page_scene が hello-world post-layout Document から metadata + fragments を
-/// populate する — recommended integration assertion
-/// (node_ids non-empty + body_id/root_id populated)。dead-untested
-/// 防止 pin。
+/// Check that build_page_scene populates metadata and fragments from a
+/// post-layout hello-world Document. The recommended integration assertions
+/// require nonempty node_ids and populated body_id/root_id, preventing
+/// this path from going untested.
 #[test]
 fn build_page_scene_populates_metadata_from_hello_world() {
     let (dom, cascade) = hello_world_post_layout();
@@ -53,7 +54,7 @@ fn build_page_scene_populates_metadata_from_hello_world() {
             "fragments must have at least one entry for each id in node_ids ({id:?})",
         );
     }
-    // 現状: @page margin なし、body_offset_pt = (0, 0)
+    // Currently: no @page margin; body_offset_pt = (0, 0).
     assert_eq!(scene.body_offset_pt, (0.0, 0.0));
     // Page metadata reflects A4
     assert_eq!(
@@ -63,10 +64,10 @@ fn build_page_scene_populates_metadata_from_hello_world() {
     assert_eq!(scene.page_metadata.orientation, Orientation::Portrait);
 }
 
-/// build_page_scene が Element node → `BlockEntry` / Text node →
-/// `ParagraphEntry` を `drawables` へ populate する (regression check —
-/// `TrackedMap::insert` の非-test call site がこの production path
-/// 経由で exercise されることも同時に確認する)。
+/// Check that build_page_scene populates `drawables` with Element node →
+/// `BlockEntry` and Text node → `ParagraphEntry` mappings. Regression
+/// check: it also verifies that the production path exercises the
+/// non-test `TrackedMap::insert` call site.
 #[test]
 fn build_page_scene_consumes_cascaded_margin_box_rules() {
     let opts = ParseOptions {
@@ -100,7 +101,7 @@ fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
 
     // Every Element NodeId in node_ids has a block_styles entry, every
     // Text NodeId has a paragraphs entry — coverage must exactly match
-    // node_ids (fragments と同じ集合、drift させない)。
+    // node_ids (the same set as fragments; do not let them drift).
     for id in &scene.node_ids {
         let node = dom
             .get_node(id.0 as usize)
@@ -153,9 +154,9 @@ fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
     );
 }
 
-/// PageScene::rasterize が html_to_png と同じ PNG bytes を返す
-/// (byte-identical triple の verbatim reuse check — primary regression
-/// signal を module scope でも local に固定する)。
+/// Check that PageScene::rasterize returns the same PNG bytes as
+/// html_to_png. This tests verbatim reuse of the byte-identical sequence
+/// and pins the primary regression signal locally in this module.
 #[test]
 fn rasterize_matches_html_to_png_bytes() {
     let (dom, cascade) = hello_world_post_layout();
