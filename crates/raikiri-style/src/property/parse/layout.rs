@@ -15,27 +15,14 @@ use super::common::*;
 /// <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>).
 /// Uses the same single-ident, ASCII case-insensitive approach as [`parse_display`].
 pub(super) fn parse_flex_direction(input: &mut Parser<'_, '_>) -> Option<FlexDirectionValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "row" => Some(FlexDirectionValue::Row),
-        "row-reverse" => Some(FlexDirectionValue::RowReverse),
-        "column" => Some(FlexDirectionValue::Column),
-        "column-reverse" => Some(FlexDirectionValue::ColumnReverse),
-        _ => None,
-    }
+    FlexDirectionValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `flex-wrap: nowrap | wrap | wrap-reverse` (CSS Flexible Box
 /// Layout Module Level 1 §5.2
 /// <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>).
 pub(super) fn parse_flex_wrap(input: &mut Parser<'_, '_>) -> Option<FlexWrapValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "nowrap" => Some(FlexWrapValue::NoWrap),
-        "wrap" => Some(FlexWrapValue::Wrap),
-        "wrap-reverse" => Some(FlexWrapValue::WrapReverse),
-        _ => None,
-    }
+    FlexWrapValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `<number [0,∞]>` for both `flex-grow` and `flex-shrink`.

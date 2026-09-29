@@ -2709,6 +2709,13 @@ pub enum FlexDirectionValue {
     ColumnReverse,
 }
 
+css_keywords!(FlexDirectionValue {
+    Row => "row",
+    RowReverse => "row-reverse",
+    Column => "column",
+    ColumnReverse => "column-reverse",
+});
+
 /// The value of the `flex-wrap` property.
 ///
 /// CSS Flexible Box Layout Module Level 1 §5.2 "Flex Line Wrapping: the
@@ -2726,6 +2733,12 @@ pub enum FlexWrapValue {
     /// `wrap-reverse` — multiple lines, stacked in reverse order from `wrap`.
     WrapReverse,
 }
+
+css_keywords!(FlexWrapValue {
+    NoWrap => "nowrap",
+    Wrap => "wrap",
+    WrapReverse => "wrap-reverse",
+});
 
 /// The specified value of the `flex-basis` property.
 ///
