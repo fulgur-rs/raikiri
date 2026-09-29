@@ -384,6 +384,8 @@ fn inner_html_getter_escapes_per_html_escaping_a_string() {
 
 #[test]
 fn inner_html_host_failure_is_reported_as_host_error() {
+    use std::any::Any;
+
     use super::super::host::{BoxGeometry, DocumentHost, HostError};
 
     /// A host whose fragment parser always fails, to exercise the
@@ -416,6 +418,15 @@ fn inner_html_host_failure_is_reported_as_host_error() {
             _markup: &str,
         ) -> Result<raikiri_dom::Document, HostError> {
             Err(HostError("parser unavailable".into()))
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
         }
     }
 

@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use raikiri_dom::Document;
 
 use crate::runtime::DomRuntime;
@@ -52,6 +54,15 @@ impl DocumentHost for DefaultUrlHost {
         markup: &str,
     ) -> Result<Document, HostError> {
         self.0.parse_fragment(context_tag, context_ns, markup)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }
 

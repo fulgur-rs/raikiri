@@ -5,6 +5,8 @@
 //! paginating renderer) implements [`DocumentHost`] to own the document
 //! together with its stylesheets and layout state.
 
+use std::any::Any;
+
 use raikiri_dom::Document;
 
 /// `DOMRect` values in CSS pixels, relative to the initial containing block.
@@ -79,6 +81,12 @@ impl std::error::Error for HostError {}
 
 /// Document ownership, style/layout, and HTML fragment parsing for a
 /// [`super::DomRuntime`].
+///
+/// The downcast hooks ([`DocumentHost::as_any`], [`DocumentHost::as_any_mut`],
+/// [`DocumentHost::into_any`]) let an embedder recover its concrete host from
+/// [`super::DomRuntime::into_host`]'s boxed trait object, either through the
+/// [`dyn DocumentHost`](DocumentHost#impl-dyn-DocumentHost) downcast helpers
+/// or directly with [`super::DomRuntime::try_into_host`].
 pub trait DocumentHost: 'static {
     /// The document scripts operate on.
     fn document(&self) -> &Document;
@@ -99,6 +107,12 @@ pub trait DocumentHost: 'static {
     /// Parse `markup` as an HTML fragment in the context of an element with
     /// the given local name and namespace. The fragment's nodes are the
     /// children of the returned document's root.
+    ///
+    /// Contract: the returned root's children must never include a Document
+    /// node. The `innerHTML` setter hands the returned root to
+    /// `Document::replace_children_from`, which panics on a Document node
+    /// found in the child list, so a host that returns one turns the setter
+    /// into a runtime panic rather than a script-visible exception.
     fn parse_fragment(
         &mut self,
         context_tag: &str,
@@ -132,5 +146,46 @@ pub trait DocumentHost: 'static {
     /// evaluated -- there is nothing running yet for it to be thrown into.
     fn fetch_script(&mut self, _url: &str) -> Result<String, HostError> {
         Err(HostError("script fetching is not supported".into()))
+    }
+    /// Type-erased shared access to the concrete host, for downcasting a
+    /// boxed [`DocumentHost`] back to the embedder's own type (see
+    /// [`super::DomRuntime::try_into_host`]). Implement as `self`.
+    fn as_any(&self) -> &dyn Any;
+    /// Type-erased exclusive access to the concrete host, for downcasting a
+    /// boxed [`DocumentHost`] back to the embedder's own type. Implement as
+    /// `self`.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    /// Owned type-erased concrete host, for downcasting a boxed
+    /// [`DocumentHost`] without borrowing. Implement as `self`: the box
+    /// coerces into a [`std::any::Any`] box for every sized host type.
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
+
+impl dyn DocumentHost {
+    /// Borrow the boxed host as the concrete type it was created with, or
+    /// `None` when it holds a different host type.
+    pub fn downcast_ref<T: DocumentHost>(&self) -> Option<&T> {
+        self.as_any().downcast_ref::<T>()
+    }
+
+    /// Exclusively borrow the boxed host as the concrete type it was created
+    /// with, or `None` when it holds a different host type.
+    pub fn downcast_mut<T: DocumentHost>(&mut self) -> Option<&mut T> {
+        self.as_any_mut().downcast_mut::<T>()
+    }
+
+    /// Unbox the host as the concrete type it was created with, or return
+    /// the boxed trait object untouched when it holds a different host type.
+    pub fn downcast<T: DocumentHost>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
+        if self.as_any().is::<T>() {
+            let any: Box<dyn Any> = self.into_any();
+            any.downcast::<T>().map_err(|_| {
+                // cov:ignore: the `is` check above rules a type mismatch out,
+                // so the `Any` downcast cannot fail here.
+                unreachable!("DocumentHost type check passed but Any downcast failed")
+            })
+        } else {
+            Err(self)
+        }
     }
 }

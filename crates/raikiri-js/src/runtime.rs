@@ -1,6 +1,7 @@
 //! A Boa realm whose DOM interfaces are native objects bound to a
 //! raikiri-dom document supplied through [`DocumentHost`].
 
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -328,8 +329,9 @@ impl DomRuntime {
     ///
     /// An uncaught exception is [`RuntimeError::JavaScript`]. If a host
     /// failure was recorded since the previous `evaluate` -- while this
-    /// script or its microtasks ran, or earlier by a callback that
-    /// [`DomRuntime::run_until_idle`] invoked, such as a timer --
+    /// script or its microtasks ran, earlier by a callback that
+    /// [`DomRuntime::run_until_idle`] invoked, such as a timer, or directly
+    /// between evaluations through [`DomRuntime::context_mut`] --
     /// [`RuntimeError::Host`] is returned instead, whether or not the script
     /// caught the exception.
     ///
@@ -530,6 +532,12 @@ impl DomRuntime {
     /// The underlying Boa context, for harness adapters that need raw
     /// engine access (for example, reading back context host data).
     ///
+    /// A host failure recorded through the context between evaluations (for
+    /// example, by driving Boa directly instead of through
+    /// [`DomRuntime::evaluate`]) stays parked in the runtime state and
+    /// surfaces as [`RuntimeError::Host`] on the next [`DomRuntime::evaluate`]
+    /// call, the same as a failure recorded while a script ran.
+    ///
     /// To pass a native Rust callback into evaluated code, prefer
     /// [`DomRuntime::evaluate_with_callback`] or
     /// [`DomRuntime::run_document_with_callback`]: they install the function
@@ -541,6 +549,10 @@ impl DomRuntime {
     }
 
     /// Tear down the realm and return the host with its (mutated) document.
+    ///
+    /// Recover the concrete host with the [`DocumentHost`] downcast helpers
+    /// (`Box<dyn DocumentHost>::downcast`) or directly with
+    /// [`DomRuntime::try_into_host`].
     pub fn into_host(mut self) -> Box<dyn DocumentHost> {
         let shared = self
             .context
@@ -552,6 +564,35 @@ impl DomRuntime {
             .unwrap_or_else(|_| unreachable!("bindings hold no Shared clones outside the context")) // cov:ignore: the context, the only other owner, was dropped above
             .into_inner();
         state.host
+    }
+
+    /// Tear down the realm and recover the concrete host it was created
+    /// with, with its (mutated) document.
+    ///
+    /// On a type mismatch nothing is torn down: the runtime is returned
+    /// untouched as `Err`, so the caller can keep evaluating or try another
+    /// concrete type. A state borrow held elsewhere (for example, a binding
+    /// still on the Rust call stack) also returns `Err` rather than
+    /// panicking.
+    ///
+    /// The `Err` payload is the runtime itself by design (nothing is torn
+    /// down on mismatch), so the large-error-variant lint does not apply.
+    #[allow(clippy::result_large_err)]
+    pub fn try_into_host<H: DocumentHost>(self) -> Result<H, Self> {
+        let matches = shared(&self.context)
+            .0
+            .try_borrow()
+            .is_ok_and(|state| state.host.as_any().is::<H>());
+        if !matches {
+            return Err(self);
+        }
+        let boxed = self.into_host();
+        let any: Box<dyn Any> = boxed.into_any();
+        any.downcast::<H>().map(|host| *host).map_err(|_| {
+            // cov:ignore: the type check above rules a mismatch out, so the
+            // `Any` downcast cannot fail here.
+            unreachable!("DocumentHost type check passed but Any downcast failed")
+        })
     }
 }
 

@@ -502,6 +502,8 @@ fn computed_value_failure_is_a_host_error() {
 /// own `fail_computed` message carries no index.
 #[test]
 fn get_computed_style_js_visible_message_hides_the_node_index() {
+    use std::any::Any;
+
     use super::super::host::{BoxGeometry, DocumentHost, HostError};
 
     struct FailingComputed(StubHost);
@@ -532,6 +534,15 @@ fn get_computed_style_js_visible_message_hides_the_node_index() {
             markup: &str,
         ) -> Result<raikiri_dom::Document, HostError> {
             self.0.parse_fragment(tag, ns, markup)
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
         }
     }
 

@@ -2,7 +2,7 @@ use super::*;
 use raikiri_dom::Document;
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, HostError};
 use raikiri_js_wasmtime_protocol::*;
-use std::{cell::Cell, rc::Rc};
+use std::{any::Any, cell::Cell, rc::Rc};
 struct TestHost {
     doc: Document,
     flushes: Rc<Cell<u32>>,
@@ -26,6 +26,15 @@ impl DocumentHost for TestHost {
     }
     fn parse_fragment(&mut self, _: &str, _: &str, _: &str) -> Result<Document, HostError> {
         Ok(Document::new())
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }
 #[test]
