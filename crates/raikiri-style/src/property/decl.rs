@@ -142,7 +142,11 @@
 //! lengths needs its own residue arm in that detector, placed before the
 //! blanket arm (the first matching arm wins); `object-position` has one,
 //! and the blanket arm carries `#[allow(unreachable_patterns)]` because its
-//! `ObjectPosition` alternative is shadowed on purpose.
+//! `ObjectPosition` alternative is shadowed on purpose. Because of that
+//! allow, an explicit arm for any other table variant placed above the
+//! blanket arm is silently accepted rather than reported as unreachable, so
+//! reviewers must check the arm order by hand until a per-entry residue hook
+//! is generated.
 //!
 //! # Links to table fields
 //!
@@ -2447,8 +2451,8 @@ mod decl {
         /// numeric-token acquisition (`expect_number_stable` /
         /// `expect_percentage_stable`) corrects the one cssparser tokenizer
         /// artifact that could (a huge-exponent, zero-mantissa literal like
-        /// `opacity: 0e999`; see the "Numeric-token NaN stabilization" section
-        /// of the `property` module docs), and the `!is_nan()` guard of
+        /// `opacity: 0e999`; see the "Numeric-token NaN stabilization" comment
+        /// at the top of `property/parse/common.rs`), and the `!is_nan()` guard of
         /// [`parse_opacity_value`] (narrower than `is_finite()` so that `+Inf`
         /// / `-Inf` still reach the clamp) remains as defense-in-depth. The
         /// fields are public, though: a caller that builds a

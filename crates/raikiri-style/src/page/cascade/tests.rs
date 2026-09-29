@@ -2832,9 +2832,11 @@ fn absolutize_in_page_context_covers_text_shadow_arm() {
     );
 }
 
-/// CSS Color 4 §3.3 clamps computed opacity to `[0, 1]`.
+/// CSS Color 4 §3.3 clamps computed opacity to `[0, 1]`. The page context
+/// applies the clamp through the generated `longhand_page_absolutize`
+/// (the `opacity` table entry's `compute:` hook, lifted back unchanged).
 #[test]
-fn absolutize_in_page_context_covers_opacity_arm_clamp() {
+fn absolutize_in_page_context_covers_opacity_clamp_through_the_generated_page_function() {
     let fs = ComputedLength(20.0);
     let ctx = ResolveContext::new(ComputedLength(16.0));
     let styles = Sides::all(BorderStyle::None);
@@ -3153,10 +3155,11 @@ fn phase_3_transformed_variants() -> usize {
 /// accounting for phase-2 resolution and keyword-only phase-3 transforms.
 /// The count is used to check that page declarations expose computed
 /// values rather than unresolved specified values.
-// The five: `overflow-x`, `overflow-y` and `overflow` (cross-axis
-// coupling), `writing-mode` (collapse to `horizontal-tb`) and `opacity`
-// (the `[0, 1]` clamp of its table entry's `compute:` hook). A new table
-// entry whose hook transforms a sample without length residue belongs here.
+///
+/// The five: `overflow-x`, `overflow-y` and `overflow` (cross-axis
+/// coupling), `writing-mode` (collapse to `horizontal-tb`) and `opacity`
+/// (the `[0, 1]` clamp of its table entry's `compute:` hook). A new table
+/// entry whose hook transforms a sample without length residue belongs here.
 const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
 fn raw_corpus_residue_variants() -> usize {
