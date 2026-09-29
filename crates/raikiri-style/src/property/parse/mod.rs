@@ -1089,9 +1089,6 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `||` fan-out of the 8 longhands above, single layer only
         // (`BackgroundShorthand` doc's Non-goal section).
         "background" => parse_background_shorthand(input).map(PropertyValue::Background),
-        // CSS Images Module Level 3 §5.1
-        // <https://www.w3.org/TR/css-images-3/#the-object-fit>.
-        "object-fit" => parse_object_fit(input).map(PropertyValue::ObjectFit),
         // CSS Images Module Level 3 §5.2
         // <https://www.w3.org/TR/css-images-3/#the-object-position>. Value:
         // `<position>` (CSS Values 4 §8.3), not `<bg-position>` —

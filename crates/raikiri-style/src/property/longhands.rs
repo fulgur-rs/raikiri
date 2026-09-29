@@ -1305,10 +1305,6 @@ longhands! {
             /// matter. Avoiding shifts of existing variants takes priority (see the
             /// declaration-order section of [`PropertyKey`]).
             Background(BackgroundShorthand),
-            /// `object-fit` — **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
-            /// Images 3 §5.1; see [`ObjectFit`]). Appended as a new 1:1 disjoint field
-            /// under the placement rule in [`PropertyKey`].
-            ObjectFit(ObjectFit),
             /// `object-position` — **non-inherited**, initial: `50% 50%` (CSS Images
             /// 3 §5.2 "Initial: 50% 50%"; see [`CssPosition`]). It reuses the same
             /// [`CssPosition`] type as `background-position` (see the section about
@@ -1925,13 +1921,11 @@ longhands! {
             // key is appended, see the PropertyValue::Background docs: shorthands do
             // not reach the cascade stage, so discriminant order does not matter.
             Background,
-            // object-fit / object-position (CSS Images Module Level 3 §5.1/§5.2,
-            // semantics on the matching PropertyValue::ObjectFit /
-            // PropertyValue::ObjectPosition variants; sibling PropertyKey variants
-            // carry no per-variant docs per crate convention). Appended for the same
-            // reason as background-repeat: new fields disjoint one-to-one from
-            // existing fields.
-            ObjectFit,
+            // object-position (CSS Images Module Level 3 §5.2, semantics on the
+            // matching PropertyValue::ObjectPosition variant; sibling PropertyKey
+            // variants carry no per-variant docs per crate convention). Appended for
+            // the same reason as background-repeat: a new field disjoint one-to-one
+            // from existing fields.
             ObjectPosition,
             // opacity (CSS Color 4 §3.3, semantics on the matching
             // PropertyValue::Opacity variant; sibling PropertyKey variants carry no
@@ -2294,7 +2288,6 @@ longhands! {
         PropertyValue::BackgroundPosition(_) => PropertyKey::BackgroundPosition,
         PropertyValue::BackgroundImage(_) => PropertyKey::BackgroundImage,
         PropertyValue::Background(_) => PropertyKey::Background,
-        PropertyValue::ObjectFit(_) => PropertyKey::ObjectFit,
         PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
         PropertyValue::Opacity(_) => PropertyKey::Opacity,
         PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
@@ -2359,6 +2352,18 @@ longhands! {
         },
         initial: Auto,
         inherited: no,
+        computed: as_specified,
+    }
+
+    /// `object-fit`: **non-inherited**, initial [`ObjectFit::Fill`] (CSS Images
+    /// Module Level 3 §5.1 <https://www.w3.org/TR/css-images-3/#the-object-fit>;
+    /// see [`ObjectFit`]). Grammar: `fill | contain | cover | none |
+    /// scale-down`. The computed value is the specified keyword.
+    "object-fit" => ObjectFit {
+        value: ObjectFit,
+        initial: ObjectFit::Fill,
+        inherited: no,
+        parse: parse_object_fit,
         computed: as_specified,
     }
 }

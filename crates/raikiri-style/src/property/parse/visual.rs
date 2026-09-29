@@ -2104,7 +2104,7 @@ pub(super) fn parse_background_attachment(
 
 /// Parse `object-fit: <fit>` (see the [`ObjectFit`] grammar:
 /// `fill | contain | cover | none | scale-down`).
-pub(super) fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> {
+pub(crate) fn parse_object_fit(input: &mut Parser<'_, '_>) -> Option<ObjectFit> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
         "fill" => Some(ObjectFit::Fill),

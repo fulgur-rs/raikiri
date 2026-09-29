@@ -84,3 +84,21 @@ fn table_keyword_property_rejects_non_keywords() {
     assert_eq!(parse_decl("isolation", "1px"), None);
     assert_eq!(parse_decl("isolation", "bogus"), None);
 }
+
+#[test]
+fn object_fit_is_declared_through_a_parse_fn() {
+    assert!(LONGHAND_NAMES.contains(&"object-fit"));
+    assert_eq!(
+        property_key_for_name("object-fit"),
+        Some(PropertyKey::ObjectFit)
+    );
+    assert_eq!(
+        parse_decl("object-fit", "contain"),
+        Some(PropertyValue::ObjectFit(ObjectFit::Contain))
+    );
+    assert_eq!(parse_decl("object-fit", "bogus"), None);
+    assert_eq!(
+        PropertyValue::ObjectFit(ObjectFit::Fill).key(),
+        PropertyKey::ObjectFit
+    );
+}
