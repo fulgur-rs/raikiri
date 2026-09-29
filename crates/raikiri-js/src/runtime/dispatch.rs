@@ -16,7 +16,8 @@ use boa_engine::object::JsObject;
 use boa_engine::object::builtins::JsArray;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{
-    Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsString, JsValue, Trace,
+    Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsString, JsValue, Source,
+    Trace,
 };
 use raikiri_dom::NodeKind;
 
@@ -974,6 +975,7 @@ pub(crate) fn report_exception(
 /// `null` if it was never assigned (or was cleared).
 fn event_handler_get(this: &JsValue, kind: &str, context: &mut Context) -> JsResult<JsValue> {
     let key = events::this_event_target(this, context)?;
+    let key = resolve_handler_key(context, key, kind)?;
     let callback = with_state(context, |s| {
         s.listeners.get(&key).and_then(|list| {
             list.iter()
@@ -996,7 +998,22 @@ fn event_handler_set(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let key = events::this_event_target(this, context)?;
+    let key = resolve_handler_key(context, key, kind)?;
     let callback = args.first().and_then(JsValue::as_callable);
+    set_handler_callback(context, key, kind, callback)?;
+    Ok(JsValue::undefined())
+}
+
+/// Store `callback` in the one handler slot for `kind` at `key`,
+/// preserving the slot position when replacing. A `None` callback clears
+/// the slot. Shared by the IDL setter and event handler content
+/// attributes, which manage the same slot per HTML section 8.1.7.
+fn set_handler_callback(
+    context: &mut Context,
+    key: Option<usize>,
+    kind: &str,
+    callback: Option<JsObject>,
+) -> JsResult<()> {
     with_state(context, |s| {
         let list = s.listeners.entry(key).or_default();
         let existing = list.iter_mut().find(|l| l.kind == kind && l.is_handler);
@@ -1013,8 +1030,247 @@ fn event_handler_set(
             }),
             (None, None) => {}
         }
+    })
+}
+
+/// Whether `index` is an HTML-namespace body or frameset element whose
+/// load and error handlers live on the window per HTML section 8.1.7.1.
+fn is_window_handler_element(doc: &raikiri_dom::Document, index: usize) -> bool {
+    let Some(node) = doc.get_node(index) else {
+        return false;
+    };
+    let tag = node.tag_name();
+    if !matches!(tag, Some("body") | Some("frameset")) {
+        return false;
+    }
+    doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS)
+}
+
+/// Storage key for the handler slot of `kind` on element `index`: the
+/// window for load and error on body and frameset, otherwise the element
+/// itself.
+fn resolve_handler_key_for_index(
+    doc: &raikiri_dom::Document,
+    index: usize,
+    kind: &str,
+) -> Option<usize> {
+    if matches!(kind, "load" | "error") && is_window_handler_element(doc, index) {
+        None
+    } else {
+        Some(index)
+    }
+}
+
+/// Map a listener-storage key to the handler slot owner for `kind`.
+/// An element key forwards to the window when the element forwards this
+/// kind there. A window key stays on the window.
+fn resolve_handler_key(
+    context: &mut Context,
+    key: Option<usize>,
+    kind: &str,
+) -> JsResult<Option<usize>> {
+    let Some(index) = key else {
+        return Ok(None);
+    };
+    with_state(context, |s| {
+        resolve_handler_key_for_index(s.host.document(), index, kind)
+    })
+}
+
+/// Compile event handler content attribute `value` into a function object
+/// per HTML section 8.1.7.1. The body runs with a single event parameter,
+/// except a window error handler which takes the five onerror arguments so
+/// inline code sees the same values an IDL window.onerror function does.
+///
+/// A syntax error compiles to `None` and the slot is cleared, while the
+/// attribute write itself still succeeds. A resource limit is `Err` and is
+/// already recorded as an abort, the same as any other uncatchable error.
+fn compile_content_handler(
+    context: &mut Context,
+    value: &str,
+    is_window_on_error: bool,
+) -> JsResult<Option<JsObject>> {
+    let params = if is_window_on_error {
+        "event,source,lineno,colno,error"
+    } else {
+        "event"
+    };
+    let wrapped = format!("(function({params}){{\n{value}\n}})");
+    match context.eval(Source::from_bytes(&wrapped)) {
+        Ok(function) => Ok(function.as_object().filter(|o| o.is_callable())),
+        Err(error) => {
+            if let Some(reason) = event_loop::abort_for(&error) {
+                let _ = event_loop::abort(context, reason);
+                return Err(error);
+            }
+            Ok(None)
+        }
+    }
+}
+
+/// Sync one event handler content attribute change for element `index`.
+/// `name` is the attribute name as passed to set or remove (any case for
+/// HTML elements). `value` is the new value, or `None` for removal.
+/// Names without an on prefix and non-HTML elements are no-ops.
+///
+/// The compiled function replaces the same handler slot the matching on
+/// IDL accessor manages, so content and IDL writes overwrite each other in
+/// place. Removal clears that slot.
+pub(crate) fn sync_event_handler_for_attribute(
+    context: &mut Context,
+    index: usize,
+    name: &str,
+    value: Option<&str>,
+) -> JsResult<()> {
+    let (is_html, exists) = with_state(context, |s| {
+        let doc = s.host.document();
+        let is_html = doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS);
+        (is_html, doc.get_node(index).is_some())
     })?;
-    Ok(JsValue::undefined())
+    if !is_html || !exists {
+        return Ok(());
+    }
+    let lower = name.to_ascii_lowercase();
+    let Some(kind) = lower.strip_prefix("on").filter(|rest| !rest.is_empty()) else {
+        return Ok(());
+    };
+    let storage = with_state(context, |s| {
+        resolve_handler_key_for_index(s.host.document(), index, kind)
+    })?;
+    let Some(text) = value else {
+        set_handler_callback(context, storage, kind, None)?;
+        return Ok(());
+    };
+    let is_window_on_error = storage.is_none() && kind == "error";
+    let compiled = compile_content_handler(context, text, is_window_on_error)?;
+    set_handler_callback(context, storage, kind, compiled)?;
+    Ok(())
+}
+
+/// Collect every HTML element on-prefix content attribute as an element,
+/// lowercased name, and value triple. Reads the document once so callers
+/// can compile without holding the state borrow.
+fn collect_content_handler_attributes(
+    context: &mut Context,
+) -> JsResult<Vec<(usize, String, String)>> {
+    with_state(context, |s| {
+        let doc = s.host.document();
+        let count = doc.node_count();
+        let mut found = Vec::new();
+        for index in 0..count {
+            let Some(node) = doc.get_node(index) else {
+                continue;
+            };
+            if node.kind() != NodeKind::Element {
+                continue;
+            }
+            if doc.element_namespace_uri(index) != Some(super::interfaces::HTML_NS) {
+                continue;
+            }
+            for qualified in doc.element_attribute_names(index) {
+                if qualified == "style" {
+                    continue;
+                }
+                let lower = qualified.to_ascii_lowercase();
+                if lower.strip_prefix("on").is_none_or(|rest| rest.is_empty()) {
+                    continue;
+                }
+                if let Some(value) = doc.element_attribute(index, &qualified) {
+                    found.push((index, lower, value.to_owned()));
+                }
+            }
+        }
+        found
+    })
+}
+
+/// Compile every event handler content attribute already present in the
+/// document. Runs once per runtime creation and once per document run
+/// start, before any script in that run can overwrite a slot through its
+/// IDL setter, so recompiling here never clobbers an IDL value.
+pub(crate) fn sync_all_event_handler_content_attributes(context: &mut Context) -> JsResult<()> {
+    let pending = collect_content_handler_attributes(context)?;
+    for (index, lower, value) in pending {
+        let kind = lower[2..].to_owned();
+        let storage = with_state(context, |s| {
+            resolve_handler_key_for_index(s.host.document(), index, &kind)
+        })?;
+        let is_window_on_error = storage.is_none() && kind == "error";
+        let compiled = compile_content_handler(context, &value, is_window_on_error)?;
+        set_handler_callback(context, storage, &kind, compiled)?;
+    }
+    Ok(())
+}
+
+/// Compile the on-prefix content attributes of the descendants of `root`,
+/// following element children and template contents. The root itself is
+/// skipped because the innerHTML setter never changes its own attributes.
+/// Runs after that setter replaces a subtree, so only newly inserted nodes
+/// recompile and IDL-set slots elsewhere are untouched.
+pub(crate) fn sync_event_handlers_in_subtree(
+    context: &mut Context,
+    root: usize,
+) -> JsResult<()> {
+    let indices = with_state(context, |s| {
+        let doc = s.host.document();
+        let mut out = Vec::new();
+        let Some(root_node) = doc.get_node(root) else {
+            return Vec::new();
+        };
+        let mut stack: Vec<usize> = Vec::new();
+        if let Some(contents) = root_node.template_contents() {
+            stack.push(contents);
+        }
+        stack.extend(root_node.children.iter().rev().copied());
+        while let Some(current) = stack.pop() {
+            let Some(node) = doc.get_node(current) else {
+                continue;
+            };
+            out.push(current);
+            if let Some(contents) = node.template_contents() {
+                stack.push(contents);
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        out
+    })?;
+    for index in indices {
+        let pending: Vec<(String, String)> = with_state(context, |s| {
+            let doc = s.host.document();
+            let Some(node) = doc.get_node(index) else {
+                return Vec::new();
+            };
+            if node.kind() != NodeKind::Element {
+                return Vec::new();
+            }
+            if doc.element_namespace_uri(index) != Some(super::interfaces::HTML_NS) {
+                return Vec::new();
+            }
+            let mut attrs = Vec::new();
+            for qualified in doc.element_attribute_names(index) {
+                if qualified == "style" {
+                    continue;
+                }
+                let lower = qualified.to_ascii_lowercase();
+                if lower.strip_prefix("on").is_some_and(|rest| !rest.is_empty())
+                    && let Some(value) = doc.element_attribute(index, &qualified)
+                {
+                    attrs.push((lower, value.to_owned()));
+                }
+            }
+            attrs
+        })?;
+        for (lower, value) in pending {
+            let kind = lower[2..].to_owned();
+            let storage = with_state(context, |s| {
+                resolve_handler_key_for_index(s.host.document(), index, &kind)
+            })?;
+            let is_window_on_error = storage.is_none() && kind == "error";
+            let compiled = compile_content_handler(context, &value, is_window_on_error)?;
+            set_handler_callback(context, storage, &kind, compiled)?;
+        }
+    }
+    Ok(())
 }
 
 macro_rules! event_handler_pair {

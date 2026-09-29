@@ -860,3 +860,31 @@ fn run_document_with_callback_keeps_a_retained_sink_callable_after_the_run() {
     rt.evaluate("stashed('late');").unwrap();
     assert_eq!(*delivered.borrow(), vec!["late".to_owned()]);
 }
+
+#[test]
+fn body_onload_content_attribute_runs_during_run_document_like_check_layout() {
+    // The check-layout smoke shape: checkLayout is invoked from
+    // <body onload="...">, so the handler must be wired before the
+    // document run fires its window load event.
+    let (mut host, _, _, body) = StubHost::page();
+    host.document
+        .set_element_attribute(body, "onload", "checkLayout();")
+        .unwrap();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "var layoutCalls = 0; function checkLayout(){ layoutCalls += 1; }",
+    );
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(eval_bool(&mut rt, "typeof layoutCalls === 'undefined'"));
+    let report = rt.run_document();
+    assert_eq!(report.aborted, None, "{report:?}");
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert!(eval_bool(&mut rt, "layoutCalls === 1"));
+    // The compiled handler is visible through both IDL getters.
+    assert!(eval_bool(
+        &mut rt,
+        "typeof window.onload === 'function' && document.body.onload === window.onload"
+    ));
+}

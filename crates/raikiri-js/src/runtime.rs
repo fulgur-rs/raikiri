@@ -319,6 +319,12 @@ impl DomRuntime {
                 Err(reason) => RuntimeError::Aborted(reason),
             });
         }
+        if let Err(error) = dispatch::sync_all_event_handler_content_attributes(&mut context) {
+            return Err(match error_message(&error, &mut context) {
+                Ok(message) => RuntimeError::JavaScript(message),
+                Err(reason) => RuntimeError::Aborted(reason),
+            });
+        }
         Ok(Self {
             context,
             report: None,
