@@ -786,6 +786,7 @@ pub(super) fn absolutize_in_page_context(
                 }
             })
         }
+        PropertyValue::TextDecorationThicknessInherit => PropertyValue::TextDecorationThicknessInherit,
         PropertyValue::TextDecorationInset(inset) => {
             PropertyValue::TextDecorationInset(match inset {
                 TextDecorationInset::Auto => TextDecorationInset::Auto,
