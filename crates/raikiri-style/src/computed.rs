@@ -16,23 +16,22 @@ use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue,
-    TextAlign, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
-    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify,
-    TextOrientation, TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode,
-    TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    ComputedTable, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
+    EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
+    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, LineBreak, ListStylePosition, ListStyleType,
+    MaskImage, MixBlendMode, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign,
+    TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
+    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation,
+    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
+    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -1525,13 +1524,8 @@ pub struct ComputedValues {
     /// own dimensions (paint/used-value layer, see
     /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
-    /// `object-fit`. **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
-    /// Images Module Level 3 §5.1 "Sizing the replaced element: the
-    /// object-fit property"
-    /// <https://www.w3.org/TR/css-images-3/#the-object-fit>, "Value: `fill |
-    /// contain | cover | none | scale-down`", "Inherited: no"). Computed
-    /// value = specified keyword.
-    pub object_fit: ObjectFit,
+    /// Table-declared property values (see `longhands!`); reachable as fields through `Deref`.
+    pub longhands: ComputedTable,
     /// `object-position`. **non-inherited**, initial: `50% 50%` (CSS Images
     /// Module Level 3 §5.2 "Positioning the replaced element: the
     /// object-position property"
@@ -1584,19 +1578,14 @@ pub struct ComputedValues {
     /// paint output is out of this crate's scope — `raikiri-paint`
     /// consumes it as plain data.
     pub opacity: f32,
-    /// `isolation`. **non-inherited**, initial: [`Isolation::Auto`] (CSS
-    /// Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
-    /// property" <https://www.w3.org/TR/compositing-1/#isolation>). Always
-    /// a keyword — no phase-3 transform, identity pass-through from
-    /// [`crate::specified::SpecifiedValues::isolation`] (same shape as
-    /// [`Self::object_fit`]).
-    pub isolation: Isolation,
     /// `mix-blend-mode`. **non-inherited**, initial:
     /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1
     /// §3.4.1 "Mix Blend Mode: the mix-blend-mode property"
-    /// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>). Same shape
-    /// as [`Self::isolation`] above — actual blending compositing is
-    /// `raikiri-paint`'s responsibility, this field is plain data.
+    /// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>). Always a
+    /// keyword — no phase-3 transform, identity pass-through from
+    /// [`crate::specified::SpecifiedValues::mix_blend_mode`]. Actual blending
+    /// compositing is `raikiri-paint`'s responsibility, this field is plain
+    /// data.
     pub mix_blend_mode: MixBlendMode,
     /// `mask-image`. **non-inherited**, initial: [`MaskImage::None`] (CSS
     /// Masking Level 1 §7.1 "Image Masking: the mask-image property"
@@ -2039,8 +2028,7 @@ impl ComputedValues {
             // CSS Backgrounds and Borders 3 §2.3: initial background-image
             // is `none`.
             background_image: BackgroundImage::None,
-            // CSS Images 3 §5.1: initial object-fit is `fill`.
-            object_fit: ObjectFit::Fill,
+            longhands: ComputedTable::initial(),
             // CSS Images 3 §5.2: initial object-position is `50% 50%`,
             // unlike the `0% 0%` initial background-position.
             object_position: ComputedCssPosition {
@@ -2051,9 +2039,6 @@ impl ComputedValues {
             },
             // CSS Color 4 §3.3: initial opacity is `1`.
             opacity: 1.0,
-            // CSS Compositing and Blending 1 §3.4.2: initial isolation
-            // is `auto`.
-            isolation: Isolation::Auto,
             // CSS Compositing and Blending 1 §3.4.1: initial
             // mix-blend-mode is `normal`.
             mix_blend_mode: MixBlendMode::Normal,
@@ -2111,7 +2096,9 @@ impl ComputedValues {
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout).
     ///
     /// The inherited/non-inherited classification is defined by each field's
-    /// documentation. Inherited fields are copied from the parent's computed
+    /// documentation; for the table-declared properties held in
+    /// [`Self::longhands`] (such as `object_fit` and `isolation`), it is the
+    /// `inherited:` entry of the property's `longhands!` block. Inherited fields are copied from the parent's computed
     /// values; non-inherited fields retain their initial values.
     ///
     pub fn inherit_from(parent: &Self) -> Self {

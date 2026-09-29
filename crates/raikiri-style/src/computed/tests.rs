@@ -1,8 +1,8 @@
 use super::*;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
     FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
-    HyphenateLimitCharsValue, Length, TextShadowColor,
+    HyphenateLimitCharsValue, Isolation, Length, ObjectFit, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -583,10 +583,17 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
         // different from the initial `None` (as required for non_initial_parent).
         background_image: BackgroundImage::Url("fixture.png".into()),
-        // CSS Images Module Level 3 §5.1/§5.2: all are non-inherited,
-        // so give them values different from the initial `fill` / `50% 50%`
-        // (as required for non_initial_parent).
-        object_fit: ObjectFit::Cover,
+        // Table-declared properties, all non-inherited: CSS Images Module
+        // Level 3 §5.1 object-fit and CSS Compositing and Blending Level 1
+        // §3.4.2 isolation get values different from the initial `fill` /
+        // `auto` (as required for non_initial_parent).
+        longhands: ComputedTable {
+            object_fit: ObjectFit::Cover,
+            isolation: Isolation::Isolate,
+        },
+        // CSS Images Module Level 3 §5.2: non-inherited, so use a value
+        // different from the initial `50% 50%` (as required for
+        // non_initial_parent).
         object_position: ComputedCssPosition {
             horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
             vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
@@ -594,10 +601,9 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Color 4 §3.3: non-inherited, so use a value different
         // from the initial `1` (as required for non_initial_parent).
         opacity: 0.75,
-        // CSS Compositing and Blending Level 1 §3.4.2/§3.4.1: both are
-        // non-inherited, so use values different from the initial `auto`/`normal`
-        // (as required for non_initial_parent).
-        isolation: Isolation::Isolate,
+        // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
+        // a value different from the initial `normal` (as required for
+        // non_initial_parent).
         mix_blend_mode: MixBlendMode::Multiply,
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited,
         // so use values different from the initial `none`

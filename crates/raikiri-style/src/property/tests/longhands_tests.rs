@@ -165,3 +165,13 @@ fn non_inherited_table_fields_reset_to_initial_in_a_child() {
     let child = SpecifiedTable::inherit_from(&parent);
     assert_eq!(child.isolation, Isolation::Auto);
 }
+
+#[test]
+fn values_expose_table_fields_through_deref() {
+    let mut specified = crate::specified::SpecifiedValues::initial();
+    specified.isolation = Isolation::Isolate;
+    assert_eq!(specified.longhands.isolation, Isolation::Isolate);
+    let computed = crate::computed::ComputedValues::initial();
+    assert_eq!(computed.isolation, Isolation::Auto);
+    assert_eq!(computed.longhands.object_fit, ObjectFit::Fill);
+}

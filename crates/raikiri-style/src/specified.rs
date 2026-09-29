@@ -39,11 +39,11 @@ use crate::property::{
     FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
     FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, Length, LengthOrAuto, LengthOrNormal,
+    LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides, SpecifiedTable, TabSize,
+    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
     TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
@@ -570,9 +570,8 @@ pub struct SpecifiedValues {
     /// Percentages pass through because they need the gradient box dimensions at paint /
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
-    /// Staging value for [`ComputedValues::object_fit`]; computed-equivalent because `ObjectFit`
-    /// carries no lengths.
-    pub object_fit: ObjectFit,
+    /// Table-declared property values (see `longhands!`); reachable as fields through `Deref`.
+    pub longhands: SpecifiedTable,
     /// **Specified** `object-position`; phase 3 absolutizes `<length-percentage>` in each offset,
     /// as for `background_position`, reusing the [`CssPosition`] type.
     pub object_position: CssPosition,
@@ -580,10 +579,8 @@ pub struct SpecifiedValues {
     /// preserves, computed clamps" in the [`ComputedValues::opacity`] docs). Phase 3
     /// ([`Self::absolutize_with`]) clamps it.
     pub opacity: f32,
-    /// **Specified** `isolation`; always a keyword. It passes through without absolutization, as
-    /// with `object_fit`.
-    pub isolation: Isolation,
-    /// **Specified** `mix-blend-mode`; same pass-through shape as `isolation`.
+    /// **Specified** `mix-blend-mode`; always a keyword. It passes through without
+    /// absolutization.
     pub mix_blend_mode: MixBlendMode,
     /// **Specified** `mask-image`; `None` / `Url(String)` are computed-equivalent. As for
     /// `background_image`, phase 3 absolutizes font-relative parts of `<length-percentage>` in
@@ -917,8 +914,7 @@ impl SpecifiedValues {
             },
             // CSS Backgrounds and Borders 3 §2.3: background-image is initially `none`.
             background_image: BackgroundImage::None,
-            // CSS Images Module Level 3 §5.1: object-fit is initially `fill`.
-            object_fit: ObjectFit::Fill,
+            longhands: SpecifiedTable::initial(),
             // CSS Images Module Level 3 §5.2: object-position is initially `50% 50%`, unlike
             // background-position (`0% 0%`).
             object_position: CssPosition {
@@ -927,8 +923,6 @@ impl SpecifiedValues {
             },
             // CSS Color 4 §3.3: opacity is initially `1`.
             opacity: 1.0,
-            // CSS Compositing and Blending Level 1 §3.4.2: isolation is initially `auto`.
-            isolation: Isolation::Auto,
             // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode is initially `normal`.
             mix_blend_mode: MixBlendMode::Normal,
             // CSS Masking Level 1 §7.1: mask-image is initially `none`.
@@ -1290,19 +1284,16 @@ impl SpecifiedValues {
                 vertical: CssPositionOffset::Start(Length::Percent(0.0)),
             },
             background_image: BackgroundImage::None,
-            // non-inherited (CSS Images Module Level 3 §5.1/§5.2, both
-            // "Inherited: no") — child starts from spec initial, same as
-            // `background_repeat` above.
-            object_fit: ObjectFit::Fill,
+            longhands: SpecifiedTable::inherit_from(&parent.longhands),
+            // non-inherited (CSS Images Module Level 3 §5.2 "Inherited: no")
+            // — child starts from spec initial, same as `background_repeat`
+            // above.
             object_position: CssPosition {
                 horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                 vertical: CssPositionOffset::Start(Length::Percent(50.0)),
             },
             // non-inherited (CSS Color 4 §3.3 "Inherited: no").
             opacity: 1.0,
-            // non-inherited (CSS Compositing and Blending Level 1 §3.4.2
-            // "Inherited: no").
-            isolation: Isolation::Auto,
             // non-inherited (CSS Compositing and Blending Level 1 §3.4.1
             // "Inherited: no").
             mix_blend_mode: MixBlendMode::Normal,
@@ -1791,9 +1782,8 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            // CSS Images Module Level 3 §5.1: the computed value is the specified keyword with no
-            // lengths, like background_repeat.
-            object_fit: self.object_fit,
+            // Table-declared properties: see `longhands!` for each property's computed value.
+            longhands: self.longhands.absolutize(),
             transform_origin: resolve_css_position(
                 self.transform_origin,
                 font_size,
@@ -2100,11 +2090,8 @@ impl SpecifiedValues {
             // direct-construction case, only against the pipeline's own
             // out-of-range values.
             opacity: self.opacity.clamp(0.0, 1.0),
-            // CSS Compositing and Blending Level 1 §3.4.2: always a keyword; pass through without
-            // a phase 3 transform, as for object_fit.
-            isolation: self.isolation,
-            // CSS Compositing and Blending Level 1 §3.4.1: same shape as
-            // `isolation` above.
+            // CSS Compositing and Blending Level 1 §3.4.1: always a keyword; pass through without
+            // a phase 3 transform.
             mix_blend_mode: self.mix_blend_mode,
             // CSS Masking Level 1 §7.1: `None` and `Url(String)` are computed-equivalent. As for
             // background_image, phase 3 absolutizes font-relative parts of `<length-percentage>`

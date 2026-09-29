@@ -2334,8 +2334,8 @@ longhands! {
     }
 
     /// `isolation`: **non-inherited**, initial [`Isolation::Auto`] (CSS
-    /// Compositing and Blending Level 1 §3.4.2
-    /// <https://www.w3.org/TR/compositing-1/#isolation>). Grammar:
+    /// Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
+    /// property" <https://www.w3.org/TR/compositing-1/#isolation>). Grammar:
     /// `auto | isolate`. The computed value is the specified keyword.
     ///
     /// The spec's conditions for when `isolation` creates a stacking context
@@ -2361,8 +2361,9 @@ longhands! {
     }
 
     /// `object-fit`: **non-inherited**, initial [`ObjectFit::Fill`] (CSS Images
-    /// Module Level 3 §5.1 <https://www.w3.org/TR/css-images-3/#the-object-fit>;
-    /// see [`ObjectFit`]). Grammar: `fill | contain | cover | none |
+    /// Module Level 3 §5.1 "Sizing the replaced element: the object-fit
+    /// property" <https://www.w3.org/TR/css-images-3/#the-object-fit>; see
+    /// [`ObjectFit`]). Grammar: `fill | contain | cover | none |
     /// scale-down`. The computed value is the specified keyword.
     "object-fit" => ObjectFit {
         value: ObjectFit,

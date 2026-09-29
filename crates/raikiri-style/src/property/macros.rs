@@ -98,7 +98,9 @@ macro_rules! css_keywords {
 ///   type and is compiled only under `cfg(test)`.
 /// - `field:` names the property's field in the generated `SpecifiedTable`
 ///   and `ComputedTable` structs, which are built from `initial`, `inherited`
-///   and `computed: as_specified`.
+///   and `computed: as_specified`. They are embedded as
+///   `SpecifiedValues::longhands` and `ComputedValues::longhands`, and the
+///   generated `Deref`/`DerefMut` impls keep `values.<field>` working.
 ///
 /// Also generated: `longhand_key_for_name`, `parse_longhand_value` and
 /// `LONGHAND_NAMES`, which the hand-written name lookup and `parse_value`
@@ -127,11 +129,11 @@ macro_rules! css_keywords {
 /// 2. Add the property's CSS name to `supported_property_names()` in `names.rs`,
 ///    maintaining alphabetical order (pinned by the
 ///    `longhand_names_are_supported_property_names` test).
-/// 3. Implement per-property sites in `cascade/inherit.rs`, `specified.rs`, and
-///    `computed.rs`: the `apply_value` arm in `inherit.rs`; the `SpecifiedValues`
-///    field, its initial value in both constructors (initial and `inherit_from`), and
-///    its copy in `absolutize_with`; the `ComputedValues` field and its initial value
-///    (see the per-property doc table at the top of `specified.rs`). Pass-through
+/// 3. Give the new field a non-initial value in the `longhands: ComputedTable { .. }`
+///    initializer of the full `ComputedValues` test fixtures in `computed/tests.rs`
+///    and `specified/tests.rs` (the compiler points at them). The `SpecifiedValues` /
+///    `ComputedValues` storage, their initial / `inherit_from` / `absolutize_with`
+///    initializers, the `apply_value` store in `cascade/inherit.rs`, the pass-through
 ///    matches in `rule.rs`, the resolve step in `cascade/inherit.rs`,
 ///    `page/absolutize.rs`, the `serialize_value` `None` arm, and the test-only
 ///    residue detector in `page/cascade/tests.rs` are covered by the table, as are
@@ -146,7 +148,9 @@ macro_rules! css_keywords {
 /// test-only residue detector in `page/cascade/tests.rs`); the `LONGHAND_NAMES`
 /// constant; the test registries' macros (`with_longhand_samples` and
 /// `with_longhand_variants`); a field of `SpecifiedTable` and `ComputedTable`
-/// (with their `initial`, `inherit_from`, `absolutize` and `apply`); and for
+/// (with their `initial`, `inherit_from`, `absolutize` and `apply`, and the
+/// `Deref`/`DerefMut` impls that expose them on `SpecifiedValues` and
+/// `ComputedValues`); and for
 /// keyword value blocks, the value enum with its `INITIAL` constant.
 macro_rules! longhands {
     // ---- helpers -------------------------------------------------------
@@ -303,13 +307,17 @@ macro_rules! longhands {
             longhands!(@computed $comp $(:: $comp_rest)*);
         )*
 
-        /// Table-declared specified values; embedded in `SpecifiedValues`.
+        /// Table-declared specified values, embedded as
+        /// `SpecifiedValues::longhands`; its fields are reachable directly on
+        /// `SpecifiedValues` through `Deref`.
         #[derive(Clone, Debug, PartialEq)]
         pub struct SpecifiedTable {
             $( $(#[$m])* pub $field: longhands!(@ty $V $vt $({ $($kw)* })?), )*
         }
 
-        /// Table-declared computed values; embedded in `ComputedValues`.
+        /// Table-declared computed values, embedded as
+        /// `ComputedValues::longhands`; its fields are reachable directly on
+        /// `ComputedValues` through `Deref`.
         #[derive(Clone, Debug, PartialEq)]
         pub struct ComputedTable {
             $( $(#[$m])* pub $field: longhands!(@ty $V $vt $({ $($kw)* })?), )*
@@ -318,7 +326,6 @@ macro_rules! longhands {
         #[allow(clippy::clone_on_copy)]
         impl SpecifiedTable {
             /// Every field at its initial value.
-            #[cfg_attr(not(test), allow(dead_code))]
             pub(crate) fn initial() -> Self {
                 Self { $( $field: longhands!(@initial_value $V $vt $({ $($kw)* })? $init), )* }
             }
@@ -326,7 +333,6 @@ macro_rules! longhands {
             /// The specified state of a child: inherited fields copy the parent's
             /// computed value, the others start at their initial value.
             // `parent` is unused while every table entry is non-inherited.
-            #[cfg_attr(not(test), allow(dead_code))]
             #[allow(unused_variables)]
             pub(crate) fn inherit_from(parent: &ComputedTable) -> Self {
                 Self {
@@ -335,13 +341,11 @@ macro_rules! longhands {
             }
 
             /// Specified to computed: every table property is computed as specified.
-            #[cfg_attr(not(test), allow(dead_code))]
             pub(crate) fn absolutize(self) -> ComputedTable {
                 ComputedTable { $( $field: self.$field, )* }
             }
 
             /// Stores a cascade winner in its field. `value` must be a table variant.
-            #[cfg_attr(not(test), allow(dead_code))]
             pub(crate) fn apply(&mut self, value: PropertyValue) {
                 match value {
                     $( PropertyValue::$V(v) => self.$field = v, )*
@@ -352,9 +356,31 @@ macro_rules! longhands {
 
         impl ComputedTable {
             /// Every field at its initial value.
-            #[cfg_attr(not(test), allow(dead_code))]
             pub(crate) fn initial() -> Self {
                 Self { $( $field: longhands!(@initial_value $V $vt $({ $($kw)* })? $init), )* }
+            }
+        }
+
+        impl ::core::ops::Deref for crate::specified::SpecifiedValues {
+            type Target = SpecifiedTable;
+            fn deref(&self) -> &SpecifiedTable {
+                &self.longhands
+            }
+        }
+        impl ::core::ops::DerefMut for crate::specified::SpecifiedValues {
+            fn deref_mut(&mut self) -> &mut SpecifiedTable {
+                &mut self.longhands
+            }
+        }
+        impl ::core::ops::Deref for crate::computed::ComputedValues {
+            type Target = ComputedTable;
+            fn deref(&self) -> &ComputedTable {
+                &self.longhands
+            }
+        }
+        impl ::core::ops::DerefMut for crate::computed::ComputedValues {
+            fn deref_mut(&mut self) -> &mut ComputedTable {
+                &mut self.longhands
             }
         }
 

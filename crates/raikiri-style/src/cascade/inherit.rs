@@ -2039,10 +2039,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, |v| apply_value(v, target)),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),
         PropertyValue::Font(shorthand) => expand_font(&shorthand, |v| apply_value(v, target)),
-        PropertyValue::ObjectFit(v) => target.object_fit = v,
         PropertyValue::ObjectPosition(v) => target.object_position = v,
         PropertyValue::Opacity(v) => target.opacity = v,
-        PropertyValue::Isolation(v) => target.isolation = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
@@ -2069,6 +2067,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         // Resolved before ordinary winners reach this function.
         PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_) => {}
+        v @ longhand_value_pat!() => target.longhands.apply(v),
     }
 }
 

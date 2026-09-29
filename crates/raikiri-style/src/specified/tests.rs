@@ -3,8 +3,8 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox,
+    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    FontVariationSetting, FontVariationSettings, GeometryBox, Isolation, ObjectFit,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -124,11 +124,11 @@ fn opacity_out_of_range_specified_clamps_at_finalize() {
 /// `finalize` unchanged; neither needs range clamping like `opacity`.
 #[test]
 fn isolation_and_mix_blend_mode_pass_through_finalize_unchanged() {
-    let specified = SpecifiedValues {
-        isolation: Isolation::Isolate,
+    let mut specified = SpecifiedValues {
         mix_blend_mode: MixBlendMode::Multiply,
         ..SpecifiedValues::initial()
     };
+    specified.isolation = Isolation::Isolate;
     let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
     assert_eq!(computed.isolation, Isolation::Isolate);
     assert_eq!(computed.mix_blend_mode, MixBlendMode::Multiply);
@@ -464,9 +464,15 @@ fn parent_fixture() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".to_string()),
-        // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited; set values other than the
-        // initial `fill` / `50% 50%`.
-        object_fit: ObjectFit::Cover,
+        // Table-declared properties, all non-inherited: CSS Images Module Level 3 §5.1
+        // object-fit and CSS Compositing and Blending Level 1 §3.4.2 isolation; set values other
+        // than the initial `fill` / `auto`.
+        longhands: ComputedTable {
+            object_fit: ObjectFit::Cover,
+            isolation: Isolation::Isolate,
+        },
+        // CSS Images Module Level 3 §5.2: non-inherited; set a value other than the initial
+        // `50% 50%`.
         object_position: crate::resolve::ComputedCssPosition {
             horizontal: crate::resolve::ComputedCssPositionOffset::Start(
                 ComputedLengthPercentage::Px(3.0),
@@ -477,9 +483,6 @@ fn parent_fixture() -> ComputedValues {
         },
         // CSS Color 4 §3.3: non-inherited; set a value other than the initial `1`.
         opacity: 0.25,
-        // CSS Compositing and Blending Level 1 §3.4.2: non-inherited; set a value other than the
-        // initial `auto`.
-        isolation: Isolation::Isolate,
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.
         mix_blend_mode: MixBlendMode::Multiply,
