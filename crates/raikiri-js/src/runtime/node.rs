@@ -362,7 +362,7 @@ fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
         Err(message) => Err(host_failure_with_message(
             context,
             HostError(message),
-            "innerHTML serialization failed",
+            "innerHTML serialization failed", // cov:ignore: serialize_inner_html fails only for malformed arena unreachable via public JS API
         )),
     }
 }
