@@ -62,6 +62,7 @@ macro_rules! css_keywords {
 ///     initial: Auto,
 ///     inherited: no,
 ///     computed: as_specified,
+///     sample: Isolation::Isolate,
 /// }
 /// ```
 ///
@@ -74,11 +75,13 @@ macro_rules! css_keywords {
 ///     inherited: no,
 ///     parse: parse_object_fit,
 ///     computed: as_specified,
+///     sample: ObjectFit::Contain,
 /// }
 /// ```
 ///
 /// The field order is fixed: `value`, `initial`, `inherited`, `parse` (when
-/// present), then `computed`. `value:` accepts a single identifier type only.
+/// present), `computed`, then `sample`. `value:` accepts a single identifier
+/// type only.
 ///
 /// - `value: keywords { .. }` defines the value enum named after the block and
 ///   parses through its `from_css_ident`. `parse:` must then be omitted.
@@ -87,6 +90,10 @@ macro_rules! css_keywords {
 /// - `initial` and `inherited` are validated at compile time but not consumed
 ///   yet. `computed:` accepts only `as_specified`; any other hook is a
 ///   `compile_error!` until hooks are consumed.
+/// - `sample:` is the test-only worst-case value used by the page-cascade
+///   corpus: pick a non-initial value, so a regression that silently resets
+///   or transforms the property is visible. It is an expression of the value
+///   type and is compiled only under `cfg(test)`.
 ///
 /// Also generated: `longhand_key_for_name`, `parse_longhand_value` and
 /// `LONGHAND_NAMES`, which the hand-written name lookup and `parse_value`
@@ -95,26 +102,31 @@ macro_rules! css_keywords {
 /// in `rule.rs`, `cascade/inherit.rs`, `page/absolutize.rs` and
 /// `serialize.rs` use.
 ///
+/// Test-only: `longhand_samples()` pairs each CSS name with its `sample:`
+/// value, and `with_longhand_samples!` / `with_longhand_variants!` feed the
+/// table entries into `property_key_samples!` and
+/// `property_value_variant_registry!` in `page/cascade/tests.rs`.
+///
 /// # Adding a property
 ///
 /// To add a new property to the table:
 ///
 /// 1. Add a block to this invocation in `longhands.rs` with the property's CSS
-///    name, variant name, value type, initial value, inherited status, and
-///    `computed: as_specified`. Follow the format of existing entries like
+///    name, variant name, value type, initial value, inherited status,
+///    `computed: as_specified` and a non-initial `sample:`. Follow the format of existing entries like
 ///    `"isolation" => Isolation { .. }`, using `value: keywords { .. }` for
 ///    keyword enums or `value: SomeType` with `parse: some_fn` for other types.
 /// 2. Add the property's CSS name to `supported_property_names()` in `names.rs`,
 ///    maintaining alphabetical order.
-/// 3. Hand edits are required at `property_key_samples!` and
-///    `property_value_variant_registry!` in `page/cascade/tests.rs`. A new
-///    variant also fails to compile until its field accesses are handled in
+/// 3. A new variant fails to compile until its field accesses are handled in
 ///    `apply_value` (`cascade/inherit.rs`), `specified.rs` and `computed.rs`.
 ///    These sites are the remaining per-property implementation locations.
+///    The page-cascade test registries pick the property up from the table.
 ///
 /// A table block currently generates only the PropertyKey and PropertyValue
 /// enum variants, the key() projection, the name-to-key lookup, the value
-/// parsing dispatch, and the pass-through pattern. Computed-value computation
+/// parsing dispatch, the pass-through pattern, and the test registries'
+/// entries. Computed-value computation
 /// and inheritance are handled by the remaining per-property sites; table
 /// properties are passed through unchanged by shorthand expansion and
 /// absolute-length conversion, and `serialize_value` returns `None` for them.
@@ -173,6 +185,35 @@ macro_rules! longhands {
         );
     };
 
+    // Test-only callback macros feeding table entries into the page-cascade
+    // registries. `$d` is a literal `$` token, so the nested macro can declare
+    // its own metavariables without the outer expansion claiming them.
+    // `$sample` arrives wrapped in parentheses, which double as the variant
+    // constructor's argument list.
+    (@test_registries [$d:tt] $( $V:ident => $sample:tt )*) => {
+        /// Invokes `$cb! { <hand entries> Variant => sample, ... }` with every
+        /// table property's `sample:` value appended after the hand entries.
+        #[cfg(test)]
+        macro_rules! with_longhand_samples {
+            ($d cb:ident { $d ($d hand:tt)* }) => {
+                $d cb! { $d ($d hand)* $( $V => PropertyValue::$V $sample, )* }
+            };
+        }
+        #[cfg(test)]
+        pub(crate) use with_longhand_samples;
+
+        /// Invokes `$cb! { <hand names> Variant, ... }` with every table
+        /// variant name appended after the hand names.
+        #[cfg(test)]
+        macro_rules! with_longhand_variants {
+            ($d cb:ident { $d ($d hand:tt)* }) => {
+                $d cb! { $d ($d hand)* $( $V, )* }
+            };
+        }
+        #[cfg(test)]
+        pub(crate) use with_longhand_variants;
+    };
+
     // ---- entry ---------------------------------------------------------
     (
         property_value {
@@ -191,7 +232,8 @@ macro_rules! longhands {
                 initial: $init:expr,
                 inherited: $inh:ident,
                 $(parse: $parse:path,)?
-                computed: $comp:ident $(:: $comp_rest:ident)* $(,)?
+                computed: $comp:ident $(:: $comp_rest:ident)*,
+                sample: $sample:expr $(,)?
             }
         )*
     ) => {
@@ -241,6 +283,14 @@ macro_rules! longhands {
             () => { $( PropertyValue::$V(..) )|+ };
         }
         pub(crate) use longhand_value_pat;
+
+        /// Every table property's CSS name paired with its `sample:` value.
+        #[cfg(test)]
+        pub(crate) fn longhand_samples() -> Vec<(&'static str, PropertyValue)> {
+            vec![ $( ($css, PropertyValue::$V($sample)), )* ]
+        }
+
+        longhands!(@test_registries [$] $( $V => ($sample) )*);
 
         /// Name lookup for table-declared properties; `normalized_name` must
         /// already be ASCII-lowercase.

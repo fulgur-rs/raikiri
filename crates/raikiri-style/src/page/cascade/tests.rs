@@ -3065,7 +3065,9 @@ macro_rules! property_key_samples {
         };
     }
 
-property_key_samples! {
+// Table-declared properties (`longhands!` in `property/longhands.rs`) are
+// appended after these hand-written entries from their `sample:` fields.
+crate::property::with_longhand_samples!(property_key_samples {
     Color => PropertyValue::Color(RED),
     BackgroundColor => PropertyValue::BackgroundColor(BLUE),
     FontFamily => PropertyValue::FontFamily(Arc::new(vec![crate::property::FontFamilyName::generic("serif")])),
@@ -3590,11 +3592,6 @@ property_key_samples! {
         clip: VisualBox::PaddingBox,
         origin: VisualBox::ContentBox,
     }),
-    // CSS Images Module Level 3 §5.1 — keyword-only, carries no length.
-    // `Contain` is the non-initial worst case (`fill` is the spec
-    // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
-    // sample above).
-    ObjectFit => PropertyValue::ObjectFit(ObjectFit::Contain),
     // CSS Images Module Level 3 §5.2 — `Em`/`Rem` worst-case payload on
     // both `Start` and `End` (distinct edges), same convention as
     // `BackgroundPosition` above; type itself (`CssPosition`) is
@@ -3618,12 +3615,9 @@ property_key_samples! {
     // `PHASE_3_PASS_THROUGH_VARIANTS`, same load-bearing-fixture
     // convention as that test's own `Solid`/`Hidden` choices).
     Opacity => PropertyValue::Opacity(2.0),
-    // CSS Compositing and Blending Level 1 §3.4.2 — non-initial
-    // (`isolate`, not `auto`) so a would-be pass-through regression
-    // (accidentally routing this arm through a transform) is visible.
-    Isolation => PropertyValue::Isolation(Isolation::Isolate),
     // CSS Compositing and Blending Level 1 §3.4.1 — non-initial
-    // (`multiply`, not `normal`), same rationale as `Isolation` above.
+    // (`multiply`, not `normal`) so a would-be pass-through regression
+    // (accidentally routing this arm through a transform) is visible.
     MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
     // CSS Masking Level 1 §7.1 — non-initial (`Url`, not `None`).
     MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".to_string())),
@@ -3648,7 +3642,7 @@ property_key_samples! {
     Left => PropertyValue::Left(LengthOrAuto::Auto),
     // CSS Tables 3 §4 table-layout — non-initial (`fixed`, not `auto`)
     // so a would-be pass-through regression (accidentally routing this
-    // arm through a transform) is visible (`Isolation` sibling comment
+    // arm through a transform) is visible (`MixBlendMode` sibling comment
     // above uses the same rationale).
     TableLayout => PropertyValue::TableLayout(TableLayoutValue::Fixed),
     // CSS Tables 3 §6 border-collapse — non-initial (`collapse`, not
@@ -3757,7 +3751,7 @@ property_key_samples! {
     FontVariationSettings => {
         PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
     },
-}
+});
 
 /// `PropertyValue` variants **not covered** by `sample_for`'s 1:1
 /// `PropertyKey -> PropertyValue` mapping: variants sharing a key (for example,
@@ -3895,7 +3889,8 @@ macro_rules! property_value_variant_registry {
 // List variants in `PropertyValue` declaration order in `property.rs`.
 // This is a convenience for mechanical updates, not a semantic requirement,
 // just as with the `property_key_samples!` invocation.
-property_value_variant_registry! {
+// Table-declared variants are appended after these hand-written names.
+crate::property::with_longhand_variants!(property_value_variant_registry {
     CustomProperty,
     Deferred,
     Color,
@@ -4067,10 +4062,8 @@ property_value_variant_registry! {
     BackgroundPosition,
     BackgroundImage,
     Background,
-    ObjectFit,
     ObjectPosition,
     Opacity,
-    Isolation,
     MixBlendMode,
     MaskImage,
     ClipPath,
@@ -4115,7 +4108,7 @@ property_value_variant_registry! {
     FontVariantNumeric,
     FontVariantEastAsian,
     FontVariationSettings,
-}
+});
 
 /// Confirm that `page_corpus()` covers **every** `PropertyValue` variant
 /// registered in `property_value_variant_registry!`, closing the previously
@@ -4736,12 +4729,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::BackgroundClip(_)
             | PropertyValue::BackgroundOrigin(_)
 
-            // `object-fit` (CSS Images Module Level 3 §5.1) carries no
-            // length either — keyword-only payload, same shape as
-            // `BackgroundRepeat` above. `object-position` (§5.2) does carry
-            // `<length-percentage>` (reuses `CssPosition`) and gets its own
-            // arm below, next to `BackgroundPosition`.
-            | PropertyValue::ObjectFit(_)
+            // Properties declared in the `longhands!` table (such as
+            // `object-fit`) carry keyword-only payloads with no length, same
+            // shape as `BackgroundRepeat` above. This arm assumes every table
+            // payload is length-free; revisit it when a table property
+            // carries a length. `object-position` (CSS Images 3 §5.2) does
+            // carry `<length-percentage>` (reuses `CssPosition`) and gets its
+            // own arm below, next to `BackgroundPosition`.
+            | crate::property::longhand_value_pat!()
             // `opacity` (CSS Color 4 §3.3) carries a bare `f32`, not a
             // `Length` — this detector only checks for *length* residue, so
             // it reports `None` unconditionally regardless of the value's
@@ -4751,10 +4746,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
             // is accounted for.
             | PropertyValue::Opacity(_)
-            // `isolation` / `mix-blend-mode` (CSS Compositing and Blending
-            // Level 1 §3.4.2/§3.4.1) carry bare keyword payloads (no
-            // `Length` at all, unlike `Opacity`'s `f32`) — always `None`.
-            | PropertyValue::Isolation(_)
+            // `mix-blend-mode` (CSS Compositing and Blending Level 1 §3.4.1)
+            // carries a bare keyword payload (no `Length` at all, unlike
+            // `Opacity`'s `f32`) — always `None`.
             | PropertyValue::MixBlendMode(_)
 
             // `clip-path` (§5.1) — no embedded length at all (no
@@ -4777,8 +4771,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS
             // Tables 3 §6) / `caption-side` (§7) / `empty-cells` (§8) carry
             // bare keyword payloads (no `Length` at all, unlike `Opacity`'s
-            // `f32`) — always `None` (`Isolation`/`MixBlendMode` sibling arms
-            // above use the same reasoning).
+            // `f32`) — always `None` (the `MixBlendMode` sibling arm above
+            // uses the same reasoning).
             | PropertyValue::TableLayout(_)
             | PropertyValue::BorderCollapse(_)
             | PropertyValue::CaptionSide(_)

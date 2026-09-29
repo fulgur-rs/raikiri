@@ -116,3 +116,16 @@ fn longhand_value_pat_matches_table_variants_only() {
     let other = PropertyValue::Opacity(0.5);
     assert!(!matches!(&other, longhand_value_pat!()));
 }
+
+#[test]
+fn every_table_entry_has_a_sample_of_its_own_variant() {
+    // `sample_for` in the page cascade tests is built from the same table;
+    // here we only pin that a sample maps back to the declared key.
+    for (name, value) in crate::property::longhand_samples() {
+        assert_eq!(
+            property_key_for_name(name),
+            Some(value.key()),
+            "sample for {name} does not round-trip through its key"
+        );
+    }
+}
