@@ -1,0 +1,27 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: write a closure as `#[key(with = |payload| ..)]`; it receives `&Payload`
+  --> 3:15
+   |
+ 3 |         #[key(|value| value.key)]
+   |               ^
+
+error: expected `#[key(OtherKey)]` or `#[key(with = <fn(&Payload) -> PropertyKey>)]`
+  --> 5:16
+   |
+ 5 |         #[key(A, B)]
+   |                ^
+
+error: `#[key(with = ..)]` needs a variant with exactly one unnamed field
+  --> 7:22
+   |
+ 7 |         #[key(with = f)]
+   |                      ^
+
+error: a variant takes at most one `#[key(..)]`
+  --> 10:9
+   |
+10 |         #[key(Other)]
+   |         ^^^^^^^^^^^^^

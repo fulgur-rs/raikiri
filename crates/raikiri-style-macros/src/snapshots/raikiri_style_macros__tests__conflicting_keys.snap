@@ -1,0 +1,27 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: `parse:` cannot be combined with `keywords:`; the generated keyword enum parses itself
+  --> 13:47
+   |
+13 |         "a-prop" => AProp { keywords: [X, Y], parse: parse_a, initial: X, inherited: no },
+   |                                               ^^^^^
+
+error: a `keywords` entry's value type is the generated enum `BProp`; remove `: u8`
+  --> 15:28
+   |
+15 |         "b-prop" => BProp: u8 { keywords: [X, Y], initial: X, inherited: no },
+   |                            ^^
+
+error: `compute:` and `computed: Type via hook` both name a hook; keep `computed: .. via ..` when the computed type differs, `compute:` otherwise
+  --> 17:73
+   |
+17 |         "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c,
+   |                                                                         ^^^^^^^
+
+error: `lift:` is only used with `computed: Type via hook`; a computed value of the specified type needs no lift
+  --> 20:73
+   |
+20 |         "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0 },
+   |                                                                         ^^^^

@@ -1,0 +1,21 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: variant `AProp` is already declared by the "a-prop" entry
+  --> 15:21
+   |
+15 |         "b-prop" => AProp { keywords: [X, Y], initial: X, inherited: no },
+   |                     ^^^^^
+
+error: field `a_prop` is already used by the `AProp` entry; set `field:` to another name
+  --> 17:81
+   |
+17 |         "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, field: a_prop },
+   |                                                                                 ^^^^^^
+
+error: variant `Color` is already a hand-written `PropertyValue` or `PropertyKey` variant
+  --> 19:20
+   |
+19 |         "color" => Color { keywords: [X, Y], initial: X, inherited: yes },
+   |                    ^^^^^

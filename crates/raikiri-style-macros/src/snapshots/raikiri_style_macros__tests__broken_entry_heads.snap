@@ -1,0 +1,27 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(&src, &errors)"
+---
+error: expected `=>`
+  --> 13:18
+   |
+13 |         "a-prop" = AProp { keywords: [X, Y], initial: X, inherited: no },
+   |                  ^
+
+error: expected `,` after this entry's `}`
+  --> 16:9
+   |
+16 |         /// C.
+   |         ^^^^^^
+
+error: expected the `PropertyValue` variant name after `=>`, e.g. `ObjectFit`
+  --> 17:21
+   |
+17 |         "c-prop" => { keywords: [X, Y], initial: X, inherited: no },
+   |                     ^
+
+error: only doc comments are allowed on a longhand entry
+  --> 18:9
+   |
+18 |         #[cfg(test)]
+   |         ^^^^^^^^^^^^

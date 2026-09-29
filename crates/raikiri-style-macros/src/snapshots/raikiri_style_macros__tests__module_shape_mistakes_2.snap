@@ -1,0 +1,21 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(src, &errors) + &render(src2, &errors2) + &render(src3, &errors3)"
+---
+error: `#[longhands]` needs an inline module: `mod decl { .. }`
+  --> 1:1
+   |
+ 1 | mod decl;
+   | ^^^^^^^^^
+
+error: `#[longhands]` applies to an inline module: `#[longhands] mod decl { .. }`
+  --> 1:1
+   |
+ 1 | struct Decl;
+   | ^^^^^^^^^^^^
+
+error: `#[longhands]` found no longhand; declare them in `properties! { .. }` inside the module
+  --> 1:5
+   |
+ 1 | mod decl { pub enum PropertyValue {} pub enum PropertyKey {} }
+   |     ^^^^

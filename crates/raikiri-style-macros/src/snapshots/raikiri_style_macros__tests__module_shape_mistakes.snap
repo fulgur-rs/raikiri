@@ -1,0 +1,21 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(args, &errors[..1]) + &render(src, &errors[1..])"
+---
+error: `#[longhands]` takes no arguments; declare longhands in `properties! { .. }` inside the module
+  --> 1:1
+   |
+ 1 | Isolation, ObjectFit
+   | ^^^^^^^^^^^^^^^^^^^^
+
+error: `properties!` takes no attributes; put doc comments on its entries
+  --> 1:38
+   |
+ 1 | mod decl { pub enum PropertyValue {} #[doc = "x"] properties! {} }
+   |                                      ^^^^^^^^^^^^
+
+error: a `#[longhands]` module must declare `pub enum PropertyKey { .. }` with its hand-written variants
+  --> 1:5
+   |
+ 1 | mod decl { pub enum PropertyValue {} #[doc = "x"] properties! {} }
+   |     ^^^^

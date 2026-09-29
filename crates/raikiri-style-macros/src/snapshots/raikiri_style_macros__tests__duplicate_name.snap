@@ -1,0 +1,9 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: longhand "isolation" is already declared by the `Isolation` entry
+  --> 15:9
+   |
+15 |         "isolation" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },
+   |         ^^^^^^^^^^^
