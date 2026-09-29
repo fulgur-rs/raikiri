@@ -526,6 +526,40 @@ fn samples_default_to_the_first_non_initial_keyword() {
     );
 }
 
+/// The table samples hold every entry's `sample:`; the computed one runs
+/// the hooks in the initial context. `equal_fields` names the entries that
+/// did not move away from the initial value.
+#[test]
+fn table_samples_and_equal_fields() {
+    let specified = SpecifiedTable::sample();
+    assert_eq!(specified.isolation, Isolation::Isolate);
+    assert_eq!(specified.object_fit, ObjectFit::Contain);
+    assert_eq!(specified.opacity, 2.0);
+    assert_eq!(specified.text_case, TextCase::Upper);
+    assert_eq!(specified.word_spacing, Length::Em(2.0));
+    assert_eq!(specified.tab, Length::Em(1.0));
+    assert_eq!(specified.break_mode, BreakMode::Auto);
+    assert_eq!(
+        specified.equal_fields(&SpecifiedTable::initial()),
+        Vec::<&str>::new()
+    );
+    assert_eq!(
+        SpecifiedTable::initial().equal_fields(&SpecifiedTable::initial()),
+        property::LONGHAND_NAMES
+    );
+
+    let computed = ComputedTable::sample();
+    // Initial context: the root font size, 16px.
+    assert_eq!(computed.word_spacing, Px(32.0));
+    assert_eq!(computed.tab, Px(16.0));
+    // `2.0` clamps to the initial `1.0`, which `equal_fields` reports.
+    assert_eq!(computed.opacity, 1.0);
+    assert_eq!(
+        computed.equal_fields(&ComputedTable::initial()),
+        ["opacity"]
+    );
+}
+
 #[test]
 fn registry_callbacks_append_declared_entries() {
     macro_rules! collect_samples {

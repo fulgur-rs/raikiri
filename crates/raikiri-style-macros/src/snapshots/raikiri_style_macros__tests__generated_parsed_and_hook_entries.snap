@@ -179,6 +179,23 @@ mod decl {
                 other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
             }
         }
+        # [doc = r" Every field at its entry's `sample` value: a non-initial"]
+        # [doc = r" value for test fixtures."]
+        # [cfg (test)]
+        pub (crate) fn sample () -> Self {
+            Self {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: sample () ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: sample () ,
+            }
+        }
+        # [doc = r" The CSS names of the entries whose fields are equal in `self`"]
+        # [doc = r" and `other`, in declaration order (test only; for checking that"]
+        # [doc = r" a fixture differs from the initial values in every entry)."]
+        # [cfg (test)]
+        pub (crate) fn equal_fields (& self , other : & Self) -> :: std :: vec :: Vec < & 'static str > {
+            let pairs : & [(& 'static str , bool)] = & [("object-fit" , self . object_fit == other . object_fit) , ("word-spacing" , self . spacing == other . spacing) ,] ;
+            pairs . iter () . filter (| (_ , equal) | * equal) . map (| (name , _) | * name) . collect ()
+        }
     }
     # [allow (unused_variables)]
     impl ComputedTable {
@@ -191,6 +208,27 @@ mod decl {
                 object_fit : < object_fit :: Property as crate :: property :: Longhand > :: compute (< object_fit :: Property as crate :: property :: Longhand > :: initial () , cx) ,
                 spacing : < spacing :: Property as crate :: property :: Longhand > :: compute (< spacing :: Property as crate :: property :: Longhand > :: initial () , cx) ,
             }
+        }
+        # [doc = r" Every field at its entry's `sample` value, computed in the"]
+        # [doc = r" initial context: a non-initial value for test fixtures, as"]
+        # [doc = r" long as no entry's `compute` maps its sample to the computed"]
+        # [doc = r" initial value (check with [`Self::equal_fields`])."]
+        # [cfg (test)]
+        pub (crate) fn sample () -> Self {
+            let ctx = crate :: resolve :: ResolveContext :: initial () ;
+            let cx = & crate :: property :: AbsolutizeCx :: initial (& ctx) ;
+            Self {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: compute (< object_fit :: Property as crate :: property :: Longhand > :: sample () , cx) ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: compute (< spacing :: Property as crate :: property :: Longhand > :: sample () , cx) ,
+            }
+        }
+        # [doc = r" The CSS names of the entries whose fields are equal in `self`"]
+        # [doc = r" and `other`, in declaration order (test only; for checking that"]
+        # [doc = r" a fixture differs from the initial values in every entry)."]
+        # [cfg (test)]
+        pub (crate) fn equal_fields (& self , other : & Self) -> :: std :: vec :: Vec < & 'static str > {
+            let pairs : & [(& 'static str , bool)] = & [("object-fit" , self . object_fit == other . object_fit) , ("word-spacing" , self . spacing == other . spacing) ,] ;
+            pairs . iter () . filter (| (_ , equal) | * equal) . map (| (name , _) | * name) . collect ()
         }
     }
     # [doc = r" Page-context absolutization of one declared longhand value."]

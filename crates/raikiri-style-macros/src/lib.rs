@@ -114,7 +114,12 @@
 //!   `computed: Type via hook`.
 //! - `sample` is the non-initial worst-case value of the page-cascade test
 //!   corpus, compiled only under `cfg(test)`. Every entry without
-//!   `keywords` must supply one.
+//!   `keywords` must supply one. It also fills the test fixtures
+//!   `SpecifiedTable::sample()` and `ComputedTable::sample()` (the latter
+//!   through `compute` in the initial context), so choose one whose
+//!   computed value differs from the computed initial value as well: a
+//!   hook that maps the sample back to the initial value (a clamp, say)
+//!   would leave the computed fixture at the initial value for that entry.
 //! - Each entry needs at least one doc comment (the specification
 //!   reference). Other attributes are rejected.
 //! - Names are plain identifiers: Rust keywords and raw identifiers are
@@ -170,7 +175,13 @@
 //!   (omitted when no entry could be declared, since a pattern must match
 //!   at least one variant);
 //! - under `cfg(test)`: `longhand_samples()`, `longhand_sample(key)`,
-//!   `with_longhand_samples!` and `with_longhand_variants!`.
+//!   `with_longhand_samples!` and `with_longhand_variants!`;
+//!   `SpecifiedTable::sample()` (every field at its `sample`) and
+//!   `ComputedTable::sample()` (every `sample` computed in the initial
+//!   context), for fixtures that must hold non-initial values; and
+//!   `equal_fields(&self, other)` on both tables, the CSS names of the
+//!   entries whose fields are equal, for checking such a fixture against
+//!   `initial()`.
 //!
 //! # Host crate
 //!

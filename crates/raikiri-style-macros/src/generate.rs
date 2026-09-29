@@ -334,6 +334,26 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
     let normalized_name = local("normalized_name");
     let input = local("input");
     let cx_ty = quote!(crate::property::AbsolutizeCx<'_>);
+    let all_names: Vec<_> = entries.iter().map(|e| &e.name).collect();
+    let pairs = local("pairs");
+    let name = local("name");
+    let equal = local("equal");
+    let equal_fields = quote! {
+        /// The CSS names of the entries whose fields are equal in `self`
+        /// and `other`, in declaration order (test only; for checking that
+        /// a fixture differs from the initial values in every entry).
+        #[cfg(test)]
+        pub(crate) fn equal_fields(&self, #other: &Self) -> ::std::vec::Vec<&'static str> {
+            let #pairs: &[(&'static str, bool)] = &[
+                #( (#all_names, self.#fields == #other.#fields), )*
+            ];
+            #pairs
+                .iter()
+                .filter(|(_, #equal)| *#equal)
+                .map(|(#name, _)| *#name)
+                .collect()
+        }
+    };
     let value_pat_name = format_ident!("longhand_value_pat");
     // An or-pattern needs at least one alternative, and no pattern matches
     // nothing, so without entries (every entry failed; the errors are
@@ -421,6 +441,15 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
                     ),
                 }
             }
+
+            /// Every field at its entry's `sample` value: a non-initial
+            /// value for test fixtures.
+            #[cfg(test)]
+            pub(crate) fn sample() -> Self {
+                Self { #( #fields: #projections::sample(), )* }
+            }
+
+            #equal_fields
         }
 
         #[allow(unused_variables)]
@@ -434,6 +463,21 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
                     #( #fields: #projections::compute(#projections::initial(), #cx), )*
                 }
             }
+
+            /// Every field at its entry's `sample` value, computed in the
+            /// initial context: a non-initial value for test fixtures, as
+            /// long as no entry's `compute` maps its sample to the computed
+            /// initial value (check with [`Self::equal_fields`]).
+            #[cfg(test)]
+            pub(crate) fn sample() -> Self {
+                let #ctx = crate::resolve::ResolveContext::initial();
+                let #cx = &crate::property::AbsolutizeCx::initial(&#ctx);
+                Self {
+                    #( #fields: #projections::compute(#projections::sample(), #cx), )*
+                }
+            }
+
+            #equal_fields
         }
 
         /// Page-context absolutization of one declared longhand value.
