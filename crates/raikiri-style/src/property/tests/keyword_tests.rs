@@ -23,6 +23,8 @@ fn keyword_tables_round_trip_through_their_parsers() {
         BorderCollapseValue,
         BorderStyle,
         BoxSizing,
+        BreakBetween,
+        BreakInside,
         CaptionSideValue,
         ClearValue,
         ContentAlignmentValue,

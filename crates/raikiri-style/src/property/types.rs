@@ -5340,6 +5340,13 @@ pub enum BreakBetween {
     Page,
 }
 
+css_keywords!(BreakBetween {
+    Auto => "auto",
+    Avoid => "avoid",
+    AvoidPage => "avoid-page",
+    Page => "page",
+});
+
 /// The value of the `break-inside` property.
 ///
 /// CSS Fragmentation Module Level 3 §3.2 "Breaks Within Boxes: the
@@ -5396,6 +5403,12 @@ pub enum BreakInside {
     /// `avoid-page` — "Avoid a page break within the box." (§3.2 verbatim)
     AvoidPage,
 }
+
+css_keywords!(BreakInside {
+    Auto => "auto",
+    Avoid => "avoid",
+    AvoidPage => "avoid-page",
+});
 
 /// The value of the `float` property.
 ///
