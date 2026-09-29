@@ -39,6 +39,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         FontVariantEmoji,
         FontVariantLigatures,
         FontVariantPosition,
+        HangingPunctuation,
         Hyphens,
         Isolation,
         LineBreak,

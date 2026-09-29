@@ -1463,12 +1463,7 @@ pub(super) fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> 
 
 /// Parses the implemented `hanging-punctuation` subset from CSS Text 3 §8.2.1.
 pub(super) fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<HangingPunctuation> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(HangingPunctuation::None),
-        "first" => Some(HangingPunctuation::First),
-        _ => None,
-    }
+    HangingPunctuation::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `direction: <ident>`
