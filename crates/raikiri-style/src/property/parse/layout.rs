@@ -1232,16 +1232,7 @@ pub(crate) fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<P
 /// `inherit` because of the "CSS-wide keyword (canonical)" policy described
 /// above. ASCII case-insensitive matching follows sibling `parse_word_break`.
 pub(super) fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(FloatValue::None),
-        "left" => Some(FloatValue::Left),
-        "right" => Some(FloatValue::Right),
-        "inline-start" => Some(FloatValue::InlineStart),
-        "inline-end" => Some(FloatValue::InlineEnd),
-        "footnote" => Some(FloatValue::Footnote),
-        _ => None,
-    }
+    FloatValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `clear: <ident>` (CSS2 §9.5.2
@@ -1252,16 +1243,7 @@ pub(super) fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
 /// `inherit` because of the "CSS-wide keyword (canonical)" policy described
 /// above. ASCII case-insensitive matching follows sibling `parse_float`.
 pub(super) fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(ClearValue::None),
-        "left" => Some(ClearValue::Left),
-        "right" => Some(ClearValue::Right),
-        "both" => Some(ClearValue::Both),
-        "inline-start" => Some(ClearValue::InlineStart),
-        "inline-end" => Some(ClearValue::InlineEnd),
-        _ => None,
-    }
+    ClearValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `table-layout: <ident>` (CSS Tables 3 §4
@@ -1273,12 +1255,7 @@ pub(super) fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
 /// (`rule.rs::DeclParser`) drops any extra tokens, such as
 /// `table-layout: auto fixed`.
 pub(super) fn parse_table_layout(input: &mut Parser<'_, '_>) -> Option<TableLayoutValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TableLayoutValue::Auto),
-        "fixed" => Some(TableLayoutValue::Fixed),
-        _ => None,
-    }
+    TableLayoutValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `border-collapse: <ident>` (CSS Tables 3 §6
@@ -1288,12 +1265,7 @@ pub(super) fn parse_table_layout(input: &mut Parser<'_, '_>) -> Option<TableLayo
 /// Value grammar: `collapse | separate`. Matching follows the same rules as
 /// sibling [`parse_table_layout`].
 pub(super) fn parse_border_collapse(input: &mut Parser<'_, '_>) -> Option<BorderCollapseValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "collapse" => Some(BorderCollapseValue::Collapse),
-        "separate" => Some(BorderCollapseValue::Separate),
-        _ => None,
-    }
+    BorderCollapseValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `border-spacing: <length>{1,2}` (CSS Tables 3 §6.1
@@ -1330,12 +1302,7 @@ pub(super) fn parse_border_spacing(input: &mut Parser<'_, '_>) -> Option<BorderS
 /// (`rule.rs::DeclParser`) drops extra tokens such as
 /// `caption-side: top bottom`.
 pub(super) fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSideValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "top" => Some(CaptionSideValue::Top),
-        "bottom" => Some(CaptionSideValue::Bottom),
-        _ => None,
-    }
+    CaptionSideValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `empty-cells: <ident>` (CSS Tables 3 §8
@@ -1345,12 +1312,7 @@ pub(super) fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSi
 /// Value grammar: `show | hide`. Matching follows the same rules as sibling
 /// [`parse_caption_side`].
 pub(super) fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCellsValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "show" => Some(EmptyCellsValue::Show),
-        "hide" => Some(EmptyCellsValue::Hide),
-        _ => None,
-    }
+    EmptyCellsValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
