@@ -1107,10 +1107,6 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `PropertyValue::Opacity` doc's "specified preserves, computed
         // clamps" note and `parse_opacity_value` doc.
         "opacity" => parse_opacity_value(input).map(PropertyValue::Opacity),
-        // CSS Compositing and Blending Level 1 §3.4.2
-        // <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
-        // `auto | isolate`.
-        "isolation" => parse_isolation(input).map(PropertyValue::Isolation),
         // CSS Compositing and Blending Level 1 §3.4.1
         // <https://www.w3.org/TR/compositing-1/#mix-blend-mode>. Grammar:
         // `<blend-mode>` — see `MixBlendMode` doc for the 16-keyword list.

@@ -1335,10 +1335,6 @@ longhands! {
             /// even out-of-range values (for example, `opacity: 2`). Appended as a new
             /// 1:1 disjoint field under the placement rule in [`PropertyKey`].
             Opacity(f32),
-            /// `isolation` — **non-inherited**, initial: [`Isolation::Auto`] (CSS
-            /// Compositing and Blending Level 1 §3.4.2; see [`Isolation`]). Appended
-            /// as a new 1:1 disjoint field under the placement rule in [`PropertyKey`].
-            Isolation(Isolation),
             /// `mix-blend-mode` — **non-inherited**, initial:
             /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1 §3.4.1;
             /// see [`MixBlendMode`]). Appended as a new 1:1 disjoint field under the
@@ -1942,13 +1938,11 @@ longhands! {
             // per-variant docs per crate convention). Appended for the same reason as
             // background-repeat: a new field disjoint one-to-one from existing fields.
             Opacity,
-            // isolation / mix-blend-mode (CSS Compositing and Blending Level 1
-            // §3.4.1/§3.4.2, semantics on the matching PropertyValue::Isolation /
-            // PropertyValue::MixBlendMode variants; sibling PropertyKey variants
-            // carry no per-variant docs per crate convention). Appended for the same
-            // reason as background-repeat: new fields disjoint one-to-one from
-            // existing fields.
-            Isolation,
+            // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1,
+            // semantics on the matching PropertyValue::MixBlendMode variant; sibling
+            // PropertyKey variants carry no per-variant docs per crate convention).
+            // Appended for the same reason as background-repeat: a new field disjoint
+            // one-to-one from existing fields.
             MixBlendMode,
             // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1, semantics on
             // the matching PropertyValue::MaskImage / PropertyValue::ClipPath
@@ -2303,7 +2297,6 @@ longhands! {
         PropertyValue::ObjectFit(_) => PropertyKey::ObjectFit,
         PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
         PropertyValue::Opacity(_) => PropertyKey::Opacity,
-        PropertyValue::Isolation(_) => PropertyKey::Isolation,
         PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
         PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
         PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
@@ -2345,5 +2338,27 @@ longhands! {
         PropertyValue::FontVariantNumeric(_) => PropertyKey::FontVariantNumeric,
         PropertyValue::FontVariantEastAsian(_) => PropertyKey::FontVariantEastAsian,
         PropertyValue::FontVariationSettings(_) => PropertyKey::FontVariationSettings,
+    }
+
+    /// `isolation`: **non-inherited**, initial [`Isolation::Auto`] (CSS
+    /// Compositing and Blending Level 1 §3.4.2
+    /// <https://www.w3.org/TR/compositing-1/#isolation>). Grammar:
+    /// `auto | isolate`. The computed value is the specified keyword.
+    ///
+    /// The spec's conditions for when `isolation` creates a stacking context
+    /// or group are not implemented here; this variant carries only the
+    /// cascaded keyword and compositing groups belong to raikiri-paint.
+    "isolation" => Isolation {
+        value: keywords {
+            /// `auto`: the initial value; the element does not itself force an
+            /// independent stacking context or group.
+            Auto => "auto",
+            /// `isolate`: make the element an independent stacking context and
+            /// confine `mix-blend-mode` blending to its subtree.
+            Isolate => "isolate",
+        },
+        initial: Auto,
+        inherited: no,
+        computed: as_specified,
     }
 }
