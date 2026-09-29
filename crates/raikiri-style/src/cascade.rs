@@ -156,6 +156,19 @@ pub struct CascadeResult {
     /// means "renders as normal" (no box-suppression meaning at all), while
     /// the same empty list on a **pseudo**'s [`Self::pseudo`] entry means
     /// "no box" (§4.1's `content: not none` condition above).
+    ///
+    /// `::marker` (CSS Lists 3 §3.7) shares this same map and the same full-
+    /// `ComputedValues` treatment. `::first-line` (CSS Pseudo-Elements
+    /// Module Level 4 §2.1 `#first-line-pseudo`) also shares it, but map
+    /// presence for a `::first-line` entry carries none of the `content`-
+    /// based box-suppression reading above — `::first-line` has no
+    /// `content`-driven box-generation model at all (see [`PseudoElem`]
+    /// doc), so presence means only "some `::first-line` rule matched this
+    /// element". §2.1.2 `#first-line-styling` also restricts which
+    /// properties may apply through `::first-line`; this crate does not yet
+    /// enforce that restriction, so a consumer reading a `::first-line`
+    /// entry from this map is responsible for using only the properties
+    /// that section allows.
     pub pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 }
 
@@ -425,6 +438,38 @@ mod tests {
                 .contains_key(&(element_id, PseudoElem::Before))
         );
         assert_eq!(doc.node_count(), 4);
+    }
+
+    #[test]
+    fn first_line_pseudo_element_absent_without_matching_rule() {
+        let css = "p { color: blue }";
+        let (_, element, result) = context_cascade_doc(css, MediaContext::default());
+        let element_id = StyleNodeId::new(element as u64);
+        assert!(
+            !result
+                .pseudo
+                .contains_key(&(element_id, PseudoElem::FirstLine))
+        );
+    }
+
+    #[test]
+    fn first_line_pseudo_element_inherits_and_overrides() {
+        let css = "p { color: blue; font-weight: bold } p::first-line { color: red }";
+        let (_, element, result) = context_cascade_doc(css, MediaContext::default());
+        let element_id = StyleNodeId::new(element as u64);
+        let pseudo = result
+            .pseudo
+            .get(&(element_id, PseudoElem::FirstLine))
+            .expect("a matching ::first-line rule must produce a pseudo entry");
+        // Own declaration wins over the originating element's value.
+        assert_eq!(pseudo.color, RED);
+        // Not set by the `::first-line` rule, so it is inherited unchanged
+        // from the originating element, same as a real child would inherit
+        // it (CSS Pseudo-Elements Module Level 4 §4 `#treelike`, which this
+        // crate applies uniformly to every entry in `CascadeResult::pseudo`
+        // regardless of whether that specific pseudo-element is itself
+        // tree-abiding — see `PseudoElem` doc).
+        assert_eq!(pseudo.font_weight, result.computed[element].font_weight);
     }
 
     #[test]

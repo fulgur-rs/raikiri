@@ -203,7 +203,15 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // pseudo-elements, of which `::before`/`::after` are a subcase):
         // "They inherit any inheritable properties from their originating
         // element; non-inheritable properties take their initial values as
-        // usual." This is computed inline here, right where `id`'s own real
+        // usual." `::first-line` is not itself tree-abiding (§2.1
+        // <https://drafts.csswg.org/css-pseudo-4/#first-line-pseudo>, see
+        // `PseudoElem` doc), but this crate resolves it with the same
+        // inherit-then-cascade step below since both are single-originating-
+        // element pseudo-elements; §4's `content`-conditioned box-generation
+        // rule two paragraphs down does not apply to it (`::first-line` has
+        // no `content`-driven box-generation model), only the plain
+        // inheritance sentence quoted above. This is computed inline here,
+        // right where `id`'s own real
         // children would be, rather than in a separate pass after this
         // whole walk finishes, for one specific reason: `child_ctx` (the
         // `rem`/`rlh` basis `id`'s real children get) is *not* a
@@ -230,7 +238,12 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // element" — is a downstream (`raikiri-dom`) decision this crate
         // does not make; see `CascadeResult::pseudo`'s doc.
         if is_element {
-            for pseudo in [PseudoElem::Before, PseudoElem::After, PseudoElem::Marker] {
+            for pseudo in [
+                PseudoElem::Before,
+                PseudoElem::After,
+                PseudoElem::Marker,
+                PseudoElem::FirstLine,
+            ] {
                 let candidates = cascaded.pseudo_candidates(id, pseudo);
                 let custom_candidates = cascaded.pseudo_custom_candidates(id, pseudo);
                 if candidates.is_none() && custom_candidates.is_none() {
