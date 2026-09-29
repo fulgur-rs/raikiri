@@ -89,9 +89,11 @@ macro_rules! css_keywords {
 ///   parses through its `from_css_ident`. `parse:` must then be omitted.
 /// - `value: SomeType` reuses an existing type and requires `parse: some_fn`,
 ///   a `fn(&mut Parser) -> Option<SomeType>` path.
-/// - `initial` and `inherited` are validated at compile time but not consumed
-///   yet. `computed:` accepts only `as_specified`; any other hook is a
-///   `compile_error!` until hooks are consumed.
+/// - `initial` supplies the field's initial value in `SpecifiedTable` and
+///   `ComputedTable`, and `inherited` decides whether `inherit_from` copies the
+///   parent's value or resets to the initial one. `computed:` accepts only
+///   `as_specified`; any other hook is a `compile_error!` until hooks are
+///   consumed.
 /// - `sample:` is the test-only worst-case value used by the page-cascade
 ///   corpus: pick a non-initial value, so a regression that silently resets
 ///   or transforms the property is visible. It is an expression of the value
@@ -120,7 +122,8 @@ macro_rules! css_keywords {
 ///
 /// 1. Add a block to this invocation in `longhands.rs` with the property's CSS
 ///    name, variant name, value type, initial value, inherited status,
-///    `computed: as_specified`, and a non-initial `sample:` (for test coverage).
+///    `computed: as_specified`, `field:` (the table field name), and a
+///    non-initial `sample:` (for test coverage), in the field order above.
 ///    Write `sample:` as a path-qualified expression (e.g. `crate::property::Foo::Bar`)
 ///    so it resolves at both the table's expansion site and in `page/cascade/tests.rs`,
 ///    or import the value type there. Follow the format of existing entries like
@@ -132,6 +135,12 @@ macro_rules! css_keywords {
 ///
 /// That is all a simple keyword property needs; everything else below is
 /// generated from the block.
+///
+/// `field:` must not equal the name of a hand-written field of `SpecifiedValues`
+/// or `ComputedValues`: the inherent field would shadow the `Deref` target, so
+/// writes through `apply` and reads through the field would diverge. The
+/// block's attributes are copied onto the generated table fields, so use doc
+/// comments only.
 ///
 /// One follow-up remains in tests: every full
 /// `ComputedValues { longhands: ComputedTable { .. }, .. }` literal, such as
@@ -329,6 +338,7 @@ macro_rules! longhands {
         /// `SpecifiedValues::longhands`; its fields are reachable directly on
         /// `SpecifiedValues` through `Deref`.
         #[derive(Clone, Debug, PartialEq)]
+        #[non_exhaustive]
         pub struct SpecifiedTable {
             $( $(#[$m])* pub $field: longhands!(@ty $V $vt $({ $($kw)* })?), )*
         }
@@ -337,6 +347,7 @@ macro_rules! longhands {
         /// `ComputedValues::longhands`; its fields are reachable directly on
         /// `ComputedValues` through `Deref`.
         #[derive(Clone, Debug, PartialEq)]
+        #[non_exhaustive]
         pub struct ComputedTable {
             $( $(#[$m])* pub $field: longhands!(@ty $V $vt $({ $($kw)* })?), )*
         }
