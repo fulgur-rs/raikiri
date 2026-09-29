@@ -360,8 +360,9 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
         }
 
         /// Specified values of the longhands declared in `properties!`,
-        /// embedded as `SpecifiedValues::longhands`; its fields are reachable
-        /// directly on `SpecifiedValues` through `Deref`.
+        /// embedded as `SpecifiedValues::longhands`; its fields are readable
+        /// directly on `SpecifiedValues` through `Deref` and written through
+        /// `longhands`.
         #[derive(Clone, Debug, PartialEq)]
         #[non_exhaustive]
         pub struct SpecifiedTable {
@@ -369,8 +370,9 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
         }
 
         /// Computed values of the longhands declared in `properties!`,
-        /// embedded as `ComputedValues::longhands`; its fields are reachable
-        /// directly on `ComputedValues` through `Deref`.
+        /// embedded as `ComputedValues::longhands`; its fields are readable
+        /// directly on `ComputedValues` through `Deref` and written through
+        /// `longhands`.
         #[derive(Clone, Debug, PartialEq)]
         #[non_exhaustive]
         pub struct ComputedTable {
@@ -451,20 +453,10 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
                 &self.longhands
             }
         }
-        impl ::core::ops::DerefMut for crate::specified::SpecifiedValues {
-            fn deref_mut(&mut self) -> &mut SpecifiedTable {
-                &mut self.longhands
-            }
-        }
         impl ::core::ops::Deref for crate::computed::ComputedValues {
             type Target = ComputedTable;
             fn deref(&self) -> &ComputedTable {
                 &self.longhands
-            }
-        }
-        impl ::core::ops::DerefMut for crate::computed::ComputedValues {
-            fn deref_mut(&mut self) -> &mut ComputedTable {
-                &mut self.longhands
             }
         }
 

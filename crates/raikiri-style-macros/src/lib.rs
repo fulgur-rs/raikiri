@@ -142,8 +142,12 @@
 //! - `PropertyValue::key()`;
 //! - `SpecifiedTable` and `ComputedTable` (`#[non_exhaustive]`, one field per
 //!   entry) with `SpecifiedTable::{initial, inherit_from, absolutize, apply}`
-//!   and `ComputedTable::initial`, and `Deref`/`DerefMut` from
-//!   `SpecifiedValues` / `ComputedValues` to them;
+//!   and `ComputedTable::initial`, and a read-only `Deref` from
+//!   `SpecifiedValues` / `ComputedValues` to them. No `DerefMut` is
+//!   generated: a write names the table (`values.longhands.field = ..` or
+//!   `values.longhands.apply(..)`), so a write can neither hide that it
+//!   goes to the table nor land in a same-named host field that reads
+//!   would not see;
 //! - `longhand_page_absolutize(value, cx)`: `lift(compute(value))` for one
 //!   table value;
 //! - `longhand_key_for_name(name)` and `parse_longhand_value(name, input)`,

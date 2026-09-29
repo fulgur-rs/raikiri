@@ -107,8 +107,9 @@ mod decl {
         }
     }
     # [doc = r" Specified values of the longhands declared in `properties!`,"]
-    # [doc = r" embedded as `SpecifiedValues::longhands`; its fields are reachable"]
-    # [doc = r" directly on `SpecifiedValues` through `Deref`."]
+    # [doc = r" embedded as `SpecifiedValues::longhands`; its fields are readable"]
+    # [doc = r" directly on `SpecifiedValues` through `Deref` and written through"]
+    # [doc = r" `longhands`."]
     # [derive (Clone , Debug , PartialEq)]
     # [non_exhaustive]
     pub struct SpecifiedTable {
@@ -118,8 +119,9 @@ mod decl {
         pub isolation : isolation :: Specified ,
     }
     # [doc = r" Computed values of the longhands declared in `properties!`,"]
-    # [doc = r" embedded as `ComputedValues::longhands`; its fields are reachable"]
-    # [doc = r" directly on `ComputedValues` through `Deref`."]
+    # [doc = r" embedded as `ComputedValues::longhands`; its fields are readable"]
+    # [doc = r" directly on `ComputedValues` through `Deref` and written through"]
+    # [doc = r" `longhands`."]
     # [derive (Clone , Debug , PartialEq)]
     # [non_exhaustive]
     pub struct ComputedTable {
@@ -187,20 +189,10 @@ mod decl {
             & self . longhands
         }
     }
-    impl :: core :: ops :: DerefMut for crate :: specified :: SpecifiedValues {
-        fn deref_mut (& mut self) -> & mut SpecifiedTable {
-            & mut self . longhands
-        }
-    }
     impl :: core :: ops :: Deref for crate :: computed :: ComputedValues {
         type Target = ComputedTable ;
         fn deref (& self) -> & ComputedTable {
             & self . longhands
-        }
-    }
-    impl :: core :: ops :: DerefMut for crate :: computed :: ComputedValues {
-        fn deref_mut (& mut self) -> & mut ComputedTable {
-            & mut self . longhands
         }
     }
     # [doc = r" Every longhand name declared in `properties!`, lowercase, in"]

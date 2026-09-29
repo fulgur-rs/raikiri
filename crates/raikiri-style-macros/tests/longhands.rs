@@ -544,14 +544,16 @@ fn registry_callbacks_append_declared_entries() {
     );
 }
 
+/// Table fields are read through `Deref` and written through `longhands`:
+/// no `DerefMut` is generated.
 #[test]
-fn deref_exposes_the_table_fields() {
+fn deref_exposes_the_table_fields_for_reading() {
     let mut specified = specified::SpecifiedValues {
         color: 0,
         longhands: SpecifiedTable::initial(),
     };
-    specified.opacity = 0.5;
-    assert_eq!(specified.longhands.opacity, 0.5);
+    specified.longhands.opacity = 0.5;
+    assert_eq!(specified.opacity, 0.5);
     assert_eq!(specified.color, 0);
 
     let computed = computed::ComputedValues {
