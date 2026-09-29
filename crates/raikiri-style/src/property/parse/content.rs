@@ -284,14 +284,10 @@ pub(super) fn parse_content_list_items(
 /// <https://www.w3.org/TR/css-content-3/#element-content> and §2.4.2
 /// <https://www.w3.org/TR/css-content-3/#quote-values>.
 fn parse_content_bare_keyword(ident: &str) -> Option<ContentComponent> {
-    match ident.to_ascii_lowercase().as_str() {
-        "contents" => Some(ContentComponent::Contents),
-        "open-quote" => Some(ContentComponent::Quote(QuoteKeyword::OpenQuote)),
-        "close-quote" => Some(ContentComponent::Quote(QuoteKeyword::CloseQuote)),
-        "no-open-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoOpenQuote)),
-        "no-close-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoCloseQuote)),
-        _ => None,
+    if ident.eq_ignore_ascii_case("contents") {
+        return Some(ContentComponent::Contents);
     }
+    QuoteKeyword::from_css_ident(ident).map(ContentComponent::Quote)
 }
 
 /// Parse `string-set: none | [ <custom-ident> <content-list> ]#`
@@ -441,14 +437,7 @@ fn parse_element_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
 }
 
 pub(super) fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "first" => Some(StringFetchMode::First),
-        "start" => Some(StringFetchMode::Start),
-        "last" => Some(StringFetchMode::Last),
-        "first-except" => Some(StringFetchMode::FirstExcept),
-        _ => None,
-    }
+    StringFetchMode::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `<counter-name>` (CSS Lists 3 §4
@@ -611,14 +600,7 @@ fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> 
 }
 
 pub(super) fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "content" => Some(ContentPart::Content),
-        "before" => Some(ContentPart::Before),
-        "after" => Some(ContentPart::After),
-        "first-letter" => Some(ContentPart::FirstLetter),
-        _ => None,
-    }
+    ContentPart::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `content([ text | before | after | first-letter ]?)`. The `?` describes
@@ -670,14 +652,7 @@ fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
 }
 
 pub(super) fn parse_content_text_keyword(input: &mut Parser<'_, '_>) -> Option<ContentTextKeyword> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "text" => Some(ContentTextKeyword::Text),
-        "before" => Some(ContentTextKeyword::Before),
-        "after" => Some(ContentTextKeyword::After),
-        "first-letter" => Some(ContentTextKeyword::FirstLetter),
-        _ => None,
-    }
+    ContentTextKeyword::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `leader(<leader-type>)`. CSS Content 3 §2.5.1 "The leader() function"
