@@ -62,6 +62,7 @@ macro_rules! css_keywords {
 ///     initial: Auto,
 ///     inherited: no,
 ///     computed: as_specified,
+///     field: isolation,
 ///     sample: Isolation::Isolate,
 /// }
 /// ```
@@ -75,13 +76,14 @@ macro_rules! css_keywords {
 ///     inherited: no,
 ///     parse: parse_object_fit,
 ///     computed: as_specified,
+///     field: object_fit,
 ///     sample: ObjectFit::Contain,
 /// }
 /// ```
 ///
 /// The field order is fixed: `value`, `initial`, `inherited`, `parse` (when
-/// present), `computed`, then `sample`. `value:` accepts a single identifier
-/// type only.
+/// present), `computed`, `field`, then `sample`. `value:` accepts a single
+/// identifier type only.
 ///
 /// - `value: keywords { .. }` defines the value enum named after the block and
 ///   parses through its `from_css_ident`. `parse:` must then be omitted.
@@ -94,6 +96,9 @@ macro_rules! css_keywords {
 ///   corpus: pick a non-initial value, so a regression that silently resets
 ///   or transforms the property is visible. It is an expression of the value
 ///   type and is compiled only under `cfg(test)`.
+/// - `field:` names the property's field in the generated `SpecifiedTable`
+///   and `ComputedTable` structs, which are built from `initial`, `inherited`
+///   and `computed: as_specified`.
 ///
 /// Also generated: `longhand_key_for_name`, `parse_longhand_value` and
 /// `LONGHAND_NAMES`, which the hand-written name lookup and `parse_value`
@@ -140,8 +145,9 @@ macro_rules! css_keywords {
 /// `cascade/inherit.rs`, `page/absolutize.rs`, `serialize_value`, and the
 /// test-only residue detector in `page/cascade/tests.rs`); the `LONGHAND_NAMES`
 /// constant; the test registries' macros (`with_longhand_samples` and
-/// `with_longhand_variants`); and for keyword value blocks, the value enum with
-/// its `INITIAL` constant.
+/// `with_longhand_variants`); a field of `SpecifiedTable` and `ComputedTable`
+/// (with their `initial`, `inherit_from`, `absolutize` and `apply`); and for
+/// keyword value blocks, the value enum with its `INITIAL` constant.
 macro_rules! longhands {
     // ---- helpers -------------------------------------------------------
     (@ty $V:ident keywords { $($kw:tt)* }) => { $V };
@@ -186,8 +192,20 @@ macro_rules! longhands {
         const _: fn() -> $ty = || $init;
     };
 
+    (@initial_value $V:ident keywords { $($kw:tt)* } $init:expr) => { $V::INITIAL };
+    (@initial_value $V:ident $ty:ident $init:expr) => { $init };
+
     (@inherited yes) => {};
     (@inherited no) => {};
+
+    // Inherited properties take the parent's computed value; the rest reset
+    // to their initial value.
+    (@inherit yes $parent:ident $field:ident $V:ident $vt:ident $({ $($kw:tt)* })? ; $init:expr) => {
+        ::core::clone::Clone::clone(&$parent.$field)
+    };
+    (@inherit no $parent:ident $field:ident $V:ident $vt:ident $({ $($kw:tt)* })? ; $init:expr) => {
+        longhands!(@initial_value $V $vt $({ $($kw)* })? $init)
+    };
 
     (@computed as_specified) => {};
     (@computed $f:ident $(:: $rest:ident)*) => {
@@ -245,6 +263,7 @@ macro_rules! longhands {
                 inherited: $inh:ident,
                 $(parse: $parse:path,)?
                 computed: $comp:ident $(:: $comp_rest:ident)*,
+                field: $field:ident,
                 sample: $sample:expr $(,)?
             }
         )*
@@ -283,6 +302,61 @@ macro_rules! longhands {
             longhands!(@inherited $inh);
             longhands!(@computed $comp $(:: $comp_rest)*);
         )*
+
+        /// Table-declared specified values; embedded in `SpecifiedValues`.
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct SpecifiedTable {
+            $( $(#[$m])* pub $field: longhands!(@ty $V $vt $({ $($kw)* })?), )*
+        }
+
+        /// Table-declared computed values; embedded in `ComputedValues`.
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct ComputedTable {
+            $( $(#[$m])* pub $field: longhands!(@ty $V $vt $({ $($kw)* })?), )*
+        }
+
+        #[allow(clippy::clone_on_copy)]
+        impl SpecifiedTable {
+            /// Every field at its initial value.
+            #[cfg_attr(not(test), allow(dead_code))]
+            pub(crate) fn initial() -> Self {
+                Self { $( $field: longhands!(@initial_value $V $vt $({ $($kw)* })? $init), )* }
+            }
+
+            /// The specified state of a child: inherited fields copy the parent's
+            /// computed value, the others start at their initial value.
+            // `parent` is unused while every table entry is non-inherited.
+            #[cfg_attr(not(test), allow(dead_code))]
+            #[allow(unused_variables)]
+            pub(crate) fn inherit_from(parent: &ComputedTable) -> Self {
+                Self {
+                    $( $field: longhands!(@inherit $inh parent $field $V $vt $({ $($kw)* })? ; $init), )*
+                }
+            }
+
+            /// Specified to computed: every table property is computed as specified.
+            #[cfg_attr(not(test), allow(dead_code))]
+            pub(crate) fn absolutize(self) -> ComputedTable {
+                ComputedTable { $( $field: self.$field, )* }
+            }
+
+            /// Stores a cascade winner in its field. `value` must be a table variant.
+            #[cfg_attr(not(test), allow(dead_code))]
+            pub(crate) fn apply(&mut self, value: PropertyValue) {
+                match value {
+                    $( PropertyValue::$V(v) => self.$field = v, )*
+                    other => unreachable!("not a table-declared property value: {other:?}"),
+                }
+            }
+        }
+
+        impl ComputedTable {
+            /// Every field at its initial value.
+            #[cfg_attr(not(test), allow(dead_code))]
+            pub(crate) fn initial() -> Self {
+                Self { $( $field: longhands!(@initial_value $V $vt $({ $($kw)* })? $init), )* }
+            }
+        }
 
         /// Every property name declared in the table, lowercase.
         #[cfg_attr(not(test), allow(dead_code))]

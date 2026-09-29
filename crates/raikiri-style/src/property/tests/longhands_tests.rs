@@ -129,3 +129,39 @@ fn every_table_entry_has_a_sample_of_its_own_variant() {
         );
     }
 }
+
+#[test]
+fn table_structs_start_at_the_declared_initial_values() {
+    let specified = SpecifiedTable::initial();
+    assert_eq!(specified.isolation, Isolation::Auto);
+    assert_eq!(specified.object_fit, ObjectFit::Fill);
+    let computed = ComputedTable::initial();
+    assert_eq!(computed.isolation, Isolation::Auto);
+    assert_eq!(computed.object_fit, ObjectFit::Fill);
+}
+
+#[test]
+fn table_apply_sets_the_matching_field() {
+    let mut table = SpecifiedTable::initial();
+    table.apply(PropertyValue::Isolation(Isolation::Isolate));
+    table.apply(PropertyValue::ObjectFit(ObjectFit::Cover));
+    assert_eq!(table.isolation, Isolation::Isolate);
+    assert_eq!(table.object_fit, ObjectFit::Cover);
+}
+
+#[test]
+fn table_absolutize_copies_as_specified_values() {
+    let mut table = SpecifiedTable::initial();
+    table.apply(PropertyValue::Isolation(Isolation::Isolate));
+    let computed = table.absolutize();
+    assert_eq!(computed.isolation, Isolation::Isolate);
+    assert_eq!(computed.object_fit, ObjectFit::Fill);
+}
+
+#[test]
+fn non_inherited_table_fields_reset_to_initial_in_a_child() {
+    let mut parent = ComputedTable::initial();
+    parent.isolation = Isolation::Isolate;
+    let child = SpecifiedTable::inherit_from(&parent);
+    assert_eq!(child.isolation, Isolation::Auto);
+}

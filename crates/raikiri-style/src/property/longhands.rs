@@ -2353,6 +2353,7 @@ longhands! {
         initial: Auto,
         inherited: no,
         computed: as_specified,
+        field: isolation,
         // Non-initial (`isolate`, not `auto`) so a would-be pass-through
         // regression (accidentally routing this variant through a
         // transform) is visible in the page-cascade corpus.
@@ -2369,6 +2370,7 @@ longhands! {
         inherited: no,
         parse: parse_object_fit,
         computed: as_specified,
+        field: object_fit,
         // Keyword-only, carries no length. `contain` is the non-initial
         // worst case (`fill` is the initial value).
         sample: ObjectFit::Contain,
