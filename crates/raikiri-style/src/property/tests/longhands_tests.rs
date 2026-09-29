@@ -236,6 +236,42 @@ fn derive_longhand_spells_keywords_in_kebab_case_or_as_overridden() {
     assert_eq!(<Fixture as Longhand>::lift(Fixture::Other), Fixture::Other);
 }
 
+/// A marker longhand whose computed type differs from its specified type,
+/// to pin the derive's `compute` / `computed` / `lift` wiring.
+#[derive(crate::property::Longhand)]
+#[longhand(
+    name = "x-scaled-fixture",
+    value = f32,
+    initial = 1.0,
+    inherited = false,
+    parse = parse_opacity_value,
+    compute = times_font_size,
+    computed = f64,
+    lift = narrow,
+    sample = 2.0
+)]
+struct ScaledFixture;
+
+fn times_font_size(value: f32, cx: &AbsolutizeCx<'_>) -> f64 {
+    f64::from(value * cx.font_size.px())
+}
+
+fn narrow(value: f64) -> f32 {
+    value as f32
+}
+
+#[test]
+fn derive_longhand_wires_a_hook_with_its_own_computed_type() {
+    let ctx = crate::resolve::ResolveContext::initial();
+    let cx = AbsolutizeCx::new(crate::resolve::ComputedLength(10.0), None, &ctx);
+    assert_eq!(<ScaledFixture as Longhand>::compute(2.0, &cx), 20.0);
+    assert_eq!(<ScaledFixture as Longhand>::lift(20.0), 20.0);
+    assert_eq!(<ScaledFixture as Longhand>::initial(), 1.0);
+    let mut input = ParserInput::new("50%");
+    let mut parser = Parser::new(&mut input);
+    assert_eq!(<ScaledFixture as Longhand>::parse(&mut parser), Some(0.5));
+}
+
 #[test]
 fn via_entry_computes_in_the_table_and_the_page_context() {
     let ctx = crate::resolve::ResolveContext::initial();

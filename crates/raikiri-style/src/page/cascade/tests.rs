@@ -3065,8 +3065,8 @@ macro_rules! property_key_samples {
         };
     }
 
-// Table-declared properties (`longhands!` in `property/longhands.rs`) are
-// appended after these hand-written entries from their `sample:` fields.
+// Declared longhands (`property/longhands.rs`) are appended after these
+// hand-written entries from their `sample = ..` values.
 crate::property::with_longhand_samples!(property_key_samples {
     Color => PropertyValue::Color(RED),
     BackgroundColor => PropertyValue::BackgroundColor(BLUE),
@@ -4713,7 +4713,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::BackgroundClip(_)
             | PropertyValue::BackgroundOrigin(_)
 
-            // Properties declared in the `longhands!` table (such as
+            // Longhands declared in `property/longhands.rs` (such as
             // `object-fit`) carry payloads with no length, same shape as
             // `BackgroundRepeat` above. This arm assumes every table payload
             // is length-free; revisit it when a table property carries a
@@ -4723,7 +4723,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // §3.3) carries a bare `f32`, not a `Length`: this detector only
             // checks for *length* residue, so it reports `None` regardless
             // of the value's range. The `[0,1]` clamp is real phase-3 work
-            // (the table's `computed: via` hook), same as
+            // (its `compute = clamp_opacity` hook), same as
             // `OverflowX`/`WritingMode` above — see
             // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that is
             // accounted for.

@@ -597,7 +597,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::CaptionSide(_)) => v,
-        // Table-declared properties (see `longhands!`): each entry's own
+        // Declared longhands (see `property/longhands.rs`): each one's own
         // computed-value behavior, lifted back into `PropertyValue`.
         v @ longhand_value_pat!() => {
             longhand_page_absolutize(v, &AbsolutizeCx::new(font_size, own_line_height, ctx))

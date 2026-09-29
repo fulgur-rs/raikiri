@@ -571,7 +571,7 @@ pub struct SpecifiedValues {
     /// Percentages pass through because they need the gradient box dimensions at paint /
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
-    /// Specified values of the properties declared in the `longhands!` table.
+    /// Specified values of the longhands declared in `property/longhands.rs`.
     /// Each is reachable as a field of `SpecifiedValues` through `Deref` (for
     /// example `values.isolation`); see [`SpecifiedTable`] for the fields.
     pub longhands: SpecifiedTable,
@@ -1764,7 +1764,7 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            // Table-declared properties: see `longhands!` for each property's computed value.
+            // Declared longhands: each goes through its own `Longhand::compute`.
             longhands: self.longhands.absolutize(&AbsolutizeCx::new(
                 font_size,
                 own_line_height,

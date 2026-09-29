@@ -1524,7 +1524,7 @@ pub struct ComputedValues {
     /// own dimensions (paint/used-value layer, see
     /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
-    /// Computed values of the properties declared in the `longhands!` table.
+    /// Computed values of the longhands declared in `property/longhands.rs`.
     /// Each is reachable as a field of `ComputedValues` through `Deref` (for
     /// example `values.isolation`); see [`ComputedTable`] for the fields.
     pub longhands: ComputedTable,
@@ -2044,7 +2044,7 @@ impl ComputedValues {
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation; for the table-declared properties held in
     /// [`Self::longhands`] (such as `object_fit` and `isolation`), it is the
-    /// `inherited:` entry of the property's `longhands!` block. Inherited
+    /// `inherited = ..` key of the property's `#[longhand(..)]`. Inherited
     /// fields are copied from the parent's computed values; non-inherited
     /// fields retain their initial values.
     ///

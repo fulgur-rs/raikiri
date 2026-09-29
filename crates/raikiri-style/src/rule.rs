@@ -472,7 +472,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::TextAlignAll(_)
         | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) | PropertyValue::Page(_)
         | PropertyValue::ColumnCount(_) | PropertyValue::ColumnWidth(_)
-        // Table-declared properties (see `longhands!`) take this arm.
+        // Declared longhands (see `property/longhands.rs`) take this arm.
         | longhand_value_pat!() => expand_none(d, push),
         PropertyValue::Columns(shorthand) => {
             push(Declaration {

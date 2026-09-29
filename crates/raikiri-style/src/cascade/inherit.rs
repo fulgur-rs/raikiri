@@ -1649,7 +1649,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
         | PropertyValue::Columns(_)
-        // Table-declared properties (see `longhands!`) take this arm.
+        // Declared longhands (see `property/longhands.rs`) take this arm.
         | longhand_value_pat!()) => v,
     })
 }

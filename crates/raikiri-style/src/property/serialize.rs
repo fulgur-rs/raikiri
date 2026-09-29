@@ -568,7 +568,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TextSpacingShorthand(..)
         | PropertyValue::TextEmphasisColor(..)
         | PropertyValue::TextEmphasis(..)
-        // Table-declared properties (see `longhands!`) take this arm.
+        // Declared longhands (see `property/longhands.rs`) take this arm.
         | longhand_value_pat!() => None,
     }
 }
