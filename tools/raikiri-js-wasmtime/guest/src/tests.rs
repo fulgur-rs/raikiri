@@ -27,4 +27,10 @@ fn rpc_flush_and_services() {
     assert!(host.box_geometry(0).unwrap().is_none());
     assert_eq!(host.parse_fragment("div", "", "x").unwrap().node_count(), 1);
     assert_eq!(host.document_url(), Some("file:///page".into()));
+    // The downcast hooks recover the concrete host from its boxed form.
+    let boxed: Box<dyn DocumentHost> = Box::new(host);
+    assert!(boxed.downcast_ref::<RpcDocumentHost>().is_some());
+    let mut boxed = boxed;
+    assert!(boxed.downcast_mut::<RpcDocumentHost>().is_some());
+    assert!(boxed.downcast::<RpcDocumentHost>().is_ok());
 }

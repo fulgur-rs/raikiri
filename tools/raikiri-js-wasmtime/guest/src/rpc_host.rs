@@ -81,12 +81,15 @@ impl DocumentHost for RpcDocumentHost {
             _ => Err(HostError("fragment response kind".into())),
         }
     }
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
     fn as_any(&self) -> &dyn Any {
         self
     }
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
