@@ -169,7 +169,6 @@ const HAND_WRITTEN_NAMES: &[&str] = &[
     "min-height",
     "min-width",
     "mix-blend-mode",
-    "object-position",
     "order",
     "orphans",
     "outline",

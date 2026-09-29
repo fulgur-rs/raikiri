@@ -3722,18 +3722,14 @@ crate::property::with_longhand_samples!(property_key_samples {
         clip: VisualBox::PaddingBox,
         origin: VisualBox::ContentBox,
     }),
-    // CSS Images Module Level 3 §5.2 — `Em`/`Rem` worst-case payload on
-    // both `Start` and `End` (distinct edges), same convention as
-    // `BackgroundPosition` above; type itself (`CssPosition`) is
-    // reused verbatim.
+    // CSS Transforms Level 1 `transform-origin` — `Em`/`Rem` worst-case
+    // payload on the position (same convention as `BackgroundPosition`
+    // above; the type itself, `CssPosition`, is reused verbatim) and an
+    // `Em` z offset.
     TransformOrigin => PropertyValue::TransformOrigin(CssPosition {
         horizontal: CssPositionOffset::Start(Length::Em(2.0)),
         vertical: CssPositionOffset::Start(Length::Rem(1.0)),
     }, Length::Em(1.0)),
-    ObjectPosition => PropertyValue::ObjectPosition(CssPosition {
-        horizontal: CssPositionOffset::Start(Length::Em(2.0)),
-        vertical: CssPositionOffset::End(Length::Rem(1.0)),
-    }),
     // CSS Compositing and Blending Level 1 §3.4.1 — non-initial
     // (`multiply`, not `normal`) so a would-be pass-through regression
     // (accidentally routing this arm through a transform) is visible.
@@ -4178,7 +4174,6 @@ crate::property::with_longhand_variants!(property_value_variant_registry {
     BackgroundPosition,
     BackgroundImage,
     Background,
-    ObjectPosition,
     MixBlendMode,
     MaskImage,
     ClipPath,
@@ -4509,6 +4504,42 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
 
     match value {
+            // Table-declared longhands (`properties!` in property/decl.rs)
+            // that carry a length. The first matching arm wins, so each must
+            // precede the blanket `longhand_value_pat!()` arm below, or this
+            // detector goes blind to its residue. `object-position` (CSS
+            // Images Module Level 3 §5.2) stores a `<length-percentage>` per
+            // edge/offset, same shape as `background-position` (both reuse
+            // `CssPosition`).
+            PropertyValue::ObjectPosition(pos) => {
+                fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
+                    match o {
+                        CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                    }
+                }
+                offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
+            }
+            // Every other table-declared longhand carries no `Length` —
+            // always `None`: `isolation`, `object-fit` and `empty-cells`
+            // carry keyword payloads, and `opacity` (CSS Color 4 §3.3) a bare
+            // `f32`. This detector only checks for *length* residue, so it
+            // reports `None` for `opacity` regardless of the value's range;
+            // its `[0,1]` clamp (the entry's `compute:` hook) is real phase-3
+            // work, same as `OverflowX`/`WritingMode` below — see
+            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that is
+            // accounted for.
+            //
+            // The pattern also covers `ObjectPosition`, already taken by the
+            // arm above: rustc reports that alternative as unreachable, which
+            // is intended here, hence the allow on this arm alone. Keep only
+            // length-bearing table arms above it: an explicit arm for another
+            // table variant placed below it is still reported as
+            // unreachable, but one placed above it would be silently
+            // accepted. A generated per-entry residue hook would replace
+            // these explicit arms once more than one table entry carries a
+            // length.
+            #[allow(unreachable_patterns)]
+            crate::property::longhand_value_pat!() => None,
             PropertyValue::FontWeight(fw) => font_weight(*fw),
             PropertyValue::TextAlign(ta) => text_align(*ta),
             PropertyValue::HangingPunctuation(_) => None,
@@ -4847,19 +4878,6 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // §3.4.1) carries a bare keyword payload (no `Length` at all,
             // unlike `opacity`'s `f32`) — always `None`.
             | PropertyValue::MixBlendMode(_)
-            // Table-declared longhands (`properties!` in property/decl.rs).
-            // Every one of them so far carries no `Length` — always `None`:
-            // `isolation`, `object-fit` and `empty-cells` carry keyword
-            // payloads, and `opacity` (CSS Color 4 §3.3) a bare `f32`. This
-            // detector only checks for *length* residue, so it reports
-            // `None` for `opacity` regardless of the value's range; its
-            // `[0,1]` clamp (the entry's `compute:` hook) is real phase-3
-            // work, same as `OverflowX`/`WritingMode` above — see
-            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
-            // is accounted for. A table entry that carries a length needs
-            // its own arm above this one, or this detector goes blind to its
-            // residue.
-            | crate::property::longhand_value_pat!()
 
             // `clip-path` (§5.1) — no embedded length at all (no
             // `<basic-shape>` support, `ClipPath` doc's scope note), so
@@ -5094,22 +5112,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
                 }
             }
-            // `object-position` stores a `<length-percentage>` per
-            // edge/offset — same shape as `background-position` above (both
-            // reuse `CssPosition`).
+            // `transform-origin` stores a `<length-percentage>` per
+            // edge/offset (same shape as `background-position` above; both
+            // reuse `CssPosition`) plus a `<length>` z offset.
             PropertyValue::TransformOrigin(pos, z) => {
                 let offset = |o| match o {
                     CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                 };
                 offset(pos.horizontal).or_else(|| offset(pos.vertical)).or_else(|| length(*z))
-            }
-            PropertyValue::ObjectPosition(pos) => {
-                fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
-                    match o {
-                        CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
-                    }
-                }
-                offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
             }
         }
 }

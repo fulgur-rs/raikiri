@@ -571,9 +571,6 @@ pub struct SpecifiedValues {
     /// Percentages pass through because they need the gradient box dimensions at paint /
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
-    /// **Specified** `object-position`; phase 3 absolutizes `<length-percentage>` in each offset,
-    /// as for `background_position`, reusing the [`CssPosition`] type.
-    pub object_position: CssPosition,
     /// Specified values of the longhands declared in the `properties!` table of
     /// `property/decl.rs` (such as `isolation`). Each is also reachable as a field of
     /// `SpecifiedValues` itself through `Deref` (for example `values.isolation`); see
@@ -907,12 +904,6 @@ impl SpecifiedValues {
             },
             // CSS Backgrounds and Borders 3 §2.3: background-image is initially `none`.
             background_image: BackgroundImage::None,
-            // CSS Images Module Level 3 §5.2: object-position is initially `50% 50%`, unlike
-            // background-position (`0% 0%`).
-            object_position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-            },
             // Each table-declared longhand at its initial value.
             longhands: SpecifiedTable::initial(),
             // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode is initially `normal`.
@@ -1270,12 +1261,6 @@ impl SpecifiedValues {
                 vertical: CssPositionOffset::Start(Length::Percent(0.0)),
             },
             background_image: BackgroundImage::None,
-            // non-inherited (CSS Images Module Level 3 §5.2 "Inherited: no") —
-            // child starts from spec initial, same as `background_repeat` above.
-            object_position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-            },
             // Table-declared longhands: each entry's `inherited:` key decides
             // between the parent's computed value and the initial value.
             longhands: SpecifiedTable::inherit_from(&parent.longhands),
@@ -1775,14 +1760,6 @@ impl SpecifiedValues {
             ),
             transform_origin_z: crate::resolve::resolve_length(
                 self.transform_origin_z,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
-            // CSS Images Module Level 3 §5.2: this contains `<length-percentage>`, so absolutize
-            // it like background_position using the same resolve_css_position function.
-            object_position: resolve_css_position(
-                self.object_position,
                 font_size,
                 own_line_height,
                 ctx,

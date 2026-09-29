@@ -1599,11 +1599,6 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Font(_)
-        // object-position (CSS Images Module Level 3 §5.2) — non-inherited,
-        // reuses `CssPosition` (`background-position`'s type); its
-        // `<length-percentage>` absolutization is phase 3's job, same as
-        // `BackgroundPosition` above.
-        | PropertyValue::ObjectPosition(_)
         // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) —
         // non-inherited, bare keyword payload with no phase-2 dependency,
         // same "nothing for phase 2 to resolve" shape as `BackgroundRepeat`
@@ -2033,7 +2028,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, |v| apply_value(v, target)),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),
         PropertyValue::Font(shorthand) => expand_font(&shorthand, |v| apply_value(v, target)),
-        PropertyValue::ObjectPosition(v) => target.object_position = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,

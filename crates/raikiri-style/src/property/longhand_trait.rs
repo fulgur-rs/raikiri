@@ -22,11 +22,8 @@ use crate::resolve::{ComputedLength, ResolveContext};
 /// resolution.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AbsolutizeCx<'a> {
-    #[expect(dead_code, reason = "no declared longhand's compute hook reads it yet")]
     pub(crate) font_size: ComputedLength,
-    #[expect(dead_code, reason = "no declared longhand's compute hook reads it yet")]
     pub(crate) own_line_height: Option<ComputedLength>,
-    #[expect(dead_code, reason = "no declared longhand's compute hook reads it yet")]
     pub(crate) ctx: &'a ResolveContext,
 }
 

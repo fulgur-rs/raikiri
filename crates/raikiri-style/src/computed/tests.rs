@@ -583,18 +583,11 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
         // different from the initial `None` (as required for non_initial_parent).
         background_image: BackgroundImage::Url("fixture.png".into()),
-        // CSS Images Module Level 3 §5.2: non-inherited, so use a value
-        // different from the initial `50% 50%` (as required for
-        // non_initial_parent).
-        object_position: ComputedCssPosition {
-            horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
-            vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
-        },
         // Table-declared longhands: CSS Compositing and Blending Level 1
-        // §3.4.2 isolation, CSS Images Module Level 3 §5.1 object-fit and
-        // CSS Color 4 §3.3 opacity are non-inherited, so use values
-        // different from the initial `auto` / `fill` / `1` (as required for
-        // non_initial_parent).
+        // §3.4.2 isolation, CSS Images Module Level 3 §5.1 object-fit /
+        // §5.2 object-position and CSS Color 4 §3.3 opacity are
+        // non-inherited, so use values different from the initial `auto` /
+        // `fill` / `50% 50%` / `1` (as required for non_initial_parent).
         // CSS Tables 3 §8 empty-cells is inherited, so use a value different
         // from the initial `show` as well.
         longhands: ComputedTable {
@@ -602,6 +595,10 @@ fn non_initial_parent() -> ComputedValues {
             object_fit: ObjectFit::Cover,
             empty_cells: EmptyCellsValue::Hide,
             opacity: 0.75,
+            object_position: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
+                vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
+            },
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
         // a value different from the initial `normal` (as above).
@@ -919,4 +916,12 @@ fn computed_table_initial_computes_hooked_initials() {
     // CSS Color 4 §3.3: initial `1` (already inside the clamp range).
     assert_eq!(initial.opacity, 1.0);
     assert_eq!(ComputedValues::initial().opacity, 1.0);
+    // CSS Images Module Level 3 §5.2: initial `50% 50%`, percentages kept
+    // at the computed layer.
+    let center = ComputedCssPosition {
+        horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+        vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+    };
+    assert_eq!(initial.object_position, center);
+    assert_eq!(ComputedValues::initial().object_position, center);
 }

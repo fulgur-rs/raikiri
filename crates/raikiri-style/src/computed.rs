@@ -1524,20 +1524,6 @@ pub struct ComputedValues {
     /// own dimensions (paint/used-value layer, see
     /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
-    /// `object-position`. **non-inherited**, initial: `50% 50%` (CSS Images
-    /// Module Level 3 §5.2 "Positioning the replaced element: the
-    /// object-position property"
-    /// <https://www.w3.org/TR/css-images-3/#the-object-position>, "Value:
-    /// `<position>`", "Inherited: no"). Computed value = "as for
-    /// background-position" per that same propdef table — this crate reuses
-    /// [`crate::property::CssPosition`]/[`ComputedCssPosition`] verbatim
-    /// ([`crate::property::CssPosition`] doc's reuse note). Percentages
-    /// resolve against the replaced element's own content box at used-value
-    /// time (a layout-time input this crate's cascade/computed layer does
-    /// not have), so — same as [`Self::background_position`] — the
-    /// `<length-percentage>` payload is absolutized against font-size/
-    /// line-height only, not against a box size.
-    pub object_position: ComputedCssPosition,
     /// Computed values of the longhands declared in the `properties!` table
     /// of `property/decl.rs` (such as `isolation`). Each is also reachable as
     /// a field of `ComputedValues` itself through `Deref` (for example
@@ -1980,14 +1966,6 @@ impl ComputedValues {
             // CSS Backgrounds and Borders 3 §2.3: initial background-image
             // is `none`.
             background_image: BackgroundImage::None,
-            // CSS Images 3 §5.2: initial object-position is `50% 50%`,
-            // unlike the `0% 0%` initial background-position.
-            object_position: ComputedCssPosition {
-                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
-                    50.0,
-                )),
-                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
-            },
             // Each table-declared longhand at its initial value.
             longhands: ComputedTable::initial(),
             // CSS Compositing and Blending 1 §3.4.1: initial
@@ -2041,7 +2019,7 @@ impl ComputedValues {
     /// The field documentation on [`Self`] is the canonical source for each
     /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side;
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_position / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout; and the longhands declared in `properties!`, according to their `inherited:` key).
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout; and the longhands declared in `properties!`, according to their `inherited:` key).
     ///
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation; for the table-declared longhands held in

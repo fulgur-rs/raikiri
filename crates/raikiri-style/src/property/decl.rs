@@ -109,6 +109,9 @@ use smol_str::SmolStr;
 use super::AbsolutizeCx;
 use super::parse::*;
 use super::types::*;
+use crate::resolve::{
+    ComputedCssPosition, ComputedCssPositionOffset, ComputedLengthPercentage, resolve_css_position,
+};
 
 // Hooks named by `compute:` / `computed: .. via` / `lift:` in the table below.
 
@@ -116,6 +119,35 @@ use super::types::*;
 /// §3.3; see the `"opacity"` entry for the NaN / infinity rationale).
 fn clamp_opacity(value: f32, _cx: &AbsolutizeCx<'_>) -> f32 {
     value.clamp(0.0, 1.0)
+}
+
+/// `object-position`'s specified-to-computed step (CSS Images 3 §5.2):
+/// absolutize each offset against the element's own font size and line
+/// height.
+fn compute_object_position(value: CssPosition, cx: &AbsolutizeCx<'_>) -> ComputedCssPosition {
+    resolve_css_position(value, cx.font_size, cx.own_line_height, cx.ctx)
+}
+
+/// `object-position`'s computed value back in specified form, for the page
+/// context. Every computed offset has an exact specified counterpart (`Px`
+/// or `Percent` on the same edge), so lifting after
+/// `compute_object_position` yields the specified position with its lengths
+/// absolutized.
+fn lift_object_position(computed: ComputedCssPosition) -> CssPosition {
+    fn offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
+        let length = |l| match l {
+            ComputedLengthPercentage::Px(v) => Length::Px(v),
+            ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+        };
+        match computed {
+            ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(length(l)),
+            ComputedCssPositionOffset::End(l) => CssPositionOffset::End(length(l)),
+        }
+    }
+    CssPosition {
+        horizontal: offset(computed.horizontal),
+        vertical: offset(computed.vertical),
+    }
 }
 
 // `#[longhands]` can only read an inline module, hence the nested `decl`.
@@ -1533,17 +1565,6 @@ mod decl {
         /// matter. Avoiding shifts of existing variants takes priority (see the
         /// declaration-order section of [`PropertyKey`]).
         Background(BackgroundShorthand),
-        /// `object-position` — **non-inherited**, initial: `50% 50%` (CSS Images
-        /// 3 §5.2 "Initial: 50% 50%"; see [`CssPosition`]). It reuses the same
-        /// [`CssPosition`] type as `background-position` (see the section about
-        /// `background-position` / `object-position` in [`CssPosition`]), but the
-        /// grammars differ. It requires strict `<position>` (CSS Values 4 §8.3),
-        /// which disallows the `<bg-position>`-specific three-value edge-offset
-        /// syntax. Therefore it is parsed with [`parse_position_strict`] instead
-        /// of [`parse_bg_position`] (see [`parse_position_branch3_strict`]).
-        /// Since it contains `<length-percentage>`, absolutization is deferred to
-        /// phase 3.
-        ObjectPosition(CssPosition),
         /// `mix-blend-mode` — **non-inherited**, initial:
         /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1 §3.4.1;
         /// see [`MixBlendMode`]). Appended as a new 1:1 disjoint field under the
@@ -2129,12 +2150,6 @@ mod decl {
         // key is appended, see the PropertyValue::Background docs: shorthands do
         // not reach the cascade stage, so discriminant order does not matter.
         Background,
-        // object-position (CSS Images Module Level 3 §5.2, semantics on the
-        // matching PropertyValue::ObjectPosition variant; sibling PropertyKey
-        // variants carry no per-variant docs per crate convention). Appended for
-        // the same reason as background-repeat: a new field disjoint one-to-one
-        // from existing fields.
-        ObjectPosition,
         // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1,
         // semantics on the matching PropertyValue::MixBlendMode variant; sibling
         // PropertyKey variants carry no per-variant docs per crate convention).
@@ -2402,6 +2417,49 @@ mod decl {
             // in-range sample would clamp to itself and count as a
             // pass-through.
             sample: 2.0,
+        },
+        /// CSS Images Module Level 3 §5.2 "Positioning the replaced element:
+        /// the object-position property"
+        /// <https://www.w3.org/TR/css-images-3/#the-object-position>. Value:
+        /// `<position>`. **Non-inherited**, initial `50% 50%` (unlike
+        /// `background-position`'s `0% 0%`).
+        ///
+        /// It reuses the [`CssPosition`] type of `background-position` (see
+        /// the section about `background-position` / `object-position` in
+        /// [`CssPosition`]), but the grammars differ: it requires strict
+        /// `<position>` (CSS Values 4 §8.3), which disallows the
+        /// `<bg-position>`-specific three-value edge-offset syntax, so it is
+        /// parsed with [`parse_position_strict`] instead of
+        /// [`parse_bg_position`] (see [`parse_position_branch3_strict`]).
+        ///
+        /// Computed value: "as for background-position" per the same propdef
+        /// table, [`ComputedCssPosition`]. The `compute` hook,
+        /// `compute_object_position`, absolutizes each offset's
+        /// `<length-percentage>` with [`resolve_css_position`] against the
+        /// element's font size and line height, keeping the edge and the
+        /// percentages. Percentages resolve against the replaced element's
+        /// own content box at used-value time (a layout-time input this
+        /// crate's cascade does not have), as for `background-position`. The
+        /// page context lifts the computed value back into
+        /// `PropertyValue::ObjectPosition` (`px` lengths and percentages) with
+        /// `lift_object_position`.
+        "object-position" => ObjectPosition: CssPosition {
+            initial: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            },
+            inherited: no,
+            parse: parse_position_strict,
+            computed: ComputedCssPosition via compute_object_position,
+            lift: lift_object_position,
+            // Font- and root-relative lengths on distinct edges, so that the
+            // page-cascade corpus sees specified-layer residue before phase 3
+            // and a transformed value after it (same convention as the
+            // `BackgroundPosition` sample).
+            sample: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Em(2.0)),
+                vertical: CssPositionOffset::End(Length::Rem(1.0)),
+            },
         },
     }
 }

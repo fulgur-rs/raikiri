@@ -461,19 +461,10 @@ fn parent_fixture() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".to_string()),
-        // CSS Images Module Level 3 §5.2: non-inherited; set a value other than the initial
-        // `50% 50%`.
-        object_position: crate::resolve::ComputedCssPosition {
-            horizontal: crate::resolve::ComputedCssPositionOffset::Start(
-                ComputedLengthPercentage::Px(3.0),
-            ),
-            vertical: crate::resolve::ComputedCssPositionOffset::End(
-                ComputedLengthPercentage::Percent(10.0),
-            ),
-        },
         // Table-declared longhands: CSS Compositing and Blending Level 1 §3.4.2 isolation, CSS
-        // Images Module Level 3 §5.1 object-fit and CSS Color 4 §3.3 opacity are non-inherited;
-        // set values other than the initial `auto` / `fill` / `1`.
+        // Images Module Level 3 §5.1 object-fit / §5.2 object-position and CSS Color 4 §3.3
+        // opacity are non-inherited; set values other than the initial `auto` / `fill` /
+        // `50% 50%` / `1`.
         // CSS Tables 3 §8 empty-cells is inherited; set a value other than the initial `show` as
         // well.
         longhands: ComputedTable {
@@ -481,6 +472,14 @@ fn parent_fixture() -> ComputedValues {
             object_fit: ObjectFit::Cover,
             empty_cells: EmptyCellsValue::Hide,
             opacity: 0.25,
+            object_position: crate::resolve::ComputedCssPosition {
+                horizontal: crate::resolve::ComputedCssPositionOffset::Start(
+                    ComputedLengthPercentage::Px(3.0),
+                ),
+                vertical: crate::resolve::ComputedCssPositionOffset::End(
+                    ComputedLengthPercentage::Percent(10.0),
+                ),
+            },
         },
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.
