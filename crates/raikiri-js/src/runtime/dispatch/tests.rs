@@ -874,7 +874,11 @@ fn onclick_content_attribute_compiles_and_dispatches_with_event_param() {
     let (mut host, _, _, body) = StubHost::page();
     let div = host.document.create_detached_element("div").unwrap();
     host.document
-        .set_element_attribute(div, "onclick", "window.hit = (window.hit || 0) + 1; window.kind = event.type;")
+        .set_element_attribute(
+            div,
+            "onclick",
+            "window.hit = (window.hit || 0) + 1; window.kind = event.type;",
+        )
         .unwrap();
     host.document.append_child(body, div).unwrap();
     let mut rt = DomRuntime::new(host).unwrap();

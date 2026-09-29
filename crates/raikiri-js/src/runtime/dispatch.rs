@@ -16,8 +16,7 @@ use boa_engine::object::JsObject;
 use boa_engine::object::builtins::JsArray;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{
-    Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsString, JsValue, Source,
-    Trace,
+    Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsString, JsValue, Source, Trace,
 };
 use raikiri_dom::NodeKind;
 
@@ -1207,10 +1206,7 @@ pub(crate) fn sync_all_event_handler_content_attributes(context: &mut Context) -
 /// skipped because the innerHTML setter never changes its own attributes.
 /// Runs after that setter replaces a subtree, so only newly inserted nodes
 /// recompile and IDL-set slots elsewhere are untouched.
-pub(crate) fn sync_event_handlers_in_subtree(
-    context: &mut Context,
-    root: usize,
-) -> JsResult<()> {
+pub(crate) fn sync_event_handlers_in_subtree(context: &mut Context, root: usize) -> JsResult<()> {
     let indices = with_state(context, |s| {
         let doc = s.host.document();
         let mut out = Vec::new();
@@ -1252,7 +1248,9 @@ pub(crate) fn sync_event_handlers_in_subtree(
                     continue;
                 }
                 let lower = qualified.to_ascii_lowercase();
-                if lower.strip_prefix("on").is_some_and(|rest| !rest.is_empty())
+                if lower
+                    .strip_prefix("on")
+                    .is_some_and(|rest| !rest.is_empty())
                     && let Some(value) = doc.element_attribute(index, &qualified)
                 {
                     attrs.push((lower, value.to_owned()));
