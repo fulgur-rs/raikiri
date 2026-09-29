@@ -3,18 +3,22 @@ use crate::node::NodeFlags;
 use taffy::TraversePartialTree;
 
 #[test]
-fn taffy_child_ids_and_count_filter_out_template_descendants() {
-    // Regression check: exclude template descendants from the taffy layout tree
-    // (= the web-spec flat tree).
-    // The template itself has in_document=true and counts as a body child,
-    // but its inner <p> has in_document=false, so the template has zero
-    // taffy children.
+fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
+    // Regression check: the taffy layout tree (= the web-spec flat tree)
+    // contains a `<template>` element's ordinary light-DOM children but not
+    // its detached contents fragment.
+    // The template itself has in_document=true and counts as a body child;
+    // its real inner <p> is likewise in-document, so the template has one
+    // taffy child. The contents fragment is unreachable from the Document
+    // root, so its <span> never appears in any taffy child list.
     let mut doc = Document::new();
     let root = doc.root_index();
     let body = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
     let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
     let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
     let _txt = doc.append_text(inner, "hi");
+    let frag = doc.allocate_template_fragment_root(tmpl);
+    let frag_span = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
 
     doc.mark_in_document_flags();
 
@@ -31,15 +35,25 @@ fn taffy_child_ids_and_count_filter_out_template_descendants() {
         <Document as TraversePartialTree>::child_ids(&doc, body_id).collect();
     assert_eq!(body_children, vec![tmpl_id]);
 
-    // The template has taffy child_count = 0 (its inner <p> is filtered).
+    // The template's real <p> child is part of the flat tree.
     assert_eq!(
         <Document as TraversePartialTree>::child_count(&doc, tmpl_id),
-        0,
-        "template contents are filtered out of taffy layout tree"
+        1,
+        "template real children stay in the taffy layout tree"
     );
     let tmpl_children: Vec<taffy::NodeId> =
         <Document as TraversePartialTree>::child_ids(&doc, tmpl_id).collect();
-    assert!(tmpl_children.is_empty());
+    assert_eq!(tmpl_children, vec![taffy::NodeId::from(inner)]);
+
+    // The contents fragment subtree appears in no reachable child list.
+    assert!(
+        !doc.get_node(frag).unwrap().is_in_document(),
+        "contents fragment root stays out-of-document"
+    );
+    assert!(
+        !doc.get_node(frag_span).unwrap().is_in_document(),
+        "contents fragment child stays out-of-document"
+    );
 }
 
 #[test]

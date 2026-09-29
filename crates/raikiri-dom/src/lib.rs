@@ -25,7 +25,10 @@
 //! The [`NodeFlags::IS_IN_DOCUMENT`] bit on [`Node`] indicates reachability from
 //! the Document root through flat-tree-parent edges. It is clear for these subtrees:
 //!
-//! - Descendants of a `<template>` element (the element itself has in_document=true)
+//! - Detached subtrees unreachable from the Document root, including a
+//!   `<template>` element's contents fragment (the element itself has
+//!   in_document=true, as do its ordinary light-DOM children — only the
+//!   associated contents fragment is inert)
 //! - In the future: light-DOM descendants outside a shadow root, slotted-only
 //!   descendants, and transient detached nodes during mutation
 //!

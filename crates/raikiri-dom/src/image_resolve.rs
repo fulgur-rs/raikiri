@@ -9,10 +9,11 @@
 //! even when the caller reuses the same cascade generation.
 //!
 //! Two kinds of node are *not* visited, and so keep whatever value they
-//! already held: nodes outside the rendered flat tree (`<template>`
-//! descendants and other inert subtrees), which are skipped before the
-//! reset; and — once a resolve fails — every node after the failing one,
-//! since a resolver `Err` is terminal and returns immediately.
+//! already held: nodes outside the rendered flat tree (a detached
+//! `<template>` contents fragment and other inert subtrees), which are
+//! skipped before the reset; and — once a resolve fails — every node after
+//! the failing one, since a resolver `Err` is terminal and returns
+//! immediately.
 
 use raikiri_traits::{ReplacedResolver, ResolverError, ResolverRequest};
 use url::Url;
@@ -26,9 +27,10 @@ use crate::node::NodeData;
 ///
 /// Only nodes that are part of the rendered flat tree are visited —
 /// [`crate::node::Node::is_in_document`] gates the walk, so an `<img>`
-/// inside a `<template>` (or any other inert subtree) never reaches
-/// `resolver.resolve()`, and therefore never triggers the fetch behind it,
-/// for an element that is never laid out or painted. Membership is decided
+/// inside a detached `<template>` contents fragment (or any other inert
+/// subtree) never reaches `resolver.resolve()`, and therefore never triggers
+/// the fetch behind it, for an element that is never laid out or painted.
+/// Membership is decided
 /// by that flag rather than by a tag-name test, per this crate's module
 /// doc "Flat tree membership". The caller owns flag freshness
 /// ([`Document::mark_in_document_flags`]);

@@ -2507,8 +2507,9 @@ fn with_resolver_refreshes_membership_before_the_image_pre_pass() {
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
     let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
-    let _hidden_text = doc.append_text(tmpl, "template text");
-    let img = doc.append_element(Some(tmpl), "img", Style::default(), None::<&str>);
+    let frag = doc.allocate_template_fragment_root(tmpl);
+    let _hidden_text = doc.append_text(frag, "template text");
+    let img = doc.append_element(Some(frag), "img", Style::default(), None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
     let rules = build_rule_tree(&doc);

@@ -1676,6 +1676,49 @@ fn parse_skips_style_inside_template_element() {
 }
 
 #[test]
+fn stylesheet_collection_sees_style_appended_directly_under_template() {
+    // A `<style>` appended directly under a `<template>` element (the DOM
+    // `appendChild` shape scripts use) is an ordinary light-DOM child: it
+    // stays in-document, so head stylesheet collection must see it. A
+    // `<style>` in the detached contents fragment stays inert and must not
+    // be collected.
+    use crate::sink::{HeadStylesheetSource, collect_head_stylesheet_sources};
+
+    let mut doc = raikiri_dom::Document::new();
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let head = doc.append_element(Some(html), "head", taffy::Style::default(), None::<&str>);
+    let tmpl = doc.append_element(
+        Some(head),
+        "template",
+        taffy::Style::default(),
+        None::<&str>,
+    );
+    let real_style = doc.append_element(Some(tmpl), "style", taffy::Style::default(), None::<&str>);
+    doc.append_text(real_style, "p{color:green}");
+    let frag = doc.allocate_template_fragment_root(tmpl);
+    let inert_style =
+        doc.append_element(Some(frag), "style", taffy::Style::default(), None::<&str>);
+    doc.append_text(inert_style, "p{color:red}");
+    doc.mark_in_document_flags();
+
+    let sources = collect_head_stylesheet_sources(&doc);
+    assert_eq!(
+        sources.len(),
+        1,
+        "only the real <template> child <style> must be collected, not the fragment one"
+    );
+    match &sources[0] {
+        HeadStylesheetSource::Inline { node_id } => assert_eq!(
+            node_id.0, real_style as u64,
+            "the collected <style> must be the real child"
+        ),
+        HeadStylesheetSource::External { .. } => {
+            panic!("a text <style> must collect as Inline, not External")
+        }
+    }
+}
+
+#[test]
 fn parse_marks_template_descendants_out_of_document() {
     // The <template> element itself belongs to the flat tree, so
     // is_in_document() is true. Check that parsing populates the bits for its

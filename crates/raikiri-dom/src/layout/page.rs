@@ -6,10 +6,11 @@ use super::*;
 /// the caller promotes this to `LayoutError::Internal`.
 ///
 /// Skip subtrees whose root is `!is_in_document()`
-/// (such as `<template>` descendants). A `<body>` within an inert subtree must
-/// not be selected as the actual body. For example, if real `<body>` follows
-/// `<template><body>ghost</body></template>` in the HTML, choosing the ghost body
-/// would run the subsequent layout / paint on an inert subtree.
+/// (such as a detached `<template>` contents fragment). A `<body>` within an
+/// inert subtree must not be selected as the actual body. For example, if real
+/// `<body>` follows `<template><body>ghost</body></template>` in the HTML
+/// (the ghost lives in the template's detached contents fragment), choosing
+/// the ghost body would run the subsequent layout / paint on an inert subtree.
 ///
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];

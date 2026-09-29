@@ -357,6 +357,29 @@ fn query_selector_empty_string_is_a_syntax_error() {
     );
 }
 
+/// Real children appended into a `<template>` element (the DOM
+/// `appendChild` shape, not the inert contents fragment) are in-document:
+/// `querySelector` finds them, including through child and sibling
+/// combinators that consult the `IS_IN_DOCUMENT` flag.
+#[test]
+fn query_selector_finds_real_children_appended_into_template() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var t = document.createElement('template');
+         var a = document.createElement('span'); a.setAttribute('class', 'a');
+         var b = document.createElement('span'); b.setAttribute('class', 'b');
+         t.appendChild(a); t.appendChild(b);
+         document.body.appendChild(t);",
+    )
+    .unwrap();
+    ok(&mut rt, "document.querySelector('template > span.a') === a");
+    ok(&mut rt, "document.querySelector('span.a + span.b') === b");
+    ok(
+        &mut rt,
+        "document.querySelectorAll('template span').length === 2",
+    );
+}
+
 fn is_dirty(rt: &mut DomRuntime) -> bool {
     with_state(rt.context_mut(), |s| s.dirty).unwrap()
 }

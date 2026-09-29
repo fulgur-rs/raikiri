@@ -65,11 +65,37 @@ impl ReplacedResolver for NeverCalledResolver {
 
 #[test]
 fn skips_img_inside_template_contents() {
-    // An `<img>` under a `<template>` is never laid out or painted, so
-    // resolving it would perform a real fetch for nothing. Membership is
-    // decided by `Node::is_in_document()` (the repo-wide convention — see
-    // this crate's module doc "Flat tree membership"), not by a tag-name
-    // check for "template".
+    // An `<img>` in a `<template>` element's detached contents fragment is
+    // never laid out or painted, so resolving it would perform a real fetch
+    // for nothing. Membership is decided by `Node::is_in_document()` (the
+    // repo-wide convention — see this crate's module doc "Flat tree
+    // membership"), not by a tag-name check for "template". The `<img>` is
+    // therefore placed in the contents fragment (the parser's shape), not as
+    // an ordinary light-DOM child of the template element (which stays
+    // in-document — see `resolves_img_appended_directly_under_template`).
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+    let frag = doc.allocate_template_fragment_root(tmpl);
+    let img = doc.append_element(Some(frag), "img", Style::default(), None::<&str>);
+    doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+    doc.mark_in_document_flags();
+    assert!(
+        !doc.nodes[img].is_in_document(),
+        "test premise: a <template> contents-fragment descendant must be !is_in_document"
+    );
+
+    resolve_images(&mut doc, &NeverCalledResolver)
+        .expect("an inert <img> must be skipped, not resolved");
+
+    assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
+}
+
+#[test]
+fn resolves_img_appended_directly_under_template() {
+    // An `<img>` appended directly under a `<template>` element (the DOM
+    // `appendChild` shape) is an ordinary light-DOM child: it stays
+    // in-document and is resolved like any other reachable `<img>`.
     let mut doc = Document::new();
     let root = doc.root_index();
     let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
@@ -77,14 +103,13 @@ fn skips_img_inside_template_contents() {
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     doc.mark_in_document_flags();
     assert!(
-        !doc.nodes[img].is_in_document(),
-        "test premise: a <template> descendant must be !is_in_document"
+        doc.nodes[img].is_in_document(),
+        "test premise: a real <template> child must be is_in_document"
     );
 
-    resolve_images(&mut doc, &NeverCalledResolver)
-        .expect("an inert <img> must be skipped, not resolved");
+    resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0)).expect("resolve Ok");
 
-    assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
+    assert_eq!(doc.nodes[img].image_intrinsic_size(), Some((10.0, 20.0)));
 }
 
 #[test]
