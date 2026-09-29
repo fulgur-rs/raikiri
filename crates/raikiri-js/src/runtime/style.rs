@@ -90,24 +90,162 @@ fn same_property(declared: &str, property: &str) -> bool {
     }
 }
 
-/// The last declared value of `property` in a `style` attribute, without `!important`.
-pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> String {
+/// CSSOM §6.7 step 2.1 validated name: `None` for an empty name or an
+/// unsupported non-custom name (which the caller drops); otherwise the name
+/// to store and enumerate -- ASCII-lowercased for non-custom names, exactly
+/// as given (trimmed) for custom names.
+fn validated_property_name(raw_name: &str) -> Option<String> {
+    let trimmed = raw_name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("--") {
+        if trimmed.len() <= 2 {
+            return None;
+        }
+        return Some(trimmed.to_owned());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !raikiri_style::property::is_supported_property_name(&lower) {
+        return None;
+    }
+    Some(lower)
+}
+
+/// One validated inline declaration: `value` without any trailing
+/// `!important`, `important` carrying that flag separately.
+struct ValidatedDeclaration {
+    name: String,
+    value: String,
+    important: bool,
+}
+
+/// The validated view of a `style` attribute (CSSOM §6.7): raw declarations
+/// parsed with [`parse_inline_style`], then each dropped when its name is
+/// empty or unsupported, its value is empty, or its value does not parse
+/// for its name (via [`declaration_value`); a trailing `!important` in the
+/// raw text becomes `important`, not part of `value`). Duplicates collapse
+/// to the last occurrence (removed then re-pushed, so the survivor sits at
+/// the last position), matching [`with_inline_style_property`]'s write path.
+/// Shorthands are kept as specified (a single entry, not expanded into
+/// longhands); expanding `margin: 0` into four longhands for reads remains
+/// future work.
+fn validated_inline_declarations(style_attr: Option<&str>) -> Vec<ValidatedDeclaration> {
     let Some(style) = style_attr else {
-        return String::new();
+        return Vec::new();
     };
-    parse_inline_style(style)
+    let mut out: Vec<ValidatedDeclaration> = Vec::new();
+    for (raw_name, raw_value) in parse_inline_style(style) {
+        let Some(name) = validated_property_name(&raw_name) else {
+            continue;
+        };
+        let important = strip_important(&raw_value) != raw_value.trim_end();
+        let value_part = strip_important(&raw_value).trim();
+        if value_part.is_empty() {
+            continue;
+        }
+        let Some(stored) = declaration_value(&name, value_part) else {
+            continue;
+        };
+        if stored.trim().is_empty() {
+            continue;
+        }
+        out.retain(|d| !same_property(&d.name, &name));
+        out.push(ValidatedDeclaration {
+            name,
+            value: stored,
+            important,
+        });
+    }
+    out
+}
+
+/// CSSOM shorthand names among
+/// [`raikiri_style::property::supported_property_names`]: excluded from the
+/// computed `length`/`item` view (longhands only, lexicographic). Kept as a
+/// plain list (rather than derived from `expand_shorthand_into`, which is
+/// `pub(crate)` to `raikiri-style`) so the computed view stays a pure
+/// name filter over the already-sorted supported list.
+pub(crate) fn is_computed_shorthand(name: &str) -> bool {
+    matches!(
+        name,
+        "background"
+            | "border"
+            | "border-color"
+            | "border-style"
+            | "border-width"
+            | "border-right"
+            | "border-radius"
+            | "columns"
+            | "flex"
+            | "flex-flow"
+            | "font"
+            | "gap"
+            | "grid"
+            | "grid-area"
+            | "grid-column"
+            | "grid-row"
+            | "grid-gap"
+            | "margin"
+            | "margin-inline"
+            | "margin-block"
+            | "padding"
+            | "padding-inline"
+            | "padding-block"
+            | "overflow"
+            | "outline"
+            | "text-decoration"
+            | "text-emphasis"
+            | "text-spacing"
+            | "place-content"
+            | "place-items"
+            | "place-self"
+    )
+}
+
+/// The computed `length`/`item` view (CSSOM §6.7): supported longhands only,
+/// lexicographic. [`raikiri_style::property::supported_property_names`] is
+/// already lowercase and sorted, so filtering out [`is_computed_shorthand`]
+/// preserves both properties.
+pub(crate) fn computed_longhand_names() -> Vec<&'static str> {
+    raikiri_style::property::supported_property_names()
+        .iter()
+        .copied()
+        .filter(|name| !is_computed_shorthand(name))
+        .collect()
+}
+
+/// The last declared value of `property` in a `style` attribute, without `!important`.
+/// Reads through the validated view ([`validated_inline_declarations`]), so
+/// an unsupported name or an unparseable value reads as `""` rather than
+/// the raw text.
+pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> String {
+    let trimmed = property.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let lookup = if trimmed.starts_with("--") {
+        if trimmed.len() <= 2 {
+            return String::new();
+        }
+        trimmed.to_owned()
+    } else {
+        trimmed.to_ascii_lowercase()
+    };
+    validated_inline_declarations(style_attr)
         .into_iter()
         .rev()
-        .find(|(name, _)| same_property(name, property))
-        .map(|(_, value)| strip_important(&value).trim().to_owned())
+        .find(|d| same_property(&d.name, &lookup))
+        .map(|d| d.value)
         .unwrap_or_default()
 }
 
 /// Serializes `declarations` back to `style` attribute text (`"prop:
 /// value;"` per declaration, space-joined) -- the inverse of
 /// [`parse_inline_style`], and CSSOM's "serialize a CSS declaration
-/// block". Shared by [`with_inline_style_property`]'s "replace one
-/// declaration" and the `cssText` getter's "serialize them all unchanged".
+/// block". Shared by [`with_inline_style_property`]'s raw-preserving
+/// "replace one declaration" and the validated `cssText` getter/serializer
+/// below.
 fn serialize_declarations(declarations: &[(String, String)]) -> String {
     declarations
         .iter()
@@ -134,35 +272,30 @@ pub(crate) fn with_inline_style_property(
     serialize_declarations(&declarations)
 }
 
-/// The last declared value of `property` in `style_attr`, `!important`
-/// (and any surrounding whitespace) included -- `None` when `property` is
-/// not declared at all. Used by [`property_priority`] to check for a
-/// trailing `!important` without also stripping it off, unlike
-/// [`inline_style_value`] (which strips it, since it backs
-/// `getPropertyValue`).
-fn declared_value(style_attr: Option<&str>, property: &str) -> Option<String> {
-    let style = style_attr?;
-    parse_inline_style(style)
+/// `getPropertyPriority`'s return value (CSSOM): `"important"` when the
+/// validated declaration for `property` carries `!important`, otherwise
+/// `""` -- including when `property` is not declared at all, is unsupported,
+/// or holds an unparseable value (all dropped from the validated view).
+fn property_priority(style_attr: Option<&str>, property: &str) -> &'static str {
+    let trimmed = property.trim();
+    if trimmed.is_empty() {
+        return "";
+    }
+    let lookup = if trimmed.starts_with("--") {
+        if trimmed.len() <= 2 {
+            return "";
+        }
+        trimmed.to_owned()
+    } else {
+        trimmed.to_ascii_lowercase()
+    };
+    match validated_inline_declarations(style_attr)
         .into_iter()
         .rev()
-        .find(|(name, _)| same_property(name, property))
-        .map(|(_, value)| value)
-}
-
-/// `getPropertyPriority`'s return value (CSSOM): `"important"` when the
-/// last declared value for `property` ends with `!important`, otherwise
-/// `""` -- including when `property` is not declared at all.
-fn property_priority(style_attr: Option<&str>, property: &str) -> &'static str {
-    match declared_value(style_attr, property) {
-        Some(value) => {
-            let trimmed = value.trim_end();
-            if strip_important(trimmed) == trimmed {
-                ""
-            } else {
-                "important"
-            }
-        }
-        None => "",
+        .find(|d| same_property(&d.name, &lookup))
+    {
+        Some(d) if d.important => "important",
+        _ => "",
     }
 }
 
@@ -209,43 +342,45 @@ struct StyleSource {
 }
 
 impl StyleSource {
-    /// The declared property name at `index`, in declaration order -- the
-    /// WebIDL "supported property indices" this object exposes (CSSOM
-    /// §6.7's `item()` and indexed access).
+    /// The declared property name at `index` -- the WebIDL "supported
+    /// property indices" this object exposes (CSSOM §6.7's `item()` and
+    /// indexed access).
     ///
-    /// A computed declaration enumerates every name
-    /// [`raikiri_style::property::supported_property_names`] recognizes,
-    /// in the sorted order that function already returns, rather than the
-    /// specific set CSSOM defines (every longhand with a resolved value):
-    /// this runtime does not classify longhand vs. shorthand, and every one
-    /// of these names already accepts `getPropertyValue`/its matching
-    /// accessor, so the simplification costs no reachable behavior. This
-    /// also means a computed read here never has to flush the host, unlike
+    /// An inline declaration enumerates its validated declarations
+    /// ([`validated_inline_declarations`]) in declaration order (last
+    /// occurrence wins, survivor at the last position): unsupported names
+    /// and unparseable values are dropped, duplicates collapse to one.
+    /// Shorthands are kept as specified (not expanded into longhands).
+    ///
+    /// A computed declaration enumerates supported longhands only (see
+    /// [`is_computed_shorthand`]), in the sorted order
+    /// [`raikiri_style::property::supported_property_names`] already
+    /// returns. A computed read here never has to flush the host, unlike
     /// [`read_property_value`]'s per-name lookup.
     fn declared_name_at(&self, index: usize, context: &mut Context) -> JsResult<Option<String>> {
         if self.computed {
-            return Ok(raikiri_style::property::supported_property_names()
+            return Ok(computed_longhand_names()
                 .get(index)
                 .map(|name| (*name).to_owned()));
         }
         let index_ = self.index;
         with_state(context, |s| {
             let style_attr = s.host.document().element_attribute(index_, "style");
-            parse_inline_style(style_attr.unwrap_or_default())
+            validated_inline_declarations(style_attr)
                 .into_iter()
                 .nth(index)
-                .map(|(name, _)| name)
+                .map(|d| d.name)
         })
     }
 
     fn declared_len(&self, context: &mut Context) -> JsResult<usize> {
         if self.computed {
-            return Ok(raikiri_style::property::supported_property_names().len());
+            return Ok(computed_longhand_names().len());
         }
         let index_ = self.index;
         with_state(context, |s| {
-            let style_attr = s.host.document().element_attribute(index_, "style");
-            parse_inline_style(style_attr.unwrap_or_default()).len()
+            validated_inline_declarations(s.host.document().element_attribute(index_, "style"))
+                .len()
         })
     }
 }
@@ -311,22 +446,36 @@ fn is_css_wide_keyword(value: &str) -> bool {
         .any(|keyword| value.trim().eq_ignore_ascii_case(keyword))
 }
 
-/// CSSOM `setProperty` steps 5-6 ("parse a CSS value"): the text to store
+/// CSSOM `setProperty` steps 2-6 ("parse a CSS value"): the text to store
 /// for a non-empty `value` of `property`, or `None` when the value does
 /// not parse and the declaration must be left untouched.
 ///
+/// A non-custom `property` outside
+/// [`raikiri_style::property::supported_property_names`] is unsupported
+/// (CSSOM step 2.2): the caller must return without a write. This helper
+/// reports that the same way as an unparseable value (`None`), so both
+/// paths leave the existing declaration untouched.
+///
+/// A `value` with a trailing `!important` is invalid here (CSSOM keeps
+/// `value` and `priority` separate; `red !important` as a `value` must not
+/// become a priority). Callers that parse a full declaration block
+/// (`cssText`, the inline `length`/`item` view) strip that suffix before
+/// calling, and re-attach it as the declaration's priority.
+///
 /// A parsed value is stored in its canonical serialization where
-/// `raikiri_style` can produce one, and as given otherwise. A name outside
-/// [`raikiri_style::property::supported_property_names`] (only reachable
-/// through `setProperty`, since the attribute accessors are generated from
-/// that list) is stored as given: there is no grammar to check it against.
+/// `raikiri_style` can produce one, and as given otherwise. CSS-wide
+/// keywords serialize ASCII-lowercased.
 fn declaration_value(property: &str, value: &str) -> Option<String> {
     let is_custom = property.starts_with("--");
     if !is_custom && !raikiri_style::property::is_supported_property_name(property) {
-        return Some(value.to_owned());
+        return None;
+    }
+    let trimmed = value.trim();
+    if strip_important(trimmed) != trimmed {
+        return None;
     }
     if !is_custom && is_css_wide_keyword(value) {
-        return Some(value.trim().to_owned());
+        return Some(value.trim().to_ascii_lowercase());
     }
     let parsed = parse_property_value(property, value)?;
     Some(
@@ -341,8 +490,10 @@ fn declaration_value(property: &str, value: &str) -> Option<String> {
     )
 }
 
-/// Set (or, for an empty `value`, remove) one inline declaration, dropping
-/// a non-empty `value` that does not parse for `property`.
+/// Set (or, for an empty or whitespace-only `value`, remove) one inline
+/// declaration, dropping a non-empty `value` that does not parse for
+/// `property` (including an unsupported non-custom name, reported as `None`
+/// by [`declaration_value`).
 fn set_declaration(
     context: &mut Context,
     index: usize,
@@ -350,7 +501,7 @@ fn set_declaration(
     value: &str,
     important: bool,
 ) -> JsResult<()> {
-    if value.is_empty() {
+    if value.trim().is_empty() {
         return write_inline(context, index, property, "");
     }
     let Some(stored) = declaration_value(property.trim(), value) else {
@@ -504,7 +655,7 @@ fn style_get_property_priority(
     Ok(JsValue::from(JsString::from(priority)))
 }
 
-/// `setProperty(property, value, priority = "")` (CSSOM). `value` and
+/// `setProperty(property, value, priority = "")` (CSSOM §6.7). `value` and
 /// `priority` are both converted before either is inspected (WebIDL
 /// converts every argument before an operation's own algorithm runs, so a
 /// `priority` whose conversion throws must abort the call even when
@@ -515,14 +666,19 @@ fn style_get_property_priority(
 /// `"important"` is spec-silent (return, no error, no write) rather than
 /// rejected as an argument error.
 ///
-/// This runtime does not reject a `property` outside
-/// [`raikiri_style::property::supported_property_names`] the way real
-/// CSSOM's `setProperty` does (silently returning for an unsupported,
-/// non-custom name): this operation stores any name given to it
-/// (ASCII-lowercased per step 2.1, the same as every recognized name), and
-/// no caller here relies on rejecting an unrecognized one -- only the
-/// per-property accessors (`s.marginTop = …`) are scoped to the supported
-/// list, becoming ordinary expandos otherwise.
+/// A non-custom `property` outside
+/// [`raikiri_style::property::supported_property_names`] makes the method
+/// return without a write (CSSOM step 2.2); the name is ASCII-lowercased
+/// per step 2.1 before that check, and custom names (`--`-prefixed) are
+/// used exactly as given. Only the per-property accessors
+/// (`s.marginTop = …`) stay scoped to the supported list, becoming ordinary
+/// expandos otherwise.
+///
+/// A `value` with a trailing `!important` never becomes a priority here:
+/// [`declaration_value`] reports it as invalid, so the declaration is left
+/// untouched (the `!important` suffix only becomes a priority when parsing
+/// a full block such as `cssText`). A whitespace-only `value` counts as
+/// empty and removes the declaration.
 fn style_set_property(
     this: &JsValue,
     args: &[JsValue],
@@ -532,13 +688,28 @@ fn style_set_property(
     if source.computed {
         return Err(no_modification_allowed(context));
     }
-    let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
+    let raw_name = dom_string(args, 0, context)?;
+    let name = ascii_lowercase_property_name(raw_name);
+    let trimmed_name = name.trim().to_owned();
     let value = legacy_null_to_empty_string(args, 1, context)?;
     let priority = optional_string(args, 2, context)?;
-    if !value.is_empty() && !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
+    let value_is_empty = value.trim().is_empty();
+    if !value_is_empty && !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
         return Ok(JsValue::undefined());
     }
-    set_declaration(context, source.index, &name, &value, !priority.is_empty())?;
+    if !trimmed_name.is_empty()
+        && !trimmed_name.starts_with("--")
+        && !raikiri_style::property::is_supported_property_name(&trimmed_name)
+    {
+        return Ok(JsValue::undefined());
+    }
+    set_declaration(
+        context,
+        source.index,
+        &trimmed_name,
+        &value,
+        !priority.is_empty(),
+    )?;
     Ok(JsValue::undefined())
 }
 
@@ -557,8 +728,26 @@ fn style_remove_property(
     Ok(JsValue::from(JsString::from(previous)))
 }
 
+/// Serialize one validated declaration, re-attaching `!important` when the
+/// raw block carried it.
+fn serialize_validated(declarations: &[ValidatedDeclaration]) -> String {
+    declarations
+        .iter()
+        .map(|d| {
+            if d.important {
+                format!("{}: {} !important;", d.name, d.value)
+            } else {
+                format!("{}: {};", d.name, d.value)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `cssText`, on getting: `""` for a computed declaration (CSSOM); the
-/// serialized inline declarations otherwise.
+/// validated inline declarations serialized otherwise (unsupported names
+/// and unparseable values dropped, non-custom names lowercased, values in
+/// canonical serialization, CSS-wide keywords lowercased).
 fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let source = this_style(this, context)?;
     if source.computed {
@@ -567,15 +756,17 @@ fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
     let index = source.index;
     let text = with_state(context, |s| {
         let style_attr = s.host.document().element_attribute(index, "style");
-        serialize_declarations(&style_attr.map(parse_inline_style).unwrap_or_default())
+        serialize_validated(&validated_inline_declarations(style_attr))
     })?;
     Ok(JsValue::from(JsString::from(text)))
 }
 
-/// `cssText`, on setting: replaces the whole inline `style` attribute with
-/// the given text verbatim (matching `setAttribute("style", …)`; this
-/// runtime re-parses declarations lazily on every read rather than
-/// validating them up front).
+/// `cssText`, on setting (CSSOM): parse the given text as a declaration
+/// block, dropping invalid declarations (empty or unsupported names,
+/// empty or unparseable values), then replace the whole inline `style`
+/// attribute with that validated serialization. Unlike
+/// `setAttribute("style", …)` (which stores verbatim), an invalid
+/// declaration here never reaches storage.
 fn style_css_text_set(
     this: &JsValue,
     args: &[JsValue],
@@ -586,10 +777,11 @@ fn style_css_text_set(
         return Err(no_modification_allowed(context));
     }
     let text = dom_string(args, 0, context)?;
+    let validated = serialize_validated(&validated_inline_declarations(Some(&text)));
     with_state(context, |s| {
         s.host
             .document_mut()
-            .set_element_inline_style(source.index, Some(text.into()));
+            .set_element_inline_style(source.index, Some(validated.into()));
     })?;
     mark_dirty(context)?;
     Ok(JsValue::undefined())

@@ -408,16 +408,35 @@ fn get_computed_style_returns_the_same_object_per_element() {
 }
 
 #[test]
-fn computed_declaration_indexed_view_lists_every_supported_property_name() {
+fn computed_declaration_indexed_view_lists_longhands_only_lexicographic() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
-    let expected = raikiri_style::property::supported_property_names().len();
+    let expected = crate::runtime::style::computed_longhand_names().len();
     ok(
         &mut rt,
         &format!(
             "var cs = getComputedStyle(document.body); \
              cs.length === {expected} && cs.item(0) === 'align-content' && cs[0] === 'align-content'",
         ),
+    );
+    // Shorthands are excluded (CSSOM §6.7: longhands only).
+    ok(
+        &mut rt,
+        "var found = false; \
+         for (var i = 0; i < cs.length; i++) { \
+           var n = cs.item(i); \
+           if (n === 'margin' || n === 'padding' || n === 'background' || n === 'border' || \
+               n === 'font' || n === 'flex' || n === 'gap' || n === 'grid' || \
+               n === 'overflow' || n === 'outline' || n === 'columns') { found = true; } \
+         } \
+         !found",
+    );
+    // Lexicographic order (already sorted in the backing list).
+    ok(
+        &mut rt,
+        "var sorted = true; \
+         for (var i = 1; i < cs.length; i++) { if (cs.item(i - 1) > cs.item(i)) { sorted = false; } } \
+         sorted",
     );
 }
 
@@ -621,13 +640,12 @@ fn setters_ignore_values_that_do_not_parse_for_the_property() {
     ok(&mut rt, "s.color = 'red !important'; s.color === ''");
 }
 
-/// A value that does parse is stored in its canonical serialization, and
-/// CSS-wide keywords and custom properties are stored as given (trimmed).
+/// A value that does parse is stored in its canonical serialization;
+/// CSS-wide keywords serialize ASCII-lowercased and custom properties are
+/// stored trimmed.
 ///
-/// The last assertion pins a documented deviation from CSSOM `setProperty`
-/// step 2 (2.2: a property that is not a supported CSS property makes the
-/// method return without a write): this runtime's `setProperty` has always
-/// stored such a name's value verbatim, and still does.
+/// CSSOM `setProperty` step 2.2: a non-custom name outside the supported
+/// list makes the method return without a write.
 #[test]
 fn setters_store_the_canonical_serialization_of_a_parsed_value() {
     let (host, ..) = StubHost::page();
@@ -640,7 +658,7 @@ fn setters_store_the_canonical_serialization_of_a_parsed_value() {
         "s.setProperty('COLOR', '#234'); s.color === 'rgb(34, 51, 68)'",
     );
     ok(&mut rt, "s.color = 'lab(0 0 0)'; s.color === 'lab(0 0 0)'");
-    ok(&mut rt, "s.color = 'inherit'; s.color === 'inherit'");
+    ok(&mut rt, "s.color = 'INHERIT'; s.color === 'inherit'");
     ok(
         &mut rt,
         "s.setProperty('--x', ' anything { } '); s.getPropertyValue('--x') === 'anything { }'",
@@ -648,7 +666,7 @@ fn setters_store_the_canonical_serialization_of_a_parsed_value() {
     ok(
         &mut rt,
         "s.setProperty('not-a-property', 'whatever'); \
-         s.getPropertyValue('not-a-property') === 'whatever'",
+         s.getPropertyValue('not-a-property') === '' && s.length === 3",
     );
 }
 
@@ -721,4 +739,162 @@ fn setters_validate_expanding_shorthands_too() {
          s.borderRadius === '' && s.gridGap === '' && s.grid === ''",
     );
     ok(&mut rt, "s.borderRadius = '1px'; s.borderRadius !== ''");
+}
+
+/// CSSOM §6.7 step 2.2: `setProperty` with an unsupported non-custom name
+/// returns without a write -- no storage, no length change, and the
+/// priority/value reads stay empty.
+#[test]
+fn set_property_rejects_an_unsupported_non_custom_name() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var e = document.createElement('div'); var s = e.style; s.setProperty('color', 'red');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "s.setProperty('not-a-property', 'whatever'); \
+         s.getPropertyValue('not-a-property') === '' && \
+         s.getPropertyPriority('not-a-property') === '' && \
+         s.removeProperty('not-a-property') === '' && \
+         s.length === 1 && s.item(0) === 'color'",
+    );
+    // A mixed-case unsupported name is lowercased first, then still rejected.
+    ok(
+        &mut rt,
+        "s.setProperty('NOT-A-PROPERTY', 'whatever'); s.length === 1",
+    );
+}
+
+/// CSSOM keeps `setProperty`'s `value` and `priority` separate: a `value`
+/// with a trailing `!important` is invalid and leaves the declaration
+/// untouched, rather than becoming a priority.
+#[test]
+fn set_property_value_with_important_is_invalid() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style; s.setProperty('color', 'red');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.setProperty('color', 'red !important'); \
+         s.getPropertyValue('color') === 'red' && s.getPropertyPriority('color') === ''",
+    );
+    ok(
+        &mut rt,
+        "s.setProperty('color', 'blue !IMPORTANT'); \
+         s.getPropertyValue('color') === 'red'",
+    );
+    // Custom values with a trailing `!important` are likewise invalid here.
+    ok(
+        &mut rt,
+        "s.setProperty('--x', '1px'); \
+         s.setProperty('--x', 'foo !important'); \
+         s.getPropertyValue('--x') === '1px' && s.getPropertyPriority('--x') === ''",
+    );
+}
+
+/// Inline `length`/`item` read through the validated view: unsupported
+/// names and unparseable values are dropped, duplicates collapse to the
+/// last occurrence (survivor at the last position), declaration order is
+/// otherwise preserved.
+#[test]
+fn inline_length_and_item_dedup_and_drop_invalid() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var e = document.createElement('div'); var s = e.style;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "e.setAttribute('style', 'color: red; color: blue'); \
+         s.length === 1 && s.item(0) === 'color' && s.getPropertyValue('color') === 'blue'",
+    );
+    ok(
+        &mut rt,
+        "e.setAttribute('style', 'color: red; margin-top: 1px; color: blue'); \
+         s.length === 2 && s.item(0) === 'margin-top' && s.item(1) === 'color' && \
+         s.getPropertyValue('color') === 'blue'",
+    );
+    ok(
+        &mut rt,
+        "e.setAttribute('style', 'color: bogus; margin-top: 1px; foo: bar'); \
+         s.length === 1 && s.item(0) === 'margin-top' && \
+         s.getPropertyValue('color') === '' && s.getPropertyValue('foo') === ''",
+    );
+}
+
+/// `cssText` on setting parses as a declaration block, dropping invalid
+/// declarations; on getting it serializes the validated view (lowercased
+/// names, canonical values, `!important` preserved).
+#[test]
+fn css_text_setter_parses_and_drops_invalid() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var e = document.createElement('div'); var s = e.style;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.cssText = 'color: bogus; margin-top: 1px; foo: bar'; \
+         s.length === 1 && s.item(0) === 'margin-top' && \
+         s.cssText === 'margin-top: 1px;'",
+    );
+    ok(
+        &mut rt,
+        "s.cssText = 'COLOR: #234'; s.cssText === 'color: rgb(34, 51, 68);'",
+    );
+    ok(
+        &mut rt,
+        "s.cssText = 'color: red !important'; \
+         s.getPropertyValue('color') === 'red' && \
+         s.getPropertyPriority('color') === 'important' && \
+         s.cssText === 'color: red !important;'",
+    );
+}
+
+/// CSS-wide keywords serialize ASCII-lowercased.
+#[test]
+fn css_wide_keywords_serialize_lowercase() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.setProperty('color', 'INHERIT'); s.color === 'inherit'",
+    );
+    ok(
+        &mut rt,
+        "s.setProperty('margin-top', 'Revert-Layer'); s.marginTop === 'revert-layer'",
+    );
+    ok(
+        &mut rt,
+        "s.cssText = 'color: INITIAL'; s.color === 'initial'",
+    );
+}
+
+/// A whitespace-only value counts as empty and removes the declaration --
+/// for custom properties (CSSOM) and, consistently, for non-custom ones.
+#[test]
+fn whitespace_only_value_removes_the_declaration() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.setProperty('--x', '1px'); s.setProperty('--x', '   '); \
+         s.getPropertyValue('--x') === '' && s.length === 0",
+    );
+    ok(
+        &mut rt,
+        "s.setProperty('color', 'red'); s.setProperty('color', '   '); \
+         s.getPropertyValue('color') === '' && s.length === 0",
+    );
+    // Whitespace-only also removes even with a (would-be) `!important` priority.
+    ok(
+        &mut rt,
+        "s.setProperty('--y', '1px'); s.setProperty('--y', '   ', 'important'); \
+         s.getPropertyValue('--y') === ''",
+    );
 }
