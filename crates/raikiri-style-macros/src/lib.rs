@@ -56,7 +56,10 @@
 //!
 //! The module may contain any number of `properties! { .. }` blocks (one per
 //! domain, say) among its other items. They are removed during expansion,
-//! and their entries are declared in source order.
+//! and their entries are declared in source order. A block must be a direct
+//! item of the annotated module: one inside a nested inline module is
+//! reported, and one outside any `#[longhands]` module is an unknown macro.
+//! Inner attributes of the module (`//!`, `#![allow(..)]`) are kept.
 //!
 //! # Entries
 //!
@@ -102,6 +105,13 @@
 //!   `keywords` must supply one.
 //! - Each entry needs at least one doc comment (the specification
 //!   reference). Other attributes are rejected.
+//! - Names are plain identifiers: Rust keywords and raw identifiers are
+//!   rejected. The default field splits the variant at word boundaries and
+//!   keeps acronyms together (`HTMLMode` becomes `html_mode`); a default
+//!   that is a Rust keyword must be replaced with `field:`.
+//! - CSS names and keyword spellings are lowercase words of ASCII letters
+//!   and digits joined by single `-`, optionally after one leading `-`
+//!   (vendor prefixes).
 //!
 //! Hook and parser paths are coerced to the fn-pointer types above, so a
 //! wrong signature is reported at the path in the table.
@@ -119,6 +129,14 @@
 //!   the written types, so rustdoc shows the real payload types) and
 //!   `Property`, an uninhabited marker implementing `crate::property::Longhand`.
 //!
+//!   The aliases repeat the written types inside `field`, which imports the
+//!   annotated module with `use super::*`. Plain and crate-rooted paths
+//!   therefore resolve as written, but a `self::` or `super::` path in a
+//!   value type (`: ValueType` or `computed: Type via ..`) would be resolved
+//!   one module too deep; write those types without the relative prefix.
+//!   A value type named bare `Specified`, `Computed` or `Property` is
+//!   rejected, since it would name the alias itself.
+//!
 //! and once for the module:
 //!
 //! - `PropertyValue::key()`;
@@ -131,7 +149,9 @@
 //! - `longhand_key_for_name(name)` and `parse_longhand_value(name, input)`,
 //!   the fall-through targets of the hand-written name lookup and parse
 //!   dispatch, and `LONGHAND_NAMES`;
-//! - `longhand_value_pat!()`, a pattern matching every table variant;
+//! - `longhand_value_pat!()`, a pattern matching every table variant
+//!   (omitted when no entry could be declared, since a pattern must match
+//!   at least one variant);
 //! - under `cfg(test)`: `longhand_samples()`, `longhand_sample(key)`,
 //!   `with_longhand_samples!` and `with_longhand_variants!`.
 //!
@@ -159,12 +179,22 @@
 //!
 //! # Diagnostics
 //!
-//! The macro never panics. Every mistake is a compile error on the tokens
-//! that caused it, and one mistake produces one error: parsing resumes at
-//! the next key or entry, and an entry with an error is still declared (its
-//! broken parts expand to `unreachable!()`), so code using its variant,
-//! field or types does not fail as well. A duplicate CSS name, variant or
-//! field is reported at the later entry.
+//! The macro never panics. Every mistake it detects is a compile error on
+//! the tokens that caused it, and it aims for one error per mistake:
+//! parsing resumes at the next key or entry; an entry with an error is
+//! still declared, with its broken parts expanded to `unreachable!()`;
+//! rules that relate keys are not reported again for a key that is already
+//! malformed; and the module-level items are generated even when no entry
+//! survives. A duplicate CSS name, variant or field is reported at the
+//! later entry. Mistakes the compiler finds in user expressions (a wrong
+//! `initial` type, a hook with the wrong signature) are reported by rustc at
+//! those expressions.
+//!
+//! Follow-on errors remain in these cases: an entry that cannot be declared
+//! at all (a broken `"name" => Variant` head, or a variant or field that
+//! duplicates another) leaves the uses of its variant and field
+//! unresolved; and when no entry survives, each use of the omitted
+//! `longhand_value_pat!` fails too.
 
 mod case;
 mod diag;
