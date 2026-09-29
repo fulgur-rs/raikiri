@@ -320,13 +320,26 @@ impl NonTSPseudoClass for PseudoClass {
     }
 }
 
-/// Tree-abiding generated pseudo-elements used by the current layout.
+/// Pseudo-elements resolved by this crate's cascade into a per-`(element,
+/// pseudo)` [`ComputedValues`](crate::ComputedValues) entry (see
+/// `CascadeResult::pseudo`).
 ///
-/// `::before` / `::after` come from CSS Pseudo-Elements Module Level 4 §4.1;
-/// `::marker` comes from CSS Lists 3 §3. Generated list markers are resolved by
-/// the downstream layout/paint layer, while author `::marker` declarations are
-/// still cascaded here.
+/// `::before` / `::after` / `::marker` are tree-abiding pseudo-elements (CSS
+/// Pseudo-Elements Module Level 4 §4.1 `#treelike`; `::marker` also CSS Lists
+/// 3 §3.7) — each is expected to yield a single generated box as if it were
+/// an immediate child of its originating element. Generated list markers are
+/// resolved by the downstream layout/paint layer, while author `::marker`
+/// declarations are still cascaded here.
 ///
+/// `::first-line` (CSS Pseudo-Elements Module Level 4 §2.1 `#first-line-pseudo`)
+/// is not tree-abiding — it formats part of the originating element's own
+/// content rather than generating a child box — but reuses the same
+/// `(element, pseudo)` cascade path since it is likewise resolved by
+/// selector match against one originating element. §2.1 restricts it to
+/// block containers and §2.1.2 `#first-line-styling` restricts which
+/// properties apply; this crate does not yet enforce either restriction and
+/// exposes the full computed value, same as the tree-abiding set (see
+/// `CascadeResult::pseudo` doc).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PseudoElem {
     /// `::before` (also accepted as legacy `:before`).
@@ -335,6 +348,8 @@ pub enum PseudoElem {
     After,
     /// `::marker` (CSS Lists 3 §3.7).
     Marker,
+    /// `::first-line` (also accepted as legacy `:first-line`).
+    FirstLine,
 }
 
 impl ToCss for PseudoElem {
@@ -343,6 +358,7 @@ impl ToCss for PseudoElem {
             PseudoElem::Before => "::before",
             PseudoElem::After => "::after",
             PseudoElem::Marker => "::marker",
+            PseudoElem::FirstLine => "::first-line",
         })
     }
 }
@@ -484,9 +500,10 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
         }
     }
 
-    /// `::before` / `::after` / `::marker` (CSS Pseudo-Elements Module Level 4
-    /// §4.1 and CSS Lists 3 §3.7, see [`PseudoElem`] doc) — everything else
-    /// (`::details-content`, `::part()`, `::slotted()`, any unknown name)
+    /// `::before` / `::after` / `::marker` / `::first-line` (CSS
+    /// Pseudo-Elements Module Level 4 §4.1, §2.1, and CSS Lists 3 §3.7, see
+    /// [`PseudoElem`] doc) — everything else (`::first-letter`,
+    /// `::details-content`, `::part()`, `::slotted()`, any unknown name)
     /// stays a parse error, same fail-closed posture as
     /// [`Self::parse_non_ts_pseudo_class`] above.
     fn parse_pseudo_element(
@@ -500,6 +517,8 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
             Ok(PseudoElem::After)
         } else if name.eq_ignore_ascii_case("marker") {
             Ok(PseudoElem::Marker)
+        } else if name.eq_ignore_ascii_case("first-line") {
+            Ok(PseudoElem::FirstLine)
         } else {
             Err(
                 location.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
@@ -784,6 +803,7 @@ mod tests {
             (".foo::before", PseudoElem::Before),
             ("p::after", PseudoElem::After),
             ("li::marker", PseudoElem::Marker),
+            ("p::first-line", PseudoElem::FirstLine),
         ] {
             let list = parse_selector_list(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}"));
             let selector = &list.slice()[0];
@@ -832,6 +852,9 @@ mod tests {
         assert!(parse_selector_list("::before::after").is_err());
         assert!(parse_selector_list("::before:hover").is_err());
         assert!(parse_selector_list(".foo::before.bar").is_err());
+        // `PseudoElem::FirstLine` overrides none of the same defaults, so it
+        // is rejected by the same state machine.
+        assert!(parse_selector_list("::first-line:hover").is_err());
     }
 
     #[test]
@@ -854,12 +877,14 @@ mod tests {
         // one-colon notation (:before, :after, :first-letter, :first-line)
         // for the ::before, ::after, ::first-letter, and ::first-line
         // pseudo-elements." The `selectors` crate's own
-        // `is_css2_pseudo_element` already special-cases exactly these two
-        // names (plus `first-line`/`first-letter`, which this crate's
-        // `parse_pseudo_element` still rejects by name) into the same
-        // pseudo-element parse path the double-colon syntax uses — so this
-        // MUST-level requirement already works without any extra code in
-        // this crate, but was previously untested.
+        // `is_css2_pseudo_element` already special-cases exactly these four
+        // names into the same pseudo-element parse path the double-colon
+        // syntax uses — so this MUST-level requirement already works for
+        // `:before`/`:after`/`:first-line` without any extra code in this
+        // crate beyond `parse_pseudo_element` accepting the double-colon
+        // name, but was previously untested. `:first-letter` still parses to
+        // a rejected name (this crate's `parse_pseudo_element` has no
+        // `PseudoElem::FirstLetter` arm), so it is not included below.
         //
         // Deliberately does NOT assert a source round-trip via `to_css`
         // (unlike `parse_before_and_after_pseudo_element_roundtrip` above):
@@ -875,6 +900,7 @@ mod tests {
         for (src, expected) in [
             (":before", PseudoElem::Before),
             (":after", PseudoElem::After),
+            (":first-line", PseudoElem::FirstLine),
         ] {
             let list = parse_selector_list(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}"));
             let selector = &list.slice()[0];

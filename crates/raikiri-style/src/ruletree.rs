@@ -2137,7 +2137,9 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
 /// PseudoElem::After)` and their bridge,
 /// `Component::Combinator(Combinator::PseudoElement)` (`::before`/`::after`)
 /// were added incrementally, making the type/universal-only name no longer
-/// accurate, so the function was renamed. Other combinators
+/// accurate, so the function was renamed. `PseudoElem::Marker` (`::marker`)
+/// and `PseudoElem::FirstLine` (`::first-line`) joined the same
+/// `Component::PseudoElement` arm later, under the same bridge. Other combinators
 /// (`Combinator::SlotAssignment` / `Combinator::Part`) and `:hover`/`:active`
 /// remain out of scope (see the `cascade.rs::match_combinator_chain` docs).
 /// The two combinators' pseudo syntax (`::slotted()`/`::part()`) cannot occur:
@@ -2330,7 +2332,7 @@ fn is_supported_selector_with_relative_anchor(
             Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => true,
             Component::Combinator(Combinator::PseudoElement) => allow_nth,
             Component::PseudoElement(
-                PseudoElem::Before | PseudoElem::After | PseudoElem::Marker,
+                PseudoElem::Before | PseudoElem::After | PseudoElem::Marker | PseudoElem::FirstLine,
             ) => allow_nth,
             Component::RelativeSelectorAnchor => allow_relative_anchor,
             Component::Invalid(_) => allow_invalid,
