@@ -9503,6 +9503,13 @@ pub enum PropertyValue {
     /// [`crate::page`].
     /// (Appended for the same reason as [`Self::TableLayout`].)
     TextDecorationThickness(TextDecorationThickness),
+    /// Marker for `text-decoration-thickness: inherit` on the element path.
+    /// CSS Cascading 4 section 7.3 takes the parent computed value even for this
+    /// non-inherited longhand when `inherit` is specified explicitly
+    /// (CSS Text Decoration 4 `text-decoration-thickness` is non-inherited,
+    /// initial `auto`). The cascade resolves this against the parent computed
+    /// thickness before staging (see [`crate::cascade::apply_winners`]).
+    TextDecorationThicknessInherit,
     /// `text-decoration-inset` — **non-inherited**, initial: `0`
     /// (ED). The element path stages it in
     /// [`crate::specified::SpecifiedValues`] and absolutizes it against the
@@ -10391,7 +10398,8 @@ impl PropertyValue {
             PropertyValue::Font(_) => PropertyKey::Font,
             PropertyValue::TextDecorationSkipInk(_) => PropertyKey::TextDecorationSkipInk,
             PropertyValue::TextDecorationSkipSpaces(_) => PropertyKey::TextDecorationSkipSpaces,
-            PropertyValue::TextDecorationThickness(_) => PropertyKey::TextDecorationThickness,
+            PropertyValue::TextDecorationThickness(_)
+            | PropertyValue::TextDecorationThicknessInherit => PropertyKey::TextDecorationThickness,
             PropertyValue::TextDecorationInset(_) => PropertyKey::TextDecorationInset,
             PropertyValue::TextEmphasisPosition(_) => PropertyKey::TextEmphasisPosition,
             PropertyValue::TextUnderlinePosition(_) => PropertyKey::TextUnderlinePosition,

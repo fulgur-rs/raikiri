@@ -7256,6 +7256,38 @@ fn text_decoration_thickness_computes_keywords_and_lengths() {
 }
 
 #[test]
+fn text_decoration_thickness_inherit_takes_parent_computed_value() {
+    // CSS Text Decoration 4 marks this longhand non-inherited (initial `auto`),
+    // so an undeclared child keeps `auto` even under a 10px parent.
+    let (parent, child) =
+        cascade_parent_child("div", Some("text-decoration-thickness: 10px"), "span", None);
+    assert_eq!(
+        parent.text_decoration_thickness,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0))
+    );
+    assert_eq!(
+        child.text_decoration_thickness,
+        ComputedTextDecorationThickness::Auto
+    );
+    // Explicit `inherit` (CSS Cascading 4 section 7.3) takes the parent
+    // computed thickness instead of the initial value.
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("text-decoration-thickness: 10px"),
+        "span",
+        Some("text-decoration-thickness: inherit"),
+    );
+    assert_eq!(
+        parent.text_decoration_thickness,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0))
+    );
+    assert_eq!(
+        child.text_decoration_thickness,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0))
+    );
+}
+
+#[test]
 fn text_emphasis_position_preserves_keywords_and_inherits() {
     let initial = cascade_doc("", "div", None);
     assert_eq!(
