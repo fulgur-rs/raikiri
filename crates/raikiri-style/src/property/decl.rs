@@ -37,7 +37,9 @@
 //!    every keyword entry does (the
 //!    `phase_3_variant_classification_matches_the_documented_counts` test
 //!    reports it). Moving an existing hand-written property into the table
-//!    keeps the count, since its hand-written sample goes away.
+//!    keeps the count, since its hand-written sample goes away. A hooked
+//!    entry whose sample the hook changes is not a pass-through; see
+//!    [Hook properties](#hook-properties).
 //! 4. Add the property's own parse and cascade tests, as for any property.
 //!
 //! Nothing else is hand-written for a keyword longhand: do not add a
@@ -55,7 +57,8 @@
 //!   `parse_*` function when `keywords:` replaces it;
 //! - its `SpecifiedValues` / `ComputedValues` fields with their
 //!   initializers, the `inherit_from` copy or reset and the `finalize`
-//!   copy;
+//!   copy or computed step in `absolutize_with` (a computed step becomes a
+//!   hook, see [Hook properties](#hook-properties));
 //! - its explicit arms in `apply_value` and `resolve_against_inherited`
 //!   (`cascade/inherit.rs`), `expand_shorthand_into` (`rule.rs`),
 //!   `serialize_value`, `absolutize_in_page_context` (`page/absolutize.rs`)
@@ -64,6 +67,12 @@
 //!   `property_value_variant_registry!`);
 //! - its `parse_value` and `property_key_for_name` arms and its
 //!   `HAND_WRITTEN_NAMES` entry (`names.rs`).
+//!
+//! A `parse_*` function kept for `parse:` is usually `pub(super)` in its
+//! `parse/*.rs` file, which this file cannot name: widen it to
+//! `pub(in crate::property)` (as for `parse_empty_cells` and
+//! `parse_opacity_value`). A missing widening is a privacy error at the
+//! `parse:` path.
 //!
 //! The build catches most leftovers: the macro rejects a table variant that
 //! clashes with a hand-written one; an old value type of the same name makes
@@ -82,15 +91,58 @@
 //! `EmptyCells`) must either be renamed at every use, or be kept and
 //! declared with `parse:` and `: ExistingType` instead of `keywords:`.
 //!
+//! # Hook properties
+//!
+//! A longhand whose computed value differs from its specified value names
+//! its specified-to-computed step in the entry:
+//!
+//! - `compute: f`, with `fn f(Specified, &AbsolutizeCx<'_>) -> Specified`,
+//!   when the computed value has the specified type (`opacity`:
+//!   `clamp_opacity`);
+//! - `computed: Type via f`, with `fn f(Specified, &AbsolutizeCx<'_>) ->
+//!   Type`, when it has its own computed type (`object-position`:
+//!   `ComputedCssPosition via compute_object_position`), together with
+//!   `lift: g`, `fn g(Type) -> Specified`, unless `Type: Into<Specified>`.
+//!
+//! The hooks are private functions of this file, above the `#[longhands]`
+//! module. The generated code calls `compute` in
+//! [`SpecifiedValues::finalize`](crate::specified::SpecifiedValues::finalize)
+//! and in `ComputedTable::initial` (so the computed initial value is the
+//! hook applied to `initial:` in the initial context). The page context
+//! applies `lift(compute(v))` through `longhand_page_absolutize`, since
+//! `PropertyValue` carries the specified type: `lift` must turn every
+//! computed value a page context can produce into the specified-type value
+//! the page result should expose. For `object-position` every computed
+//! offset has an exact specified counterpart (`px` or a percentage on the
+//! same edge); a property whose computed values cannot be expressed in the
+//! specified type needs a different `lift` or a hand-written page arm. An
+//! `inherited: yes` entry also seeds a child's specified value with `lift`
+//! of the parent's computed value.
+//!
+//! [`AbsolutizeCx`] carries only the element's (or page context's) own
+//! font size, own line height and the tree-global `ResolveContext`. A
+//! property whose computed value depends on another property of the same
+//! element (border widths on border styles, the `overflow-x` /
+//! `overflow-y` pair) or on the parent beyond inheritance still needs
+//! hand-written handling.
+//!
+//! In the page-cascade bookkeeping (`page/cascade/tests.rs`), a sample the
+//! hook changes is not counted in `PHASE_3_PASS_THROUGH_VARIANTS`; when that
+//! sample also carries no length residue (like `opacity`'s `2.0`), it
+//! counts in `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`.
+//!
 //! # Limits of the generated pass-through
 //!
 //! Every table-declared value takes the same arm, [`longhand_value_pat!`],
 //! in the shorthand expansion, the phase-2 `resolve_against_inherited`
 //! step, `serialize_value` (no serialization) and the page-cascade test's
 //! `specified_layer_residue` detector (reports no residue). That is right
-//! for keyword payloads. A longhand whose payload carries lengths needs its
-//! own residue arm in that detector, and a longhand whose value depends on
-//! the parent needs its own phase-2 arm.
+//! for payloads without lengths. A longhand whose value depends on the
+//! parent needs its own phase-2 arm. A longhand whose payload carries
+//! lengths needs its own residue arm in that detector, placed before the
+//! blanket arm (the first matching arm wins); `object-position` has one,
+//! and the blanket arm carries `#[allow(unreachable_patterns)]` because its
+//! `ObjectPosition` alternative is shadowed on purpose.
 //!
 //! # Links to table fields
 //!

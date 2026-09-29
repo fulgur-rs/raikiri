@@ -3153,6 +3153,10 @@ fn phase_3_transformed_variants() -> usize {
 /// accounting for phase-2 resolution and keyword-only phase-3 transforms.
 /// The count is used to check that page declarations expose computed
 /// values rather than unresolved specified values.
+// The five: `overflow-x`, `overflow-y` and `overflow` (cross-axis
+// coupling), `writing-mode` (collapse to `horizontal-tb`) and `opacity`
+// (the `[0, 1]` clamp of its table entry's `compute:` hook). A new table
+// entry whose hook transforms a sample without length residue belongs here.
 const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
 fn raw_corpus_residue_variants() -> usize {

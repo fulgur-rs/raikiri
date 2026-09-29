@@ -88,9 +88,14 @@ use crate::resolve::{
 ///
 /// | Layer | Fields |
 /// | --- | --- |
-/// | **Still specified** (awaiting phase 2 or phase 3 absolutization) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `text_decoration_inset` / `text_decoration_thickness` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` / `border_spacing` |
-/// | **Already computed-equivalent** (no lengths to absolutize) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `text_underline_position` / `text_emphasis_position` / `text_emphasis_style` / `text_emphasis_color` / `font_style` / `font_kerning` / `font_optical_sizing` / `font_variant_emoji` / `font_language_override` / `font_variant_ligatures` / `font_synthesis` / `font_variant_position` / `font_palette` / `font_variant_numeric` / `font_variant_east_asian` / `font_variant_caps` / `text_transform` / `text_combine_upright` / `text_orientation` / `unicode_bidi` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `white_space_collapse` / `hyphens` / `hyphenate_character` / `hyphenate_limit_chars` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
+/// | **Still specified** (awaiting phase 2 or phase 3 absolutization) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `text_decoration_inset` / `text_decoration_thickness` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `border_spacing` |
+/// | **Already computed-equivalent** (no lengths to absolutize) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `text_underline_position` / `text_emphasis_position` / `text_emphasis_style` / `text_emphasis_color` / `font_style` / `font_kerning` / `font_optical_sizing` / `font_variant_emoji` / `font_language_override` / `font_variant_ligatures` / `font_synthesis` / `font_variant_position` / `font_palette` / `font_variant_numeric` / `font_variant_east_asian` / `font_variant_caps` / `text_transform` / `text_combine_upright` / `text_orientation` / `unicode_bidi` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `white_space_collapse` / `hyphens` / `hyphenate_character` / `hyphenate_limit_chars` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `table_layout` / `border_collapse` / `caption_side` |
 /// | **Variant-dependent layer** (the type is the same in both layers, but some variants require absolutization) | `vertical_align` — see [`Self::vertical_align`] |
+///
+/// The table lists hand-written fields only. The longhands declared in the
+/// `properties!` table (the fields of [`SpecifiedTable`]) document their
+/// computed step on their table entry: a specified value equal to its
+/// computed value, or a `compute` hook.
 ///
 /// \* For `background_image`, the `None` and `Url(String)` variants fit the
 /// computed-equivalent classification. The `Gradient(..)` variant (CSS Images 4
@@ -577,7 +582,7 @@ pub struct SpecifiedValues {
     /// [`SpecifiedTable`] for the fields.
     pub longhands: SpecifiedTable,
     /// **Specified** `mix-blend-mode`; always a keyword. It passes through without
-    /// absolutization, as with `object_fit`.
+    /// absolutization, as with `background_repeat`.
     pub mix_blend_mode: MixBlendMode,
     /// **Specified** `mask-image`; `None` / `Url(String)` are computed-equivalent. As for
     /// `background_image`, phase 3 absolutizes font-relative parts of `<length-percentage>` in
@@ -2030,7 +2035,7 @@ impl SpecifiedValues {
                 ctx,
             )),
             // CSS Compositing and Blending Level 1 §3.4.1: always a keyword; pass through without
-            // a phase 3 transform, as for object_fit.
+            // a phase 3 transform, as for background_repeat.
             mix_blend_mode: self.mix_blend_mode,
             // CSS Masking Level 1 §7.1: `None` and `Url(String)` are computed-equivalent. As for
             // background_image, phase 3 absolutizes font-relative parts of `<length-percentage>`
