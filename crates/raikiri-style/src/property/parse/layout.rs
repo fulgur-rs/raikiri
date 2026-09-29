@@ -1303,37 +1303,7 @@ pub(super) fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCells
 }
 
 pub(super) fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
-    // Follow the sibling multi-keyword approach in parse_string_fetch,
-    // parse_content_part, and parse_content_text_keyword. Match ASCII case
-    // insensitively through to_ascii_lowercase(), allocating once per declaration.
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "block" => Some(DisplayValue::Block),
-        "inline" => Some(DisplayValue::Inline),
-        "inline-block" => Some(DisplayValue::InlineBlock),
-        "flow-root" => Some(DisplayValue::FlowRoot),
-        "none" => Some(DisplayValue::None),
-        // The current layout bridge models the outer display type as block,
-        // so inline-flex/inline-grid share the corresponding formatting
-        // context until inline-level shrink-to-fit support is added.
-        "flex" => Some(DisplayValue::Flex),
-        "inline-flex" => Some(DisplayValue::InlineFlex),
-        "grid" => Some(DisplayValue::Grid),
-        "inline-grid" => Some(DisplayValue::InlineGrid),
-        "list-item" => Some(DisplayValue::ListItem),
-        "contents" => Some(DisplayValue::Contents),
-        "table" => Some(DisplayValue::Table),
-        "inline-table" => Some(DisplayValue::InlineTable),
-        "table-row-group" => Some(DisplayValue::TableRowGroup),
-        "table-header-group" => Some(DisplayValue::TableHeaderGroup),
-        "table-footer-group" => Some(DisplayValue::TableFooterGroup),
-        "table-row" => Some(DisplayValue::TableRow),
-        "table-column-group" => Some(DisplayValue::TableColumnGroup),
-        "table-column" => Some(DisplayValue::TableColumn),
-        "table-cell" => Some(DisplayValue::TableCell),
-        "table-caption" => Some(DisplayValue::TableCaption),
-        _ => None,
-    }
+    DisplayValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_list_style_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {

@@ -2680,6 +2680,30 @@ pub enum DisplayValue {
     TableCaption,
 }
 
+css_keywords!(DisplayValue {
+    Block => "block",
+    Inline => "inline",
+    InlineBlock => "inline-block",
+    FlowRoot => "flow-root",
+    None => "none",
+    Flex => "flex",
+    InlineFlex => "inline-flex",
+    Grid => "grid",
+    InlineGrid => "inline-grid",
+    ListItem => "list-item",
+    Contents => "contents",
+    Table => "table",
+    InlineTable => "inline-table",
+    TableRowGroup => "table-row-group",
+    TableHeaderGroup => "table-header-group",
+    TableFooterGroup => "table-footer-group",
+    TableRow => "table-row",
+    TableColumnGroup => "table-column-group",
+    TableColumn => "table-column",
+    TableCell => "table-cell",
+    TableCaption => "table-caption",
+});
+
 /// The value of the `flex-direction` property.
 ///
 /// CSS Flexible Box Layout Module Level 1 §5.1 "Flex Flow Direction: the
