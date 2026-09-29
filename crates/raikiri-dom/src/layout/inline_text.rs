@@ -4330,6 +4330,23 @@ pub(crate) fn collapse_text_for_shaping(
     // survivor is indistinguishable from a collapsed space downstream;
     // wide-char pairs across nodes stay space-approximated — symmetric
     // pairs are unaffected either way).
+    // Known limitation for pre-line, intentional for now, see
+    // raikiri-spike-6r1x.12: an edge line feed facing inline content is
+    // degraded to a space even under pre-line, where the spec preserves
+    // segment breaks as forced breaks. Single-node interior breaks stay
+    // preserved, so X newline Y as one node keeps two lines while the
+    // same text split across sibling nodes collapses to one line with a
+    // migrated or NBSP space. Keeping the edge break in place alone does
+    // not restore the break: measured split geometries keep the two-line
+    // block height but misplace the second run to the right of the first
+    // instead of at the next line start, and an interior break plus a
+    // following sibling misplaces that sibling the same way. Correct
+    // rendering needs cross-node forced-break handling at the line-box
+    // level, analogous to the br path with wrap plus a full-width break
+    // item, combined with stripping the edge break from shaping so it is
+    // counted once, not twice. That is beyond a minimal per-node fix, so
+    // the space degradation stays until that line-box work lands. Do not
+    // add a test pinning the collapsed single-line value as correct.
     let mut out = merged;
     if !before {
         out = out.trim_start_matches([' ', '\n']).to_string();
