@@ -1789,3 +1789,314 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
         element_transform(&cascade.computed[1], 0.4, 0.4, 100.2, 10.4) * Point::new(0.0, 0.0);
     assert_eq!(actual, Point::new(101.0, 11.0));
 }
+
+fn background_repeat_fixture(
+    repeat: &str,
+    position: &str,
+) -> (
+    ComputedCssPosition,
+    raikiri_style::property::BackgroundRepeat,
+) {
+    let mut document = Document::new();
+    let id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        Style::default(),
+        Some(format!(
+            "background-repeat:{repeat};background-position:{position}"
+        )),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    (
+        cascade.computed[id].background_position,
+        cascade.computed[id].background_repeat,
+    )
+}
+
+fn background_fill_origins(scene: &Scene) -> Vec<(f64, f64)> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => {
+                let coeffs = fill.transform.as_coeffs();
+                Some((coeffs[4], coeffs[5]))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn background_fill_count(scene: &Scene) -> usize {
+    scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count()
+}
+
+#[test]
+fn background_repeat_tiles_cover_area_with_clipping() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+    };
+    let (position, repeat) = background_repeat_fixture("repeat", "0px 0px");
+    let mut scene = Scene::new();
+    paint_background_image(
+        &mut scene, &decoded, 0.0, 0.0, 100.0, 50.0, 20.0, 10.0, &position, &repeat,
+    );
+    // 100 / 20 by 50 / 10 tiles, edge tiles fit exactly here.
+    assert_eq!(background_fill_count(&scene), 25);
+    let origins = background_fill_origins(&scene);
+    assert!(origins.contains(&(0.0, 0.0)));
+    assert!(origins.contains(&(80.0, 40.0)));
+    // The painting area clip keeps partial edge tiles inside the area.
+    let clip = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(clip),
+            _ => None,
+        })
+        .expect("repeat paint must clip to the painting area");
+    assert_eq!(clip.transform, Affine::IDENTITY);
+    let bounds = kurbo::Shape::bounding_box(&clip.clip);
+    assert_eq!(bounds, kurbo::Rect::new(0.0, 0.0, 100.0, 50.0));
+
+    // A partial edge tile still counts: 25px wide area with 20px tiles
+    // needs an origin at 20px clipped to 25px.
+    let mut clipped = Scene::new();
+    paint_background_image(
+        &mut clipped,
+        &decoded,
+        0.0,
+        0.0,
+        25.0,
+        12.0,
+        20.0,
+        10.0,
+        &position,
+        &repeat,
+    );
+    assert_eq!(background_fill_count(&clipped), 4);
+    let origins = background_fill_origins(&clipped);
+    assert!(origins.contains(&(20.0, 10.0)));
+}
+
+#[test]
+fn background_no_repeat_paints_single_origin_tile() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+    };
+    let (position, repeat) = background_repeat_fixture("no-repeat", "0px 0px");
+    let mut scene = Scene::new();
+    paint_background_image(
+        &mut scene, &decoded, 0.0, 0.0, 100.0, 50.0, 20.0, 10.0, &position, &repeat,
+    );
+    assert_eq!(background_fill_count(&scene), 1);
+    assert_eq!(background_fill_origins(&scene), vec![(0.0, 0.0)]);
+
+    // The single tile follows background-position.
+    let (offset_position, offset_repeat) = background_repeat_fixture("no-repeat", "3px 4px");
+    let mut offset = Scene::new();
+    paint_background_image(
+        &mut offset,
+        &decoded,
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        20.0,
+        10.0,
+        &offset_position,
+        &offset_repeat,
+    );
+    assert_eq!(background_fill_count(&offset), 1);
+    assert_eq!(background_fill_origins(&offset), vec![(3.0, 4.0)]);
+}
+
+#[test]
+fn background_repeat_x_and_y_tile_single_axis() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+    };
+    let (repeat_x_position, repeat_x) = background_repeat_fixture("repeat-x", "0px 0px");
+    let mut scene = Scene::new();
+    paint_background_image(
+        &mut scene,
+        &decoded,
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        20.0,
+        10.0,
+        &repeat_x_position,
+        &repeat_x,
+    );
+    assert_eq!(background_fill_count(&scene), 5);
+    for (_, y) in background_fill_origins(&scene) {
+        assert_eq!(y, 0.0);
+    }
+
+    let (repeat_y_position, repeat_y) = background_repeat_fixture("repeat-y", "0px 0px");
+    let mut scene = Scene::new();
+    paint_background_image(
+        &mut scene,
+        &decoded,
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        20.0,
+        10.0,
+        &repeat_y_position,
+        &repeat_y,
+    );
+    assert_eq!(background_fill_count(&scene), 5);
+    for (x, _) in background_fill_origins(&scene) {
+        assert_eq!(x, 0.0);
+    }
+}
+
+#[test]
+fn background_repeat_with_offset_covers_both_directions() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+    };
+    // Origin at 90px/40px: tiling must extend left and up to cover the area,
+    // not only right and down from the origin.
+    let (position, repeat) = background_repeat_fixture("repeat", "90px 40px");
+    let mut scene = Scene::new();
+    paint_background_image(
+        &mut scene, &decoded, 0.0, 0.0, 100.0, 50.0, 20.0, 10.0, &position, &repeat,
+    );
+    let origins = background_fill_origins(&scene);
+    assert_eq!(origins.len(), 30);
+    assert!(origins.contains(&(-10.0, 0.0)));
+    assert!(origins.contains(&(90.0, 40.0)));
+}
+
+#[test]
+fn background_space_and_round_defer_to_single_tile() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+    };
+    for repeat_style in ["space", "round", "space round", "round space"] {
+        let (position, repeat) = background_repeat_fixture(repeat_style, "0px 0px");
+        let mut scene = Scene::new();
+        paint_background_image(
+            &mut scene, &decoded, 0.0, 0.0, 100.0, 50.0, 20.0, 10.0, &position, &repeat,
+        );
+        assert_eq!(
+            background_fill_count(&scene),
+            1,
+            "{repeat_style} must stay a single tile until spacing and rescaling land"
+        );
+    }
+}
+
+#[test]
+fn background_repeat_rejects_nonfinite_tile_geometry() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![255, 0, 0, 255],
+    };
+    let (position, repeat) = background_repeat_fixture("repeat", "0px 0px");
+    for (image_w, image_h) in [
+        (f64::INFINITY, 10.0),
+        (20.0, f64::INFINITY),
+        (f64::NAN, 10.0),
+        (20.0, f64::NAN),
+    ] {
+        let mut scene = Scene::new();
+        paint_background_image(
+            &mut scene, &decoded, 0.0, 0.0, 100.0, 50.0, image_w, image_h, &position, &repeat,
+        );
+        assert_eq!(background_fill_count(&scene), 0);
+    }
+    // A non-finite painting area cannot place the origin tile.
+    let mut scene = Scene::new();
+    paint_background_image(
+        &mut scene,
+        &decoded,
+        f64::INFINITY,
+        0.0,
+        f64::INFINITY,
+        50.0,
+        20.0,
+        10.0,
+        &position,
+        &repeat,
+    );
+    assert_eq!(background_fill_count(&scene), 0);
+}
+
+#[test]
+fn background_repeat_tiles_paint_contiguous_pixels() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![255, 0, 0, 255],
+    };
+    let (repeat_position, repeat) = background_repeat_fixture("repeat", "0px 0px");
+    let mut repeat_scene = Scene::new();
+    paint_background_image(
+        &mut repeat_scene,
+        &decoded,
+        0.0,
+        0.0,
+        4.0,
+        4.0,
+        2.0,
+        2.0,
+        &repeat_position,
+        &repeat,
+    );
+    let repeat_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(repeat_scene, Affine::IDENTITY),
+        4,
+        4,
+    );
+    // All four 2px tiles are solid red, including the tile straddling the
+    // center and the partial edge coverage.
+    for chunk in repeat_rgba.chunks_exact(4) {
+        assert_eq!(chunk, &[255, 0, 0, 255]);
+    }
+
+    let (single_position, single) = background_repeat_fixture("no-repeat", "0px 0px");
+    let mut single_scene = Scene::new();
+    paint_background_image(
+        &mut single_scene,
+        &decoded,
+        0.0,
+        0.0,
+        4.0,
+        4.0,
+        2.0,
+        2.0,
+        &single_position,
+        &single,
+    );
+    let single_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(single_scene, Affine::IDENTITY),
+        4,
+        4,
+    );
+    let pixel =
+        |x: u32, y: u32| &single_rgba[((y * 4 + x) * 4) as usize..((y * 4 + x) * 4 + 4) as usize];
+    assert_eq!(pixel(0, 0), &[255, 0, 0, 255]);
+    assert_eq!(pixel(3, 3), &[0, 0, 0, 0]);
+}
