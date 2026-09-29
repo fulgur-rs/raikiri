@@ -13,6 +13,12 @@ mod macros;
 mod types;
 pub use types::*;
 
+mod longhand_trait;
+#[allow(unused_imports)]
+pub(crate) use longhand_trait::{
+    AbsolutizeCx, FontSize, FromCx, HookFn, Longhand, OwnLineHeight, run_hook,
+};
+
 mod longhands;
 pub use longhands::*;
 
