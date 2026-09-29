@@ -5375,6 +5375,15 @@ pub enum FloatValue {
     Footnote,
 }
 
+css_keywords!(FloatValue {
+    None => "none",
+    Left => "left",
+    Right => "right",
+    InlineStart => "inline-start",
+    InlineEnd => "inline-end",
+    Footnote => "footnote",
+});
+
 /// The value of the `clear` property.
 ///
 /// CSS2 §9.5.2 "Controlling flow next to floats: the 'clear' property"
@@ -5439,6 +5448,15 @@ pub enum ClearValue {
     /// writing direction (CSS Logical Properties §4). Maps to `right` in LTR.
     InlineEnd,
 }
+
+css_keywords!(ClearValue {
+    None => "none",
+    Left => "left",
+    Right => "right",
+    Both => "both",
+    InlineStart => "inline-start",
+    InlineEnd => "inline-end",
+});
 
 /// When `float` is not `none`, resolve the computed-value transformation of
 /// `display` required by CSS2 §9.7 "Relationships between
@@ -6202,6 +6220,11 @@ pub enum TableLayoutValue {
     Fixed,
 }
 
+css_keywords!(TableLayoutValue {
+    Auto => "auto",
+    Fixed => "fixed",
+});
+
 /// The value of the `border-collapse` property.
 ///
 /// CSS Tables 3 §6 "Borders"
@@ -6226,6 +6249,11 @@ pub enum BorderCollapseValue {
     /// `collapse` — collapsing borders model.
     Collapse,
 }
+
+css_keywords!(BorderCollapseValue {
+    Separate => "separate",
+    Collapse => "collapse",
+});
 
 /// The value of the `caption-side` property.
 ///
@@ -6252,6 +6280,11 @@ pub enum CaptionSideValue {
     Bottom,
 }
 
+css_keywords!(CaptionSideValue {
+    Top => "top",
+    Bottom => "bottom",
+});
+
 /// The value of the `empty-cells` property.
 ///
 /// CSS Tables 3 §8 "Empty Cells: the empty-cells property"
@@ -6277,6 +6310,11 @@ pub enum EmptyCellsValue {
     /// `hide` — hides an empty cell's border and background.
     Hide,
 }
+
+css_keywords!(EmptyCellsValue {
+    Show => "show",
+    Hide => "hide",
+});
 
 /// The specified value of `border-spacing`.
 ///
