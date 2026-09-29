@@ -74,6 +74,9 @@ impl SelectorQuery {
         let Some(elem) = node.as_element() else {
             return false;
         };
+        // DOM query entry points allow detached candidates (same-tree gating);
+        // the stylesheet cascade passes `false` to keep inert/template-contents
+        // filtering (see `is_candidate_element`).
         match_complex_selector_list(
             &self.list,
             dom,
@@ -82,6 +85,7 @@ impl SelectorQuery {
             ancestors,
             dom.quirks_mode(),
             scope,
+            true,
         )
         .is_some()
     }

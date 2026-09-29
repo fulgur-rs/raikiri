@@ -283,6 +283,10 @@ impl StyleDom for Document {
     fn quirks_mode(&self) -> StyleQuirksMode {
         convert_quirks_mode(Document::quirks_mode(self))
     }
+
+    fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {
+        Document::parent_of(self, child.0 as usize).map(|p| StyleNodeId::new(p as u64))
+    }
 }
 
 /// [`raikiri_traits::QuirksMode`] (raikiri-html's parse-time mirror of

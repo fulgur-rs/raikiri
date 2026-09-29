@@ -215,6 +215,15 @@ impl StyleDom for TestDoc {
     fn quirks_mode(&self) -> StyleQuirksMode {
         self.quirks_mode
     }
+
+    fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {
+        let idx = child.0 as usize;
+        self.nodes.iter().enumerate().find_map(|(i, n)| {
+            n.children
+                .contains(&idx)
+                .then_some(StyleNodeId::new(i as u64))
+        })
+    }
 }
 
 impl<'a> StyleNode for TestNodeRef<'a> {

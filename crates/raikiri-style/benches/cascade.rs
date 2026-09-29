@@ -269,6 +269,15 @@ impl StyleDom for BenchDoc {
     fn node_count(&self) -> usize {
         self.nodes.len()
     }
+
+    fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {
+        let idx = child.0 as usize;
+        self.nodes.iter().enumerate().find_map(|(i, n)| {
+            n.children
+                .contains(&idx)
+                .then_some(StyleNodeId::new(i as u64))
+        })
+    }
 }
 
 impl StyleNode for BenchNodeRef<'_> {

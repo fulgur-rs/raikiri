@@ -581,6 +581,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         // selector containing `:scope` before it ever reaches
                         // the rule tree, so this arm is dead in practice here).
                         None,
+                        false,
                     ) {
                         for decl in &rule.declarations {
                             // Expand shorthands before adding longhand
@@ -619,6 +620,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             id,
                             &ancestor_path,
                             quirks_mode,
+                            false,
                         ) else {
                             continue;
                         };
