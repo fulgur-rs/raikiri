@@ -1603,6 +1603,45 @@ fn cascade_page_border_css_wide_inherit_takes_root() {
 }
 
 #[test]
+fn cascade_page_border_all_sides_css_wide() {
+    // Cover `resolve_border_page_*` left/top/bottom branches: each side's inherit
+    // takes its own root side; initial clears.
+    let mut root = ComputedValues::initial();
+    root.border.top.width = crate::resolve::ComputedLength(1.0);
+    root.border.top.style = BorderStyle::Solid;
+    root.border.right.width = crate::resolve::ComputedLength(2.0);
+    root.border.right.style = BorderStyle::Solid;
+    root.border.bottom.width = crate::resolve::ComputedLength(3.0);
+    root.border.bottom.style = BorderStyle::Solid;
+    root.border.left.width = crate::resolve::ComputedLength(4.0);
+    root.border.left.style = BorderStyle::Solid;
+    let result = page(
+        "@page { border-top-width: inherit; border-right-width: inherit; \
+         border-bottom-width: inherit; border-left-width: inherit; \
+         border-top-style: inherit; border-right-style: inherit; \
+         border-bottom-style: inherit; border-left-style: inherit; \
+         border-left-color: inherit }",
+        &root,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(1.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(2.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderBottomWidth),
+        Some(&PropertyValue::BorderBottomWidth(Length::Px(3.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderLeftWidth),
+        Some(&PropertyValue::BorderLeftWidth(Length::Px(4.0)))
+    );
+}
+
+#[test]
 fn cascade_page_border_width_is_gated_by_border_style_hidden() {
     let root = ComputedValues::initial();
     let result = page(

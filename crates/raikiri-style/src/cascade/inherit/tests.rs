@@ -8523,3 +8523,90 @@ fn border_rollback_via_user_var_and_user_inherit() {
     assert_eq!(r3.computed[c3].border.right.width, ComputedLength(12.0));
     let _ = (parent, child, p3);
 }
+
+#[test]
+fn apply_value_direct_border_right_and_css_wide_fall_through() {
+    // Defensive arms in `apply_value` for shorthands that `collect_cascaded` already
+    // expands (see `apply_value_direct_border_shorthand_fall_through` sibling):
+    // direct calls must not panic and must preserve ordering (width, style, color).
+    use crate::property::CssWideKeyword;
+    use crate::specified::SpecifiedValues;
+    let mut cv = SpecifiedValues::initial();
+    let border = Border {
+        width: Length::Px(2.0),
+        style: BorderStyle::Dotted,
+        color: BorderColor::CurrentColor,
+    };
+    apply_value(PropertyValue::BorderRight(border), &mut cv);
+    assert_eq!(cv.border.right.width, Length::Px(2.0));
+    assert_eq!(cv.border.right.style, BorderStyle::Dotted);
+    // Shorthand CssWide expands to longhand CssWide markers, which are no-ops here
+    // (resolved in `apply_winners` via the normal cascade); direct calls leave initial.
+    let mut cv2 = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
+        &mut cv2,
+    );
+    assert_eq!(cv2.border.top.width, crate::specified::INITIAL_BORDER.width);
+    let mut cv3 = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Initial),
+        &mut cv3,
+    );
+    assert_eq!(cv3.border.right.style, BorderStyle::None);
+    // Longhand markers are no-ops here.
+    let mut cv4 = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
+        &mut cv4,
+    );
+    assert_eq!(
+        cv4.border.right.width,
+        crate::specified::INITIAL_BORDER.width
+    );
+}
+
+#[test]
+fn border_rollback_deferred_var_substituting_to_css_wide() {
+    // Cover `resolve_border_css_wide`'s Deferred-then-CssWide arms:
+    // User declares `var(--u)` where `--u` is `inherit`/`initial`;
+    // Author reverts; rollback resolves the var to the marker, then to parent/initial.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("border-right-width: 13px; border-right-style: solid"),
+    );
+    let child = doc.push_element(parent, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div div { --u: inherit; border-right-width: var(--u); border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div div { border-right-width: revert; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[child].border.right.width,
+        ComputedLength(13.0),
+        "User var(--u: inherit) rollback must resolve to parent 13px"
+    );
+    // Same shape with `initial` (covers Initial/Unset inner arms).
+    let mut tree2 = RuleTree::empty();
+    tree2.add_stylesheet(
+        "div div { --v: initial; border-right-width: var(--v); border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree2.add_stylesheet(
+        "div div { border-right-width: revert; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r2 = cascade(&doc, &tree2).expect("cascade Ok");
+    assert_eq!(
+        r2.computed[child].border.right.width,
+        ComputedLength(3.0),
+        "User var(--v: initial) rollback must resolve to initial 3px (visible with solid)"
+    );
+}
