@@ -188,6 +188,47 @@ impl HtmlCollectionSource {
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
         cached_item(&self.source, &self.cache, index, context)
     }
+
+    /// The supported property names (DOM §4.2.10.2): for each element in
+    /// collection order, its `id` when non-empty and not yet listed, then
+    /// its `name` when it is an HTML element with a non-empty `name` not
+    /// yet listed.
+    fn supported_names(&self, context: &mut Context) -> JsResult<Vec<String>> {
+        self.with_nodes(context, |doc, nodes| {
+            let mut out: Vec<String> = Vec::new();
+            for &node in nodes {
+                if let Some(id) = doc.element_attribute(node, "id")
+                    && !id.is_empty()
+                    && !out.iter().any(|s| s == id)
+                {
+                    out.push(id.to_owned());
+                }
+                if doc.element_namespace_uri(node) == Some(HTML_NS)
+                    && let Some(name) = doc.element_attribute(node, "name")
+                    && !name.is_empty()
+                    && !out.iter().any(|s| s == name)
+                {
+                    out.push(name.to_owned());
+                }
+            }
+            out
+        })
+    }
+
+    /// The first element named `name` in collection order, or `None` when
+    /// `name` is empty or matches nothing (DOM §4.2.10.2 `namedItem`).
+    fn named_value(&self, name: &str, context: &mut Context) -> JsResult<Option<JsValue>> {
+        if name.is_empty() {
+            return Ok(None);
+        }
+        let found = self.with_nodes(context, |doc, nodes| {
+            nodes.iter().copied().find(|&n| has_name(doc, n, name))
+        })?;
+        match found {
+            Some(node) => Ok(Some(wrap(context, node)?.into())),
+            None => Ok(None),
+        }
+    }
 }
 
 impl IndexedSource for NodeListSource {
@@ -207,6 +248,14 @@ impl IndexedSource for HtmlCollectionSource {
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
         self.item(index, context)
+    }
+
+    fn supported_property_names(&self, context: &mut Context) -> JsResult<Vec<String>> {
+        self.supported_names(context)
+    }
+
+    fn named_property(&self, name: &str, context: &mut Context) -> JsResult<Option<JsValue>> {
+        self.named_value(name, context)
     }
 }
 

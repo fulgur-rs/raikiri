@@ -423,3 +423,218 @@ fn each_collection_caches_independently() {
     ok(&mut rt, "first.length === 2 && second.length === 1");
     assert_eq!(live_walks(&mut rt), walks_before + 4);
 }
+
+#[test]
+fn named_properties_are_read_only_non_enumerable_own_properties() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; \
+         var x = document.createElement('div'); x.id = 'alpha'; \
+         var y = document.createElement('div'); y.setAttribute('name', 'beta'); \
+         var z = document.createElement('div'); z.id = 'beta'; \
+         b.append(x, y, z); var c = b.children;",
+    )
+    .unwrap();
+    // Dot, bracket, and namedItem agree when visible. `z` carries the
+    // duplicate `beta` (its `id`), so the first `beta` (`y`'s `name`) wins,
+    // matching namedItem's first-in-order rule.
+    ok(
+        &mut rt,
+        "c.alpha === x && c['alpha'] === x && c.namedItem('alpha') === x",
+    );
+    ok(
+        &mut rt,
+        "c.beta === y && c['beta'] === y && c.namedItem('beta') === y",
+    );
+    ok(
+        &mut rt,
+        "'alpha' in c && 'beta' in c && !('gamma' in c) && !('' in c) \
+         && c.gamma === undefined && c.namedItem('') === null && c.namedItem('gamma') === null",
+    );
+    // Non-enumerable own data properties: visible in ownKeys and
+    // getOwnPropertyDescriptor, invisible to Object.keys and for-in.
+    ok(
+        &mut rt,
+        "var d = Object.getOwnPropertyDescriptor(c, 'alpha'); \
+         d.value === x && !d.writable && !d.enumerable && d.configurable",
+    );
+    ok(
+        &mut rt,
+        "var keys = Reflect.ownKeys(c); \
+         keys.length === 5 && keys[0] === '0' && keys[1] === '1' && keys[2] === '2' \
+         && keys[3] === 'alpha' && keys[4] === 'beta'",
+    );
+    ok(
+        &mut rt,
+        "Object.keys(c).join() === '0,1,2' \
+         && (function () { var out = []; for (var k in c) out.push(k); return out.join() === '0,1,2'; })()",
+    );
+    // A visible named property cannot be written or deleted: sloppy writes
+    // are ignored, strict writes throw, and deletes refuse.
+    ok(&mut rt, "var f = c.alpha; c.alpha = 1; c.alpha === f");
+    ok(
+        &mut rt,
+        "(function () { 'use strict'; try { c.alpha = 1; return false } catch (e) { return e instanceof TypeError } })()",
+    );
+    ok(
+        &mut rt,
+        "try { Object.defineProperty(c, 'alpha', { value: 1 }); false } catch (e) { e instanceof TypeError }",
+    );
+    ok(
+        &mut rt,
+        "(function () { 'use strict'; try { delete c.alpha; return false } catch (e) { return e instanceof TypeError } })()",
+    );
+    ok(&mut rt, "delete c.nope && c.length === 3");
+}
+
+#[test]
+fn named_visibility_hides_prototype_and_builtin_names() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; \
+         var l = document.createElement('div'); l.id = 'length'; \
+         var it = document.createElement('div'); it.id = 'item'; \
+         var ni = document.createElement('div'); ni.id = 'namedItem'; \
+         var ts = document.createElement('div'); ts.id = 'toString'; \
+         b.append(l, it, ni, ts); var c = b.children;",
+    )
+    .unwrap();
+    // Built-ins win: the named getter still finds the element, but the
+    // property itself resolves through the prototype chain.
+    ok(
+        &mut rt,
+        "typeof c.length === 'number' && c.length === 4 && c.namedItem('length') === l",
+    );
+    ok(
+        &mut rt,
+        "typeof c.item === 'function' && c.namedItem('item') === it \
+         && typeof c.namedItem === 'function' && c.namedItem('namedItem') === ni",
+    );
+    ok(
+        &mut rt,
+        "typeof c.toString === 'function' && c.namedItem('toString') === ts \
+         && 'length' in c && 'item' in c && 'toString' in c",
+    );
+    // Hidden names are not own properties and never reach ownKeys, even
+    // though namedItem still resolves them.
+    ok(
+        &mut rt,
+        "Object.getOwnPropertyDescriptor(c, 'length') === undefined \
+         && Object.getOwnPropertyDescriptor(c, 'item') === undefined \
+         && Object.getOwnPropertyDescriptor(c, 'toString') === undefined",
+    );
+    ok(
+        &mut rt,
+        "var keys = Reflect.ownKeys(c); \
+         keys.length === 4 && keys[0] === '0' && keys[3] === '3' \
+         && keys.indexOf('length') === -1 && keys.indexOf('item') === -1 \
+         && keys.indexOf('toString') === -1",
+    );
+    // Defining the hidden name still refuses while it is supported without
+    // an own property, matching the DefineOwnProperty named branch.
+    ok(
+        &mut rt,
+        "try { Object.defineProperty(c, 'length', { value: 1 }); false } catch (e) { e instanceof TypeError }",
+    );
+}
+
+#[test]
+fn expandos_shadow_and_unhide_named_properties() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; var c = b.children; c.pre = 1; \
+         var e = document.createElement('div'); e.id = 'pre'; b.appendChild(e);",
+    )
+    .unwrap();
+    // The expando predates the element, so the named property stays hidden
+    // behind it; namedItem still resolves the element itself.
+    ok(
+        &mut rt,
+        "c.pre === 1 && c.namedItem('pre') === e && ('pre' in c) \
+         && Reflect.ownKeys(c).join() === '0,pre'",
+    );
+    ok(&mut rt, "delete c.pre && c.pre === e && ('pre' in c)");
+    ok(
+        &mut rt,
+        "Reflect.ownKeys(c).join() === '0,pre' \
+         && Object.getOwnPropertyDescriptor(c, 'pre').value === e",
+    );
+    // A fresh expando for an unsupported name is an ordinary own property.
+    rt.evaluate("c.fresh = 2;").unwrap();
+    ok(
+        &mut rt,
+        "c.fresh === 2 && ('fresh' in c) \
+         && Reflect.ownKeys(c).join() === '0,pre,fresh' \
+         && Object.keys(c).join() === '0,fresh'",
+    );
+}
+
+#[test]
+fn node_list_has_no_named_properties() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; var x = document.createElement('div'); x.id = 'nlist'; \
+         b.appendChild(x); var cn = b.childNodes; var c = b.children;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "c.nlist === x && ('nlist' in c) && cn.nlist === undefined \
+         && !('nlist' in cn) && cn.namedItem === undefined",
+    );
+    ok(
+        &mut rt,
+        "Object.getOwnPropertyDescriptor(cn, 'nlist') === undefined \
+         && Reflect.ownKeys(cn).join() === '0' && c.namedItem('nlist') === x",
+    );
+}
+
+#[test]
+fn named_properties_are_live() {
+    let mut rt = rt();
+    rt.evaluate("var b = document.body; var c = b.children;")
+        .unwrap();
+    ok(&mut rt, "c.live === undefined && !('live' in c)");
+    rt.evaluate("var e = document.createElement('div'); e.id = 'live'; b.appendChild(e);")
+        .unwrap();
+    ok(
+        &mut rt,
+        "c.live === e && ('live' in c) && Reflect.ownKeys(c).join() === '0,live'",
+    );
+    rt.evaluate("e.id = 'moved';").unwrap();
+    ok(
+        &mut rt,
+        "c.live === undefined && !('live' in c) && c.moved === e \
+         && Reflect.ownKeys(c).join() === '0,moved'",
+    );
+    rt.evaluate("e.remove();").unwrap();
+    ok(
+        &mut rt,
+        "c.moved === undefined && !('moved' in c) && c.length === 0 \
+         && Reflect.ownKeys(c).length === 0",
+    );
+}
+
+#[test]
+fn numeric_names_use_indexed_access_not_named() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; \
+         var first = document.createElement('div'); \
+         var second = document.createElement('div'); second.id = '5'; \
+         b.append(first, second); var c = b.children;",
+    )
+    .unwrap();
+    // `5` is an array index, so bracket access ignores the named getter:
+    // index 5 is out of bounds, and `in` follows the same rule.
+    ok(
+        &mut rt,
+        "c[0] === first && c[1] === second && c['5'] === undefined \
+         && c.namedItem('5') === second && !('5' in c) \
+         && Object.getOwnPropertyDescriptor(c, '5') === undefined",
+    );
+    // The supported name still lists in ownKeys per the visibility
+    // algorithm (it is visible: no own and no prototype `5`), even though
+    // GetOwnProperty ignores it for array indices.
+    ok(&mut rt, "Reflect.ownKeys(c).join() === '0,1,5'");
+}

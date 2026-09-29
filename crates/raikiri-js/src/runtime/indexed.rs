@@ -1,10 +1,15 @@
 //! Objects with WebIDL indexed properties (`coll[0]`, `coll.length`),
-//! built as a `Proxy` over a native target.
+//! plus optional named properties (`coll.someId`), built as a `Proxy`
+//! over a native target.
 //!
 //! WebIDL §3.9 ("legacy platform objects") gives an interface with an
 //! indexed property getter exotic `[[GetOwnProperty]]`,
 //! `[[DefineOwnProperty]]`, `[[Delete]]`, `[[PreventExtensions]]`, and
-//! `[[OwnPropertyKeys]]` behavior. Boa has no hook for custom exotic
+//! `[[OwnPropertyKeys]]` behavior, extended here with the named-property
+//! side of the same section (`LegacyPlatformObjectGetOwnProperty` with
+//! `ignoreNamedProps = false`, the named-property visibility algorithm,
+//! and the named branches of `[[DefineOwnProperty]]` / `[[Delete]]` /
+//! `[[OwnPropertyKeys]]`). Boa has no hook for custom exotic
 //! objects outside the engine, so [`indexed_object`] builds the same
 //! observable behavior from a `Proxy` whose traps consult an
 //! [`IndexedSource`] every time, which is what makes a collection *live*.
@@ -13,25 +18,48 @@
 //!
 //! Supported indices are reported as own data properties that are
 //! `{ writable: false, enumerable: true, configurable: true }` and never
-//! actually exist on the target. ECMAScript only lets a `getOwnPropertyDescriptor`
+//! actually exist on the target. Visible named properties are reported the
+//! same way, except `enumerable` follows [`IndexedSource::named_enumerable`]
+//! (`false` for `HTMLCollection`'s `[LegacyUnenumerableNamedProperties]`).
+//! ECMAScript only lets a `getOwnPropertyDescriptor`
 //! trap report a property the target lacks when the descriptor is
 //! configurable **and** the target is extensible, and only lets an `ownKeys`
 //! trap add keys the target lacks while the target is extensible. So:
 //!
-//! - every index descriptor is configurable, and
+//! - every index and named descriptor is configurable, and
 //! - the `preventExtensions` trap always returns `false` (WebIDL's
 //!   `[[PreventExtensions]]` for legacy platform objects does the same), so
 //!   the target can never become non-extensible;
-//! - the `defineProperty` trap refuses every array-index key, so the target
-//!   never gains an own index property that could disagree with the source.
+//! - the `defineProperty` trap refuses every array-index key, and every
+//!   supported named-property key without an own property (no source here
+//!   implements a named setter), so the target never gains an own property
+//!   that could disagree with the source.
 //!
 //! Every other key is forwarded to the target with the original receiver,
 //! so expandos, symbols, and prototype members behave as on an ordinary
 //! object. `set` is forwarded as `Reflect.set(target, key, value, receiver)`
-//! for every key: with the proxy as receiver, an index write reaches this
-//! proxy's own `getOwnPropertyDescriptor` / `defineProperty` traps, so it
-//! fails exactly as `[[DefineOwnProperty]]` does.
+//! for every key: with the proxy as receiver, an index or visible-named
+//! write reaches this proxy's own `getOwnPropertyDescriptor` /
+//! `defineProperty` traps, so it fails exactly as `[[DefineOwnProperty]]`
+//! does.
 //!
+//! # What is not implemented
+//!
+//! All sources here share the same narrow shape, which keeps the traps
+//! spec-faithful without carrying the full WebIDL generality:
+//!
+//! - no indexed or named setter, and no named deleter;
+//! - no `[LegacyOverrideBuiltIns]` (named properties never shadow own or
+//!   prototype properties) and no `[Global]` (the named
+//!   `[[DefineOwnProperty]]` / `[[Delete]]` branches for global objects do
+//!   not apply);
+//! - no unforgeable property names;
+//! - no named-properties object on any prototype chain (only `[Global]`
+//!   interfaces have one, and none of these objects is global).
+//!
+//! A source that needs any of those (for example a future
+//! `CSSStyleDeclaration`-style object with a named setter) extends
+//! [`IndexedSource`] with new hook methods rather than branching here.
 //! # Every trap is defined
 //!
 //! A proxy looks each trap up on its handler with an ordinary `[[Get]]`,
@@ -69,12 +97,48 @@ use boa_engine::{
 
 /// What an indexed object enumerates. Implementations must not own
 /// garbage-collected values: the target's native data is not traced.
+///
+/// The named-property hooks default to "no named properties" (`NodeList`,
+/// `DOMTokenList`, and `CSSStyleDeclaration` keep the defaults today; only
+/// `HTMLCollection` overrides them), so the same building block can serve
+/// `CSSStyleDeclaration`-style objects later by overriding the same two
+/// methods.
 pub(crate) trait IndexedSource: 'static {
     /// The number of supported property indices right now.
     fn length(&self, context: &mut Context) -> JsResult<usize>;
 
     /// The value at `index`, or `None` when `index` is not supported.
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>>;
+
+    /// The supported property names right now, in specification order
+    /// (DOM §4.2.10.2 for `HTMLCollection`: tree order, `id` then `name`
+    /// per element, deduplicated). Empty when the interface supports no
+    /// named properties.
+    fn supported_property_names(&self, context: &mut Context) -> JsResult<Vec<String>> {
+        let _ = context;
+        Ok(Vec::new())
+    }
+
+    /// The named getter's value for `name`, or `None` when `name` is not a
+    /// supported property name (including the empty string, which never
+    /// matches per DOM §4.2.10.2).
+    fn named_property(&self, name: &str, context: &mut Context) -> JsResult<Option<JsValue>> {
+        let _ = (name, context);
+        Ok(None)
+    }
+
+    /// Whether named properties are enumerable (`false` for interfaces with
+    /// `[LegacyUnenumerableNamedProperties]`, such as `HTMLCollection`).
+    fn named_enumerable(&self) -> bool {
+        false
+    }
+
+    /// Whether the interface has `[LegacyOverrideBuiltIns]` (named
+    /// properties shadow own and prototype properties). None of the current
+    /// sources does.
+    fn legacy_override_built_ins(&self) -> bool {
+        false
+    }
 }
 
 /// Native data of an indexed object's proxy target.
@@ -168,7 +232,7 @@ pub(crate) fn indexed_object<S: IndexedSource>(
         .has(has_trap::<S>)
         .own_keys(own_keys_trap::<S>)
         .get_own_property_descriptor(get_own_property_descriptor_trap::<S>)
-        .define_property(define_property_trap)
+        .define_property(define_property_trap::<S>)
         .delete_property(delete_property_trap::<S>)
         .prevent_extensions(prevent_extensions_trap)
         .set(set_trap)
@@ -228,6 +292,51 @@ fn array_index(args: &[JsValue], context: &mut Context) -> JsResult<Option<usize
     })
 }
 
+/// The string name in trap argument 1, if it is one. Array indices arrive
+/// as `Index` and symbols as `Symbol`, so only `String` counts: named
+/// properties are strings by definition, and WebIDL ignores named
+/// properties for array indices entirely.
+fn string_name(args: &[JsValue], context: &mut Context) -> JsResult<Option<String>> {
+    let key = args.get(1).cloned().unwrap_or_default();
+    Ok(match key.to_property_key(context)? {
+        PropertyKey::String(name) => Some(name.to_std_string_escaped()),
+        _ => None,
+    })
+}
+
+/// Whether `name` is visible on `target` per the named-property visibility
+/// algorithm (WebIDL §3.9.7), assuming `name` is already known to be a
+/// supported property name (the caller checked via `named_property` or the
+/// supported-names list, matching the algorithm's first step).
+///
+/// The caller guarantees `name` is not an array index that is also a
+/// supported index: `own_keys_trap` filters those before calling (they are
+/// already listed as indices, and the indexed own property makes the named
+/// one invisible), while the other traps only call this for `String` keys,
+/// which Boa never classifies as `Index`.
+fn is_named_visible<S: IndexedSource>(
+    target: &JsObject,
+    source: &S,
+    name: &str,
+    context: &mut Context,
+) -> JsResult<bool> {
+    let key = JsString::from(name);
+    if target.has_own_property(key.clone(), context)? {
+        return Ok(false);
+    }
+    if source.legacy_override_built_ins() {
+        return Ok(true);
+    }
+    let mut prototype = target.prototype();
+    while let Some(object) = prototype {
+        if object.has_own_property(key.clone(), context)? {
+            return Ok(false);
+        }
+        prototype = object.prototype();
+    }
+    Ok(true)
+}
+
 fn call(function: &JsObject, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     function.call(&JsValue::undefined(), args, context)
 }
@@ -268,42 +377,69 @@ fn detached_descriptor(value: JsValue, context: &mut Context) -> JsResult<JsValu
     Ok(descriptor.into())
 }
 
-/// `get` trap (`« target, key, receiver »`): a supported index reads the
-/// source; anything else is `Reflect.get(target, key, receiver)`.
+/// `get` trap: a supported index reads the source; a visible named
+/// property reads the named getter; anything else is
+/// `Reflect.get(target, key, receiver)`. Array indices never consult named
+/// properties, matching `LegacyPlatformObjectGetOwnProperty` setting
+/// `ignoreNamedProps` for them.
 fn get_trap<S: IndexedSource>(
     _: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
-    let (_, source) = trap_target::<S>(args)?;
-    if let Some(index) = array_index(args, context)?
-        && let Some(value) = source.item(index, context)?
+    let (target, source) = trap_target::<S>(args)?;
+    if let Some(index) = array_index(args, context)? {
+        if let Some(value) = source.item(index, context)? {
+            return Ok(value);
+        }
+        return forward(|i| &i.reflect_get, args, context);
+    }
+    if let Some(name) = string_name(args, context)?
+        && let Some(value) = source.named_property(&name, context)?
+        && is_named_visible(&target, source.as_ref(), &name, context)?
     {
         return Ok(value);
     }
     forward(|i| &i.reflect_get, args, context)
 }
 
-/// `has` trap (`« target, key »`).
+/// `has` trap: supported indices and visible named properties are
+/// present; anything else follows the target (own plus prototype).
+/// Array indices never consult named properties.
 fn has_trap<S: IndexedSource>(
     _: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let (target, source) = trap_target::<S>(args)?;
-    if let Some(index) = array_index(args, context)?
-        && index < source.length(context)?
-    {
-        return Ok(true.into());
+    if let Some(index) = array_index(args, context)? {
+        if index < source.length(context)? {
+            return Ok(true.into());
+        }
+        let key = args.get(1).cloned().unwrap_or_default();
+        let key = key.to_property_key(context)?;
+        return Ok(target.has_property(key, context)?.into());
     }
     let key = args.get(1).cloned().unwrap_or_default();
     let key = key.to_property_key(context)?;
-    Ok(target.has_property(key, context)?.into())
+    if target.has_property(key, context)? {
+        return Ok(true.into());
+    }
+    if let Some(name) = string_name(args, context)?
+        && let Some(_) = source.named_property(&name, context)?
+        && is_named_visible(&target, source.as_ref(), &name, context)?
+    {
+        return Ok(true.into());
+    }
+    Ok(false.into())
 }
 
-/// `ownKeys` trap (`« target »`): the supported indices in ascending order,
-/// then the target's own keys (strings, then symbols, as the target orders
-/// them).
+/// `ownKeys` trap: the supported indices in ascending order, then the
+/// visible named properties in supported-names order, then the target's
+/// own keys (strings, then symbols, as the target orders them).
+/// Supported names that are also supported indices are skipped here (they
+/// are already listed as indices, and the indexed own property makes the
+/// named one invisible).
 fn own_keys_trap<S: IndexedSource>(
     _: &JsValue,
     args: &[JsValue],
@@ -314,6 +450,16 @@ fn own_keys_trap<S: IndexedSource>(
     let mut keys: Vec<JsValue> = (0..length)
         .map(|i| JsValue::from(JsString::from(i.to_string())))
         .collect();
+    for name in source.supported_property_names(context)? {
+        if let PropertyKey::Index(index) = PropertyKey::from(JsString::from(name.as_str()))
+            && (index.get() as usize) < length
+        {
+            continue;
+        }
+        if is_named_visible(&target, source.as_ref(), &name, context)? {
+            keys.push(JsValue::from(JsString::from(name)));
+        }
+    }
     keys.extend(
         target
             .own_property_keys(context)?
@@ -323,20 +469,39 @@ fn own_keys_trap<S: IndexedSource>(
     Ok(JsArray::from_iter(keys, context).into())
 }
 
-/// `getOwnPropertyDescriptor` trap (`« target, key »`).
+/// `getOwnPropertyDescriptor` trap: supported indices report
+/// `{ writable: false, enumerable: true, configurable: true }`; visible
+/// named properties report `{ writable: false, enumerable:
+/// named_enumerable, configurable: true }` (no source implements a named
+/// setter); array indices never consult named properties; anything else
+/// forwards to the target with a detached copy.
 fn get_own_property_descriptor_trap<S: IndexedSource>(
     _: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
-    let (_, source) = trap_target::<S>(args)?;
-    if let Some(index) = array_index(args, context)?
-        && let Some(value) = source.item(index, context)?
+    let (target, source) = trap_target::<S>(args)?;
+    if let Some(index) = array_index(args, context)? {
+        if let Some(value) = source.item(index, context)? {
+            let descriptor = JsObject::with_null_proto();
+            descriptor.create_data_property_or_throw(js_string!("value"), value, context)?;
+            descriptor.create_data_property_or_throw(js_string!("writable"), false, context)?;
+            descriptor.create_data_property_or_throw(js_string!("enumerable"), true, context)?;
+            descriptor.create_data_property_or_throw(js_string!("configurable"), true, context)?;
+            return Ok(descriptor.into());
+        }
+        let own = forward(|i| &i.reflect_get_own_property_descriptor, args, context)?;
+        return detached_descriptor(own, context);
+    }
+    if let Some(name) = string_name(args, context)?
+        && let Some(value) = source.named_property(&name, context)?
+        && is_named_visible(&target, source.as_ref(), &name, context)?
     {
+        let enumerable = source.named_enumerable();
         let descriptor = JsObject::with_null_proto();
         descriptor.create_data_property_or_throw(js_string!("value"), value, context)?;
         descriptor.create_data_property_or_throw(js_string!("writable"), false, context)?;
-        descriptor.create_data_property_or_throw(js_string!("enumerable"), true, context)?;
+        descriptor.create_data_property_or_throw(js_string!("enumerable"), enumerable, context)?;
         descriptor.create_data_property_or_throw(js_string!("configurable"), true, context)?;
         return Ok(descriptor.into());
     }
@@ -344,11 +509,28 @@ fn get_own_property_descriptor_trap<S: IndexedSource>(
     detached_descriptor(own, context)
 }
 
-/// `defineProperty` trap (`« target, key, descriptor »`): array indices are
-/// read-only (no indexed setter), everything else is defined on the target.
-fn define_property_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+/// `defineProperty` trap: array indices are read-only (no indexed
+/// setter, so every array-index key refuses); a supported named property
+/// without an own property is read-only too (no named setter), so defining
+/// it refuses as well; redefining an existing own property and defining an
+/// unsupported name both fall through to the target. Symbols always fall
+/// through.
+fn define_property_trap<S: IndexedSource>(
+    _: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
     if array_index(args, context)?.is_some() {
         return Ok(false.into());
+    }
+    if let Some(name) = string_name(args, context)? {
+        let (target, source) = trap_target::<S>(args)?;
+        if source.named_property(&name, context)?.is_some()
+            && !target.has_own_property(JsString::from(name.as_str()), context)?
+            && !source.legacy_override_built_ins()
+        {
+            return Ok(false.into());
+        }
     }
     // The engine builds the descriptor argument with `Object.prototype` as
     // its prototype; detach it before `Reflect.defineProperty` reads it back.
@@ -362,24 +544,33 @@ fn define_property_trap(_: &JsValue, args: &[JsValue], context: &mut Context) ->
     )
 }
 
-/// `deleteProperty` trap (`« target, key »`): a supported index cannot be
-/// deleted; anything else is deleted from the target.
+/// `deleteProperty` trap: a supported index cannot be deleted; a visible
+/// named property cannot be deleted either (no named deleter); array
+/// indices never consult named properties; anything else is deleted from
+/// the target.
 fn delete_property_trap<S: IndexedSource>(
     _: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
-    let (_, source) = trap_target::<S>(args)?;
-    if let Some(index) = array_index(args, context)?
-        && index < source.length(context)?
+    let (target, source) = trap_target::<S>(args)?;
+    if let Some(index) = array_index(args, context)? {
+        if index < source.length(context)? {
+            return Ok(false.into());
+        }
+        return forward(|i| &i.reflect_delete_property, args, context);
+    }
+    if let Some(name) = string_name(args, context)?
+        && source.named_property(&name, context)?.is_some()
+        && is_named_visible(&target, source.as_ref(), &name, context)?
     {
         return Ok(false.into());
     }
     forward(|i| &i.reflect_delete_property, args, context)
 }
 
-/// `set` trap (`« target, key, value, receiver »`), forwarded for every key
-/// (see the module docs for how index writes fail).
+/// `set` trap, forwarded for every key (see the module docs for how
+/// index and visible-named writes fail through the `defineProperty` trap).
 fn set_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     forward(|i| &i.reflect_set, args, context)
 }
