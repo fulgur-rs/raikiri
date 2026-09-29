@@ -141,8 +141,21 @@ mod property {
         pub key: PropertyKey,
     }
 
+    /// Payload whose key is computed by a named function.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct PendingValue(pub PropertyKey);
+
+    impl PendingValue {
+        pub fn property_key(&self) -> PropertyKey {
+            self.0
+        }
+    }
+
     #[raikiri_style_macros::longhands]
     mod decl {
+        //! Inner attributes stay inside the expanded module.
+        #![allow(clippy::large_enum_variant)]
+
         use super::*;
 
         /// Every property value.
@@ -157,6 +170,9 @@ mod property {
             /// Hand-written, key computed from the payload.
             #[key(with = |value| value.key)]
             Deferred(DeferredValue),
+            /// Hand-written, key from a named function.
+            #[key(with = PendingValue::property_key)]
+            Pending(PendingValue),
         }
 
         /// Every property key.
@@ -205,6 +221,10 @@ mod property {
                 computed: Px via absolutize_length, lift: px_to_length,
                 field: tab, sample: Length::Em(1.0),
             },
+            /// A keywords longhand whose initial value is written as a path.
+            "break-mode" => BreakMode {
+                keywords: [Auto, Always, Avoid], initial: BreakMode::Always, inherited: no,
+            },
         }
     }
     pub use decl::*;
@@ -230,8 +250,8 @@ mod computed {
 
 use cssparser::{Parser, ParserInput};
 use property::{
-    ComputedTable, DeferredValue, Isolation, Length, Longhand, ObjectFit, PropertyKey,
-    PropertyValue, Px, SpecifiedTable, TextCase,
+    BreakMode, ComputedTable, DeferredValue, Isolation, Length, Longhand, ObjectFit, PendingValue,
+    PropertyKey, PropertyValue, Px, SpecifiedTable, TextCase,
 };
 
 fn parse(name: &str, css: &str) -> Option<PropertyValue> {
@@ -301,6 +321,7 @@ fn specified_initial_values() {
     assert_eq!(table.text_case, TextCase::None);
     assert_eq!(table.word_spacing, Length::Px(0.0));
     assert_eq!(table.tab, Length::Px(8.0));
+    assert_eq!(table.break_mode, BreakMode::Always);
 }
 
 #[test]
@@ -392,7 +413,8 @@ fn names_and_lookup() {
             "opacity",
             "text-case",
             "word-spacing",
-            "tab-width"
+            "tab-width",
+            "break-mode"
         ]
     );
     assert_eq!(
@@ -444,6 +466,10 @@ fn key_projection() {
         .key(),
         PropertyKey::Opacity
     );
+    assert_eq!(
+        PropertyValue::Pending(PendingValue(PropertyKey::TabWidth)).key(),
+        PropertyKey::TabWidth
+    );
     assert_eq!(PropertyValue::Opacity(1.0).key(), PropertyKey::Opacity);
     assert_eq!(
         PropertyValue::TabWidth(Length::Px(1.0)).key(),
@@ -475,6 +501,8 @@ fn samples_default_to_the_first_non_initial_keyword() {
             ("text-case", PropertyValue::TextCase(TextCase::Upper)),
             ("word-spacing", PropertyValue::WordSpacing(Length::Em(2.0))),
             ("tab-width", PropertyValue::TabWidth(Length::Em(1.0))),
+            // The first keyword that is not the (path-written) initial one.
+            ("break-mode", PropertyValue::BreakMode(BreakMode::Auto)),
         ]
     );
 }
@@ -494,7 +522,7 @@ fn registry_callbacks_append_declared_entries() {
     let samples = property::with_longhand_samples!(collect_samples {
         Color => PropertyValue::Color(1),
     });
-    assert_eq!(samples.len(), 7);
+    assert_eq!(samples.len(), 8);
     assert_eq!(samples[0], ("Color", PropertyValue::Color(1)));
     assert_eq!(samples[3], ("Opacity", PropertyValue::Opacity(2.0)));
 
@@ -510,7 +538,8 @@ fn registry_callbacks_append_declared_entries() {
             "Opacity",
             "TextCase",
             "WordSpacing",
-            "TabWidth"
+            "TabWidth",
+            "BreakMode"
         ]
     );
 }

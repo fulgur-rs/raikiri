@@ -4,7 +4,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens as _, quote, quote_spanned};
 use syn::spanned::Spanned as _;
-use syn::{Expr, Fields, Ident, Item, ItemEnum, ItemMod};
+use syn::{AttrStyle, Expr, Fields, Ident, Item, ItemEnum, ItemMod};
 
 use crate::diag::Errors;
 use crate::{generate, model, parse};
@@ -157,6 +157,31 @@ fn take_properties(items: &mut Vec<Item>, errors: &mut Errors) -> Vec<parse::Raw
     raw
 }
 
+/// Reports and removes `properties!` blocks nested in inline sub-modules,
+/// where `#[longhands]` does not read them (they would otherwise fail as an
+/// unknown macro).
+fn reject_nested_properties(items: &mut [Item], errors: &mut Errors) {
+    for item in items {
+        let Item::Mod(module) = item else {
+            continue;
+        };
+        let Some((_, nested)) = &mut module.content else {
+            continue;
+        };
+        nested.retain(|item| match item {
+            Item::Macro(mac) if mac.mac.path.is_ident("properties") && mac.ident.is_none() => {
+                errors.push(syn::Error::new_spanned(
+                    &mac.mac.path,
+                    "`properties!` must be a direct item of the `#[longhands]` module, not of a module inside it",
+                ));
+                false
+            }
+            _ => true,
+        });
+        reject_nested_properties(nested, errors);
+    }
+}
+
 /// Expands `#[longhands]` applied to `item`.
 pub(crate) fn expand(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut errors = Errors::default();
@@ -204,6 +229,7 @@ fn expand_module(mut module: ItemMod, errors: &mut Errors) -> TokenStream {
         return module.into_token_stream();
     };
     let raw = take_properties(&mut items, errors);
+    reject_nested_properties(&mut items, errors);
 
     let value_index = find_enum(&items, "PropertyValue");
     let key_index = find_enum(&items, "PropertyKey");
@@ -237,13 +263,16 @@ fn expand_module(mut module: ItemMod, errors: &mut Errors) -> TokenStream {
                     .variants
                     .extend(entries.iter().map(generate::key_variant));
             }
-            if entries.is_empty() {
-                TokenStream::new()
-            } else {
-                generate::items(&entries, &key_arms)
-            }
+            // Generated even without entries, so a module whose only entry
+            // failed still offers the module-level items to the crate.
+            generate::items(&entries, &key_arms)
         }
         (value_index, _) => {
+            // Strip the `#[key]` helpers so they are not reported as unknown
+            // attributes on top of the missing enum.
+            if let Some(value_enum) = value_index.and_then(|i| enum_at(&mut items, i)) {
+                take_key_arms(value_enum, errors);
+            }
             let missing = if value_index.is_none() {
                 "PropertyValue"
             } else {
@@ -267,9 +296,18 @@ fn expand_module(mut module: ItemMod, errors: &mut Errors) -> TokenStream {
         ident,
         ..
     } = &module;
+    // `attrs` holds both the outer attributes and the inner ones written
+    // inside the braces (`//!`, `#![allow(..)]`); each goes back to its place.
+    let outer = attrs
+        .iter()
+        .filter(|attr| matches!(attr.style, AttrStyle::Outer));
+    let inner = attrs
+        .iter()
+        .filter(|attr| matches!(attr.style, AttrStyle::Inner(_)));
     let items = items.iter().map(|item| item.to_token_stream());
     quote! {
-        #(#attrs)* #vis #unsafety #mod_token #ident {
+        #(#outer)* #vis #unsafety #mod_token #ident {
+            #(#inner)*
             #(#items)*
             #generated
         }

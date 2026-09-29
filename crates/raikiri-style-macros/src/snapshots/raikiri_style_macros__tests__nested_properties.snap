@@ -1,0 +1,9 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(src, &errors)"
+---
+error: `properties!` must be a direct item of the `#[longhands]` module, not of a module inside it
+  --> 9:9
+   |
+ 9 |         properties! {
+   |         ^^^^^^^^^^

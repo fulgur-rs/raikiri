@@ -457,3 +457,134 @@ fn rust_keywords_and_raw_identifiers_are_errors_not_panics() {
         ["Color", "CustomProperty", "CProp", "DProp", "Type"]
     );
 }
+
+/// The names of the items directly inside an expanded module (functions,
+/// structs, enums, modules, consts and macros).
+fn item_names(expanded: &TokenStream) -> Vec<String> {
+    let module: syn::ItemMod = syn::parse2(expanded.clone()).expect("expansion is a module");
+    let (_, items) = module.content.expect("inline module");
+    items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Fn(f) => Some(f.sig.ident.to_string()),
+            syn::Item::Struct(s) => Some(s.ident.to_string()),
+            syn::Item::Enum(e) => Some(e.ident.to_string()),
+            syn::Item::Mod(m) => Some(m.ident.to_string()),
+            syn::Item::Const(c) => Some(c.ident.to_string()),
+            syn::Item::Macro(m) => m.ident.as_ref().map(|i| i.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn inner_attributes_stay_inside_the_module() {
+    let src = r#"/// Outer docs.
+#[allow(dead_code)]
+mod decl {
+    //! Inner docs.
+    #![allow(clippy::large_enum_variant)]
+    pub enum PropertyValue { Color(u32) }
+    pub enum PropertyKey { Color }
+    properties! {
+        /// A.
+        "a-prop" => AProp { keywords: [X, Y], initial: X, inherited: no },
+    }
+}
+"#;
+    let (expanded, errors) = expand(src);
+    assert!(errors.is_empty(), "{}", render(src, &errors));
+    let text = expanded.to_string();
+    let open = text.find("mod decl {").expect("module header");
+    let (before, inside) = text.split_at(open);
+    assert!(before.contains("Outer docs") && before.contains("allow (dead_code)"));
+    assert!(!before.contains("Inner docs") && !before.contains("large_enum_variant"));
+    assert!(inside.starts_with(
+        "mod decl { # ! [doc = \" Inner docs.\"] # ! [allow (clippy :: large_enum_variant)]"
+    ));
+    // The expansion must parse back as a module with its inner attributes.
+    let module: syn::ItemMod = syn::parse2(expanded).expect("expansion is a module");
+    assert_eq!(
+        module
+            .attrs
+            .iter()
+            .filter(|a| matches!(a.style, syn::AttrStyle::Inner(_)))
+            .count(),
+        2
+    );
+}
+
+/// When the only entry fails, the module-level items are still generated,
+/// so the rest of the crate compiles against them and the one mistake is
+/// the one error. `longhand_value_pat!` is the exception: with no entry it
+/// cannot be a pattern.
+#[test]
+fn module_items_survive_when_no_entry_does() {
+    let src = module(
+        r#"        /// A.
+        "a-prop" = AProp { keywords: [X, Y], initial: X, inherited: no },"#,
+    );
+    let (expanded, errors) = expand(&src);
+    assert_eq!(errors.len(), 1, "{}", render(&src, &errors));
+    let names = item_names(&expanded);
+    for expected in [
+        "SpecifiedTable",
+        "ComputedTable",
+        "longhand_page_absolutize",
+        "LONGHAND_NAMES",
+        "longhand_samples",
+        "longhand_sample",
+        "longhand_key_for_name",
+        "parse_longhand_value",
+        "with_longhand_samples",
+        "with_longhand_variants",
+    ] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "{expected} in {names:?}"
+        );
+    }
+    assert!(!names.iter().any(|n| n == "longhand_value_pat"));
+    assert!(
+        expanded
+            .to_string()
+            .contains("pub fn key (& self) -> PropertyKey")
+    );
+}
+
+#[test]
+fn key_helpers_are_stripped_when_an_enum_is_missing() {
+    let src = r#"mod decl {
+    pub enum PropertyValue {
+        #[key(Custom)]
+        CustomProperty(String),
+    }
+}
+"#;
+    let (expanded, errors) = expand(src);
+    assert_eq!(errors.len(), 1);
+    assert!(!expanded.to_string().contains("key (Custom)"));
+}
+
+#[test]
+fn nested_properties_blocks_are_reported_and_removed() {
+    let src = r#"mod decl {
+    pub enum PropertyValue { Color(u32) }
+    pub enum PropertyKey { Color }
+    properties! {
+        /// A.
+        "a-prop" => AProp { keywords: [X, Y], initial: X, inherited: no },
+    }
+    mod inner {
+        properties! {
+            /// B.
+            "b-prop" => BProp { keywords: [X, Y], initial: X, inherited: no },
+        }
+    }
+}
+"#;
+    let (expanded, errors) = expand(src);
+    assert_eq!(errors.len(), 1);
+    insta::assert_snapshot!("nested_properties", render(src, &errors));
+    assert!(!expanded.to_string().contains("b-prop"));
+}
