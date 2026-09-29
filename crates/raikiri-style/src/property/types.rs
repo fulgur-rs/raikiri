@@ -7045,6 +7045,12 @@ pub enum BackgroundAttachment {
     Local,
 }
 
+css_keywords!(BackgroundAttachment {
+    Scroll => "scroll",
+    Fixed => "fixed",
+    Local => "local",
+});
+
 /// Box keyword shared by `background-clip` and `background-origin`
 /// (CSS Backgrounds and Borders 3 §2.7 "Painting Area: the
 /// background-clip property" / "Positioning Area: the
@@ -7070,6 +7076,14 @@ pub enum VisualBox {
     /// `text` — clips to the shape of the text (CSS Backgrounds 4 §2.6, `background-clip: text`).
     Text,
 }
+
+css_keywords!(VisualBox {
+    BorderBox => "border-box",
+    PaddingBox => "padding-box",
+    ContentBox => "content-box",
+    BorderArea => "border-area",
+    Text => "text",
+});
 
 /// Specified value of `background-size`.
 ///
@@ -7259,6 +7273,14 @@ pub enum ObjectFit {
     ScaleDown,
 }
 
+css_keywords!(ObjectFit {
+    Fill => "fill",
+    Contain => "contain",
+    Cover => "cover",
+    None => "none",
+    ScaleDown => "scale-down",
+});
+
 /// Specified value of `isolation`.
 ///
 /// CSS Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
@@ -7282,6 +7304,11 @@ pub enum Isolation {
     /// blending to its subtree.
     Isolate,
 }
+
+css_keywords!(Isolation {
+    Auto => "auto",
+    Isolate => "isolate",
+});
 
 /// Specified value of `mix-blend-mode`.
 ///
@@ -7336,6 +7363,25 @@ pub enum MixBlendMode {
     /// `luminosity` — see §3.2.15.
     Luminosity,
 }
+
+css_keywords!(MixBlendMode {
+    Normal => "normal",
+    Multiply => "multiply",
+    Screen => "screen",
+    Overlay => "overlay",
+    Darken => "darken",
+    Lighten => "lighten",
+    ColorDodge => "color-dodge",
+    ColorBurn => "color-burn",
+    HardLight => "hard-light",
+    SoftLight => "soft-light",
+    Difference => "difference",
+    Exclusion => "exclusion",
+    Hue => "hue",
+    Saturation => "saturation",
+    Color => "color",
+    Luminosity => "luminosity",
+});
 
 /// `clip-path`'s `<geometry-box>` component (CSS Masking Level 1 §5.1,
 /// "Basic Shapes: the clip-path property"
