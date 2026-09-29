@@ -24,64 +24,99 @@ struct Args {
     listed: Option<LitBool>,
 }
 
-/// Stores `value` in `slot`, rejecting a second occurrence of the key.
-fn set_once<T>(slot: &mut Option<T>, value: T, key: &syn::Path) -> syn::Result<()> {
-    if slot.is_some() {
-        return Err(syn::Error::new_spanned(key, "duplicate `#[longhand]` key"));
+/// Every error found in one declaration, reported together.
+#[derive(Default)]
+struct Errors(Option<syn::Error>);
+
+impl Errors {
+    fn push(&mut self, error: syn::Error) {
+        match &mut self.0 {
+            Some(first) => first.combine(error),
+            None => self.0 = Some(error),
+        }
     }
-    *slot = Some(value);
-    Ok(())
 }
 
-fn parse_args(input: &DeriveInput) -> syn::Result<(Args, Span)> {
+/// Stores `value` in `slot`, reporting a second occurrence of the key.
+fn set_once<T>(slot: &mut Option<T>, value: T, key: &syn::Path, errors: &mut Errors) {
+    if slot.is_some() {
+        errors.push(syn::Error::new_spanned(key, "duplicate `#[longhand]` key"));
+    } else {
+        *slot = Some(value);
+    }
+}
+
+/// Parses `#[longhand(..)]`. Mistakes are collected in `errors` rather than
+/// returned, so the caller can still emit a best-effort impl and the
+/// declaration's own error is not buried under follow-on errors from every
+/// use of the missing impl.
+fn parse_args(input: &DeriveInput, errors: &mut Errors) -> (Args, Span) {
     let mut args = Args::default();
     let mut attr_span = None;
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("longhand")) {
         if attr_span.is_some() {
-            return Err(syn::Error::new_spanned(
+            errors.push(syn::Error::new_spanned(
                 attr,
                 "a type takes exactly one `#[longhand(..)]` attribute",
             ));
+            continue;
         }
-        attr_span = Some(attr.span());
-        attr.parse_nested_meta(|meta| {
+        attr_span = Some(attr.path().span());
+        let parsed = attr.parse_nested_meta(|meta| {
             let key = &meta.path;
             if key.is_ident("name") {
-                set_once(&mut args.name, meta.value()?.parse()?, key)
+                set_once(&mut args.name, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("initial") {
-                set_once(&mut args.initial, meta.value()?.parse()?, key)
+                set_once(&mut args.initial, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("inherited") {
-                set_once(&mut args.inherited, meta.value()?.parse()?, key)
+                set_once(&mut args.inherited, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("sample") {
-                set_once(&mut args.sample, meta.value()?.parse()?, key)
+                set_once(&mut args.sample, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("value") {
-                set_once(&mut args.value, meta.value()?.parse()?, key)
+                set_once(&mut args.value, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("parse") {
-                set_once(&mut args.parse, meta.value()?.parse()?, key)
+                set_once(&mut args.parse, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("compute") {
-                set_once(&mut args.compute, meta.value()?.parse()?, key)
+                set_once(&mut args.compute, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("computed") {
-                set_once(&mut args.computed, meta.value()?.parse()?, key)
+                set_once(&mut args.computed, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("lift") {
-                set_once(&mut args.lift, meta.value()?.parse()?, key)
+                set_once(&mut args.lift, meta.value()?.parse()?, key, errors);
             } else if key.is_ident("listed") {
-                set_once(&mut args.listed, meta.value()?.parse()?, key)
+                set_once(&mut args.listed, meta.value()?.parse()?, key, errors);
             } else {
-                Err(meta.error(format!("unknown `#[longhand]` key; expected one of {KEYS}")))
+                errors
+                    .push(meta.error(format!("unknown `#[longhand]` key; expected one of {KEYS}")));
+                // Skip the value so the remaining keys are still read.
+                if meta.input.peek(syn::Token![=]) {
+                    meta.value()?.parse::<Expr>()?;
+                }
             }
-        })?;
+            Ok(())
+        });
+        if let Err(error) = parsed {
+            errors.push(error);
+        }
     }
-    let Some(attr_span) = attr_span else {
-        return Err(syn::Error::new_spanned(
+    let attr_span = attr_span.unwrap_or_else(|| {
+        errors.push(syn::Error::new_spanned(
             &input.ident,
             "`#[derive(Longhand)]` needs a `#[longhand(name = .., initial = .., inherited = .., sample = ..)]` attribute",
         ));
-    };
-    Ok((args, attr_span))
+        input.ident.span()
+    });
+    (args, attr_span)
 }
 
-fn required<T>(slot: Option<T>, key: &str, span: Span) -> syn::Result<T> {
-    slot.ok_or_else(|| syn::Error::new(span, format!("`#[longhand]` is missing `{key} = ..`")))
+/// A required key's value, or `fallback` after reporting it missing.
+fn required<T>(slot: Option<T>, key: &str, span: Span, errors: &mut Errors, fallback: T) -> T {
+    slot.unwrap_or_else(|| {
+        errors.push(syn::Error::new(
+            span,
+            format!("`#[longhand]` is missing `{key} = ..`"),
+        ));
+        fallback
+    })
 }
 
 /// A CSS property name: ASCII lowercase letters, digits and `-`.
@@ -173,20 +208,42 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             "a longhand type cannot be generic",
         ));
     }
-    let (args, attr_span) = parse_args(&input)?;
-    let name = required(args.name, "name", attr_span)?;
-    check_name(&name)?;
-    let initial = required(args.initial, "initial", attr_span)?;
-    let inherited = required(args.inherited, "inherited", attr_span)?;
-    let sample = required(args.sample, "sample", attr_span)?;
+    let mut errors = Errors::default();
+    let (args, attr_span) = parse_args(&input, &mut errors);
+    let unreachable: Expr = syn::parse_quote!(::core::unreachable!());
+    let name = required(
+        args.name,
+        "name",
+        attr_span,
+        &mut errors,
+        LitStr::new("", attr_span),
+    );
+    if let Err(error) = check_name(&name) {
+        errors.push(error);
+    }
+    let initial = required(
+        args.initial,
+        "initial",
+        attr_span,
+        &mut errors,
+        unreachable.clone(),
+    );
+    let inherited = required(
+        args.inherited,
+        "inherited",
+        attr_span,
+        &mut errors,
+        LitBool::new(false, attr_span),
+    );
+    let sample = required(args.sample, "sample", attr_span, &mut errors, unreachable);
     if let (Some(computed), None) = (&args.computed, &args.lift) {
-        return Err(syn::Error::new_spanned(
+        errors.push(syn::Error::new_spanned(
             computed,
             "a `computed = ..` type needs `lift = some_fn` to turn a computed value back into a specified one",
         ));
     }
     if let (None, Some(lift)) = (&args.computed, &args.lift) {
-        return Err(syn::Error::new_spanned(
+        errors.push(syn::Error::new_spanned(
             lift,
             "`lift = ..` is only used with `computed = ..`; without it the computed type is the specified type",
         ));
@@ -218,12 +275,19 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
         None => {
             if let Some(value) = &args.value {
-                return Err(syn::Error::new_spanned(
+                errors.push(syn::Error::new_spanned(
                     value,
                     "a keyword longhand's value is the enum itself; drop `value = ..` or supply `parse = some_fn`",
                 ));
             }
-            let kws = keywords(&input)?;
+            let kws = match keywords(&input) {
+                Ok(kws) if args.value.is_none() => kws,
+                Ok(_) => Vec::new(),
+                Err(error) => {
+                    errors.push(error);
+                    Vec::new()
+                }
+            };
             let variants: Vec<_> = kws.iter().map(|k| &k.variant).collect();
             let css: Vec<_> = kws.iter().map(|k| &k.css).collect();
             let keyword_impl = quote! {
@@ -248,10 +312,14 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     }
                 }
             };
-            let body = quote! {
-                input.expect_ident().ok().and_then(|ident| Self::from_css_ident(ident))
-            };
-            (keyword_impl, body)
+            if kws.is_empty() {
+                (TokenStream::new(), quote!(::core::unreachable!()))
+            } else {
+                let body = quote! {
+                    input.expect_ident().ok().and_then(|ident| Self::from_css_ident(ident))
+                };
+                (keyword_impl, body)
+            }
         }
     };
 
@@ -265,12 +333,13 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             specified
         },
     };
-    let lift_body = match &args.lift {
-        Some(lift) => quote_spanned! {lift.span()=>
+    let lift_body = match (&args.computed, &args.lift) {
+        (Some(_), Some(lift)) => quote_spanned! {lift.span()=>
             let lift: fn(Self::Computed) -> Self::Specified = #lift;
             lift(computed)
         },
-        None => quote!(computed),
+        (Some(_), None) => quote!(::core::unreachable!()),
+        (None, _) => quote!(computed),
     };
 
     // A longhand must also be listed in `#[longhands(..)]`, which adds the
@@ -287,7 +356,9 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let initial = resolve_variant(initial, &input);
     let sample = resolve_variant(sample, &input);
 
+    let errors = errors.0.map(syn::Error::into_compile_error);
     Ok(quote! {
+        #errors
         #keyword_impl
         #listed_check
 
