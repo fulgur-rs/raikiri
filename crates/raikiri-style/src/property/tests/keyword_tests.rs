@@ -49,6 +49,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         OverflowValue,
         OverflowWrap,
         QuoteKeyword,
+        RubyPosition,
         TableLayoutValue,
         TextAlign,
         TextAlignAll,

@@ -4078,6 +4078,12 @@ pub enum RubyPosition {
     InterCharacter,
 }
 
+css_keywords!(RubyPosition {
+    Over => "over",
+    Under => "under",
+    InterCharacter => "inter-character",
+});
+
 /// `WritingMode`'s renderer-facing fallback normalization ([`WritingMode`] doc's
 /// Non-goal section). This is not the CSS computed keyword: element
 /// [`crate::computed::ComputedValues::cssom_writing_mode`] preserves the
