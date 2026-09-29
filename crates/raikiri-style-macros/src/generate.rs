@@ -12,7 +12,7 @@ use quote::{ToTokens as _, format_ident, quote, quote_spanned};
 use syn::spanned::Spanned as _;
 use syn::{Ident, Variant};
 
-use crate::model::{Entry, Value};
+use crate::model::{Entry, Lift, Value, is_reserved_type};
 
 /// A local identifier invisible to user tokens.
 fn local(name: &str) -> Ident {
@@ -130,9 +130,15 @@ fn type_module(entry: &Entry) -> TokenStream {
     let field = &entry.field;
     let name = code_name(entry);
     let doc = docs(&format!("Value types of the {name} longhand."), &entry.docs);
-    let specified = specified_ty(entry);
+    // A reserved name has been reported; `super::` keeps the alias from
+    // naming itself, so the report is the only error.
+    let in_module = |ty: TokenStream| match syn::parse2::<syn::Type>(ty.clone()) {
+        Ok(parsed) if is_reserved_type(&parsed) => quote!(super::#ty),
+        _ => ty,
+    };
+    let specified = in_module(specified_ty(entry));
     let computed = match &entry.computed_ty {
-        Some(ty) => ty.to_token_stream(),
+        Some(ty) => in_module(ty.to_token_stream()),
         None => specified.clone(),
     };
     let specified_doc = format!(" Specified value of {name}.");
@@ -225,19 +231,20 @@ fn longhand_impl(entry: &Entry) -> TokenStream {
         },
     };
 
-    let lift = match &entry.computed_ty {
-        Some(ty) => {
+    let lift = match (&entry.computed_ty, &entry.lift) {
+        (None, _) => quote!(#computed),
+        (Some(_), Lift::Broken) => unreachable_body(&[&computed]),
+        (Some(ty), lift) => {
             let f = local("lift");
-            let (path, span) = match &entry.lift {
-                Some(path) => (path.to_token_stream(), path.span()),
-                None => (quote!(::core::convert::Into::into), ty.span()),
+            let (path, span) = match lift {
+                Lift::Path(path) => (path.to_token_stream(), path.span()),
+                _ => (quote!(::core::convert::Into::into), ty.span()),
             };
             quote_spanned! {span=>
                 let #f: fn(Self::Computed) -> Self::Specified = #path;
                 #f(#computed)
             }
         }
-        None => quote!(#computed),
     };
 
     let specified_item = quote_spanned!(span=> type Specified = #field::Specified;);
@@ -318,7 +325,23 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
     let normalized_name = local("normalized_name");
     let input = local("input");
     let cx_ty = quote!(crate::property::AbsolutizeCx<'_>);
-    let value_pat = format_ident!("longhand_value_pat");
+    let value_pat_name = format_ident!("longhand_value_pat");
+    // An or-pattern needs at least one alternative, and no pattern matches
+    // nothing, so without entries (every entry failed; the errors are
+    // reported) the macro is omitted and each use of it fails as well.
+    let value_pat = if variants.is_empty() {
+        TokenStream::new()
+    } else {
+        quote! {
+            /// Pattern matching every `PropertyValue` variant declared in
+            /// `properties!`, for the exhaustive matches whose declared
+            /// longhands all take the same pass-through arm.
+            macro_rules! #value_pat_name {
+                () => { #( crate::property::PropertyValue::#variants(..) )|* };
+            }
+            pub(crate) use #value_pat_name;
+        }
+    };
 
     quote! {
         #(#per_entry)*
@@ -389,6 +412,7 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
             }
         }
 
+        #[allow(unused_variables)]
         impl ComputedTable {
             /// Every field at its initial value, computed in the initial
             /// context.
@@ -448,13 +472,7 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
         /// declaration order.
         pub(crate) const LONGHAND_NAMES: &[&str] = &[#(#listed_names),*];
 
-        /// Pattern matching every `PropertyValue` variant declared in
-        /// `properties!`, for the exhaustive matches whose declared
-        /// longhands all take the same pass-through arm.
-        macro_rules! #value_pat {
-            () => { #( crate::property::PropertyValue::#variants(..) )|* };
-        }
-        pub(crate) use #value_pat;
+        #value_pat
 
         /// Every declared longhand's CSS name paired with its sample value.
         #[cfg(test)]

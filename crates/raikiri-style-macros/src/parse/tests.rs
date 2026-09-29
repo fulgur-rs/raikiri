@@ -54,7 +54,6 @@ fn parses_the_short_forms() {
     assert_eq!(opacity.value_ty.to_token_stream().to_string(), "f32");
     assert_eq!(tokens(&opacity.compute), "clamp_opacity");
     assert_eq!(tokens(&opacity.initial), "1.0");
-    assert!(!opacity.had_errors);
 }
 
 #[test]
@@ -128,8 +127,6 @@ fn an_unknown_key_is_one_error_and_the_rest_is_kept() {
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].inherited.value(), Some(&false));
     assert_eq!(tokens(&entries[0].sample), "Y");
-    assert!(entries[0].had_errors);
-    assert!(!entries[1].had_errors);
 }
 
 #[test]

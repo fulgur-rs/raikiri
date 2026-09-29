@@ -1,7 +1,7 @@
 use quote::ToTokens as _;
 use syn::Ident;
 
-use super::{Entry, Value, build};
+use super::{Entry, Lift, Value, build, is_css_name};
 use crate::diag::Errors;
 use crate::parse::parse_block;
 
@@ -107,8 +107,11 @@ fn computed_via_sets_the_type_hook_and_lift() {
     assert_eq!(errors, Vec::<String>::new());
     assert_eq!(entries[0].computed_ty.to_token_stream().to_string(), "Px");
     assert_eq!(entries[0].compute.to_token_stream().to_string(), "to_px");
-    assert!(entries[0].lift.is_none());
-    assert_eq!(entries[1].lift.to_token_stream().to_string(), "from_px");
+    assert!(matches!(entries[0].lift, Lift::Into));
+    let Lift::Path(lift) = &entries[1].lift else {
+        panic!("expected `lift: from_px`");
+    };
+    assert_eq!(lift.to_token_stream().to_string(), "from_px");
 }
 
 #[test]
@@ -147,5 +150,123 @@ fn duplicates_drop_the_later_entry_except_for_names() {
     let variants: Vec<_> = entries.iter().map(|e| e.variant.to_string()).collect();
     assert_eq!(variants, ["A", "B"]);
     assert!(entries[0].name_listed);
+    assert!(!entries[1].name_listed);
+}
+
+#[test]
+fn css_names_are_well_formed_identifiers() {
+    for good in ["opacity", "object-fit", "-webkit-line-clamp", "x2", "a-2b"] {
+        assert!(is_css_name(good), "{good}");
+    }
+    for bad in [
+        "",
+        "-",
+        "--",
+        "a-",
+        "a--b",
+        "--custom",
+        "2d",
+        "-2d",
+        "Object-fit",
+        "a_b",
+        "a b",
+    ] {
+        assert!(!is_css_name(bad), "{bad}");
+    }
+}
+
+#[test]
+fn a_keywords_initial_written_as_a_path_drives_the_default_sample() {
+    let (entries, errors) = build_str(
+        r#"
+        /// Docs.
+        "isolation" => Isolation { keywords: [Auto, Isolate], initial: Isolation::Isolate, inherited: no },
+        "#,
+        &[],
+    );
+    assert_eq!(errors, Vec::<String>::new());
+    assert_eq!(text(entries[0].initial.as_ref()), "Isolation :: Isolate");
+    assert_eq!(text(entries[0].sample.as_ref()), "Isolation :: Auto");
+}
+
+#[test]
+fn acronym_variants_get_readable_default_fields() {
+    let (entries, errors) = build_str(
+        r#"
+        /// Docs.
+        "html-mode" => HTMLMode { keywords: [On, Off], initial: On, inherited: no },
+        "#,
+        &[],
+    );
+    assert_eq!(errors, Vec::<String>::new());
+    assert_eq!(entries[0].field, "html_mode");
+}
+
+#[test]
+fn a_malformed_key_is_not_reported_again_by_related_rules() {
+    // A malformed `computed:` with `lift:`, and a malformed `compute:` with
+    // `computed: .. via ..`: one error each.
+    let (entries, errors) = build_str(
+        r#"
+        /// Docs.
+        "a" => A: L { initial: L::Z, inherited: no, parse: p, computed: Px, lift: l, sample: L::O },
+        /// Docs.
+        "b" => B: L { initial: L::Z, inherited: no, parse: p, compute: |x| x, computed: Px via to_px, sample: L::O },
+        /// Docs.
+        "c" => C: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: |x| x, sample: L::O },
+        "#,
+        &[],
+    );
+    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert!(matches!(entries[2].lift, Lift::Broken));
+}
+
+#[test]
+fn reserved_alias_names_are_rejected_as_value_types() {
+    let (_, errors) = build_str(
+        r#"
+        /// Docs.
+        "a" => A: Specified { initial: X, inherited: no, parse: p, sample: Y },
+        /// Docs.
+        "b" => B: f32 { initial: 1.0, inherited: no, parse: p, computed: Computed via c, sample: 2.0 },
+        /// Docs.
+        "c" => Property { keywords: [X, Y], initial: X, inherited: no },
+        /// Docs.
+        "d" => D: crate::Specified { initial: X, inherited: no, parse: p, sample: Y },
+        "#,
+        &[],
+    );
+    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert!(
+        errors
+            .iter()
+            .all(|e| e.contains("would resolve to the entry's own type alias"))
+    );
+}
+
+#[test]
+fn a_duplicate_name_across_blocks_is_reported() {
+    let mut errors = Errors::default();
+    let mut raw = parse_block(
+        r#"/// Docs.
+        "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },"#
+            .parse()
+            .expect("tokenizes"),
+        &mut errors,
+    );
+    raw.extend(parse_block(
+        r#"/// Docs.
+        "isolation" => Other { keywords: [Auto, Isolate], initial: Auto, inherited: no },"#
+            .parse()
+            .expect("tokenizes"),
+        &mut errors,
+    ));
+    let entries = build(raw, &[], &mut errors);
+    let messages: Vec<String> = errors.into_vec().iter().map(|e| e.to_string()).collect();
+    assert_eq!(
+        messages,
+        ["longhand \"isolation\" is already declared by the `Isolation` entry"]
+    );
+    assert_eq!(entries.len(), 2);
     assert!(!entries[1].name_listed);
 }

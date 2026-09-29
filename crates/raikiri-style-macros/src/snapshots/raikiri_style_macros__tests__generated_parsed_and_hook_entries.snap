@@ -178,6 +178,7 @@ mod decl {
             }
         }
     }
+    # [allow (unused_variables)]
     impl ComputedTable {
         # [doc = r" Every field at its initial value, computed in the initial"]
         # [doc = r" context."]

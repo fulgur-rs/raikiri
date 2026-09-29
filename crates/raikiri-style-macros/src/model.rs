@@ -43,6 +43,46 @@ pub(crate) enum Value {
     },
 }
 
+/// How a computed value is turned back into a specified one.
+pub(crate) enum Lift {
+    /// `Into::into` (no `lift:` written).
+    Into,
+    /// `lift: <path>`.
+    Path(ExprPath),
+    /// `lift:` was malformed (already reported).
+    Broken,
+}
+
+/// The names the per-entry type module defines itself; a written value type
+/// with one of these names would resolve to the alias instead.
+pub(crate) const RESERVED_TYPE_NAMES: [&str; 3] = ["Specified", "Computed", "Property"];
+
+/// Whether `ty` is a bare single-segment path named like one of
+/// [`RESERVED_TYPE_NAMES`].
+pub(crate) fn is_reserved_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(path) if path.qself.is_none() => path
+            .path
+            .get_ident()
+            .is_some_and(|ident| RESERVED_TYPE_NAMES.iter().any(|name| ident == name)),
+        _ => false,
+    }
+}
+
+/// Reports a value type that is a bare reserved name.
+fn check_reserved_type(ty: &Type, errors: &mut Errors) {
+    if is_reserved_type(ty) {
+        errors.push(syn::Error::new_spanned(
+            ty,
+            format!(
+                "a value type named `{}` would resolve to the entry's own type alias; write a path such as `crate::..::{}`",
+                quote::ToTokens::to_token_stream(ty),
+                quote::ToTokens::to_token_stream(ty)
+            ),
+        ));
+    }
+}
+
 /// One validated longhand.
 pub(crate) struct Entry {
     /// Doc comments written before the CSS name.
@@ -67,9 +107,9 @@ pub(crate) struct Entry {
     pub(crate) compute: Option<ExprPath>,
     /// The computed value type when it differs from the specified one.
     pub(crate) computed_ty: Option<Box<Type>>,
-    /// The computed-to-specified function; `None` is `Into::into`. Only
-    /// used when `computed_ty` is set.
-    pub(crate) lift: Option<ExprPath>,
+    /// The computed-to-specified function. Only used when `computed_ty` is
+    /// set.
+    pub(crate) lift: Lift,
     /// The test-only sample value expression; `None` after an error.
     pub(crate) sample: Option<TokenStream>,
     /// Whether the name takes part in name lookup and parse dispatch
@@ -85,9 +125,7 @@ pub(crate) fn build(raw: Vec<RawEntry>, hand_written: &[Ident], errors: &mut Err
     let mut fields: HashMap<String, Ident> = HashMap::new();
     let mut out = Vec::with_capacity(raw.len());
     for raw in raw {
-        let Some(mut entry) = build_entry(raw, errors) else {
-            continue;
-        };
+        let mut entry = build_entry(raw, errors);
         let variant = entry.variant.to_string();
         if hand_written.contains(&entry.variant) {
             errors.push(syn::Error::new(
@@ -140,15 +178,21 @@ fn quoted(name: &LitStr) -> String {
     format!("\"{}\"", name.value())
 }
 
-/// Whether `s` is a valid CSS name: lowercase ASCII letters, digits and
-/// `-`, not starting with a digit or `--` (custom properties are not
-/// longhands).
-fn is_css_name(s: &str) -> bool {
-    !s.is_empty()
-        && !s.starts_with("--")
-        && !s.starts_with(|c: char| c.is_ascii_digit())
-        && s.bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+/// Whether `s` is a well-formed lowercase CSS identifier, as used for
+/// property names and keyword spellings: words of lowercase ASCII letters
+/// and digits joined by single `-`, optionally after one leading `-` (a
+/// vendor prefix), with the first word not starting with a digit. `-`,
+/// `a-`, `a--b`, `--custom` and `2d` are rejected.
+pub(crate) fn is_css_name(s: &str) -> bool {
+    let body = s.strip_prefix('-').unwrap_or(s);
+    !body.is_empty()
+        && !body.starts_with(|c: char| c.is_ascii_digit())
+        && body.split('-').all(|word| {
+            !word.is_empty()
+                && word
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
 }
 
 /// Keeps the doc comments of `attrs` and reports any other attribute.
@@ -176,7 +220,7 @@ fn bare_ident(expr: &Expr) -> Option<&Ident> {
     }
 }
 
-fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
+fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
     let RawEntry {
         attrs,
         name,
@@ -191,7 +235,6 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
         lift,
         field,
         sample,
-        had_errors: _,
     } = raw;
     let docs = docs_only(attrs, "a longhand entry", errors);
     if docs.is_empty() {
@@ -227,15 +270,20 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
                 ),
             ));
             let ty = value_ty.clone().unwrap_or_else(|| ident_type(&variant));
+            check_reserved_type(&ty, errors);
             Value::Parsed {
                 ty: Box::new(ty),
                 parse: None,
             }
         }
-        (Slot::Absent, _) => Value::Parsed {
-            ty: Box::new(value_ty.clone().unwrap_or_else(|| ident_type(&variant))),
-            parse: parse.value().cloned(),
-        },
+        (Slot::Absent, _) => {
+            let ty = value_ty.clone().unwrap_or_else(|| ident_type(&variant));
+            check_reserved_type(&ty, errors);
+            Value::Parsed {
+                ty: Box::new(ty),
+                parse: parse.value().cloned(),
+            }
+        }
         (_, parse_slot) => {
             if let Some(key) = parse_slot.key() {
                 errors.push(syn::Error::new(
@@ -252,6 +300,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
                     ),
                 ));
             }
+            check_reserved_type(&ident_type(&variant), errors);
             let list = match keywords {
                 Slot::Present(key, list) => {
                     if list.is_empty() {
@@ -289,12 +338,18 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
         }
     };
 
+    let computed_invalid = matches!(computed, Slot::Invalid(_));
     let (computed_ty, via_hook) = match computed {
-        Slot::Present(_, ComputedSpec::Via { ty, hook }) => (Some(ty), Some(hook)),
+        Slot::Present(_, ComputedSpec::Via { ty, hook }) => {
+            check_reserved_type(&ty, errors);
+            (Some(ty), Some(hook))
+        }
         _ => (None, None),
     };
     let compute = match (compute, via_hook) {
-        (Slot::Present(key, _) | Slot::Invalid(key), Some(hook)) => {
+        // A malformed `compute:` has been reported already.
+        (Slot::Invalid(_), via) => via,
+        (Slot::Present(key, _), Some(hook)) => {
             errors.push(syn::Error::new(
                 key.span(),
                 "`compute:` and `computed: Type via hook` both name a hook; keep `computed: .. via ..` when the computed type differs, `compute:` otherwise",
@@ -306,17 +361,22 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
     };
     let lift = match lift {
         Slot::Present(key, path) => {
-            if computed_ty.is_none() {
-                errors.push(syn::Error::new(
-                    key.span(),
-                    "`lift:` is only used with `computed: Type via hook`; a computed value of the specified type needs no lift",
-                ));
-                None
+            if computed_ty.is_some() {
+                Lift::Path(path)
             } else {
-                Some(path)
+                // After a malformed `computed:`, whether a lift is needed is
+                // unknown; that error is the one reported.
+                if !computed_invalid {
+                    errors.push(syn::Error::new(
+                        key.span(),
+                        "`lift:` is only used with `computed: Type via hook`; a computed value of the specified type needs no lift",
+                    ));
+                }
+                Lift::Into
             }
         }
-        _ => None,
+        Slot::Invalid(_) => Lift::Broken,
+        Slot::Absent => Lift::Into,
     };
 
     let field = match field {
@@ -355,7 +415,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
         },
     };
 
-    Some(Entry {
+    Entry {
         docs,
         name,
         variant,
@@ -369,7 +429,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
         lift,
         sample: sample_expr,
         name_listed: true,
-    })
+    }
 }
 
 /// The keyword name of a resolved `Variant::Keyword` initial value (the
@@ -422,12 +482,7 @@ fn resolve_keywords(list: Vec<crate::parse::Keyword>, errors: &mut Errors) -> Ve
         let docs = docs_only(kw.attrs, "a keyword", errors);
         let css = match kw.css {
             Some(css) => {
-                let value = css.value();
-                let valid = !value.is_empty()
-                    && value
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
-                if !valid {
+                if !is_css_name(&css.value()) {
                     errors.push(syn::Error::new(
                         css.span(),
                         "a keyword spelling is lowercase ASCII letters, digits and `-`, e.g. \"scale-down\"",

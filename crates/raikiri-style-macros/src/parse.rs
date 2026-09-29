@@ -136,8 +136,6 @@ pub(crate) struct RawEntry {
     pub(crate) field: Slot<Ident>,
     /// `sample: <expr>`.
     pub(crate) sample: Slot<Expr>,
-    /// Whether an error was reported inside this entry's body.
-    pub(crate) had_errors: bool,
 }
 
 /// Parses the body of one `properties! { .. }` invocation. Every mistake is
@@ -240,7 +238,6 @@ fn parse_entry(input: ParseStream, errors: &mut Errors) -> syn::Result<RawEntry>
         lift: Slot::Absent,
         field: Slot::Absent,
         sample: Slot::Absent,
-        had_errors: false,
     };
     parse_keys(&content, &mut entry, errors);
 
@@ -292,7 +289,6 @@ fn parse_keys(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) {
         let before = content.cursor();
         if let Err(error) = parse_key(content, entry, errors) {
             errors.push(error);
-            entry.had_errors = true;
             skip_to_next_key(content);
             if content.cursor() == before {
                 // Guarantee progress on input the recovery cannot classify.
@@ -313,11 +309,9 @@ fn store<T>(
     key: Ident,
     value: syn::Result<T>,
     content: ParseStream,
-    entry_errors: &mut bool,
     errors: &mut Errors,
 ) -> bool {
     if !slot.is_absent() {
-        *entry_errors = true;
         errors.push(syn::Error::new(
             key.span(),
             format!("duplicate key `{key}` in this entry"),
@@ -332,7 +326,6 @@ fn store<T>(
         }
         Err(error) => {
             *slot = Slot::Invalid(key);
-            *entry_errors = true;
             errors.push(error);
             skip_to_next_key(content);
             false
@@ -351,7 +344,6 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
         return Err(content.error(format!("expected `:` after `{key}`")));
     }
     content.parse::<Token![:]>()?;
-    let had = &mut entry.had_errors;
     let k = key.clone();
     let stored = match key.to_string().as_str() {
         "keywords" => store(
@@ -359,7 +351,6 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             k,
             parse_keywords(content),
             content,
-            had,
             errors,
         ),
         "initial" => store(
@@ -367,7 +358,6 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             k,
             content.parse::<Expr>(),
             content,
-            had,
             errors,
         ),
         "inherited" => store(
@@ -375,23 +365,14 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             k,
             parse_yes_no(content),
             content,
-            had,
             errors,
         ),
-        "parse" => store(
-            &mut entry.parse,
-            k,
-            parse_fn_path(content),
-            content,
-            had,
-            errors,
-        ),
+        "parse" => store(&mut entry.parse, k, parse_fn_path(content), content, errors),
         "compute" => store(
             &mut entry.compute,
             k,
             parse_fn_path(content),
             content,
-            had,
             errors,
         ),
         "computed" => store(
@@ -399,31 +380,21 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             k,
             parse_computed(content),
             content,
-            had,
             errors,
         ),
-        "lift" => store(
-            &mut entry.lift,
-            k,
-            parse_fn_path(content),
-            content,
-            had,
-            errors,
-        ),
+        "lift" => store(&mut entry.lift, k, parse_fn_path(content), content, errors),
         "field" => {
             let value = plain_ident(content, "expected a field name, e.g. `field: object_fit`");
-            store(&mut entry.field, k, value, content, had, errors)
+            store(&mut entry.field, k, value, content, errors)
         }
         "sample" => store(
             &mut entry.sample,
             k,
             content.parse::<Expr>(),
             content,
-            had,
             errors,
         ),
         _ => {
-            *had = true;
             errors.push(syn::Error::new(
                 key.span(),
                 format!("unknown key `{key}`; expected one of {}", key_list()),
