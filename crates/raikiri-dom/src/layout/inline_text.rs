@@ -929,14 +929,35 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
         let mut y = 0.0_f32;
         let mut line_height_used = line_height;
         let mut baseline_for_line = None;
-        for &child in &doc.nodes[parent_id].children.clone() {
+        // Keep NBSP-connected inline content together. U+00A0 is Glue in
+        // UAX 14 and forbids breaks before and after, so CSS line breaking
+        // must not split an image plus NBSP plus image run across lines.
+        // Group maximal runs of images linked by NBSP-containing whitespace
+        // and wrap each group atomically. Collapsible-only whitespace stays
+        // breakable and keeps the existing drop-at-wrap behavior.
+        let children = doc.nodes[parent_id].children.clone();
+        const KIND_SKIP: u8 = 0;
+        const KIND_IMG: u8 = 1;
+        const KIND_GLUE: u8 = 2;
+        const KIND_BREAKABLE: u8 = 3;
+        const KIND_BR: u8 = 4;
+        let mut kinds: Vec<u8> = Vec::with_capacity(children.len());
+        let mut widths: Vec<f32> = Vec::with_capacity(children.len());
+        let mut heights: Vec<f32> = Vec::with_capacity(children.len());
+        let mut collapsibles: Vec<bool> = Vec::with_capacity(children.len());
+        for &child in &children {
             if !doc.nodes[child].is_in_document() {
+                kinds.push(KIND_SKIP);
+                widths.push(0.0);
+                heights.push(0.0);
+                collapsibles.push(false);
                 continue;
             }
             if doc.nodes[child].tag_name() == Some("br") {
-                x = 0.0;
-                y += line_height_used;
-                line_height_used = line_height;
+                kinds.push(KIND_BR);
+                widths.push(0.0);
+                heights.push(0.0);
+                collapsibles.push(false);
                 continue;
             }
             let is_inline_whitespace = matches!(
@@ -958,37 +979,163 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                     NodeData::Text(text)
                         if text.text_content.chars().all(is_collapsible_ws)
                 );
-            let (width, height) = if is_inline_whitespace {
-                (
+            if is_inline_whitespace {
+                let width =
                     doc.nodes[child].unrounded_layout.size.width.max(
                         style_dimension_length(doc.nodes[child].style.size.width).unwrap_or(0.0),
-                    ),
-                    0.0,
-                )
-            } else if doc.nodes[child].tag_name() == Some("img") {
-                (
-                    doc.nodes[child].unrounded_layout.size.width.max(0.0),
-                    doc.nodes[child].unrounded_layout.size.height.max(0.0),
-                )
-            } else {
-                continue;
-            };
-            if width <= 0.0 || !width.is_finite() {
+                    );
+                if width <= 0.0 || !width.is_finite() {
+                    kinds.push(KIND_SKIP);
+                    widths.push(0.0);
+                    heights.push(0.0);
+                    collapsibles.push(false);
+                    continue;
+                }
+                let has_nbsp = matches!(
+                    &doc.nodes[child].data,
+                    NodeData::Text(text) if text.text_content.contains('\u{00A0}')
+                );
+                if has_nbsp {
+                    kinds.push(KIND_GLUE);
+                } else {
+                    kinds.push(KIND_BREAKABLE);
+                }
+                widths.push(width);
+                heights.push(0.0);
+                collapsibles.push(is_collapsible_whitespace);
                 continue;
             }
-            if x > 0.0 && x + width > parent_width + 0.01 {
+            if doc.nodes[child].tag_name() == Some("img") {
+                let width = doc.nodes[child].unrounded_layout.size.width.max(0.0);
+                let height = doc.nodes[child].unrounded_layout.size.height.max(0.0);
+                if width <= 0.0 || !width.is_finite() {
+                    kinds.push(KIND_SKIP);
+                    widths.push(0.0);
+                    heights.push(0.0);
+                    collapsibles.push(false);
+                    continue;
+                }
+                kinds.push(KIND_IMG);
+                widths.push(width);
+                heights.push(height);
+                collapsibles.push(false);
+                continue;
+            }
+            kinds.push(KIND_SKIP);
+            widths.push(0.0);
+            heights.push(0.0);
+            collapsibles.push(false);
+        }
+        // Partition participating positions into wrap-atomic groups. Images
+        // join the open group only through an adjacent NBSP glue node, so
+        // back-to-back images without NBSP between them stay separable and
+        // keep the existing wrapping behavior. Each collapsible-only or
+        // preserved-space run without NBSP forms its own single-item group.
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut group_for_pos: Vec<Option<usize>> = vec![None; children.len()];
+        let mut current: Vec<usize> = Vec::new();
+        for pos in 0..children.len() {
+            match kinds[pos] {
+                KIND_IMG => {
+                    let glued = current.last().is_some_and(|&last| kinds[last] == KIND_GLUE);
+                    if current.is_empty() || !glued {
+                        if !current.is_empty() {
+                            let gid = groups.len();
+                            for &p in &current {
+                                group_for_pos[p] = Some(gid);
+                            }
+                            groups.push(std::mem::take(&mut current));
+                        }
+                        current.push(pos);
+                    } else {
+                        current.push(pos);
+                    }
+                }
+                KIND_GLUE => {
+                    current.push(pos);
+                }
+                KIND_BREAKABLE => {
+                    if !current.is_empty() {
+                        let gid = groups.len();
+                        for &p in &current {
+                            group_for_pos[p] = Some(gid);
+                        }
+                        groups.push(std::mem::take(&mut current));
+                    }
+                    let gid = groups.len();
+                    groups.push(vec![pos]);
+                    group_for_pos[pos] = Some(gid);
+                }
+                _ => {
+                    if !current.is_empty() {
+                        let gid = groups.len();
+                        for &p in &current {
+                            group_for_pos[p] = Some(gid);
+                        }
+                        groups.push(std::mem::take(&mut current));
+                    }
+                }
+            }
+        }
+        if !current.is_empty() {
+            let gid = groups.len();
+            for &p in &current {
+                group_for_pos[p] = Some(gid);
+            }
+            groups.push(current);
+        }
+        let group_widths: Vec<f32> = groups
+            .iter()
+            .map(|group| group.iter().map(|&p| widths[p]).sum())
+            .collect();
+        for pos in 0..children.len() {
+            let child = children[pos];
+            let kind = kinds[pos];
+            if kind == KIND_SKIP {
+                continue;
+            }
+            if kind == KIND_BR {
                 x = 0.0;
                 y += line_height_used;
                 line_height_used = line_height;
-                baseline_for_line = None;
-                if is_collapsible_whitespace {
+                continue;
+            }
+            let width = widths[pos];
+            let height = heights[pos];
+            let is_collapsible_whitespace = collapsibles[pos];
+            let gid = group_for_pos[pos].expect("participating position has a group");
+            let group = &groups[gid];
+            let is_first_in_group = group.first().is_some_and(|&first| first == pos);
+            let is_glue_group = group.len() > 1;
+            if is_glue_group {
+                // A multi-item group holds at least one NBSP glue node by
+                // construction, so the whole run moves as one unit. Only the
+                // first item tests the group width. Later items skip the wrap
+                // test so the run can overflow the line rather than split.
+                if is_first_in_group {
+                    let group_width = group_widths[gid];
+                    if x > 0.0 && x + group_width > parent_width + 0.01 {
+                        x = 0.0;
+                        y += line_height_used;
+                        line_height_used = line_height;
+                        baseline_for_line = None;
+                    }
+                }
+            } else {
+                if x > 0.0 && x + width > parent_width + 0.01 {
+                    x = 0.0;
+                    y += line_height_used;
+                    line_height_used = line_height;
+                    baseline_for_line = None;
+                    if is_collapsible_whitespace {
+                        continue;
+                    }
+                }
+                if is_collapsible_whitespace && x == 0.0 {
+                    // CSS-collapsible leading whitespace is removed at a new line.
+                    // U+00A0 is not collapsible and keeps its measured advance.
                     continue;
                 }
-            }
-            if is_collapsible_whitespace && x == 0.0 {
-                // CSS-collapsible leading whitespace is removed at a new line.
-                // U+00A0 is not collapsible and keeps its measured advance.
-                continue;
             }
             let taffy_y = doc.nodes[child].unrounded_layout.location.y;
             let relative_offset_y = relative_position_y_offset(

@@ -4445,3 +4445,103 @@ fn word_space_transform_space_trailing_edge_with_negative_word_spacing() {
         second_loc.location.x
     );
 }
+
+#[test]
+fn nbsp_glue_keeps_image_group_together_on_overflow() {
+    // Overflow regression for NBSP glue in the replaced-child realign pass.
+    // U+00A0 forbids breaks before and after, so an image plus NBSP plus
+    // image run must wrap atomically. A filler image leaves 70 units used
+    // on a 100 unit line, then a 90 unit glued run must move as one unit
+    // to the next line instead of stranding its first image on line one.
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+    let filler = doc.append_element(
+        Some(block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 30px; height: 20px"),
+    );
+    let first = doc.append_element(
+        Some(block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 40px; height: 20px"),
+    );
+    let nbsp = doc.append_text(block, "\u{00A0}");
+    let second = doc.append_element(
+        Some(block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 40px; height: 20px"),
+    );
+    doc.mark_in_document_flags();
+
+    let rules = build_rule_tree(&doc);
+    let cascade_result = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade_result);
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        doc.nodes[block]
+            .flags
+            .contains(crate::node::NodeFlags::IS_INLINE_ROOT),
+        "fixture must qualify as an inline root so the realign pass runs"
+    );
+
+    doc.nodes[block].unrounded_layout.size.width = 100.0;
+    doc.nodes[filler].unrounded_layout.size.width = 30.0;
+    doc.nodes[filler].unrounded_layout.size.height = 20.0;
+    doc.nodes[first].unrounded_layout.size.width = 40.0;
+    doc.nodes[first].unrounded_layout.size.height = 20.0;
+    doc.nodes[nbsp].unrounded_layout.size.width = 10.0;
+    doc.nodes[second].unrounded_layout.size.width = 40.0;
+    doc.nodes[second].unrounded_layout.size.height = 20.0;
+
+    realign_inline_replaced_children(&mut doc, &cascade_result);
+
+    let filler_loc = doc.nodes[filler].unrounded_layout;
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let nbsp_loc = doc.nodes[nbsp].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (filler_loc.location.x - 0.0).abs() < 1e-3,
+        "filler stays at line start, got x={}",
+        filler_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.x - 0.0).abs() < 1e-3,
+        "glued run moves as one unit, so first image wraps to x=0, got x={}",
+        first_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (nbsp_loc.location.x - 40.0).abs() < 1e-3,
+        "NBSP stays glued after first image, got x={}",
+        nbsp_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (second_loc.location.x - 50.0).abs() < 1e-3,
+        "second image stays glued after NBSP, got x={}",
+        second_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "glued images share a line, got first y={} second y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        first_loc.location.y > filler_loc.location.y + 1e-3,
+        "glued run wrapped past filler line, got first y={} filler y={}",
+        first_loc.location.y,
+        filler_loc.location.y
+    );
+}
