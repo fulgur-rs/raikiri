@@ -206,7 +206,10 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
             .expect("probe has a fragment");
         assert_eq!((frag.x, frag.y), expected_frag, "fragment for {html:?}");
         assert_eq!(
-            (frag.x + scene.body_offset_pt.0, frag.y + scene.body_offset_pt.1),
+            (
+                frag.x + scene.body_offset_pt.0,
+                frag.y + scene.body_offset_pt.1
+            ),
             expected_abs,
             "page-absolute geometry for {html:?}"
         );

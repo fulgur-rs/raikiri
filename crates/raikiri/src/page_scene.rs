@@ -356,11 +356,7 @@ fn collapse_margins(values: &[f32]) -> f32 {
 /// A nonzero top border or padding breaks parent-first-child margin
 /// collapsing (CSS 2.1 section 8.3.1). Border uses the absolutized computed
 /// width; padding resolves percentages against the containing-block width.
-fn has_top_barrier(
-    cascade: &CascadeResult,
-    node_idx: usize,
-    content_width: f32,
-) -> bool {
+fn has_top_barrier(cascade: &CascadeResult, node_idx: usize, content_width: f32) -> bool {
     let Some(computed) = cascade.computed.get(node_idx) else {
         return false;
     };
@@ -396,7 +392,8 @@ fn first_in_flow_top_margin(
         && !matches!(
             computed.overflow.y,
             OverflowValue::Visible | OverflowValue::Clip
-        ) {
+        )
+    {
         return None;
     }
     let body = dom.get_node(body_idx)?;
@@ -474,28 +471,20 @@ fn body_margin_offsets(
     let body_left = cascade
         .computed
         .get(body_idx)
-        .map_or(0.0, |computed| {
-            used_margin_px(computed.margin.left, basis)
-        });
+        .map_or(0.0, |computed| used_margin_px(computed.margin.left, basis));
     let body_top = cascade
         .computed
         .get(body_idx)
-        .map_or(0.0, |computed| {
-            used_margin_px(computed.margin.top, basis)
-        });
+        .map_or(0.0, |computed| used_margin_px(computed.margin.top, basis));
     let (html_left, html_top, html_has_barrier) = html_idx.map_or((0.0, 0.0, false), |idx| {
         let left = cascade
             .computed
             .get(idx)
-            .map_or(0.0, |computed| {
-                used_margin_px(computed.margin.left, basis)
-            });
+            .map_or(0.0, |computed| used_margin_px(computed.margin.left, basis));
         let top = cascade
             .computed
             .get(idx)
-            .map_or(0.0, |computed| {
-                used_margin_px(computed.margin.top, basis)
-            });
+            .map_or(0.0, |computed| used_margin_px(computed.margin.top, basis));
         let barrier = has_top_barrier(cascade, idx, basis);
         (left, top, barrier)
     });
@@ -605,13 +594,8 @@ pub fn build_page_scene_for_page_named(
     let body_arena_idx = find_first_element_by_tag(dom, "body");
     let body_id = body_arena_idx.map(|idx| NodeId::new(idx as u64));
     let content_width = margins.content_width(page_box).max(0.0);
-    let (body_left_extra, body_top_extra) = body_margin_offsets(
-        dom,
-        cascade,
-        body_arena_idx,
-        html_arena_idx,
-        content_width,
-    );
+    let (body_left_extra, body_top_extra) =
+        body_margin_offsets(dom, cascade, body_arena_idx, html_arena_idx, content_width);
 
     let mut node_ids: Vec<NodeId> = Vec::new();
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
