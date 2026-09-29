@@ -5144,8 +5144,14 @@ fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f64 {
 ///
 /// The image is clipped to the caller's background painting area. This keeps
 /// URL backgrounds useful to reftests while leaving gradients on the existing
-/// color path. Repetition is deliberately represented by the first tile for
-/// now; the object-fit tranche only consumes `no-repeat` backgrounds.
+/// color path.
+///
+/// Tiling follows CSS Backgrounds and Borders 3 section 2.4: `repeat` tiles
+/// the origin tile (positioned by `background-position`) in both directions
+/// to cover the painting area, clipping partial edge tiles; `no-repeat`
+/// paints only the origin tile. `space` and `round` deliberately fall back
+/// to a single tile; full spacing and rescaling remain deferred follow-up
+/// work.
 #[allow(clippy::too_many_arguments)]
 fn paint_background_image(
     scene: &mut impl PaintScene,
@@ -5164,11 +5170,14 @@ fn paint_background_image(
     }
     let area_w = x1 - x0;
     let area_h = y1 - y0;
-    if image_w <= 0.0 || image_h <= 0.0 {
+    if image_w <= 0.0 || image_h <= 0.0 || !image_w.is_finite() || !image_h.is_finite() {
         return;
     }
     let image_x = x0 + position_offset(position.horizontal, area_w - image_w);
     let image_y = y0 + position_offset(position.vertical, area_h - image_h);
+    if !image_x.is_finite() || !image_y.is_finite() {
+        return;
+    }
     let image_data = peniko::ImageData {
         data: peniko::Blob::from(decoded.rgba.clone()),
         format: peniko::ImageFormat::Rgba8,
@@ -5177,21 +5186,53 @@ fn paint_background_image(
         height: decoded.height,
     };
     let brush = peniko::ImageBrush::new(image_data);
+    let tile_shape = Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64);
+    let tile_scale = Affine::scale_non_uniform(
+        image_w / decoded.width as f64,
+        image_h / decoded.height as f64,
+    );
+    // `space` and `round` fall through to a single tile; only `repeat`
+    // tiles on an axis. Full spacing and rescaling are deferred follow-up work.
+    let repeat_x = matches!(
+        repeat.x,
+        raikiri_style::property::BackgroundRepeatKeyword::Repeat
+    );
+    let repeat_y = matches!(
+        repeat.y,
+        raikiri_style::property::BackgroundRepeatKeyword::Repeat
+    );
+    let x_origins = if repeat_x {
+        let start = ((x0 - image_x) / image_w).floor() as i64;
+        let end = ((x1 - image_x) / image_w).ceil() as i64;
+        (start..end)
+            .map(|tile| image_x + tile as f64 * image_w)
+            .collect::<Vec<_>>()
+    } else {
+        vec![image_x]
+    };
+    let y_origins = if repeat_y {
+        let start = ((y0 - image_y) / image_h).floor() as i64;
+        let end = ((y1 - image_y) / image_h).ceil() as i64;
+        (start..end)
+            .map(|tile| image_y + tile as f64 * image_h)
+            .collect::<Vec<_>>()
+    } else {
+        vec![image_y]
+    };
     let clip = Rect::new(x0, y0, x1, y1);
     scene.push_clip_layer(Affine::IDENTITY, &clip);
-    scene.fill(
-        Fill::NonZero,
-        Affine::translate((image_x, image_y))
-            * Affine::scale_non_uniform(
-                image_w / decoded.width as f64,
-                image_h / decoded.height as f64,
-            ),
-        brush.as_ref(),
-        None,
-        &Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64),
-    );
+    for tile_y in &y_origins {
+        for tile_x in &x_origins {
+            scene.fill(
+                Fill::NonZero,
+                Affine::translate((*tile_x, *tile_y)) * tile_scale,
+                brush.as_ref(),
+                None,
+                &tile_shape,
+            );
+        }
+    }
     scene.pop_layer();
-    let _ = repeat;
 }
 
 fn used_border_radius(value: ComputedLengthPercentage, reference: f64) -> f64 {
