@@ -557,7 +557,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderCollapse(..)
         | PropertyValue::BorderSpacing(..)
         | PropertyValue::CaptionSide(..)
-        | PropertyValue::EmptyCells(..)
         | PropertyValue::Font(..)
         | PropertyValue::TextDecorationThickness(..)
         | PropertyValue::Page(..)

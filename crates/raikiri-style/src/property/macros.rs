@@ -332,7 +332,7 @@ macro_rules! longhands {
 
             /// The specified state of a child: inherited fields copy the parent's
             /// computed value, the others start at their initial value.
-            // `parent` is unused while every table entry is non-inherited.
+            // `parent` is unused when every table entry is non-inherited.
             #[allow(unused_variables)]
             pub(crate) fn inherit_from(parent: &ComputedTable) -> Self {
                 Self {

@@ -3660,9 +3660,6 @@ crate::property::with_longhand_samples!(property_key_samples {
     // CSS Tables 3 §7 caption-side — non-initial (`bottom`, not `top`),
     // same rationale as `TableLayout` above.
     CaptionSide => PropertyValue::CaptionSide(CaptionSideValue::Bottom),
-    // CSS Tables 3 §8 empty-cells — non-initial (`hide`, not `show`),
-    // same rationale as `TableLayout` above.
-    EmptyCells => PropertyValue::EmptyCells(EmptyCellsValue::Hide),
     // CSS Fonts 4 §2.1 — shorthand fall-through (`Background` above
     // uses the same "sample a shorthand with a length-bearing
     // component" shape). `size`/`line-height` carry the lengths; the
@@ -4073,7 +4070,6 @@ crate::property::with_longhand_variants!(property_value_variant_registry {
     BorderCollapse,
     BorderSpacing,
     CaptionSide,
-    EmptyCells,
     Top,
     Right,
     Bottom,
@@ -4769,14 +4765,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             }),
             | PropertyValue::Filter(_) => None,
             // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS
-            // Tables 3 §6) / `caption-side` (§7) / `empty-cells` (§8) carry
-            // bare keyword payloads (no `Length` at all, unlike `Opacity`'s
-            // `f32`) — always `None` (the `MixBlendMode` sibling arm above
-            // uses the same reasoning).
+            // Tables 3 §6) / `caption-side` (§7) carry bare keyword payloads
+            // (no `Length` at all, unlike `Opacity`'s `f32`) — always `None`
+            // (the `MixBlendMode` sibling arm above uses the same reasoning).
             | PropertyValue::TableLayout(_)
             | PropertyValue::BorderCollapse(_)
-            | PropertyValue::CaptionSide(_)
-            | PropertyValue::EmptyCells(_) => None,
+            | PropertyValue::CaptionSide(_) => None,
             // `border-spacing` (CSS Tables 3 §6.1) carries two `<length>`
             // payloads — report the first specified-layer residue found
             // (`Gap`'s row-then-column arm above uses the same shape, with

@@ -1344,7 +1344,7 @@ pub(super) fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSi
 ///
 /// Value grammar: `show | hide`. Matching follows the same rules as sibling
 /// [`parse_caption_side`].
-pub(super) fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCellsValue> {
+pub(crate) fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCellsValue> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
         "show" => Some(EmptyCellsValue::Show),

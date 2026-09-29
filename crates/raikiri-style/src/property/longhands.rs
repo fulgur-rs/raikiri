@@ -1383,11 +1383,6 @@ longhands! {
             /// Computed value: the specified keyword (no relative lengths to resolve).
             /// (Appended for the same reason as [`Self::TableLayout`].)
             CaptionSide(CaptionSideValue),
-            /// `empty-cells: show | hide` — **inherited**, initial:
-            /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8; see [`EmptyCellsValue`]).
-            /// Computed value: the specified keyword (no relative lengths to resolve).
-            /// (Appended for the same reason as [`Self::TableLayout`].)
-            EmptyCells(EmptyCellsValue),
             /// `font` shorthand — **inherited**. Retains six grammar components
             /// (style/variant-caps/weight/size/line-height/family; see
             /// [`FontShorthand`]). Its subset of CSS Fonts 4 §2.1
@@ -1989,12 +1984,6 @@ longhands! {
             // reason as background-repeat: a new field disjoint one-to-one from
             // existing fields.
             CaptionSide,
-            // empty-cells (CSS Tables 3 §8, semantics on the matching
-            // PropertyValue::EmptyCells variant; sibling PropertyKey variants
-            // carry no per-variant docs per crate convention). Appended for the same
-            // reason as background-repeat: a new field disjoint one-to-one from
-            // existing fields.
-            EmptyCells,
             // font shorthand (CSS Fonts 4 §2.1, semantics on the matching
             // PropertyValue::Font variant; sibling PropertyKey variants carry no
             // per-variant docs per crate convention). For this appended placement, see the background-repeat
@@ -2300,7 +2289,6 @@ longhands! {
         PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
         PropertyValue::BorderSpacing(_) => PropertyKey::BorderSpacing,
         PropertyValue::CaptionSide(_) => PropertyKey::CaptionSide,
-        PropertyValue::EmptyCells(_) => PropertyKey::EmptyCells,
         PropertyValue::Font(_) => PropertyKey::Font,
         PropertyValue::TextDecorationSkipInk(_) => PropertyKey::TextDecorationSkipInk,
         PropertyValue::TextDecorationSkipSpaces(_) => PropertyKey::TextDecorationSkipSpaces,
@@ -2375,5 +2363,26 @@ longhands! {
         // Keyword-only, carries no length. `contain` is the non-initial
         // worst case (`fill` is the initial value).
         sample: ObjectFit::Contain,
+    }
+
+    /// `empty-cells`: **inherited**, initial [`EmptyCellsValue::Show`] (CSS
+    /// Tables 3 §8 "Empty Cells"
+    /// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>; see
+    /// [`EmptyCellsValue`]). Grammar: `show | hide`. The computed value is the
+    /// specified keyword (no relative lengths to resolve).
+    ///
+    /// The field carries the cascaded value only; empty-cell border and
+    /// background painting is layout/paint-time behavior (raikiri-dom /
+    /// raikiri-paint).
+    "empty-cells" => EmptyCells {
+        value: EmptyCellsValue,
+        initial: EmptyCellsValue::Show,
+        inherited: yes,
+        parse: parse_empty_cells,
+        computed: as_specified,
+        field: empty_cells,
+        // Keyword-only, carries no length. `hide` is the non-initial worst
+        // case (`show` is the initial value).
+        sample: EmptyCellsValue::Hide,
     }
 }

@@ -17,13 +17,13 @@ use crate::property::{
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ComputedTable, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
-    EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
-    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
-    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, LineBreak, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
+    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
+    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
+    HyphenateLimitChars, Hyphens, LineBreak, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
     PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign,
     TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
     TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
@@ -1680,19 +1680,6 @@ pub struct ComputedValues {
     /// is layout-time behavior (raikiri-dom scope) — [`Self::table_layout`]
     /// doc's split applies here as well.
     pub caption_side: CaptionSideValue,
-    /// `empty-cells`. **inherited**, initial:
-    /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8 "Empty Cells"
-    /// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>,
-    /// "Initial: show" / "Inherited: yes"). Computed value = specified
-    /// keyword ([`EmptyCellsValue`] doc — no length payload).
-    ///
-    /// # Scope carving
-    ///
-    /// This field carries the cascaded value only. Empty-cell border /
-    /// background painting is layout/paint-time behavior (raikiri-dom /
-    /// raikiri-paint scope) — [`Self::table_layout`] doc's split applies
-    /// here as well.
-    pub empty_cells: EmptyCellsValue,
     /// `column-count` — non-inherited multicol container setting.
     pub column_count: ColumnCountValue,
     /// Computed `column-width` — non-inherited multicol container setting.
@@ -2073,9 +2060,6 @@ impl ComputedValues {
             // CSS Tables 3 §7: initial caption-side is `top`
             // (inherited; used to seed the root).
             caption_side: CaptionSideValue::Top,
-            // CSS Tables 3 §8: initial empty-cells is `show`
-            // (inherited; used to seed the root).
-            empty_cells: EmptyCellsValue::Show,
             // CSS Multi-column Layout 1: both longhands initially `auto`.
             column_count: ColumnCountValue::Auto,
             column_width: ComputedColumnWidth::Auto,

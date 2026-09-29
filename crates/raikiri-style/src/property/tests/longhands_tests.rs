@@ -175,3 +175,25 @@ fn values_expose_table_fields_through_deref() {
     assert_eq!(computed.isolation, Isolation::Auto);
     assert_eq!(computed.longhands.object_fit, ObjectFit::Fill);
 }
+
+#[test]
+fn inherited_table_field_copies_the_parent_value() {
+    let mut parent = ComputedTable::initial();
+    parent.empty_cells = EmptyCellsValue::Hide;
+    let child = SpecifiedTable::inherit_from(&parent);
+    assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
+    // non-inherited siblings still reset
+    parent.isolation = Isolation::Isolate;
+    assert_eq!(
+        SpecifiedTable::inherit_from(&parent).isolation,
+        Isolation::Auto
+    );
+}
+
+#[test]
+fn empty_cells_cascades_from_parent_to_child() {
+    let mut parent = crate::computed::ComputedValues::initial();
+    parent.empty_cells = EmptyCellsValue::Hide;
+    let child = crate::computed::ComputedValues::inherit_from(&parent);
+    assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
+}

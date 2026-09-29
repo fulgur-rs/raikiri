@@ -597,7 +597,6 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::CaptionSide(_)
-        | PropertyValue::EmptyCells(_)
         // Table-declared properties (see `longhands!`) take this arm.
         | longhand_value_pat!()) => v,
         // Preserve specified order until the page context produces its computed value.

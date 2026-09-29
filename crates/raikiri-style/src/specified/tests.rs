@@ -3,8 +3,9 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
 use crate::property::{
-    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox, Isolation, ObjectFit,
+    ComputedTable, EmptyCellsValue, FontSynthesisStyle, FontVariantEastAsianVariant,
+    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox, Isolation,
+    ObjectFit,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -464,12 +465,13 @@ fn parent_fixture() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".to_string()),
-        // Table-declared properties, all non-inherited: CSS Images Module Level 3 §5.1
-        // object-fit and CSS Compositing and Blending Level 1 §3.4.2 isolation; set values other
-        // than the initial `fill` / `auto`.
+        // Table-declared properties: CSS Images Module Level 3 §5.1 object-fit and CSS
+        // Compositing and Blending Level 1 §3.4.2 isolation (non-inherited), and CSS Tables 3 §8
+        // empty-cells (inherited); set values other than the initial `fill` / `auto` / `show`.
         longhands: ComputedTable {
             object_fit: ObjectFit::Cover,
             isolation: Isolation::Isolate,
+            empty_cells: EmptyCellsValue::Hide,
         },
         // CSS Images Module Level 3 §5.2: non-inherited; set a value other than the initial
         // `50% 50%`.
@@ -510,8 +512,6 @@ fn parent_fixture() -> ComputedValues {
         },
         // CSS Tables 3 §7: caption-side is inherited; set a value other than the initial `top`.
         caption_side: CaptionSideValue::Bottom,
-        // CSS Tables 3 §8: empty-cells is inherited; set a value other than the initial `show`.
-        empty_cells: EmptyCellsValue::Hide,
         column_count: ColumnCountValue::Count(3),
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
         custom_properties: crate::computed::empty_custom_properties(),

@@ -469,7 +469,6 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::BorderSpacing(_)
         | PropertyValue::CaptionSide(_)
-        | PropertyValue::EmptyCells(_)
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)

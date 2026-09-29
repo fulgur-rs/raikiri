@@ -1,8 +1,8 @@
 use super::*;
 use crate::property::{
-    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
-    HyphenateLimitCharsValue, Isolation, Length, ObjectFit, TextShadowColor,
+    ComputedTable, EmptyCellsValue, FontSynthesisStyle, FontVariantEastAsianVariant,
+    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Isolation, Length, ObjectFit, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -583,13 +583,15 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
         // different from the initial `None` (as required for non_initial_parent).
         background_image: BackgroundImage::Url("fixture.png".into()),
-        // Table-declared properties, all non-inherited: CSS Images Module
-        // Level 3 §5.1 object-fit and CSS Compositing and Blending Level 1
-        // §3.4.2 isolation get values different from the initial `fill` /
-        // `auto` (as required for non_initial_parent).
+        // Table-declared properties: CSS Images Module Level 3 §5.1
+        // object-fit and CSS Compositing and Blending Level 1 §3.4.2
+        // isolation (non-inherited), and CSS Tables 3 §8 empty-cells
+        // (inherited), get values different from the initial `fill` /
+        // `auto` / `show` (as required for non_initial_parent).
         longhands: ComputedTable {
             object_fit: ObjectFit::Cover,
             isolation: Isolation::Isolate,
+            empty_cells: EmptyCellsValue::Hide,
         },
         // CSS Images Module Level 3 §5.2: non-inherited, so use a value
         // different from the initial `50% 50%` (as required for
@@ -635,9 +637,6 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Tables 3 §7: caption-side is inherited, so use a value
         // different from the initial `top` (as above).
         caption_side: CaptionSideValue::Bottom,
-        // CSS Tables 3 §8: empty-cells is inherited, so use a value
-        // different from the initial `show` (as above).
-        empty_cells: EmptyCellsValue::Hide,
         // CSS Multi-column Layout 1: non-inherited fields use non-initial
         // values so `inherit_from` assertions exercise the reset.
         column_count: ColumnCountValue::Count(3),

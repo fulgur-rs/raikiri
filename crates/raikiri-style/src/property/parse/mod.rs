@@ -915,11 +915,6 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (initial `top`, inherited). Uses the same matching rules
         // as the `table-layout` arm above.
         "caption-side" => parse_caption_side(input).map(PropertyValue::CaptionSide),
-        // CSS Tables 3 §8 empty-cells. grammar: `show | hide`
-        // <https://www.w3.org/TR/css-tables-3/#empty-cells-property>
-        // (initial `show`, inherited). Uses the same matching rules
-        // as the `table-layout` arm above.
-        "empty-cells" => parse_empty_cells(input).map(PropertyValue::EmptyCells),
         // CSS Fonts 4 §2.1 font shorthand — 15 longhands (6 grammar components plus
         // 9 modeled reset-only subproperties) are expanded by
         // `crate::rule::expand_shorthand_into` (see its doc).

@@ -6166,7 +6166,7 @@ pub enum CaptionSideValue {
 ///
 /// The decision to paint cell backgrounds and borders belongs to
 /// raikiri-dom / raikiri-paint
-/// (see [`crate::computed::ComputedValues::empty_cells`]); this crate only
+/// (see [`crate::property::ComputedTable::empty_cells`]); this crate only
 /// carries the cascaded keyword.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8837,7 +8837,6 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-collapse" => PropertyKey::BorderCollapse,
         "border-spacing" => PropertyKey::BorderSpacing,
         "caption-side" => PropertyKey::CaptionSide,
-        "empty-cells" => PropertyKey::EmptyCells,
         "font" => PropertyKey::Font,
         "text-decoration-skip-ink" => PropertyKey::TextDecorationSkipInk,
         "text-decoration-skip-spaces" => PropertyKey::TextDecorationSkipSpaces,
