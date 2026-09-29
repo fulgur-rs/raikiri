@@ -2328,6 +2328,18 @@ fn isolation_key_maps_to_isolation_property_key() {
     assert_eq!(v.key(), PropertyKey::Isolation);
 }
 
+#[test]
+fn isolation_var_defers_under_the_isolation_key() {
+    // `isolation` has no hand-written name arm: the deferred value's key
+    // comes from the name lookup's fall-through into the declared longhands.
+    let value = parse("var(--x)", "isolation");
+    assert!(
+        matches!(value, Some(PropertyValue::Deferred(_))),
+        "{value:?}"
+    );
+    assert_eq!(value.unwrap().key(), PropertyKey::Isolation);
+}
+
 // ── mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) ────
 
 #[test]

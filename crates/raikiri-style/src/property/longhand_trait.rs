@@ -20,12 +20,13 @@ use crate::resolve::{ComputedLength, ResolveContext};
 /// [`SpecifiedValues::finalize`](crate::specified::SpecifiedValues::finalize)
 /// and the page-context absolutization already have for their own length
 /// resolution.
-// No declared longhand reads the length inputs yet.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AbsolutizeCx<'a> {
+    #[expect(dead_code, reason = "no declared longhand's compute hook reads it yet")]
     pub(crate) font_size: ComputedLength,
+    #[expect(dead_code, reason = "no declared longhand's compute hook reads it yet")]
     pub(crate) own_line_height: Option<ComputedLength>,
+    #[expect(dead_code, reason = "no declared longhand's compute hook reads it yet")]
     pub(crate) ctx: &'a ResolveContext,
 }
 
@@ -56,13 +57,17 @@ impl<'a> AbsolutizeCx<'a> {
 /// `<field>::Property` of each entry; nothing implements it by hand.
 pub(crate) trait Longhand {
     /// The property name, lowercase.
-    // The generated code spells names and inheritance as literals per entry,
-    // so these two constants are only read by tests and by code that
-    // inspects a longhand generically.
-    #[allow(dead_code)]
+    // The generated code spells names and inheritance as literals per entry.
+    // `NAME` is read only by the generated test-only `longhand_samples()`,
+    // which nothing calls yet, and `INHERITED` by nothing; both stay as part
+    // of the declared longhand's description.
+    #[expect(
+        dead_code,
+        reason = "only the uncalled test-only `longhand_samples()` reads it"
+    )]
     const NAME: &'static str;
     /// Whether the property is inherited.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "the generated code writes inheritance per entry")]
     const INHERITED: bool;
     /// The specified value type (the `PropertyValue` payload).
     type Specified: Clone + core::fmt::Debug + PartialEq;
