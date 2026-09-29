@@ -2324,6 +2324,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
                     percent: -50.0,
                     px: 0.0,
                     em: 2.0,
+                    ch: 0.0,
                 }),
             )),
             fs,
@@ -2337,6 +2338,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             percent: -50.0,
             px: 40.0,
             em: 0.0,
+            ch: 0.0,
         },)),
     );
     // `flex-basis` intrinsic keywords round-trip as keywords through

@@ -3248,6 +3248,51 @@ fn preshape_text_applies_computed_word_spacing_ch_to_advance() {
 }
 
 #[test]
+fn preshape_text_adds_calc_ch_absolute_offset_to_measured_spacing() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    fn shaped_width(inline_style: &str, text: &str) -> f32 {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+        let text = doc.append_text(p, text);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        doc.nodes[text]
+            .text_layout()
+            .expect("text should be shaped")
+            .full_width()
+    }
+
+    // `calc(1ch + 5px)` must equal the measured `1ch` plus the 5px offset per
+    // spacing unit (two glyphs for letter-spacing, one space for word-spacing).
+    let letter_ch = shaped_width("letter-spacing: 1ch", "AB");
+    let letter_calc = shaped_width("letter-spacing: calc(1ch + 5px)", "AB");
+    assert!(
+        (letter_calc - letter_ch - 10.0).abs() < 0.01,
+        "letter-spacing: ch={letter_ch}, calc={letter_calc}"
+    );
+    let word_ch = shaped_width("word-spacing: 1ch", "A B");
+    let word_calc = shaped_width("word-spacing: calc(1ch + 5px)", "A B");
+    assert!(
+        (word_calc - word_ch - 5.0).abs() < 0.01,
+        "word-spacing: ch={word_ch}, calc={word_calc}"
+    );
+}
+
+#[test]
 fn preshape_text_measures_inherited_ch_spacing_with_the_declaring_font() {
     use parley::{FontContext, LayoutContext};
     use raikiri_style::{build_rule_tree, cascade};

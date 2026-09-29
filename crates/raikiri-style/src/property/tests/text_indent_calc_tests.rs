@@ -13,6 +13,7 @@ fn mixed_percentage_and_px_calc_stays_mixed_and_keeps_flags() {
                 percent: 50.0,
                 px: 60.0,
                 em: 0.0,
+                ch: 0.0,
             }),
             hanging: true,
             each_line: true,
@@ -48,7 +49,8 @@ fn calc_subtracts_em_after_resolving_the_element_font_size() {
         LengthPercentageCalc {
             percent: 0.0,
             px: 10.0,
-            em: -0.5
+            em: -0.5,
+            ch: 0.0,
         }
     );
     assert_eq!(

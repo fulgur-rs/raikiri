@@ -14,7 +14,7 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
-    used_line_height_length,
+    calc_ch_factor, used_line_height_length,
 };
 use crate::rule::{
     expand_background, expand_border, expand_border_color, expand_border_css_wide,
@@ -1797,8 +1797,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.text_indent = v.length;
             target.text_indent_ch_factor = match v.length {
                 TextIndentLength::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                TextIndentLength::Calc(calc) => calc_ch_factor(calc),
                 _ => None,
             };
+            target.text_indent_ch_offset = 0.0;
             target.text_indent_ch_font = None;
             target.text_indent_ch_inherited = false;
             target.text_indent_hanging = v.hanging;
@@ -1924,16 +1926,20 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 LetterSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => {
                     Some(factor)
                 }
+                LetterSpacingValue::Calc(calc) => calc_ch_factor(calc),
                 _ => None,
             };
+            target.letter_spacing_ch_offset = 0.0;
             target.letter_spacing_ch_font = None;
         }
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
             target.word_spacing_ch_factor = match ws {
                 WordSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                WordSpacingValue::Calc(calc) => calc_ch_factor(calc),
                 _ => None,
             };
+            target.word_spacing_ch_offset = 0.0;
             target.word_spacing_ch_font = None;
         }
         PropertyValue::TabSize(ts) => target.tab_size = ts,

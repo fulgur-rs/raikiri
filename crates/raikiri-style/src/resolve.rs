@@ -1924,7 +1924,7 @@ pub fn resolve_letter_spacing(
             ComputedLetterSpacing::Px(resolve_length(length, font_size, own_line_height, ctx).px())
         }
         LetterSpacingValue::Calc(calc) => {
-            let px = calc.px + calc.em * font_size.px();
+            let px = calc.px + calc.em * font_size.px() + calc.ch * font_size.px() * 0.5;
             if calc.percent == 0.0 {
                 ComputedLetterSpacing::Px(px)
             } else if px == 0.0 {
@@ -1973,9 +1973,9 @@ pub fn resolve_letter_spacing_with_ch(
             own_line_height,
             ctx,
         ),
-        LetterSpacingValue::Calc(_) => ComputedLengthWithCh {
+        LetterSpacingValue::Calc(calc) => ComputedLengthWithCh {
             value: ComputedLength::ZERO,
-            ch_factor: None,
+            ch_factor: calc_ch_factor(calc),
         },
     }
 }
@@ -2261,6 +2261,22 @@ pub fn resolve_length_percentage(
     }
 }
 
+/// Authored `ch` coefficient of a mixed `calc()`, when it has one.
+///
+/// A calc that mixes `ch` with other terms keeps the coefficient as `ch_factor`
+/// provenance; [`calc_ch_offset`] gives the remaining absolute part.
+pub fn calc_ch_factor(calc: LengthPercentageCalc) -> Option<f32> {
+    (calc.ch != 0.0 && calc.ch.is_finite()).then_some(calc.ch)
+}
+
+/// Absolute (non-`ch`, non-percentage) part of a mixed `calc()` in CSS px.
+///
+/// A font-aware consumer resolves a `ch`-bearing calc as
+/// `ch_factor * advance + offset`, so a plain `Nch` value has offset zero.
+pub fn calc_ch_offset(calc: LengthPercentageCalc, font_size: ComputedLength) -> f32 {
+    calc.px + calc.em * font_size.0
+}
+
 /// Resolve the deferred `em` coefficient in a `text-indent` calc against the
 /// element's computed font size. Percentages remain unresolved for used-value
 /// processing. A pure result is collapsed to `Px` or `Percent`; only a mixed
@@ -2269,7 +2285,9 @@ pub fn resolve_text_indent_calc(
     specified: LengthPercentageCalc,
     font_size: ComputedLength,
 ) -> ComputedTextIndent {
-    let px = specified.px + specified.em * font_size.0;
+    // `ch` keeps only the `0.5em` fallback here; the font-aware consumer
+    // replaces it using the factor and offset recorded by the caller.
+    let px = specified.px + specified.em * font_size.0 + specified.ch * font_size.0 * 0.5;
     if specified.percent == 0.0 {
         ComputedTextIndent::Px(px)
     } else if px == 0.0 {
@@ -3149,6 +3167,7 @@ pub fn lift_text_indent(computed: ComputedTextIndent) -> TextIndentLength {
             percent: value.percent,
             px: value.px,
             em: 0.0,
+            ch: 0.0,
         }),
     }
 }
@@ -3201,6 +3220,7 @@ pub fn lift_letter_spacing(computed: ComputedLetterSpacing) -> LetterSpacingValu
             percent: calc.percent,
             px: calc.px,
             em: 0.0,
+            ch: 0.0,
         }),
     }
 }

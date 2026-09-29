@@ -819,6 +819,7 @@ pub(super) fn absolutize_in_page_context(
                             percent: calc.percent,
                             px: calc.px,
                             em: 0.0,
+                            ch: 0.0,
                         })
                     }
                 },

@@ -3189,14 +3189,19 @@ fn measured_text_indent_px(
     probes: &mut HashMap<(String, u32, u32, u8), f32>,
 ) -> Option<f32> {
     let factor = cv.text_indent_ch_factor?;
-    Some(measured_ch_length_px(
+    let measured = measured_ch_length_px(
         factor,
         cv.text_indent_ch_font.as_ref(),
         cv,
         fonts,
         layout_cx,
         probes,
-    ))
+    ) + cv.text_indent_ch_offset;
+    Some(if measured.is_nan() {
+        0.0
+    } else {
+        measured.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+    })
 }
 
 pub(crate) fn bounded_text_indent_amount(
@@ -3207,7 +3212,12 @@ pub(crate) fn bounded_text_indent_amount(
     let raw = match value {
         ComputedTextIndent::Px(px) => measured.unwrap_or(px),
         ComputedTextIndent::Percent(percent) => containing_width * percent / 100.0,
-        ComputedTextIndent::Calc(calc) => calc.px + containing_width * calc.percent / 100.0,
+        // A measured `ch` calc already folds its absolute part into `measured`,
+        // so only the percentage term is added on top.
+        ComputedTextIndent::Calc(calc) => match measured {
+            Some(measured) => measured + containing_width * calc.percent / 100.0,
+            None => calc.px + containing_width * calc.percent / 100.0,
+        },
     };
     if raw.is_nan() {
         0.0
@@ -5233,6 +5243,8 @@ pub(crate) fn preshape_text(
         // Preserve authored `ch` so the shaping font's `0` advance can replace
         // the style-layer fallback before Parley lays out the text.
         letter_spacing_ch_factor: Option<f32>,
+        // Absolute part of a `ch`-bearing calc, added to the measured advance.
+        letter_spacing_ch_offset: f32,
         // Font that declared an inherited `ch` letter-spacing.
         letter_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         // Style-layer fallback in CSS px; replaced with a measured `ch`
@@ -5240,6 +5252,7 @@ pub(crate) fn preshape_text(
         word_spacing_raw: f32,
         // Preserve the authored unit because `ComputedLength` alone loses it.
         word_spacing_ch_factor: Option<f32>,
+        word_spacing_ch_offset: f32,
         word_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
@@ -5261,9 +5274,11 @@ pub(crate) fn preshape_text(
         metrics_style: StyleFontStyle,
         metrics_letter_spacing_raw: f32,
         metrics_letter_spacing_ch_factor: Option<f32>,
+        metrics_letter_spacing_ch_offset: f32,
         metrics_letter_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         metrics_word_spacing_raw: f32,
         metrics_word_spacing_ch_factor: Option<f32>,
+        metrics_word_spacing_ch_offset: f32,
         metrics_word_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         simple_pre_block: bool,
         // Preserve the metric quantization used by a simple pre block when
@@ -5690,9 +5705,11 @@ pub(crate) fn preshape_text(
             line_height_raw: cv.line_height,
             letter_spacing_raw: cv.letter_spacing.px(),
             letter_spacing_ch_factor: cv.letter_spacing_ch_factor,
+            letter_spacing_ch_offset: cv.letter_spacing_ch_offset,
             letter_spacing_ch_font: cv.letter_spacing_ch_font.clone(),
             word_spacing_raw: cv.word_spacing.px(),
             word_spacing_ch_factor: cv.word_spacing_ch_factor,
+            word_spacing_ch_offset: cv.word_spacing_ch_offset,
             word_spacing_ch_font: cv.word_spacing_ch_font.clone(),
             tab_size: cv.tab_size,
             white_space: cv.white_space,
@@ -5715,9 +5732,11 @@ pub(crate) fn preshape_text(
             metrics_style: mcv.font_style,
             metrics_letter_spacing_raw: mcv.letter_spacing.px(),
             metrics_letter_spacing_ch_factor: mcv.letter_spacing_ch_factor,
+            metrics_letter_spacing_ch_offset: mcv.letter_spacing_ch_offset,
             metrics_letter_spacing_ch_font: mcv.letter_spacing_ch_font.clone(),
             metrics_word_spacing_raw: mcv.word_spacing.px(),
             metrics_word_spacing_ch_factor: mcv.word_spacing_ch_factor,
+            metrics_word_spacing_ch_offset: mcv.word_spacing_ch_offset,
             metrics_word_spacing_ch_font: mcv.word_spacing_ch_font.clone(),
             simple_pre_block,
             simple_preserved_run,
@@ -5746,7 +5765,8 @@ pub(crate) fn preshape_text(
                     job.font_size_raw,
                     job.font_weight_raw,
                     job.font_style,
-                );
+                )
+                + job.letter_spacing_ch_offset;
         }
         if let Some(factor) = job.word_spacing_ch_factor {
             job.word_spacing_raw = factor
@@ -5759,7 +5779,8 @@ pub(crate) fn preshape_text(
                     job.font_size_raw,
                     job.font_weight_raw,
                     job.font_style,
-                );
+                )
+                + job.word_spacing_ch_offset;
         }
         if let Some(factor) = job.metrics_letter_spacing_ch_factor {
             job.metrics_letter_spacing_raw = factor
@@ -5772,7 +5793,8 @@ pub(crate) fn preshape_text(
                     job.metrics_size,
                     job.metrics_weight,
                     job.metrics_style,
-                );
+                )
+                + job.metrics_letter_spacing_ch_offset;
         }
         if let Some(factor) = job.metrics_word_spacing_ch_factor {
             job.metrics_word_spacing_raw = factor
@@ -5785,7 +5807,8 @@ pub(crate) fn preshape_text(
                     job.metrics_size,
                     job.metrics_weight,
                     job.metrics_style,
-                );
+                )
+                + job.metrics_word_spacing_ch_offset;
         }
         if !matches!(
             job.white_space,

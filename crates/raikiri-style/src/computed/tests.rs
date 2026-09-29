@@ -287,6 +287,7 @@ fn non_initial_parent() -> ComputedValues {
         // (as required for every field of non_initial_parent).
         text_indent: ComputedTextIndent::Px(9.0),
         text_indent_ch_factor: None,
+        text_indent_ch_offset: 0.0,
         text_indent_ch_font: None,
         text_indent_ch_inherited: false,
         text_indent_hanging: false,
@@ -442,10 +443,12 @@ fn non_initial_parent() -> ComputedValues {
         letter_spacing: ComputedLength(2.0),
         letter_spacing_computed: ComputedLetterSpacing::Px(2.0),
         letter_spacing_ch_factor: None,
+        letter_spacing_ch_offset: 0.0,
         letter_spacing_ch_font: None,
         word_spacing: ComputedLength(4.0),
         word_spacing_computed: ComputedLetterSpacing::Px(4.0),
         word_spacing_ch_factor: None,
+        word_spacing_ch_offset: 0.0,
         word_spacing_ch_font: None,
         // CSS Text Module Level 3 §4.2: differs from the initial `8`
         // (as required for every field of non_initial_parent).

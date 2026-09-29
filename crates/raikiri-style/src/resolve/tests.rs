@@ -354,6 +354,7 @@ fn letter_spacing_computed_value_preserves_percentages_and_calcs() {
                 percent: 0.0,
                 px: 10.0,
                 em: -0.5,
+                ch: 0.0,
             }),
             font_size,
             None,
@@ -367,6 +368,7 @@ fn letter_spacing_computed_value_preserves_percentages_and_calcs() {
                 percent: -15.0,
                 px: 10.0,
                 em: 0.0,
+                ch: 0.0,
             }),
             font_size,
             None,
@@ -388,6 +390,7 @@ fn letter_spacing_layout_fallback_remains_zero_for_deferred_values() {
             percent: -15.0,
             px: 10.0,
             em: 0.0,
+            ch: 0.0,
         }),
     ] {
         assert_eq!(
@@ -410,6 +413,7 @@ fn letter_spacing_lift_preserves_computed_form() {
             percent: -15.0,
             px: 10.0,
             em: 0.0,
+            ch: 0.0,
         }),
     );
     assert_eq!(
@@ -428,6 +432,7 @@ fn tab_size_calc_resolves_em_against_font_size() {
                 percent: 0.0,
                 px: 10.0,
                 em: 0.5,
+                ch: 0.0,
             }),
             font_size,
             None,
@@ -448,6 +453,7 @@ fn tab_size_calc_clamps_negative_derived_to_zero() {
                 percent: 0.0,
                 px: 10.0,
                 em: -1.0,
+                ch: 0.0,
             }),
             font_size,
             None,
@@ -1284,6 +1290,7 @@ fn lift_text_indent_calc_does_not_reapply_parent_em_in_child() {
             percent: 50.0,
             px: 60.0,
             em: 0.0,
+            ch: 0.0,
         }),
     );
 }
@@ -1295,7 +1302,8 @@ fn resolve_text_indent_calc_collapses_pure_length_and_preserves_mixed_calc() {
             LengthPercentageCalc {
                 percent: 0.0,
                 px: 10.0,
-                em: 0.5
+                em: 0.5,
+                ch: 0.0,
             },
             ComputedLength(40.0),
         ),
@@ -1306,7 +1314,8 @@ fn resolve_text_indent_calc_collapses_pure_length_and_preserves_mixed_calc() {
             LengthPercentageCalc {
                 percent: 50.0,
                 px: 60.0,
-                em: 0.0
+                em: 0.0,
+                ch: 0.0,
             },
             ComputedLength(40.0),
         ),
@@ -1598,6 +1607,7 @@ fn text_underline_offset_calc_resolves_em_and_retains_mixed_percentages() {
                 percent: 0.0,
                 px: -8.0,
                 em: 2.0,
+                ch: 0.0,
             },
             ComputedTextUnderlineOffset::Length(ComputedLength(24.0)),
         ),
@@ -1606,6 +1616,7 @@ fn text_underline_offset_calc_resolves_em_and_retains_mixed_percentages() {
                 percent: -50.0,
                 px: 0.0,
                 em: 2.0,
+                ch: 0.0,
             },
             ComputedTextUnderlineOffset::Calc(CalcLengthPercentage {
                 percent: -50.0,
@@ -1617,6 +1628,7 @@ fn text_underline_offset_calc_resolves_em_and_retains_mixed_percentages() {
                 percent: 200.0,
                 px: -8.0,
                 em: 0.0,
+                ch: 0.0,
             },
             ComputedTextUnderlineOffset::Calc(CalcLengthPercentage {
                 percent: 200.0,
@@ -1628,6 +1640,7 @@ fn text_underline_offset_calc_resolves_em_and_retains_mixed_percentages() {
                 percent: 200.0,
                 px: 0.0,
                 em: -0.5,
+                ch: 0.0,
             },
             ComputedTextUnderlineOffset::Calc(CalcLengthPercentage {
                 percent: 200.0,

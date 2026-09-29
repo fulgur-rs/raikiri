@@ -58,19 +58,20 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent, ResolveContext,
-    empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
-    lift_font_size, lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent,
-    lift_text_shadow_item, lift_word_spacing, resolve_background_image, resolve_background_size,
-    resolve_border, resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item,
-    resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
-    resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_tab_size, resolve_text_decoration_inset,
-    resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
-    resolve_text_underline_offset, resolve_transform_function, resolve_vertical_align,
-    resolve_word_spacing, resolve_word_spacing_with_ch, used_line_height_length,
+    calc_ch_factor, calc_ch_offset, empty_computed_box_shadow_list,
+    empty_computed_text_shadow_list, lift_border_spacing, lift_font_size, lift_letter_spacing,
+    lift_line_height, lift_tab_size, lift_text_indent, lift_text_shadow_item, lift_word_spacing,
+    resolve_background_image, resolve_background_size, resolve_border, resolve_border_radius,
+    resolve_border_spacing, resolve_box_shadow_item, resolve_column_width, resolve_css_position,
+    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
+    resolve_grid_template_tracks, resolve_length, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
+    resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
+    resolve_line_height, resolve_margin_length_or_auto, resolve_outline, resolve_tab_size,
+    resolve_text_decoration_inset, resolve_text_decoration_thickness, resolve_text_indent_calc,
+    resolve_text_shadow_item, resolve_text_underline_offset, resolve_transform_function,
+    resolve_vertical_align, resolve_word_spacing, resolve_word_spacing_with_ch,
+    used_line_height_length,
 };
 
 /// Per-node values after applying cascade winners but before absolutization.
@@ -244,6 +245,10 @@ pub struct SpecifiedValues {
     pub text_indent: TextIndentLength,
     /// Authored `ch` factor retained through inheritance for the layout sink.
     pub text_indent_ch_factor: Option<f32>,
+    /// Absolute part (px) of a `ch`-bearing `calc()` for `text-indent`, paired with
+    /// the factor: a font-aware consumer resolves it as
+    /// `factor * advance + offset`. Zero for a plain `Nch` value.
+    pub text_indent_ch_offset: f32,
     /// Source font for an inherited `ch` value.
     pub text_indent_ch_font: Option<ChFontKey>,
     /// Whether this value was inherited from an ancestor's `text-indent: ch`.
@@ -411,6 +416,10 @@ pub struct SpecifiedValues {
     /// Authored `ch` factor retained through inheritance so the text-layout
     /// sink can replace the style fallback with a font metric.
     pub letter_spacing_ch_factor: Option<f32>,
+    /// Absolute part (px) of a `ch`-bearing `calc()` for `letter-spacing`, paired with
+    /// the factor: a font-aware consumer resolves it as
+    /// `factor * advance + offset`. Zero for a plain `Nch` value.
+    pub letter_spacing_ch_offset: f32,
     /// Font that declared an inherited `ch` [`Self::letter_spacing_ch_factor`],
     /// so descendants measure it with that font rather than their own.
     pub letter_spacing_ch_font: Option<ChFontKey>,
@@ -420,6 +429,10 @@ pub struct SpecifiedValues {
     /// Authored `ch` factor retained through inheritance so the text-layout
     /// sink can replace the style-layer fallback with a font metric.
     pub word_spacing_ch_factor: Option<f32>,
+    /// Absolute part (px) of a `ch`-bearing `calc()` for `word-spacing`, paired with
+    /// the factor: a font-aware consumer resolves it as
+    /// `factor * advance + offset`. Zero for a plain `Nch` value.
+    pub word_spacing_ch_offset: f32,
     /// Font that declared an inherited `ch` [`Self::word_spacing_ch_factor`].
     pub word_spacing_ch_font: Option<ChFontKey>,
     /// **Specified** `tab-size`; phase 3 ([`resolve_tab_size`]) absolutizes `<length>` against
@@ -704,6 +717,7 @@ impl SpecifiedValues {
             // CSS Text 3 §8.1: text-indent is initially `0`.
             text_indent: TextIndentLength::Length(Length::Px(0.0)),
             text_indent_ch_factor: None,
+            text_indent_ch_offset: 0.0,
             text_indent_ch_font: None,
             text_indent_ch_inherited: false,
             text_indent_hanging: false,
@@ -809,9 +823,11 @@ impl SpecifiedValues {
             // CSS Text 3 §7.2 / §7.1: both letter-spacing and word-spacing are initially `normal`.
             letter_spacing: LetterSpacingValue::Normal,
             letter_spacing_ch_factor: None,
+            letter_spacing_ch_offset: 0.0,
             letter_spacing_ch_font: None,
             word_spacing: WordSpacingValue::Normal,
             word_spacing_ch_factor: None,
+            word_spacing_ch_offset: 0.0,
             word_spacing_ch_font: None,
             // CSS Text Module Level 3 §4.2: tab-size is initially `8`.
             tab_size: TabSize::Number(8.0),
@@ -1047,6 +1063,7 @@ impl SpecifiedValues {
             // terms without reapplying the parent's em basis to the child.
             text_indent: lift_text_indent(parent.text_indent),
             text_indent_ch_factor: parent.text_indent_ch_factor,
+            text_indent_ch_offset: parent.text_indent_ch_offset,
             text_indent_ch_font: parent.text_indent_ch_font.clone(),
             text_indent_ch_inherited: parent.text_indent_ch_inherited
                 || parent.text_indent_ch_factor.is_some(),
@@ -1091,9 +1108,11 @@ impl SpecifiedValues {
             // separate in `ComputedValues::word_spacing`.
             letter_spacing: lift_letter_spacing(parent.letter_spacing_computed),
             letter_spacing_ch_factor: parent.letter_spacing_ch_factor,
+            letter_spacing_ch_offset: parent.letter_spacing_ch_offset,
             letter_spacing_ch_font: parent.letter_spacing_ch_font.clone(),
             word_spacing: lift_word_spacing(parent.word_spacing_computed),
             word_spacing_ch_factor: parent.word_spacing_ch_factor,
+            word_spacing_ch_offset: parent.word_spacing_ch_offset,
             word_spacing_ch_font: parent.word_spacing_ch_font.clone(),
             // CSS Text Module Level 3 §4.2: tab-size is inherited. Lift a computed `<number>` or
             // `<length>` into its specified representation, as for `lift_line_height`.
@@ -1162,6 +1181,7 @@ impl SpecifiedValues {
                         percent: value.percent,
                         px: value.px,
                         em: 0.0,
+                        ch: 0.0,
                     })
                 }
             },
@@ -1559,15 +1579,24 @@ impl SpecifiedValues {
                 };
                 (value, resolved.ch_factor)
             }
-            TextIndentLength::Calc(calc) => (resolve_text_indent_calc(calc, font_size), None),
+            TextIndentLength::Calc(calc) => (
+                resolve_text_indent_calc(calc, font_size),
+                calc_ch_factor(calc),
+            ),
         };
-        // The font-metric ch fallback is only for a plain length with recorded
-        // ch provenance. A calc keeps and resolves its own percent/px/em terms.
-        let text_indent_ch_factor = match self.text_indent {
-            TextIndentLength::Length(_) => self
-                .text_indent_ch_factor
-                .or(authored_text_indent_ch_factor),
-            TextIndentLength::Calc(_) => None,
+        // Font-metric `ch` provenance comes from a plain `Nch` length or from
+        // a `ch` term inside a calc; an inherited value keeps the ancestor's.
+        let text_indent_ch_factor = self
+            .text_indent_ch_factor
+            .or(authored_text_indent_ch_factor);
+        // A calc authored on this node contributes its own absolute part; an
+        // inherited one keeps the ancestor's, and a plain `Nch` has none.
+        let text_indent_ch_offset = match self.text_indent {
+            TextIndentLength::Calc(calc) if authored_text_indent_ch_factor.is_some() => {
+                calc_ch_offset(calc, font_size)
+            }
+            _ if authored_text_indent_ch_factor.is_some() => 0.0,
+            _ => self.text_indent_ch_offset,
         };
         let own_ch_font = || ChFontKey {
             family: self.font_family.clone(),
@@ -1587,11 +1616,25 @@ impl SpecifiedValues {
                     None
                 }
             };
+        let letter_spacing_ch_offset = match self.letter_spacing {
+            LetterSpacingValue::Calc(calc) if letter_spacing.ch_factor.is_some() => {
+                calc_ch_offset(calc, font_size)
+            }
+            _ if letter_spacing.ch_factor.is_some() => 0.0,
+            _ => self.letter_spacing_ch_offset,
+        };
         let letter_spacing_ch_font = declaring_ch_font(
             letter_spacing.ch_factor,
             self.letter_spacing_ch_factor,
             &self.letter_spacing_ch_font,
         );
+        let word_spacing_ch_offset = match self.word_spacing {
+            LetterSpacingValue::Calc(calc) if word_spacing.ch_factor.is_some() => {
+                calc_ch_offset(calc, font_size)
+            }
+            _ if word_spacing.ch_factor.is_some() => 0.0,
+            _ => self.word_spacing_ch_offset,
+        };
         let word_spacing_ch_font = declaring_ch_font(
             word_spacing.ch_factor,
             self.word_spacing_ch_factor,
@@ -1699,6 +1742,7 @@ impl SpecifiedValues {
             // comment above shows the inherited counterpart pattern).
             text_indent,
             text_indent_ch_factor,
+            text_indent_ch_offset,
             text_indent_ch_font,
             text_indent_ch_inherited: self.text_indent_ch_inherited,
             // Flags pass through untouched (no absolutization needed).
@@ -1933,10 +1977,12 @@ impl SpecifiedValues {
             // Preserve the `ch` provenance through inheritance for the
             // font-metric-aware text-layout consumer.
             letter_spacing_ch_factor: self.letter_spacing_ch_factor.or(letter_spacing.ch_factor),
+            letter_spacing_ch_offset,
             letter_spacing_ch_font,
             word_spacing: word_spacing.value,
             word_spacing_computed,
             word_spacing_ch_factor: self.word_spacing_ch_factor.or(word_spacing.ch_factor),
+            word_spacing_ch_offset,
             word_spacing_ch_font,
             // `1lh` in tab-size uses own_line_height like any box property (CSS Text Module Level
             // 3 §4.2 specifies no special line-height reference).

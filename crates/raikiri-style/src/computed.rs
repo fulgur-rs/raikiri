@@ -586,6 +586,10 @@ pub struct ComputedValues {
     pub text_indent: ComputedTextIndent,
     /// Authored `ch` factor retained for the font-metric-aware layout sink.
     pub text_indent_ch_factor: Option<f32>,
+    /// Absolute part (px) of a `ch`-bearing `calc()` for `text-indent`, paired with
+    /// the factor: a font-aware consumer resolves it as
+    /// `factor * advance + offset`. Zero for a plain `Nch` value.
+    pub text_indent_ch_offset: f32,
     /// Source font for an inherited `ch` value.
     pub text_indent_ch_font: Option<ChFontKey>,
     /// Whether the `ch` value was inherited from an ancestor.
@@ -1092,6 +1096,10 @@ pub struct ComputedValues {
     /// Authored `ch` factor for `letter-spacing`, retained so the text-layout
     /// sink can replace the style fallback with the shaping font's `0` advance.
     pub letter_spacing_ch_factor: Option<f32>,
+    /// Absolute part (px) of a `ch`-bearing `calc()` for `letter-spacing`, paired with
+    /// the factor: a font-aware consumer resolves it as
+    /// `factor * advance + offset`. Zero for a plain `Nch` value.
+    pub letter_spacing_ch_offset: f32,
     /// Font that declared [`Self::letter_spacing_ch_factor`]. The computed
     /// value is an absolute length, so an inherited `ch` measures with the
     /// declaring element's font, not the inheriting element's.
@@ -1108,6 +1116,10 @@ pub struct ComputedValues {
     /// inheritance so the text-layout sink can replace the style-layer
     /// fallback with the shaping font's `0` glyph advance.
     pub word_spacing_ch_factor: Option<f32>,
+    /// Absolute part (px) of a `ch`-bearing `calc()` for `word-spacing`, paired with
+    /// the factor: a font-aware consumer resolves it as
+    /// `factor * advance + offset`. Zero for a plain `Nch` value.
+    pub word_spacing_ch_offset: f32,
     /// Font that declared [`Self::word_spacing_ch_factor`]; see
     /// [`Self::letter_spacing_ch_font`].
     pub word_spacing_ch_font: Option<ChFontKey>,
@@ -1801,6 +1813,7 @@ impl ComputedValues {
             // CSS Text 3 §8.1: initial text-indent is `0`.
             text_indent: ComputedTextIndent::Px(0.0),
             text_indent_ch_factor: None,
+            text_indent_ch_offset: 0.0,
             text_indent_ch_font: None,
             text_indent_ch_inherited: false,
             text_indent_hanging: false,
@@ -1927,10 +1940,12 @@ impl ComputedValues {
             letter_spacing: ComputedLength::ZERO,
             letter_spacing_computed: ComputedLetterSpacing::Px(0.0),
             letter_spacing_ch_factor: None,
+            letter_spacing_ch_offset: 0.0,
             letter_spacing_ch_font: None,
             word_spacing: ComputedLength::ZERO,
             word_spacing_computed: ComputedWordSpacing::Px(0.0),
             word_spacing_ch_factor: None,
+            word_spacing_ch_offset: 0.0,
             word_spacing_ch_font: None,
             // CSS Text 3 §4.2: initial tab-size is `8`.
             tab_size: ComputedTabSize::Number(8.0),
