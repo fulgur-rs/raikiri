@@ -40,10 +40,10 @@ fn parse_hello_world_produces_expected_tree() {
     let options = empty_options();
     let uncascaded = parse(&html[..], &options).expect("parse ok");
 
-    // html > body > p > "Hello" の tree を assert。
-    // 注意: html5ever tokenizer は text を複数 AppendText に分割する可能性
-    // があるため、Text children を concat して assert する (現状 adjacent
-    // Text の auto-merge は未実装、現在の実装範囲の上限)。
+    // Assert the html > body > p > "Hello" tree.
+    // Note: the html5ever tokenizer may split text into multiple AppendText calls,
+    // so concatenate Text children before asserting. Adjacent Text nodes are not
+    // auto-merged yet; this is a current implementation limit.
     let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p element exists");
     let mut collected = String::new();
     for c in uncascaded.dom.child_ids(p_id) {
@@ -75,11 +75,11 @@ fn parse_extracts_style_element_content() {
 
 #[test]
 fn parse_skips_link_stylesheet_when_no_network_provider() {
-    // 外部 <link rel="stylesheet"> の fetch は
-    // `ParseOptions::network` が `Some` の時のみ行われる opt-in 機能。
-    // `network: None` (empty_options()) の場合は href の解決すら試みず、
-    // stylesheet_sources は空のまま — Consumer が network capability を
-    // 渡さない既存 caller の挙動は不変。
+    // Fetching external <link rel="stylesheet"> resources is opt-in and happens
+    // only when `ParseOptions::network` is `Some`. With `network: None`
+    // (empty_options()), even href resolution is skipped and stylesheet_sources
+    // remains empty. Existing callers that provide no network capability keep
+    // the same behavior.
     let html = br#"<html><head><link rel="stylesheet" href="foo.css"></head><body>x</body></html>"#;
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -110,11 +110,11 @@ fn parse_skips_link_stylesheet_when_no_network_provider() {
 }
 
 /// `<link rel="stylesheet">` fetch → CSS text →
-/// `UncascadedDocument.stylesheet_sources` の integration を、mock
-/// `NetworkProvider` を使って end-to-end で検証する (実 CSS parsing /
-/// cascade 統合は raikiri-style / raikiri umbrella crate 側、ここでは
-/// raikiri-html の責務である「検出 → fetch → doc.stylesheet_sources
-/// への統合」までを見る)。
+/// Test the integration of `UncascadedDocument.stylesheet_sources`
+/// end to end using a mock `NetworkProvider`. CSS parsing and cascade
+/// integration belong to raikiri-style and the raikiri umbrella crate; this
+/// test covers raikiri-html’s responsibility: detection, fetching, and
+/// incorporation into doc.stylesheet_sources.
 mod external_link_stylesheet_fetch_tests {
     use super::*;
     use raikiri_traits::{
@@ -435,8 +435,8 @@ mod external_link_stylesheet_fetch_tests {
     fn parse_applies_base_override_to_a_link_that_precedes_it_in_source_order() {
         // Known scope divergence from the HTML Standard's actual
         // processing model (documented on
-        // `parse.rs::fetch_external_stylesheets`, "<base> と <link> の
-        // 相対順序" bullet): per spec, a browser's streaming parser
+        // `parse.rs::fetch_external_stylesheets`, the bullet on the relative
+        // source order of <base> and <link>): per spec, a browser's streaming parser
         // fetches each <link>'s resource against the document base URL
         // *at the moment the <link> is inserted*, so a <link> before
         // the <base> in source order should resolve against
@@ -1005,8 +1005,8 @@ mod external_link_stylesheet_fetch_tests {
 fn parse_records_html_parse_warning_on_malformed_input() {
     use raikiri_traits::WarningKind;
 
-    // 明確に html5ever が非致命 parse error を報告する input:
-    // </p> だけの closing tag は "unexpected end tag" を trigger する。
+    // Input that reliably causes html5ever to report a nonfatal parse error:
+    // a lone </p> closing tag triggers "unexpected end tag".
     let html = b"</p>";
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse recovers");
@@ -1027,9 +1027,9 @@ fn parse_records_html_parse_warning_on_malformed_input() {
 
 #[test]
 fn parse_caps_html_parse_warnings_and_does_not_grow_past_cap() {
-    // html5ever は malformed input の 1 token あたり概ね 1 parse_error を
-    // 報告するため、cap が無いと attacker-controlled 個数の RenderWarning
-    // (owned String 持ち) が積み上がる (DoS)。
+    // html5ever reports roughly one parse_error per token of malformed input.
+    // Without a cap, an attacker could accumulate an unbounded number of
+    // RenderWarning entries (each owning a String), causing a DoS.
     let opts = empty_options();
     let default_cap = raikiri_traits::RenderLimits::default()
         .max_parse_warnings
@@ -1062,15 +1062,15 @@ fn parse_caps_html_parse_warnings_and_does_not_grow_past_cap() {
 
 #[test]
 fn raikiri_tree_sink_new_consults_custom_max_parse_warnings_cap() {
-    // `RaikiriTreeSink::new` の parameter が `parse()` の default 経路を
-    // 経由せず直接 `parse_error` の cap として使われることを検証する。
+    // Verify that the parameter to `RaikiriTreeSink::new` directly sets the
+    // `parse_error` cap, without going through the default `parse()` path.
     //
-    // cap=5 → last_real_slot=4 なので real warning は 4 件のみ記録され、
-    // 5 件目は「以降 suppress した」ことを示す synthetic entry に置き換わる
-    // (reserved-last-slot 契約、`RaikiriTreeSink::parse_error` doc 参照)。
-    // 50 個の `</x>` は raw parse error 数がこの cap を大きく上回る入力
-    // (`parse_caps_html_parse_warnings_and_does_not_grow_past_cap` と同じ
-    // input shape で、cap=1024 でも頭打ちになることが確認済み)。
+    // With cap=5, last_real_slot=4: record only four real warnings, then
+    // replace the fifth with a synthetic entry indicating further suppression
+    // (the reserved-last-slot contract; see `RaikiriTreeSink::parse_error` docs).
+    // The 50 `</x>` tags yield far more raw parse errors than this cap
+    // (the same input shape as `parse_caps_html_parse_warnings_and_does_not_grow_past_cap`,
+    // which also confirms that a cap of 1024 bounds the count).
     use raikiri_traits::WarningKind;
 
     let opts = empty_options();
@@ -1152,8 +1152,8 @@ fn raikiri_tree_sink_new_zero_cap_records_nothing_when_no_parse_errors_occur() {
 
 #[test]
 fn raikiri_tree_sink_new_cap_of_one_yields_only_the_synthetic_entry() {
-    // cap=1 は last_real_slot=0 なので real warning 用の slot が無く、
-    // 最初の parse_error 呼び出しで即座に synthetic entry が積まれる境界値。
+    // With cap=1, last_real_slot=0 leaves no slot for real warnings.
+    // The first parse_error call immediately records the synthetic entry.
     use raikiri_traits::WarningKind;
 
     let opts = empty_options();
@@ -1238,8 +1238,8 @@ fn parse_with_sink_via_transparent_wrapper() {
     use std::borrow::Cow;
     use std::cell::Ref;
 
-    /// Consumer wrapper example: RaikiriTreeSink を丸ごと delegate するだけの
-    /// 透過 sink。sanitize / rewrite の hook point としては何もしない。
+    /// Consumer wrapper example: a transparent sink that delegates everything
+    /// to RaikiriTreeSink. It does nothing at the sanitize/rewrite hook point.
     struct TransparentSink {
         inner: RaikiriTreeSink,
         observed_elements: std::cell::Cell<u32>,
@@ -1335,17 +1335,17 @@ fn parse_with_sink_via_transparent_wrapper() {
 
 #[test]
 fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit() {
-    // Contract rewrite (以前: pseudo-tag "#comment"
-    // Element を strip する契約 — 現在は `NodeData::Comment` variant として
-    // 恒久 tree 内保持 + `mark_in_document_flags` step 2 で
-    // IS_IN_DOCUMENT bit clear + Element でないので cascade/paint の Element
-    // gate で skip、の 2 段 gate に置換済み)。
+    // Contract rewrite: previously, pseudo-tag "#comment" Elements were stripped.
+    // Now `NodeData::Comment` nodes persist in the tree. In step 2,
+    // `mark_in_document_flags` clears IS_IN_DOCUMENT; the cascade/paint Element
+    // gate also skips them because they are not Elements. These two gates
+    // replace the old stripping contract.
     //
-    // 旧 test 名 `parse_strips_comment_nodes_from_dom_tree` は "#comment"
-    // pseudo-tag Element の非存在を scan していたが、契約変更後は Comment が
-    // Element でない → as_element() == None → scan は自動で "見つからない"
-    // → vacuously pass するため active positive assertion に rewrite する
-    // (run-and-see-pass に頼らない coverage を確保するため)。
+    // The old test `parse_strips_comment_nodes_from_dom_tree` scanned for an
+    // absent "#comment" pseudo-tag Element. With the new contract, Comment is
+    // not an Element, so as_element() == None and the scan would pass vacuously.
+    // Use positive assertions instead to guarantee coverage without relying
+    // on simply running the old test and seeing a pass.
     use raikiri_traits::{Dom, Node};
 
     let html = b"<html><body><!-- a comment --><p>hi</p></body></html>";
@@ -1353,7 +1353,7 @@ fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit()
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     let doc = &uncascaded.dom;
 
-    // (a) arena に必ず 1 個以上 Comment kind の node が存在する。
+    // (a) At least one Comment-kind node exists in the arena.
     let mut comment_ids: Vec<usize> = Vec::new();
     for i in 0..doc.node_count() {
         let n = doc.node(raikiri_traits::NodeId::new(i as u64)).unwrap();
@@ -1371,26 +1371,26 @@ fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit()
         .node(raikiri_traits::NodeId::new(comment_id as u64))
         .unwrap();
 
-    // (b) Comment は as_element() == None (Two-way invariant)。
+    // (b) A Comment has as_element() == None (the two-way invariant).
     assert!(
         comment_node.as_element().is_none(),
         "NodeKind::Comment must project as_element() == None (Two-way invariant)"
     );
 
-    // (c) sink.finish() 後 mark_in_document_flags は Comment の
-    //     IS_IN_DOCUMENT bit を clear している。
+    // (c) After sink.finish(), mark_in_document_flags has cleared the
+    //     Comment node’s IS_IN_DOCUMENT bit.
     assert!(
         !comment_node.is_in_document(),
         "Comment's IS_IN_DOCUMENT bit must be cleared after parse"
     );
 
-    // (d) Comment は tree 内に persist している (body の children に含まれる)。
-    //     旧挙動: strip 済で detach されていたため、body の直接子は <p> のみ
-    //     だった。新挙動: body の children = `[Comment, <p>]` (source order)。
-    //     NB: `Dom::child_ids` と `TraversePartialTree::child_ids` の
-    //     inherent-method ambiguity 回避のため UFCS で trait を明示する。
-    //     raw arena children を見たいので Dom (unfiltered) を選択、次段の
-    //     taffy filter test は TraversePartialTree を明示する。
+    // (d) The Comment persists in the tree, among the body’s children.
+    //     Previously it was detached by stripping, leaving only <p> as a
+    //     direct child. Now the body children are `[Comment, <p>]` in source order.
+    //     Use UFCS to disambiguate the `Dom::child_ids` and
+    //     `TraversePartialTree::child_ids` methods. Choose the unfiltered Dom
+    //     to inspect raw arena children; the next taffy filter test explicitly
+    //     uses TraversePartialTree.
     let body_id = find_first_by_tag(doc, "body").expect("body exists");
     let body_kids: Vec<usize> = Dom::child_ids(doc, body_id)
         .map(|id| id.0 as usize)
@@ -1400,12 +1400,12 @@ fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit()
         "Comment node must persist as a child of body (not physically stripped); body kids = {body_kids:?}"
     );
 
-    // (e) taffy layout tree からは leak しない。TaffyChildIter は
-    //     is_in_document() filter (raikiri-dom/src/taffy_impl.rs) を
-    //     経由するため、body の taffy child_count = 1 (`<p>` only)。
-    //     この behaviour は既に `taffy_child_ids_and_count_filter_out_template_descendants`
-    //     で check されているが、Comment/PI 経路の独立 regression として
-    //     ここでも assert する。
+    // (e) The Comment does not leak into the taffy layout tree. TaffyChildIter
+    //     uses the is_in_document() filter (raikiri-dom/src/taffy_impl.rs),
+    //     so the body’s taffy child_count is 1 (only `<p>`). This behavior is
+    //     already checked by `taffy_child_ids_and_count_filter_out_template_descendants`,
+    //     but assert it here independently for the Comment/PI path as a
+    //     regression check.
     use taffy::TraversePartialTree;
     let body_taffy_id = taffy::NodeId::from(body_id.0 as usize);
     assert_eq!(
@@ -1586,9 +1586,9 @@ fn parse_wires_no_quirks_through_document_to_cascade_case_sensitive() {
 
 #[test]
 fn parse_survives_table_foster_parenting() {
-    // <table> 直下 text の foster parenting は html5ever が
-    // append_before_sibling(AppendText(...)) を trigger する典型 case。
-    // panic せず parse が完走することのみ verify。
+    // Foster parenting of text directly under <table> is a typical case
+    // that triggers append_before_sibling(AppendText(...)) in html5ever.
+    // Only verify that parsing completes without panicking.
     let html = b"<table>stray text<tr><td>x</td></tr></table>";
     let opts = empty_options();
     let _ = parse(&html[..], &opts).expect("parse should not panic");
@@ -1676,13 +1676,56 @@ fn parse_skips_style_inside_template_element() {
 }
 
 #[test]
+fn stylesheet_collection_sees_style_appended_directly_under_template() {
+    // A `<style>` appended directly under a `<template>` element (the DOM
+    // `appendChild` shape scripts use) is an ordinary light-DOM child: it
+    // stays in-document, so head stylesheet collection must see it. A
+    // `<style>` in the detached contents fragment stays inert and must not
+    // be collected.
+    use crate::sink::{HeadStylesheetSource, collect_head_stylesheet_sources};
+
+    let mut doc = raikiri_dom::Document::new();
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let head = doc.append_element(Some(html), "head", taffy::Style::default(), None::<&str>);
+    let tmpl = doc.append_element(
+        Some(head),
+        "template",
+        taffy::Style::default(),
+        None::<&str>,
+    );
+    let real_style = doc.append_element(Some(tmpl), "style", taffy::Style::default(), None::<&str>);
+    doc.append_text(real_style, "p{color:green}");
+    let frag = doc.allocate_template_fragment_root(tmpl);
+    let inert_style =
+        doc.append_element(Some(frag), "style", taffy::Style::default(), None::<&str>);
+    doc.append_text(inert_style, "p{color:red}");
+    doc.mark_in_document_flags();
+
+    let sources = collect_head_stylesheet_sources(&doc);
+    assert_eq!(
+        sources.len(),
+        1,
+        "only the real <template> child <style> must be collected, not the fragment one"
+    );
+    match &sources[0] {
+        HeadStylesheetSource::Inline { node_id } => assert_eq!(
+            node_id.0, real_style as u64,
+            "the collected <style> must be the real child"
+        ),
+        HeadStylesheetSource::External { .. } => {
+            panic!("a text <style> must collect as Inline, not External")
+        }
+    }
+}
+
+#[test]
 fn parse_marks_template_descendants_out_of_document() {
-    // <template> element 自身は flat tree の一員なので
-    // is_in_document()=true、その descendants (子孫の element / text) は
-    // false であることを parse 経路の bit populate で check する。
+    // The <template> element itself belongs to the flat tree, so
+    // is_in_document() is true. Check that parsing populates the bits for its
+    // descendants (elements and text) as false.
     //
-    // 現在の sink には mark_in_document_flags phase が無いため、default
-    // true が clear されず descendant も true になる → 失敗する failing test。
+    // Without a mark_in_document_flags phase in the sink, the default true
+    // bits on descendants would remain set, causing this test to fail.
     let html = b"<html><head></head><body>\
                      <template><p id=\"inner\">hi</p></template>\
                      </body></html>";
@@ -1736,8 +1779,8 @@ fn parse_marks_template_descendants_out_of_document() {
 
 #[test]
 fn parse_marks_body_children_in_document() {
-    // normal HTML (template 無し) を parse すると全 node が
-    // is_in_document()=true。default true が保たれる regression check。
+    // Parsing normal HTML without a template leaves is_in_document() true
+    // for every node. This regression check pins the default true value.
     let html = b"<html><head></head><body><p>hi</p></body></html>";
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -1756,30 +1799,29 @@ fn parse_marks_body_children_in_document() {
 
 #[test]
 fn parse_wires_template_contents_to_detached_fragment_root() {
-    // sink が `<template>` を作った時 fragment
-    // root を eager allocate し、template element の `template_contents`
-    // slot に arena index を wire する。html5ever は以降
-    // `get_template_contents(template_handle)` の戻り値を append parent と
-    // して使うため、template contents は fragment root の子として積まれ
-    // (template element 自身の children は空)、Document root からは
-    // reachable でなくなる。この smoke test は次を check する:
+    // When the sink creates a `<template>`, it eagerly allocates a fragment
+    // root and wires its arena index into the template element’s
+    // `template_contents` slot. html5ever then uses the result of
+    // `get_template_contents(template_handle)` as the append parent, placing
+    // contents under the fragment root rather than the template element. The
+    // contents are no longer reachable from the Document root. Check:
     //
-    // 1. template_contents は Some(idx) を返し、idx != template arena index
-    //    (別 arena slot に fragment root が実在する)
-    // 2. template element の arena children は空 (children は fragment root
-    //    へ流れた: 以前の挙動では template 直下に <span> が居た)
-    // 3. fragment root の arena children に <span> が含まれる (reshape 到達点)
-    // 4. template 自身は is_in_document()=true、fragment root
-    //    と <span>、その text は is_in_document()=false (Document root から
-    //    reachable でないため mark_in_document_flags で clear される)
+    // 1. template_contents returns Some(idx), with idx != template arena index
+    //    (the fragment root has its own arena slot).
+    // 2. The template element has no arena children: contents went to the
+    //    fragment root (previously <span> sat directly under the template).
+    // 3. The fragment root’s arena children include <span> (the reshape result).
+    // 4. The template itself has is_in_document()=true; the fragment root,
+    //    <span>, and its text have is_in_document()=false because they are not
+    //    reachable from the Document root and mark_in_document_flags clears them.
     let html = b"<html><body><template><span>x</span></template></body></html>";
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     let doc = &uncascaded.dom;
 
-    // template element を linear scan で拾う (get_template_contents に相当
-    // する raikiri-traits API は無いため、arena 直参照で node.template_contents()
-    // を読む)。
+    // Find the template element by linear scan. raikiri-traits has no API
+    // equivalent to get_template_contents, so read node.template_contents()
+    // directly from the arena.
     let mut template_id: Option<usize> = None;
     let mut span_id: Option<usize> = None;
     for id_u in 0..doc.node_count() {
@@ -1801,24 +1843,23 @@ fn parse_wires_template_contents_to_detached_fragment_root() {
         .template_contents()
         .expect("template_contents slot must be populated by sink");
 
-    // (1) fragment root は template element と別 arena slot に居る。
+    // (1) The fragment root occupies a different arena slot from the template.
     assert_ne!(
         frag_root_id, template_id,
         "fragment root must be a distinct arena node, not the template element itself"
     );
 
-    // (2) template element 自身の arena children は空 (reshape で全ての
-    // contents が fragment root に付いた)。
+    // (2) The template itself has no arena children; reshaping attached all
+    //     contents to the fragment root.
     assert!(
         template_node.children.is_empty(),
         "template element's own arena children must be empty (contents belong to fragment root); got {:?}",
         template_node.children
     );
 
-    // (3) fragment root は NodeKind::DocumentFragment として存在する
-    //     (以前は "#document-fragment" pseudo-tag Element だった)。
-    //     as_element() == None、tag_name() == None (pseudo-tag pollution 廃止)、
-    //     しかし children slot は使えて <span> を保持する。
+    // (3) The fragment root exists as NodeKind::DocumentFragment, not the
+    //     former "#document-fragment" pseudo-tag Element. Its as_element()
+    //     and tag_name() return None, while its children slot holds <span>.
     let frag_root = doc
         .get_node(frag_root_id)
         .expect("fragment root should exist in arena");
@@ -1832,8 +1873,8 @@ fn parse_wires_template_contents_to_detached_fragment_root() {
         None,
         "fragment root must not carry a tag_name (Two-way invariant: non-Element kind → tag_name None)"
     );
-    // NodeRef 経由でも as_element() == None を confirm (dom_impl surface で
-    // Two-way invariant が保たれることを end-to-end で pin)。
+    // Also confirm as_element() == None through NodeRef, pinning the
+    // two-way invariant end to end at the dom_impl surface.
     {
         let frag_ref = doc
             .node(raikiri_traits::NodeId::new(frag_root_id as u64))
@@ -1849,9 +1890,9 @@ fn parse_wires_template_contents_to_detached_fragment_root() {
         frag_root.children
     );
 
-    // (4) template 自身は in_document、fragment root と
-    // <span> はどちらも out-of-document (Document root から reachable
-    // でないため `mark_in_document_flags` step 2 が set しない)。
+    // (4) The template is in-document; the fragment root and <span> are not.
+    //     They are unreachable from the Document root, so step 2 of
+    //     `mark_in_document_flags` does not set their bits.
     assert!(
         template_node.is_in_document(),
         "template element itself must be in_document"
@@ -1865,7 +1906,7 @@ fn parse_wires_template_contents_to_detached_fragment_root() {
         !span_node.is_in_document(),
         "<span> under fragment root must be out-of-document"
     );
-    // <span> の text child も out-of-document。
+    // The <span> text child is also out-of-document.
     for &c in &span_node.children {
         let child = doc.get_node(c).expect("span child in-range");
         assert!(
@@ -1877,9 +1918,9 @@ fn parse_wires_template_contents_to_detached_fragment_root() {
 
 #[test]
 fn parse_marks_nested_template_descendants_out_of_document() {
-    // 深いネスト (template > div > span > text) でも
-    // in_document bit が subtree 全体に伝播する。single-pass DFS で
-    // in_template state が正しく引き継がれることを pin。
+    // Even with deep nesting (template > div > span > text), the
+    // in_document bit propagates across the entire subtree. Pin that a
+    // single-pass DFS carries the in_template state correctly.
     let html = b"<html><body>\
                      <template><div><span>x</span></div></template>\
                      </body></html>";
@@ -1910,24 +1951,21 @@ fn parse_marks_nested_template_descendants_out_of_document() {
 
 #[test]
 fn parse_then_cascade_skips_template_descendants() {
-    // cascade が template subtree を skip する silent bug fix
-    // regression check。詳細な cascaded map の shape reflection は raikiri-style
-    // 内部の unit test で担保するのが正道 (未存在なら別途追加)、この
-    // integration test は "parse → cascade の chain が template 内 element を
-    // 触っても error / panic しない" ことと、bit populate が cascade 呼び出し
-    // 前後で保たれることを check する。
+    // Regression check for the silent bug where cascade skipped the template
+    // subtree. Detailed checks of the cascaded map’s shape belong in
+    // raikiri-style unit tests (add them separately if missing). Here, check
+    // that parsing then cascading can visit an element inside a template
+    // without error or panic, and that its bits stay unchanged across cascade.
     //
-    // 追加 check: resolve_inheritance の
-    // is_in_document() gate 実装ミスは `cascade.computed.len() ==
-    // dom.node_count()` という contract (raikiri/src/lib.rs
-    // `html_document_cascade_populated_after_construct` が非-template
-    // document でのみ check していた) を template を含む document で破り得る
-    // — raikiri-dom::layout::preshape_text / raikiri-paint::text::draw_text_node
-    // は node_id で `cascade.computed[idx]` に直接 index するため、破れると
-    // OOB panic に繋がる。TestDoc 経由の raikiri-style 内部 unit test は
-    // is_in_document() が常に true な default 実装のため、この contract
-    // 破れを検出できない (parse 経由で実際に bit が false になる document
-    // でのみ再現する) — 本 integration test がそのカバレッジを担う。
+    // Additional check: a broken is_in_document() gate in resolve_inheritance
+    // may violate the `cascade.computed.len() == dom.node_count()` contract.
+    // `html_document_cascade_populated_after_construct` in raikiri/src/lib.rs
+    // previously checked this only for documents without templates. Later
+    // phases index `cascade.computed[idx]` directly by node_id; a mismatch
+    // would panic out of bounds. raikiri-style unit tests using TestDoc
+    // cannot catch this: its default is_in_document() is always true. Only
+    // a parsed document can produce false bits; this integration test covers
+    // that case.
     let html = b"<html><head><style>p { color: red }</style></head><body>\
                      <p>outer</p>\
                      <template><p id=\"inner\">inner</p></template>\
@@ -1938,25 +1976,24 @@ fn parse_then_cascade_skips_template_descendants() {
     let cascade = raikiri_style::cascade(&uncascaded.dom, &tree)
         .expect("cascade must not error / panic on template subtree");
 
-    // Contract: cascade.computed.len() == dom.node_count() でなければ
-    // ならない — たとえ template 子孫が cascade gate で skip されても、
-    // index 契約 (raikiri-dom / raikiri-paint が node_id で直接 index) を
-    // 破ってはいけない。
+    // Contract: cascade.computed.len() must equal dom.node_count(). Even
+    // when the cascade gate skips template descendants, preserve the indexing
+    // contract: raikiri-dom and raikiri-paint index directly by node_id.
     assert_eq!(
         cascade.computed.len(),
         uncascaded.dom.node_count(),
         "cascade.computed.len() must equal node_count() even with template descendants"
     );
 
-    // cascade 呼び出し後も inner <p> は out-of-document のまま (cascade が bit
-    // を触ることは無いという contract の pin)。
+    // After cascade, the inner <p> remains out-of-document: cascade must
+    // not change the bit.
     //
-    // 加えて outer <p> と inner <p> の ComputedValues
-    // を実際に検証する。gate が動いていれば outer には `p { color: red }` rule
-    // が適用され CssColor { r:255, g:0, b:0 } となり、inner には rule が適用
-    // されず initial (CssColor::BLACK = { r:0, g:0, b:0 }) が残る。もし cascade
-    // gate を両方削除したら inner にも red rule が届き BLACK ではなくなるため、
-    // この assert 対で gate 動作が本当に発火していることを check する。
+    // Check the actual ComputedValues of both the outer and inner <p>.
+    // If the gate works, `p { color: red }` applies to the outer <p>, yielding
+    // CssColor { r:255, g:0, b:0 }, while the inner <p> keeps its initial
+    // CssColor::BLACK = { r:0, g:0, b:0 }. If both cascade gates are removed,
+    // the inner <p> also becomes red. These paired assertions prove that the
+    // gate actually runs.
     use raikiri_style::property::CssColor;
     const RED: CssColor = CssColor {
         r: 255,
@@ -3159,8 +3196,8 @@ fn parse_includes_svg_and_html_styles_in_host_stylesheet_sources() {
 
 #[test]
 fn parse_wires_style_attribute_to_inline_style_source() {
-    // real HTML `<p style="color:red">` → cascade が消費できる
-    // inline_style_source が populate される (end-to-end verify)。
+    // Real HTML `<p style="color:red">` populates inline_style_source
+    // for cascade to consume (end-to-end verification).
     let html = b"<html><body><p style=\"color:red\">Hi</p></body></html>";
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -3168,7 +3205,7 @@ fn parse_wires_style_attribute_to_inline_style_source() {
     let p_node = uncascaded.dom.node(p_id).expect("p node exists");
     let p_elem = p_node.as_element().expect("p is element");
     assert_eq!(p_elem.inline_style_source(), Some("color:red"));
-    // `style` は attributes には積まれない (Node.inline_style 側に分離)。
+    // `style` is stored separately in Node.inline_style, not in attributes.
     assert_eq!(p_elem.attr("style"), Some("color:red"));
 }
 
@@ -3197,13 +3234,13 @@ fn parse_treats_html_elements_namespace_uri_as_none() {
     let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
     let p_node = uncascaded.dom.node(p_id).expect("p node exists");
     let p = p_node.as_element().expect("p is element");
-    // HTML default namespace は optimized path として None を返す。
+    // The optimized path returns None for the default HTML namespace.
     assert_eq!(p.namespace_uri(), None);
 }
 
 #[test]
 fn parse_wires_svg_namespace_uri() {
-    // html5ever は <svg> 内 element を automatically SVG namespace に置く。
+    // html5ever automatically puts elements within <svg> in the SVG namespace.
     let html = br#"<html><body><svg><g></g></svg></body></html>"#;
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -3250,7 +3287,7 @@ fn parse_missing_style_attribute_leaves_inline_style_none() {
 
 #[test]
 fn parse_empty_style_attribute_normalizes_to_none() {
-    // trait contract: `style=""` は inline_style_source が None。
+    // Trait contract: `style=""` gives inline_style_source == None.
     let html = br#"<html><body><p style=""></p></body></html>"#;
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -3262,12 +3299,11 @@ fn parse_empty_style_attribute_normalizes_to_none() {
 
 #[test]
 fn sink_first_wins_on_duplicate_style_attribute() {
-    // Defensive: html5ever は tokenizer 段で duplicate attr を dedupe する
-    // が (§13.2.5.32)、raikiri-html sink 単体が受け取る Vec<Attribute> が
-    // duplicate を含む可能性を排除しない (external consumer が TreeSink を
-    // wrap して重複 attr を注入する scenario も含む)。この test は sink
-    // 単体を driver に見立てて "style を 2 回渡すと最初 (color:red) が勝つ"
-    // 挙動を check する。
+    // Defense in depth: html5ever deduplicates attributes during tokenization
+    // (§13.2.5.32), but the raikiri-html sink may still receive a
+    // Vec<Attribute> with duplicates. An external consumer might wrap TreeSink
+    // and inject duplicate attributes. Drive the sink directly to check that
+    // when style is supplied twice, the first value (color:red) wins.
     use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
     use html5ever::tendril::StrTendril;
     use markup5ever::{LocalName, Namespace};
@@ -3282,11 +3318,11 @@ fn sink_first_wins_on_duplicate_style_attribute() {
         name: QualName::new(None, Namespace::from(""), LocalName::from("style")),
         value: StrTendril::from(v),
     };
-    // sink に "style=color:red" と "style=color:blue" を順に渡す。
+    // Pass "style=color:red" then "style=color:blue" to the sink.
     let attrs = vec![attr("color:red"), attr("color:blue")];
     let idx = sink.create_element(name, attrs, ElementFlags::default());
-    // Document の Handle は root。attach しないと finish 前に見つからないため
-    // append 経由で root child にする。
+    // The Document Handle is the root. Append the node as a root child
+    // so finish can find it.
     sink.append(
         &sink.get_document(),
         html5ever::interface::NodeOrText::AppendNode(idx),
@@ -3296,19 +3332,19 @@ fn sink_first_wins_on_duplicate_style_attribute() {
     let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
     let p_node = uncascaded.dom.node(p_id).expect("p node exists");
     let p = p_node.as_element().expect("p is element");
-    // first-wins (regression check for wire_side_tables)。
+    // First wins (regression check for wire_side_tables).
     assert_eq!(p.inline_style_source(), Some("color:red"));
 }
 
 // ── MathML annotation-xml integration point ─────
 //
-// HTML5 §13.2.5 tree construction: MathML `annotation-xml` element は
-// `encoding` attribute の value が ASCII case-insensitive で `text/html`
-// または `application/xhtml+xml` と一致するときに HTML integration point
-// となる。tree construction algorithm の branch 判定に使う中心 predicate。
+// HTML5 §13.2.5 tree construction: a MathML `annotation-xml` element
+// is an HTML integration point when its `encoding` attribute equals
+// `text/html` or `application/xhtml+xml`, ignoring ASCII case. This is
+// the central predicate for branch selection in tree construction.
 
-/// Helper: annotation-xml element を指定 namespace + encoding で作成し、
-/// `is_mathml_annotation_xml_integration_point` の返り値を返す。
+/// Helper: create an annotation-xml element with the given namespace
+/// and encoding, then return `is_mathml_annotation_xml_integration_point`.
 fn probe_annotation_xml_integration_point(
     ns_uri: &str,
     local: &str,
@@ -3372,8 +3408,8 @@ fn annotation_xml_with_application_xhtml_xml_encoding_is_integration_point() {
 
 #[test]
 fn annotation_xml_with_unrelated_encoding_is_not_integration_point() {
-    // spec は text/html と application/xhtml+xml の 2 種のみ integration point。
-    // application/xml / image/svg+xml / 空文字列 は non-match。
+    // The spec lists only text/html and application/xhtml+xml as integration
+    // points. application/xml, image/svg+xml, and the empty string do not match.
     for v in ["application/xml", "image/svg+xml", "", "text/plain"] {
         assert!(
             !probe_annotation_xml_integration_point(
@@ -3397,8 +3433,8 @@ fn annotation_xml_without_encoding_attribute_is_not_integration_point() {
 
 #[test]
 fn non_mathml_annotation_xml_is_not_integration_point() {
-    // Defense in depth: annotation-xml でも MathML namespace 以外では
-    // integration point ではない (spec の主語が "MathML annotation-xml")。
+    // Defense in depth: annotation-xml is not an integration point outside
+    // the MathML namespace (the spec says "MathML annotation-xml").
     assert!(!probe_annotation_xml_integration_point(
         "http://www.w3.org/2000/svg",
         "annotation-xml",
@@ -3413,7 +3449,7 @@ fn non_mathml_annotation_xml_is_not_integration_point() {
 
 #[test]
 fn non_annotation_xml_mathml_element_is_not_integration_point() {
-    // annotation-xml 以外の MathML 要素は integration point ではない。
+    // Other MathML elements are not integration points.
     assert!(!probe_annotation_xml_integration_point(
         "http://www.w3.org/1998/Math/MathML",
         "mi",
@@ -3423,10 +3459,10 @@ fn non_annotation_xml_mathml_element_is_not_integration_point() {
 
 #[test]
 fn annotation_xml_duplicate_encoding_attribute_uses_first_value() {
-    // HTML §13.2.5.32 duplicate attribute → ignore later occurrences。
-    // sink_first_wins_on_duplicate_style_attribute と同じ first-wins 契約を
-    // integration point 判定でも守る (later match が earlier non-match を
-    // 上書きしないことを check する)。
+    // HTML §13.2.5.32: ignore later occurrences of a duplicate attribute.
+    // Apply the same first-wins contract as
+    // sink_first_wins_on_duplicate_style_attribute to the integration-point
+    // predicate: a later match must not override an earlier nonmatch.
     use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
     use html5ever::tendril::StrTendril;
     use markup5ever::{LocalName, Namespace};
@@ -3477,17 +3513,17 @@ fn annotation_xml_duplicate_encoding_attribute_uses_first_value() {
     }
 }
 
-// End-to-end parse: annotation-xml integration point の判定は tree
-// construction algorithm の branch を切り替えるので、parse 経由でも
-// "子要素の namespace が予想通りか" で観測できる。
-// - encoding=text/html → HTML integration point 発動 → 子は HTML namespace
-//   (raikiri-dom optimized path で namespace_uri() = None)
-// - encoding 不在 → 通常の MathML foreign content → 子は MathML namespace
+// End-to-end parsing: the annotation-xml integration-point predicate
+// changes the branch in the tree construction algorithm. Observe it by
+// checking the child element’s namespace:
+// - encoding=text/html activates an HTML integration point: HTML namespace
+//   (the optimized raikiri-dom namespace_uri() returns None).
+// - Without encoding: normal MathML foreign content and MathML namespace.
 
 #[test]
 fn parse_annotation_xml_integration_point_inherits_html_namespace_for_children() {
-    // annotation-xml encoding=text/html は HTML integration point。中の
-    // 未知要素 <foo> は HTML namespace として解釈されるべき。
+    // annotation-xml with encoding=text/html is an HTML integration point.
+    // Its unknown <foo> child must be interpreted in the HTML namespace.
     let html =
         br#"<math><annotation-xml encoding="text/html"><foo>x</foo></annotation-xml></math>"#;
     let opts = empty_options();
@@ -3505,8 +3541,8 @@ fn parse_annotation_xml_integration_point_inherits_html_namespace_for_children()
 
 #[test]
 fn parse_annotation_xml_non_integration_wraps_children_in_mathml_namespace() {
-    // annotation-xml (encoding 不在) は integration point ではない。中の
-    // 未知要素 <foo> は MathML foreign content として MathML namespace で解釈される。
+    // annotation-xml without encoding is not an integration point. Its
+    // unknown <foo> child belongs to MathML foreign content and namespace.
     let html = br#"<math><annotation-xml><foo>x</foo></annotation-xml></math>"#;
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -3522,17 +3558,16 @@ fn parse_annotation_xml_non_integration_wraps_children_in_mathml_namespace() {
 
 #[test]
 fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
-    // Contract rewrite (旧: 100 個の "#comment" pseudo-tag
-    // Element が strip されるか、を "#comment" tag の非存在で確認)。
-    // 現在は Comment kind node が 100 個 arena に存在し、taffy child_count
-    // からは 100 個すべて filter され、body の taffy child は <p> の 1 個のみ、
-    // という bulk invariant を positive に check する。旧 form は Comment が
-    // Element でないため as_element() == None → scan は空振り → vacuously
-    // pass するため content 保証にならない。
+    // Contract rewrite: the old test checked whether 100 "#comment"
+    // pseudo-tag Elements were stripped by scanning for that tag’s absence.
+    // Now 100 Comment-kind nodes persist in the arena, but all 100 are
+    // filtered from taffy child_count, leaving only <p> as a taffy child of
+    // body. Assert this bulk invariant positively. The old Element scan
+    // would pass vacuously because Comments return as_element() == None.
     use raikiri_traits::{Dom, Node};
 
     // 100 comments under body — verifies mark_in_document_flags handles bulk
-    // correctly (旧 retain_children ベース bulk strip の 代替 stress test)。
+    // Stress-test the replacement for the old retain_children-based bulk strip.
     let mut html = String::from("<html><head></head><body>");
     for i in 0..100 {
         html.push_str(&format!("<!-- comment {i} -->"));
@@ -3542,7 +3577,7 @@ fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
     let doc = &uncascaded.dom;
 
-    // (a) arena 中の Comment node の総数 == 100 (persist されている)。
+    // (a) Exactly 100 Comment nodes persist in the arena.
     let mut comment_count = 0usize;
     let mut in_document_comments = 0usize;
     for i in 0..doc.node_count() {
@@ -3558,16 +3593,16 @@ fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
         comment_count, 100,
         "expected 100 Comment nodes to persist in the arena"
     );
-    // (b) すべての Comment の IS_IN_DOCUMENT bit は clear されている
-    //     (bulk mark_in_document_flags 契約)。
+    // (b) The IS_IN_DOCUMENT bit is clear on every Comment
+    //     (the bulk mark_in_document_flags contract).
     assert_eq!(
         in_document_comments, 0,
         "all 100 Comment nodes must have IS_IN_DOCUMENT cleared"
     );
 
-    // (c) body の taffy child_count == 1 (<p> only)、100 個の Comment は
-    //     TaffyChildIter の is_in_document filter で完全に除去される
-    //     (attacker-controlled bulk stress でも leak しない = defense-in-depth)。
+    // (c) The body has exactly one taffy child, <p>; the
+    //     TaffyChildIter is_in_document filter removes all 100 Comments.
+    //     No leak occurs even for attacker-controlled bulk input (defense in depth).
     let body_id = find_first_by_tag(doc, "body").expect("body exists");
     use taffy::TraversePartialTree;
     let body_taffy_id = taffy::NodeId::from(body_id.0 as usize);
@@ -3582,45 +3617,39 @@ fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
 
 #[test]
 fn minimal_ua_css_covers_required_display_block_selectors() {
-    // Scope: html, body, div, p, h1-h6 が display: block を持つ。
+    // Scope: html, body, div, p, and h1-h6 have display: block.
     //
-    // 各 tag について、rule 行の存在を検査する — 「行を trim_start した後
-    // `{tag}` で始まり、その直後 whitespace を挟んで `{` が来る」ケースだけ
-    // 選択子と扱う。素の contains() だと `p` が comment 内の `Appendix` /
-    // `paragraph` / `display` の一部に match してしまうのを防ぐため。
+    // For each tag, check that a rule line starts with `{tag}` after trim_start,
+    // followed by whitespace and `{`. A plain contains() check would falsely
+    // match `p` inside `Appendix`, `paragraph`, or `display` in comments.
     //
     // article/section/nav/aside/header/footer/
-    // main/figure/figcaption/blockquote 追加 (block-level sectioning /
-    // grouping elements)。cascade まで通した非-vacuous な検証は
-    // `crates/raikiri/tests/build_cascaded.rs`
-    // `sectioning_and_grouping_elements_are_display_block_via_ua_css` 側。
-    // ol/ul/li 追加 (block-level list treatment と
-    // `display: list-item`/marker foundation)。cascade まで通した
-    // 非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs` の
-    // `list_elements_use_list_item_display_via_ua_css` 側。
-    // hr 追加 (display: block は §flow-content-3
-    // (15.3.3) の flow-content グループ側の rule に相乗り。border/color/
-    // margin の hr 固有 rule は別 group、詳細は minimal.css のコメント
-    // 参照)。cascade まで通した非-vacuous な検証は
-    // `crates/raikiri/tests/build_cascaded.rs`
-    // `hr_is_display_block_border_inset_and_margin_via_ua_css` 側。
-    // hgroup 追加 (article/aside/nav/section と
-    // 同じ §sections-and-headings (15.3.6) selector group の一員、
-    // 元の scope からは漏れていた)。cascade まで通した非-vacuous
-    // な検証は `crates/raikiri/tests/build_cascaded.rs`
-    // `sectioning_and_grouping_elements_are_display_block_via_ua_css`
-    // 側 (既存 loop に追加)。
-    // address/center/listing/plaintext/search/xmp
-    // 追加 (§flow-content-3 (15.3.3) の display:block selector の残り、
-    // 未追跡と判明した7要素のうち6つ)。
-    // center/listing/plaintext/xmp は HTML LS §16.2 上は
-    // "entirely obsolete" 分類だが、その分類は authoring conformance の
-    // 話であって UA rendering の話ではない (詳細は minimal.css のコメント
-    // 参照)。cascade まで通した非-vacuous な検証は追加した6要素分は
-    // `crates/raikiri/tests/build_cascaded.rs`
-    // `flow_content_3_residue_elements_are_display_block_via_ua_css` 側。
-    // dialog (§flow-content-3 の7要素目) はこの loop には入れない
-    // (下の assert 参照)。
+    // Add main/figure/figcaption/blockquote (block-level sectioning and
+    // grouping elements), alongside article/section/nav/aside/header/footer.
+    // For a non-vacuous cascade test, see `crates/raikiri/tests/build_cascaded.rs`
+    // and `sectioning_and_grouping_elements_are_display_block_via_ua_css`.
+    // Add ol/ul/li (block-level list treatment and the foundation for
+    // `display: list-item` and markers). For a non-vacuous cascade test, see
+    // `crates/raikiri/tests/build_cascaded.rs` and
+    // `list_elements_use_list_item_display_via_ua_css`.
+    // Add hr. Its display: block comes from the §flow-content-3 (15.3.3)
+    // flow-content rule; separate rules handle hr’s border/color/margin (see
+    // minimal.css comments). For a non-vacuous cascade test, see
+    // `crates/raikiri/tests/build_cascaded.rs` and
+    // `hr_is_display_block_border_inset_and_margin_via_ua_css`.
+    // Add hgroup: it shares the §sections-and-headings (15.3.6) selector
+    // group with article/aside/nav/section but was omitted from the original
+    // scope. For a non-vacuous cascade test, see the existing loop in
+    // `crates/raikiri/tests/build_cascaded.rs`,
+    // `sectioning_and_grouping_elements_are_display_block_via_ua_css`.
+    // Add address/center/listing/plaintext/search/xmp: six of the seven
+    // previously untracked display:block selectors in §flow-content-3
+    // (15.3.3). HTML LS §16.2 classifies center/listing/plaintext/xmp as
+    // "entirely obsolete", but that is about authoring conformance, not UA
+    // rendering (see minimal.css comments). For a non-vacuous cascade test of
+    // these six, see `crates/raikiri/tests/build_cascaded.rs` and
+    // `flow_content_3_residue_elements_are_display_block_via_ua_css`.
+    // The seventh element, dialog, is excluded from this loop (see below).
     for tag in [
         "html",
         "body",
@@ -3666,13 +3695,12 @@ fn minimal_ua_css_covers_required_display_block_selectors() {
             "MINIMAL_UA_CSS is missing selector rule `{tag} {{ … }}`",
         );
     }
-    // dialog の display は open 属性依存 (minimal.css の `dialog` /
-    // `dialog[open]` specificity pair 経由、詳細は minimal.css の
-    // コメント参照) で、上の loop が保証する「無条件に display: block」
-    // の契約には当てはまらないため、上の loop には含めず両方の
-    // selector-rule prefix の存在をここで直接 assert する。cascade まで
-    // 通した非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs`
-    // `dialog_display_reflects_open_attribute_via_ua_css` 側。
+    // The display of dialog depends on its open attribute, via the `dialog`
+    // and `dialog[open]` specificity pair (see minimal.css comments). It does
+    // not meet this loop’s unconditional display: block contract. Check both
+    // selector-rule prefixes directly here instead. For a non-vacuous cascade
+    // test, see `crates/raikiri/tests/build_cascaded.rs` and
+    // `dialog_display_reflects_open_attribute_via_ua_css`.
     let has_selector_rule = |selector: &str| {
         MINIMAL_UA_CSS.lines().any(|line| {
             line.trim_start()
@@ -3702,12 +3730,12 @@ fn minimal_ua_css_covers_required_display_block_selectors() {
         has_selector_rule("[dir]:dir(rtl)"),
         "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(rtl) {{ … }}`",
     );
-    // spec 参照コメントが含まれていること (CSS 2.1 App.D 由来の 独立実装の印)
+    // Check for the spec-reference comment, a sign of independent implementation based on CSS 2.1 App.D.
     assert!(
         MINIMAL_UA_CSS.contains("CSS 2.1 App.D"),
         "MINIMAL_UA_CSS should contain spec reference comments",
     );
-    // display: block declaration が含まれていること (直接文字列で確認)
+    // Check for a display: block declaration directly as text.
     assert!(
         MINIMAL_UA_CSS.contains("display: block"),
         "MINIMAL_UA_CSS should declare display: block",
@@ -3746,9 +3774,8 @@ fn parse_injects_extra_stylesheets_as_user() {
     };
     let doc = parse(&html[..], &opts).expect("parse ok");
 
-    // extra_stylesheets は StylesheetKind::User
-    // としてタグされる (以前は Author に混ぜていた — regression trap
-    // だったため独立 variant に分離した)。
+    // extra_stylesheets are tagged StylesheetKind::User. Previously they
+    // were mixed into Author; the separate variant prevents that regression.
     let user_entries: Vec<&str> = doc
         .dom
         .stylesheets()
@@ -3759,7 +3786,7 @@ fn parse_injects_extra_stylesheets_as_user() {
     assert_eq!(user_entries[0], extra_a);
     assert_eq!(user_entries[1], extra_b);
 
-    // Author 側には何も混入していないことも確認 (retag 前は 2 entries 混入していた)。
+    // Also confirm that no entries reach Author (two did before retagging).
     let author_entries: Vec<&str> = doc
         .dom
         .stylesheets()

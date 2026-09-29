@@ -126,10 +126,9 @@ fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
 
 #[test]
 fn text_align_center_offsets_glyphs_to_container_middle() {
-    // `text-align: center` の最小 regression check:
-    // 単独 Text の block container (`<p>` + 1 Text は minimal line box の
-    // 2-child threshold 未満のため plain block path) で、glyph run の
-    // 先頭 x が container 幅の中央付近に寄ること。
+    // Minimal regression check for `text-align: center`: In a block container of a single Text (`<p>` + 1
+    // Text is below the 2-child threshold for a minimal line box, so it's a plain block path), the leading x
+    // of the glyph run should be centered near the container width.
     use parley::{FontContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -185,10 +184,9 @@ fn text_align_center_offsets_glyphs_to_container_middle() {
 
 #[test]
 fn text_indent_px_offsets_first_line() {
-    // `text-indent` 基本配線の regression check:
-    // 単独 Text の block container で first line の先頭 x が indent 分
-    // 右に寄ること。parley `set_text_indent` 経由 (basic のみ —
-    // hanging/each-line は parse 層 drop のため常に default)。
+    // Regression check for `text-indent` basic wiring: In a block container of a single Text, the leading x
+    // of the first line should be shifted to the right by the indent amount. Via parley `set_text_indent`
+    // (basic only — hanging/each-line are always default due to parse layer drop).
     use parley::{FontContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -266,7 +264,7 @@ fn text_indent_amount_bounds_nonfinite_values() {
 
 #[test]
 fn text_indent_negative_protrudes_before_box() {
-    // negative indent は box 始端より前に張り出す (CSS Text 3 §8.1)。
+    // Negative indent protrudes before the start of the box (CSS Text 3 §8.1).
     use parley::{FontContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -298,8 +296,7 @@ fn text_indent_negative_protrudes_before_box() {
         })
         .next()
         .expect("glyph");
-    // glyph x は layout-local で -20 (paint が box origin x=20 に
-    // 足して最終 x=0 になる)。
+    // glyph x is layout-local at -20 (paint adds to box origin x=20 for a final x=0).
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -311,7 +308,7 @@ fn text_indent_negative_protrudes_before_box() {
 
 #[test]
 fn text_indent_zero_leaves_first_line_at_edge() {
-    // indent 無しは preshape のまま (realign の indent 経路を通らない)。
+    // No indent means it remains as preshape (does not go through the indent path of realign).
     use parley::{FontContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -379,15 +376,15 @@ fn tab_replacement_with_zero_interval_removes_tabs() {
 }
 
 #[test]
-#[ignore] // 明示的に cargo test -- --ignored で実行
+#[ignore] // Explicitly run with cargo test -- --ignored
 fn font_context_new_cost_is_reasonable() {
     let start = std::time::Instant::now();
     for _ in 0..10 {
         let _ = parley::FontContext::new();
     }
     let elapsed = start.elapsed();
-    // 10 回 total で 5 秒未満なら現行実装の per-call new() は許容
-    // (10 連ラン determinism test が timeout しないため)
+    // If 10 total calls take less than 5 seconds, the current per-call new() implementation is acceptable (to
+    // prevent the 10-run determinism test from timing out).
     assert!(
         elapsed.as_secs() < 5,
         "FontContext::new() too slow: 10x = {:?}",
@@ -395,20 +392,20 @@ fn font_context_new_cost_is_reasonable() {
     );
 }
 
-// ── 非有限 f32 guard ────────
+// ── Non-finite f32 guard ────────
 //
-// untrusted author CSS から +Inf / NaN が taffy / parley に到達しないことを
-// **5 site すべて**で check する。reproducer は元の probe comment 由来。
+// Check that +Inf / NaN from untrusted author CSS does not reach taffy / parley on **all 5 sites**. The
+// reproducer comes from the original probe comment.
 //
-// 期待値は「非有限でない」ではなく **clamp 後の具体値** で書く — NaN は
-// `NaN != NaN` なので `assert_ne!(x, ...NAN)` は無条件に pass してしまい
-// guard の有無を判別できない。
+// The expected value should be written as the **specific value after clamping**, not "not non-finite" —
+// because NaN is `NaN != NaN`, `assert_ne!(x, ...NAN)` will unconditionally pass, making it impossible to
+// determine the presence or absence of a guard.
 
-/// cascade → `apply_computed_to_style` を通した後の対象 element の
-/// `taffy::Style` を返す。
+/// Returns the `taffy::Style` of the target element after passing through cascade →
+/// `apply_computed_to_style`.
 ///
-/// fixture は **非 body element** (`<p>`) — `<body>` は後段
-/// `apply_page_box_to_body` で size を clobber されるため。
+/// The fixture is a **non-body element** (`<p>`) — because `<body>`'s size will be clobbered by the
+/// subsequent `apply_page_box_to_body`.
 fn guarded_style_for(inline: &str) -> taffy::Style {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
@@ -421,20 +418,20 @@ fn guarded_style_for(inline: &str) -> taffy::Style {
     doc.nodes[p].style.clone()
 }
 
-/// site 1 — `computed_length_percentage_to_taffy_length_percentage` (padding)。
+/// site 1 — `computed_length_percentage_to_taffy_length_percentage` (padding).
 #[test]
 fn nonfinite_padding_is_clamped_before_taffy() {
     use taffy::LengthPercentage;
 
-    // Reproducer A': `1e40px` は cssparser の f64→f32 変換で +Inf になり、
-    // `parse_padding_side` の `v >= 0.0` を **通過する** (inf >= 0.0 は true)。
+    // Reproducer A': `1e40px` becomes +Inf during cssparser's f64→f32 conversion, and **passes** `v >= 0.0`
+    // of `parse_padding_side` (inf >= 0.0 is true).
     assert_eq!(
         guarded_style_for("padding-top: 1e40px").padding.top,
         LengthPercentage::length(MAX_TAFFY_MAGNITUDE),
     );
 
-    // Reproducer A: IEEE 754 `0.0 * inf = NaN` — em の乗算で NaN が生まれる。
-    // かつては `Em(_) => length(0.0)` arm がこれを吸収していた。
+    // Reproducer A: IEEE 754 `0.0 * inf = NaN` — NaN is produced by em multiplication. Previously,
+    // `Em(_) => length(0.0)` arm absorbed this.
     assert_eq!(
         guarded_style_for("font-size: 0px; padding-top: 1e40em")
             .padding
@@ -443,19 +440,17 @@ fn nonfinite_padding_is_clamped_before_taffy() {
         "NaN は clamp では潰れないので is_nan() → 0.0 で処理する",
     );
 
-    // percentage 側 (`Percent` arm) も同じ guard を通す。
-    // (`1e40%` は raikiri の `parse_percentage` が cssparser の unit_value
-    //  1e38 を `* 100.0` して +Inf にする — 実測。)
+    // The percentage side (`Percent` arm) also passes through the same guard. (`1e40%` makes raikiri's
+    // `parse_percentage` +Inf by `* 100.0` cssparser's unit_value 1e38 — measured.)
     assert_eq!(
         guarded_style_for("padding-top: 1e40%").padding.top,
         LengthPercentage::percent(MAX_TAFFY_MAGNITUDE),
     );
 
-    // **有限だが巨大**な値も clamp する。上の 3 case はすべて f32 で既に
-    // 非有限 (`1e40` は f32 で +Inf) なので、実装を
-    // `if v.is_finite() { v } else { ... }` に「簡素化」しても全部 pass して
-    // しまう。`1e38%` は `Percent(1e38)` = **有限** (実測) で fraction は
-    // 1e36 になるため、この 1 本だけがその簡素化を殺す。
+    // Clamp even **finite but huge** values. All 3 cases above are already non-finite in f32 (`1e40` is +Inf
+    // in f32), so even if the implementation is "simplified" to `if v.is_finite() { v } else { ... }`, they
+    // all pass. `1e38%` is `Percent(1e38)` = **finite** (measured) and the fraction becomes 1e36, so only
+    // this one kills that simplification.
     assert_eq!(
         guarded_style_for("padding-top: 1e38%").padding.top,
         LengthPercentage::percent(MAX_TAFFY_MAGNITUDE),
@@ -463,7 +458,7 @@ fn nonfinite_padding_is_clamped_before_taffy() {
     );
 }
 
-/// site 2 — `computed_length_percentage_or_auto_to_taffy_dimension` (width / height)。
+/// site 2 — `computed_length_percentage_or_auto_to_taffy_dimension` (width / height).
 #[test]
 fn nonfinite_size_is_clamped_before_taffy() {
     use taffy::Dimension;
@@ -471,15 +466,15 @@ fn nonfinite_size_is_clamped_before_taffy() {
     assert_eq!(s.size.width, Dimension::length(MAX_TAFFY_MAGNITUDE));
     assert_eq!(s.size.height, Dimension::percent(MAX_TAFFY_MAGNITUDE));
 
-    // NaN 経路 (em × font-size 0)。
+    // NaN path (em × font-size 0).
     let n = guarded_style_for("font-size: 0px; width: 1e40em");
     assert_eq!(n.size.width, Dimension::length(0.0));
 }
 
-/// site 3 — `computed_length_percentage_or_auto_to_taffy_length_percentage_auto` (margin)。
+/// site 3 — `computed_length_percentage_or_auto_to_taffy_length_percentage_auto` (margin).
 ///
-/// margin は **負値が spec-valid** (CSS Box 3 §3.1) なので clamp は対称
-/// (`[-MAX, MAX]`) でなければならない。
+/// Margin **negative values are spec-valid** (CSS Box 3 §3.1), so clamping must be symmetric
+/// (`[-MAX, MAX]`).
 #[test]
 fn nonfinite_margin_is_clamped_symmetrically_before_taffy() {
     use taffy::LengthPercentageAuto;
@@ -498,17 +493,16 @@ fn nonfinite_margin_is_clamped_symmetrically_before_taffy() {
             .top,
         LengthPercentageAuto::length(0.0),
     );
-    // `Percent` の負値経路 (`parse_margin_side` は allow-negative なので
-    // `-1e40%` が parse を通り `Percent(-inf)` になる — 実測)。
-    // `Px` 側だけだと `Percent` arm から `sanitize_taffy` を外す変更が
-    // test を素通りする。
+    // Negative path for `Percent` (`parse_margin_side` is allow-negative, so `-1e40%` passes parsing and
+    // becomes `Percent(-inf)` — observed). If only the `Px` side is considered, a change that removes
+    // `sanitize_taffy` from the `Percent` arm would pass tests unnoticed.
     assert_eq!(
         guarded_style_for("margin-left: -1e40%").margin.left,
         LengthPercentageAuto::percent(-MAX_TAFFY_MAGNITUDE),
     );
 }
 
-/// site 4 — `computed_length_to_taffy_length_percentage` (border-width)。
+/// site 4 — `computed_length_to_taffy_length_percentage` (border-width).
 #[test]
 fn nonfinite_border_width_is_clamped_before_taffy() {
     use taffy::LengthPercentage;
@@ -526,31 +520,30 @@ fn nonfinite_border_width_is_clamped_before_taffy() {
     );
 }
 
-/// site 5 — `preshape_text` の `cv.font_size.px()` → parley
-/// `StyleProperty::FontSize`。
+/// site 5 — `cv.font_size.px()` of `preshape_text` → parley
+/// `StyleProperty::FontSize`.
 ///
-/// 観測は shape 後の `Layout::height()` — font-size が非有限なら line metrics
-/// が汚染されて height も非有限になる。
+/// Observation is `Layout::height()` after shaping — if font-size is non-finite, line metrics are
+/// corrupted and height also becomes non-finite.
 ///
-/// # guard を外すと fail ではなく **hang** する
+/// # Removing the guard causes a **hang** instead of a fail
 ///
-/// 実測 (`sanitize_finite` を恒等関数に差し替えて単独実行): site 1-4 は即座に
-/// assert 失敗するが、本 site は 25 秒経っても終了しない。機構は
-/// `parley-0.10.0/src/layout/line_break.rs` の `if next_x <= max_advance` が
-/// `next_x = inf` で恒偽になり、`while self.break_next().is_some() {}` が
-/// 前進しないこと (shaping 自体は完了しており spin するのは `break_all_lines`)。
+/// Observed (running `sanitize_finite` alone after replacing it with an identity function): sites 1-4
+/// immediately fail with an assert, but this site does not terminate even after 25 seconds. The mechanism
+/// is that `if next_x <= max_advance` of `parley-0.10.0/src/layout/line_break.rs` becomes always false in
+/// `next_x = inf`, and `while self.break_next().is_some() {}` does not advance (shaping itself is
+/// complete, and it is `break_all_lines` that spins).
 ///
-/// そのため本 test は **worker thread + `recv_timeout` で有界化**してある —
-/// guard が消えた場合に「CI job が 20 分で殺される」(infra flake と区別
-/// できず、同一 binary の後続 test の結果も失われる) ではなく
-/// **assert failure** として落ちる。
+/// Therefore, this test is **bounded by a worker thread + `recv_timeout`** — if the guard disappears, it
+/// will crash as an **assert failure** instead of "CI job killed in 20 minutes" (which is
+/// indistinguishable from an infra flake and also loses the results of subsequent tests for the same
+/// binary).
 #[test]
 fn nonfinite_font_size_is_clamped_before_parley() {
-    // 親 / 子の inline style を分けて渡す — `font-size` の `em` は **親**の
-    // computed font-size 基準 (CSS Values 4 §6.1.1) なので、NaN (`0 * inf`)
-    // を作るには乗数 `font-size: 0px` が親側に載っている必要がある。
-    // site 1-4 は乗数が同一 element に載るので 1 element で作れるが、
-    // font-size だけは 2 element 要る。
+    // Pass parent/child inline styles separately — `em` of `font-size` is based on the **parent's** computed
+    // font-size (CSS Values 4 §6.1.1), so to create NaN (`0 * inf`), the multiplier `font-size: 0px` must be
+    // on the parent side. Sites 1-4 can be created with one element because the multiplier is on the same
+    // element, but font-size alone requires two elements.
     fn shaped_height(parent_inline: Option<&str>, child_inline: &str) -> f32 {
         use parley::{FontContext, LayoutContext};
         use raikiri_style::{build_rule_tree, cascade};
@@ -575,12 +568,12 @@ fn nonfinite_font_size_is_clamped_before_parley() {
         doc.nodes[text].text_layout().unwrap().height()
     }
 
-    /// guard 消失時の hang を **有界時間の失敗**に変える wrapper。
+    /// A wrapper that changes a hang when a guard disappears into a **bounded-time failure**.
     ///
-    /// 有界なのは **test** であって process ではない — timeout しても worker
-    /// thread は spin したまま残る (parley に cancellation が無く、`break_all_lines`
-    /// を中断する手段がないため)。test binary の終了時に process ごと落ちるので
-    /// 実害は無いが、「有界化した」の射程はここまで。
+    /// What is bounded is the **test**, not the process — even if it times out, the worker thread remains
+    /// spinning (because parley has no cancellation, and there is no way to interrupt `break_all_lines`).
+    /// There is no practical harm as the entire process crashes when the test binary exits, but this is the
+    /// extent of what "bounded" means.
     fn shaped_height_bounded(parent_inline: Option<&str>, child_inline: &str) -> f32 {
         use std::sync::mpsc::RecvTimeoutError;
 
@@ -590,12 +583,11 @@ fn nonfinite_font_size_is_clamped_before_parley() {
         std::thread::spawn(move || {
             let _ = tx.send(shaped_height(parent.as_deref(), &child));
         });
-        // `Timeout` と `Disconnected` を混同しないこと — `shaped_height` は
-        // 内部に `.expect("cascade Ok")` / `.unwrap()` を持つので、worker が
-        // panic すると `tx` が drop されて **数 ms で** `Disconnected` が
-        // 返る。これを「30 秒で終わらなかった」と報告すると cascade の
-        // regression を guard 消失として調査させてしまい、本 wrapper の
-        // 導入目的 (hang を通常の失敗と区別する) の裏返しになる。
+        // Do not confuse `Timeout` with `Disconnected` — `shaped_height` contains `.expect("cascade Ok")` /
+        // `.unwrap()`, so if the worker panics, `tx` is dropped and `Disconnected` returns **in a few ms**.
+        // Reporting this as "did not finish in 30 seconds" would cause a cascade regression to be investigated as
+        // a guard disappearance, which is the inverse of the purpose of introducing this wrapper (to distinguish
+        // hangs from normal failures).
         match rx.recv_timeout(std::time::Duration::from_secs(30)) {
             Ok(h) => h,
             Err(RecvTimeoutError::Timeout) => panic!(
@@ -609,37 +601,37 @@ fn nonfinite_font_size_is_clamped_before_parley() {
         }
     }
 
-    // (a) +Inf font-size。`1e40px` は cssparser の f64→f32 で +Inf。
+    // (a) +Inf font-size. `1e40px` is +Inf due to f64→f32 conversion in cssparser.
     let inf_px = shaped_height_bounded(None, "font-size: 1e40px");
     assert!(
         inf_px.is_finite(),
         "font-size +Inf (px 由来) が parley に届いた: {inf_px}"
     );
 
-    // (b) +Inf font-size (em compounding 由来)。親は initial の 16px なので
-    // `16.0 * inf = +Inf` — **NaN ではない**。
+    // (b) +Inf font-size (from em compounding). The parent is the initial 16px, so `16.0 * inf = +Inf` —
+    // **not NaN**.
     let inf_em = shaped_height_bounded(None, "font-size: 1e40em");
     assert!(
         inf_em.is_finite(),
         "font-size +Inf (em 由来) が parley に届いた: {inf_em}"
     );
 
-    // (c) **NaN** font-size — `0.0 * inf` (IEEE 754)。`font-size` の `em` は
-    // **親**の computed font-size 基準 (CSS Values 4 §6.1.1) なので乗数
-    // `font-size: 0px` は親側に載る。site 1-4 は乗数が同一 element に載るので
-    // 1 element で作れるが、font-size だけは 2 element 要る。
+    // (c) **NaN** font-size — `0.0 * inf` (IEEE 754). `em` of `font-size` is based on the **parent's**
+    // computed font-size (CSS Values 4 §6.1.1), so the multiplier `font-size: 0px` is applied to the parent.
+    // Sites 1-4 can be created with one element because the multiplier is applied to the same element, but
+    // font-size requires two elements.
     //
-    // **`is_nan()` 分岐削除 mutation は本 case では死なない (実測)。** guard が生きている限り
-    // parley が受け取るのは 0.0 であって NaN ではないので、**parley 側の
-    // NaN 許容が変わってもここでは気づけない** (「上流の canary」ではない)。
-    // `is_nan()` 分岐を殺す mutation を検出するのは site 1-4 の e2e 4 本と
-    // `sanitize_finite_maps_nan_to_zero` の計 5 本 (mutation testing 実測)。
+    // **The `is_nan()` branch deletion mutation does not die in this case (measured).** As long as the guard
+    // is alive, parley receives 0.0, not NaN, so **even if parley's NaN tolerance changes, it won't be
+    // noticed here** (it's not an "upstream canary"). Detecting mutations that kill the `is_nan()` branch
+    // requires 4 e2e tests from sites 1-4 and `sanitize_finite_maps_nan_to_zero`, for a total of 5 tests
+    // (measured by mutation testing).
     //
-    // それでも置く理由は 2 つ:
-    //   1. NaN を作れる経路の一つ (親 `0px` × 子 `em`) が e2e で構築
-    //      できることの pin。site 1-4 と違い 1 element では作れない。
-    //   2. 「guard 消失 × 上流の NaN 許容変化」という複合 regression への
-    //      保険 (単独ではどちらも他の test が拾う)。
+    // There are two reasons to still include it:
+    //   1. Pinning that one path to create NaN (parent `0px` × child `em`) can be constructed with e2e.
+    //      Unlike sites 1-4, it cannot be created with one element.
+    //   2. Insurance against a compound regression of "guard disappearance × upstream NaN tolerance change"
+    //      (individually, other tests would catch both).
     let nan = shaped_height_bounded(Some("font-size: 0px"), "font-size: 1e40em");
     assert!(nan.is_finite(), "font-size NaN が parley に届いた: {nan}");
     assert_eq!(
@@ -695,8 +687,8 @@ fn shape_raw_bounded(font_size: f32, bound: std::time::Duration) -> Result<(), &
 ///
 /// # Why this exists as assertions, not just prose
 ///
-/// The doc comment on `MAX_FONT_SIZE_PX` ("guard を外すと... 25 秒経っ
-/// ても終了しない") reads as "non-finite font-size ⇒ hang" in general —
+/// The doc comment on `MAX_FONT_SIZE_PX` ("removing the guard... does not terminate even after 25
+/// seconds") reads as "non-finite font-size ⇒ hang" in general —
 /// but that claim was written from a manual repro that only ever
 /// exercised `+Inf` (the first sub-case its guarded test tries) before
 /// hanging; it never got to see whether `NaN` or `-Inf` behave the same
@@ -728,8 +720,8 @@ fn parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size() 
 
 /// `+Inf` half of the paired characterization — formalizes into an
 /// automated regression test the manual measurement recorded in
-/// `MAX_FONT_SIZE_PX`'s doc comment ("guard を外すと... 25 秒経っても
-/// 終了しない"): `font_size = +Inf` reaching parley directly (bypassing
+/// `MAX_FONT_SIZE_PX`'s doc comment ("removing the guard... does not terminate even after 25 seconds"):
+/// `font_size = +Inf` reaching parley directly (bypassing
 /// `preshape_text` / `sanitize_finite`, not just disabling them)
 /// reproducibly hangs `break_all_lines`. See
 /// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`
@@ -782,23 +774,22 @@ fn parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard() 
     );
 }
 
-// ── guard 関数そのものの unit test ───────────────────────────────────
+// ── Unit test for the guard function itself ───────────────────────────────────
 //
-// e2e test は site 5 が hang し得るうえ 1 本あたり FontContext 構築を伴う。
-// guard の算術は純関数なので直接叩く (数 ms、hang し得ない)。
+// E2E tests can cause site 5 to hang, and each test involves FontContext construction. The guard's
+// arithmetic is a pure function, so it's called directly (a few ms, cannot hang).
 
 #[test]
 fn sanitize_finite_maps_nan_to_zero() {
-    // `f32::clamp` は NaN を NaN のまま返すので、この分岐が無いと NaN が
-    // 素通りする。
+    // `f32::clamp` returns NaN as NaN, so without this branch, NaN would pass through.
     let mut diag = Vec::new();
     assert_eq!(sanitize_finite(f32::NAN, -1.0, 1.0, "test", &mut diag), 0.0);
     assert_eq!(
         sanitize_finite(f32::NAN, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
         0.0
     );
-    // 両方とも実際に clamp した (NaN != 0.0) ので、それぞれ 1 event ずつ
-    // `LayoutWarn::NonFiniteClamped` が積まれる。
+    // Since both were actually clamped (NaN != 0.0), 1 event each of `LayoutWarn::NonFiniteClamped` will be
+    // accumulated.
     assert_eq!(
         diag.len(),
         2,
@@ -833,7 +824,7 @@ fn sanitize_finite_clamps_infinities_to_bounds() {
         ),
         -MAX_TAFFY_MAGNITUDE
     );
-    // 下限が 0.0 の site (font-size) では -Inf は 0.0 に落ちる。
+    // At sites with a lower bound of 0.0 (font-size), -Inf falls to 0.0.
     assert_eq!(
         sanitize_finite(f32::NEG_INFINITY, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
         0.0
@@ -843,7 +834,8 @@ fn sanitize_finite_clamps_infinities_to_bounds() {
 
 #[test]
 fn sanitize_taffy_clamps_out_of_range_finite_values() {
-    // 有限でも範囲外なら寄せる (「有限化するだけ」ではない)。
+    // Even if finite, out-of-range values are brought within range (it's not just about "making them
+    // finite").
     let mut diag = Vec::new();
     assert_eq!(sanitize_taffy(1e30, "test", &mut diag), MAX_TAFFY_MAGNITUDE);
     assert_eq!(
@@ -855,7 +847,7 @@ fn sanitize_taffy_clamps_out_of_range_finite_values() {
 
 #[test]
 fn sanitize_taffy_passes_through_in_range_values() {
-    // 通常値は bit-identical に素通しする (VRT が pixel-exact である前提)。
+    // Normal values are passed through bit-identically (assuming VRT is pixel-exact).
     let mut diag = Vec::new();
     for v in [0.0_f32, 1.0, -1.0, 16.0, 793.7008, MAX_TAFFY_MAGNITUDE] {
         assert_eq!(
@@ -864,8 +856,8 @@ fn sanitize_taffy_passes_through_in_range_values() {
             "in-range value must pass through: {v}"
         );
     }
-    // 範囲内 (clamp が実質 no-op) では何も積まない — per-node spam を
-    // 避ける設計の check (`sanitize_finite` の doc参照)。
+    // Nothing is accumulated when within range (clamping is effectively a no-op) — this check is designed to
+    // avoid per-node spam (see `sanitize_finite`'s doc).
     assert!(
         diag.is_empty(),
         "in-range value must not push a LayoutWarn: {diag:?}"
@@ -875,11 +867,11 @@ fn sanitize_taffy_passes_through_in_range_values() {
 #[test]
 fn sanitize_line_height_clamps_non_finite_and_out_of_range_number() {
     // site 7: `ComputedLineHeight::Number` — grammar `<number [0,∞]>`
-    // なので下限 0.0、上限 `MAX_LINE_HEIGHT_NUMBER`。NaN は他の length 系
-    // site と同じ `sanitize_finite` の `0.0` fallback を継承する (font-weight
-    // のような専用 fallback が要らない理由: line-height の unitless
-    // number に `0` は grammar 上有効な値であり、font-weight の `400.0`
-    // 事情 — `0.0` が妥当域外 — が line-height には無い)。
+    // So the lower bound is 0.0, and the upper bound is `MAX_LINE_HEIGHT_NUMBER`. NaN inherits the
+    // `sanitize_finite` fallback of `0.0`, similar to other length-related sites (reason why a dedicated
+    // fallback like font-weight is not needed: `0` is a grammatically valid value for line-height's unitless
+    // number, and line-height does not have the `400.0` circumstances of font-weight — `0.0` being outside
+    // the valid range).
     let mut diag = Vec::new();
     assert_eq!(
         sanitize_line_height(ComputedLineHeight::Number(f32::NAN), &mut diag),
@@ -921,9 +913,8 @@ fn sanitize_line_height_clamps_non_finite_and_out_of_range_number() {
 #[test]
 fn sanitize_line_height_clamps_non_finite_and_out_of_range_length() {
     // site 8: `ComputedLineHeight::Length` — grammar
-    // `<length-percentage [0,∞]>` の percentage は computed 層で既に
-    // px へ絶対化済み (`ComputedLineHeight::Length` の doc参照) なので
-    // ここでは px の妥当域だけを見る。
+    // Percentages in `<length-percentage [0,∞]>` are already absolute in px at the computed layer (see
+    // `ComputedLineHeight::Length` documentation), so here we only look at the valid range for px.
     let mut diag = Vec::new();
     assert_eq!(
         sanitize_line_height(
@@ -960,13 +951,14 @@ fn sanitize_line_height_clamps_non_finite_and_out_of_range_length() {
     }
 }
 
-// ── crate::diag 経由の generalized 診断 channel ──
-// fonts.rs の FontWarn observer pattern を汎用化した LayoutWarn 側の
-// 独自 unit test。fonts.rs の `observer_fires_*` test 群と対になる。
+// ── generalized diagnostic channel via crate::diag ──
+// This is a unique unit test for LayoutWarn, which generalizes the FontWarn observer pattern in fonts.rs.
+// It corresponds to the `observer_fires_*` test group in fonts.rs.
 
-/// `emit_layout_warn` は observer が `Some` ならそれを呼び、`eprintln!`
-/// はしない — fonts.rs の `emit_warn` と対称的な契約 (両方とも
-/// `crate::diag::emit_warn_via` を経由するので同じ振る舞いになるはず)。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+/// `emit_layout_warn` calls the observer if it is `Some`, and `eprintln!` does not — a contract
+/// symmetrical to `emit_warn` in fonts.rs (both should behave the same since they go through
+/// `crate::diag::emit_warn_via`). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests
+/// (#[test]-item doc) — rustdoc-blind, confirmed via intentionally breaking it to verify
 #[test]
 fn emit_layout_warn_calls_observer_when_some() {
     let mut collected: Vec<LayoutWarn> = Vec::new();
@@ -981,9 +973,9 @@ fn emit_layout_warn_calls_observer_when_some() {
         },
     );
     assert_eq!(collected.len(), 1);
-    // float literal は pattern に書けない (`illegal_floating_point_literal_pattern`
-    // は deny-by-default) ので variant/site だけ matches! で確認し、
-    // `clamped` の値は別途 `if let` で束縛して assert する。
+    // Float literals cannot be written in patterns (`illegal_floating_point_literal_pattern` is
+    // deny-by-default), so only the variant/site is checked with matches!, and the value of `clamped` is
+    // separately bound with `if let` and asserted.
     assert!(matches!(
         collected[0],
         LayoutWarn::NonFiniteClamped { site: "test", .. }
@@ -993,23 +985,21 @@ fn emit_layout_warn_calls_observer_when_some() {
     }
 }
 
-/// `observer == None` では代わりに `eprintln!` する — 呼び出しても panic
-/// しないことだけを確認する (stderr の内容は capture しない、fonts.rs の
-/// 対応する経路も同様に未検証)。
+/// `observer == None` instead of `eprintln!` — only confirm that calling it does not panic (stderr content
+/// is not captured, and the corresponding path in fonts.rs is similarly untested).
 #[test]
 fn emit_layout_warn_falls_back_to_eprintln_when_none() {
     let mut observer: LayoutWarnObserver<'_> = None;
     emit_layout_warn(&mut observer, LayoutWarn::Truncated { suppressed: 3 });
 }
 
-/// `push_layout_warn` は `LAYOUT_WARN_CAP` を超えた分を個別 event
-/// としてではなく単一の running `Truncated` counter に畳み込む —
-/// 「病的な入力で every field が毎回 clamp される」場合に buffer と
-/// 後段の eprintln! replay を有界にするための cap (doc 参照)。
+/// `push_layout_warn` folds events exceeding `LAYOUT_WARN_CAP` into a single running `Truncated` counter
+/// instead of individual events — a cap to bound the buffer and subsequent eprintln! replay in cases of
+/// "pathological input where every field is clamped every time" (see doc).
 #[test]
 fn push_layout_warn_collapses_past_cap_into_truncated_counter() {
     let mut diag: Vec<LayoutWarn> = Vec::new();
-    // cap ちょうどまでは real event。
+    // Up to the cap, these are real events.
     for _ in 0..LAYOUT_WARN_CAP {
         push_layout_warn(
             &mut diag,
@@ -1027,7 +1017,8 @@ fn push_layout_warn_collapses_past_cap_into_truncated_counter() {
         "cap 以内は real event のみのはず: {diag:?}"
     );
 
-    // cap を超えた分は Vec を伸ばさず、末尾の Truncated counter に集約される。
+    // Events exceeding the cap do not extend the Vec; they are aggregated into the Truncated counter at the
+    // end.
     for _ in 0..5 {
         push_layout_warn(
             &mut diag,
@@ -1049,9 +1040,10 @@ fn push_layout_warn_collapses_past_cap_into_truncated_counter() {
     ));
 }
 
-/// `LayoutWarn` の `Display` が両 variant で人間可読な文字列を出す
-/// ことの check (`crate::diag::emit_warn_via` の `eprintln!` fallback が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-/// 実際に読める行になることの保証)。
+/// Check that `LayoutWarn`'s `Display` produces human-readable strings for both variants (guaranteeing
+/// that `crate::diag::emit_warn_via`'s `eprintln!` fallback becomes a readable line, confirmed by
+/// intentionally breaking it // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item
+/// doc) — rustdoc-blind).
 #[test]
 fn layout_warn_display_is_human_readable() {
     let clamped = LayoutWarn::NonFiniteClamped {
@@ -1070,48 +1062,49 @@ fn layout_warn_display_is_human_readable() {
     );
 }
 
-/// clamp 定数が **doc が主張する帯の中にある**ことの pin。
+/// Pin that the clamp constant is **within the range asserted by the doc**.
 ///
-/// literal との `assert_eq!` は同語反復なので使わない — 定数を書き換えれば
-/// test も一緒に書き換わり、何も検出しない。doc が根拠として挙げた
-/// **関係式**を書く。
+/// Do not use `assert_eq!` with a literal, as it is tautological — if the constant is rewritten, the test
+/// will also be rewritten, detecting nothing. Write the **relational expression** that the doc cites as
+/// its basis.
 #[test]
 fn clamp_limits_are_in_the_documented_range() {
-    // taffy 幾何: CSSWG issue #4552 が報告する実装の LayoutUnit 上限帯
-    // (1e7〜1e8 px) の中にあること。
+    // Taffy geometry: that it is within the LayoutUnit upper bound range (1e7-1e8 px) of implementations
+    // reported by CSSWG issue #4552.
     assert!(
         (1e7..=1e8).contains(&MAX_TAFFY_MAGNITUDE),
         "MAX_TAFFY_MAGNITUDE は CSSWG #4552 の 1e7..=1e8 px 帯に収まること: {MAX_TAFFY_MAGNITUDE}"
     );
-    // doc はより強く「帯の**下端**を採る = 3 engine のいずれの上限より下」と
-    // 主張している。最小は old-Edge の `2^31 / 100 ≈ 2.15e7 px`。
+    // The doc asserts more strongly that "taking the **lower bound** of the range = below the upper limit of
+    // any of the 3 engines." The minimum is old-Edge's `2^31 / 100 ≈ 2.15e7 px`.
     assert!(
         MAX_TAFFY_MAGNITUDE <= (i32::MAX / 100) as f32,
         "MAX_TAFFY_MAGNITUDE は 3 engine の最小上限 (2^31/100 ≈ 2.15e7 px) 以下であること: {MAX_TAFFY_MAGNITUDE}"
     );
-    // font-size: skrifa の 16.16 fixed 変換が saturate する
-    // `i32::MAX / 64 ≈ 3.36e7` ppem より **1 桁以上**下 (doc の主張)。
+    // Font-size: **more than 1 digit** below `i32::MAX / 64 ≈ 3.36e7` ppem where skrifa's 16.16 fixed
+    // conversion saturates (as asserted by the doc).
     assert!(
         MAX_FONT_SIZE_PX * 10.0 < (i32::MAX / 64) as f32,
         "MAX_FONT_SIZE_PX は skrifa の saturation 点より 1 桁以上下であること: {MAX_FONT_SIZE_PX}"
     );
 }
 
-// ── 出力側 guard: nested percentage ──────────
+// Output guard: nested percentage
 //
-// 入力側 guard (上の site 1-4) は bridge に入る f32 を有限化するが、
-// percentage は used value 層 (taffy) で containing block に対して解決され
-// nest ごとに複利するため、**出力**は非有限に戻りうる。以下はその出力側
-// guard (`sanitize_taffy_layout`) の pin。
+// While the input guard (sites 1-4 above) makes the f32 values entering the bridge finite, percentages
+// are resolved against the containing block at the used value layer (Taffy) and compound with each nest.
+// Therefore, the **output** can become non-finite again. Below is the pin for that output guard
+// (`sanitize_taffy_layout`).
 
-/// [`sanitize_taffy_layout`] が保証する invariant の述語 —
-/// [`taffy::Layout`] の全 f32 field が有限。
+/// Predicate for the invariant guaranteed by [`sanitize_taffy_layout`] — all f32 fields of
+/// [`taffy::Layout`] are finite.
 ///
-/// paint が現に読む 4 field ではなく全 field を見る (guard 側と同じ理由)。
+/// Examine all fields, not just the 4 fields that paint actually reads (for the same reason as the guard
+/// side).
 ///
-/// `..` を使わず網羅 destructure するのも guard 側と同じ理由 — taffy が
-/// f32 field を増やしたときに guard 側 (網羅 literal) だけが compile error に
-/// なり、**述語側は黙って旧 field しか見ない**、という非対称を作らないため。
+/// Using exhaustive destructuring instead of `..` is for the same reason as the guard side — to avoid
+/// creating an asymmetry where, if Taffy adds an f32 field, only the guard side (exhaustive literal) would
+/// result in a compile error, while the **predicate side would silently only examine the old fields**.
 fn layout_all_finite(l: &TaffyLayout) -> bool {
     fn size_ok(s: Size<f32>) -> bool {
         s.width.is_finite() && s.height.is_finite()
@@ -1120,7 +1113,7 @@ fn layout_all_finite(l: &TaffyLayout) -> bool {
         r.left.is_finite() && r.right.is_finite() && r.top.is_finite() && r.bottom.is_finite()
     }
     let TaffyLayout {
-        // `order` は u32 — guard 対象外 (`sanitize_taffy_layout` の doc)。
+        // `order` is u32 — not subject to guard (`sanitize_taffy_layout`'s doc).
         order: _,
         location,
         size,
@@ -1140,15 +1133,15 @@ fn layout_all_finite(l: &TaffyLayout) -> bool {
         && rect_ok(*margin)
 }
 
-/// `<html><body>` の下に `decl` を持つ `<div>` を `depth` 段 nest した
-/// document を [`layout_single_page`] に通し、**各段の**
-/// `unrounded_layout` を浅い順に返す。
+/// Pass a document with `<div>`, which has `decl` under `<html><body>`, nested `depth` levels deep, to
+/// [`layout_single_page`], and return the `unrounded_layout` for **each level** in order from shallowest
+/// to deepest.
 ///
-/// 起点は probe 材料の depth range test setup だが、**depth ごとに document を作り直さない** —
-/// depth `N` の chain は 1..=`N` の各深さの node を既に含んでおり、
-/// probe が depth ごとに払っていた `FontContext::new()`
-/// (`font_context_new_cost_is_reasonable` が 10 回 5 秒未満を check =
-/// 決して安くない) を depth 数だけ払う理由が無いため。
+/// The starting point is the depth range test setup for the probe material, but **we do not recreate the
+/// document for each depth** — the chain for depth `N` already contains nodes for each depth from 1 to
+/// `N`, and there is no reason to pay the `FontContext::new()` (checking
+/// `font_context_new_cost_is_reasonable` 10 times in less than 5 seconds = not cheap at all) for each
+/// depth, which the probe used to pay.
 fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
@@ -1168,44 +1161,42 @@ fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
         .collect()
 }
 
-/// 修正前は下記の depth で `unrounded_layout` が
-/// 非有限に戻っていた。probe 材料 RAWDATA.txt の depth range 実測では
-/// **base (guard 前) / head (入力側 guard 後) が完全に一致**していた =
-/// 入力側 guard では閉じない穴であることの証拠:
+/// Before the fix, `unrounded_layout` returned to non-finite at the depth below. In the actual measurement
+/// of the depth range of the probe material RAWDATA.txt, **base (before guard) / head (after input-side
+/// guard) matched perfectly** = evidence that this is a hole not closed by the input-side guard:
 ///
-/// | decl | test setup | 本 test setup (実測) |
+/// | decl | test setup | this test setup (actual measurement) |
 /// |---|---|---|
 /// | `width: 1e9%` | 6 | 6 |
 /// | `width: 100000%` | 12 | 12 |
 /// | `width: 10000%` | 18 | 18 |
 /// | `width: 1000%` | 36 | 36 |
-/// | `width: 200%` | 到達せず | 到達せず |
+/// | `width: 200%` | Not reached | Not reached |
 /// | `padding-left: 1e9%` | 4 | 5 |
 /// | `padding-left: 100000%` | 8 | 9 |
 /// | `padding-left: 1000%` | 25 | 25 |
-/// | `padding-left: 200%` | 到達せず | 到達せず |
+/// | `padding-left: 200%` | Not reached | Not reached |
 ///
-/// (`padding-left` 系 2 行の ±1 は 2 test setup の差に由来する。probe は
-/// depth ごとに document を作り直すので最深段が leaf になるが、本 test setup
-/// は 1 本の chain を最深まで伸ばして各段を見るので同じ段が container に
-/// なる。**ただし機構は特定できていない** — この構造差が原因なら padding
-/// 系 3 行すべてがずれるはずだが `padding-left: 1000%` は 25/25 で一致
-/// する。数値自体は再現可能で、本 test setup 列は `set_unrounded_layout` の
-/// `sanitize_taffy_layout` 呼び出しだけを外して実測した値である。
-/// `width` 系 4 行は完全一致。)
+/// (The ±1 in the two `padding-left`-related lines is due to the difference in the two test setups. The
+/// probe recreates documents for each depth, so the deepest level becomes a leaf. However, this test setup
+/// extends a single chain to the deepest level and examines each stage, so the same stage becomes a
+/// container. **However, the mechanism has not been identified** — if this structural difference were the
+/// cause, all three padding-related lines should be shifted, but `padding-left: 1000%` matches 25/25. The
+/// numerical values themselves are reproducible, and the values in this test setup column were measured by
+/// removing only the `sanitize_taffy_layout` call from `set_unrounded_layout`. The four `width`-related
+/// lines match perfectly.)
 ///
-/// 修正後はすべて「到達せず」になる。
+/// After the fix, all will be "Not reached".
 ///
-/// **検査幅 45 は表の range 範囲に揃えた値であって、保証の上限ではない。**
-/// 本 test が check するのは「この 9 declaration を深さ 45 まで見た範囲で
-/// 保存値が全 field 有限」という**検査した点**だけである。深さ非依存性
-/// そのものは test からは出てこない — 根拠は
-/// `sanitize_taffy_layout` が taffy から arena への唯一の書き込み経路に
-/// 置かれているという **choke point の構造的議論**の側にある。
-/// `nested_percentage_output_stays_finite_far_past_the_range` も
-/// 「range よりかなり深い一例」を足すだけで、全称的な深さ非依存性を
-/// check するものではない。したがってこの 45 を「安全な上限」として
-/// 下げないこと (下げてよい根拠は test ではなく構造の側にある)。
+/// **The inspection width of 45 is a value aligned with the range in the table, not a guaranteed upper
+/// limit.** This test only checks the **inspected point**: "within the range of these 9 declarations
+/// viewed up to depth 45, all saved fields are finite." Depth independence itself does not come from the
+/// test — the basis lies in the **structural argument of the choke point**, which is that
+/// `sanitize_taffy_layout` is placed at the sole write path from taffy to the arena.
+/// `nested_percentage_output_stays_finite_far_past_the_range` also merely adds "an example considerably
+/// deeper than the range" and does not check for universal depth independence. Therefore, do not lower
+/// this 45 as a "safe upper limit" (the justification for lowering it lies in the structure, not the
+/// test).
 #[test]
 fn nested_percentage_output_is_finite_through_probe_sweep_depth() {
     const SWEEP_DEPTH: usize = 45;
@@ -1235,26 +1226,23 @@ fn nested_percentage_output_is_finite_through_probe_sweep_depth() {
     }
 }
 
-/// **深さ 96 でも保存値が有限**であることの pin。
+/// Pin that the saved value is finite even at depth 96.
 ///
-/// `nested_percentage_output_is_finite_through_probe_range_depth` は上
-/// の表に揃えた深さ 45 までしか見ないので、修正前に最も浅く破れた
-/// `padding-left: 1e9%` (test setup で depth 4 / 本 test setup で depth 5)
-/// を、その range 幅の 2 倍超で追加の 1 点として見る。
+/// Since `nested_percentage_output_is_finite_through_probe_range_depth` only looks up to depth 45, aligned
+/// with the table above, we will look at the shallowest broken `padding-left: 1e9%` (depth 4 in test setup
+/// / depth 5 in this test setup) before the fix, as an additional point more than double its range width.
 ///
-/// **本 test は深さ非依存性を check しない** — 有限深さの test が示せるのは
-/// 常に「検査した深さでは有限」までである。深さ非依存性の根拠は
-/// `sanitize_taffy_layout` が taffy から arena への唯一の書き込み経路に
-/// 置かれているという **choke point の構造的議論**であって、本 test では
-/// ない。本 test はその構造的議論に対する sanity check の位置づけ。
+/// **This test does not check depth independence** — a finite-depth test can always only show "finite at
+/// the depths examined." The basis for depth independence is the **structural argument of a choke point**,
+/// that `sanitize_taffy_layout` is placed as the sole write path from taffy to the arena, not this test.
+/// This test is positioned as a sanity check for that structural argument.
 ///
-/// **本 test は (a) / (b) 案を排除しない** (できない) — 入力側 fraction
-/// bound `F` に対する破綻深さ `35.6 / log10(F)`
-/// (`MAX_TAFFY_MAGNITUDE` の doc の表) は深さ 96 では `F >= 2.35` しか
-/// 捕まえられず、`width: 200%` を温存する最小の `F = 2.0` は `D = 118` で
-/// **本 test を通ってしまう**。有限深さの test は原理的に (a) を排除できない。
-/// (a) 却下の根拠は「深さ非依存には `F <= 1` が要り、それが `width: 200%` を
-/// 殺す」という `MAX_TAFFY_MAGNITUDE` の doc の議論であって、本 test ではない。
+/// **This test does not (cannot) exclude proposals (a) / (b)** — the breakdown depth `35.6 / log10(F)`
+/// (table in `MAX_TAFFY_MAGNITUDE`'s doc) for the input-side fraction bound `F` can only catch `F >= 2.35`
+/// at depth 96, and the smallest `F = 2.0` that preserves `width: 200%` is `D = 118`, which **passes this
+/// test**. A finite-depth test cannot, in principle, exclude (a). The basis for rejecting (a) is the
+/// argument in `MAX_TAFFY_MAGNITUDE`'s doc that "depth independence requires `F <= 1`, and that kills
+/// `width: 200%`," not this test.
 #[test]
 fn nested_percentage_output_stays_finite_far_past_the_sweep() {
     const DEEP: usize = 96;
@@ -1269,8 +1257,8 @@ fn nested_percentage_output_stays_finite_far_past_the_sweep() {
     }
 }
 
-/// `sanitize_taffy_layout` の field 単位の挙動 (上の 2 test は「有限で
-/// ある」までしか見ないので、どの値に落ちるかはこちらで check する)。
+/// Field-unit behavior of `sanitize_taffy_layout` (the two tests above only check "is finite," so we check
+/// here what value it falls to).
 #[test]
 fn sanitize_taffy_layout_clamps_every_f32_field() {
     let poisoned = TaffyLayout {
@@ -1315,14 +1303,13 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
     let mut diag = Vec::new();
     let s = sanitize_taffy_layout(&poisoned, &mut diag);
 
-    // `order` は u32 なので guard 対象外 — 素通しすること。
+    // `order` is u32, so it's not subject to guarding — let it pass through.
     assert_eq!(s.order, 7, "order は clamp 対象ではない");
 
-    // 16 field が非有限/範囲外 (下の個別 assert が数える対象と一致): location
+    // 16 fields are non-finite/out of range (matches what the individual asserts below count): location
     // 2 + size 2 + scrollable_overflow_rect 2 + scrollbar_size 1 + border 3 + padding 3
-    // + margin 3。範囲内の 4 field (scrollbar_size.height / border.bottom /
-    // padding.bottom / margin.top) は積まれない (per-node spam を
-    // 避ける設計)。
+    // + margin 3. The 4 in-range fields (scrollbar_size.height / border.bottom / padding.bottom / margin.top)
+    //   are not accumulated (designed to avoid per-node spam).
     assert_eq!(
         diag.len(),
         16,
@@ -1339,7 +1326,8 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
 
     assert_eq!(s.location.x, MAX_TAFFY_MAGNITUDE);
     assert_eq!(s.location.y, -MAX_TAFFY_MAGNITUDE);
-    // NaN は clamp では潰れないので `is_nan()` → 0.0 (sanitize_finite)。
+    // NaN is not crushed by clamp, so `is_nan()`
+    // → 0.0 (sanitize_finite).
     assert_eq!(s.size.width, 0.0);
     assert_eq!(s.size.height, MAX_TAFFY_MAGNITUDE);
     assert_eq!(s.scrollable_overflow_rect.right, -MAX_TAFFY_MAGNITUDE);
@@ -1359,10 +1347,10 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
     assert_eq!(s.margin.top, -3.0);
     assert_eq!(s.margin.bottom, 0.0);
 
-    // `[-MAX, MAX]` に収まる Layout の 1 例が bit 単位で不変であることの
-    // pin。「通常 layout への影響ゼロ」を示すものではない — 影響が無いのは
-    // 帯の内側に収まる場合だけで、外に出る入力 (`width: 200%` × 14 段 nest
-    // など) では値が動く (`MAX_TAFFY_MAGNITUDE` の「clamp が実際に効く帯」節)。
+    // Pinning that one example of Layout that fits within `[-MAX, MAX]` is bit-wise invariant. This does not
+    // indicate "zero impact on normal layout" — there is no impact only when it fits within the band; for
+    // inputs that go outside (such as `width: 200%` × 14 levels of nesting), the value changes (see
+    // `MAX_TAFFY_MAGNITUDE`'s "band where clamp actually takes effect" section).
     let benign = TaffyLayout {
         order: 3,
         location: Point { x: 10.0, y: -20.5 },
@@ -1407,33 +1395,31 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
     );
 }
 
-// ── 意味的 invariant fallback ─────────────────
+// Semantic invariant fallback
 //
-// 上の `sanitize_taffy_layout_*` test 群は「全 field が有限」までしか
-// 見ない (前段の scope)。以下は `enforce_layout_invariants` が扱う
-// 「field は有限だが親子関係が意味的に壊れている」層の pin。
-// `enforce_layout_invariants` の doc の 2 つの probe (border-box
-// padding overflow / 負 margin overflow) の数値もここで正式な
-// assertion に昇格させている。
+// The `sanitize_taffy_layout_*` test group above only checks up to "all fields are finite" (the preceding
+// scope). The following pins the layer that `enforce_layout_invariants` handles, where "fields are finite
+// but the parent-child relationship is semantically broken." The numerical values of the two probes
+// (border-box padding overflow / negative margin overflow) in `enforce_layout_invariants`'s doc are also
+// formally promoted to assertions here.
 
-/// invariant 1 (content box 非負) の直接 pin。field 単位では
-/// `sanitize_taffy_layout` を素通りする値 (`size` も `padding` もどちらも
-/// `[-MAX, MAX]` 内) で `content_box_width() < 0.0` を作り、
-/// `enforce_layout_invariants` が (a) その node、(b) その **subtree 内の
-/// child** の両方をゼロ化すること、(c) `LayoutWarn` を積むことを確認する。
-/// (b) が無いと「親だけゼロ化して子は壊れた親を基準にした古い値のまま」
-/// という中途半端な状態になり、invariant 2 を新たに破ってしまう。
+/// Direct pin of invariant 1 (content box non-negative). For fields, values that pass through
+/// `sanitize_taffy_layout` (both `size` and `padding` are within `[-MAX, MAX]`) are used to create
+/// `content_box_width() < 0.0`, and `enforce_layout_invariants` is confirmed to (a) zero out that node,
+/// (b) zero out both the **child within that subtree**, and (c) push `LayoutWarn`. Without (b), it would
+/// be a half-baked state where "only the parent is zeroed out, and the child remains with old values based
+/// on the broken parent," which would newly violate invariant 2.
 #[test]
 fn content_box_violation_resets_subtree_to_zero_layout() {
     let mut doc = Document::new();
     let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
 
-    // size.width (10.0) より padding.left+right (40.0) の方が大きい ⇒
-    // content_box_width() = 10.0 - 40.0 = -30.0 < 0.0。size / padding
-    // どちらも個別には `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]` 内
-    // なので `sanitize_taffy_layout` の field 単位 clamp はこれを止めない
-    // — これが実際に起こりうることの直接的な再現。
+    // padding.left+right (40.0) is greater than size.width (10.0) =>
+    // content_box_width() = 10.0 - 40.0 = -30.0 < 0.0.size / padding
+    // Both are individually within `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]`, so
+    // `sanitize_taffy_layout`'s field-level clamp does not stop this—a direct reproduction of something that
+    // can actually happen.
     doc.nodes[parent].unrounded_layout = TaffyLayout {
         order: 3,
         location: Point::ZERO,
@@ -1452,8 +1438,8 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
         },
         margin: Rect::zero(),
     };
-    // child 自体は (壊れた parent を無視すれば) 何の問題も無い layout —
-    // subtree 全体がゼロ化されることを確認するための材料。
+    // The child itself has no layout problems (if we ignore the broken parent) — this is material to confirm
+    // that the entire subtree is zeroed out.
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 1,
         location: Point { x: 1.0, y: 1.0 },
@@ -1494,22 +1480,18 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
     );
 }
 
-/// **この変更で挙動が反転した直接 check (旧名
-/// `saturated_child_outside_parent_resets_subtree_to_zero_layout`)**。
-/// `child_within_parent_border_box` の gate (「その axis 自身の
-/// `child.location` が飽和している」) を満たし、かつ旧実装なら
-/// containment 違反として reset されていたはずの、直接構築した
-/// maximally-非-contained な値 (`location.x == MAX_TAFFY_MAGNITUDE`
-/// に対し `parent.size.width == 100.0`) を使う。この変更で `axis_ok` が
-/// 符号を問わず無条件 `true` になったため、この fixture は — 実際には
-/// 明らかに parent border box の外にあるにもかかわらず — もう reset
-/// されない。「fixture を直接構築しても、もはやこの invariant を
-/// 破らせることはできない」ことを示す regression check として残す
-/// (`child_within_parent_border_box` の doc「符号を問わず無条件
-/// accept になった理由」節、および将来「この check 自体を維持すべきか」
-/// を判断する follow-up (別途明示的に deferred とされた問題)
-/// が「現在の関数は実際に何をするか」を確認する材料として使うことを
-/// 想定している)。
+/// **Direct check of behavior reversed by this change (formerly
+/// `saturated_child_outside_parent_resets_subtree_to_zero_layout`)**.
+/// Use a directly constructed maximally-uncontained value (`location.x == MAX_TAFFY_MAGNITUDE` vs.
+/// `parent.size.width == 100.0`) that satisfies the gate of `child_within_parent_border_box` ("its own
+/// `child.location` is saturated") and would have been reset as a containment violation in the old
+/// implementation. Since this change made `axis_ok` unconditionally `true` regardless of sign, this
+/// fixture is no longer reset — even though it is clearly outside the parent border box. This is kept as a
+/// regression check to show that "even by directly constructing the fixture, this invariant can no longer
+/// be broken" (see the "Reason why it became unconditionally accepted regardless of sign" section in the
+/// doc of `child_within_parent_border_box`, and it is intended to be used as material for a future
+/// follow-up (a problem explicitly deferred separately) to determine "whether this check itself should be
+/// maintained" to confirm "what the current function actually does").
 #[test]
 fn saturated_child_outside_parent_is_not_reset() {
     let mut doc = Document::new();
@@ -1517,7 +1499,7 @@ fn saturated_child_outside_parent_is_not_reset() {
     let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
     let grandchild = doc.append_element(Some(child), "div", Style::default(), None::<&str>);
 
-    // parent は正常 (100x100, 飽和していない)。
+    // Parent is normal (100x100, not saturated).
     doc.nodes[parent].unrounded_layout = TaffyLayout {
         order: 0,
         location: Point::ZERO,
@@ -1531,9 +1513,9 @@ fn saturated_child_outside_parent_is_not_reset() {
         padding: Rect::zero(),
         margin: Rect::zero(),
     };
-    // child.location.x がちょうど飽和境界 (MAX_TAFFY_MAGNITUDE) —
-    // parent (100x100) には到底収まらない。この変更以降、
-    // この「明らかに収まっていない」事実はもう reset の理由にならない。
+    // child.location.x is exactly at the saturation boundary (MAX_TAFFY_MAGNITUDE) — it cannot possibly fit
+    // within the parent (100x100). After this change, this "clearly not fitting" fact is no longer a reason
+    // for reset.
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 2,
         location: Point {
@@ -1550,8 +1532,8 @@ fn saturated_child_outside_parent_is_not_reset() {
         padding: Rect::zero(),
         margin: Rect::zero(),
     };
-    // grandchild は child を基準にした normal な値 — reset されて
-    // いないことを subtree 全体で確認する材料 (下記 assert 参照)。
+    // grandchild is a normal value based on child — material to confirm that it has not been reset throughout
+    // the subtree (see assert below).
     doc.nodes[grandchild].unrounded_layout = TaffyLayout {
         order: 5,
         location: Point { x: 1.0, y: 1.0 },
@@ -1603,15 +1585,14 @@ fn saturated_child_outside_parent_is_not_reset() {
     );
 }
 
-/// invariant 2 の gate が **無条件ではない**ことの check — CSS が普通に
-/// 許す overflow (小さい parent + 負 margin で右/下/左にはみ出す child)
-/// を `layout_single_page` のフルパイプラインで実際に layout し、
-/// `enforce_layout_invariants` がそれを誤って fallback しないことを
-/// 確認する。数値は `enforce_layout_invariants` の doc に記録した
-/// 実測値と同じ (probe で先に確認済み)。
+/// A check that the gate for invariant 2 is **not unconditional** — layout overflow that CSS normally
+/// allows (a child overflowing to the right/bottom/left with a small parent + negative margin) is actually
+/// laid out by `layout_single_page`'s full pipeline, and `enforce_layout_invariants` does not incorrectly
+/// fall back. The numerical values are the same as the actual measured values recorded in
+/// `enforce_layout_invariants`'s doc (already confirmed by probe).
 ///
-/// これが無いと「invariant 2 を無条件チェックにしてしまう」regression
-/// (spec 違反 — legitimate な overflow layout を壊す) を検出できない。
+/// Without this, we cannot detect a regression that "makes invariant 2 an unconditional check" (a spec
+/// violation — breaking legitimate overflow layout).
 #[test]
 fn legitimate_negative_margin_overflow_is_not_reset() {
     use raikiri_style::{build_rule_tree, cascade};
@@ -1668,35 +1649,31 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
     );
 }
 
-/// gate (`child.location` 自身が飽和) が真でも child が実際には parent
-/// に収まっている (境界ちょうど) ケースでは fallback しないことの pin。
+/// Pinning that fallback does not occur even if the gate (`child.location` itself is saturated) is true,
+/// but the child actually fits within the parent (exactly at the boundary).
 ///
-/// **この変更が入る前の history**: この test はもともと旧
+/// **History before this change**: This test was originally old
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
-/// (飽和 かつ containment 違反 → reset、この変更で
-/// `saturated_child_outside_parent_is_not_reset` に改名・反転) と
-/// 対にして、「gate 単独ではなく『gate かつ containment 違反』という
-/// conjunction を検査している」ことを示す check だった。この変更で
-/// `axis_ok` が符号を問わず無条件 `true` になったため、この
-/// conjunction はもう成立しない — containment が実際にどうであっても
-/// (境界ちょうどで収まっていても、明らかに外れていても) reset は
-/// 起きない。本 test の assert 自体は (この fixture がたまたま
-/// 「収まっている」ケースだったため) 引き続き通るが、それは
-/// 「containment を検査して pass した」からではなく「そもそも
-/// containment を見ていない」から — その事実を示す対の regression check
-/// は `saturated_child_outside_parent_is_not_reset` を参照。
-/// 実際の nested percentage chain を使った同種の check は
-/// `nested_percentage_wide_child_chain_is_not_reset` を参照
-/// (extent ではなく origin だけを見る現行の `child_within_parent_border_box`
-/// を選んだ直接の理由になった regression)。
+/// This was a check (renamed to `saturated_child_outside_parent_is_not_reset` and inverted with this
+/// change) paired with "saturated AND containment violation → reset" to indicate that "we are checking the
+/// conjunction 'gate AND containment violation' rather than just 'gate'." With this change, `axis_ok`
+/// unconditionally became `true` regardless of its sign, so this conjunction no longer holds — a reset
+/// will not occur regardless of actual containment (whether it's exactly within the boundary or clearly
+/// outside). The assert in this test itself continues to pass (because this fixture happened to be a
+/// "contained" case), but that's not because "containment was checked and passed," but because
+/// "containment is not being looked at in the first place." For the paired regression check demonstrating
+/// this fact, see `saturated_child_outside_parent_is_not_reset`. For a similar check using an actual
+/// nested percentage chain, see `nested_percentage_wide_child_chain_is_not_reset` (a regression that was
+/// the direct reason for choosing the current `child_within_parent_border_box`, which only looks at
+/// origin, not extent).
 #[test]
 fn saturated_but_contained_layout_is_not_reset() {
     let mut doc = Document::new();
     let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
 
-    // parent の size もちょうど飽和境界 — child の location がそこに
-    // ぴったり収まる (境界値、`<=` で ok) ケースを作る。
+    // Create a case where the parent's size is also exactly at the saturation boundary — the child's location
+    // fits perfectly within it (boundary value, OK by `<=`).
     doc.nodes[parent].unrounded_layout = TaffyLayout {
         order: 0,
         location: Point::ZERO,
@@ -1710,9 +1687,9 @@ fn saturated_but_contained_layout_is_not_reset() {
         padding: Rect::zero(),
         margin: Rect::zero(),
     };
-    // child.location 自身がちょうど飽和境界 — gate
-    // (`child_within_parent_border_box` の axis 単位 gate) を発火させる。
-    // parent.size と同じ値なので `<=` で境界ちょうど「収まっている」。
+    // child.location itself is exactly at the saturation boundary — trigger the gate
+    // (`child_within_parent_border_box` axis unit gate). Since it's the same value as parent.size, it's
+    // exactly "contained" at the boundary by `<=`.
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 1,
         location: Point {
@@ -1757,25 +1734,24 @@ fn saturated_but_contained_layout_is_not_reset() {
     );
 }
 
-/// **この変更で挙動が反転した check (旧名
+/// **Check whose behavior was inverted by this change (formerly named**
 /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`,
-/// 旧主張「`y` 軸の検出力が保たれていること」)**。
+/// Former assertion: "The detection capability of the `y` axis is maintained."
 ///
-/// この変更が入る前は、この fixture (`y` 軸が飽和かつ実際に parent に
-/// 収まっていない = 真の violation、`x` 軸は飽和していない legitimate
-/// な負 margin `-30`) は `y` 軸の検出力を示す check として意味があった —
-/// `y` 軸の再検査だけで reset の理由が説明でき、`x` 軸の legitimate な
-/// 負値は無視されることを示せた。この変更で `axis_ok` が符号を問わず
-/// 無条件 `true` になったため、`y` 軸は飽和しているだけでもう
-/// containment を再検査しない —「収まっていない」という事実自体が
-/// reset の理由になり得なくなった。
+/// Before this change, this fixture (`y` axis saturated and actually not contained by parent = true
+/// violation, `x` axis not saturated, legitimate negative margin `-30`) was meaningful as a check to
+/// demonstrate the detection capability of the `y` axis — showing that re-checking only the `y` axis could
+/// explain the reason for the reset, and that the legitimate negative value of the `x` axis would be
+/// ignored. With this change, `axis_ok` became unconditionally `true` regardless of sign, so the `y` axis
+/// no longer re-checks containment just by being saturated — the fact of "not being contained" itself can
+/// no longer be a reason for a reset.
 ///
-/// 本 test は現在、`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-/// とほぼ同じ主張 (どちらの axis も reset の理由にならない) の近縁 check
-/// になっている。唯一の違いは `y` 軸の値 — こちらは `y` が **実際には
-/// parent に収まっていない** (`MAX_TAFFY_MAGNITUDE > 100.0`) のに対し、
-/// あちらは境界ちょうどで収まっている。両方とも reset されないことで、
-/// 「収まっているかどうか」が結果に一切影響しなくなったことを示す。
+/// This test is now a closely related check making almost the same assertion as
+/// `saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset` (neither axis
+/// is a reason for reset). The only difference is the value of the `y` axis — here, `y` is **actually not
+/// contained by the parent** (`MAX_TAFFY_MAGNITUDE > 100.0`), whereas there, it is contained exactly at
+/// the boundary. The fact that neither is reset shows that "whether it is contained or not" no longer
+/// affects the result at all.
 #[test]
 fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
     let mut doc = Document::new();
@@ -1795,10 +1771,9 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
         padding: Rect::zero(),
         margin: Rect::zero(),
     };
-    // y 軸: child.location.y がちょうど飽和境界かつ実際に parent
-    // (height=100.0) に収まっていない。x 軸: 通常の負 margin (`-30`)
-    // による legitimate overflow — 飽和していない。この変更
-    // 以降、どちらの軸も reset の理由にならない。
+    // y-axis: child.location.y is exactly at the saturation boundary and is actually not contained by the
+    // parent (height=100.0). x-axis: legitimate overflow due to normal negative margin (`-30`) — not
+    // saturated. After this change, neither axis is a reason for reset.
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 1,
         location: Point {
@@ -1836,48 +1811,45 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
     );
 }
 
-/// **直前の指摘への直接回帰 pin**
-/// — 直前の
+/// **Direct regression pin to the previous point** — the previous
 /// `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-/// (この変更が入る前の旧名
+/// (Old name before this change
 /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`)
-/// は当時「`y` 軸だけでも reset の説明がつく」ため、`x` 軸を実装が正しく
-/// 無視しているかどうかを実際には区別できない、と指摘された
-/// (旧 axis-mixing 実装でも当時の axis 単位実装でも同じ「reset される」
-/// という結果になってしまうため)。
+/// It was pointed out at the time that "the reset could be explained by the `y` axis alone," making it
+/// impossible to distinguish whether the `x` axis was correctly ignored by the implementation (because
+/// both the old axis-mixing implementation and the axis-unit implementation at the time would result in
+/// the same "reset").
 ///
-/// 本 test は区別できる fixture を使う: `y` 軸を「飽和境界にちょうど
-/// 達しているが、それでも parent に収まっている」(= 真の violation では
-/// ない) 値にし、`x` 軸には legitimate な負 margin (`-30`、飽和して
-/// いない) を与える。
+/// This test uses a distinguishable fixture: the `y` axis is set to a value that "just reaches the
+/// saturation boundary but still fits within the parent" (= not a true violation), and the `x` axis is
+/// given a legitimate negative margin (`-30`, not saturated).
 ///
-/// - **現行実装 (符号を問わず無条件 accept)**:
-///   `x` 軸は飽和していないので無条件 ok。`y` 軸は飽和しているが、
-///   containment を再検査せずやはり無条件 ok。→ **reset されない**。
-/// - **この変更が入る直前の実装 (axis 単位・符号で分岐、正方向だけ `<=` を
-///   再検査)**: `x` 軸は無条件 ok、`y` 軸は飽和かつ正なので再検査するが
-///   実際に parent に収まっているので ok。→ 同じく reset されない
-///   (この test はこの変更の前後で結果が変わらない — 変わったのは
-///   `saturated_child_outside_parent_is_not_reset` や
+/// - **Current implementation (unconditionally accepts regardless of sign)**: The `x` axis is not
+///   saturated, so it's unconditionally OK. The `y` axis is saturated, but containment is not re-checked,
+///   so it's also unconditionally OK. -> **Not reset**.
+/// - **Implementation just before this change (axis-unit, branches by sign, re-checks `<=` only for
+///   positive direction)**: The `x` axis is unconditionally OK. The `y` axis is saturated and positive, so
+///   it's re-checked, but it actually fits within the parent, so it's OK. -> Also not reset (this test's
+///   result does not change before and after this change — what changed was
+///   `saturated_child_outside_parent_is_not_reset` and
 ///   `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-///   のように実際に containment が破れているケース)。
-/// - **旧 axis-mixing 実装 (`parent.size` / `child.size` /
-///   `child.location` のいずれかが飽和していれば `x` / `y` 両方を
-///   無条件チェック)**: `y` の飽和で gate が開き、`x >= 0.0` の
-///   チェックに `-30.0` が失敗する → **誤って reset される**。
+///   cases where containment is actually broken).
+/// - **Old axis-mixing implementation (if any of `parent.size` / `child.size` / `child.location` is
+///   saturated, unconditionally checks both `x` / `y`)**: Saturation of `y` opens the gate, and `-30.0`
+///   fails the check for `x >= 0.0` -> **Incorrectly reset**.
 ///
-/// すなわち本 test が pass することは「`x` 軸の legitimate な負 margin
-/// が reset の原因になっていない」ことの直接証拠であり、旧 axis-mixing
-/// 実装への退行があれば本 test 単体で fail する。
+/// In other words, this test passing is direct evidence that "the legitimate negative margin of the `x`
+/// axis is not causing a reset," and if there were a regression to the old axis-mixing implementation,
+/// this test alone would fail.
 #[test]
 fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
     let mut doc = Document::new();
     let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
 
-    // parent.size.height もちょうど飽和境界 — child.location.y
-    // (同じく飽和境界) がそこにぴったり収まる (`<=`、境界ちょうど) ように
-    // するため。width は通常値 (x 軸は飽和させないので関係ない)。
+    // This is to ensure that parent.size.height is also exactly at the saturation boundary, so that
+    // child.location.y (also at the saturation boundary) fits perfectly there (`<=`, exactly at the
+    // boundary). The width is a normal value (the x-axis is not saturated, so it's irrelevant).
     doc.nodes[parent].unrounded_layout = TaffyLayout {
         order: 0,
         location: Point::ZERO,
@@ -1891,10 +1863,10 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
         padding: Rect::zero(),
         margin: Rect::zero(),
     };
-    // x 軸: legitimate な負 margin (`-30`)、飽和していない — 無条件で
-    // ok 扱いされるべき軸。y 軸: 飽和境界ちょうどだが、parent.size.height
-    // と等しいので実際には収まっている (真の violation ではない) —
-    // 「飽和している」だけでは reset の理由にならないことも同時に示す。
+    // x-axis: legitimate negative margin (`-30`), not saturated — this axis should be unconditionally treated
+    // as OK. y-axis: exactly at the saturation boundary, but since it's equal to parent.size.height, it
+    // actually fits (not a true violation) — this also shows that "saturated" alone is not a reason for a
+    // reset.
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 1,
         location: Point {
@@ -1931,24 +1903,21 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
     );
 }
 
-/// **直前の指摘への直接回帰 check (その 2)**
-/// — 指摘された元の scenario そのもの: 同じ subtree の**無関係な
-/// 別の場所** (ここでは同じ `parent` 自身) の `size` が飽和している状況で、
-/// **その child 自身は何も飽和していない**のに legitimate な負 margin
-/// (`location.x = -30`) を持つ。旧版の gate
-/// (`parent.size` / `child.size` / `child.location` のいずれか 1 つでも
-/// 飽和していれば検査する) はこれを誤って reset していた —
-/// `child_within_parent_border_box` の doc「gate を axis 単位・
-/// `child.location` 自身に限定する理由」節の 1. で説明した field 単位の
-/// 問題を直接再現する。
+/// **Direct regression check to the previous point (part 2)** — The original scenario itself that was
+/// pointed out: `size` in an **unrelated different location** (here, `parent` itself) of the same subtree
+/// is saturated, while **the child itself is not saturated at all** but has a legitimate negative margin
+/// (`location.x = -30`). The old gate (which would check if any one of `parent.size` / `child.size` /
+/// `child.location` was saturated) incorrectly reset this — directly reproducing the field-unit problem
+/// explained in section 1 of `child_within_parent_border_box`'s doc, "Reasons for limiting the gate to
+/// axis units and `child.location` itself".
 #[test]
 fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
     let mut doc = Document::new();
     let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
 
-    // parent.size が飽和 — 無関係な原因 (例えば別の subtree で起きた
-    // percentage 複利) を想定した、この child とは関係の無い飽和。
+    // parent.size is saturated — assuming an unrelated cause (e.g., percentage compounding that occurred in
+    // another subtree), this saturation is unrelated to this child.
     doc.nodes[parent].unrounded_layout = TaffyLayout {
         order: 0,
         location: Point::ZERO,
@@ -1962,9 +1931,8 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
         padding: Rect::zero(),
         margin: Rect::zero(),
     };
-    // child 自身は完全に正常 — location / size とも飽和していない、
-    // 通常の負 margin による legitimate overflow
-    // (`legitimate_negative_margin_overflow_is_not_reset` と同じ形)。
+    // The child itself is completely normal — neither location nor size is saturated, a legitimate overflow
+    // due to a normal negative margin (same form as `legitimate_negative_margin_overflow_is_not_reset`).
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 1,
         location: Point { x: -30.0, y: 0.0 },
@@ -2061,7 +2029,7 @@ fn nested_percentage_wide_child_chain_is_not_reset() {
 /// so the old code reset this unconditionally regardless of
 /// `parent.size`. This test pins that the sign-based branch introduced
 /// later (see `child_within_parent_border_box`'s
-/// doc, "符号を問わず無条件 accept になった理由") treats
+/// doc, "The reason why it became unconditional accept regardless of sign") treats
 /// saturated-negative as unconditionally ok, the same way
 /// unsaturated-negative already was — and, since a later change,
 /// the same way saturated-positive now is too.
@@ -2084,10 +2052,10 @@ fn saturated_negative_location_is_not_reset() {
         padding: Rect::zero(),
         margin: Rect::zero(),
     };
-    // child.location.x はちょうど飽和境界の**負**側 — parent.size は
-    // 飽和していない通常値 (100.0)。旧式 (`>= 0.0 && <= parent.size`) は
-    // 負の値に対しては恒等的に false だったので、この fixture は
-    // 旧実装では必ず reset される (`>= 0.0` を満たす負数は存在しない)。
+    // child.location.x is exactly on the **negative** side of the saturation boundary — parent.size is
+    // a normal, unsaturated value (100.0). Since the old implementation (`>= 0.0 && <= parent.size`) was
+    // identically false for negative values, this fixture would
+    // always be reset in the old implementation (no negative number satisfies `>= 0.0`).
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 1,
         location: Point {
@@ -2108,14 +2076,13 @@ fn saturated_negative_location_is_not_reset() {
     let child_before = doc.nodes[child].unrounded_layout;
     enforce_layout_invariants(&mut doc, parent);
 
-    // これ以降の assert メッセージはあえて 1 物理行で書く (この file の
-    // 他 test の慣習である backslash 継続の複数行ではない) —
-    // `scripts/lib/patch_coverage.py` の `code_only()` は行ごとに
-    // string 状態をリセットするため、backslash 継続行の途中に (地の文
-    // としての) `)`/`]`/`}` があると `cov:ignore` の block scope 計算が
-    // そこで途切れ、後続行が exempt されず patch coverage が誤って
-    // FAIL する (実際に踏んだ経験がある)。1 行に畳むのは
-    // その回避策であり、単なる style の揺れではない。
+    // The assert messages from this point onward are intentionally written on a single physical line (not
+    // multiple lines with backslash continuation, which is the convention for other tests in this file) —
+    // because `code_only()` in `scripts/lib/patch_coverage.py` resets the string state for each line, if
+    // there is `)`/`]`/`}` (as plain text) in the middle of a backslash-continued line, the block scope
+    // calculation for `cov:ignore` will be interrupted there, subsequent lines will not be exempt, and patch
+    // coverage will incorrectly FAIL (this has actually been encountered). Folding them into one line is a
+    // workaround for this, not just a style variation.
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
@@ -2540,8 +2507,9 @@ fn with_resolver_refreshes_membership_before_the_image_pre_pass() {
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
     let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
-    let _hidden_text = doc.append_text(tmpl, "template text");
-    let img = doc.append_element(Some(tmpl), "img", Style::default(), None::<&str>);
+    let frag = doc.allocate_template_fragment_root(tmpl);
+    let _hidden_text = doc.append_text(frag, "template text");
+    let img = doc.append_element(Some(frag), "img", Style::default(), None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
     let rules = build_rule_tree(&doc);

@@ -84,9 +84,9 @@ url        = "2.5"
 # `gzip` for real-world compressed CSS/font/image responses. `rustls`'s
 # default crypto provider (`ring`) has a `[build-dependencies] cc` edge —
 # checked via `cargo tree -e normal,build` against this exact pin — so this
-# is a real Non-Pure-Rust build-graph edge (walls.md 壁7's "Non-Pure-Rust
-# dep 追加" trigger category). It does not fire the wasm32 half of that
-# trigger ("WASM 未対応 かつ代替なし") because this dependency is `optional
+# is a real Non-Pure-Rust build-graph edge (walls.md wall 7's "add a Non-Pure-Rust
+# dependency" trigger category). It does not fire the wasm32 half of that
+# trigger ("no WASM support and no alternative") because this dependency is `optional
 # = true` behind raikiri-net's non-default `http-ureq` feature and is never
 # part of a wasm32-unknown-unknown build of this crate's default features.
 ureq = "=3.4.2"
@@ -140,67 +140,68 @@ flate2 = "1"
 # for the version pin + Pure Rust rationale now lives here instead of being
 # duplicated per crate — the writeup below is carried over verbatim from
 # raikiri-style/Cargo.toml (pre-vvf6), not summarized, per that comment's own
-# "regenerate できない情報なので manifest に残す" note.
+# "keep non-reproducible information in the manifest" note.
 #
 # `default-features = false` drops `plotters` (+ its `chrono`/`image` tail) and
 # `rayon`; `cargo_bench_support` is the one feature required for `cargo bench`
 # to drive the harness.
 #
-# **Pinned below 0.8 on purpose** (autonomy.md 原則 5, Pure Rust must):
+# **Pinned below 0.8 on purpose** (autonomy.md principle 5, Pure Rust must):
 # criterion 0.8 gained a `[target."cfg(any(windows, unix))".dependencies]` edge
 # on `alloca`, which ships an `alloca.c` compiled through `cc` at build time.
 # That is a C compilation step in the build graph — walls.md wall 7's
-# "Non-Pure-Rust dep 追加" trigger — and 0.7.0 is the pure-Rust alternative that
-# 原則 5 requires us to prefer when one exists. Measured on this workspace:
+# "add a Non-Pure-Rust dependency" trigger — and 0.7.0 is the pure-Rust alternative that
+# principle 5 requires us to prefer when one exists. Measured on this workspace:
 # 0.7.0 adds 22 packages with no `cc` and no `alloca`; 0.8.2 adds 30 including
 # both. **Do not bump to 0.8+ without a wall/build escalation.**
 #
-# ── 原則 5 Pure Rust / WASM readiness ──────────────────────────────────
+# ── Principle 5: Pure Rust / WASM readiness ──────────────────────────────────
 #
-# walls.md 壁 7 の判定原則が crate-local dev-dep にも Pure Rust / WASM check を
-# 必須としているので、"dev-only だから" は check を省く理由にならない。以下は
-# 実施した check の結論と、再実行できる形の evidence (raikiri-spike-zpui、
-# raikiri-style/benches/cascade.rs 経由で検証済み)。
+# The walls.md wall 7 rule requires a Pure Rust / WASM check even for a
+# crate-local dev dependency: "dev-only" is not an exemption. The results
+# and reproducible commands follow (verified in raikiri-spike-zpui via
+# raikiri-style/benches/cascade.rs).
 #
 #   rustup target add wasm32-unknown-unknown
 #   cargo check -p raikiri-style --all-targets --target wasm32-unknown-unknown
 #   → Finished
 #
-# これは `benches/cascade.rs` を wasm32 向けに compile する。追加 22 package の
-# 内訳は **19 が wasm32 で compile / 1 は host proc-macro (`zerocopy-derive`) /
-# 2 はどの target の graph にも入らない (`aho-corasick`、`crunchy`)**。
-# compile に失敗する package は 1 つも無い。
+# This compiles `benches/cascade.rs` for wasm32. Of the 22 added packages,
+# **19 compile for wasm32, one is a host proc-macro (`zerocopy-derive`), and
+# two do not enter either target's graph (`aho-corasick`, `crunchy`)**.
+# No package fails to compile.
 #
-# したがって walls.md 壁 7 Trigger の "WASM dead-end dep 追加 (WASM 未対応 かつ
-# 代替なし)" は **第 1 連言が成立しない**ため発火しない (代替も divan / tango 等が
-# 実在する)。22 package 個別の根拠は bd raikiri-spike-zpui に記録した —
-# ここに列挙すると 0.7.x の dep tree が動くたびに lockfile と食い違う。
+# Therefore walls.md wall 7's "add a WASM dead-end dependency (no WASM
+# support and no alternative)" trigger does not apply: **the first condition
+# is false** (alternatives such as divan and tango also exist). Per-package
+# evidence for all 22 is in bd raikiri-spike-zpui; listing it here would
+# drift from Cargo.lock as the 0.7.x dependency tree changes.
 #
-# 注意して読むべき点 (regenerate できない情報なので manifest に残す):
+# Important details (kept in the manifest because they cannot be regenerated):
 #
-# - `criterion` は wasm32 で **compile は通るが動かない**。`std::time::Instant`
-#   (`src/bencher.rs`) と `std::fs` (`src/fs.rs`) が wasm32-unknown-unknown に
-#   実装されていないため。bench は host で回す前提。
-# - `default-features = false` は **plot を無効化しない**。`plotters` を落とすと
-#   pure Rust の backend が消えるだけで、`gnuplot` が PATH にあれば
-#   `PlottingBackend::Gnuplot` に解決し、`criterion-plot` が
-#   `Command::new("gnuplot")` で **外部 native binary を起動する**
-#   (`criterion/src/lib.rs` の `default_plotting_backend`、`criterion-plot/src/lib.rs`)。
-#   gnuplot 不在なら `PlottingBackend::None` に落ちるだけなので build graph に
-#   C binding も native link も入らず壁 7 Trigger 1 は発火しないが、
-#   「plot は無効」ではない。
-# - criterion の runtime OS surface は Instant / fs だけではない —
-#   `Command::new($CARGO) metadata` (CARGO_TARGET_DIR 未設定時)、
-#   `TcpStream::connect` (cargo-criterion 連携、`CARGO_CRITERION_PORT`)、
-#   `process::exit` も持つ。いずれも dev-dependency の bench harness 内。
+# - `criterion` **compiles but cannot run** on wasm32: `std::time::Instant`
+#   (`src/bencher.rs`) and `std::fs` (`src/fs.rs`) are not implemented for
+#   wasm32-unknown-unknown. Benchmarks are expected to run on the host.
+# - `default-features = false` **does not disable plotting**. Dropping
+#   `plotters` only removes the pure-Rust backend. If `gnuplot` is on PATH,
+#   `PlottingBackend::Gnuplot` uses `criterion-plot` to **launch an external
+#   native binary** through `Command::new("gnuplot")` (`default_plotting_backend`
+#   in `criterion/src/lib.rs`, and `criterion-plot/src/lib.rs`). Without gnuplot,
+#   it falls back to `PlottingBackend::None`, with no C binding or native link
+#   in the build graph, so wall 7 trigger 1 does not apply. Plotting is not
+#   disabled, however.
+# - Criterion also uses OS APIs beyond Instant and fs: `Command::new($CARGO)
+#   metadata` (when CARGO_TARGET_DIR is unset), `TcpStream::connect` (for
+#   cargo-criterion integration via `CARGO_CRITERION_PORT`), and `process::exit`.
+#   These all run inside the dev-dependency benchmark harness.
 #
-# raikiri-bench (raikiri-spike-vvf6) の追加時点で再確認: `cargo tree -p
-# raikiri-bench -e normal,build,dev` に `alloca` / `cc` は出現せず、上記の
-# 判断は raikiri-bench にもそのまま適用できる。raikiri-bench 自体の
-# wasm32-unknown-unknown check は実施していない — bench-only / host-only
-# crate であり (raikiri-vrt / raikiri-wpt と同じ posture、いずれも wasm32
-# check を持たない)、そのものが WASM 対象 surface に入らないため。この
-# 判断が甘いと思う場合は raikiri-spike-vvf6 に追記して再検討すること。
+# Rechecked when adding raikiri-bench (raikiri-spike-vvf6): `cargo tree -p
+# raikiri-bench -e normal,build,dev` contains neither `alloca` nor `cc`, so
+# the same reasoning applies. raikiri-bench itself was not checked for
+# wasm32-unknown-unknown: it is a host-only benchmark crate (like raikiri-vrt
+# and raikiri-wpt, which also have no wasm32 check), not part of the WASM
+# target surface. If this judgment seems too permissive, revisit it in
+# raikiri-spike-vvf6.
 criterion = { version = "0.8", default-features = false, features = [
     "cargo_bench_support",
 ] }
@@ -210,4 +211,4 @@ unsafe_code = "deny"
 missing_docs = "warn"
 
 [workspace.lints.clippy]
-# M1 以降で必要に応じて拡張。M0 では空のまま resolver="3" 挙動の確認に集中
+# Extend as needed after M1. Keep this empty in M0 to focus on resolver="3" behavior.

@@ -296,6 +296,72 @@ pub(crate) fn project_deferred_value(
             _ => return None,
         },
         // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::BorderRight(border) => match key {
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidth(border.width)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyle(border.style)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColor(border.color)
+            }
+            _ => return None,
+        },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::BorderCssWide(kw) => match key {
+            crate::property::PropertyKey::BorderTopWidth => {
+                PropertyValue::BorderTopWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderTopStyle => {
+                PropertyValue::BorderTopStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderTopColor => {
+                PropertyValue::BorderTopColorCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColorCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderBottomWidth => {
+                PropertyValue::BorderBottomWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderBottomStyle => {
+                PropertyValue::BorderBottomStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderBottomColor => {
+                PropertyValue::BorderBottomColorCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftWidth => {
+                PropertyValue::BorderLeftWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftStyle => {
+                PropertyValue::BorderLeftStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftColor => {
+                PropertyValue::BorderLeftColorCssWide(kw)
+            }
+            _ => return None,
+        },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::BorderRightCssWide(kw) => match key {
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColorCssWide(kw)
+            }
+            _ => return None,
+        },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::Overflow(pair) => match key {
             crate::property::PropertyKey::OverflowX => PropertyValue::OverflowX(pair.x),
             crate::property::PropertyKey::OverflowY => PropertyValue::OverflowY(pair.y),
@@ -1597,7 +1663,7 @@ mod tests {
 
     #[test]
     fn var_in_font_shorthand_projects_each_deferred_longhand() {
-        // `var_in_background_shorthand_projects_each_deferred_longhand` の
+        // Sibling of `var_in_background_shorthand_projects_each_deferred_longhand`:
         // sibling — `font: var(--f)` expands 6 grammar longhands plus 9
         // reset-only subproperties after substitution.
         use crate::property::{

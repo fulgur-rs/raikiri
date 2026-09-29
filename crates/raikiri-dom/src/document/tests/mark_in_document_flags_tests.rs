@@ -2,17 +2,17 @@ use super::*;
 
 #[test]
 fn mark_in_document_flags_clears_detached_arena_nodes() {
-    // Regression check: arena に存在するが
-    // Document root から reachable でない node (foster-parenting transient
-    // state / unimplemented-node 除去後の孤児 等) は mark 後 is_in_document=false に落ちる
-    // (Node::new_* の default true を step 1 の全 clear が上書きする)。
+    // Regression check: nodes present in the arena but not
+    // reachable from the Document root (foster-parenting transient state,
+    // orphans after removal of unimplemented nodes, etc.) become
+    // is_in_document=false after marking (step 1 clears their default true flag).
     let mut doc = Document::new();
     let root = doc.root_index();
     let attached = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
-    // parent=None で detached を作る (append_element の primitive contract)
+    // Create a detached node with parent=None (append_element primitive contract).
     let detached = doc.append_element(None::<usize>, "span", Style::default(), None::<&str>);
 
-    // constructor default はどちらも true
+    // Both constructors default to true.
     assert!(doc.get_node(attached).unwrap().is_in_document());
     assert!(doc.get_node(detached).unwrap().is_in_document());
 
@@ -29,11 +29,15 @@ fn mark_in_document_flags_clears_detached_arena_nodes() {
 }
 
 #[test]
-fn mark_in_document_flags_keeps_template_element_but_clears_descendants() {
-    // Regression check for the existing contract: template element
-    // itself stays in_document=true, its descendants get cleared. Redundant
-    // with the raikiri-html integration test but locally verifies the DFS
-    // shape (in_template state propagation) without going through parse.
+fn mark_in_document_flags_keeps_template_real_children_in_document() {
+    // Regression check for the template-contents contract (HTML §4.12.3):
+    // only the detached contents fragment is inert. Ordinary light-DOM
+    // children appended directly under the `<template>` element (the
+    // `appendChild` shape) are in the document tree, so they stay
+    // in_document=true along with the template element itself. The inert
+    // contents-fragment shape is covered by
+    // `template_contents_fragment_children_stay_out_of_document` in
+    // `template_in_document_tests`.
     let mut doc = Document::new();
     let root = doc.root_index();
     let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
@@ -47,20 +51,20 @@ fn mark_in_document_flags_keeps_template_element_but_clears_descendants() {
         "template stays in doc"
     );
     assert!(
-        !doc.get_node(inner).unwrap().is_in_document(),
-        "<p> cleared"
+        doc.get_node(inner).unwrap().is_in_document(),
+        "real <p> child of <template> stays in doc"
     );
     assert!(
-        !doc.get_node(text).unwrap().is_in_document(),
-        "text cleared"
+        doc.get_node(text).unwrap().is_in_document(),
+        "text under a real <template> child stays in doc"
     );
 }
 
 #[test]
 fn append_operations_set_flags_dirty() {
-    // Regression check: mutation primitives が flags_dirty を
-    // set することで、observation-side が mark_in_document_flags を呼ぶ contract
-    // に依存できる。fresh Document は dirty=false からスタート。
+    // Regression check: mutation primitives set flags_dirty,
+    // allowing observers to rely on calling mark_in_document_flags.
+    // A fresh Document starts with dirty=false.
     let mut doc = Document::new();
     assert!(!doc.flags_dirty, "fresh Document has clean flags");
     let e = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
@@ -73,8 +77,8 @@ fn append_operations_set_flags_dirty() {
 #[test]
 fn attach_and_detach_set_flags_dirty() {
     // attach_child / detach_from_parent / reparent_children / insert_child_before /
-    // retain_children はいずれも tree topology を変えるため flags_dirty を
-    // set する契約。
+    // Both retain_children operations change tree topology and must set
+    // flags_dirty.
     let mut doc = Document::new();
     let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
     let b = doc.append_element(Some(0), "b", Style::default(), None::<&str>);
@@ -105,72 +109,81 @@ fn attach_and_detach_set_flags_dirty() {
 
 #[test]
 fn mark_in_document_flags_is_noop_when_clean() {
-    // mark_in_document_flags は !flags_dirty のとき
-    // 何もしない。invariant: 一度 mark した後 mutation が無ければ再 mark は
-    // 高速で idempotent。
+    // mark_in_document_flags does nothing when !flags_dirty.
+    // Invariant: without mutation after marking, marking again is
+    // fast and idempotent.
     let mut doc = Document::new();
     let e = doc.append_element(Some(0), "e", Style::default(), None::<&str>);
     doc.mark_in_document_flags();
     assert!(!doc.flags_dirty);
     assert!(doc.get_node(e).unwrap().is_in_document());
-    // 再 mark は no-op、状態不変。
+    // Marking again is a no-op; the state is unchanged.
     doc.mark_in_document_flags();
     assert!(doc.get_node(e).unwrap().is_in_document());
     assert!(!doc.flags_dirty);
 }
 
 #[test]
-fn set_element_namespace_dirties_flags_for_template_only() {
-    // Regression check: `set_element_namespace` は
-    // `<template>` element の namespace を変更した場合のみ flags_dirty を
-    // set する。template 以外は set しない (pure metadata、layout 無影響)。
+fn set_element_namespace_dirties_flags_for_svg_only() {
+    // Regression check: `set_element_namespace` sets flags_dirty only when
+    // changing the namespace of an `<svg>` element (the inline-SVG subtree
+    // bits depend on that namespace). `<template>` and `<div>` namespace
+    // changes do not set it: membership no longer depends on template
+    // detection (real children stay in-document in any namespace, and the
+    // inert contents fragment is unreachable regardless).
     let mut doc = Document::new();
     let tmpl = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
     let div = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let svg = doc.append_element(Some(0), "svg", Style::default(), None::<&str>);
     doc.mark_in_document_flags();
     assert!(!doc.flags_dirty);
 
-    // template の namespace を変更 → dirty set される
+    // Changing a template’s namespace → do not set dirty.
     doc.set_element_namespace(tmpl, Some(SmolStr::new("http://www.w3.org/2000/svg")));
     assert!(
-        doc.flags_dirty,
-        "template namespace change must dirty flags"
+        !doc.flags_dirty,
+        "template namespace change must NOT dirty flags"
     );
-    doc.mark_in_document_flags();
-    assert!(!doc.flags_dirty);
 
-    // div の namespace を変更 → dirty set されない (template 判定に無関係)
+    // Changing a div’s namespace → do not set dirty.
     doc.set_element_namespace(div, Some(SmolStr::new("http://www.w3.org/2000/svg")));
     assert!(
         !doc.flags_dirty,
-        "non-template namespace change must NOT dirty flags"
+        "non-svg namespace change must NOT dirty flags"
     );
 
-    // 同じ namespace を再度 set → 変化無しなら dirty set しない
-    doc.set_element_namespace(tmpl, Some(SmolStr::new("http://www.w3.org/2000/svg")));
+    // Changing an svg element's namespace → set dirty (inline-SVG flags).
+    doc.set_element_namespace(svg, Some(SmolStr::new("http://www.w3.org/2000/svg")));
+    assert!(doc.flags_dirty, "svg namespace change must dirty flags");
+    doc.mark_in_document_flags();
+    assert!(!doc.flags_dirty);
+
+    // Setting the same namespace again → no change, so do not set dirty.
+    doc.set_element_namespace(svg, Some(SmolStr::new("http://www.w3.org/2000/svg")));
     assert!(!doc.flags_dirty, "no-op namespace set must NOT dirty flags");
 }
 
 #[test]
-fn post_mark_attach_under_template_becomes_out_of_document_after_remark() {
-    // Regression check: mutation → 再 mark で正しい bit 状態が復元
-    // されることを end-to-end で pin。post-parse mutation の contract。
+fn post_mark_attach_under_template_stays_in_document_after_remark() {
+    // Regression check: pin end-to-end restoration of correct flags on
+    // marking again after mutation. This is the post-parse mutation contract.
     let mut doc = Document::new();
     let root = doc.root_index();
     let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
     doc.mark_in_document_flags();
     assert!(doc.get_node(tmpl).unwrap().is_in_document());
 
-    // 新規 append_element は default IS_IN_DOCUMENT=true で作られる。
-    // template 配下に attach するので flags_dirty=true になり、mark で
-    // false に落ちるべき。
+    // A newly appended element starts with default IS_IN_DOCUMENT=true.
+    // Attaching it directly below a template makes flags_dirty=true, and
+    // marking must keep the flag: it is an ordinary light-DOM child, not
+    // template contents.
     let new_child = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
     assert!(doc.flags_dirty, "mutation → dirty");
-    // mark 前は default true (bit reset は mark でしか起きない)
+    // Before marking, the flag still has its default true value.
     assert!(doc.get_node(new_child).unwrap().is_in_document());
     doc.mark_in_document_flags();
     assert!(
-        !doc.get_node(new_child).unwrap().is_in_document(),
-        "child attached under template must become out-of-document after remark"
+        doc.get_node(new_child).unwrap().is_in_document(),
+        "child attached under template must stay in-document after remark"
     );
 }

@@ -1,79 +1,84 @@
-//! Resource limits and layout configuration.
+//! Render entry-point configuration (Finding #5: remove iteration inside raikiri).
+//!
+//! The three entry points, `plan()`, `render_streaming()`, and `render_batch()`,
+//! each accept configuration and enforce resource and cost limits. Round 4 review #1
+//! promoted these limits to `RenderLimits` (formerly limited to BatchConfig, now
+//! shared by plan and Streaming).
 
 use crate::page::TargetRegistry;
 
-/// Layout and parse entry points share these
-/// resource / cost 上限 (Finding #5 + round 4 review #1)。
+/// Resource and cost limits accepted by all entry points (plan /
+/// render_streaming / render_batch; Finding #5 + round 4 review #1).
 ///
-/// 妥当な defaults は fulgur 想定: pages=10_000, nodes=1M, slots=100k,
-/// buffer=10k, bytes=1GB (§4 参照)。
+/// Defaults suitable for fulgur: pages=10_000, nodes=1M, slots=100k,
+/// buffer=10k, bytes=1GB (see §4).
 ///
 /// # `max_input_bytes` promotion
 ///
-/// `max_input_bytes` field は、SEC-HIGH `parse_html` unbounded-read DoS を
-/// close するために導入された hard-coded 32 MiB input cap を
-/// `RenderLimits` 上の configurable field へ昇格させたもの。
+/// The `max_input_bytes` field replaces the hard-coded 32 MiB input cap
+/// introduced to close the SEC-HIGH unbounded-read DoS in `parse_html`
+/// with a configurable field on `RenderLimits`.
 ///
-/// **Migration**: 旧 stopgap を利用していた consumer (`parse_html`
-/// / `parse_html_with_limits` を呼ぶ側) は、`RenderLimits::default()` を渡す
-/// 限り behavior 不変 (default `Some(32 * 1024 * 1024)` は元の hard-coded
-/// 値と一致)。cap を調整したい場合は [`RenderLimitsBuilder::max_input_bytes`]
-/// (または field への直接代入)、無効化したい場合は `None` を設定する
-/// (**cap 無効化の security 上の含意は `max_input_bytes` field doc を参照**)。
+/// **Migration**: Consumers of the old stopgap (`parse_html` /
+/// `parse_html_with_limits` callers) retain the same behavior when passing
+/// `RenderLimits::default()` (its default `Some(32 * 1024 * 1024)` matches
+/// the former hard-coded value). To adjust the cap, use [`RenderLimitsBuilder::max_input_bytes`]
+/// (or assign the field directly); to disable it, set `None`
+/// (**see the `max_input_bytes` field docs for the security implications**).
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct RenderLimits {
-    /// 超過 → `LimitExceeded { kind: Pages }`。
+    /// Exceeding this yields `LimitExceeded { kind: Pages }`.
     pub max_document_pages: Option<u32>,
-    /// parse 完了後 check。
+    /// Checked after parsing completes.
     pub max_dom_nodes: Option<u64>,
-    /// per-doc target 参照数上限。
+    /// Maximum number of per-document target references.
     pub max_target_slots: Option<u32>,
-    /// LayoutBuffer に貯める上限。
+    /// Maximum entries stored in LayoutBuffer.
     pub max_layout_buffer_entries: Option<u32>,
-    /// approximate memory footprint 上限。
+    /// Maximum approximate memory footprint.
     pub max_aggregate_bytes: Option<u64>,
-    /// parse 前に読み込む raw input byte 数上限。超過 →
-    /// `LimitExceeded { kind: InputBytes }`。
+    /// Maximum raw input bytes read before parsing. Exceeding it yields
+    /// `LimitExceeded { kind: InputBytes }`.
     ///
-    /// Default は `Some(32 * 1024 * 1024)` (32 MiB)、旧 stopgap の
-    /// hard-coded 値を継承。
+    /// Defaults to `Some(32 * 1024 * 1024)` (32 MiB), inherited from
+    /// the previous hard-coded stopgap.
     ///
-    /// **Security**: `None` は cap を無効化し、SEC-HIGH の `parse_html`
-    /// unbounded-read DoS を **再暴露する** (attacker が任意
-    /// サイズの HTML を送り込み OOM を誘発可能)。明示的な opt-out としてのみ
-    /// 使用し、default (`Some(32 MiB)`) から離れる場合は upstream で別途
-    /// bound を設ける前提であること。
+    /// **Security**: `None` disables the cap and **re-exposes** the SEC-HIGH
+    /// unbounded-read DoS in `parse_html` (an attacker could send HTML of arbitrary
+    /// size and trigger OOM). Use it only as an explicit opt-out;
+    /// if you depart from the default (`Some(32 MiB)`), provide another
+    /// upstream bound.
     ///
-    /// **Semantic**: [`max_aggregate_bytes`](Self::max_aggregate_bytes) は
-    /// post-parse の approximate memory footprint (DOM node arena / cascade
-    /// table 等の合計) を check する一方、`max_input_bytes` は parse-time の
-    /// raw byte stream を check する (parse 開始前に enforce できるので DoS
-    /// 対策として直接的、fail-closed 早期返却)。
+    /// **Semantic**: [`max_aggregate_bytes`](Self::max_aggregate_bytes) checks
+    /// approximate post-parse memory usage (the DOM node arena, cascade
+    /// table, etc.), whereas `max_input_bytes` checks the parse-time raw
+    /// byte stream (enforceable before parsing for direct DoS protection
+    /// and fail-closed early return).
     pub max_input_bytes: Option<u64>,
-    /// HTML parse 中に html5ever が報告する非致命 parse error を warning
-    /// として記録する件数の上限。超過すると、以降の parse error は記録され
-    /// なくなる代わりに「以降 suppress した」ことを示す synthetic な 1 件の
-    /// warning が追加される (silent drop だと consumer が「warning が 1 件も
-    /// 無かった」のか「cap に達して drop された」のか区別できないため)。
+    /// Maximum number of non-fatal parse errors reported by html5ever during
+    /// HTML parsing that are recorded as warnings. Once exceeded, subsequent
+    /// parse errors are not recorded; instead, one synthetic warning indicates
+    /// that later errors were suppressed (so consumers can distinguish
+    /// no warnings from warnings dropped after the cap was reached).
     ///
-    /// Default は `Some(1024)`。
+    /// Defaults to `Some(1024)`.
     ///
-    /// **Security**: HTML5 のエラー回復アルゴリズムは、malformed な入力の
-    /// 小さな token 1 個あたり概ね 1 個の parse error を報告しうる。cap が
-    /// 無いと、attacker が任意個数の owned `String` を持つ warning を積ませて
-    /// memory を線形に消費させられる (parse error 自体は tree construction を
-    /// 止めない non-fatal な事象なので、上限が無いと入力サイズにほぼ比例した
-    /// allocation が発生する)。`None` はこの cap を無効化するため、明示的な
-    /// opt-out としてのみ使用し、無効化する場合は upstream で別途 bound を
-    /// 設ける前提であること。
+    /// **Security**: HTML5 error recovery can report roughly one parse error
+    /// per small malformed token. Without a cap, an attacker can accumulate
+    /// arbitrarily many warnings with owned `String`s and consume memory
+    /// linearly (parse errors do not stop tree construction, so allocations
+    /// can scale approximately with input size). `None` disables this cap;
+    /// use it only as an explicit opt-out and provide another upstream
+    /// bound if disabling it.
     ///
-    /// **Semantic**: [`max_input_bytes`](Self::max_input_bytes) が生の入力
-    /// byte 数 (線形) を check するのに対し、`max_parse_warnings` は同じ入力
-    /// サイズでも malformed token の密度によって非線形に増幅しうる出力側の
-    /// warning 件数を check する — 短い入力でも極端に高密度な malformed token
-    /// 列を送り込めば大量の warning を生成できるため、入力 byte cap だけでは
-    /// この増幅を防げない。
+    ///
+    /// **Semantic**: [`max_input_bytes`](Self::max_input_bytes) checks the raw
+    /// input byte count (linear), while `max_parse_warnings` checks output-side
+    /// warning count, which can grow nonlinearly with the density of malformed
+    /// tokens even for a fixed input size. A short but densely malformed input
+    /// can create many warnings; the input-byte cap alone cannot prevent
+    /// this amplification.
     pub max_parse_warnings: Option<usize>,
 }
 
@@ -85,32 +90,32 @@ impl Default for RenderLimits {
             max_target_slots: Some(100_000),
             max_layout_buffer_entries: Some(10_000),
             max_aggregate_bytes: Some(1_073_741_824), // 1 GB
-            // 32 MiB — 元は raikiri-html の parse-time input read に対する
-            // hard-coded cap だった値を継承 (behavior 不変)。
+            // 32 MiB — inherited from the former hard-coded cap on parse-time input
+            // reads in raikiri-html (unchanged behavior).
             max_input_bytes: Some(32 * 1024 * 1024),
-            // 1024 — 元は raikiri-html の RaikiriTreeSink 内 hard-coded const
-            // だった値を継承 (behavior 不変)。html5ever のエラー回復アルゴリズム
-            // は malformed input の 1 token あたり概ね 1 個の parse error を
-            // 報告しうるため、cap が無いと memory 消費が入力サイズにほぼ比例
-            // して増加する (field doc の Security note 参照)。
+            // 1024 — inherited from the former hard-coded constant in raikiri-html's
+            // RaikiriTreeSink (unchanged behavior). html5ever error recovery can
+            // report roughly one parse error per malformed token; without a cap,
+            // memory consumption could grow roughly in proportion to input size
+            // (see the Security note in the field docs).
             max_parse_warnings: Some(1024),
         }
     }
 }
 
 impl RenderLimits {
-    /// Default 相当の shortcut。
+    /// Shortcut equivalent to `Default`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Fluent builder を返す。
+    /// Return a fluent builder.
     pub fn builder() -> RenderLimitsBuilder {
         RenderLimitsBuilder::default()
     }
 }
 
-/// `RenderLimits` の fluent builder。未設定 field は Default 値。
+/// Fluent builder for `RenderLimits`. Unset fields use their default values.
 #[derive(Debug, Default, Clone)]
 pub struct RenderLimitsBuilder {
     max_document_pages: Option<Option<u32>>,
@@ -123,49 +128,49 @@ pub struct RenderLimitsBuilder {
 }
 
 impl RenderLimitsBuilder {
-    /// `max_document_pages` を設定 (`None` = unbounded)。
+    /// Set `max_document_pages` (`None` = unbounded).
     pub fn max_document_pages(mut self, v: Option<u32>) -> Self {
         self.max_document_pages = Some(v);
         self
     }
 
-    /// `max_dom_nodes` を設定。
+    /// Set `max_dom_nodes`.
     pub fn max_dom_nodes(mut self, v: Option<u64>) -> Self {
         self.max_dom_nodes = Some(v);
         self
     }
 
-    /// `max_target_slots` を設定。
+    /// Set `max_target_slots`.
     pub fn max_target_slots(mut self, v: Option<u32>) -> Self {
         self.max_target_slots = Some(v);
         self
     }
 
-    /// `max_layout_buffer_entries` を設定。
+    /// Set `max_layout_buffer_entries`.
     pub fn max_layout_buffer_entries(mut self, v: Option<u32>) -> Self {
         self.max_layout_buffer_entries = Some(v);
         self
     }
 
-    /// `max_aggregate_bytes` を設定。
+    /// Set `max_aggregate_bytes`.
     pub fn max_aggregate_bytes(mut self, v: Option<u64>) -> Self {
         self.max_aggregate_bytes = Some(v);
         self
     }
 
-    /// `max_input_bytes` を設定 (`None` = cap 無効化)。
+    /// Set `max_input_bytes` (`None` disables the cap).
     pub fn max_input_bytes(mut self, v: Option<u64>) -> Self {
         self.max_input_bytes = Some(v);
         self
     }
 
-    /// `max_parse_warnings` を設定 (`None` = cap 無効化)。
+    /// Set `max_parse_warnings` (`None` disables the cap).
     pub fn max_parse_warnings(mut self, v: Option<usize>) -> Self {
         self.max_parse_warnings = Some(v);
         self
     }
 
-    /// Build。未設定 field は Default 値。
+    /// Build; unset fields use their default values.
     pub fn build(self) -> RenderLimits {
         let d = RenderLimits::default();
         RenderLimits {
@@ -182,24 +187,24 @@ impl RenderLimitsBuilder {
     }
 }
 
-/// LayoutBuffer の lookahead 幅 config。
+/// Configuration for the LayoutBuffer lookahead range.
 ///
-/// 初期 seed value (blitz 慣習ベース、将来 refine 予定)。
+/// Initial seed values (based on blitz conventions; to be refined).
 ///
-/// spec §4 "[対象 struct]" list に含まれるため `#[non_exhaustive]` を付与
-/// (round 3 Missing #6 対応)。
+/// Listed among the structs in spec §4, so it is `#[non_exhaustive]`
+/// (round 3 Missing #6).
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct LookaheadConfig {
-    /// widow 判定のため何行先を bufferするか。
+    /// Number of lines to buffer ahead for widow detection.
     pub widow_line_buffer: usize,
-    /// orphan 判定のため何行前を bufferするか。
+    /// Number of lines to buffer behind for orphan detection.
     pub orphan_line_buffer: usize,
-    /// `break-inside: avoid` subtree の最大 block 数。
+    /// Maximum number of blocks in a `break-inside: avoid` subtree.
     pub break_avoid_max_subtree_blocks: usize,
-    /// flex / grid container の probe layout 上限 (`None` = unbounded)。
+    /// Probe-layout limit for flex / grid containers (`None` = unbounded).
     pub max_container_probe_pages: Option<usize>,
-    /// cross-size 方向の lookahead を許可するか。
+    /// Whether to allow lookahead in the cross-size direction.
     pub allow_cross_size_lookahead: bool,
 }
 
@@ -217,18 +222,18 @@ impl Default for LookaheadConfig {
 }
 
 impl LookaheadConfig {
-    /// Default 相当の shortcut。
+    /// Shortcut equivalent to `Default`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Fluent builder を返す。
+    /// Return a fluent builder.
     pub fn builder() -> LookaheadConfigBuilder {
         LookaheadConfigBuilder::default()
     }
 }
 
-/// `LookaheadConfig` の fluent builder。
+/// Fluent builder for `LookaheadConfig`.
 #[derive(Debug, Default, Clone)]
 pub struct LookaheadConfigBuilder {
     widow_line_buffer: Option<usize>,
@@ -239,37 +244,37 @@ pub struct LookaheadConfigBuilder {
 }
 
 impl LookaheadConfigBuilder {
-    /// `widow_line_buffer` を設定。
+    /// Set `widow_line_buffer`.
     pub fn widow_line_buffer(mut self, v: usize) -> Self {
         self.widow_line_buffer = Some(v);
         self
     }
 
-    /// `orphan_line_buffer` を設定。
+    /// Set `orphan_line_buffer`.
     pub fn orphan_line_buffer(mut self, v: usize) -> Self {
         self.orphan_line_buffer = Some(v);
         self
     }
 
-    /// `break_avoid_max_subtree_blocks` を設定。
+    /// Set `break_avoid_max_subtree_blocks`.
     pub fn break_avoid_max_subtree_blocks(mut self, v: usize) -> Self {
         self.break_avoid_max_subtree_blocks = Some(v);
         self
     }
 
-    /// `max_container_probe_pages` を設定 (`None` = unbounded)。
+    /// Set `max_container_probe_pages` (`None` = unbounded).
     pub fn max_container_probe_pages(mut self, v: Option<usize>) -> Self {
         self.max_container_probe_pages = Some(v);
         self
     }
 
-    /// `allow_cross_size_lookahead` を設定。
+    /// Set `allow_cross_size_lookahead`.
     pub fn allow_cross_size_lookahead(mut self, v: bool) -> Self {
         self.allow_cross_size_lookahead = Some(v);
         self
     }
 
-    /// Build。未設定 field は Default 値。
+    /// Build; unset fields use their default values.
     pub fn build(self) -> LookaheadConfig {
         let d = LookaheadConfig::default();
         LookaheadConfig {
@@ -292,9 +297,9 @@ impl LookaheadConfigBuilder {
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct LayoutConfig {
-    /// lookahead 設定。
+    /// Lookahead settings.
     pub lookahead: LookaheadConfig,
-    /// resource / cost 上限。
+    /// Resource and cost limits.
     pub limits: RenderLimits,
     /// An optional registry hint for target resolution.
     pub initial_registry: Option<TargetRegistry>,
@@ -307,12 +312,12 @@ pub struct LayoutConfig {
 }
 
 impl LayoutConfig {
-    /// Default 相当の shortcut。
+    /// Shortcut equivalent to `Default`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Fluent builder を返す。
+    /// Return a fluent builder.
     pub fn builder() -> LayoutConfigBuilder {
         LayoutConfigBuilder::default()
     }
@@ -329,19 +334,19 @@ pub struct LayoutConfigBuilder {
 }
 
 impl LayoutConfigBuilder {
-    /// `lookahead` を設定。
+    /// Set `lookahead`.
     pub fn lookahead(mut self, v: LookaheadConfig) -> Self {
         self.lookahead = Some(v);
         self
     }
 
-    /// `limits` を設定。
+    /// Set `limits`.
     pub fn limits(mut self, v: RenderLimits) -> Self {
         self.limits = Some(v);
         self
     }
 
-    /// `initial_registry` を設定。
+    /// Set `initial_registry`.
     pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
         self.initial_registry = Some(v);
         self
@@ -359,7 +364,7 @@ impl LayoutConfigBuilder {
         self
     }
 
-    /// Build。未設定 field は Default 値。
+    /// Build; unset fields use their default values.
     pub fn build(self) -> LayoutConfig {
         let d = LayoutConfig::default();
         LayoutConfig {
@@ -372,30 +377,30 @@ impl LayoutConfigBuilder {
     }
 }
 
-/// `render_batch()` 用 config (round 4 review #1 対応で `max_document_pages` を
-/// `limits` に吸収)。
+/// Configuration for `render_batch()` (round 4 review #1 moved
+/// `max_document_pages` into `limits`).
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct BatchConfig {
-    /// resource / cost 上限。
+    /// Resource and cost limits.
     pub limits: RenderLimits,
-    /// `plan` の結果を hint として渡す。
+    /// Pass the result of `plan` as a hint.
     pub initial_registry: Option<TargetRegistry>,
 }
 
 impl BatchConfig {
-    /// Default 相当の shortcut。
+    /// Shortcut equivalent to `Default`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Fluent builder を返す。
+    /// Return a fluent builder.
     pub fn builder() -> BatchConfigBuilder {
         BatchConfigBuilder::default()
     }
 }
 
-/// `BatchConfig` の fluent builder。
+/// Fluent builder for `BatchConfig`.
 #[derive(Debug, Default, Clone)]
 pub struct BatchConfigBuilder {
     limits: Option<RenderLimits>,
@@ -403,19 +408,19 @@ pub struct BatchConfigBuilder {
 }
 
 impl BatchConfigBuilder {
-    /// `limits` を設定。
+    /// Set `limits`.
     pub fn limits(mut self, v: RenderLimits) -> Self {
         self.limits = Some(v);
         self
     }
 
-    /// `initial_registry` を設定。
+    /// Set `initial_registry`.
     pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
         self.initial_registry = Some(v);
         self
     }
 
-    /// Build。未設定 field は Default 値。
+    /// Build; unset fields use their default values.
     pub fn build(self) -> BatchConfig {
         let d = BatchConfig::default();
         BatchConfig {

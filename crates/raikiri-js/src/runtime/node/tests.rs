@@ -336,16 +336,15 @@ fn inner_html_setter_treats_null_as_the_empty_string() {
     ok(&mut rt, "p.textContent === ''");
 }
 
-/// `serialize_inner_html` rejects an attribute name that is not a valid XML
-/// `Name`, a check specific to `Element.setAttribute` (DOM §4.9), not to
-/// HTML fragment serialization. A real HTML parser can legitimately produce
-/// such a name (e.g. one starting with an ASCII digit); `1bad` is planted
-/// directly (bypassing `setAttribute`'s own XML `Name` validation, since
-/// `Document::set_element_attributes` -- the plural form
-/// `replace_children_from` uses -- performs none) to model that, without
-/// depending on a fragment-parsing host implementation.
+/// HTML fragment serialization never validates attribute names (name checks
+/// belong to `Element.setAttribute`, DOM §4.9). A real HTML parser can produce
+/// a digit-leading name; `1bad` is planted directly (bypassing `setAttribute`'s
+/// own XML `Name` validation, since `Document::set_element_attributes` -- the
+/// plural form `replace_children_from` uses -- performs none) to model that,
+/// without depending on a fragment-parsing host implementation. Reading
+/// `innerHTML` must serialize it instead of failing.
 #[test]
-fn inner_html_getter_reports_an_invalid_attribute_name_as_a_host_error() {
+fn inner_html_getter_serializes_digit_leading_attribute_names() {
     let (mut rt, body) = rt_with_body();
     with_state(rt.context_mut(), |s| {
         let doc = s.host.document_mut();
@@ -354,51 +353,39 @@ fn inner_html_getter_reports_an_invalid_attribute_name_as_a_host_error() {
         doc.set_element_attributes(child, vec![("1bad".into(), "x".into())]);
     })
     .unwrap();
-    let err = rt.evaluate("document.body.innerHTML;");
-    assert!(
-        matches!(err, Err(RuntimeError::Host(ref m)) if m.contains("invalid attribute name")),
-        "{err:?}"
+    ok(
+        &mut rt,
+        "document.body.innerHTML === '<div 1bad=\"x\"></div>'",
     );
 }
 
-/// The arena index in raikiri-dom's own error message (`... on innerHTML
-/// node {id}`) must never reach script: a script that catches the getter's
-/// exception should see a fixed message with no digits from that index,
-/// even though the harness-facing host failure above still records the
-/// original, more detailed message.
+/// HTML escaping-a-string (section 13.3) through the `innerHTML` getter:
+/// attribute values keep `<` and `>` raw while `"` and `&` are escaped,
+/// and no-break space becomes `&nbsp;` in both modes (`'` stays raw,
+/// covered by the `raikiri-dom` attribute-mode test).
 #[test]
-fn inner_html_getter_js_visible_message_hides_the_node_index() {
-    let (mut rt, body) = rt_with_body();
-    with_state(rt.context_mut(), |s| {
-        let doc = s.host.document_mut();
-        let child = doc.create_detached_element("div").unwrap();
-        doc.append_child(body, child).unwrap();
-        doc.set_element_attributes(child, vec![("1bad".into(), "x".into())]);
-    })
+fn inner_html_getter_escapes_per_html_escaping_a_string() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var d = document.createElement('div'); document.body.appendChild(d); d.setAttribute('title', 'a<b>c\"d&e\\u00a0g'); d.textContent = 'x\\u00a0y';",
+    )
     .unwrap();
-    // The overall `evaluate` call still reports a host failure (the recorded
-    // detail, not the caught exception's message), so the JS-visible message
-    // is stashed into a global for a second, unrelated `evaluate` call to
-    // read back.
-    let _ = rt.evaluate(
-        "var caughtMessage = ''; \
-         try { document.body.innerHTML; } catch (e) { caughtMessage = e.message; }",
+    ok(
+        &mut rt,
+        "d.innerHTML === 'x&nbsp;y' && d.getAttribute('title') === 'a<b>c\"d&e\\u00a0g'",
     );
-    let message = rt
-        .evaluate("caughtMessage")
-        .unwrap()
-        .to_string(rt.context_mut())
-        .unwrap()
-        .to_std_string_escaped();
-    assert!(
-        !message.chars().any(|c| c.is_ascii_digit()),
-        "node index leaked into the JS-visible message: {message:?}"
+    // Read back the serialized element through the parent: the attribute keeps
+    // angle brackets raw, while `"`/`&`/NBSP are escaped.
+    ok(
+        &mut rt,
+        "document.body.innerHTML === '<div title=\"a<b>c&quot;d&amp;e&nbsp;g\">x&nbsp;y</div>'",
     );
-    assert!(message.contains("innerHTML"), "{message:?}");
 }
 
 #[test]
 fn inner_html_host_failure_is_reported_as_host_error() {
+    use std::any::Any;
+
     use super::super::host::{BoxGeometry, DocumentHost, HostError};
 
     /// A host whose fragment parser always fails, to exercise the
@@ -431,6 +418,15 @@ fn inner_html_host_failure_is_reported_as_host_error() {
             _markup: &str,
         ) -> Result<raikiri_dom::Document, HostError> {
             Err(HostError("parser unavailable".into()))
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
         }
     }
 

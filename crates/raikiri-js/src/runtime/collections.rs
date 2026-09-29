@@ -2,10 +2,12 @@
 //!
 //! Both are [`indexed_object`]s. A live collection (`childNodes`,
 //! `children`, `getElementsByTagName`, `getElementsByClassName`) stores
-//! only what it enumerates -- a root node plus a filter -- and re-walks the
-//! tree on every `length`, `item`, index, or iteration access, so it always
-//! reflects the current tree. A static `NodeList` (`querySelectorAll`)
-//! stores the node list it was created with.
+//! only what it enumerates -- a root node plus a filter -- and resolves it
+//! against the current tree on access, caching the resolved list per
+//! collection for the current mutation generation, so repeated `length`,
+//! `item`, index, or iteration accesses within one generation do not
+//! re-walk the tree. A static `NodeList` (`querySelectorAll`) stores the
+//! node list it was created with.
 //!
 //! Spec refs:
 //! - <https://dom.spec.whatwg.org/#interface-nodelist>
@@ -13,6 +15,8 @@
 //! - <https://webidl.spec.whatwg.org/#es-iterators> (NodeList's iteration
 //!   members and both interfaces' `@@iterator` are the `%Array.prototype%`
 //!   functions themselves)
+
+use std::cell::{Cell, RefCell};
 
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
@@ -25,8 +29,10 @@ use super::query::{elements_by_tag_name, elements_with_class_tokens};
 use super::tree::element_children_of;
 use super::webidl::{arg_unsigned_long, dom_string, with_state};
 
-/// What a collection enumerates. Every kind except [`Self::Static`] is
-/// re-evaluated against the current tree on each access.
+/// What a collection enumerates. Every kind except `Static` is resolved
+/// against the current tree on access; the walking kinds are cached per
+/// collection per generation by the wrappers below, while `ChildNodes`
+/// borrows the child list directly (no walk, so no cache).
 #[derive(Debug, Clone)]
 pub(crate) enum CollectionSource {
     /// Every child of the node.
@@ -47,74 +53,223 @@ pub(crate) enum CollectionSource {
     WindowNamed(String),
 }
 
-impl CollectionSource {
-    /// Run `f` over the nodes the collection currently contains, in
-    /// collection order. A live kind walks the current tree; a static one
-    /// lends its stored list without copying it.
+/// Resolved nodes for one live collection at one generation. Each collection
+/// object owns one; a mutation bumps the shared generation (see the state
+/// field it is cached against), so the next access re-walks once and later
+/// accesses in the same generation reuse it.
+#[derive(Debug, Default)]
+struct CollectionCache {
+    generation: Cell<Option<u64>>,
+    nodes: RefCell<Vec<usize>>,
+}
+
+/// Run `f` over the nodes `source` currently contains, in collection order.
+/// `Static` lends its stored list and `ChildNodes` borrows the child list
+/// directly, both without touching `cache`; every other (walking) kind
+/// reuses `cache` when it was resolved for the current generation and
+/// re-walks exactly once per generation otherwise.
+///
+/// `f` must not borrow the shared state itself: it runs while that state is
+/// borrowed to lend the document, so reaching back into it (for example to
+/// wrap a node) would fail the re-entrant borrow check. Callers copy out an
+/// index or length inside `f` and wrap afterwards.
+fn with_live_nodes<T>(
+    source: &CollectionSource,
+    cache: &CollectionCache,
+    context: &mut Context,
+    f: impl FnOnce(&Document, &[usize]) -> T,
+) -> JsResult<T> {
+    match source {
+        CollectionSource::Static(nodes) => {
+            return with_state(context, |s| {
+                let doc = s.host.document();
+                f(doc, nodes)
+            });
+        }
+        CollectionSource::ChildNodes(node) => {
+            let node = *node;
+            return with_state(context, |s| {
+                let doc = s.host.document();
+                let children = doc.get_node(node).map_or(&[][..], |n| &n.children[..]);
+                f(doc, children)
+            });
+        }
+        _ => {}
+    }
+    let generation = with_state(context, |s| s.generation)?;
+    if cache.generation.get() == Some(generation) {
+        let cached = cache.nodes.borrow();
+        return with_state(context, |s| {
+            let doc = s.host.document();
+            f(doc, &cached)
+        });
+    }
+    let fresh = with_state(context, |s| {
+        #[cfg(test)]
+        {
+            s.live_walks += 1;
+        }
+        let doc = s.host.document();
+        match source {
+            CollectionSource::Children(node) => element_children_of(doc, *node),
+            CollectionSource::TagName(root, query) => elements_by_tag_name(doc, *root, query),
+            CollectionSource::ClassNames(root, tokens) => {
+                elements_with_class_tokens(doc, *root, tokens)
+            }
+            CollectionSource::WindowNamed(name) => super::window::named::nodes(doc, name),
+            // cov:ignore: Static and ChildNodes return through the fast paths above.
+            CollectionSource::Static(_) | CollectionSource::ChildNodes(_) => Vec::new(),
+        }
+    })?;
+    *cache.nodes.borrow_mut() = fresh;
+    cache.generation.set(Some(generation));
+    let cached = cache.nodes.borrow();
+    with_state(context, |s| {
+        let doc = s.host.document();
+        f(doc, &cached)
+    })
+}
+
+fn cached_length(
+    source: &CollectionSource,
+    cache: &CollectionCache,
+    context: &mut Context,
+) -> JsResult<usize> {
+    with_live_nodes(source, cache, context, |_, nodes| nodes.len())
+}
+
+fn cached_item(
+    source: &CollectionSource,
+    cache: &CollectionCache,
+    index: usize,
+    context: &mut Context,
+) -> JsResult<Option<JsValue>> {
+    match with_live_nodes(source, cache, context, |_, nodes| nodes.get(index).copied())? {
+        Some(node) => Ok(Some(wrap(context, node)?.into())),
+        None => Ok(None),
+    }
+}
+
+/// The source of a `NodeList`.
+pub(crate) struct NodeListSource {
+    source: CollectionSource,
+    cache: CollectionCache,
+}
+
+/// The source of an `HTMLCollection`.
+pub(crate) struct HtmlCollectionSource {
+    source: CollectionSource,
+    cache: CollectionCache,
+}
+
+impl NodeListSource {
+    fn length(&self, context: &mut Context) -> JsResult<usize> {
+        cached_length(&self.source, &self.cache, context)
+    }
+
+    fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
+        cached_item(&self.source, &self.cache, index, context)
+    }
+}
+
+impl HtmlCollectionSource {
     fn with_nodes<T>(
         &self,
         context: &mut Context,
         f: impl FnOnce(&Document, &[usize]) -> T,
     ) -> JsResult<T> {
-        with_state(context, |s| {
-            let doc = s.host.document();
-            let live = match self {
-                Self::Static(nodes) => return f(doc, nodes),
-                Self::ChildNodes(node) => {
-                    let children = doc.get_node(*node).map_or(&[][..], |n| &n.children[..]);
-                    return f(doc, children);
-                }
-                Self::Children(node) => element_children_of(doc, *node),
-                Self::TagName(root, query) => elements_by_tag_name(doc, *root, query),
-                Self::ClassNames(root, tokens) => elements_with_class_tokens(doc, *root, tokens),
-                Self::WindowNamed(name) => super::window::named::nodes(doc, name),
-            };
-            f(doc, &live)
-        })
+        with_live_nodes(&self.source, &self.cache, context, f)
     }
 
     fn length(&self, context: &mut Context) -> JsResult<usize> {
-        self.with_nodes(context, |_, nodes| nodes.len())
+        cached_length(&self.source, &self.cache, context)
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
-        match self.with_nodes(context, |_, nodes| nodes.get(index).copied())? {
+        cached_item(&self.source, &self.cache, index, context)
+    }
+
+    /// The supported property names (DOM §4.2.10.2): for each element in
+    /// collection order, its `id` when non-empty and not yet listed, then
+    /// its `name` when it is an HTML element with a non-empty `name` not
+    /// yet listed.
+    fn supported_names(&self, context: &mut Context) -> JsResult<Vec<String>> {
+        self.with_nodes(context, |doc, nodes| {
+            let mut out: Vec<String> = Vec::new();
+            for &node in nodes {
+                if let Some(id) = doc.element_attribute(node, "id")
+                    && !id.is_empty()
+                    && !out.iter().any(|s| s == id)
+                {
+                    out.push(id.to_owned());
+                }
+                if doc.element_namespace_uri(node) == Some(HTML_NS)
+                    && let Some(name) = doc.element_attribute(node, "name")
+                    && !name.is_empty()
+                    && !out.iter().any(|s| s == name)
+                {
+                    out.push(name.to_owned());
+                }
+            }
+            out
+        })
+    }
+
+    /// The first element named `name` in collection order, or `None` when
+    /// `name` is empty or matches nothing (DOM §4.2.10.2 `namedItem`).
+    fn named_value(&self, name: &str, context: &mut Context) -> JsResult<Option<JsValue>> {
+        if name.is_empty() {
+            return Ok(None);
+        }
+        let found = self.with_nodes(context, |doc, nodes| {
+            nodes.iter().copied().find(|&n| has_name(doc, n, name))
+        })?;
+        match found {
             Some(node) => Ok(Some(wrap(context, node)?.into())),
             None => Ok(None),
         }
     }
 }
 
-/// The source of a `NodeList`.
-pub(crate) struct NodeListSource(CollectionSource);
-
-/// The source of an `HTMLCollection`.
-pub(crate) struct HtmlCollectionSource(CollectionSource);
-
 impl IndexedSource for NodeListSource {
     fn length(&self, context: &mut Context) -> JsResult<usize> {
-        self.0.length(context)
+        self.length(context)
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
-        self.0.item(index, context)
+        self.item(index, context)
     }
 }
 
 impl IndexedSource for HtmlCollectionSource {
     fn length(&self, context: &mut Context) -> JsResult<usize> {
-        self.0.length(context)
+        self.length(context)
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
-        self.0.item(index, context)
+        self.item(index, context)
+    }
+
+    fn supported_property_names(&self, context: &mut Context) -> JsResult<Vec<String>> {
+        self.supported_names(context)
+    }
+
+    fn named_property(&self, name: &str, context: &mut Context) -> JsResult<Option<JsValue>> {
+        self.named_value(name, context)
     }
 }
 
 /// A new `NodeList` over `source`.
 pub(crate) fn node_list(context: &mut Context, source: CollectionSource) -> JsResult<JsObject> {
     let prototype = protos(context).node_list.clone();
-    indexed_object(context, prototype, NodeListSource(source))
+    indexed_object(
+        context,
+        prototype,
+        NodeListSource {
+            source,
+            cache: CollectionCache::default(),
+        },
+    )
 }
 
 /// A new `HTMLCollection` over `source`.
@@ -123,7 +278,14 @@ pub(crate) fn html_collection(
     source: CollectionSource,
 ) -> JsResult<JsObject> {
     let prototype = protos(context).html_collection.clone();
-    indexed_object(context, prototype, HtmlCollectionSource(source))
+    indexed_object(
+        context,
+        prototype,
+        HtmlCollectionSource {
+            source,
+            cache: CollectionCache::default(),
+        },
+    )
 }
 
 fn node_list_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -187,7 +349,7 @@ fn html_collection_named_item(
     if name.is_empty() {
         return Ok(JsValue::null());
     }
-    let found = source.0.with_nodes(context, |doc, nodes| {
+    let found = source.with_nodes(context, |doc, nodes| {
         nodes.iter().copied().find(|&n| has_name(doc, n, &name))
     })?;
     match found {

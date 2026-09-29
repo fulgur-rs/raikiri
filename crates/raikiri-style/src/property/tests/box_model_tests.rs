@@ -16,10 +16,10 @@ fn red() -> CssColor {
 // Verification anchors:
 //   #1 content-box → Some(BoxSizing::ContentBox)
 //   #2 border-box  → Some(BoxSizing::BorderBox)
-//   #3 padding-box → None (spec 外、CSS UI 3 draft の削除済 keyword)
-//   #4 initial + #5 non-inheritance test は crate::computed 側
+//   #3 padding-box → None (outside the spec; keyword removed from the CSS UI 3 draft)
+//   #4 initial and #5 non-inheritance tests live in crate::computed.
 //
-// sibling: `display_*` / `text_align_*` の keyword parser test 群と同構造。
+// Same structure as sibling `display_*` / `text_align_*` keyword parser tests.
 
 #[test]
 fn box_sizing_parse_content_box() {
@@ -40,9 +40,9 @@ fn box_sizing_parse_border_box() {
 #[test]
 fn box_sizing_rejects_unknown_ident() {
     // spec-invalid (→ drop):
-    // - `padding-box` は CSS-UI 3 draft 相当だが css-sizing-3 では削除済み
-    //   (spec note "supersedes the one in `[CSS-UI-3]`")、
-    // - `margin-box` は grammar 外の任意 ident。
+    // `padding-box` appeared in the CSS UI 3 draft but was removed in css-sizing-3.
+    //   (spec note "supersedes the one in `[CSS-UI-3]`").
+    // `margin-box` is an arbitrary identifier outside the grammar.
     assert_eq!(parse("padding-box", "box-sizing"), None);
     assert_eq!(parse("margin-box", "box-sizing"), None);
     assert_eq!(parse("bogus", "box-sizing"), None);
@@ -50,8 +50,8 @@ fn box_sizing_rejects_unknown_ident() {
 
 #[test]
 fn box_sizing_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
-    // canonical: PropertyValue doc「CSS-wide keyword」節。
+    // (b) Unsupported: CSS-wide keywords are not implemented yet; silently drop them.
+    // Canonical reference: the "CSS-wide keyword" section of the PropertyValue doc.
     assert_eq!(parse("inherit", "box-sizing"), None);
     assert_eq!(parse("initial", "box-sizing"), None);
     assert_eq!(parse("unset", "box-sizing"), None);
@@ -67,8 +67,8 @@ fn box_sizing_rejects_non_ident() {
 
 #[test]
 fn box_sizing_is_case_insensitive() {
-    // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII case-insensitive
-    // (sibling `display_is_case_insensitive` と同 flavor)。
+    // CSS Values 3 §3.1 "Pre-defined Keywords": keywords are ASCII case-insensitive,
+    // just like the sibling `display_is_case_insensitive` test.
     assert_eq!(
         parse("CONTENT-BOX", "box-sizing"),
         Some(PropertyValue::BoxSizing(BoxSizing::ContentBox))
@@ -82,16 +82,16 @@ fn box_sizing_is_case_insensitive() {
 #[test]
 fn box_sizing_key_returns_box_sizing() {
     // PropertyValue::BoxSizing → PropertyKey::BoxSizing (cascade winner
-    // 選択の discriminant 導線、sibling `Display` / `TextAlign` key() と対称)。
+    // Discriminant selection path, symmetric with sibling `Display` / `TextAlign` key().
     let v = PropertyValue::BoxSizing(BoxSizing::BorderBox);
     assert_eq!(v.key(), PropertyKey::BoxSizing);
 }
 
 // ── position: running() (CSS GCPM 3 §1.2.1) ──
 //
-// Verification items 1-6 は task description 由来、
-// canonical shape は後に amended。sibling は counter-* /
-// content / string-set の SmolStr wire-through pattern。
+// Verification items 1–6 come from the task description;
+// the canonical shape was later amended. Siblings follow the counter-* /
+// content / string-set SmolStr wire-through pattern.
 
 #[test]
 fn position_parse_running_header() {
@@ -107,7 +107,7 @@ fn position_parse_running_header() {
 
 #[test]
 fn position_parse_running_footer() {
-    // Verification 2: 別 name の smoke — SmolStr::new が生きていることを pin。
+    // Verification 2: smoke test a different name to pin that SmolStr::new is used.
     assert_eq!(
         parse("running(footer)", "position"),
         Some(PropertyValue::Position(PositionValue::Running(
@@ -118,10 +118,10 @@ fn position_parse_running_footer() {
 
 #[test]
 fn position_parse_static() {
-    // Verification 5 baseline: position: static → PositionValue::Static。
-    // apply_value は no-op、running_templates は inherit_from の initial
-    // (空 Vec) が残る = cascade winner が earlier running(...) を suppress する
-    // ID 用途 (cascade.rs 側の `static_position_wins_over_running` で検証)。
+    // Verification 5 baseline: position: static → PositionValue::Static.
+    // apply_value is a no-op, leaving the initial running_templates from inherit_from
+    // (an empty Vec). Thus the cascade winner suppresses an earlier running(...) value
+    // for ID purposes (verified by `static_position_wins_over_running` in cascade.rs).
     assert_eq!(
         parse("static", "position"),
         Some(PropertyValue::Position(PositionValue::Static))
@@ -130,8 +130,8 @@ fn position_parse_static() {
 
 #[test]
 fn position_running_case_insensitive_function_name() {
-    // Verification 4: function name は ASCII case-insensitive (CSS spec 慣行)、
-    // custom-ident は case-preserving。
+    // Verification 4: function names are ASCII case-insensitive (CSS convention),
+    // but custom identifiers preserve case.
     assert_eq!(
         parse("RUNNING(header)", "position"),
         Some(PropertyValue::Position(PositionValue::Running(
@@ -142,18 +142,18 @@ fn position_running_case_insensitive_function_name() {
 
 #[test]
 fn position_running_rejects_none_custom_ident() {
-    // Verification 6: `running(none)` reject。`none` は position property
-    // spec-defined keyword ではないが、runtime resolve で `element(none)` 参照が
-    // silent match するのを避けるため custom-ident としても弾く (string-set
-    // と同じ規約)。
+    // Verification 6: reject `running(none)`. Although `none` is not a
+    // spec-defined position keyword, reject it as a custom identifier too: otherwise
+    // an `element(none)` reference could silently match at runtime (the same rule
+    // as string-set).
     assert_eq!(parse("running(none)", "position"), None);
 }
 
 #[test]
 fn position_running_rejects_reserved_css_wide_keyword() {
     // spec CSS Values 4 §4.2 <https://www.w3.org/TR/css-values-4/#custom-idents>:
-    // <custom-ident> は CSS-wide keyword + `default` 除外。
-    // position: running(inherit) 等は declaration drop。
+    // <custom-ident> excludes CSS-wide keywords and `default`.
+    // Drop declarations such as position: running(inherit).
     assert_eq!(parse("running(inherit)", "position"), None);
     assert_eq!(parse("running(initial)", "position"), None);
     assert_eq!(parse("running(unset)", "position"), None);
@@ -163,8 +163,8 @@ fn position_running_rejects_reserved_css_wide_keyword() {
 
 #[test]
 fn position_rejects_missing_custom_ident() {
-    // spec §1.2.1: `running() = running( <custom-ident> )` — argument 必須。
-    // 空 argument は malformed、declaration drop。
+    // Spec §1.2.1: `running() = running( <custom-ident> )` requires an argument.
+    // An empty argument is malformed; drop the declaration.
     assert_eq!(parse("running()", "position"), None);
 }
 
@@ -172,14 +172,14 @@ fn position_rejects_missing_custom_ident() {
 fn position_parse_sticky() {
     // CSS Positioned Layout Module Level 3 §3 sticky positioning
     // <https://www.w3.org/TR/css-position-3/#sticky-pos>:
-    // `position: sticky` は有効な position 値。本 crate では parse 段階で
-    // PositionValue::Sticky として保持する (layout 連携は将来)。
+    // `position: sticky` is a valid position value. During parsing, this crate
+    // preserves it as PositionValue::Sticky (layout integration is future work).
     assert_eq!(
         parse("sticky", "position"),
         Some(PropertyValue::Position(PositionValue::Sticky))
     );
-    // ident は ASCII case-insensitive (cssparser の expect_ident_matching 準拠、
-    // `static` と同様)。
+    // Identifiers are ASCII case-insensitive (following cssparser's expect_ident_matching,
+    // just as for `static`).
     assert_eq!(
         parse("Sticky", "position"),
         Some(PropertyValue::Position(PositionValue::Sticky))
@@ -192,8 +192,8 @@ fn position_parse_sticky() {
 
 #[test]
 fn position_rejects_out_of_scope_keywords() {
-    // relative / absolute / fixed は受理する (position:relative offset 実装)。
-    // `sticky` も受理。
+    // Accept relative / absolute / fixed (position:relative offsets are implemented).
+    // Also accept `sticky`.
     assert_eq!(
         parse("relative", "position"),
         Some(PropertyValue::Position(PositionValue::Relative))
@@ -206,15 +206,15 @@ fn position_rejects_out_of_scope_keywords() {
         parse("fixed", "position"),
         Some(PropertyValue::Position(PositionValue::Fixed))
     );
-    // それ以外の keyword は drop
+    // Drop any other keyword.
     assert_eq!(parse("inherit", "position"), None);
     assert_eq!(parse("initial", "position"), None);
 }
 
 #[test]
 fn position_rejects_running_with_extra_arg() {
-    // `running(a, b)` — parse_nested_block が parse_entirely 経由で
-    // 余剰 token を検知し、declaration drop になる。
+    // For `running(a, b)`, parse_nested_block uses parse_entirely to
+    // detect the extra token, causing the declaration to be dropped.
     assert_eq!(parse("running(a, b)", "position"), None);
 }
 
@@ -223,10 +223,10 @@ fn position_rejects_running_with_extra_arg() {
 // Primary sources:
 // - https://www.w3.org/TR/css-box-3/#padding-physical
 //   "Negative values for padding properties are invalid." — non-negative
-//   constraint を parse-time enforce (parse_padding_side が全 Length variant
-//   で >= 0.0 check、負値 = declaration drop)。
+//   Enforce the constraint at parse time: parse_padding_side checks >= 0.0
+//   for all Length variants; negative values drop the declaration.
 // - https://www.w3.org/TR/css-box-3/#padding-shorthand
-//   `<'padding-top'>{1,4}` — 1-4 value expansion (top/right/bottom/left)。
+//   `<'padding-top'>{1,4}` — 1-4 value expansion (top/right/bottom/left).
 
 fn padding_sides(top: Length, right: Length, bottom: Length, left: Length) -> Sides<Length> {
     Sides {
@@ -237,7 +237,7 @@ fn padding_sides(top: Length, right: Length, bottom: Length, left: Length) -> Si
     }
 }
 
-// Verification #3 — longhand parse 4 arm (px / % / em / pt の 5 unit)。
+// Verification #3: parse four longhands over five units (px / % / em / pt).
 #[test]
 fn padding_top_parses_px() {
     assert_eq!(
@@ -248,7 +248,7 @@ fn padding_top_parses_px() {
 
 #[test]
 fn padding_right_parses_percentage() {
-    // spec grammar `<length-percentage>` — % 受理。
+    // Spec grammar `<length-percentage>` accepts `%`.
     assert_eq!(
         parse("5%", "padding-right"),
         Some(PropertyValue::PaddingRight(Length::Percent(5.0)))
@@ -271,7 +271,7 @@ fn padding_left_parses_pt() {
     );
 }
 
-// Verification #4 — shorthand 1-4 value expansion (CSS Box 3 §4.2)。
+// Verification #4 — shorthand 1-4 value expansion (CSS Box 3 §4.2).
 #[test]
 fn padding_shorthand_one_value_all_sides() {
     // 1 value → 4 sides = value
@@ -325,8 +325,8 @@ fn padding_shorthand_four_values_clockwise() {
 
 #[test]
 fn padding_shorthand_mixed_units() {
-    // spec (CSS Box 3) §4.2 は per-value `<'padding-top'>` = `<length-percentage>` を許容 —
-    // 混合 unit も spec-valid (padding: 10px 5% 1em 12pt)。
+    // Spec (CSS Box 3) §4.2 permits per-value `<'padding-top'>` = `<length-percentage>`;
+    // mixed units are also valid (padding: 10px 5% 1em 12pt).
     assert_eq!(
         parse("10px 5% 1em 12pt", "padding"),
         Some(PropertyValue::Padding(padding_sides(
@@ -338,42 +338,42 @@ fn padding_shorthand_mixed_units() {
     );
 }
 
-// Verification #5 — non-negative constraint (spec-literal claim)。
+// Verification #5 — non-negative constraint (spec-literal claim).
 #[test]
 fn padding_top_rejects_negative_px() {
-    // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid."。
+    // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid.".
     assert_eq!(parse("-5px", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_rejects_negative_percentage() {
-    // 負 percentage も同様に spec-invalid。
+    // Negative percentages are likewise invalid per spec.
     assert_eq!(parse("-10%", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_rejects_negative_em() {
-    // 負 em (font-relative) も spec-invalid。
+    // Negative em (font-relative) is also invalid per spec.
     assert_eq!(parse("-1em", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_rejects_negative_rem() {
-    // 全 Length variant 経路の non-negative check check (rem)。
+    // Check nonnegative filtering across all Length variants (rem).
     assert_eq!(parse("-0.5rem", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_rejects_negative_pt() {
-    // 全 Length variant 経路の non-negative check check (pt)。
+    // Check nonnegative filtering across all Length variants (pt).
     assert_eq!(parse("-3pt", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_accepts_zero() {
-    // zero (bound の下端) は spec grammar `[0,∞]` の閉区間で有効。
-    // `0px` は Dimension arm、bare `0` は CSS Values 3 §5 unitless-zero clause
-    // の Number arm を通し、非負 filter を pass。
+    // Zero (the lower bound) is valid in the closed spec interval `[0,∞]`.
+    // `0px` takes the Dimension arm; bare `0` takes the Number arm under
+    // the CSS Values 3 §5 unitless-zero clause, then passes the nonnegative filter.
     assert_eq!(
         parse("0px", "padding-top"),
         Some(PropertyValue::PaddingTop(Length::Px(0.0)))
@@ -386,13 +386,13 @@ fn padding_top_accepts_zero() {
 
 #[test]
 fn padding_shorthand_rejects_any_negative_value() {
-    // `padding: 10px -5px` — spec (CSS Box 3) §4.2 の {1,4} multiplier は各 iteration が
-    // 有効 `<'padding-top'>` であることを要求。2 番目 `-5px` は spec (CSS Box 3) §4.1
-    // `[0,∞]` 制約違反で fail、try_parse rewind で 1-value form の Some を
-    // parse_padding_shorthand が返す。ここで DeclParser の expect_exhausted
-    // が leftover `-5px` を検知して declaration ごと drop する — 実 caller
-    // 経路として rule.rs 経由で drop を check (parse_value 単体では
-    // Some(all(10px)) が観測されるが、それは leftover 込みで invalid)。
+    // For `padding: 10px -5px`, the {1,4} multiplier in CSS Box 3 §4.2 requires
+    // each iteration to be valid `<'padding-top'>`. The second value, `-5px`,
+    // violates CSS Box 3 §4.1's `[0,∞]` constraint; try_parse rewinds and
+    // parse_padding_shorthand returns Some for the one-value form. DeclParser's
+    // expect_exhausted then detects the remaining `-5px` and drops the whole
+    // declaration. Check this through rule.rs, the actual caller path (parse_value
+    // alone returns Some(all(10px)), but leftover tokens make it invalid).
     let decls_2 = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
         "padding: 10px -5px;",
     )));
@@ -400,7 +400,7 @@ fn padding_shorthand_rejects_any_negative_value() {
         decls_2.is_empty(),
         "`padding: 10px -5px` must drop via expect_exhausted leftover"
     );
-    // 4 value form 内の 4 番目が負値 case — 同様 leftover 経由 drop。
+    // Likewise, a negative fourth value in the four-value form drops via leftover tokens.
     let decls_4 = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
         "padding: 10px 20px 30px -40px;",
     )));
@@ -410,28 +410,28 @@ fn padding_shorthand_rejects_any_negative_value() {
     );
 }
 
-// Verification #6 — `auto` keyword reject (spec grammar に無い)。
+// Verification #6: reject `auto`, which is absent from the spec grammar.
 #[test]
 fn padding_top_rejects_auto_keyword() {
-    // spec (CSS Box 3) §4.1 grammar = `<length-percentage>` のみ、`auto` は margin 側の
-    // extension で padding には無い。parse_length_value の Dimension /
-    // Percentage arm fall-through で自然 reject。
+    // CSS Box 3 §4.1 grammar contains only `<length-percentage>`; `auto` belongs to
+    // the margin extension, not padding. It is naturally rejected by fall-through
+    // in the Dimension / Percentage arms of parse_length_value.
     assert_eq!(parse("auto", "padding-top"), None);
 }
 
 #[test]
 fn padding_shorthand_rejects_auto_keyword() {
-    // shorthand も同様 auto reject (1st value で fail、全体 drop)。
+    // Reject `auto` in shorthand too (first value fails and the whole declaration drops).
     assert_eq!(parse("auto", "padding"), None);
 }
 
 #[test]
 fn padding_shorthand_mixed_with_auto_drops_via_leftover() {
-    // `padding: 10px auto` — 1st 成功 (10px)、2nd で auto → try_parse rewind、
-    // 1-value form の Some を parse_padding_shorthand が返す。ここまでは
-    // parse_value 単体で観測可能だが、DeclParser の expect_exhausted が
-    // leftover `auto` を検知して declaration drop する — 実 caller 経路の
-    // check として rule.rs 経由でも drop することを確認。
+    // For `padding: 10px auto`, the first value succeeds, then `auto` as the second
+    // makes try_parse rewind; parse_padding_shorthand returns Some for the
+    // one-value form. This is observable through parse_value alone, but DeclParser's
+    // expect_exhausted detects leftover `auto` and drops the declaration. Also check
+    // that rule.rs, the actual caller path, drops it.
     let decls = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
         "padding: 10px auto;",
     )));
@@ -441,20 +441,20 @@ fn padding_shorthand_mixed_with_auto_drops_via_leftover() {
     );
 }
 
-// Verification #6 — spec grammar 外 unit の drop (vw / cap 等、非対応)。
+// Verification #6: drop unsupported units outside our grammar (such as vw / cap).
 #[test]
 fn padding_top_rejects_unsupported_unit() {
-    // (b) 非対応 — vw / cap 等は spec-valid だが
-    // 未対応、parse_length_value 側で drop、`None`
-    // propagate → declaration drop。`ch` / `lh` / `rlh` はそれぞれ受理側へ移った
-    // (`padding_top_accepts_ch` / `padding_top_accepts_lh` 参照)。
+    // (b) Unsupported: vw / cap and similar units are valid per spec, but
+    // not implemented. parse_length_value drops them and propagates `None`,
+    // dropping the declaration. `ch` / `lh` / `rlh` have moved to the accepted set
+    // (see `padding_top_accepts_ch` / `padding_top_accepts_lh`).
     assert_eq!(parse("10vw", "padding-top"), None);
     assert_eq!(parse("5cap", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_accepts_lh() {
-    // CSS Values 4 §6.1.1 `lh`/`rlh`。
+    // CSS Values 4 §6.1.1 `lh`/`rlh`.
     assert_eq!(
         parse("5lh", "padding-top"),
         Some(PropertyValue::PaddingTop(Length::Lh(5.0)))
@@ -483,30 +483,30 @@ fn padding_top_accepts_cm() {
 
 #[test]
 fn padding_top_rejects_negative_cm() {
-    // 全 Length variant 経路の non-negative check check (cm、新規 absolute unit)。
+    // Check nonnegative filtering across all Length variants (cm, new absolute unit).
     assert_eq!(parse("-1cm", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_rejects_negative_ex() {
-    // 全 Length variant 経路の non-negative check check (ex、新規 font-relative unit)。
+    // Check nonnegative filtering across all Length variants (ex, new font-relative unit).
     assert_eq!(parse("-1ex", "padding-top"), None);
 }
 
 #[test]
 fn padding_top_rejects_negative_lh() {
-    // 全 Length variant 経路の non-negative check check (`lh`/`rlh`、
-    // `Length::payload` の OR-pattern に `Lh`/`Rlh`
-    // を足し忘れていないことの直接 pin)。
+    // Check nonnegative filtering across all Length variants (`lh`/`rlh`),
+    // directly pinning that `Lh`/`Rlh` were added to the OR-pattern in
+    // `Length::payload`.
     assert_eq!(parse("-1lh", "padding-top"), None);
     assert_eq!(parse("-1rlh", "padding-top"), None);
 }
 
-/// 追加した残り unit (`rex` / `rch` / `ic` / `ric` /
-/// `mm` / `Q`) を `Length::payload` 経由で直接 exercise する — 他 call site
-/// (font-size / width / height / margin / border-width / line-height) の
-/// テストは Ex / Ch / Cm / In / Pc しか通さないため、`Length::payload` の
-/// OR-pattern 全 arm の patch coverage には本 test が要る。
+/// Directly exercise the remaining added units (`rex` / `rch` / `ic` / `ric` /
+/// `mm` / `Q`) via `Length::payload`. Tests at other call sites
+/// (font-size / width / height / margin / border-width / line-height)
+/// cover only Ex / Ch / Cm / In / Pc; this test is needed for patch coverage
+/// of every arm of the `Length::payload` OR-pattern.
 #[test]
 fn padding_top_accepts_remaining_additional_units() {
     assert_eq!(
@@ -535,11 +535,11 @@ fn padding_top_accepts_remaining_additional_units() {
     );
 }
 
-// Verification — Sides::all constructor + PropertyKey mapping smoke。
+// Verification — Sides::all constructor + PropertyKey mapping smoke.
 #[test]
 fn padding_key_maps_to_padding_property_keys() {
-    // 5 discriminant (4 longhand + 1 shorthand) が個別 PropertyKey を返すこと。
-    // cascade winner selection の discriminant integrity 確認。
+    // Each of five discriminants (four longhands and one shorthand) returns its own PropertyKey.
+    // Verify discriminant integrity for cascade winner selection.
     assert_eq!(
         PropertyValue::PaddingTop(Length::Px(0.0)).key(),
         PropertyKey::PaddingTop
@@ -564,7 +564,7 @@ fn padding_key_maps_to_padding_property_keys() {
 
 #[test]
 fn sides_all_constructor_replicates_value() {
-    // Sides::all(v) は 4 field を全て v で埋める。
+    // Sides::all(v) fills all four fields with v.
     let sides = Sides::all(Length::Px(7.5));
     assert_eq!(sides.top, Length::Px(7.5));
     assert_eq!(sides.right, Length::Px(7.5));
@@ -574,10 +574,10 @@ fn sides_all_constructor_replicates_value() {
 
 #[test]
 fn padding_shorthand_five_values_dropped_by_leftover() {
-    // 5 個目以降は本 helper が consume せず leftover として残す。
-    // parse_value 単体では 4-value form の Some を返すが、caller (rule.rs)
-    // の expect_exhausted が leftover を検知して declaration drop するので、
-    // rule.rs 経由で drop 確認。
+    // The helper leaves any fifth or later value unconsumed as leftovers.
+    // parse_value alone returns Some for the four-value form, but the caller's
+    // expect_exhausted (in rule.rs) detects leftovers and drops the declaration;
+    // check the drop through rule.rs.
     let source = "padding: 10px 20px 30px 40px 50px;";
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
@@ -590,7 +590,7 @@ fn padding_shorthand_five_values_dropped_by_leftover() {
 
 #[test]
 fn padding_case_insensitive_unit() {
-    // CSS spec: unit identifier は ASCII case-insensitive。
+    // CSS spec: unit identifiers are ASCII case-insensitive.
     assert_eq!(
         parse("10PX", "padding-top"),
         Some(PropertyValue::PaddingTop(Length::Px(10.0)))
@@ -603,9 +603,9 @@ fn padding_case_insensitive_unit() {
 
 #[test]
 fn position_key_maps_to_position_property_key() {
-    // PropertyValue::Position → PropertyKey::Position (cascade winner 選択の
-    // discriminant integrity、既存 sibling counter-* / content / string-set と
-    // 同じ pattern)。
+    // PropertyValue::Position → PropertyKey::Position (discriminant integrity for
+    // cascade winner selection, following existing sibling counter-* / content /
+    // string-set patterns).
     let v = PropertyValue::Position(PositionValue::Static);
     assert_eq!(v.key(), PropertyKey::Position);
     let v = PropertyValue::Position(PositionValue::Running(SmolStr::new("hdr")));
@@ -960,7 +960,7 @@ fn resolve_overflow_both_non_visible_non_clip_is_unaffected() {
 
 #[test]
 fn margin_top_parse_px() {
-    // Verification 3-a: `margin-top: 10px` → MarginTop(Length(Px(10)))。
+    // Verification 3-a: `margin-top: 10px` → MarginTop(Length(Px(10))).
     assert_eq!(
         parse("10px", "margin-top"),
         Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
@@ -971,8 +971,8 @@ fn margin_top_parse_px() {
 
 #[test]
 fn margin_right_parse_auto() {
-    // Verification 3-b: `margin-right: auto` → MarginRight(Auto)。§3.1 の
-    // `auto` alternative の受理を per-side longhand で pin。
+    // Verification 3-b: `margin-right: auto` → MarginRight(Auto). Pin acceptance
+    // of the §3.1 `auto` alternative in a per-side longhand.
     assert_eq!(
         parse("auto", "margin-right"),
         Some(PropertyValue::MarginRight(LengthOrAuto::Auto))
@@ -981,7 +981,7 @@ fn margin_right_parse_auto() {
 
 #[test]
 fn margin_bottom_parse_percentage() {
-    // Verification 3-c: `margin-bottom: 50%` → MarginBottom(Length(Percent(50)))。
+    // Verification 3-c: `margin-bottom: 50%` → MarginBottom(Length(Percent(50))).
     assert_eq!(
         parse("50%", "margin-bottom"),
         Some(PropertyValue::MarginBottom(LengthOrAuto::Length(
@@ -992,9 +992,9 @@ fn margin_bottom_parse_percentage() {
 
 #[test]
 fn margin_left_parse_em() {
-    // Verification 3-d: `margin-left: 2em` → MarginLeft(Length(Em(2)))。
-    // `<length-percentage>` mode 経由で em 受理 (parse_length_value の mode
-    // arg = true)。
+    // Verification 3-d: `margin-left: 2em` → MarginLeft(Length(Em(2))).
+    // Accept em through `<length-percentage>` mode (the parse_length_value mode
+    // arg = true).
     assert_eq!(
         parse("2em", "margin-left"),
         Some(PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Em(
@@ -1005,8 +1005,8 @@ fn margin_left_parse_em() {
 
 #[test]
 fn margin_side_accepts_negative_length() {
-    // Task Non-goals: negative margin は spec-valid (§3.1 "Negative values
-    // for margin properties are allowed")。longhand も含めて受理を pin。
+    // Task non-goal: negative margins are valid per spec (§3.1 "Negative values
+    // for margin properties are allowed"). Pin their acceptance in longhands too.
     assert_eq!(
         parse("-10px", "margin-top"),
         Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
@@ -1017,9 +1017,9 @@ fn margin_side_accepts_negative_length() {
 
 #[test]
 fn margin_top_accepts_zero() {
-    // spec `<length-percentage> | auto` — 0 は valid length。`0px` は Dimension arm、
-    // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す。
-    // margin は non-negative filter を持たないため素通り。
+    // Spec `<length-percentage> | auto`: zero is a valid length. `0px` takes the Dimension arm;
+    // bare `0` takes the Number arm under the CSS Values 3 §5 unitless-zero clause.
+    // Margins have no nonnegative filter, so these values pass unchanged.
     assert_eq!(
         parse("0px", "margin-top"),
         Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
@@ -1036,9 +1036,9 @@ fn margin_top_accepts_zero() {
 
 #[test]
 fn margin_side_case_insensitive_auto() {
-    // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を check
-    // (expect_ident_matching が case-insensitive の証拠、helper 変更で
-    // regression した際の canary)。
+    // CSS spec: identifier keywords are ASCII case-insensitive. Check acceptance of `AUTO`
+    // (as proof that expect_ident_matching ignores case and a canary against
+    // regressions if the helper changes).
     assert_eq!(
         parse("AUTO", "margin-top"),
         Some(PropertyValue::MarginTop(LengthOrAuto::Auto))
@@ -1047,15 +1047,15 @@ fn margin_side_case_insensitive_auto() {
 
 #[test]
 fn margin_side_rejects_unsupported_unit() {
-    // `cap` (§6.1.1 font-relative lengths) は現状
-    // 未対応 (parse_length_value 側で drop)。`cm` / `lh` / `rlh` は
-    // それぞれ受理側へ移った — margin-side helper に非依存で波及ドロップを pin。
+    // `cap` (§6.1.1 font-relative lengths) remains
+    // unsupported (dropped by parse_length_value). `cm` / `lh` / `rlh` have
+    // moved to the accepted set. Pin knock-on drops independently of the margin-side helper.
     assert_eq!(parse("1cap", "margin-top"), None);
 }
 
 #[test]
 fn margin_side_accepts_lh() {
-    // CSS Values 4 §6.1.1 `lh`/`rlh`。
+    // CSS Values 4 §6.1.1 `lh`/`rlh`.
     assert_eq!(
         parse("1lh", "margin-top"),
         Some(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Lh(
@@ -1082,7 +1082,7 @@ fn margin_side_accepts_absolute_unit() {
 
 #[test]
 fn margin_side_rejects_bogus_ident() {
-    // `<length-percentage> | auto` grammar 外 ident は declaration drop。
+    // Drop identifiers outside the `<length-percentage> | auto` grammar.
     assert_eq!(parse("fill-available", "margin-top"), None);
     assert_eq!(parse("initial", "margin-top"), None);
 }
@@ -1090,7 +1090,7 @@ fn margin_side_rejects_bogus_ident() {
 #[test]
 fn margin_shorthand_one_value_spreads_all_sides() {
     // Verification 4-a (§3.2 "If there is only one component value, it
-    // applies to all sides"): `margin: 10px` → 全 4 side = 10px。
+    // applies to all sides"): `margin: 10px` sets all four sides to 10px.
     let want = Sides::all(LengthOrAuto::Length(Length::Px(10.0)));
     assert_eq!(parse("10px", "margin"), Some(PropertyValue::Margin(want)));
 }
@@ -1099,7 +1099,7 @@ fn margin_shorthand_one_value_spreads_all_sides() {
 fn margin_shorthand_two_values_top_bottom_and_right_left() {
     // Verification 4-b (§3.2 "If there are two values, the top and bottom
     // margins are set to the first value and the right and left margins
-    // are set to the second"): top/bottom = 10px, right/left = 20px。
+    // are set to the second"): top/bottom = 10px, right/left = 20px.
     let want = Sides {
         top: LengthOrAuto::Length(Length::Px(10.0)),
         right: LengthOrAuto::Length(Length::Px(20.0)),
@@ -1117,7 +1117,7 @@ fn margin_shorthand_three_values_top_horiz_bottom() {
     // Verification 4-c (§3.2 "If there are three values, the top is set to
     // the first value, the left and right are set to the second, and the
     // bottom is set to the third"): top = 10px, right/left = 20px,
-    // bottom = 30px。
+    // bottom = 30px.
     let want = Sides {
         top: LengthOrAuto::Length(Length::Px(10.0)),
         right: LengthOrAuto::Length(Length::Px(20.0)),
@@ -1133,7 +1133,7 @@ fn margin_shorthand_three_values_top_horiz_bottom() {
 #[test]
 fn margin_shorthand_four_values_clockwise() {
     // Verification 4-d (§3.2 "If there are four values they apply to the
-    // top, right, bottom, and left, respectively"): clockwise from top。
+    // top, right, bottom, and left, respectively"): clockwise from top.
     let want = Sides {
         top: LengthOrAuto::Length(Length::Px(10.0)),
         right: LengthOrAuto::Length(Length::Px(20.0)),
@@ -1148,20 +1148,20 @@ fn margin_shorthand_four_values_clockwise() {
 
 #[test]
 fn margin_shorthand_all_auto() {
-    // Verification 5-a: `margin: auto` (1 value auto) → 全 4 side = Auto。
-    // browser の "block-level centering" 慣用の parse pin。
+    // Verification 5-a: `margin: auto` (one auto value) sets all four sides to Auto.
+    // Pin parsing of the browser convention for "block-level centering".
     let want = Sides::all(LengthOrAuto::Auto);
     assert_eq!(parse("auto", "margin"), Some(PropertyValue::Margin(want)));
 }
 
 #[test]
 fn margin_shorthand_zero_and_auto_horizontal_center() {
-    // Verification 5-b: `margin: 0 auto` (2 value mixed) は block-level
-    // horizontal centering の canonical form。top/bottom = 0px, right/left = auto。
-    // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths> の
-    // unitless-zero clause により bare `0` は Length::Px(0.0) 受理
+    // Verification 5-b: `margin: 0 auto` (two mixed values) is the canonical form
+    // for block-level horizontal centering: top/bottom = 0px, right/left = auto.
+    // Under the unitless-zero clause of CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths>,
+    // accept bare `0` as Length::Px(0.0)
     // (`parse_length_value_accepts_unitless_zero_only`
-    // で pin)。
+    // (also pinned here).
     let want = Sides {
         top: LengthOrAuto::Length(Length::Px(0.0)),
         right: LengthOrAuto::Auto,
@@ -1173,8 +1173,8 @@ fn margin_shorthand_zero_and_auto_horizontal_center() {
 
 #[test]
 fn margin_shorthand_mixed_units() {
-    // grammar coverage: 4-value shorthand で unit / auto を全て混在させる。
-    // 32n `<length-percentage> | auto` の grammar 網羅を単一 assertion に集約。
+    // Grammar coverage: mix units and auto across all four shorthand values.
+    // Cover the 32n `<length-percentage> | auto` grammar in one assertion.
     let want = Sides {
         top: LengthOrAuto::Length(Length::Px(10.0)),
         right: LengthOrAuto::Auto,
@@ -1189,25 +1189,25 @@ fn margin_shorthand_mixed_units() {
 
 #[test]
 fn margin_shorthand_rejects_empty_input() {
-    // 空 value: parse_margin_side 1st fail → parse_margin_shorthand `?`
-    // 上位伝播で None (declaration drop)。
+    // Empty value: parse_margin_side fails on the first value, and `?` in
+    // parse_margin_shorthand propagates None (drop the declaration).
     assert_eq!(parse("", "margin"), None);
 }
 
 #[test]
 fn margin_shorthand_rejects_bogus_ident() {
-    // 1st value 位置に grammar 外 ident → declaration drop。
+    // Drop an identifier outside the grammar in the first-value position.
     assert_eq!(parse("bogus", "margin"), None);
 }
 
 #[test]
 fn margin_shorthand_leaves_extra_values_for_caller_exhausted_check() {
-    // 5+ value shorthand: 本 helper は 4 value 消費、5th 以降は unconsumed で
-    // return。DeclParser::parse_value の expect_exhausted で最終的に
-    // declaration drop されるので、rule.rs 側 test
-    // (`margin_shorthand_five_values_declaration_dropped`) で end-to-end
-    // 挙動を check する。本 test は parse_value 単体 (caller expect_exhausted
-    // 経由なし) では 4 value までは Some が返る shape の pin。
+    // For shorthand with five or more values, this helper consumes four and returns
+    // with the fifth and later values unconsumed. DeclParser::parse_value's
+    // expect_exhausted ultimately drops the declaration, so a rule.rs test
+    // (`margin_shorthand_five_values_declaration_dropped`) checks end-to-end
+    // behavior. This test pins that parse_value alone (without the caller's
+    // expect_exhausted) returns Some for the first four values.
     let want = Sides {
         top: LengthOrAuto::Length(Length::Px(10.0)),
         right: LengthOrAuto::Length(Length::Px(20.0)),
@@ -1222,7 +1222,7 @@ fn margin_shorthand_leaves_extra_values_for_caller_exhausted_check() {
 
 #[test]
 fn margin_shorthand_case_insensitive_auto_and_units() {
-    // shorthand path でも case-insensitive dispatch が生きている pin。
+    // Pin case-insensitive dispatch along the shorthand path too.
     let want = Sides {
         top: LengthOrAuto::Auto,
         right: LengthOrAuto::Length(Length::Px(20.0)),
@@ -1237,10 +1237,10 @@ fn margin_shorthand_case_insensitive_auto_and_units() {
 
 #[test]
 fn margin_longhand_keys_map_correctly() {
-    // 4 longhand + shorthand variant → 対応 key (cascade winner 選択の
-    // discriminant integrity)。sibling `position_key_maps_to_position_property_key`
-    // と同 pattern。shorthand `Margin` key も expansion 前の PropertyValue
-    // 段で観測可能なため includes。
+    // Four longhands and one shorthand map to their respective keys (pinning
+    // cascade winner selection and sibling `position_key_maps_to_position_property_key`
+    // discriminant integrity). Include the shorthand
+    // `Margin` key, observable on PropertyValue before expansion.
     let top = PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(1.0)));
     assert_eq!(top.key(), PropertyKey::MarginTop);
     let right = PropertyValue::MarginRight(LengthOrAuto::Length(Length::Px(1.0)));
@@ -1256,8 +1256,8 @@ fn margin_longhand_keys_map_correctly() {
 #[test]
 fn sides_all_spreads_value_to_all_four() {
     // Sides::all helper ( reused by shorthand 1-value + initial value):
-    // 1 value → top/right/bottom/left が全て同値、Clone 経路 (最後の side は
-    // move 消費) が正しく動く pin。
+    // One value sets top/right/bottom/left alike. Pin correct behavior of the
+    // Clone path (the last side consumes the moved value).
     let s = Sides::all(LengthOrAuto::Length(Length::Px(3.5)));
     assert_eq!(s.top, LengthOrAuto::Length(Length::Px(3.5)));
     assert_eq!(s.right, LengthOrAuto::Length(Length::Px(3.5)));
@@ -1279,8 +1279,8 @@ fn sides_all_spreads_value_to_all_four() {
 fn margin_inline_start_parses_to_margin_left() {
     // §4.2 physical fixed-mapping: `margin-inline-start` produces the
     // exact same `PropertyValue` as `margin-left` (no dedicated variant
-    // — `PropertyValue::PaddingInline` doc's "なぜ 8 longhand が専用
-    // variant を持たないか" section).
+    // — see the "Why the eight longhands do not have dedicated
+    // variants" section of the `PropertyValue::PaddingInline` doc).
     assert_eq!(
         parse("5px", "margin-inline-start"),
         Some(PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Px(
@@ -1474,9 +1474,9 @@ fn margin_inline_shorthand_leaves_extra_values_for_caller_exhausted_check() {
 
 #[test]
 fn logical_margin_padding_keys_map_to_their_physical_counterparts() {
-    // cascade winner selection の discriminant integrity — 8 longhand は
-    // 専用 key を持たず物理 key へ写像 (`margin_longhand_keys_map_correctly`
-    // と同 pattern)。4 shorthand は自分専用の key を持つ。
+    // Discriminant integrity for cascade winner selection: the eight longhands
+    // map to physical keys rather than dedicated keys (as in
+    // `margin_longhand_keys_map_correctly`); the four shorthands each have their own key.
     assert_eq!(
         PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Px(1.0))).key(),
         PropertyKey::MarginLeft
@@ -1561,7 +1561,7 @@ fn logical_margin_padding_property_names_resolve_to_physical_property_keys() {
 #[test]
 fn border_top_width_parse_px() {
     // Verification #1: parse("1px", "border-top-width") =
-    // Some(PropertyValue::BorderTopWidth(Length::Px(1.0)))。
+    // Some(PropertyValue::BorderTopWidth(Length::Px(1.0))).
     assert_eq!(
         parse("1px", "border-top-width"),
         Some(PropertyValue::BorderTopWidth(Length::Px(1.0)))
@@ -1574,16 +1574,16 @@ fn border_top_width_parse_px() {
 // https://www.w3.org/TR/css-sizing-3/#preferred-size-properties
 // Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
 //         fit-content(<length-percentage>)`
-// Initial: auto、Inherited: no。
+// Initial: auto, Inherited: no.
 //
-// 本 task では `auto` + non-negative `<length-percentage>` のみ受理、
-// min-content / max-content / fit-content() は (b) 非対応。
+// This task accepts only `auto` and nonnegative `<length-percentage>`;
+// min-content / max-content / fit-content() remain unsupported (b).
 
 #[test]
 fn width_parse_auto_keyword() {
-    // Verification #1: `width: auto` → Width(Auto)。initial 値と同 shape で
-    // grammar 上位優先分岐 (parse_width の try_parse ident branch) が生きて
-    // いることを pin。
+    // Verification #1: `width: auto` → Width(Auto). It has the same shape as the initial
+    // value. Pin the priority branch of the grammar (parse_width's try_parse
+    // identifier branch).
     assert_eq!(
         parse("auto", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Auto))
@@ -1593,8 +1593,8 @@ fn width_parse_auto_keyword() {
 #[test]
 fn border_top_width_parse_medium_keyword() {
     // Verification #2: parse("medium", "border-top-width") =
-    // Some(PropertyValue::BorderTopWidth(Length::Px(3.0)))。
-    // spec §3.3 規定値 (normative equivalence) の 1/3/5 px mapping。
+    // Some(PropertyValue::BorderTopWidth(Length::Px(3.0))).
+    // Pin the normative §3.3 mapping of thin/medium/thick to 1/3/5 px.
     assert_eq!(
         parse("medium", "border-top-width"),
         Some(PropertyValue::BorderTopWidth(Length::Px(3.0)))
@@ -1603,10 +1603,10 @@ fn border_top_width_parse_medium_keyword() {
 
 #[test]
 fn width_parse_length_px() {
-    // Verification #2: `width: 100px` → Width(Length(Px(100)))。
-    // 従来 `unknown_property_returns_none` canary で `None` だった箇所が
-    // 実 variant を返すようになった transition check (canary はその後
-    // `float` を経て `cursor` に移設済み)。
+    // Verification #2: `width: 100px` → Width(Length(Px(100))).
+    // Check the transition from returning `None` in the old
+    // `unknown_property_returns_none` canary to returning a real variant (the
+    // canary subsequently moved through `float` to `cursor`).
     assert_eq!(
         parse("100px", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(
@@ -1617,9 +1617,9 @@ fn width_parse_length_px() {
 
 #[test]
 fn border_width_thin_thick_keywords_map_to_1px_5px() {
-    // spec §3.3 規定値: thin=1px、thick=5px。
-    // 4 side 各 arm の smoke — arm cross-copy regression check (`top` arm を
-    // `right` arm に誤 wire しても本 test で fail する)。
+    // Spec §3.3 values: thin=1px, thick=5px.
+    // Smoke-test each arm for four sides to catch cross-arm wiring mistakes
+    // (e.g. wrongly wiring the `top` arm to the `right` arm).
     assert_eq!(
         parse("thin", "border-right-width"),
         Some(PropertyValue::BorderRightWidth(Length::Px(1.0)))
@@ -1632,8 +1632,8 @@ fn border_width_thin_thick_keywords_map_to_1px_5px() {
 
 #[test]
 fn width_parse_length_percentage() {
-    // Verification #3: `width: 50%` → Width(Length(Percent(50)))。
-    // parse_length_value(allow_percentage=true) 経由の Percent branch。
+    // Verification #3: `width: 50%` → Width(Length(Percent(50))).
+    // The Percent branch through parse_length_value(allow_percentage=true).
     assert_eq!(
         parse("50%", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Length(Length::Percent(
@@ -1644,19 +1644,19 @@ fn width_parse_length_percentage() {
 
 #[test]
 fn border_width_rejects_negative() {
-    // Verification #6: parse("-1px", "border-top-width") = None。
-    // spec `<line-width>` = `<length [0,∞]>` — 負値は grammar 違反 → drop。
+    // Verification #6: parse("-1px", "border-top-width") = None.
+    // Spec `<line-width>` = `<length [0,∞]>`; negatives violate grammar → drop.
     assert_eq!(parse("-1px", "border-top-width"), None);
-    // Em / Rem / Pt も同 constraint (unit-bearing variant 全て)。
+    // Em / Rem / Pt have the same constraint (all unit-bearing variants).
     assert_eq!(parse("-1em", "border-bottom-width"), None);
 }
 
 #[test]
 fn border_top_width_accepts_zero() {
-    // spec `<line-width>` = `<length [0,∞]>` — 0 は閉区間下端。`0px` は
-    // Dimension arm、bare `0` は CSS Values 3 §5 unitless-zero clause の
-    // Number arm を通す。parse_border_width_side の
-    // `>= 0.0` 非負 filter を pass。
+    // In spec `<line-width>` = `<length [0,∞]>`, zero is the closed interval's lower bound.
+    // `0px` takes the Dimension arm; bare `0` takes the Number arm via
+    // CSS Values 3 §5's unitless-zero clause. It passes parse_border_width_side's
+    // `>= 0.0` nonnegative filter.
     assert_eq!(
         parse("0px", "border-top-width"),
         Some(PropertyValue::BorderTopWidth(Length::Px(0.0)))
@@ -1670,11 +1670,11 @@ fn border_top_width_accepts_zero() {
 #[test]
 fn border_shorthand_accepts_bare_zero_width() {
     // Follow-on coverage: `0 solid`
-    // は shorthand の width slot を bare-zero で埋めた canonical form。
-    // parse_border_shorthand の width slot が parse_border_width_side_res 経由で
-    // parse_length_value Number arm を通して Length::Px(0.0) を取り、
-    // style slot は Solid、color slot は省略で spec initial =
-    // `BorderColor::CurrentColor` (CSS Backgrounds 3 §3.1)。
+    // uses bare zero in the shorthand width slot, a canonical form.
+    // parse_border_shorthand's width slot calls parse_border_width_side_res,
+    // which gets Length::Px(0.0) via parse_length_value's Number arm;
+    // the style slot is Solid; omitted color takes the spec initial value of
+    // `BorderColor::CurrentColor` (CSS Backgrounds 3 §3.1).
     let border = Border {
         width: Length::Px(0.0),
         style: BorderStyle::Solid,
@@ -1688,35 +1688,63 @@ fn border_shorthand_accepts_bare_zero_width() {
 
 #[test]
 fn border_width_rejects_percentage() {
-    // `<line-width>` grammar は `<percentage>` を含まない (padding とは
-    // 違う点)。`parse_length_value(input, false)` の
-    // `<length>` mode で Percentage token 自体が reject される。
+    // The `<line-width>` grammar excludes `<percentage>` (unlike padding).
+    // In `parse_length_value(input, false)`, Percentage tokens themselves
+    // are rejected in `<length>` mode.
     assert_eq!(parse("50%", "border-top-width"), None);
 }
 
 #[test]
 fn border_width_rejects_unknown_keyword() {
-    // spec §3.3 の keyword 集合外は drop (`auto` / `fat` / `bold` etc.)。
+    // Drop keywords outside the §3.3 set (`auto` / `fat` / `bold`, etc.).
     assert_eq!(parse("auto", "border-top-width"), None);
     assert_eq!(parse("fat", "border-top-width"), None);
 }
 
 #[test]
-fn border_width_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
-    // canonical: PropertyValue doc「CSS-wide keyword」節。
-    assert_eq!(parse("inherit", "border-top-width"), None);
-    assert_eq!(parse("initial", "border-top-width"), None);
-    assert_eq!(parse("unset", "border-top-width"), None);
-    assert_eq!(parse("revert", "border-top-width"), None);
-    assert_eq!(parse("revert-layer", "border-top-width"), None);
+fn border_width_accepts_css_wide_keyword() {
+    // CSS Cascading 4 §7.3 + CSS Cascading 5 §7.3.5: every `border-*-width` longhand
+    // accepts the five CSS-wide keywords as a lone value (see `CssWideKeyword`).
+    assert_eq!(
+        parse("inherit", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
+    assert_eq!(
+        parse("initial", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::Initial
+        ))
+    );
+    assert_eq!(
+        parse("unset", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Unset))
+    );
+    assert_eq!(
+        parse("revert", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Revert))
+    );
+    assert_eq!(
+        parse("revert-layer", "border-top-width"),
+        Some(PropertyValue::BorderTopWidthCssWide(
+            CssWideKeyword::RevertLayer
+        ))
+    );
+    // ASCII case-insensitive (CSS Values 3 §3.1).
+    assert_eq!(
+        parse("INHERIT", "border-right-width"),
+        Some(PropertyValue::BorderRightWidthCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
 }
 
 #[test]
 fn border_width_accepts_absolute_unit() {
-    // `<line-width>` の `<length [0,∞]>` half は `<percentage>` を含まないが
-    // 他 absolute unit は含む — 追加した `pc` を
-    // border-width 経路 (`allow_percentage=false`) でも check する。
+    // The `<length [0,∞]>` half of `<line-width>` excludes `<percentage>` but
+    // includes other absolute units. Check the newly added `pc` through
+    // the border-width path (`allow_percentage=false`) as well.
     assert_eq!(
         parse("1pc", "border-top-width"),
         Some(PropertyValue::BorderTopWidth(Length::Pc(1.0)))
@@ -1725,13 +1753,13 @@ fn border_width_accepts_absolute_unit() {
 
 #[test]
 fn border_width_rejects_negative_absolute_unit() {
-    // 全 unit-bearing variant の non-negative check check (cm、新規 absolute unit)。
+    // Check nonnegative filtering across unit-bearing variants (cm, new absolute unit).
     assert_eq!(parse("-1cm", "border-top-width"), None);
 }
 
 #[test]
 fn border_width_accepts_lh() {
-    // CSS Values 4 §6.1.1 `lh`/`rlh`。`<line-width>`
+    // CSS Values 4 §6.1.1 `lh`/`rlh`.`<line-width>`
     // grammar (`<length [0,∞]> | thin | medium | thick`) has no
     // self-reference concern the way `font-size` / `line-height` do
     // (`Length::Lh` doc), so `border-*-width` accepts them unfiltered.
@@ -1815,7 +1843,7 @@ fn border_color_shorthand_currentcolor_and_named() {
 #[test]
 fn border_top_style_parse_solid() {
     // Verification #3: parse("solid", "border-top-style") =
-    // Some(PropertyValue::BorderTopStyle(BorderStyle::Solid))。
+    // Some(PropertyValue::BorderTopStyle(BorderStyle::Solid)).
     assert_eq!(
         parse("solid", "border-top-style"),
         Some(PropertyValue::BorderTopStyle(BorderStyle::Solid))
@@ -1824,7 +1852,7 @@ fn border_top_style_parse_solid() {
 
 #[test]
 fn width_parse_length_em() {
-    // font-relative unit 経路 check — parse_length_value 経由で em を受理。
+    // Check the font-relative unit path: accept em via parse_length_value.
     assert_eq!(
         parse("2em", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Length(Length::Em(2.0))))
@@ -1833,8 +1861,8 @@ fn width_parse_length_em() {
 
 #[test]
 fn border_style_all_10_variants_accepted() {
-    // spec §3.2 `<line-style>` の 10 alternative 全てを smoke (arm 削り
-    // regression 検知)。
+    // Smoke-test all ten alternatives in spec §3.2 `<line-style>` (catch
+    // regressions that remove an arm).
     assert_eq!(
         parse("none", "border-top-style"),
         Some(PropertyValue::BorderTopStyle(BorderStyle::None))
@@ -1875,34 +1903,34 @@ fn border_style_all_10_variants_accepted() {
 
 #[test]
 fn width_rejects_negative_px() {
-    // Verification #4: `width: -10px` → None (spec grammar `[0,∞]` violation)。
-    // parse_width の post-filter が enforce (padding と同 pattern)。
+    // Verification #4: `width: -10px` → None (spec grammar `[0,∞]` violation).
+    // The parse_width post-filter enforces this (as for padding).
     assert_eq!(parse("-10px", "width"), None);
 }
 
 #[test]
 fn width_rejects_negative_percentage() {
-    // 全 Length variant OR-pattern check の check (Percent 分岐)。
+    // Check the Percent branch of the nonnegative Length OR-pattern.
     assert_eq!(parse("-50%", "width"), None);
 }
 
 #[test]
 fn width_rejects_negative_em() {
-    // 全 Length variant OR-pattern check の check (Em 分岐)。
+    // Check the Em branch of the nonnegative Length OR-pattern.
     assert_eq!(parse("-2em", "width"), None);
 }
 
 #[test]
 fn width_accepts_zero() {
-    // spec `[0,∞]` の closed interval — 下端 0 は有効。
+    // Spec `[0,∞]` is a closed interval; its lower bound, zero, is valid.
     assert_eq!(
         parse("0px", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(0.0))))
     );
     // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths>
-    // unitless-zero clause 経由: bare `0` も同 Px(0.0)
-    // として受理 (width は `<length-percentage [0,∞]>`、helper が Number arm で
-    // 拾い parse_width の非負 filter を pass)。
+    // Under the unitless-zero clause, bare `0` is also accepted as Px(0.0)
+    // (width uses `<length-percentage [0,∞]>`; the helper gets it via the Number arm
+    // and it passes the parse_width nonnegative filter).
     assert_eq!(
         parse("0", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(0.0))))
@@ -1911,25 +1939,52 @@ fn width_accepts_zero() {
 
 #[test]
 fn border_style_rejects_unknown_keyword() {
-    // `<line-style>` grammar 外 (`wavy` は CSS Text Decoration 4 由来、
-    // border-style では invalid) は drop。
+    // Drop values outside `<line-style>` grammar (`wavy` comes from CSS Text Decoration 4,
+    // not border-style).
     assert_eq!(parse("wavy", "border-top-style"), None);
 }
 
 #[test]
-fn border_style_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
-    // canonical: PropertyValue doc「CSS-wide keyword」節。
-    assert_eq!(parse("inherit", "border-top-style"), None);
-    assert_eq!(parse("initial", "border-top-style"), None);
-    assert_eq!(parse("unset", "border-top-style"), None);
-    assert_eq!(parse("revert", "border-top-style"), None);
-    assert_eq!(parse("revert-layer", "border-top-style"), None);
+fn border_style_accepts_css_wide_keyword() {
+    // CSS Cascading 4 §7.3 + CSS Cascading 5 §7.3.5: every `border-*-style` longhand
+    // accepts the five CSS-wide keywords as a lone value (see `CssWideKeyword`).
+    assert_eq!(
+        parse("inherit", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
+    assert_eq!(
+        parse("initial", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::Initial
+        ))
+    );
+    assert_eq!(
+        parse("unset", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Unset))
+    );
+    assert_eq!(
+        parse("revert", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Revert))
+    );
+    assert_eq!(
+        parse("revert-layer", "border-top-style"),
+        Some(PropertyValue::BorderTopStyleCssWide(
+            CssWideKeyword::RevertLayer
+        ))
+    );
+    assert_eq!(
+        parse("INHERIT", "border-right-style"),
+        Some(PropertyValue::BorderRightStyleCssWide(
+            CssWideKeyword::Inherit
+        ))
+    );
 }
 
 #[test]
 fn border_style_case_insensitive() {
-    // CSS Values 3 §3.1: keyword は ASCII case-insensitive。
+    // CSS Values 3 §3.1: keywords are ASCII case-insensitive.
     assert_eq!(
         parse("SOLID", "border-top-style"),
         Some(PropertyValue::BorderTopStyle(BorderStyle::Solid))
@@ -1967,18 +2022,18 @@ fn width_rejects_fit_content_function() {
 
 #[test]
 fn width_rejects_unsupported_unit() {
-    // (b) 非対応 — vw / cap 等は spec-valid だが
-    // 未対応、parse_length_value 側で drop、None
-    // propagate。`ch` / `lh` / `rlh` は
-    // それぞれ受理側へ移った
-    // (`width_accepts_absolute_unit` / `width_accepts_lh` 参照)。
+    // (b) Unsupported: vw / cap and similar units are valid per spec but
+    // not implemented. parse_length_value drops them and propagates None.
+    // `ch` / `lh` / `rlh` have
+    // moved to the accepted set.
+    // (see `width_accepts_absolute_unit` / `width_accepts_lh`).
     assert_eq!(parse("10vw", "width"), None);
     assert_eq!(parse("5cap", "width"), None);
 }
 
 #[test]
 fn width_accepts_lh() {
-    // CSS Values 4 §6.1.1 `lh`/`rlh`。
+    // CSS Values 4 §6.1.1 `lh`/`rlh`.
     assert_eq!(
         parse("5lh", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Length(Length::Lh(5.0))))
@@ -1991,8 +2046,8 @@ fn width_accepts_lh() {
 
 #[test]
 fn width_accepts_absolute_unit() {
-    // `1in` = 96px 相当 (specified 層は authored unit をそのまま保持、
-    // 絶対化は resolve.rs の責務 — check: `resolve::tests::length_additional_absolute_units_convert_per_spec_table`)。
+    // `1in` equals 96px; the specified layer preserves the authored unit,
+    // and resolve.rs handles absolute conversion (see `resolve::tests::length_additional_absolute_units_convert_per_spec_table`).
     assert_eq!(
         parse("1in", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Length(Length::In(1.0))))
@@ -2001,8 +2056,8 @@ fn width_accepts_absolute_unit() {
 
 #[test]
 fn width_case_insensitive_auto() {
-    // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を check
-    // (sibling `margin_side_case_insensitive_auto` と同 pattern)。
+    // CSS spec: identifier keywords are ASCII case-insensitive. Check acceptance of `AUTO`
+    // (as in sibling `margin_side_case_insensitive_auto`).
     assert_eq!(
         parse("AUTO", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Auto))
@@ -2011,9 +2066,9 @@ fn width_case_insensitive_auto() {
 
 #[test]
 fn border_top_color_parse_hex() {
-    // border-*-color の hex form は `parse_color` (background-color と同じ
-    // helper) が hex/named/rgb(a)/transparent を受理し、`parse_border_color`
-    // が `BorderColor::Resolved` で wrap して cascade static side に届く。
+    // For border-*-color hex forms, `parse_color` (the same helper used by
+    // background-color) accepts hex/named/rgb(a)/transparent, and `parse_border_color`
+    // wraps the result in `BorderColor::Resolved` for the static cascade layer.
     assert_eq!(
         parse("#ff0000", "border-top-color"),
         Some(PropertyValue::BorderTopColor(BorderColor::Resolved(
@@ -2029,9 +2084,9 @@ fn border_top_color_parse_hex() {
 
 #[test]
 fn border_color_named_and_rgb() {
-    // 4 side 各 arm の smoke + 3 color form (named / rgb / transparent) を
-    // 分散して cross-arm regression 検知 (background-color test の pattern)。
-    // `BorderColor::Resolved` wrap。
+    // Distribute a smoke test for each of four side arms across three color forms
+    // (named / rgb / transparent) to detect cross-arm regressions (background-color pattern).
+    // `BorderColor::Resolved` wrap.
     assert_eq!(
         parse("red", "border-right-color"),
         Some(PropertyValue::BorderRightColor(BorderColor::Resolved(
@@ -2065,15 +2120,15 @@ fn border_color_named_and_rgb() {
 #[test]
 fn border_top_color_parse_currentcolor() {
     // CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
-    // "Initial: currentcolor" — author 明示 `border-*-color: currentcolor` が
-    // `BorderColor::CurrentColor` variant として保持されることを check する
-    // (hazard case 1 の cascade-side coverage、used-value resolution は
-    // paint scope 責務)。
+    // "Initial: currentcolor": check that an explicit author declaration of
+    // `border-*-color: currentcolor` remains a `BorderColor::CurrentColor` variant
+    // (cascade-side coverage for hazard case 1; used-value resolution belongs to
+    // painting).
     assert_eq!(
         parse("currentcolor", "border-top-color"),
         Some(PropertyValue::BorderTopColor(BorderColor::CurrentColor))
     );
-    // CSS Color 3 §4.4 keyword は ASCII case-insensitive。
+    // CSS Color 3 §4.4 keywords are ASCII case-insensitive.
     assert_eq!(
         parse("CurrentColor", "border-right-color"),
         Some(PropertyValue::BorderRightColor(BorderColor::CurrentColor))
@@ -2086,9 +2141,9 @@ fn border_top_color_parse_currentcolor() {
 
 #[test]
 fn border_shorthand_all_three_components() {
-    // Verification #5: parse("1px solid red", "border") = shorthand 経由で
-    // 全 4 side の Border {width: 1px, style: Solid, color: red} を expand。
-    // color slot は `BorderColor::Resolved` に wrap。
+    // Verification #5: parse("1px solid red", "border") expands a shorthand into
+    // Border {width: 1px, style: Solid, color: red} for all four sides.
+    // Wrap the color slot in `BorderColor::Resolved`.
     let border = Border {
         width: Length::Px(1.0),
         style: BorderStyle::Solid,
@@ -2107,8 +2162,8 @@ fn border_shorthand_all_three_components() {
 
 #[test]
 fn border_shorthand_any_order() {
-    // spec §3.4 grammar は `||` (any-order)。全 6 permutation を check する
-    // 代わりに 3 order (color-first / style-first / mixed) を smoke。
+    // Spec §3.4 grammar uses `||` (any order). Rather than all six permutations,
+    // smoke-test three orders (color-first / style-first / mixed).
     let expected = Border {
         width: Length::Px(2.0),
         style: BorderStyle::Dashed,
@@ -2134,10 +2189,10 @@ fn border_shorthand_any_order() {
 #[test]
 fn border_shorthand_omitted_components_use_initial() {
     // spec §3.4 "Omitted values are set to their initial values" —
-    // width 省略 → medium (3px)、style 省略 → None、color 省略 →
-    // `currentcolor` keyword (`BorderColor::CurrentColor`、spec §3.1
-    // initial)。
-    // 1 component only (color) — width と style は initial:
+    // Omitted width → medium (3px); omitted style → None; omitted color →
+    // `currentcolor` keyword (`BorderColor::CurrentColor`, spec §3.1
+    // initial).
+    // Only one component (color): width and style use their initial values:
     let with_only_color = Border {
         width: Length::Px(3.0), // medium initial
         style: BorderStyle::None,
@@ -2152,7 +2207,7 @@ fn border_shorthand_omitted_components_use_initial() {
         parse("red", "border"),
         Some(PropertyValue::Border(Sides::all(with_only_color)))
     );
-    // 1 component only (style) — width と color は initial:
+    // Only one component (style): width and color use their initial values:
     let with_only_style = Border {
         width: Length::Px(3.0),
         style: BorderStyle::Solid,
@@ -2243,9 +2298,9 @@ fn border_new_is_default() {
 
 #[test]
 fn border_shorthand_color_slot_accepts_currentcolor() {
-    // sibling: border shorthand の color slot は 4 longhand と同じ
-    // `parse_border_color` を経由するため、`currentcolor` keyword も
-    // shorthand から受理される。
+    // Sibling case: the border shorthand's color slot uses the same
+    // `parse_border_color` as the four longhands, so it also accepts
+    // the `currentcolor` keyword.
     let expected = Border {
         width: Length::Px(1.0),
         style: BorderStyle::Solid,
@@ -2255,7 +2310,7 @@ fn border_shorthand_color_slot_accepts_currentcolor() {
         parse("1px solid currentcolor", "border"),
         Some(PropertyValue::Border(Sides::all(expected)))
     );
-    // 引数 order は自由。style first。
+    // Argument order is flexible: style first.
     assert_eq!(
         parse("solid currentcolor 1px", "border"),
         Some(PropertyValue::Border(Sides::all(expected)))
@@ -2264,25 +2319,25 @@ fn border_shorthand_color_slot_accepts_currentcolor() {
 
 #[test]
 fn border_shorthand_empty_returns_none() {
-    // `||` grammar は at least 1 component 必須。0 component は None。
+    // The `||` grammar requires at least one component; zero returns None.
     assert_eq!(parse("", "border"), None);
 }
 
 #[test]
 fn border_shorthand_unknown_keyword_only_returns_none() {
-    // 未知 keyword (width/style/color いずれの slot にも match しない) は
-    // 1st iteration で全 slot None、`matched=false` で break、0-component
-    // guard で None (declaration drop)。
+    // An unknown keyword (matching no width/style/color slot) makes all slots None
+    // on the first iteration, then `matched=false` breaks; the zero-component
+    // guard returns None and drops the declaration.
     assert_eq!(parse("garbage", "border"), None);
 }
 
 #[test]
 fn border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check() {
-    // `border: 1px 2px` — 1st iteration で width=1px、2nd iteration で
-    // width slot 満了、`2px` は他 slot (style/color) に match しないため
-    // fall-through break。leftover は caller の `expect_exhausted` 責務。
-    // 本 helper 単体としては 1st を確保して Some を返す (parse_value 経路
-    // では end-to-end で declaration drop する — rule.rs test で check 予定)。
+    // For `border: 1px 2px`, the first iteration sets width=1px. On the second,
+    // the width slot is occupied and `2px` matches no other slot (style/color),
+    // so parsing falls through. The caller's `expect_exhausted` owns the leftover.
+    // The helper alone holds the first value and returns Some (the parse_value path
+    // drops the declaration end-to-end; check in a rule.rs test).
     let expected = Border {
         width: Length::Px(1.0),
         style: BorderStyle::None,
@@ -2292,15 +2347,15 @@ fn border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check() {
     let mut parser = Parser::new(&mut input);
     let result = parse_border_shorthand(&mut parser);
     assert_eq!(result, Some(Sides::all(expected)));
-    // 2px は unconsumed のまま — parser cursor は "2px" の直前を指す。
+    // `2px` remains unconsumed: the parser cursor points just before "2px".
     assert!(!parser.is_exhausted());
 }
 
 #[test]
 fn border_longhand_keys_map_correctly() {
-    // 12 longhand + 1 shorthand variant → 対応 key (cascade winner 選択の
-    // discriminant integrity)。sibling `margin_longhand_keys_map_correctly`
-    // と同 pattern。
+    // Twelve longhands and one shorthand map to their respective keys,
+    // pinning cascade winner selection like sibling `margin_longhand_keys_map_correctly`
+    // (the same discriminant-integrity pattern).
     assert_eq!(
         PropertyValue::BorderTopWidth(Length::Px(1.0)).key(),
         PropertyKey::BorderTopWidth
@@ -2362,8 +2417,8 @@ fn border_longhand_keys_map_correctly() {
 
 #[test]
 fn width_key_maps_to_width_property_key() {
-    // PropertyValue::Width → PropertyKey::Width (cascade winner 選択の
-    // discriminant integrity、既存 sibling padding/margin と同じ pattern)。
+    // PropertyValue::Width → PropertyKey::Width (discriminant integrity for
+    // cascade winner selection, following the sibling padding/margin pattern).
     assert_eq!(
         PropertyValue::Width(LengthOrAuto::Auto).key(),
         PropertyKey::Width
@@ -2407,18 +2462,18 @@ fn logical_size_aliases_use_physical_horizontal_writing_mode_axes() {
 //   min-content | max-content | fit-content(<length-percentage>)`,
 //   initial `auto`, Inheritance `No`.
 //
-// 現状 scope は `auto` + 非負 `<length-percentage>` の 2 分岐のみ、
-// 他 sizing keyword / global keyword / calc() / var() は silent drop
-// (parse_height doc の Scope carving 節参照)。
+// Current scope has only two branches, `auto` and nonnegative `<length-percentage>`;
+// other sizing/global keywords and calc() / var() are silently dropped
+// (see the "Scope carving" section of the parse_height doc).
 //
-// sibling: sibling `width` と同 shape の非負 `<length-percentage>` +
-// `auto` grammar、payload 型は共通 `LengthOrAuto`。
+// Sibling case: the same nonnegative `<length-percentage>` + `auto` grammar
+// as `width`; both share the `LengthOrAuto` payload type.
 
 #[test]
 fn height_parse_auto() {
-    // Verification 1 (task doc): `auto` ident は spec initial value でもある
-    // (§3.1.1 "Initial: auto") — cascade winner として declaration が到達
-    // した場合の受理 pattern を pin。
+    // Verification 1 (task doc): the `auto` identifier is also the spec initial value
+    // (§3.1.1 "Initial: auto"). Pin acceptance when the declaration arrives
+    // as the cascade winner.
     assert_eq!(
         parse("auto", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Auto))
@@ -2427,8 +2482,8 @@ fn height_parse_auto() {
 
 #[test]
 fn height_parse_px() {
-    // Verification 2 (task doc): 非負 px は spec-valid `<length-percentage>`
-    // (§3.1.1)。sibling `width_parse_length_px` と同 shape。
+    // Verification 2 (task doc): nonnegative px is valid `<length-percentage>`
+    // (§3.1.1), in the same shape as sibling `width_parse_length_px`.
     assert_eq!(
         parse("100px", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(
@@ -2439,9 +2494,9 @@ fn height_parse_px() {
 
 #[test]
 fn height_parse_percentage() {
-    // Verification 3 (task doc): percentage 受理 (parse_length_value の
-    // allow_percentage = true 経路)。resolve (containing block % → 実寸)
-    // は下流責務。
+    // Verification 3 (task doc): accept percentages via parse_length_value's
+    // allow_percentage = true path. Resolving containing-block percentages to
+    // actual dimensions is downstream work.
     assert_eq!(
         parse("50%", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Length(
@@ -2452,18 +2507,18 @@ fn height_parse_percentage() {
 
 #[test]
 fn height_rejects_negative_length() {
-    // Verification 4 (task doc): `<length-percentage [0,∞]>` (§3.1.1) の
-    // 非負制約により `-10px` は spec-invalid → drop。sibling
-    // padding の非負フィルタ pattern と同 shape、margin の `-10px` 受理
-    // (§3.1) との対称的な reject を pin。
+    // Verification 4 (task doc): under §3.1.1 `<length-percentage [0,∞]>`,
+    // `-10px` is invalid per spec and must be dropped. Follow the sibling
+    // padding nonnegative filter, and pin rejection symmetric with the accepted
+    // `-10px` margin (§3.1).
     assert_eq!(parse("-10px", "height"), None);
 }
 
 #[test]
 fn height_accepts_zero() {
-    // spec `<length-percentage [0,∞]>` — 0 は閉区間下端。`0px` は Dimension arm、
-    // bare `0` は CSS Values 3 §5 unitless-zero clause の Number arm を通す。
-    // parse_height の `>= 0.0` 非負 filter を pass。
+    // Spec `<length-percentage [0,∞]>`: zero is the closed interval's lower bound. `0px` takes the Dimension arm;
+    // bare `0` takes the Number arm under CSS Values 3 §5's unitless-zero clause.
+    // Both pass parse_height's `>= 0.0` nonnegative filter.
     assert_eq!(
         parse("0px", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(0.0))))
@@ -2476,8 +2531,8 @@ fn height_accepts_zero() {
 
 #[test]
 fn height_rejects_negative_percentage() {
-    // 非負フィルタが Percent variant にも効く check (parse_padding_side の
-    // 同 pattern、Verification 4 の姉妹)。
+    // Check that the nonnegative filter also applies to Percent variants (as in
+    // parse_padding_side, a sibling of Verification 4).
     assert_eq!(parse("-10%", "height"), None);
 }
 
@@ -2503,8 +2558,8 @@ fn height_rejects_unsupported_sizing_keyword() {
 
 #[test]
 fn height_rejects_css_wide_keyword() {
-    // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。
-    // canonical: PropertyValue doc「CSS-wide keyword」節。
+    // (b) Unsupported: CSS-wide keywords are not implemented yet; silently drop them.
+    // Canonical reference: the "CSS-wide keyword" section of the PropertyValue doc.
     assert_eq!(parse("inherit", "height"), None);
     assert_eq!(parse("initial", "height"), None);
     assert_eq!(parse("unset", "height"), None);
@@ -2514,9 +2569,9 @@ fn height_rejects_css_wide_keyword() {
 
 #[test]
 fn height_case_insensitive_auto() {
-    // CSS spec: ident keyword は ASCII case-insensitive
-    // (`expect_ident_matching` の cssparser 慣行、sibling
-    // `margin_side_case_insensitive_auto` と同 pattern)。
+    // CSS spec: identifier keywords are ASCII case-insensitive
+    // (cssparser's `expect_ident_matching` convention, like sibling
+    // `margin_side_case_insensitive_auto`).
     assert_eq!(
         parse("AUTO", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Auto))
@@ -2525,17 +2580,17 @@ fn height_case_insensitive_auto() {
 
 #[test]
 fn height_rejects_unsupported_unit() {
-    // `cap` (§6.1.1 font-relative lengths) は現状
-    // 未対応 (parse_length_value 側で drop)。`cm` / `lh` / `rlh` は
-    // それぞれ受理側へ移った (`height_accepts_absolute_unit` /
-    // `height_accepts_lh` 参照)。sibling
-    // `margin_side_rejects_unsupported_unit` と同 pattern。
+    // `cap` (§6.1.1 font-relative lengths) remains
+    // unsupported (dropped by parse_length_value). `cm` / `lh` / `rlh` have
+    // moved to the accepted set (see `height_accepts_absolute_unit` /
+    // `height_accepts_lh`). Follow the sibling
+    // `margin_side_rejects_unsupported_unit` pattern.
     assert_eq!(parse("1cap", "height"), None);
 }
 
 #[test]
 fn height_accepts_lh() {
-    // CSS Values 4 §6.1.1 `lh`/`rlh`。
+    // CSS Values 4 §6.1.1 `lh`/`rlh`.
     assert_eq!(
         parse("1.5lh", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Length(Length::Lh(1.5))))
@@ -2550,7 +2605,7 @@ fn height_accepts_lh() {
 
 #[test]
 fn height_accepts_absolute_unit() {
-    // CSS Values 4 §6.2 absolute lengths。
+    // CSS Values 4 §6.2 absolute lengths.
     assert_eq!(
         parse("1cm", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Length(Length::Cm(1.0))))
@@ -2564,9 +2619,9 @@ fn height_rejects_negative_absolute_unit() {
 
 #[test]
 fn height_parse_em_and_rem() {
-    // grammar coverage: font-relative units (`em` / `rem`) も
-    // `<length-percentage>` mode で受理される。resolve は下流
-    // (font-size context / root font-size context) 責務。
+    // Grammar coverage: font-relative units (`em` / `rem`) are also
+    // accepted in `<length-percentage>` mode. Resolution is downstream
+    // (font-size context / root font-size context).
     assert_eq!(
         parse("1.2em", "height"),
         Some(PropertyValue::Height(LengthOrAuto::Length(Length::Em(1.2))))
@@ -2581,8 +2636,8 @@ fn height_parse_em_and_rem() {
 
 #[test]
 fn height_key_maps_to_height_property_key() {
-    // sibling `margin_longhand_keys_map_correctly` と同 pattern — cascade
-    // winner selection の discriminant integrity を pin。
+    // Follow the sibling `margin_longhand_keys_map_correctly` pattern: pin
+    // cascade winner selection's discriminant integrity.
     let v = PropertyValue::Height(LengthOrAuto::Auto);
     assert_eq!(v.key(), PropertyKey::Height);
     let v = PropertyValue::Height(LengthOrAuto::Length(Length::Px(100.0)));
@@ -2771,7 +2826,7 @@ fn box_shadow_zero_mantissa_huge_exponent_offset_or_spread_resolves_to_zero_but_
     // checked (not just `+Inf`) because an earlier iteration of the
     // sibling `opacity` guard used `is_finite()` and wrongly dropped
     // the negative-overflow case too (`opacity_zero_mantissa_huge_exponent_resolves_to_zero_but_preserves_infinity`
-    // doc参照).
+    // see the doc).
     assert_eq!(
         parse("1e40px 1px", "box-shadow"),
         Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
@@ -2950,4 +3005,264 @@ fn outline_offset_parses_length_and_rejects_non_length() {
     // `auto` / `none` are not valid for this property.
     assert_eq!(parse("auto", "outline-offset"), None);
     assert_eq!(parse("none", "outline-offset"), None);
+}
+
+#[test]
+fn border_right_shorthand_parses_width_style_color() {
+    // CSS Backgrounds 3 §3.4 single-side shorthand: `border-right` accepts the same
+    // `||` components as `border` but targets only the right side.
+    let expected = Border {
+        width: Length::Px(2.0),
+        style: BorderStyle::Dashed,
+        color: BorderColor::CurrentColor,
+    };
+    assert_eq!(
+        parse("2px dashed", "border-right"),
+        Some(PropertyValue::BorderRight(expected))
+    );
+    // Any order, omitted components fill with initial values.
+    assert_eq!(
+        parse("dashed 2px", "border-right"),
+        Some(PropertyValue::BorderRight(expected))
+    );
+    assert_eq!(
+        parse("dashed", "border-right"),
+        Some(PropertyValue::BorderRight(Border {
+            width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+            style: BorderStyle::Dashed,
+            color: BorderColor::CurrentColor,
+        }))
+    );
+    assert_eq!(
+        parse("2px", "border-right").unwrap().key(),
+        PropertyKey::BorderRight
+    );
+}
+
+#[test]
+fn border_and_border_right_accept_css_wide_keywords() {
+    // CSS Cascading 4 §7.3 + CSS Cascading 5 §7.3.5: `border` and `border-right`
+    // accept the five CSS-wide keywords as a lone value.
+    for (kw, expected) in [
+        ("inherit", CssWideKeyword::Inherit),
+        ("initial", CssWideKeyword::Initial),
+        ("unset", CssWideKeyword::Unset),
+        ("revert", CssWideKeyword::Revert),
+        ("revert-layer", CssWideKeyword::RevertLayer),
+    ] {
+        assert_eq!(
+            parse(kw, "border"),
+            Some(PropertyValue::BorderCssWide(expected)),
+            "border: {kw}"
+        );
+        assert_eq!(
+            parse(kw, "border-right"),
+            Some(PropertyValue::BorderRightCssWide(expected)),
+            "border-right: {kw}"
+        );
+        // Longhands share the same contract.
+        assert_eq!(
+            parse(kw, "border-right-width"),
+            Some(PropertyValue::BorderRightWidthCssWide(expected))
+        );
+        assert_eq!(
+            parse(kw, "border-right-style"),
+            Some(PropertyValue::BorderRightStyleCssWide(expected))
+        );
+        assert_eq!(
+            parse(kw, "border-right-color"),
+            Some(PropertyValue::BorderRightColorCssWide(expected))
+        );
+    }
+    // Case-insensitive.
+    assert_eq!(
+        parse("INHERIT", "border-right"),
+        Some(PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit))
+    );
+}
+
+#[test]
+fn border_css_wide_combined_with_components_is_invalid() {
+    // A CSS-wide keyword must be the lone value: `border-right: inherit solid`
+    // and `border: inherit solid` leave a leftover token for the caller's
+    // `expect_exhausted`, which drops the declaration. `parse_entire` models that
+    // exhaustiveness here; `parse` alone would return the prefix.
+    assert_eq!(parse_entire("inherit solid", "border-right"), None);
+    assert_eq!(parse_entire("inherit solid", "border"), None);
+    assert_eq!(parse_entire("solid inherit", "border-right"), None);
+    assert_eq!(parse_entire("1px inherit", "border"), None);
+    // Shorthand keys for the CSS-wide forms share the shorthand key so cascade
+    // winners compete per shorthand before expansion.
+    assert_eq!(
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit).key(),
+        PropertyKey::Border
+    );
+    assert_eq!(
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit).key(),
+        PropertyKey::BorderRight
+    );
+}
+
+#[test]
+fn border_right_expansion_preserves_declaration_order() {
+    // CSS Cascading 4 §3 + §6.1 order of appearance: expanding `border-right`
+    // in place as width, style, color preserves declaration order so a later
+    // longhand in the same block wins (see `crate::rule::expand_border_right`).
+    use crate::rule::{expand_border_right, expand_border_right_css_wide};
+    let border = Border {
+        width: Length::Px(2.0),
+        style: BorderStyle::Dashed,
+        color: BorderColor::CurrentColor,
+    };
+    let mut values = Vec::new();
+    expand_border_right(border, |v| values.push(v));
+    assert_eq!(
+        values,
+        vec![
+            PropertyValue::BorderRightWidth(Length::Px(2.0)),
+            PropertyValue::BorderRightStyle(BorderStyle::Dashed),
+            PropertyValue::BorderRightColor(BorderColor::CurrentColor),
+        ]
+    );
+    let mut wide = Vec::new();
+    expand_border_right_css_wide(CssWideKeyword::Inherit, |v| wide.push(v));
+    assert_eq!(
+        wide,
+        vec![
+            PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
+            PropertyValue::BorderRightStyleCssWide(CssWideKeyword::Inherit),
+            PropertyValue::BorderRightColorCssWide(CssWideKeyword::Inherit),
+        ]
+    );
+}
+
+#[test]
+fn css_wide_keyword_roundtrips_through_all() {
+    // Pin `CssWideKeyword::ALL` (generated by `css_keywords!`) so the dead-code
+    // lint stays quiet and future keyword additions force an explicit update here.
+    assert_eq!(CssWideKeyword::ALL.len(), 5);
+    for kw in CssWideKeyword::ALL {
+        assert_eq!(CssWideKeyword::from_css_ident(kw.as_css_str()), Some(*kw));
+    }
+}
+
+#[test]
+#[allow(clippy::type_complexity)]
+fn border_all_longhands_accept_css_wide_keywords() {
+    // Cover every `border-*-width/style/color` dispatch arm in `parse_value`
+    // (see `parse_css_wide_keyword`): all twelve longhands accept all five keywords.
+    let cases: &[(&str, fn(CssWideKeyword) -> PropertyValue)] = &[
+        ("border-top-width", PropertyValue::BorderTopWidthCssWide),
+        ("border-right-width", PropertyValue::BorderRightWidthCssWide),
+        (
+            "border-bottom-width",
+            PropertyValue::BorderBottomWidthCssWide,
+        ),
+        ("border-left-width", PropertyValue::BorderLeftWidthCssWide),
+        ("border-top-style", PropertyValue::BorderTopStyleCssWide),
+        ("border-right-style", PropertyValue::BorderRightStyleCssWide),
+        (
+            "border-bottom-style",
+            PropertyValue::BorderBottomStyleCssWide,
+        ),
+        ("border-left-style", PropertyValue::BorderLeftStyleCssWide),
+        ("border-top-color", PropertyValue::BorderTopColorCssWide),
+        ("border-right-color", PropertyValue::BorderRightColorCssWide),
+        (
+            "border-bottom-color",
+            PropertyValue::BorderBottomColorCssWide,
+        ),
+        ("border-left-color", PropertyValue::BorderLeftColorCssWide),
+    ];
+    for (name, ctor) in cases {
+        for kw in CssWideKeyword::ALL {
+            assert_eq!(
+                parse(kw.as_css_str(), name),
+                Some(ctor(*kw)),
+                "{name}: {kw:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn border_css_wide_serializes_to_keyword() {
+    // Cover `serialize_value`'s `CssWideKeyword` arm for every border variant.
+    for kw in CssWideKeyword::ALL {
+        let expected = kw.as_css_str().to_owned();
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftWidthCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftStyleCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderTopColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderRightColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderBottomColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::BorderLeftColorCssWide(*kw)),
+            Some(expected.clone())
+        );
+    }
+    // `border-right` shorthand itself is not canonically serialized (expanded first).
+    assert_eq!(
+        crate::property::serialize_value(&PropertyValue::BorderRight(Border {
+            width: Length::Px(2.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        })),
+        None
+    );
+}
+
+#[test]
+fn border_right_shorthand_rejects_empty_and_unknown() {
+    // Cover `parse_border_right_shorthand`'s empty-declaration guard (see
+    // `parse_border_shorthand`'s `||` contract): empty and unknown-only drop.
+    assert_eq!(parse("", "border-right"), None);
+    assert_eq!(parse("garbage", "border-right"), None);
+    assert_eq!(parse_entire("1px 2px", "border-right"), None);
 }

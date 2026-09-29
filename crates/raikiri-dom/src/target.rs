@@ -3,8 +3,8 @@
 //!
 //! Companion to [`crate::running`]'s register-site
 //! walker (already landed) — same document-order
-//! arena-walk shape, different [`GcpmDirective`] variant. `running`'s
-//! [`mod@crate::running`] の `collect_running_template` already *emits*
+//! arena-walk shape, different [`GcpmDirective`] variant.
+//! `collect_running_template` in [`mod@crate::running`] already *emits*
 //! `CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet` (and
 //! `RegisterRunning` is emitted by [`crate::running::build_running_template_store`]
 //! itself) into each `position: running(name)` template's own
@@ -42,13 +42,13 @@
 //! Every other producing [`GcpmDirective`] variant
 //! (`CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet`) is a direct
 //! mirror of a CSS property cascade already resolved onto
-//! [`raikiri_style::ComputedValues`] (see [`mod@crate::running`] の `collect_running_template`).
+//! [`raikiri_style::ComputedValues`] (see `collect_running_template` in [`mod@crate::running`]).
 //! `RegisterTarget { fragment_id }` is different: it is **HTML
 //! `id`-attribute-driven, not CSS-property-driven** — there is no CSS
 //! property whose cascade could produce it, and `raikiri_style::CascadeResult`
 //! deliberately carries no `gcpm_directives` field (`crates/raikiri-style/src/cascade.rs`
-//! module doc: "`CascadeResult`-level の `gcpm_directives` ... は下流
-//! (raikiri-dom) で per-document に concatenate される責務に移った" — the
+//! module doc: “`CascadeResult`-level `gcpm_directives` ... now have the
+//! downstream (raikiri-dom) responsibility of concatenation per document” — the
 //! concept was explicitly moved downstream, not dropped). So this walker
 //! **constructs** ("synthesizes") a `GcpmDirective::RegisterTarget` for
 //! every in-document element with a non-empty `id` attribute
@@ -161,7 +161,7 @@ impl CounterScopes {
     /// Apply one element's `counter-reset` / `counter-increment` /
     /// `counter-set` directives, in CSS Lists 3 §4 processing order (reset →
     /// increment → set — the same order
-    /// [`mod@crate::running`] の `collect_running_template` already pins for the
+    /// `collect_running_template` in [`mod@crate::running`] already pins for the
     /// sibling `GcpmDirective`-emit walk, and for the same reason: §4.2's
     /// note that `counter-set` is applied after `counter-increment`).
     ///
@@ -336,7 +336,7 @@ fn element_id(doc: &Document, idx: usize) -> Option<String> {
 /// text — only its descendants do).
 ///
 /// Same reverse-push-children iterative DFS shape as
-/// [`mod@crate::running`] の `collect_running_template` (and, one level up,
+/// `collect_running_template` in [`mod@crate::running`] (and, one level up,
 /// [`build_target_registry`] itself) — see that function's doc for the
 /// document-order rationale. Nested per register-site element, same
 /// per-subtree walk cost tradeoff `collect_running_template` already
@@ -873,8 +873,13 @@ mod tests {
             Some("counter-increment: visible"),
         );
         let template = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+        // The probe lives in the detached contents fragment (the parser's
+        // shape): it is unreachable, so snapshots skip it. An ordinary
+        // light-DOM child appended directly under the template element would
+        // stay in-document instead.
+        let frag = doc.allocate_template_fragment_root(template);
         let inert_child = doc.append_element(
-            Some(template),
+            Some(frag),
             "div",
             Style::default(),
             Some("counter-increment: inert"),

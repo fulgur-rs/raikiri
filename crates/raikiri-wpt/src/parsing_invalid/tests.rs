@@ -22,42 +22,11 @@ function test_invalid_value(property, value) {
 }
 "#;
 
-/// A stand-in for `resources/testharness.js` with what the helper, these
-/// pages, and the runner's report script use: `setup`,
-/// `add_completion_callback`, `test`, `assert_equals`, and `assert_true`.
-/// An uncaught error outside a test makes the harness status ERROR, as in
-/// the real harness; results are delivered on `load`.
-const FAKE_HARNESS: &str = r#"
-var __tests = [];
-var __callbacks = [];
-var __status = { status: 0, message: null };
-function setup(options) {}
-function add_completion_callback(callback) { __callbacks.push(callback); }
-function assert_equals(actual, expected) {
-    if (actual !== expected) {
-        throw new Error("assert_equals: expected " + String(expected) + ", got " + String(actual));
-    }
-}
-function assert_true(value) {
-    if (value !== true) { throw new Error("assert_true: got " + String(value)); }
-}
-function test(body, name) {
-    try {
-        body();
-        __tests.push({ name: name, status: 0, message: null });
-    } catch (error) {
-        __tests.push({ name: name, status: 1, message: String(error) });
-    }
-}
-window.addEventListener("error", function (event) {
-    __status = { status: 1, message: String(event.message) };
-});
-window.addEventListener("load", function () {
-    for (var i = 0; i < __callbacks.length; i++) {
-        __callbacks[i](__tests, __status);
-    }
-});
-"#;
+/// Shared fake `resources/testharness.js` stand-in, covering what the helper,
+/// these pages, and the runner's report script use. An uncaught error outside
+/// a test makes the harness status ERROR, as in the real harness; results are
+/// delivered on `load`, or on `done()` when the page opts into explicit done.
+const FAKE_HARNESS: &str = include_str!("../../tests/fixtures/fake-testharness.js");
 
 /// The `<script>` tags a WPT parsing page starts with.
 const PAGE_HEAD: &str = r#"<!DOCTYPE html>

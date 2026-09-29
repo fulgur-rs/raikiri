@@ -20,7 +20,7 @@
 //! ```text
 //! struct RunningTemplateStore {
 //!     parsed_templates: HashMap<RunningTemplateId, ParsedRunningTemplate>,
-//!     // layout 結果はキャッシュしない
+//!     // Do not cache layout results
 //! }
 //!
 //! struct ParsedRunningTemplate {
@@ -191,7 +191,7 @@ pub(crate) struct CascadeSubset {
 /// [`layout_running_template`].
 ///
 /// **`has_content_variant` semantics** — matches the design doc
-/// parenthetical (§7.3 line 1993 "content(before/after) 参照あり"). Flipped
+/// parenthetical (§7.3 line 1993 “references to content(before/after)”). Flipped
 /// on `content(before)` and `content(after)` because pseudo-element string
 /// values are themselves built from `::before` / `::after` `content:`
 /// content-lists that may contain page-dependent bits (`counter()`,
@@ -204,7 +204,7 @@ pub(crate) struct CascadeSubset {
 /// cache via distinct `template_id`s — the `content(text)` axis does not
 /// add per-page dynamism the id-key doesn't already cover. The `#[non_exhaustive]`
 /// catch-all in `detect_dynamic_flags`'s Content arm over-marks unknown
-/// future keywords for safety (§7.3 line 2005 "correctness 優先").
+/// future keywords for safety (§7.3 line 2005 “prioritize correctness”).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DynamicFlags {
     /// `counter()` / `counters()` reference present anywhere in the template.
@@ -236,7 +236,7 @@ impl DynamicFlags {
 ///
 /// Design doc §7.3 line 1982-1987: the tier-1 cache entry — a DOM subtree
 /// root + pre-cascaded style block + GCPM directives + dynamic-content flags.
-/// Layout is NOT cached here (§7.3 line 1979 "layout 結果はキャッシュしない");
+/// Layout is NOT cached here (§7.3 line 1979 “do not cache layout results”);
 /// per-page re-layout runs via [`layout_running_template`].
 ///
 /// **`directives` field** — [`raikiri_traits::GcpmDirective`] was uninhabited
@@ -247,7 +247,7 @@ impl DynamicFlags {
 /// [`raikiri_style::ComputedValues`] in the subtree. It does **not** emit
 /// `RegisterRunning` for nested `position: running(name)` seeds inside the
 /// subtree (the "if the spec/impl allows" hedge below is deliberately left
-/// unresolved — fail-closed, 原則 3) nor `RegisterTarget` (that directive is
+/// unresolved — fail-closed, principle 3) nor `RegisterTarget` (that directive is
 /// `id`-attribute-driven and belongs to the separate
 /// [`raikiri_traits::TargetRegistry`] registration walk, a different task's
 /// territory — see the module-level "Divergence from
@@ -577,7 +577,7 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
                 }
                 // ContentTextKeyword is #[non_exhaustive]; a future variant
                 // may or may not carry per-page dynamism. Over-mark for
-                // safety (§7.3 line 2005 "correctness 優先"); a new keyword
+                // safety (§7.3 line 2005 “prioritize correctness”); a new keyword
                 // should be checked against spec to see whether it deserves
                 // an explicit arm.
                 _ => {
@@ -829,7 +829,7 @@ pub(crate) fn derive_element_directives(
 /// seed found while walking the subtree — the nested element is registered
 /// independently by [`build_running_template_store`]'s own top-level walk;
 /// see [`ParsedRunningTemplate`]'s type-level `directives` field note for
-/// why this walker leaves that hedge unresolved (fail-closed, 原則 3) rather
+/// why this walker leaves that hedge unresolved (fail-closed, principle 3) rather
 /// than guess a directive shape nothing downstream consumes yet. Does NOT
 /// emit `RegisterTarget` either — out of this task's scope (see the
 /// module-level "Divergence from `raikiri_traits::TargetRegistry`'s
@@ -1122,7 +1122,7 @@ fn is_css_document_white_space(c: char) -> bool {
 ///
 /// Explicit-stack iterative DFS (reverse-push children so the `Vec` pops
 /// them in original, i.e. document, order) — same shape as
-/// [`mod@crate::target`] の `collect_descendant_text` — rather than recursion, so a
+/// `collect_descendant_text` in [`mod@crate::target`] — rather than recursion, so a
 /// deeply nested DOM cannot exhaust the call stack.
 #[allow(
     dead_code,
@@ -1686,7 +1686,7 @@ mod tests {
 
     #[test]
     fn detect_dynamic_flags_content_text_and_first_letter_are_static() {
-        // Matches design §7.3 line 1993 "content(before/after) 参照あり":
+        // Matches design §7.3 line 1993 “references to content(before/after)”:
         // content(text) reads the element's own string value, which is fixed
         // per running element; a future layout cache keyed on template_id
         // naturally misses across distinct elements. content(first-letter)
@@ -2588,22 +2588,19 @@ mod tests {
 
     #[test]
     fn resolve_string_set_component_content_text_skips_template_descendants() {
-        // collect_descendant_text's `is_in_document()` check must actually
-        // skip a subtree that's still reachable via `node.children` but
-        // flagged out of the flat tree — the `<template>` case is the one
-        // shape of this in an ordinary parsed document (a `<template>`
-        // element itself stays in_document, but everything inside it gets
-        // cleared by `mark_in_document_flags`, same contract as
-        // `Document::mark_in_document_flags_keeps_template_element_but_clears_descendants`).
-        // A node that's merely absent from the tree (e.g. built with
-        // `parent: None`) would never reach this check at all, since the
-        // walk wouldn't descend into it in the first place — this test
-        // needs the reachable-but-flagged-out case specifically.
+        // collect_descendant_text's `is_in_document()` check must skip a
+        // `<template>` element's detached contents fragment: the fragment is
+        // unreachable from the Document root (the parser's shape), so the
+        // walk never descends into it and the "hidden" text never leaks into
+        // the resolved string. An ordinary light-DOM child appended directly
+        // under the template element stays in-document instead, so the probe
+        // `<p>` is placed in the contents fragment here.
         let mut doc = Document::new();
         let root = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
         doc.append_text(root, "before ");
         let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
-        let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+        let frag = doc.allocate_template_fragment_root(tmpl);
+        let inner = doc.append_element(Some(frag), "p", Style::default(), None::<&str>);
         doc.append_text(inner, "hidden");
         doc.append_text(root, " after");
 
@@ -2887,7 +2884,7 @@ mod tests {
 
     #[test]
     fn layout_running_template_does_not_mutate_store_or_parsed() {
-        // §7.3 line 1979: layout 結果はキャッシュしない — per-page re-layout
+        // §7.3 line 1979: do not cache layout results — per-page re-layout
         // must not stash anything into the store or mutate the parsed
         // template (would leak into a later page's re-layout).
         let mut store = RunningTemplateStore::default();

@@ -1347,7 +1347,7 @@ fn cascade_page_padding_rlh_uses_root_line_height_not_own() {
 
 /// The common case: no font metrics available for `normal` — falls back
 /// to padding's own initial value `0`, same policy as the element path
-/// (`crate::resolve::resolve_length_percentage` doc). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+/// (`crate::resolve::resolve_length_percentage` doc). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed by deliberately breaking the link
 #[test]
 fn cascade_page_padding_lh_falls_back_to_zero_when_line_height_normal() {
     let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
@@ -1361,7 +1361,7 @@ fn cascade_page_padding_lh_falls_back_to_zero_when_line_height_normal() {
 /// §3.1) — **not** `Auto` (`resolve_margin_length_or_auto` —
 /// element-path sibling is
 /// `margin_lh_falls_back_to_zero_not_auto_when_line_height_normal` in
-/// `crate::cascade`). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+/// `crate::cascade`). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed by deliberately breaking the link
 #[test]
 fn cascade_page_margin_lh_falls_back_to_zero_not_auto_when_line_height_normal() {
     let root = root_with_font_size(20.0); // line-height stays `normal` (initial)
@@ -1377,7 +1377,7 @@ fn cascade_page_margin_lh_falls_back_to_zero_not_auto_when_line_height_normal() 
 
 /// `@page { line-height: 1lh }` is self-referential — CSS Values 4
 /// §6.1.1, spec quote canonically documented on
-/// `crate::resolve::resolve_line_height`. The page context's "parent" // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+/// `crate::resolve::resolve_line_height`. The page context's "parent" // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed by deliberately breaking the link
 /// for this purpose is the root element (CSS Paged Media 3 §6), which
 /// is exactly what `ctx.root_line_height` already carries.
 #[test]
@@ -1476,7 +1476,7 @@ fn cascade_page_font_size_rlh_matches_lh_because_parent_is_root() {
 /// initial (`medium` = 16px), same "no real font metrics in the style
 /// layer" wall as the element path
 /// (`font_size_lh_falls_back_to_initial_when_parent_line_height_is_normal`
-/// in `crate::cascade`). Deliberately **not** `root_with_font_size`'s // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+/// in `crate::cascade`). Deliberately **not** `root_with_font_size`'s // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed by deliberately breaking the link
 /// 20px — the fallback is `font-size`'s spec initial, unconditionally,
 /// not whatever font-size the root happens to declare.
 #[test]
@@ -1564,6 +1564,83 @@ fn cascade_page_border_width_is_gated_by_border_style_none() {
 }
 
 /// `hidden` gates identically to `none` (same §3.3 clause).
+#[test]
+fn cascade_page_border_css_wide_inherit_takes_root() {
+    // `@page` with `border-right: inherit` takes the root element's computed right side.
+    // Covers `resolve_border_page_*` helpers for inherit.
+    let mut root = ComputedValues::initial();
+    root.border.right = crate::resolve::resolve_border(
+        Border {
+            width: Length::Px(7.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::CurrentColor,
+        },
+        root.font_size,
+        None,
+        &crate::resolve::ResolveContext::initial(),
+    );
+    let result = page("@page { border-right: inherit }", &root);
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(7.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightStyle),
+        Some(&PropertyValue::BorderRightStyle(BorderStyle::Solid))
+    );
+    // `border: initial` clears to initial (covers initial/unset arms for all sides).
+    let result2 = page("@page { border: initial }", &root);
+    assert_eq!(
+        result2.declarations().get(&PropertyKey::BorderRightStyle),
+        Some(&PropertyValue::BorderRightStyle(BorderStyle::None))
+    );
+    // `revert` with no lower origin falls back to initial (covers revert fallback).
+    let result3 = page("@page { border-right-width: revert }", &root);
+    assert_eq!(
+        result3.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(0.0)))
+    );
+}
+
+#[test]
+fn cascade_page_border_all_sides_css_wide() {
+    // Cover `resolve_border_page_*` left/top/bottom branches: each side's inherit
+    // takes its own root side; initial clears.
+    let mut root = ComputedValues::initial();
+    root.border.top.width = crate::resolve::ComputedLength(1.0);
+    root.border.top.style = BorderStyle::Solid;
+    root.border.right.width = crate::resolve::ComputedLength(2.0);
+    root.border.right.style = BorderStyle::Solid;
+    root.border.bottom.width = crate::resolve::ComputedLength(3.0);
+    root.border.bottom.style = BorderStyle::Solid;
+    root.border.left.width = crate::resolve::ComputedLength(4.0);
+    root.border.left.style = BorderStyle::Solid;
+    let result = page(
+        "@page { border-top-width: inherit; border-right-width: inherit; \
+         border-bottom-width: inherit; border-left-width: inherit; \
+         border-top-style: inherit; border-right-style: inherit; \
+         border-bottom-style: inherit; border-left-style: inherit; \
+         border-left-color: inherit }",
+        &root,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(1.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderRightWidth),
+        Some(&PropertyValue::BorderRightWidth(Length::Px(2.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderBottomWidth),
+        Some(&PropertyValue::BorderBottomWidth(Length::Px(3.0)))
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderLeftWidth),
+        Some(&PropertyValue::BorderLeftWidth(Length::Px(4.0)))
+    );
+}
+
 #[test]
 fn cascade_page_border_width_is_gated_by_border_style_hidden() {
     let root = ComputedValues::initial();
@@ -2247,6 +2324,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
                     percent: -50.0,
                     px: 0.0,
                     em: 2.0,
+                    ch: 0.0,
                 }),
             )),
             fs,
@@ -2260,6 +2338,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             percent: -50.0,
             px: 40.0,
             em: 0.0,
+            ch: 0.0,
         },)),
     );
     // `flex-basis` intrinsic keywords round-trip as keywords through
@@ -2472,7 +2551,7 @@ fn absolutize_in_page_context_covers_flex_basis_and_gap_arms() {
 /// Direct exercise of `absolutize_in_page_context`'s `BackgroundSize`
 /// arm for the `cover`/`contain` keywords — `page_corpus`'s
 /// `BackgroundSize` worst-case sample is always the `Explicit` variant
-/// (`sample_for` 参照), so this test drives the `Cover`/`Contain` arms
+/// (see `sample_for`), so this test drives the `Cover`/`Contain` arms
 /// of the local `lift` helper directly (sibling of
 /// `absolutize_in_page_context_covers_flex_basis_and_gap_arms` above).
 #[test]
@@ -2935,7 +3014,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 143;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 157;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -2954,34 +3033,32 @@ fn raw_corpus_residue_variants() -> usize {
     phase_3_transformed_variants() + 8 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
 }
 
-/// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する。
-/// `key => value` の対を 1 度書けば
-/// `ALL_PROPERTY_KEYS` (列挙) と `sample_for` (網羅 match) の**両方**に
-/// そのまま展開される。
+/// Generate `sample_for` and `ALL_PROPERTY_KEYS` from **one token list**.
+/// Writing each `key => value` pair once expands into both
+/// `ALL_PROPERTY_KEYS` (the enumeration) and `sample_for` (exhaustive match).
 ///
-/// 本 macro が何を置き換え、何を塞ぎ何を塞がないかの canonical な記述は
-/// `page_corpus` 手前の section comment (「`declarations` は computed 値」
-/// 契約の機械的 check 節) にある — 繰り返さない。
+/// See the section comment before `page_corpus` (the mechanical check of
+/// the "`declarations` are computed values" contract) for the canonical
+/// account of what this macro replaces, prevents, and does not prevent.
 macro_rules! property_key_samples {
         ($($key:ident => $value:expr),+ $(,)?) => {
-            /// `PropertyValue::key()` を経由して 1:1 対応する `PropertyKey`
-            /// 全件、`property_key_samples!` 呼び出しでの記述順
-            /// (= `PropertyKey` 自身の宣言順、`property.rs`)。key を複数
-            /// `PropertyValue` variant で共有するもの (`FontSize` /
-            /// `FontSizeRelative`) はここには 1 度しか現れない —
-            /// 共有側は `key_sharing_extras` が別途持つ。
+            /// Every `PropertyKey` with a 1:1 mapping through
+            /// `PropertyValue::key()`, in the order written at the
+            /// `property_key_samples!` call (the declaration order in
+            /// `property.rs`). Keys shared by multiple `PropertyValue`
+            /// variants (`FontSize` / `FontSizeRelative`) occur only once;
+            /// `key_sharing_extras` holds the additional variants.
             const ALL_PROPERTY_KEYS: &[PropertyKey] = &[$(PropertyKey::$key),+];
 
-            /// 与えられた `PropertyKey` に対する **specified 層の worst
-            /// case** `PropertyValue` サンプルを 1 つ返す。
+            /// Return one **specified-layer worst-case** `PropertyValue`
+            /// sample for the given `PropertyKey`.
             ///
-            /// **wildcard arm を置かない** (`property_key_samples!` の
-            /// 展開そのものが持たない) — `PropertyKey` に variant を足すと
-            /// ここで **compile error** になる。この compile error が何を
-            /// 強制し (通常の新 property 追加)、何を強制しないか
-            /// (`FontSizeRelative` 型の key 共有 variant) の canonical な
-            /// 記述は `page_corpus` 手前の
-            /// section comment にある。
+            /// **No wildcard arm** (the `property_key_samples!` expansion
+            /// itself has none): adding a `PropertyKey` variant causes a
+            /// **compile error** here. See the section comment before
+            /// `page_corpus` for the canonical account of what this forces
+            /// (ordinary new properties) and what it does not force
+            /// (key-sharing variants such as `FontSizeRelative`).
             fn sample_for(key: PropertyKey) -> PropertyValue {
                 match key {
                     $(PropertyKey::$key => $value,)+
@@ -3035,7 +3112,7 @@ property_key_samples! {
     // `Padding` above, placed right after it to match `PropertyKey`'s
     // own declaration order (`property.rs`'s "shorthand key comes after
     // the longhands it can compete with" placement, `PropertyKey` doc's
-    // "宣言順は load-bearing" section).
+    // "declaration order is load-bearing" section).
     PaddingInline => PropertyValue::PaddingInline(StartEnd::both(Length::Em(2.0))),
     PaddingBlock => PropertyValue::PaddingBlock(StartEnd::both(Length::Em(2.0))),
     MarginTop => PropertyValue::MarginTop(LengthOrAuto::Length(Length::Rem(2.0))),
@@ -3066,6 +3143,11 @@ property_key_samples! {
         style: BorderStyle::Solid,
         color: BorderColor::CurrentColor,
     })),
+    BorderRight => PropertyValue::BorderRight(Border {
+        width: Length::Em(1.0),
+        style: BorderStyle::Solid,
+        color: BorderColor::CurrentColor,
+    }),
     BorderStyle => PropertyValue::BorderStyle(Sides::all(BorderStyle::Double)),
     BorderWidth => PropertyValue::BorderWidth(Sides::all(Length::Em(2.0))),
     BorderColor => PropertyValue::BorderColor(Sides::all(BorderColor::CurrentColor)),
@@ -3439,10 +3521,9 @@ property_key_samples! {
     // phase-3 transform classification this corpus drives. Placed last
     // to match `PropertyKey`'s own declaration order (`property.rs`),
     // per this macro's `property_key_samples!` doc contract.
-    // Future work: vertical writing-mode 実装時に computed
-    // value が specified value を保持するようになったら、本 sample の
-    // worst-case 理由付けと `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` を
-    // 同時に見直すこと。
+    // Future work: when vertical writing-mode support keeps the specified
+    // value at the computed layer, revisit both the worst-case justification
+    // for this sample and `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`.
     WritingMode => PropertyValue::WritingMode(WritingMode::VerticalRl),
     RubyPosition => PropertyValue::RubyPosition(RubyPosition::Over),
     // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 — keyword-only,
@@ -3680,17 +3761,19 @@ property_key_samples! {
     },
 }
 
-/// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
-/// **乗らない** `PropertyValue` variant — 複数 variant が同じ key を共有するもの
-/// (例: [`PropertyValue::FontSizeRelative`] / [`PropertyValue::FontSize`]、
-/// [`PropertyValue::TextWrapShorthand`] / [`PropertyValue::TextWrap`)、
-/// または internal inheritance/deferred marker。
+/// `PropertyValue` variants **not covered** by `sample_for`'s 1:1
+/// `PropertyKey -> PropertyValue` mapping: variants sharing a key (for example,
+/// [`PropertyValue::FontSizeRelative`] / [`PropertyValue::FontSize`] and
+/// [`PropertyValue::TextWrapShorthand`] / `PropertyValue::TextWrap`),
+/// or internal inheritance/deferred markers.
 ///
-/// `page_corpus` へはこの関数の戻り値をそのまま追加する。新しい non-1:1
-/// variant を加えたらここにも sample を足す。`property_value_variant_registry!`
-/// と `page_corpus_covers_every_registered_property_value_variant` が追加漏れを検出する。
+/// Append this function's results to `page_corpus` unchanged. Add a sample
+/// here for each new non-1:1 variant. `property_value_variant_registry!`
+/// and `page_corpus_covers_every_registered_property_value_variant` catch omissions.
 fn key_sharing_extras() -> Vec<PropertyValue> {
-    use crate::property::{DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand};
+    use crate::property::{
+        CssWideKeyword, DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand,
+    };
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
         PropertyValue::CounterResetInherit,
@@ -3700,6 +3783,20 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::MarginLeftInherit,
         PropertyValue::MarginInherit,
         PropertyValue::BorderRadiusInherit,
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftWidthCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftStyleCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderRightColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftColorCssWide(CssWideKeyword::Inherit),
         PropertyValue::Deferred(DeferredValue {
             property: "width".into(),
             value: "calc(1px + 1px)".into(),
@@ -3712,27 +3809,25 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
     ]
 }
 
-/// 全 `PropertyValue` variant を **specified 層の worst case** payload で
-/// 1 つずつ並べたもの — `sample_for` (`ALL_PROPERTY_KEYS` を経由) と
-/// `key_sharing_extras` から生成する。並び順は
-/// `PropertyKey` の宣言順 + 末尾に key 共有 variant。本 module のどの
-/// test も corpus の順序には依存しない (`HashSet` / `filter` / 走査で
-/// 完結する) ので、`PropertyValue` 自身の宣言順 (旧来の順序) との違いは
-/// 挙動に影響しない。
+/// One **specified-layer worst-case** payload for every `PropertyValue`
+/// variant, built from `sample_for` (via `ALL_PROPERTY_KEYS`) and
+/// `key_sharing_extras`. The order is `PropertyKey` declaration order followed
+/// by key-sharing variants. No test here depends on corpus order (they use
+/// `HashSet`, `filter`, or iteration), so it is safe to differ from the old
+/// `PropertyValue` declaration order.
 ///
-/// worst case = 「phase 2 / phase 3 を通さなければ specified 層の残滓が
-/// 残る」値: length は `Em` / `Rem` / `Pt` (`Px` / `Percent` は既に computed
-/// 層なので使わない)、`font-weight` は `bolder`、`text-align` は
-/// `match-parent`、`font-size` の relative variant は `larger`。
-/// 個々の選定根拠は `sample_for` / `key_sharing_extras`
-/// の呼び出し箇所を参照。
+/// "Worst case" means a value that retains specified-layer residue without
+/// phase 2 / phase 3: lengths use `Em` / `Rem` / `Pt` (not `Px` / `Percent`,
+/// already computed); `font-weight` uses `bolder`, `text-align` uses
+/// `match-parent`, and relative `font-size` uses `larger`. See the
+/// `sample_for` / `key_sharing_extras` call sites for individual reasons.
 ///
-/// この関数**自体**の完全性 (「`PropertyValue` の全 variant を実際に
-/// 覆っているか」) は `ALL_PROPERTY_KEYS` / `sample_for` の網羅性からは
-/// 出てこない (`sample_for` は `PropertyKey` に対して網羅的であり、
-/// `PropertyValue` に対してではない)。その完全性は
-/// `property_value_variant_registry!` + `page_corpus_covers_every_registered_property_value_variant`
-/// (共に下) が別途保証する。
+/// The exhaustiveness of this function **itself** (whether it covers every
+/// `PropertyValue` variant) does not follow from `ALL_PROPERTY_KEYS` /
+/// `sample_for`, which covers `PropertyKey`, not `PropertyValue`.
+/// `property_value_variant_registry!` and
+/// `page_corpus_covers_every_registered_property_value_variant` below
+/// provide the separate guarantee.
 fn page_corpus() -> Vec<PropertyValue> {
     let mut corpus: Vec<PropertyValue> =
         ALL_PROPERTY_KEYS.iter().copied().map(sample_for).collect();
@@ -3740,45 +3835,40 @@ fn page_corpus() -> Vec<PropertyValue> {
     corpus
 }
 
-/// `PropertyValue` **自身**に対して網羅的な match を 1 つの token 列から
-/// 生成する (`property_key_samples!` の姉妹 macro)。
+/// Generate an exhaustive match over `PropertyValue` **itself** from one
+/// token list (the companion macro to `property_key_samples!`).
 ///
-/// `property_key_samples!` は `PropertyKey` に対して網羅的なので、新しい
-/// `PropertyKey` を伴う通常の property 追加は forced だが、**既存の**
-/// `PropertyKey` を再利用する新 variant (`FontSizeRelative` が
-/// `PropertyKey::FontSize` を再利用するのと同型) は `PropertyKey` の
-/// variant 集合を増やさないため、その網羅 match は compile error に
-/// ならない (`page_corpus` 手前の section comment の「一方向性」節で
-/// 述べた、その rework が残した follow-up として追跡していた
-/// ギャップ)。
+/// `property_key_samples!` exhausts `PropertyKey`, so it forces ordinary
+/// property additions with a new `PropertyKey`. A new variant reusing an
+/// **existing** key (as `FontSizeRelative` reuses `PropertyKey::FontSize`)
+/// does not change the `PropertyKey` variant set, so that match does not
+/// fail to compile. This was the remaining gap tracked after the rework,
+/// as described in the "one-way coverage" section before `page_corpus`.
 ///
-/// 本 macro はこの穴を埋める — `PropertyValue` 自身の variant 集合に
-/// 対して網羅的なので、key を再利用する variant も含め **どんな新
-/// variant でも** compile error になる。`stable Rust` に variant を
-/// 安全に列挙する手段 (`mem::variant_count` は unstable、外部 derive
-/// crate は 独立実装方針外) が無いという前提は変わっていないが、
-/// 「型に対する reflection」ではなく「型に対する網羅 match」で同じ
-/// forcing を得られる — これは `property_key_samples!` が `PropertyKey`
-/// に対して既にやっていることを `PropertyValue` に一般化しただけであり、
-/// `PropertyValue`/`PropertyKey` の定義自体には一切触れない
-/// (`#[non_exhaustive]` は downstream crate にのみ効くため、定義側と
-/// 同じ crate 内の本 match には影響しない)。
+/// This macro closes that gap: its match exhausts the `PropertyValue` variant
+/// set, so **any new variant**, including one reusing a key, produces a
+/// compile error. Stable Rust still has no safe way to enumerate variants
+/// (`mem::variant_count` is unstable; an external derive crate conflicts
+/// with the independent-implementation policy). An exhaustive match forces
+/// the same update without type reflection. This extends the pattern already
+/// used for `PropertyKey` without changing either type's definition.
+/// `#[non_exhaustive]` only affects downstream crates; this match is in the
+/// defining crate and remains exhaustive.
 ///
-/// 生成するもの:
-/// - `PROPERTY_VALUE_VARIANT_COUNT`: token 列の要素数 = 現在の
-///   `PropertyValue` variant 総数。
-/// - `property_value_variant_name`: 上記の網羅 match。戻り値
-///   (variant 名の文字列) 自体に意味は無い — exhaustiveness を
-///   compile-time に強制することだけが目的。
+/// Generates:
+/// - `PROPERTY_VALUE_VARIANT_COUNT`: number of entries in the token list,
+///   i.e. the current total number of `PropertyValue` variants.
+/// - `property_value_variant_name`: the exhaustive match above. The returned
+///   variant-name string is immaterial; the purpose is compile-time
+///   enforcement of exhaustiveness.
 ///
-/// この 2 つを組み合わせても、`key_sharing_extras()` / `sample_for` への
-/// 追加漏れそのものを**この macro だけでは**検出しない — 網羅 match は
-/// 「型に新しい variant が増えた」ことだけを compile error にする。
-/// 「増えた variant を corpus (`page_corpus`) 側へ反映し忘れた」ことは
-/// `page_corpus_covers_every_registered_property_value_variant` (test、
-/// 下) が runtime で検出する: `PROPERTY_VALUE_VARIANT_COUNT` は compile
-/// error 経由で正しく増えるが `page_corpus().len()` は反映漏れがあれば
-/// 増えないので、両者の不一致が test failure として現れる。
+/// This macro **alone** cannot detect failure to add a new variant to
+/// `key_sharing_extras()` / `sample_for`: its exhaustive match only produces
+/// a compile error when the type gains a variant. The test
+/// `page_corpus_covers_every_registered_property_value_variant` below catches
+/// a variant missing from the corpus at runtime: the count increases through
+/// the compile-error-driven update, but `page_corpus().len()` does not unless
+/// its sample is also added.
 macro_rules! property_value_variant_registry {
         ($($variant:ident),+ $(,)?) => {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
@@ -3804,9 +3894,9 @@ macro_rules! property_value_variant_registry {
         };
     }
 
-// `property.rs` の `PropertyValue` 宣言順と同じ順に列挙 (機械的な追従を
-// 楽にするための慣習 — 順序自体に意味は無い、`property_key_samples!` の
-// 呼び出しと同様)。
+// List variants in `PropertyValue` declaration order in `property.rs`.
+// This is a convenience for mechanical updates, not a semantic requirement,
+// just as with the `property_key_samples!` invocation.
 property_value_variant_registry! {
     CustomProperty,
     Deferred,
@@ -3858,6 +3948,21 @@ property_value_variant_registry! {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    BorderRight,
+    BorderCssWide,
+    BorderRightCssWide,
+    BorderTopWidthCssWide,
+    BorderRightWidthCssWide,
+    BorderBottomWidthCssWide,
+    BorderLeftWidthCssWide,
+    BorderTopStyleCssWide,
+    BorderRightStyleCssWide,
+    BorderBottomStyleCssWide,
+    BorderLeftStyleCssWide,
+    BorderTopColorCssWide,
+    BorderRightColorCssWide,
+    BorderBottomColorCssWide,
+    BorderLeftColorCssWide,
     BorderStyle,
     BorderWidth,
     BorderColor,
@@ -4014,24 +4119,23 @@ property_value_variant_registry! {
     FontVariationSettings,
 }
 
-/// `page_corpus()` が `property_value_variant_registry!` に登録された
-/// **全ての** `PropertyValue` variant を実際に覆っていること —
-/// 先述の一方向性 gap のクローズ。
+/// Confirm that `page_corpus()` covers **every** `PropertyValue` variant
+/// registered in `property_value_variant_registry!`, closing the previously
+/// described one-way coverage gap.
 ///
-/// 新しい variant が `property_value_variant_registry!` の呼び出しに
-/// 追加されないままだと `property_value_variant_name` の網羅 match が
-/// compile error になる (この test 以前の問題)。本 test はその一歩先 —
-/// **compile は通ったが corpus への反映を忘れた**中間状態 (`sample_for`
-/// への新 `PropertyKey` arm 追加、または `key_sharing_extras()` への
-/// 要素追加のどちらかを忘れた場合) を runtime で検出する。
+/// If a new variant is not added to the registry, the exhaustive match in
+/// `property_value_variant_name` fails to compile (before this test runs).
+/// This test also catches the intermediate state where compilation succeeds
+/// but the corpus is not updated: either the new `PropertyKey` arm is missing
+/// from `sample_for` or the additional variant is missing from
+/// `key_sharing_extras()`.
 #[test]
 fn page_corpus_covers_every_registered_property_value_variant() {
     let corpus = page_corpus();
-    // `property_value_variant_name` を実際の corpus 値に対して呼ぶ ---
-    // この match が持つ exhaustiveness 自体は型レベルで compile-time に
-    // 強制されている (呼び出し有無に関わらず) ので、ここでの呼び出しは
-    // 主に「dead code にしない」ための実利用と、match 本体が実際の
-    // payload shape に対して panic しないことの smoke check。
+    // Call `property_value_variant_name` with actual corpus values. The
+    // match is exhaustive at compile time regardless of whether it is called.
+    // Calling it here keeps it live and smoke-tests the actual payload shapes
+    // for panics.
     for value in &corpus {
         property_value_variant_name(value);
     }
@@ -4049,53 +4153,52 @@ fn page_corpus_covers_every_registered_property_value_variant() {
     );
 }
 
-/// `value` が **specified 層でしか意味を持たない表現**を残しているか。
+/// Whether `value` retains a representation that **only makes sense at the
+/// specified layer**.
 ///
-/// `PageCascadeResult::declarations` の doc が宣言する「これは computed 値だ」
-/// を検査可能にしたもの。`Some(_)` は「その値は phase 2 / phase 3 を素通り
-/// した」を意味する。
+/// This makes the computed-value contract documented for
+/// `PageCascadeResult::declarations` testable. `Some(_)` means the value
+/// bypassed phase 2 / phase 3.
 ///
-/// **wildcard arm を置かない** — `PropertyValue` に variant を足すとここで
-/// compile error になる。この compile error と `page_corpus`
-/// (`sample_for`) 側の更新がどう連動する (しない) かの canonical な
-/// 記述は `page_corpus` 手前の section comment に
-/// ある。
+/// **No wildcard arm**: adding a `PropertyValue` variant fails to compile
+/// here. See the section comment before `page_corpus` for the canonical
+/// account of how this interacts (or does not) with updating that corpus
+/// through `sample_for`.
 ///
-/// # 網羅 match が及ぶ payload 型は 5 つだけ
+/// # Payload types covered by the exhaustive match: five only
 ///
 /// `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
-/// `TextAlign`。この 5 型については
-/// `crate::cascade::resolve_against_inherited` の doc が「この guard が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (demoted from an already-linked span)
-/// 守らない範囲」として挙げる **既存 variant への payload 追加**
-/// (gap (a)) もここで compile error になる。
+/// `TextAlign`. For these five types, adding a payload variant to an
+/// **existing** `PropertyValue` variant (gap (a), listed as outside the
+/// guard's scope in the documentation for
+/// `crate::cascade::resolve_against_inherited`) also fails to compile here. // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed by deliberately breaking the link (demoted from an already-linked span)
 ///
-/// **及ばない**もの: `BorderStyle` / `BorderColor` / `DisplayValue` /
-/// `PositionValue` / `BoxSizing` / `ContentComponent` などは `(_)` で捨てて
-/// いる。また `PropertyValue::Border` は struct pattern ではなく field
-/// access (`b.width`) で読むので、[`Border`] に length を運ぶ field を
-/// 追加しても compile error にならない。
+/// **Not covered**: `BorderStyle` / `BorderColor` / `DisplayValue` /
+/// `PositionValue` / `BoxSizing` / `ContentComponent`, etc., are discarded
+/// with `(_)`. Also, `PropertyValue::Border` uses field access (`b.width`)
+/// rather than a struct pattern, so adding a length-bearing field to
+/// [`Border`] does not fail to compile.
 fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
-    /// box property (`padding` / `margin` / `width` / `height` /
-    /// `border-*-width`) の `<length-percentage>`。
+    /// The `<length-percentage>` of a box property (`padding` / `margin` /
+    /// `width` / `height` / `border-*-width`).
     ///
-    /// `%` は CSS Values 4 §5.5.1
-    /// <https://www.w3.org/TR/css-values-4/#combine-percentages> の既定
-    /// ("the computed value of a percentage is the specified percentage")
-    /// どおり computed 層に残る。`Pt` を残滓とする根拠は「absolute で
-    /// ない」ではない — CSS Values 4 §6.2
-    /// <https://www.w3.org/TR/css-values-4/#absolute-lengths> は `pt` も
-    /// absolute length に数える。根拠は同 § の "px is their canonical
-    /// unit" 側であり、computed 層の運搬 shape を `Px` に正規化する
-    /// raikiri の invariant である。
+    /// CSS Values 4 §5.5.1
+    /// <https://www.w3.org/TR/css-values-4/#combine-percentages> says that
+    /// percentages remain at the computed layer by default ("the computed
+    /// value of a percentage is the specified percentage"). `Pt` is
+    /// residue not because it is non-absolute — CSS Values 4 §6.2
+    /// <https://www.w3.org/TR/css-values-4/#absolute-lengths> counts `pt`
+    /// as absolute — but because "px is their canonical unit." Raikiri's
+    /// invariant normalizes the computed-layer representation to `Px`.
     fn length(l: Length) -> Option<&'static str> {
         match l {
             Length::Px(_) | Length::Percent(_) => None,
             Length::Em(_) => Some("Length::Em"),
             Length::Rem(_) => Some("Length::Rem"),
             Length::Pt(_) => Some("Length::Pt"),
-            // additional font-relative / absolute
-            // units。`Em` / `Rem` / `Pt` と同じ理由で残滓 (絶対化前は
-            // computed 層に存在しない specified-only 表現)。
+            // Additional font-relative and absolute units are residue for
+            // the same reason as `Em` / `Rem` / `Pt`: before absolutization,
+            // these specified-only representations cannot exist in the computed layer.
             Length::Ex(_) => Some("Length::Ex"),
             Length::Rex(_) => Some("Length::Rex"),
             Length::Ch(_) => Some("Length::Ch"),
@@ -4114,17 +4217,17 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             Length::Rlh(_) => Some("Length::Rlh"),
         }
     }
-    /// `%` が computed 層に**残らない** position 用 — `font-size` と
-    /// `line-height`。
+    /// For positions where `%` **does not remain** at the computed layer:
+    /// `font-size` and `line-height`.
     ///
-    /// CSS Values 4 §5.5.1 の既定文が `font-size` を明示的な例外として
-    /// 名指ししている ("such as in font-size, which computes its
-    /// `<percentage>` values to `<length>`)。`line-height` は CSS Inline 3
-    /// §5.1 <https://www.w3.org/TR/css-inline-3/#line-height-property> が
-    /// "Percentages: computed relative to 1em" と規定する。実装側は
-    /// `crate::resolve` の `resolve_font_size` / `resolve_line_height` が // doc-pointer-lint:ignore: opt-out-3, fn-body-local item doc (nested inside `specified_layer_residue`, itself inside #[cfg(test)] mod tests) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// 両方とも `%` を絶対化しており、本 helper 以前の検出器はそれを
-    /// computed 層と誤分類していた。
+    /// CSS Values 4 §5.5.1 explicitly names `font-size` as an exception
+    /// ("such as in font-size, which computes its `<percentage>` values to
+    /// `<length>`"). CSS Inline 3 §5.1
+    /// <https://www.w3.org/TR/css-inline-3/#line-height-property> specifies
+    /// "Percentages: computed relative to 1em" for `line-height`. On the
+    /// implementation side, `resolve_font_size` and `resolve_line_height`
+    /// in `crate::resolve` both absolutize `%`. The detector preceding this // doc-pointer-lint:ignore: opt-out-3, fn-body-local item doc (nested inside `specified_layer_residue`, itself inside #[cfg(test)] mod tests) — rustdoc-blind, confirmed by deliberately breaking the link
+    /// helper incorrectly classified it as computed-layer data.
     fn length_absolute_only(l: Length, what: &'static str) -> Option<&'static str> {
         match l {
             Length::Percent(_) => Some(what),
@@ -4148,9 +4251,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             TextUnderlineOffset::Calc(_) => None,
         }
     }
-    /// `flex-basis: content | <'width'>` — `auto`/`content` keyword は
-    /// 常に無 residue (computed 層でも keyword のまま、`ComputedFlexBasis`
-    /// doc 参照)、`<length-percentage>` は [`length`] に delegate。
+    /// `flex-basis: content | <'width'>`: `auto` / `content` never leave
+    /// residue (they remain keywords at the computed layer; see
+    /// `ComputedFlexBasis`), while `<length-percentage>` delegates to [`length`].
     fn flex_basis(fb: FlexBasisValue) -> Option<&'static str> {
         match fb {
             FlexBasisValue::Auto
@@ -4161,10 +4264,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             FlexBasisValue::Length(l) => length(l),
         }
     }
-    /// `vertical-align` の bare keyword は常に無 residue (computed 層でも
-    /// keyword のまま)、`<length>` / `<percentage>` は [`length`] に
-    /// delegate — `flex_basis` と同じ shape (`<percentage>` は phase 3 で
-    /// `Px` に絶対化済みのため residue 判定上は `Px` 扱い)。
+    /// Bare `vertical-align` keywords never leave residue (they remain
+    /// keywords at the computed layer). `<length>` / `<percentage>` delegate
+    /// to [`length`], as in `flex_basis`: phase 3 has already absolutized a
+    /// `<percentage>` to `Px`, so the residue check treats it as `Px`.
     fn vertical_align(va: VerticalAlign) -> Option<&'static str> {
         match va {
             VerticalAlign::Baseline
@@ -4208,7 +4311,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
     fn line_height(lh: LineHeight) -> Option<&'static str> {
         match lh {
-            // CSS Inline 3 §5.1: `normal` / `<number>` は computed 値のまま。
+            // CSS Inline 3 §5.1: `normal` / `<number>` remain computed values.
             LineHeight::Normal | LineHeight::Number(_) => None,
             LineHeight::Length(l) => length_absolute_only(l, "line-height: <percentage>"),
         }
@@ -4229,16 +4332,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | TextAlign::Center
             | TextAlign::Justify
             | TextAlign::JustifyAll => None,
-            // この改修以降、`resolve_against_inherited` の
-            // phase 2 が必ず解決するため、この arm に**到達すること自体が
-            // bug** (かつての「唯一の文書化された例外」ではない —
-            // `PageCascadeResult::declarations` の doc も参照)。`Some`
-            // のまま残してあるのは意図的な tripwire: 新しい entry point が
-            // phase 2 を経由し損ねた場合 (gap (b) 相当)
-            // に本検出器が拾えるようにするため。raw corpus
-            // (`specified_layer_residue_detector_is_not_vacuous`) はまさに
-            // この「未解決の raw 値」を検査しているので、`None` に変えると
-            // その negative control が意味を失う。
+            // Since this change, phase 2 of `resolve_against_inherited`
+            // always resolves this, so reaching this arm is itself a **bug**
+            // (not the former "only documented exception"; see the docs for
+            // `PageCascadeResult::declarations`). Keep `Some` deliberately as
+            // a tripwire for new entry points that bypass phase 2 (gap (b)).
+            // The raw corpus in `specified_layer_residue_detector_is_not_vacuous`
+            // tests precisely these unresolved raw values; changing this to
+            // `None` would invalidate that negative control.
             TextAlign::MatchParent => Some("text-align: match-parent"),
             TextAlign::Inherit => Some("text-align: inherit"),
             TextAlign::InternalCenter => Some("text-align: -internal-center"),
@@ -4247,9 +4348,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     fn sides<T: Copy>(s: Sides<T>, f: impl Fn(T) -> Option<&'static str>) -> Option<&'static str> {
         [s.top, s.right, s.bottom, s.left].into_iter().find_map(f)
     }
-    /// [`sides`] の 2-value ([`StartEnd<T>`]) sibling — `margin-inline`/
-    /// `margin-block`/`padding-inline`/`padding-block` shorthand の
-    /// start/end 2 component いずれかが残滓なら全体を残滓とする。
+    /// Two-value ([`StartEnd<T>`]) sibling of [`sides`]: for the
+    /// `margin-inline` / `margin-block` / `padding-inline` / `padding-block`
+    /// shorthands, either start/end component makes the whole value residue.
     fn start_end<T: Copy>(
         p: StartEnd<T>,
         f: impl Fn(T) -> Option<&'static str>,
@@ -4257,8 +4358,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
         f(p.start).or_else(|| f(p.end))
     }
     /// `<track-breadth>` — `min-content`/`max-content`/`auto`/`<flex>`
-    /// keyword は常に無 residue (`<number>` 相当、absolutize 不要)、
-    /// `<length-percentage>` は [`length`] に delegate。
+    /// Keywords never leave residue (equivalent to `<number>`; no
+    /// absolutization needed); `<length-percentage>` delegates to [`length`].
     fn grid_track_breadth(b: &GridTrackBreadth) -> Option<&'static str> {
         match b {
             GridTrackBreadth::Length(l) => length(*l),
@@ -4268,8 +4369,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | GridTrackBreadth::Auto => None,
         }
     }
-    /// `<inflexible-breadth>` — [`grid_track_breadth`] と同じ shape
-    /// (`<flex>` variant を持たない点のみ異なる)。
+    /// `<inflexible-breadth>` has the same shape as
+    /// [`grid_track_breadth`], except that it has no `<flex>` variant.
     fn grid_inflexible_breadth(b: &GridInflexibleBreadth) -> Option<&'static str> {
         match b {
             GridInflexibleBreadth::Length(l) => length(*l),
@@ -4278,8 +4379,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | GridInflexibleBreadth::Auto => None,
         }
     }
-    /// `<track-size>` — `minmax()` はどちらかの side が残滓なら全体を
-    /// 残滓とする。
+    /// `<track-size>`: either side of `minmax()` makes the whole value
+    /// residue.
     fn grid_track_size(s: &GridTrackSize) -> Option<&'static str> {
         match s {
             GridTrackSize::Breadth(b) => grid_track_breadth(b),
@@ -4289,9 +4390,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             GridTrackSize::FitContent(l) => length(*l),
         }
     }
-    /// `grid-template-columns` / `grid-template-rows`: `none` は常に無
-    /// residue、track list は component (bare track と `repeat()` の
-    /// 中身の両方) を走査していずれか 1 つでも残滓なら全体を残滓とする。
+    /// `grid-template-columns` / `grid-template-rows`: `none` has no
+    /// residue. Scan each track-list component (bare tracks and contents of
+    /// `repeat()`); any residue makes the whole list residue.
     fn grid_template_tracks(t: &GridTemplateTracks) -> Option<&'static str> {
         match t {
             GridTemplateTracks::None => None,
@@ -4339,19 +4440,18 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 ColumnWidthValue::Length(l) => length(l),
             },
             PropertyValue::LineHeight(lh) => line_height(*lh),
-            // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
+            // Only `font-size` also treats `%` as residue (the explicit §5.5.1 exception).
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
-            // `larger` / `smaller` — `font_weight` の `Bolder`/`Lighter` と同型:
-            // 常に未解決の残滓。`page_corpus` の worst-case
-            // payload としても使う。
+            // `larger` / `smaller`, like `font_weight`'s `Bolder` /
+            // `Lighter`, always leave unresolved residue. The `page_corpus`
+            // also uses this as its worst-case payload.
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
-            // `font` shorthand fall-through — `size` は `FontSize` /
-            // `FontSizeRelative` longhand arm と同じ delegate
-            // (`length_absolute_only` / 常に残滓)、`line-height` は
-            // `LineHeight` arm と同じ `line_height` delegate、`weight` は
-            // `FontWeight` arm と同じ `font_weight` delegate。style /
-            // variant / family は length を運ばない (各 longhand arm と
-            // 同じく無 residue)。
+            // `font` shorthand fall-through: `size` delegates as in the
+            // `FontSize` / `FontSizeRelative` longhand arms
+            // (`length_absolute_only` / always residue); `line-height`
+            // delegates as in `LineHeight` (`line_height`), and `weight`
+            // as in `FontWeight` (`font_weight`). Style, variant, and family
+            // carry no lengths and leave no residue, as for their longhands.
             PropertyValue::Font(shorthand) => {
                 let size_residue = match shorthand.size {
                     FontShorthandSize::Absolute(l) => {
@@ -4426,6 +4526,21 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 start_end(*p, length_or_auto)
             }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            PropertyValue::BorderRight(b) => length(b.width),
+            PropertyValue::BorderCssWide(_)
+            | PropertyValue::BorderRightCssWide(_)
+            | PropertyValue::BorderTopWidthCssWide(_)
+            | PropertyValue::BorderRightWidthCssWide(_)
+            | PropertyValue::BorderBottomWidthCssWide(_)
+            | PropertyValue::BorderLeftWidthCssWide(_)
+            | PropertyValue::BorderTopStyleCssWide(_)
+            | PropertyValue::BorderRightStyleCssWide(_)
+            | PropertyValue::BorderBottomStyleCssWide(_)
+            | PropertyValue::BorderLeftStyleCssWide(_)
+            | PropertyValue::BorderTopColorCssWide(_)
+            | PropertyValue::BorderRightColorCssWide(_)
+            | PropertyValue::BorderBottomColorCssWide(_)
+            | PropertyValue::BorderLeftColorCssWide(_) => None,
             // Shorthand fall-throughs — styles/colors carry no length.
             PropertyValue::BorderStyle(_)
             | PropertyValue::BorderColor(_) => None,
@@ -4450,7 +4565,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::GridAutoColumns(v) | PropertyValue::GridAutoRows(v) => {
                 v.iter().find_map(grid_track_size)
             }
-            // 層に依存しない payload — keyword / color / ident list / counter。
+            // Layer-independent payloads: keywords, colors, identifier lists, counters.
             PropertyValue::Color(_)
             | PropertyValue::BackgroundColor(_)
             | PropertyValue::FontFamily(_)
@@ -4899,12 +5014,13 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
         }
 }
 
-/// `%` が computed 層に残らない 2 つの position を検出器が取りこぼさないこと。
+/// Verify that the detector catches both positions where `%` cannot remain
+/// at the computed-value layer.
 ///
-/// `page_corpus` は `PropertyKey` あたり payload を 1 つしか持てない
-/// (`sample_for` が 1 key → 1 value の関数のため) ので、この 2 payload は
-/// corpus ではなく検出器を直接叩く。corpus 側の `Em` payload は据え置き
-/// なので raw residue の数え上げにも影響しない。
+/// `page_corpus` can hold only one payload per `PropertyKey` because
+/// `sample_for` maps one key to one value. Exercise these two payloads
+/// directly through the detector instead. The corpus keeps its `Em` payloads,
+/// so the count of raw residues is unaffected.
 #[test]
 fn percentage_is_specified_layer_residue_on_font_size_and_line_height() {
     assert_eq!(
@@ -4917,7 +5033,7 @@ fn percentage_is_specified_layer_residue_on_font_size_and_line_height() {
         ))),
         Some("line-height: <percentage>"),
     );
-    // 対照 — box property では `%` が computed 値 (CSS Values 4 §5.5.1 既定)。
+    // Contrast: `%` remains a computed value for box properties (CSS Values 4 §5.5.1 default).
     assert_eq!(
         specified_layer_residue(&PropertyValue::PaddingTop(Length::Percent(50.0))),
         None,
@@ -5001,12 +5117,11 @@ fn grid_track_residue_detector_covers_minmax_fit_content_and_top_level_none() {
     );
 }
 
-/// `letter-spacing: normal` / `word-spacing: normal` は残滓ではない
-/// (CSS Text 3 §7.2/§7.1: "Computes to zero.") — `page_corpus` の
-/// `LetterSpacing`/`WordSpacing` worst-case サンプルは常に `Length`
-/// variant (`sample_for` 参照) なので `letter_spacing` /
-/// `length_or_normal` helper の `Normal` arm は corpus 経由では exercise
-/// されない。ここで直接叩く。
+/// `letter-spacing: normal` and `word-spacing: normal` are not residues
+/// (CSS Text 3 §7.2/§7.1: "Computes to zero."). The worst-case
+/// `LetterSpacing`/`WordSpacing` samples in `page_corpus` are always `Length`
+/// variants (see `sample_for`), so the `Normal` arms of `letter_spacing` and
+/// `length_or_normal` are not exercised through the corpus. Test them directly.
 #[test]
 fn letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue() {
     assert_eq!(
@@ -5017,7 +5132,7 @@ fn letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue() {
         specified_layer_residue(&PropertyValue::WordSpacing(WordSpacingValue::Normal)),
         None,
     );
-    // 対照 — `Em` は残滓 (絶対化前)。
+    // Contrast: `Em` is a residue before absolutization.
     assert_eq!(
         specified_layer_residue(&PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Em(1.0)
@@ -5026,15 +5141,15 @@ fn letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue() {
     );
 }
 
-/// `flex-basis: content` / `auto` は残滓ではない (`ComputedFlexBasis`
-/// doc: computed 層でも keyword のまま) — sibling of
-/// `letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue`
-/// above, same reason: `page_corpus`'s `FlexBasis` worst-case sample is
-/// always a `Length` variant (`sample_for` 参照), so `flex_basis`'s
-/// keyword arm isn't exercised via the corpus. `row-gap`/`column-gap:
-/// normal` follow the same pattern as letter-spacing/word-spacing's
-/// `normal` (CSS Box Alignment 3 §8.1: normal は残滓ではなく keyword の
-/// まま).
+/// `flex-basis: content` and `auto` are not residues (see
+/// `ComputedFlexBasis`'s doc: they remain keywords at the computed-value
+/// layer). This test is a sibling of
+/// `letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue`:
+/// `page_corpus`'s worst-case `FlexBasis` sample is always a `Length` variant
+/// (see `sample_for`), so its keyword arm is not exercised through the
+/// corpus. `row-gap`/`column-gap: normal` follow the same pattern as
+/// letter-spacing/word-spacing's `normal` (CSS Box Alignment 3 §8.1:
+/// `normal` remains a keyword and is not a residue).
 #[test]
 fn flex_basis_content_and_gap_normal_are_not_specified_layer_residue() {
     assert_eq!(
@@ -5053,7 +5168,7 @@ fn flex_basis_content_and_gap_normal_are_not_specified_layer_residue() {
         specified_layer_residue(&PropertyValue::ColumnGap(LengthOrNormal::Normal)),
         None,
     );
-    // 対照 — `Em` は残滓 (絶対化前)。
+    // Contrast: `Em` is a residue before absolutization.
     assert_eq!(
         specified_layer_residue(&PropertyValue::FlexBasis(FlexBasisValue::Length(
             Length::Em(1.0)
@@ -5062,11 +5177,12 @@ fn flex_basis_content_and_gap_normal_are_not_specified_layer_residue() {
     );
 }
 
-/// `background-size: cover` / `contain` は残滓ではない (CSS Backgrounds 3
-/// §2.9: どちらも `<length-percentage>` を伴わない bare keyword) —
-/// `page_corpus`'s `BackgroundSize` worst-case sample は常に `Explicit`
-/// variant (`sample_for` 参照) なので `specified_layer_residue`'s
-/// `Cover | Contain => None` arm は corpus 経由では exercise されない。
+/// `background-size: cover` and `contain` are not residues (CSS
+/// Backgrounds 3 §2.9: both are bare keywords without a
+/// `<length-percentage>`). The worst-case `BackgroundSize` sample in
+/// `page_corpus` is always an `Explicit` variant (see `sample_for`), so the
+/// `Cover | Contain => None` arm of `specified_layer_residue` is not exercised
+/// through the corpus.
 #[test]
 fn background_size_cover_and_contain_are_not_specified_layer_residue() {
     assert_eq!(
@@ -5170,33 +5286,33 @@ fn text_decoration_keyword_payloads_are_not_specified_layer_residue() {
     );
 }
 
-/// `tab-size: <number>` は残滓ではない (CSS Text Module Level 3 §4.2:
-/// "Computed value: the specified number or absolute length" —
-/// `<number>` はそもそも computed 層でも number のまま、`normal` の
-/// ような keyword-to-length collapse を経ない) — sibling of
-/// `flex_basis_content_and_gap_normal_are_not_specified_layer_residue`
-/// above, same reason: `page_corpus`'s `TabSize` worst-case sample is
-/// always the `Length` variant (`sample_for` 参照), so `tab_size`'s
-/// `Number` arm isn't exercised via the corpus. Here directly.
+/// `tab-size: <number>` is not a residue (CSS Text Module Level 3 §4.2:
+/// "Computed value: the specified number or absolute length"; a `<number>`
+/// remains a number at the computed-value layer, without a keyword-to-length
+/// collapse like `normal`). This is a sibling of
+/// `flex_basis_content_and_gap_normal_are_not_specified_layer_residue` for the
+/// same reason: `page_corpus`'s worst-case `TabSize` sample is always a
+/// `Length` variant (see `sample_for`), so its `Number` arm is not exercised
+/// through the corpus. Test it directly here.
 #[test]
 fn tab_size_number_is_not_specified_layer_residue() {
     assert_eq!(
         specified_layer_residue(&PropertyValue::TabSize(TabSize::Number(4.0))),
         None,
     );
-    // 対照 — `Em` は残滓 (絶対化前)。
+    // Contrast: `Em` is a residue before absolutization.
     assert_eq!(
         specified_layer_residue(&PropertyValue::TabSize(TabSize::Length(Length::Em(1.0)))),
         Some("Length::Em"),
     );
 }
 
-/// `vertical-align` の bare keyword は残滓ではない (computed 層でも keyword の
-/// まま) — sibling of
-/// `flex_basis_content_and_gap_normal_are_not_specified_layer_residue`
-/// above, same reason: `page_corpus`'s `VerticalAlign` worst-case
-/// sample is a `Length` variant (`sample_for` 参照), so `vertical_align`'s
-/// keyword arms aren't exercised via the corpus.
+/// Bare `vertical-align` keywords are not residues; they remain keywords
+/// at the computed-value layer. Like
+/// `flex_basis_content_and_gap_normal_are_not_specified_layer_residue`,
+/// `page_corpus`'s worst-case `VerticalAlign` sample is a `Length` variant
+/// (see `sample_for`), so the keyword arms of `vertical_align` are not
+/// exercised through the corpus.
 #[test]
 fn vertical_align_keywords_are_not_specified_layer_residue() {
     for va in [
@@ -5214,7 +5330,7 @@ fn vertical_align_keywords_are_not_specified_layer_residue() {
             None
         );
     }
-    // 対照 — `Em` は残滓 (絶対化前)。
+    // Contrast: `Em` is a residue before absolutization.
     assert_eq!(
         specified_layer_residue(&PropertyValue::VerticalAlign(VerticalAlign::Length(
             Length::Em(1.0)
@@ -5232,11 +5348,11 @@ fn vertical_align_keywords_are_not_specified_layer_residue() {
     );
 }
 
-/// 追加した font-relative / absolute unit も
-/// `Em` / `Rem` / `Pt` と同じく「絶対化前は specified 層の残滓」として
-/// 検出される (`length()` inner helper の網羅 match — 新 variant 追加は
-/// compile error で強制されるが、各 arm の到達は compile では保証されない
-/// ため個別に exercise する)。
+/// Detect the additional font-relative and absolute units as
+/// specified-layer residues before absolutization, like `Em`, `Rem`, and
+/// `Pt`. The exhaustive match in the inner `length()` helper makes adding a
+/// new variant a compile error, but compilation does not guarantee each arm
+/// is reached, so exercise them individually.
 #[test]
 fn additional_length_units_are_specified_layer_residue() {
     // straight-line asserts (no loop + lazy custom message) so every
@@ -5299,32 +5415,30 @@ fn additional_length_units_are_specified_layer_residue() {
     );
 }
 
-/// `page_corpus` に重複 variant が無く、`sample_for` の各 arm が自分の
-/// key と一致する `PropertyValue` を返すこと。
+/// Verify that `page_corpus` has no duplicate variants and that every arm
+/// of `sample_for` returns a `PropertyValue` matching its own key.
 ///
-/// 以前の本 test は手で持つ `PROPERTY_VALUE_VARIANTS` (単なる数) と
-/// `corpus.len()` を比較していたが、両者は互いにしか照合されておらず
-/// (実際に `PropertyValue::Orphan` を足して
-/// 実証)、新 variant が両方同じ数のまま corpus 外に残るケースを検出
-/// できなかった。その後の rework で `PROPERTY_VALUE_VARIANTS` を廃止し
-/// `page_corpus` を `sample_for` 駆動に変えたので、その旧チェックは
-/// **常に真になる同語反復** (`corpus.len()` は `ALL_PROPERTY_KEYS.len() +
-/// key_sharing_extras().len()` の定義から出てくる) になり、削除した。
+/// This test once compared `corpus.len()` against a manually maintained
+/// `PROPERTY_VALUE_VARIANTS` count. The two values were only checked against
+/// each other; adding `PropertyValue::Orphan` proved that the check could miss
+/// a new variant left out of the corpus if both counts stayed equal. A later
+/// rework removed `PROPERTY_VALUE_VARIANTS` and made `page_corpus` depend on
+/// `sample_for`. The old check then became a **tautology**: the definition
+/// already implies `corpus.len() == ALL_PROPERTY_KEYS.len() +
+/// key_sharing_extras().len()`. It was removed.
 ///
-/// 本 test が「corpus 完全性」自体は保証しない件の canonical な記述は
-/// `page_corpus` 手前の section comment にある。本 test 自身が見ている
-/// のは 2 つの**内部整合性**だけ:
+/// The section comment before `page_corpus` explains why this test does not
+/// guarantee corpus completeness. It checks only two **internal invariants**:
 ///
-/// - discriminant の重複が無いこと (`std::mem::discriminant` — payload の
-///   trait bound に依存せず variant のみを区別する)。`PropertyValue::key()`
-///   はもう使えない — `FontSizeRelative` /
-///   `FontSize` が意図的に `PropertyKey::FontSize` を共有し単射性が崩れた
-///   ため。
-/// - `sample_for(key).key() == key` — arm の中身が自分の key と食い違って
-///   いないこと (コピペミス class の検出。`property_key_samples!` マクロ
-///   はこの一貫性まで保証しない — マクロは token 列を lhs/rhs にそのまま
-///   展開するだけで、rhs の式が lhs の `PropertyKey` に対応する variant を
-///   実際に construct しているかは見ていない)。
+/// - No duplicate discriminants. `std::mem::discriminant` compares variants
+///   without imposing trait bounds on their payloads. `PropertyValue::key()`
+///   no longer works here: `FontSizeRelative` and `FontSize` deliberately
+///   share `PropertyKey::FontSize`, so the key mapping is not injective.
+/// - `sample_for(key).key() == key`: an arm must return a value for its own
+///   key. This catches copy/paste mistakes. The `property_key_samples!` macro
+///   does not enforce this invariant: it expands the lhs/rhs token sequences
+///   without checking whether the rhs constructs a variant matching the lhs
+///   `PropertyKey`.
 #[test]
 fn page_corpus_has_no_duplicate_or_mismatched_samples() {
     let corpus = page_corpus();
@@ -5371,8 +5485,8 @@ fn page_corpus_font_size_and_font_size_relative_share_one_key() {
 fn phase_3_variant_classification_matches_the_documented_counts() {
     let font_size = ComputedLength(20.0);
     let ctx = ResolveContext::new(ComputedLength(16.0));
-    // `Solid` にしておかないと border-*-width が style gate で `0px` に
-    // 潰れ、「変換された」判定が gate 由来か絶対化由来か区別できない。
+    // Keep border-*-width at `Solid`; otherwise the style gate collapses it
+    // to `0px`, making gate effects indistinguishable from absolutization.
     let styles = Sides::all(BorderStyle::Solid);
     // Both axes `hidden` — "neither visible nor
     // clip", so it always triggers the CSS Overflow 3 §3.1 coupling for
@@ -5401,16 +5515,16 @@ fn phase_3_variant_classification_matches_the_documented_counts() {
     );
 }
 
-/// **本節の中心 pin** — phase 2 → phase 3 を通した後、`declarations` に
-/// 届く値に specified 層残滓は**一切残らない**。
+/// **Central assertion of this section**: after phase 2 → phase 3, no
+/// specified-layer residue remains in values reaching `declarations`.
 ///
-/// `PageCascadeResult::declarations` の doc が consumer に宣言している
-/// 「These are computed values, with no documented exception」そのもの。
-/// この改修より前は `text-align: match-parent` が唯一の例外
-/// だった (旧 test 名
-/// `page_declarations_carry_exactly_one_specified_layer_residue`) — 本
-/// task がそれを解消したので期待値を空 `vec![]` に変えた。例外が復活したら
-/// ここで落ち、doc を直させる。
+/// This is the contract that `PageCascadeResult::declarations` documents for
+/// consumers: "These are computed values, with no documented exception".
+/// Before this change, `text-align: match-parent` was the sole exception
+/// (former test name:
+/// `page_declarations_carry_exactly_one_specified_layer_residue`). This
+/// change resolved it, so the expected value became an empty `vec![]`. A
+/// reintroduced exception will fail here and require a doc update.
 #[test]
 fn page_declarations_carry_no_specified_layer_residue() {
     let root = root_with_font_size(16.0);
@@ -5463,17 +5577,17 @@ fn page_width_calc_stays_a_residue_until_used_value_layout() {
     assert_eq!(specified_layer_residue(&resolved), Some("calc()"));
 }
 
-/// 同じ規則を **`cascade_page` の出力そのもの** に対して確かめる。
+/// Check the same rule against **`cascade_page`'s actual output**.
 ///
-/// 上の test は phase 2 ∘ phase 3 を直接合成しているので、`cascade_page`
-/// が phase 3 を呼ばなくなっても落ちない。契約が書かれているのは
-/// `PageCascadeResult::declarations` = `cascade_page` の戻り値なので、
-/// 主語を合わせた check をもう 1 本置く。後の変更で
-/// `resolve_against_inherited` → `absolutize_in_page_context` の合成順序
-/// 自体は `ResolvedAgainstInherited` 型で強制されるようになったが、
-/// 「本関数群を一切呼ばない新しい entry point」までは型で数え上げられない
-/// (その変更は narrow しただけで close していない) ので、既存経路
-/// (`cascade_page`) の integration だけでも押さえておく。
+/// The preceding test composes phase 2 ∘ phase 3 directly; it would not
+/// fail if `cascade_page` stopped invoking phase 3. The contract belongs to
+/// `PageCascadeResult::declarations`, the return value of `cascade_page`, so
+/// check that entry point separately. A later change made the composition
+/// order (`resolve_against_inherited` → `absolutize_in_page_context`) mandatory
+/// through the `ResolvedAgainstInherited` type. But types cannot enumerate
+/// new entry points that bypass both functions (that change narrowed the
+/// gap without closing it), so pin at least the integration of the existing
+/// `cascade_page` path.
 #[test]
 fn cascade_page_output_carries_no_specified_layer_residue() {
     let root = root_with_font_size(16.0);
@@ -5483,34 +5597,34 @@ fn cascade_page_output_carries_no_specified_layer_residue() {
              width: 4em; height: 5em; text-align: match-parent; direction: rtl }",
         &root,
     );
-    // vacuity guard — stylesheet が黙って落ちていないこと。
+    // Vacuity guard: the stylesheet must not be silently dropped.
     //
-    // exact count で持つ。`>= N` 形だと `border` shorthand の 12 longhand が
-    // 丸ごと落ちる parse regression が起きても残りで閾値を超えてしまい、
-    // かつ落ちた分は residue も 0 なので本 check が素通りする。
+    // Require an exact count. With `>= N`, a parsing regression could drop
+    // all 12 longhands expanded from the `border` shorthand yet leave enough
+    // others to pass the threshold. Dropped values also contribute zero
+    // residues, so the residue check would miss them.
     //
-    // 27 = font-size / font-weight / line-height / text-align / width /
-    // height / direction の 7 + padding 4 + margin 4 + `border` shorthand
-    // の展開 12 (4 side × width / style / color)。`@page` の shorthand 展開が
-    // 変わったらここが先に落ちる — 失敗時の意味: corpus stylesheet が
-    // 期待通り parse / 展開されていない。
+    // 27 = seven from font-size / font-weight / line-height / text-align /
+    // width / height / direction + four padding + four margin + 12 expanded
+    // from the `border` shorthand (four sides × width / style / color). If
+    // `@page` shorthand expansion changes, this check fails first, indicating
+    // that the corpus stylesheet was not parsed/expanded as expected.
     //
-    // 診断文言は (custom message ではなく) この comment 側に置く:
-    // `assert_eq!` の custom message 引数は assertion 失敗時のみ評価され
-    // る cold path なので、test が pass する限り自動 coverage 計測上
-    // uncovered 扱いになる。
+    // Put this diagnostic in the comment, not in a custom message:
+    // `assert_eq!` evaluates its custom message only on failure. That cold
+    // path is reported as uncovered while the test passes.
     assert_eq!(result.declarations().len(), 27);
 
-    // `declarations` は HashMap-random 順なので sort して比較する。
+    // Sort `declarations` for comparison: HashMap iteration order is random.
     let mut residues: Vec<String> = result
         .declarations()
         .values()
         .filter_map(|v| specified_layer_residue(v).map(|r| format!("{:?}: {r}", v.key())))
         .collect();
     residues.sort();
-    // この改修より前はここに `TextAlign: text-align: match-parent`
-    // が 1 件残っていた (関数名が予告していた「no residue」と実際の
-    // assertion が食い違っていた quirk) — 今は名前どおり空になる。
+    // Before this change, one `TextAlign: text-align: match-parent` residue
+    // remained here (contradicting the "no residue" test name). Now the
+    // result is empty as the name promises.
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
@@ -5520,12 +5634,12 @@ fn cascade_page_output_carries_no_specified_layer_residue() {
     );
 }
 
-/// `page_declarations_carry_no_specified_layer_residue` と
-/// `cascade_page_output_carries_no_specified_layer_residue` が vacuous で
-/// ないこと (negative control) — 検出器は phase 2 / phase 3 を通していない
-/// **raw** 値に対しては実際に発火する (`text-align: match-parent` を含む —
-/// この改修以降も raw corpus はまだ resolve 前なので、この
-/// negative control 自体は変わらない)。
+/// Negative control: verify that
+/// `page_declarations_carry_no_specified_layer_residue` and
+/// `cascade_page_output_carries_no_specified_layer_residue` are not vacuous.
+/// The detector must fire on **raw** values that have not passed through
+/// phase 2 / phase 3, including `text-align: match-parent`. The raw corpus
+/// still needs resolution after this change, so this control remains valid.
 #[test]
 fn specified_layer_residue_detector_is_not_vacuous() {
     let raw = page_corpus()
@@ -5903,7 +6017,7 @@ fn post_parse_page_border_shorthand_before_longhand_lets_longhand_win() {
             },
         }),
     );
-    // top.width だけ後方 longhand が勝つ。
+    // Only top.width is overridden by the later longhand.
     assert_eq!(
         result.declarations().get(&PropertyKey::BorderTopWidth),
         Some(&PropertyValue::BorderTopWidth(Length::Px(10.0))),
@@ -5920,7 +6034,7 @@ fn post_parse_page_border_shorthand_before_longhand_lets_longhand_win() {
         result.declarations().get(&PropertyKey::BorderLeftWidth),
         Some(&PropertyValue::BorderLeftWidth(Length::Px(4.0))),
     );
-    // style / color は shorthand 由来のまま per-side に残る。
+    // Each side retains style and color from the shorthand.
     assert_eq!(
         result.declarations().get(&PropertyKey::BorderTopStyle),
         Some(&PropertyValue::BorderTopStyle(BorderStyle::Solid)),

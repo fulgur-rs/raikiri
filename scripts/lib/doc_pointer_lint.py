@@ -24,7 +24,7 @@ to keep its numbers comparable to the historical scan this task is
 retiring):
 
   1. **role 1 rule (must be zero)**: bracket-link syntax in a `plain` `//`
-     comment line. AGENTS.md's "既知の限界" section says rustdoc reads zero
+     comment line. AGENTS.md's "known limitations" section says rustdoc reads zero
      bytes of a plain `//` comment, so a bracket there *looks* like a
      verified intra-doc link but is not — worse than a bare backtick span,
      which at least doesn't claim to be verified. This applies to ANY
@@ -35,7 +35,7 @@ retiring):
      Role 1 has **no ignore-marker exemption mechanism** — unlike role 2, a
      flagged occurrence cannot be exempted with
      `doc-pointer-lint:ignore:`. AGENTS.md's decided rule for plain `//`
-     comments is unconditional ("一切書かない"), so the only remedy is to
+     comments is unconditional ("write none"), so the only remedy is to
      rewrite the line as a bare code span (or, for a non-link bracket use
      that isn't a `crate::…` pointer at all, wrap it in backticks — Step C
      of `analyze_line()` strips backtick spans before the bracket step
@@ -84,8 +84,7 @@ retiring):
 
   2. **role 2 maximum-count guard (prevents new occurrences)**: bare (non-linked) `crate::…`
      pointers in `doc` (`///` / `//!`) comment lines — i.e. occurrences of
-     the exact violation AGENTS.md's "`crate::…` pointer は intra-doc link
-     で書く" rule prohibits, that have not yet been fixed. Must not exceed
+     the exact violation AGENTS.md's "write `crate::…` pointers as intra-doc links" rule prohibits, that have not yet been fixed. Must not exceed
      a pinned baseline (`doc_pointer_lint_baseline.txt`).
 
   4. **role 4 (the earlier change, informational only — NOT gated, no
@@ -101,7 +100,7 @@ retiring):
      sites by the earlier change's block-wide re-scan (see
      `doc_pointer_lint_baseline.txt`'s 2026-08-10 block-wide scan entry). Numbering
      skips 3 because the design note that requested this role (role 4) itself
-     calls it "role 4 (仮称)" against a 3-role count that was never a
+     calls it "role 4 (provisional name)" against a 3-role count that was never a
      literal code construct in this file — kept as-is here so the design note's text and this code stay traceably in sync rather than silently
      renumbering.
 
@@ -218,15 +217,14 @@ retiring):
      the "line-position, not brace-depth" constraint above still holds
      without exception.
 
-Opt-out classification (AGENTS.md "explicit exemption (link 化しない)"), applied only
+Opt-out classification (AGENTS.md "explicit exemption (do not make a link)"), applied only
 to the role-2 maximum-count candidate set:
 
   1. **(removed) marker** — grep-able, same line as the flagged span.
   2. **points into `#[cfg(test)] mod tests`** — approximated by checking
      whether the pointer path itself contains a `tests::` segment (AGENTS.md
-     explicit exemption 2's own reasoning: "path 中の `tests::` がtest であることを
-     示す"), per the earlier change's own framing of this explicit exemption as
-     "path の `tests::` パターンで概ね判定可能".
+     explicit exemption 2's own reasoning: "`tests::` in the path indicates a test"), per the earlier change's own framing of this explicit exemption as
+     "the `tests::` pattern in the path is usually enough to identify it".
   3. **not checked by rustdoc position** (`#[test]` item doc, fn-body-local item
      doc, `#[doc(hidden)]`, `tests/`/`benches`/`examples` targets,
      `#[cfg]`-excluded item, unexpanded `macro_rules!` body) — bd
@@ -234,7 +232,7 @@ to the role-2 maximum-count candidate set:
      statically decidable** from the surrounding text alone. This script
      does not attempt to decide it: such spans are counted toward the
      counted by default (count uncertain cases by default), and an author who has separately
-     confirmed (by the "わざと壊して確かめる" procedure in AGENTS.md) that a
+     confirmed (by the "break the link deliberately to test it" procedure in AGENTS.md) that a
      specific span is not checked by rustdoc must say so explicitly with a
      `doc-pointer-lint:ignore: <reason>` marker on the same line — the same
      "an explicit exemption only, with no implicit exemption" posture
@@ -488,13 +486,13 @@ _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 # Step E (run against what steps A+C left behind, so nothing already
 # consumed as a code span — e.g. `` `&[Declaration]` `` — can re-match
 # here): a bare bracket-link. AGENTS.md's rule for plain `//` comments is
-# blanket — "bracket link 構文 (`[...]` / `` [`...`] ``) を一切書かない" —
+# blanket — "never write bracket-link syntax (`[...]` / `` [`...`] ``)" —
 # not conditioned on the bracket content looking like a Rust path/ident.
 # §8.3 final review (the earlier review iteration): an earlier version
 # of this pattern only matched identifier/path-shaped content
 # (`[A-Za-z_][A-Za-z0-9_:<>]*`), which silently let `[two words]` and
 # `[foo-bar]` — anything with a space, hyphen, or other punctuation —
-# through role 1 undetected, contradicting the "一切" (unconditionally)
+# through role 1 undetected, contradicting the "never" (unconditionally)
 # in the rule it's meant to enforce. Matches ANY non-bracket, non-newline
 # content between `[` and `]` now, so shape is no longer a loophole.
 #
@@ -557,7 +555,7 @@ def analyze_line(raw: str, *, in_backtick: bool = False) -> tuple[LineFindings, 
 
     ```
     // grammar: `auto | <length-percentage [0,∞]> | min-content | max-content
-    // | fit-content(<length-percentage>)` のうち ...
+    // | fit-content(<length-percentage>)` among others ...
     ```
 
     Without carry-over, the first line above looks — in isolation — like

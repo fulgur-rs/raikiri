@@ -134,7 +134,6 @@ pub(crate) fn compute_multicol_layout(
     output
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 pub(crate) fn multicol_definite_dimension(
     tree: &Document,
     value: Dimension,
@@ -245,7 +244,6 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
     })
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn relayout_nested_multicol_children(
     tree: &mut Document,
     node_id: TaffyNodeId,
@@ -470,7 +468,6 @@ fn relayout_nested_multicol_children(
     maximum.max(cursor).max(minimum_height)
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn nested_text_line_ranges(
     layout: &parley::Layout<()>,
     context: FragmentationContext,
@@ -548,7 +545,6 @@ fn nested_text_line_ranges(
     ranges
 }
 
-// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn refresh_nested_text_fragments(
     tree: &mut Document,
     node_id: usize,
@@ -824,12 +820,20 @@ pub(crate) fn multicol_metrics_for_node(
     if !container_width.is_finite() || container_width <= 0.0 {
         return None;
     }
+    // CSS Multi-column Layout Module Level 1 section 5 Column Gaps and Rules
+    // https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
+    // resolves column-gap normal on a multicol container to 1em of the
+    // container font size. This differs from flex and grid, where normal
+    // behaves as 0, so the generic gap bridge keeps its own normal-to-0 mapping.
     let column_gap = match cv.column_gap {
         ComputedLengthPercentageOrNormal::Px(value) if value.is_finite() => value.max(0.0),
         ComputedLengthPercentageOrNormal::Percent(value) if value.is_finite() => {
             (container_width * value / 100.0).max(0.0)
         }
-        ComputedLengthPercentageOrNormal::Normal => 0.0,
+        ComputedLengthPercentageOrNormal::Normal => {
+            let em = cv.font_size.px();
+            if em.is_finite() { em.max(0.0) } else { 0.0 }
+        }
         _ => 0.0,
     };
     let column_count = declared_count.unwrap_or_else(|| {

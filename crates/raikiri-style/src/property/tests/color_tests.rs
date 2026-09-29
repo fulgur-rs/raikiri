@@ -53,8 +53,8 @@ fn color_parse_hex_3digit_duplicates_nibbles() {
 
 #[test]
 fn color_parse_hex_4digit_duplicates_alpha_nibble() {
-    // CSS Color 4 §5.2: `#rgba` becomes `#rrggbbaa`。alpha nibble `8`
-    // → `0x88` = 136 (8 * 17)。
+    // CSS Color 4 §5.2: `#rgba` becomes `#rrggbbaa`.alpha nibble `8`
+    // → `0x88` = 136 (8 * 17).
     assert_eq!(
         parse("#f008", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -68,8 +68,8 @@ fn color_parse_hex_4digit_duplicates_alpha_nibble() {
 
 #[test]
 fn color_parse_hex_8digit_alpha_byte() {
-    // CSS Color 4 §5.2 8-digit form: 末尾 byte が alpha (0..=255)。
-    // `#ff000080` → alpha = 0x80 = 128。
+    // CSS Color 4 §5.2 8-digit form: the last byte is alpha (0..=255).
+    // `#ff000080` → alpha = 0x80 = 128.
     assert_eq!(
         parse("#ff000080", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -84,7 +84,7 @@ fn color_parse_hex_8digit_alpha_byte() {
 #[test]
 fn color_parse_hex_case_insensitive() {
     // CSS Color 4 §5.2 verbatim: "the case of the letters doesn’t matter -
-    // #00ff00 is identical to #00FF00" — `#FF0000` == `#ff0000`。
+    // #00ff00 is identical to #00FF00" — `#FF0000` == `#ff0000`.
     assert_eq!(
         parse("#FF0000", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -98,16 +98,16 @@ fn color_parse_hex_case_insensitive() {
 
 #[test]
 fn color_parse_hex_invalid_char_returns_none() {
-    // spec-invalid: `g` は hex digit ではない (→ drop)。
+    // Invalid per spec: `g` is not a hex digit (→ drop).
     assert_eq!(parse("#gggggg", "color"), None);
 }
 
 #[test]
 fn color_parse_hex_invalid_length_returns_none() {
-    // spec-invalid: hex-notation grammar は 3/4/6/8 digit のみ。
-    // 5-digit は spec に無い (→ drop)。
+    // Invalid per spec: hex-notation grammar allows only 3/4/6/8 digits.
+    // Five digits are not allowed by the spec (→ drop).
     assert_eq!(parse("#12345", "color"), None);
-    // 7-digit も同様に spec-invalid。
+    // Seven digits are likewise invalid per spec.
     assert_eq!(parse("#1234567", "color"), None);
 }
 
@@ -1677,15 +1677,15 @@ fn color_parse_color_functions_reject_invalid_syntax() {
 
 // ── rgb() / rgba() function form ──
 //
-// CSS Color 4 §5.1 legacy comma syntax の追加 form covers。
-// 1 sample あたり CssColor 値まで check (loose `Some(_)` は mix reject 系
-// regression が silent pass するため避ける、既存 background_color assert
-// pattern に揃える)。
+// Cover additional forms of CSS Color 4 §5.1 legacy comma syntax.
+// Check the CssColor value of each sample (avoid a loose `Some(_)`, which
+// would silently pass regressions involving rejected mixed forms; follow the
+// existing background_color assertion pattern).
 
 #[test]
 fn color_parse_rgb_percentage_form() {
-    // §5.1: `<percentage>` 0%/100% は `<number>` 0/255 と等価。
-    // 100% → 1.0 unit_value → final `rgb_f32_to_css_color` で round(255) = 255。
+    // §5.1: `<percentage>` 0%/100% equals `<number>` 0/255.
+    // 100% → unit_value 1.0 → round(255) = 255 in `rgb_f32_to_css_color`.
     assert_eq!(
         parse("rgb(100%, 0%, 0%)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1699,8 +1699,8 @@ fn color_parse_rgb_percentage_form() {
 
 #[test]
 fn color_parse_rgba_number_alpha() {
-    // §5.1 alpha-value = <number> 0..=1。0.5 → final u8 conversion の
-    // round(127.5) = 128。
+    // §5.1 alpha-value = <number> 0..=1; converting 0.5 to u8 gives
+    // round(127.5) = 128.
     assert_eq!(
         parse("rgba(255, 0, 0, 0.5)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1714,8 +1714,8 @@ fn color_parse_rgba_number_alpha() {
 
 #[test]
 fn color_parse_rgba_percentage_alpha() {
-    // §5.1 alpha-value = <percentage> 0%..=100% は <number> 0..=1 と
-    // 同じ mapping (50% → unit_value 0.5 → 128)。
+    // §5.1 alpha-value = <percentage> 0%..=100% has the
+    // same mapping as <number> 0..=1 (50% → unit_value 0.5 → 128).
     assert_eq!(
         parse("rgba(255, 0, 0, 50%)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1730,7 +1730,7 @@ fn color_parse_rgba_percentage_alpha() {
 #[test]
 fn color_parse_rgb_clamps_overflow() {
     // §5.1: "Values outside these ranges are not invalid, but are
-    // clamped to the ranges defined here at parsed-value time"。300 → 255。
+    // clamped to the ranges defined here at parsed-value time".300 → 255.
     assert_eq!(
         parse("rgb(300, 0, 0)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1744,7 +1744,7 @@ fn color_parse_rgb_clamps_overflow() {
 
 #[test]
 fn color_parse_rgb_clamps_negative() {
-    // §5.1 同上、負値も spec-valid で clamp のみ。-10 → 0。
+    // §5.1 likewise permits negative values; only clamp them: -10 → 0.
     assert_eq!(
         parse("rgb(-10, 0, 0)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1758,23 +1758,23 @@ fn color_parse_rgb_clamps_negative() {
 
 #[test]
 fn color_parse_rgb_mix_number_percentage_returns_none() {
-    // §5.1: legacy form は "all-number or all-percentage"、mix は禁止。
-    // 1 番目 = <number> 255 → is_pct=false 固定、2 番目 `50%` は
-    // expect_integer が Percentage token を reject → Err → None。
+    // §5.1: legacy forms must be all-number or all-percentage, not mixed.
+    // First = <number> 255 → is_pct=false; second `50%` is
+    // a Percentage token rejected by expect_integer → Err → None.
     assert_eq!(parse("rgb(255, 50%, 0)", "color"), None);
 }
 
 #[test]
 fn color_parse_rgb_mix_percentage_number_returns_none() {
-    // 逆方向 mix (percentage → number): 1 番目 = <pct> 50% → is_pct=true
-    // 固定、2 番目 `255` は expect_percentage が Number token を reject。
+    // Reverse mix (percentage → number): first = <pct> 50% → is_pct=true;
+    // second `255` is a Number token rejected by expect_percentage.
     assert_eq!(parse("rgb(50%, 255, 0)", "color"), None);
 }
 
 #[test]
 fn color_parse_rgb_modern_syntax_returns_none() {
-    // §5.1 modern (space + slash) syntax `rgb(R G B / A)` は本 task
-    // で対応。legacy comma からの移行を check.
+    // §5.1 modern (space + slash) syntax `rgb(R G B / A)` is supported by
+    // this task. Check its transition from legacy comma syntax.
     assert_eq!(
         parse("rgb(255 0 0)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1797,26 +1797,26 @@ fn color_parse_rgb_modern_syntax_returns_none() {
 
 #[test]
 fn color_parse_rgb_too_few_args_returns_none() {
-    // §5.1 legacy grammar は 3 channel 必須。2 個 (`rgb(255, 0)`) は
-    // 3 番目 channel 手前で `)` (block 終端) に達し、expect_integer が
-    // Err → None。
+    // §5.1 legacy grammar requires three channels. With two (`rgb(255, 0)`),
+    // `)` ends the block before channel three; expect_integer returns
+    // Err → None.
     assert_eq!(parse("rgb(255, 0)", "color"), None);
 }
 
 #[test]
 fn color_parse_rgb_too_many_args_returns_none() {
-    // §5.1 legacy grammar は最大 4 slot (3 channel + optional alpha)。
-    // 5 個目は `parse_nested_block` 内部の `parse_entirely` (cssparser
-    // 0.37 parser.rs:1149) が exhaustion check で Err → None。
+    // §5.1 legacy grammar permits at most four slots (3 channels + optional alpha).
+    // The fifth triggers `parse_entirely` inside `parse_nested_block` (cssparser
+    // 0.37 parser.rs:1149), whose exhaustion check returns Err → None.
     assert_eq!(parse("rgb(255, 0, 0, 0.5, 99)", "color"), None);
 }
 
 #[test]
 fn color_parse_rgb_name_accepts_alpha() {
-    // §5.1 alias 規定 cross-cover: rgb() name でも alpha を受理。
-    // parse_rgb_function は function name に依存せず、4 番目 comma の有無
-    // だけで alpha slot を判定するため、`rgb(R, G, B, A)` は valid。
-    // name-based branching が retro で入った場合の regression guard。
+    // §5.1 alias cross-coverage: rgb() also accepts alpha.
+    // parse_rgb_function does not depend on the function name; it detects the
+    // alpha slot solely from a fourth comma, so `rgb(R, G, B, A)` is valid.
+    // Guard against a regression if name-based branching is added later.
     assert_eq!(
         parse("rgb(255, 0, 0, 0.5)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1830,9 +1830,9 @@ fn color_parse_rgb_name_accepts_alpha() {
 
 #[test]
 fn color_parse_rgba_name_accepts_no_alpha() {
-    // §5.1 alias 規定 cross-cover: rgba() name でも alpha を省略できる
-    // (opaque と等価)。`rgba(R, G, B)` は spec grammar 上 valid で、
-    // parse_rgb_function は name に依存せず 4 番目 comma 無し → a=255。
+    // §5.1 alias cross-coverage: rgba() may also omit alpha
+    // (equivalent to opaque). `rgba(R, G, B)` is valid per spec;
+    // parse_rgb_function ignores the name and sets a=255 without a fourth comma.
     assert_eq!(
         parse("rgba(255, 0, 0)", "color"),
         Some(PropertyValue::Color(CssColor {
@@ -1853,9 +1853,9 @@ fn color_parse_invalid_returns_none() {
 #[test]
 fn color_parse_transparent_keyword_returns_zero_alpha() {
     // CSS Color 4 §6.3 "The transparent keyword": `transparent`
-    // = rgba(0, 0, 0, 0)。Ident arm hardcodes a=255、明示 branch が無ければ
-    // transparent が到達しても opaque black (`{0,0,0,255}`) になる bug の
-    // regression check。
+    // = rgba(0, 0, 0, 0). The Ident arm hardcodes a=255; without an explicit branch,
+    // even transparent becomes opaque black (`{0,0,0,255}`). This test guards
+    // against that regression.
     assert_eq!(
         parse("transparent", "color"),
         Some(PropertyValue::Color(CssColor::TRANSPARENT))
@@ -1864,14 +1864,14 @@ fn color_parse_transparent_keyword_returns_zero_alpha() {
 
 // ── CssColor::from_hex direct helper contract ──
 //
-// parse_color 経由の integration test は上で網羅済み。以下は helper 自体の
-// API contract を check する direct call test — rgb() function form
-// や future property (border-*-color 等) が同じ primitive を消費するため、
-// 内部形状の regression を早く捕まえる目的。
+// Integration tests through parse_color are above; the following direct calls
+// check the helper's own API contract. rgb() function forms
+// and future properties (such as border-*-color) use the same primitive, so
+// catch internal-shape regressions early.
 
 #[test]
 fn css_color_from_hex_6digit_returns_channels() {
-    // 6-digit form: `rrggbb` は各 2 桁を byte として解釈、alpha = 255。
+    // 6-digit form: interpret each pair in `rrggbb` as a byte; alpha = 255.
     assert_eq!(
         CssColor::from_hex("336699"),
         Some(CssColor {
@@ -1885,20 +1885,20 @@ fn css_color_from_hex_6digit_returns_channels() {
 
 #[test]
 fn css_color_from_hex_3digit_expands_by_duplication() {
-    // 3-digit form: 各 nibble を duplicate。`#369` == `#336699`。
+    // 3-digit form: duplicate each nibble. `#369` == `#336699`.
     assert_eq!(CssColor::from_hex("369"), CssColor::from_hex("336699"));
 }
 
 #[test]
 fn css_color_from_hex_4digit_expands_alpha_nibble() {
-    // 4-digit form: `#369c` == `#336699cc`。alpha nibble `c` (12) →
-    // `0xcc` = 204。
+    // 4-digit form: `#369c` == `#336699cc`.alpha nibble `c` (12) →
+    // `0xcc` = 204.
     assert_eq!(CssColor::from_hex("369c"), CssColor::from_hex("336699cc"));
 }
 
 #[test]
 fn css_color_from_hex_8digit_carries_alpha_byte() {
-    // 8-digit form: 末尾 byte がそのまま alpha (0..=255)。
+    // 8-digit form: the final byte is alpha unchanged (0..=255).
     assert_eq!(
         CssColor::from_hex("336699cc"),
         Some(CssColor {
@@ -1912,13 +1912,13 @@ fn css_color_from_hex_8digit_carries_alpha_byte() {
 
 #[test]
 fn css_color_from_hex_mixed_case_accepted() {
-    // §5.2 case-insensitive: `#aBcDeF` == `#abcdef`。
+    // §5.2 case-insensitive: `#aBcDeF` == `#abcdef`.
     assert_eq!(CssColor::from_hex("aBcDeF"), CssColor::from_hex("abcdef"));
 }
 
 #[test]
 fn css_color_from_hex_invalid_length_returns_none() {
-    // hex-notation grammar 外の length は spec-invalid → None。
+    // Lengths outside the hex-notation grammar are invalid per spec → None.
     assert_eq!(CssColor::from_hex(""), None);
     assert_eq!(CssColor::from_hex("1"), None);
     assert_eq!(CssColor::from_hex("12"), None);
@@ -1929,23 +1929,23 @@ fn css_color_from_hex_invalid_length_returns_none() {
 
 #[test]
 fn css_color_from_hex_non_hex_char_returns_none() {
-    // non-hex byte → None (nibble parse で早期 fail)。
+    // Non-hex byte → None (fail early when parsing a nibble).
     assert_eq!(CssColor::from_hex("gggggg"), None);
     assert_eq!(CssColor::from_hex("12x456"), None);
-    // 3-digit 内の non-hex も同様。
+    // Likewise for a non-hex digit in the 3-digit form.
     assert_eq!(CssColor::from_hex("f0z"), None);
 }
 
 // ── background-color (CSS Backgrounds 3 §2.2) ──
 //
 // 5-sample accept check (task description Verification #4):
-// named / hex / rgb() / rgba() / transparent が
-// `Some(PropertyValue::BackgroundColor(<exact RGBA>))` を返す。
+// Named / hex / rgb() / rgba() / transparent return
+// `Some(PropertyValue::BackgroundColor(<exact RGBA>))`.
 //
-// exact RGBA assert が必要な理由: `Some(_)` の loose form だと
-// `parse_color` の Ident arm が transparent に a=255 を返す regression
-// (opaque black に落ちる bug) を silent pass してしまうため、
-// 5 sample 全て CssColor 値まで check する。
+// Why assert exact RGBA: a loose `Some(_)` would
+// silently pass a regression where the Ident arm of `parse_color` returns a=255
+// for transparent (incorrectly producing opaque black), so
+// check the CssColor value of all five samples.
 
 #[test]
 fn background_color_parse_named() {
@@ -1988,8 +1988,8 @@ fn background_color_parse_rgb() {
 
 #[test]
 fn background_color_parse_rgba() {
-    // rgba() alpha は number literal (0.0..=1.0)、final u8 conversion で
-    // 0..=255 に mapping。0.5 → 128 (rounding は CSS Color 4 準拠)。
+    // rgba() alpha is a number literal (0.0..=1.0); the final u8 conversion
+    // maps it to 0..=255. 0.5 → 128 (rounding follows CSS Color 4).
     assert_eq!(
         parse("rgba(0, 0, 0, 0.5)", "background-color"),
         Some(PropertyValue::BackgroundColor(CssColor {
@@ -2004,7 +2004,7 @@ fn background_color_parse_rgba() {
 #[test]
 fn background_color_parse_transparent() {
     // CSS Color 4 §6.3 "The transparent keyword": shorthand for
-    // rgba(0, 0, 0, 0)。spec initial value と一致 (CSS Backgrounds 3 §2.2)。
+    // rgba(0, 0, 0, 0). Matches the spec initial value (CSS Backgrounds 3 §2.2).
     assert_eq!(
         parse("transparent", "background-color"),
         Some(PropertyValue::BackgroundColor(CssColor::TRANSPARENT))
@@ -2013,8 +2013,8 @@ fn background_color_parse_transparent() {
 
 #[test]
 fn background_color_parse_invalid_returns_none() {
-    // `none` は <color> grammar に含まれない spec-invalid keyword (task
-    // Non-goals: spec-invalid → drop)。
+    // `none` is invalid per spec: it is not in the <color> grammar (task
+    // Non-goals: spec-invalid → drop).
     assert_eq!(parse("none", "background-color"), None);
     // Legacy comma-separated hsl() is a CSS Color 4-valid spelling.
     assert_eq!(
@@ -2031,7 +2031,7 @@ fn background_color_parse_invalid_returns_none() {
 #[test]
 fn background_color_key_returns_background_color() {
     // PropertyValue::BackgroundColor → PropertyKey::BackgroundColor (cascade
-    // winner 選択の discriminant 導線、sibling `Color` key() と対称)。
+    // Discriminant path for winner selection, symmetric with sibling `Color` key().
     let v = PropertyValue::BackgroundColor(CssColor::TRANSPARENT);
     assert_eq!(v.key(), PropertyKey::BackgroundColor);
 }

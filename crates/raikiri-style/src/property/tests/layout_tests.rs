@@ -200,7 +200,7 @@ fn display_rejects_non_ident() {
 
 #[test]
 fn display_is_case_insensitive() {
-    // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII case-insensitive
+    // CSS Values 3 §3.1 "Pre-defined Keywords": keywords are ASCII case-insensitive.
     assert_eq!(
         parse("BLOCK", "display"),
         Some(PropertyValue::Display(DisplayValue::Block))
@@ -890,14 +890,14 @@ fn flex_grow_parse_number() {
 
 #[test]
 fn flex_grow_rejects_negative() {
-    // spec `<number [0,∞]>` — negative は grammar 違反。
+    // Spec `<number [0,∞]>`: negatives violate the grammar.
     assert_eq!(parse("-1", "flex-grow"), None);
 }
 
 #[test]
 fn flex_grow_rejects_non_finite_literal() {
-    // f64 → f32 変換で `+Inf` になる巨大 literal
-    // (`parse_nonneg_finite_number` doc の hazard 節参照)。
+    // A huge literal becomes `+Inf` on f64 → f32 conversion
+    // (see the hazard section of the `parse_nonneg_finite_number` doc).
     assert_eq!(parse("1e40", "flex-grow"), None);
 }
 
@@ -969,7 +969,7 @@ fn flex_basis_parse_length_and_percentage() {
 
 #[test]
 fn flex_basis_rejects_negative_length() {
-    // `<'width'>` reuse — CSS Sizing 3 §3.1.1 の `[0,∞]` constraint。
+    // Reuse `<'width'>` with the CSS Sizing 3 §3.1.1 `[0,∞]` constraint.
     assert_eq!(parse("-10px", "flex-basis"), None);
 }
 
@@ -989,7 +989,7 @@ fn flex_shorthand_none_expands_to_0_0_auto() {
 
 #[test]
 fn flex_shorthand_auto_is_1_1_auto() {
-    // §7.1.1 informative summary: `flex: auto` == `flex: 1 1 auto`。
+    // §7.1.1 informative summary: `flex: auto` == `flex: 1 1 auto`.
     assert_eq!(
         parse("auto", "flex"),
         Some(PropertyValue::Flex(FlexShorthand {
@@ -1004,8 +1004,8 @@ fn flex_shorthand_auto_is_1_1_auto() {
 fn flex_shorthand_bare_number_defaults_shrink_1_basis_0() {
     // §7.1.1 informative summary: `flex: <number [1,∞]>` ==
     // `flex: <number> 1 0` — omitted-component default (grow=1/shrink=1
-    // であって longhand 自身の initial ではない、`FlexShorthand` doc の
-    // "Omitted-component defaults" 節)。
+    // not the longhand's own initial value (see the "Omitted-component defaults"
+    // section of the `FlexShorthand` doc).
     assert_eq!(
         parse("2", "flex"),
         Some(PropertyValue::Flex(FlexShorthand {
@@ -1032,8 +1032,8 @@ fn flex_shorthand_unitless_zero_is_a_flex_factor_not_yet_preceded_by_two() {
 
 #[test]
 fn flex_shorthand_unitless_zero_after_two_factors_is_basis() {
-    // 同じ spec 文の逆方向 — 2 つの flex factor の**後**の unitless zero は
-    // flex-basis として解釈される。
+    // The reverse case in the same spec statement: unitless zero **after**
+    // two flex factors is interpreted as flex-basis.
     assert_eq!(
         parse("2 3 0", "flex"),
         Some(PropertyValue::Flex(FlexShorthand {
@@ -1142,10 +1142,10 @@ fn flex_flow_rejects_empty_and_unknown() {
 
 #[test]
 fn flex_flow_rejects_duplicate_components() {
-    // `parse_value` 契約では leftover token を consume せず caller
-    // (`DeclParser` の `expect_exhausted`) が declaration ごと drop する
-    // (`parse_flex_shorthand` と同じ contract) — ここでは
-    // `parse_entire` で declaration-level の exhaustiveness を再現する。
+    // The `parse_value` contract leaves leftover tokens unconsumed; the caller
+    // (`DeclParser` via `expect_exhausted`) drops the entire declaration
+    // (the same contract as `parse_flex_shorthand`). Here `parse_entire`
+    // reproduces declaration-level exhaustion.
     assert_eq!(parse_entire("row row", "flex-flow"), None);
     assert_eq!(parse_entire("wrap wrap", "flex-flow"), None);
     assert_eq!(parse_entire("row wrap nowrap", "flex-flow"), None);
@@ -1226,8 +1226,8 @@ fn align_content_parse_same_grammar_as_justify_content() {
 #[test]
 fn content_alignment_rejects_left_right_and_baseline() {
     // scope carving: `left`/`right` (justify-content-specific extension)
-    // と `<baseline-position>` は taffy に対応 variant が無いため未実装
-    // (`ContentAlignmentValue` doc 参照)。
+    // and `<baseline-position>` lack corresponding taffy variants, so they remain unsupported
+    // (see the `ContentAlignmentValue` doc).
     assert_eq!(parse("left", "justify-content"), None);
     assert_eq!(parse("right", "justify-content"), None);
     assert_eq!(parse("baseline", "align-content"), None);
@@ -1235,7 +1235,7 @@ fn content_alignment_rejects_left_right_and_baseline() {
 
 #[test]
 fn content_alignment_rejects_overflow_position_prefix() {
-    // scope carving: `safe`/`unsafe` prefix は未実装。
+    // Scope boundary: `safe`/`unsafe` prefixes are unsupported.
     assert_eq!(parse("safe center", "justify-content"), None);
 }
 
@@ -1259,14 +1259,14 @@ fn align_items_parse_self_position_and_baseline() {
 
 #[test]
 fn align_items_rejects_auto() {
-    // `auto` は align-self 専用 keyword — align-items の grammar には無い。
+    // `auto` is only an align-self keyword, absent from align-items grammar.
     assert_eq!(parse("auto", "align-items"), None);
 }
 
 #[test]
 fn align_items_rejects_self_start_self_end() {
-    // scope carving: writing-mode 相対 keyword は未実装
-    // (`SelfAlignmentValue` doc 参照)。
+    // Scope boundary: writing-mode-relative keywords are unsupported
+    // (see the `SelfAlignmentValue` doc).
     assert_eq!(
         parse("self-start", "align-items"),
         Some(PropertyValue::AlignItems(SelfAlignmentValue::Start))
@@ -2538,11 +2538,11 @@ fn orphans_widows_key_maps_to_distinct_property_keys() {
 
 // ── table-layout (CSS Tables 3 §4) ────────────────────────────────────
 //
-// WPT css/css-tables/parsing/table-layout-{valid,invalid}.html の
-// grammar (`auto | fixed`) を check する。invalid 側 2 case
-// (`none` / `auto fixed`) は caller の `expect_exhausted`
-// (rule.rs::DeclParser) が落とす — ここでは `parse_entire` で同条件を
-// 再現する。
+// Check the grammar (`auto | fixed`) in WPT
+// css/css-tables/parsing/table-layout-{valid,invalid}.html. Two invalid cases
+// (`none` / `auto fixed`) are dropped by the caller's `expect_exhausted`
+// (rule.rs::DeclParser); here `parse_entire` reproduces the same conditions
+// to verify declaration-level validity.
 
 #[test]
 fn table_layout_accepts_auto_and_fixed() {
@@ -2554,7 +2554,7 @@ fn table_layout_accepts_auto_and_fixed() {
         parse("fixed", "table-layout"),
         Some(PropertyValue::TableLayout(TableLayoutValue::Fixed))
     );
-    // ASCII case-insensitive (CSS Values 3 §3.1)。
+    // ASCII case-insensitive (CSS Values 3 §3.1).
     assert_eq!(
         parse("FIXED", "table-layout"),
         Some(PropertyValue::TableLayout(TableLayoutValue::Fixed))
@@ -2576,8 +2576,8 @@ fn table_layout_key_maps_to_table_layout_property_key() {
 
 // ── border-collapse (CSS Tables 3 §6) ─────────────────────────────────
 //
-// WPT css/css-tables/parsing/border-collapse-{valid,invalid}.html の
-// grammar (`collapse | separate`) を check する (同上の構成)。
+// Check the grammar (`collapse | separate`) in WPT
+// css/css-tables/parsing/border-collapse-{valid,invalid}.html (same setup).
 
 #[test]
 fn border_collapse_accepts_collapse_and_separate() {
@@ -2589,7 +2589,7 @@ fn border_collapse_accepts_collapse_and_separate() {
         parse("separate", "border-collapse"),
         Some(PropertyValue::BorderCollapse(BorderCollapseValue::Separate))
     );
-    // ASCII case-insensitive (CSS Values 3 §3.1)。
+    // ASCII case-insensitive (CSS Values 3 §3.1).
     assert_eq!(
         parse("COLLAPSE", "border-collapse"),
         Some(PropertyValue::BorderCollapse(BorderCollapseValue::Collapse))
@@ -2611,15 +2611,15 @@ fn border_collapse_key_maps_to_border_collapse_property_key() {
 
 // ── border-spacing (CSS Tables 3 §6.1) ─────────────────────────────────
 //
-// WPT css/css-tables/parsing/border-spacing-{valid,invalid}.html の
-// 全 case の pin。valid の `calc()` 混じり 2 件は上流 deferred path が
-// `Deferred` に回す (`width: calc(..)` と同型) ため、ここでは受理
-// (`Some`) のみ assert し payload の中身は assert しない。
+// Pin every case in WPT css/css-tables/parsing/border-spacing-{valid,invalid}.html.
+// The two valid cases containing `calc()` take the upstream deferred path,
+// which returns `Deferred` (as with `width: calc(..)`); only assert acceptance
+// (`Some`) here, not the payload contents.
 
 #[test]
 fn border_spacing_accepts_valid_values() {
-    // 単一 standard length は両軸に double する (spec 本文 +
-    // `GapShorthand` と同型)。
+    // Double a single standard length across both axes (spec text and
+    // same pattern as `GapShorthand`).
     assert_eq!(
         parse("0px", "border-spacing"),
         Some(PropertyValue::BorderSpacing(BorderSpacingValue {
@@ -2627,7 +2627,7 @@ fn border_spacing_accepts_valid_values() {
             vertical: Length::Px(0.0),
         }))
     );
-    // 2 成分。
+    // Two components.
     assert_eq!(
         parse("10px 20px", "border-spacing"),
         Some(PropertyValue::BorderSpacing(BorderSpacingValue {
@@ -2635,7 +2635,7 @@ fn border_spacing_accepts_valid_values() {
             vertical: Length::Px(20.0),
         }))
     );
-    // unitless `0` は `<length>` として受理 (WPT computed の `"0"` case)。
+    // Accept unitless `0` as `<length>` (WPT computed `"0"` case).
     assert_eq!(
         parse("0", "border-spacing"),
         Some(PropertyValue::BorderSpacing(BorderSpacingValue {
@@ -2643,7 +2643,7 @@ fn border_spacing_accepts_valid_values() {
             vertical: Length::Px(0.0),
         }))
     );
-    // font-relative も plain length として受理。
+    // Also accept font-relative lengths as plain lengths.
     assert_eq!(
         parse("0.5em 1px", "border-spacing"),
         Some(PropertyValue::BorderSpacing(BorderSpacingValue {
@@ -2651,18 +2651,18 @@ fn border_spacing_accepts_valid_values() {
             vertical: Length::Px(1.0),
         }))
     );
-    // `calc()` 混じりは deferred path が受理する (payload は `Deferred`)。
+    // The deferred path accepts a value containing `calc()` (payload: `Deferred`).
     let deferred = parse_entire("calc(10px + 0.5em) calc(10px - 0.5em)", "border-spacing");
     assert!(
         matches!(deferred, Some(PropertyValue::Deferred(_))),
         "calc border-spacing should defer, got {deferred:?}"
     );
-    // `calc()` 単一値も同様。
+    // Likewise for a single `calc()` value.
     assert!(matches!(
         parse_entire("calc(10px + 0.5em)", "border-spacing"),
         Some(PropertyValue::Deferred(_))
     ));
-    // key mapping。
+    // key mapping.
     let v = PropertyValue::BorderSpacing(BorderSpacingValue {
         horizontal: Length::Px(1.0),
         vertical: Length::Px(2.0),
@@ -2672,26 +2672,26 @@ fn border_spacing_accepts_valid_values() {
 
 #[test]
 fn border_spacing_rejects_invalid_values() {
-    // `<percentage>` は Percentages: N/A のため reject。
+    // Reject `<percentage>` because Percentages: N/A.
     assert_eq!(parse("10%", "border-spacing"), None);
-    // 負 length は illegal のため reject。
+    // Reject negative lengths as invalid.
     assert_eq!(parse("-20px", "border-spacing"), None);
     assert_eq!(parse_entire("10px -20px", "border-spacing"), None);
-    // bare non-zero number は `<length>` ではないため reject。
+    // Reject bare nonzero numbers: they are not `<length>`.
     assert_eq!(parse("30", "border-spacing"), None);
-    // 3 成分は `{1,2}` を満たさないため reject。
+    // Reject three components: they do not satisfy `{1,2}`.
     assert_eq!(parse_entire("40px 50px 60px", "border-spacing"), None);
-    // keyword は `<length>` ではないため reject。
+    // Reject keywords: they are not `<length>`.
     assert_eq!(parse("auto", "border-spacing"), None);
-    // `%` 混じり calc は deferred path の guard が reject
-    // (`tab-size` の Percentages: N/A guard と同型)。
+    // The deferred-path guard rejects a calc expression containing `%`
+    // (the same pattern as the Percentages: N/A guard for `tab-size`).
     assert_eq!(parse_entire("calc(10% + 5px)", "border-spacing"), None);
 }
 
 // ── caption-side (CSS Tables 3 §7) ─────────────────────────────────────
 //
-// WPT css/css-tables/parsing/caption-side-{valid,invalid}.html の
-// 全 case の pin。
+// Pin every case in WPT css/css-tables/parsing/caption-side-{valid,invalid}.html.
+// All cases are covered.
 
 #[test]
 fn caption_side_accepts_valid_values() {
@@ -2703,7 +2703,7 @@ fn caption_side_accepts_valid_values() {
         parse("bottom", "caption-side"),
         Some(PropertyValue::CaptionSide(CaptionSideValue::Bottom))
     );
-    // ASCII case-insensitive (`table-layout` の `FIXED` case と同型)。
+    // ASCII case-insensitive (like the `FIXED` case for `table-layout`).
     assert_eq!(
         parse("TOP", "caption-side"),
         Some(PropertyValue::CaptionSide(CaptionSideValue::Top))
@@ -2723,8 +2723,8 @@ fn caption_side_rejects_invalid_values() {
 
 // ── empty-cells (CSS Tables 3 §8) ──────────────────────────────────────
 //
-// WPT css/css-tables/parsing/empty-cells-{valid,invalid}.html の
-// 全 case の pin。
+// Pin every case in WPT css/css-tables/parsing/empty-cells-{valid,invalid}.html.
+// All cases are covered.
 
 #[test]
 fn empty_cells_accepts_valid_values() {
@@ -2736,7 +2736,7 @@ fn empty_cells_accepts_valid_values() {
         parse("hide", "empty-cells"),
         Some(PropertyValue::EmptyCells(EmptyCellsValue::Hide))
     );
-    // ASCII case-insensitive (`table-layout` の `FIXED` case と同型)。
+    // ASCII case-insensitive (like the `FIXED` case for `table-layout`).
     assert_eq!(
         parse("HIDE", "empty-cells"),
         Some(PropertyValue::EmptyCells(EmptyCellsValue::Hide))

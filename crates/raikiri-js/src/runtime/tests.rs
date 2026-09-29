@@ -540,3 +540,370 @@ fn element_attribute_mutations_round_trip_through_native_bindings() {
         "line.getAttribute('data-count') === null && !line.hasAttribute('data-count')",
     ));
 }
+
+// ---- evaluate_with_callback ----
+
+/// [`DomRuntime::evaluate_with_callback`]'s callback runs when the script
+/// calls it, sees the script's arguments, and hands its return value back.
+/// The closure is `FnMut`: incrementing the directly-captured counter only
+/// compiles under an `FnMut` bound, and the returned value proves it ran.
+#[test]
+fn callback_is_invoked_with_script_arguments_and_returns_a_value() {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let calls = Rc::new(Cell::new(0u32));
+    let seen: Rc<RefCell<Vec<(f64, String)>>> = Rc::default();
+    let mut direct_count = 0u32;
+    let result = rt
+        .evaluate_with_callback("sink(40 + 2, 'x')", "sink", {
+            let calls = Rc::clone(&calls);
+            let seen = Rc::clone(&seen);
+            move |_this, args, context| {
+                direct_count += 1;
+                calls.set(calls.get() + 1);
+                let number = args[0].to_number(context)?;
+                let text = args[1].to_string(context)?.to_std_string_escaped();
+                seen.borrow_mut().push((number, text));
+                Ok(JsValue::from(number + f64::from(direct_count)))
+            }
+        })
+        .unwrap();
+    assert_eq!(result.to_number(rt.context_mut()).unwrap(), 43.0);
+    assert_eq!(calls.get(), 1);
+    assert_eq!(*seen.borrow(), vec![(42.0, "x".to_owned())]);
+}
+
+/// The callback is visible by name while its script runs (but hidden from
+/// `Object.keys`) and gone afterwards: no global leaks into later scripts.
+#[test]
+fn callback_global_is_visible_during_evaluation_and_removed_after() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let visible = rt
+        .evaluate_with_callback(
+            "typeof sink === 'function' && !Object.keys(globalThis).includes('sink')",
+            "sink",
+            |_this, _args, _context| Ok(JsValue::undefined()),
+        )
+        .unwrap();
+    assert!(visible.to_boolean());
+    assert!(eval_bool(&mut rt, "typeof sink === 'undefined'"));
+    assert!(eval_bool(
+        &mut rt,
+        "!Object.getOwnPropertyNames(globalThis).includes('sink')"
+    ));
+}
+
+/// A callback exception reaches the caller as [`RuntimeError::JavaScript`],
+/// and the global is still removed.
+#[test]
+fn callback_exception_is_reported_as_a_javascript_error() {
+    use boa_engine::JsNativeError;
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let result = rt.evaluate_with_callback("sink();", "sink", |_this, _args, _context| {
+        Err(JsNativeError::typ().with_message("boom").into())
+    });
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(message)) if message.contains("boom")),
+        "{result:?}"
+    );
+    assert!(eval_bool(&mut rt, "typeof sink === 'undefined'"));
+}
+
+/// Installing over an existing global is refused instead of clobbering it,
+/// and the runtime keeps working afterwards.
+#[test]
+fn callback_name_colliding_with_an_existing_global_is_an_error() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var sink = 41;").unwrap();
+    let result = rt.evaluate_with_callback("sink;", "sink", |_this, _args, _context| {
+        Ok(JsValue::undefined())
+    });
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(_))),
+        "{result:?}"
+    );
+    assert!(eval_bool(&mut rt, "sink === 41"));
+}
+
+/// A function reference the script kept throws a `TypeError` when called
+/// after the installing evaluation returned, instead of reaching freed
+/// state.
+#[test]
+fn callback_reference_kept_by_script_throws_after_return() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate_with_callback(
+        "var stashed = sink; stashed(1);",
+        "sink",
+        |_this, _args, _context| Ok(JsValue::undefined()),
+    )
+    .unwrap();
+    let result = rt.evaluate("stashed(1);");
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(message)) if message.contains("no longer installed")),
+        "{result:?}"
+    );
+}
+
+/// A callback that runs script which calls the same callback again throws a
+/// `TypeError` instead of panicking on the slot's `RefCell`.
+#[test]
+fn reentrant_callback_throws_instead_of_panicking() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let entries = Rc::new(Cell::new(0u32));
+    let result = rt.evaluate_with_callback("sink(function () { sink(2); });", "sink", {
+        let entries = Rc::clone(&entries);
+        move |_this, args, context| {
+            entries.set(entries.get() + 1);
+            match args.first().and_then(|value| value.as_object()) {
+                Some(hook) => hook
+                    .call(&JsValue::undefined(), &[], context)
+                    .map(|_| JsValue::undefined()),
+                None => Ok(JsValue::from(2)),
+            }
+        }
+    });
+    assert!(
+        matches!(&result, Err(RuntimeError::JavaScript(message)) if message.contains("was reentered")),
+        "{result:?}"
+    );
+    // The inner call reached the trampoline (which rejected it) without
+    // ever entering the closure body a second time.
+    assert_eq!(entries.get(), 1);
+}
+
+// ---- hostile stringification during error mapping ----
+
+/// A custom `toString` that records a host failure while [`DomRuntime::evaluate`]
+/// stringifies the thrown value must be attributed to the throwing call
+/// itself, not to the next call. The failure slot is read after mapping the
+/// error, so the stringification-time failure is reported here and the slot
+/// is empty for what follows.
+#[test]
+fn hostile_tostring_host_failure_belongs_to_the_throwing_call() {
+    let (mut host, ..) = StubHost::page();
+    host.fail_geometry = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let err = rt.evaluate(
+        "throw { toString() { document.body.getBoundingClientRect(); return 'oops'; } };",
+    );
+    assert_eq!(
+        err,
+        Err(RuntimeError::Host("stub geometry failure".into())),
+        "{err:?}"
+    );
+    // No stale failure leaks into the next evaluation.
+    assert_eq!(rt.evaluate("1 + 1").unwrap(), JsValue::from(2));
+}
+
+/// Same as above through an `Error` message getter instead of `toString`:
+/// reading `message` during stringification runs script, which can record a
+/// host failure that must belong to the current call.
+#[test]
+fn hostile_error_message_getter_host_failure_belongs_to_the_throwing_call() {
+    let (mut host, ..) = StubHost::page();
+    host.fail_geometry = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let err = rt.evaluate(
+        "throw (() => {              let e = new Error('orig');              Object.defineProperty(e, 'message', {                get() { document.body.getBoundingClientRect(); return 'hacked'; }              });              return e;          })();",
+    );
+    assert_eq!(
+        err,
+        Err(RuntimeError::Host("stub geometry failure".into())),
+        "{err:?}"
+    );
+    assert_eq!(rt.evaluate("1 + 1").unwrap(), JsValue::from(2));
+}
+
+// ---- concrete host recovery (raikiri-spike-4nhl.118) ----
+
+/// `try_into_host` hands the concrete host back with its mutated document,
+/// and the boxed `into_host` result downcasts to the same concrete type.
+#[test]
+fn try_into_host_recovers_concrete_host_with_mutated_document() {
+    use super::host::DocumentHost;
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var recovered = document.createElement('div'); \
+         recovered.setAttribute('id', 'back'); \
+         document.body.appendChild(recovered);",
+    )
+    .unwrap();
+    let host: StubHost = rt.try_into_host::<StubHost>().unwrap_or_else(|_| {
+        panic!("expected the runtime to hold a StubHost");
+    });
+    let found = (0..host.document().node_count())
+        .filter_map(|index| host.document().get_node(index))
+        .filter_map(|node| node.tag_name())
+        .any(|tag| tag == "div");
+    assert!(found, "mutated document did not survive host recovery");
+    // The `Any` hooks report the concrete type the runtime was built with.
+    let (host, ..) = StubHost::page();
+    let rt = DomRuntime::new(host).unwrap();
+    let boxed = rt.into_host();
+    assert!(boxed.as_any().is::<StubHost>());
+    let mut boxed = boxed;
+    assert!(boxed.as_any_mut().is::<StubHost>());
+    assert!(boxed.downcast_ref::<StubHost>().is_some());
+    assert!(boxed.downcast_mut::<StubHost>().is_some());
+    let recovered: Box<StubHost> = boxed.downcast::<StubHost>().unwrap_or_else(|_| {
+        panic!("expected Box downcast to StubHost to succeed");
+    });
+    assert_eq!(
+        recovered
+            .document()
+            .get_node(recovered.document().root_index())
+            .map(|node| node.children.len()),
+        Some(1)
+    );
+}
+
+/// A `try_into_host` type mismatch returns the runtime untouched, so the
+/// caller can keep evaluating or try another concrete type.
+#[test]
+fn try_into_host_type_mismatch_returns_runtime_untouched() {
+    use std::any::Any;
+
+    use super::host::{BoxGeometry, DocumentHost, HostError};
+
+    struct OtherHost(StubHost);
+    impl DocumentHost for OtherHost {
+        fn document(&self) -> &raikiri_dom::Document {
+            self.0.document()
+        }
+        fn document_mut(&mut self) -> &mut raikiri_dom::Document {
+            self.0.document_mut()
+        }
+        fn flush(&mut self) -> Result<(), HostError> {
+            self.0.flush()
+        }
+        fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+            self.0.box_geometry(node)
+        }
+        fn computed_value(
+            &mut self,
+            node: usize,
+            property: &str,
+        ) -> Result<Option<String>, HostError> {
+            self.0.computed_value(node, property)
+        }
+        fn parse_fragment(
+            &mut self,
+            tag: &str,
+            ns: &str,
+            markup: &str,
+        ) -> Result<raikiri_dom::Document, HostError> {
+            self.0.parse_fragment(tag, ns, markup)
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
+        }
+    }
+
+    let (host, ..) = StubHost::page();
+    let rt = DomRuntime::new(host).unwrap();
+    let rt = match rt.try_into_host::<OtherHost>() {
+        Ok(_) => panic!("expected a type mismatch"),
+        Err(rt) => rt,
+    };
+    let mut rt = rt;
+    assert!(rt.evaluate("1 + 1").is_ok());
+    assert!(rt.try_into_host::<StubHost>().is_ok());
+    // The boxed form reports the same mismatch without consuming the box,
+    // and the owned downcast hands the box back on a mismatch.
+    let (host, ..) = StubHost::page();
+    let boxed = DomRuntime::new(host).unwrap().into_host();
+    assert!(boxed.downcast_ref::<OtherHost>().is_none());
+    let boxed = match boxed.downcast::<OtherHost>() {
+        Ok(_) => panic!("expected a boxed type mismatch"),
+        Err(boxed) => boxed,
+    };
+    assert!(boxed.downcast::<StubHost>().is_ok());
+}
+
+/// A host failure recorded through `context_mut` between evaluations stays
+/// parked and surfaces as a host error on the next `evaluate` call.
+#[test]
+fn host_failure_recorded_via_context_mut_surfaces_on_next_evaluate() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert_eq!(rt.evaluate("1 + 1").unwrap(), JsValue::from(2));
+    let _ = host_failure(rt.context_mut(), HostError("between evaluations".into()));
+    assert_eq!(
+        rt.evaluate("1 + 1"),
+        Err(RuntimeError::Host("between evaluations".into()))
+    );
+    assert_eq!(rt.evaluate("1 + 1").unwrap(), JsValue::from(2));
+}
+
+/// The `parse_fragment` contract forbids Document children: the stub host's
+/// own fragment keeps it, and a fragment that breaks it panics in
+/// `replace_children_from` instead of producing script-visible behavior.
+#[test]
+fn parse_fragment_contract_forbids_document_children() {
+    use raikiri_dom::NodeKind;
+
+    use super::host::DocumentHost;
+
+    let (mut host, ..) = StubHost::page();
+    let fragment = host.parse_fragment("div", "", "<b>x</b>").unwrap();
+    let root = fragment.root_index();
+    let children = fragment
+        .get_node(root)
+        .map(|node| node.children.clone())
+        .unwrap_or_default();
+    assert!(!children.is_empty());
+    for child in children {
+        assert_ne!(
+            fragment.get_node(child).map(|node| node.kind()),
+            Some(NodeKind::Document),
+            "stub fragment broke the parse_fragment contract"
+        );
+    }
+    // A contract-breaking fragment panics where the innerHTML setter would
+    // hand it to replace_children_from.
+    let mut source = raikiri_dom::Document::new();
+    let source_parent = source
+        .create_detached_element("section")
+        .expect("detached element creation does not fail");
+    let source_root = source.root_index();
+    source.attach_child(source_parent, source_root);
+    let mut target = raikiri_dom::Document::new();
+    let target_parent = target
+        .create_detached_element("main")
+        .expect("detached element creation does not fail");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        target.replace_children_from(target_parent, &source, source_parent);
+    }));
+    let message = match result {
+        Ok(()) => panic!("expected replace_children_from to panic on a Document child"),
+        Err(payload) => payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .unwrap_or_default(),
+    };
+    assert!(
+        message.contains("replace_children_from cannot copy a Document node as a child"),
+        "unexpected panic message: {message:?}"
+    );
+}

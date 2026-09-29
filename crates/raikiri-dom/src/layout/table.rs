@@ -358,22 +358,21 @@ pub fn compute_table_layout(
         inputs.parent_size.width,
     );
     // In fixed mode an unresolvable specified width (auto, or % of an
-    // indefinite container) falls back to the auto algorithm below.
-    // Auto layout resolves columns against the SPECIFIED width only
-    // (`None` when auto): with `known_dimensions.width = None` the resolver
-    // takes its cap branch (preferred size capped by the definite
-    // container) instead of stretch-to-fill. A specified width keeps the
-    // previous basis (`effective_known`, the taffy-resolved outer width —
-    // subtracting insets recovers the content box). Fixed layout keeps the
-    // previous behavior (container width as distribution basis).
+    // indefinite container) falls back to the auto algorithm below
+    // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
+    // automatic layout algorithm; §17.5.2: such a table does not fill its
+    // containing block).
+    // Both auto and fixed+auto resolve columns against the SPECIFIED width
+    // only (`None` when auto): with `known_dimensions.width = None` the
+    // resolver takes its cap branch (preferred size capped by the definite
+    // container, §17.5.2.2) instead of stretch-to-fill. A specified width
+    // keeps the previous basis (`effective_known`, the taffy-resolved outer
+    // width — subtracting insets recovers the content box).
     let inputs_for_columns = LayoutInput {
         known_dimensions: Size {
-            width: match table_layout {
-                TableLayoutValue::Fixed => effective_known.width,
-                _ => match specified_width {
-                    Some(_) => effective_known.width,
-                    None => None,
-                },
+            width: match specified_width {
+                Some(_) => effective_known.width,
+                None => None,
             },
             height: effective_known.height,
         },
@@ -485,9 +484,9 @@ pub fn compute_table_layout(
         }
         x
     };
-    // Auto tables without a specified width size to content
-    // (shrink-wrap); specified widths (and fixed layout) keep the previous
-    // fill basis.
+    // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
+    // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
+    // width keeps the fill basis.
     let table_width_basis = if abspos_table && specified_width.is_none() {
         // An auto-width absolutely positioned table uses the containing block's
         // available width for this table-layout path.  Taffy's shrink-to-fit
@@ -499,12 +498,9 @@ pub fn compute_table_layout(
     } else if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
         specified_width.or(effective_known.width)
     } else {
-        match table_layout {
-            TableLayoutValue::Fixed => effective_known.width,
-            _ => match specified_width {
-                Some(_) => effective_known.width,
-                None => None,
-            },
+        match specified_width {
+            Some(_) => effective_known.width,
+            None => None,
         }
     };
     let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32;
@@ -884,19 +880,29 @@ fn collect_cells_in_row(
     *n_cols = (*n_cols).max(col);
 }
 
+/// Cell `colspan` per WHATWG HTML 4.9.12.1 ("Forming a table", "Cells" step):
+/// a missing attribute, a parse failure, or a zero value defaults to 1,
+/// and values greater than 1000 clamp to 1000 (mirroring the `colSpan`
+/// IDL `ReflectRange=(1, 1000)`).
+///
+/// Note: the full "rules for parsing non-negative integers" tolerance
+/// (surrounding whitespace, trailing junk) is intentionally not implemented;
+/// the value must parse as a plain unsigned integer, anything else falls
+/// back to 1.
 fn get_colspan(doc: &Document, node_id: usize) -> u16 {
     if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
         for a in &data.attributes {
             if a.namespace.is_none()
                 && a.local.as_str() == "colspan"
-                && let Ok(v) = a.value.parse::<u16>()
+                && let Ok(v) = a.value.parse::<u32>()
             {
-                return v.max(1);
+                // Parse wide (u32) so huge values (e.g. "100000", which
+                // overflows u16) clamp to 1000 instead of failing to parse
+                // and falling back to 1.
+                return v.clamp(1, 1000) as u16;
             }
         }
     }
-    // Also check html attribute via ElementData retrieval alternative: try parsing int, clamp to at least 1, huge values clamp to reasonable?
-    // spec allows up to 1000; we clamp to 1000 for safety.
     1
 }
 
@@ -1149,65 +1155,17 @@ fn resolve_column_widths(
                 if col_max_full.iter().sum::<f32>() <= avail {
                     col_max_full
                 } else {
-                    distribute_columns(avail, &col_min, &col_max, &col_pct)
+                    distribute_columns_with_authored(
+                        avail,
+                        &col_min_full,
+                        &col_max_full,
+                        &col_pct,
+                        &authored_length,
+                    )
                 }
             }
         },
     }
-}
-
-fn distribute_columns(avail: f32, min: &[f32], max: &[f32], pct: &[f32]) -> Vec<f32> {
-    let n = min.len();
-    let psum: f32 = pct.iter().sum();
-    let scale = if psum > 1.0 { 1.0 / psum } else { 1.0 };
-    let mut w = vec![0.0f32; n];
-    for i in 0..n {
-        w[i] = if pct[i] > 0.0 {
-            f32_max_compat(pct[i] * scale * avail, min[i])
-        } else {
-            min[i]
-        };
-    }
-    let assigned: f32 = w.iter().sum();
-    if assigned + 0.01 < avail {
-        let mut remaining = avail - assigned;
-        let grow: Vec<f32> = (0..n)
-            .map(|i| {
-                if pct[i] == 0.0 {
-                    f32_max_compat(max[i] - w[i], 0.0)
-                } else {
-                    0.0
-                }
-            })
-            .collect();
-        let gsum: f32 = grow.iter().sum();
-        if gsum > 0.0 {
-            let take = if remaining < gsum { remaining } else { gsum };
-            for i in 0..n {
-                w[i] += take * grow[i] / gsum;
-            }
-            remaining -= take;
-        }
-        if remaining > 0.0 {
-            let np: Vec<usize> = (0..n).filter(|&i| pct[i] == 0.0).collect();
-            let targets = if np.is_empty() { (0..n).collect() } else { np };
-            let share = remaining / targets.len() as f32;
-            for i in targets {
-                w[i] += share;
-            }
-        }
-    } else if assigned > avail + 0.01 {
-        let excess = assigned - avail;
-        let shrink: Vec<f32> = (0..n).map(|i| f32_max_compat(w[i] - min[i], 0.0)).collect();
-        let ssum: f32 = shrink.iter().sum();
-        if ssum > 0.0 {
-            let take = if excess < ssum { excess } else { ssum };
-            for i in 0..n {
-                w[i] -= take * shrink[i] / ssum;
-            }
-        }
-    }
-    w
 }
 
 fn distribute_columns_with_authored(

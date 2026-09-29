@@ -12,7 +12,7 @@
 #      verified but never is. Must be 0, unconditionally (no baseline).
 #   2. **role 2 maximum-count guard (prevents new occurrences)**: bare (non-linked) `crate::…`
 #      pointers inside `///` / `//!` doc comments — the exact violation
-#      AGENTS.md's "`crate::…` pointer は intra-doc link で書く" rule
+#      AGENTS.md's "write `crate::…` pointers as intra-doc links" rule
 #      prohibits. Must not exceed the pinned baseline in
 #      scripts/lib/doc_pointer_lint_baseline.txt.
 #   4. **role 4 (an earlier change, informational only, NOT gated)**:
@@ -42,7 +42,7 @@
 # fn-body-local item doc, #[doc(hidden)], tests/benches/examples targets,
 # #[cfg]-excluded items, unexpanded macro_rules! bodies) is counted toward
 # counted by default; only an explicit marker, written after actually
-# confirming that rustdoc does not check it by AGENTS.md's "わざと壊して確かめる"
+# confirming that rustdoc does not check it by AGENTS.md's "break the link deliberately to test it"
 # procedure, exempts it.
 #
 # Scope note: this script is standalone and NOT connected to

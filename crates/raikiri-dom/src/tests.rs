@@ -24,7 +24,7 @@ fn build_document(display: Display) -> (Document, usize) {
         root_style.grid_template_columns = vec![length(200.0), length(200.0)];
         root_style.grid_template_rows = vec![length(50.0)];
     }
-    // Document node (idx=0) の子として layout root (idx=1) を作る
+    // Create layout root (idx=1) as a child of Document node (idx=0).
     let layout_root = doc.append_element(Some(0), "root", root_style, None::<&str>);
     doc.append_element(Some(layout_root), "a", leaf_style.clone(), None::<&str>);
     doc.append_element(Some(layout_root), "b", leaf_style, None::<&str>);
@@ -107,25 +107,25 @@ fn dom_trait_navigation() {
     let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
     let _t = doc.append_text(p, "hello");
 
-    // root_id は Document kind の virtual root
+    // root_id is the virtual root of Document kind.
     let root_id = doc.root_id();
     let root_node = doc.node(root_id).expect("root node exists");
     assert_eq!(root_node.kind(), NodeKind::Document);
 
-    // Document の child = <p> element
-    // NB: taffy::prelude::TraversePartialTree にも child_ids があるため UFCS で
-    // raikiri_traits::Dom::child_ids を明示する。
+    // A Document child is a <p> element.
+    // taffy::prelude::TraversePartialTree also defines child_ids, so use UFCS
+    // to specify raikiri_traits::Dom::child_ids.
     let root_children: Vec<_> = Dom::child_ids(&doc, root_id).collect();
     assert_eq!(root_children.len(), 1);
 
-    // <p> は Element、tag_name = "p"
+    // <p> is an Element with tag_name = "p".
     let elem_id = root_children[0];
     let elem_node = doc.node(elem_id).expect("element exists");
     assert_eq!(elem_node.kind(), NodeKind::Element);
     let elem = elem_node.as_element().expect("kind == Element");
     assert_eq!(elem.tag_name(), "p");
 
-    // <p> の child = "hello" text node
+    // A child of <p> is the text node "hello".
     let elem_children: Vec<_> = Dom::child_ids(&doc, elem_id).collect();
     assert_eq!(elem_children.len(), 1);
     let text_node = doc.node(elem_children[0]).expect("text exists");
@@ -136,10 +136,10 @@ fn dom_trait_navigation() {
 
 #[test]
 fn child_ids_returns_empty_on_invalid_nodeid() {
-    // child_ids は node() と対称に、範囲外 NodeId で
-    // panic せず empty iter を返す。将来の blitz-compat integration で
-    // Consumer が document rebuild を挟んで NodeId を stash する pattern に
-    // 備える。
+    // In symmetry with node(), child_ids returns an empty iterator, not a
+    // panic, for an out-of-range NodeId. This supports future blitz-compat
+    // consumers that stash a NodeId across a document rebuild.
+    // This keeps child traversal safe for stale references.
     let mut doc = Document::new();
     doc.append_element(Some(0), "p", Style::default(), None::<&str>);
 
@@ -149,7 +149,7 @@ fn child_ids_returns_empty_on_invalid_nodeid() {
         kids.is_empty(),
         "out-of-range NodeId should yield empty iter"
     );
-    // node() と contract 一致確認 (対称性のリファレンス)
+    // Verify the contract matches node() (symmetry reference).
     assert!(doc.node(far).is_none());
 }
 
@@ -190,7 +190,7 @@ fn element_ref_reflects_namespace_uri_when_set() {
 
     let p_node = doc.node(NodeId::new(html_p as u64)).expect("p exists");
     let p_elem = p_node.as_element().expect("p is element");
-    // HTML default は None を optimized path として返す (setter を呼ばなくてよい契約)。
+    // The HTML default returns None as the optimized path (no setter call required).
     assert_eq!(p_elem.namespace_uri(), None);
 
     let g_node = doc.node(NodeId::new(svg_g as u64)).expect("g exists");
@@ -221,35 +221,35 @@ fn element_ref_reflects_id_and_class_and_attr() {
     // id lookup
     assert_eq!(elem.id(), Some("main"));
 
-    // has_class: ASCII whitespace で split — space / tab 混在も token 化
+    // has_class splits on ASCII whitespace, including mixed spaces and tabs.
     assert!(elem.has_class("foo"));
     assert!(elem.has_class("bar"));
     assert!(elem.has_class("baz"));
     assert!(!elem.has_class("qux"));
-    // 空 token を渡すと false (spec: empty class token は match しない)
+    // Empty tokens return false (spec: empty class tokens never match).
     assert!(!elem.has_class(""));
 
     // attr generic lookup
     assert_eq!(elem.attr("data-x"), Some("42"));
-    // 空文字列 attribute は Some("") (attribute の有無と値は独立に追跡する
-    // — CSS Selectors L4 の attribute-presence selector `[foo]` は値と
-    // 無関係に存在だけで match するため、空文字列を absent と同一視しては
-    // ならない contract)。id() 固有の empty-is-absent 正規化は id() 自身に
-    // 局所化されており、この generic attr() には適用されない。
+    // An empty-string attribute is Some(""): presence and value are independent.
+    // A CSS Selectors L4 presence selector `[foo]` matches on presence
+    // regardless of value, so do not treat the empty string as absent.
+    // The empty-is-absent normalization belongs only to id();
+    // it does not apply to generic attr().
     assert_eq!(elem.attr("empty"), Some(""));
-    // 未設定 attribute は None
+    // Unset attributes return None.
     assert_eq!(elem.attr("missing"), None);
 }
 
 #[test]
 fn element_attr_style_reads_through_inline_style() {
-    // `attr("style")` は Node.inline_style へ redirect され、
-    // inline_style_source と同じ値を返す (trait doc の一致性契約)。
+    // `attr("style")` redirects to Node.inline_style and returns
+    // the same value as inline_style_source (trait documentation contract).
     use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
 
     let mut doc = Document::new();
     let el = doc.append_element(Some(0), "p", Style::default(), Some("color:red"));
-    // attributes には style を含めない (sink 側で分離済想定)。
+    // Do not include style in attributes (the sink separates it).
 
     let el_node = doc.node(NodeId::new(el as u64)).expect("p exists");
     let elem = el_node.as_element().expect("p is element");
@@ -288,9 +288,9 @@ fn element_id_treats_empty_value_as_none_while_attr_preserves_presence() {
 #[test]
 #[should_panic(expected = "set_element_attributes called on non-Element")]
 fn set_element_attributes_panics_on_non_element_in_debug() {
-    // Document root (index 0) は Document kind、Text node は Text kind。
-    // どちらも attribute-family setter の対象外なので debug_assert が
-    // 発火することを regression check する。
+    // The Document root (index 0) has Document kind; Text nodes have Text kind.
+    // Neither accepts attribute-family setters, so regression-check that
+    // the debug_assert triggers.
     use smol_str::SmolStr;
     let mut doc = Document::new();
     // arena index 0 = Document root
@@ -532,9 +532,9 @@ fn many_mutations_still_yield_correct_layout() {
 
 #[test]
 fn taffy_leaf_measure_reads_pre_populated_text_layout() {
-    // Node.text_layout に手動で parley Layout をセットして、taffy leaf closure が
-    // その intrinsic size を返すことを直接検証する (layout_single_page 経由
-    // ではなく leaf closure の check として)。
+    // Set a parley Layout manually on Node.text_layout and directly verify
+    // that the taffy leaf closure returns its intrinsic size (checking
+    // the leaf closure rather than going through layout_single_page).
     use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext};
     use taffy::{AvailableSpace, NodeId as TaffyNodeId, Size};
 
@@ -554,7 +554,7 @@ fn taffy_leaf_measure_reads_pre_populated_text_layout() {
     );
     let text = doc.append_text(root, "Hi");
 
-    // 手動 pre-shape
+    // Manually pre-shape.
     let mut fonts = FontContext::new();
     let mut layout_cx = LayoutContext::<()>::new();
     let builder = layout_cx.ranged_builder(&mut fonts, "Hi", 1.0, true);
@@ -583,7 +583,7 @@ fn taffy_leaf_measure_reads_pre_populated_text_layout() {
         "text leaf must have non-zero width from parley layout (got {})",
         text_size.width
     );
-    // root の block layout 経由で text leaf の高さが flow するはず
+    // Text leaf height should flow through the root block layout.
     let root_size = doc.nodes[root].unrounded_layout.size;
     assert!(
         (root_size.height - expected_h).abs() < 0.5,
@@ -592,16 +592,16 @@ fn taffy_leaf_measure_reads_pre_populated_text_layout() {
     );
 }
 
-// ── pub 化 smoke test ─────────────
+// ── Public-surface smoke test ─────────────
 
 #[test]
 fn document_get_node_returns_some_for_valid_id_and_none_for_out_of_range() {
     let mut doc = Document::new();
     let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
-    // valid: root + p の 2 個存在
+    // Valid: root + p both exist.
     assert!(doc.get_node(0).is_some());
     assert!(doc.get_node(p).is_some());
-    // out of range: node_count 以上
+    // Out of range: at or beyond node_count.
     assert!(doc.get_node(doc.node_count()).is_none());
     assert!(doc.get_node(doc.node_count() + 100).is_none());
 }
@@ -626,12 +626,12 @@ fn document_root_index_is_zero_and_matches_get_node_kind() {
 
 #[test]
 fn node_accessors_are_callable_from_external_call_site() {
-    // Node が NodeData tagged union に refactor された
-    // 後の pub_surface pin。旧 pub field (kind / tag_name / text_layout)
-    // が accessor method 化されたことを super::* から見えることで regression
-    // check する。external consumer 契約は無影響
-    // (crates/raikiri/tests/external_consumer.rs は Node/Element field
-    // access 0 件、こちらは raikiri-dom 内部 pub_surface)。
+    // Pin the public surface after refactoring Node into a NodeData tagged union.
+    // Check from super::* that the old public fields
+    // (kind / tag_name / text_layout) are now accessible through methods.
+    // This leaves the external consumer contract unchanged:
+    // crates/raikiri/tests/external_consumer.rs accesses zero Node/Element fields;
+    // this test checks the raikiri-dom internal public surface.
     let mut doc = Document::new();
     let e = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let t = doc.append_text(e, "hi");
@@ -688,8 +688,8 @@ fn node_accessors_are_callable_from_external_call_site() {
 /// and (per the output-side guard) finite. This is consistent with —
 /// and now formalizes as an automated regression check, rather than leaving
 /// it as prose — the manual observation already recorded on
-/// `MAX_FONT_SIZE_PX` in `crates/raikiri-dom/src/layout.rs`: "site 1-4 の
-/// taffy 側 test は即座に assert 失敗する (値が壊れるだけ)". This test
+/// `MAX_FONT_SIZE_PX` in `crates/raikiri-dom/src/layout.rs`: “taffy-side
+/// tests at sites 1–4 immediately fail assertions (only values break).” This test
 /// does not assert anything about *which specific* values taffy produces
 /// (a separate, still-open concern about the "finite garbage"
 /// semantic-validity of taffy's output is tracked elsewhere); it pins the

@@ -1,8 +1,5 @@
 //! Boa-specific WPT support shared by native and isolated execution.
-use boa_engine::object::FunctionObjectBuilder;
-use boa_engine::property::PropertyDescriptor;
-use boa_engine::{Context, JsResult, JsString, JsSymbol, JsValue, NativeFunction, js_string};
-use raikiri_js::TestOutcome;
+use boa_engine::{Context, JsResult, JsString, JsValue, js_string};
 use raikiri_js::runtime::{DomRuntime, RunReport, RuntimeError};
 pub const SINK_SYMBOL_DESCRIPTION: &str = "raikiri testharness report sink";
 
@@ -35,9 +32,25 @@ pub const DOCUMENT_FONTS_SCRIPT: &str = r#"(function () {
 
 pub const MAX_DELIVERED_TESTS: u64 = 100_000;
 
+/// One WPT testharness subtest's outcome, as reported by the harness.
+///
+/// This is WPT-specific: it lives in this harness support crate (shared by
+/// the native and isolated page runners) rather than in `raikiri-js`, which
+/// is a general document-script runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubtestOutcome {
+    /// The subtest's name, verbatim.
+    pub name: String,
+    /// Whether the subtest passed.
+    pub passed: bool,
+    /// The harness's message for the subtest, usually empty when `passed`
+    /// is true.
+    pub message: String,
+}
+
 #[derive(Debug, Default)]
 pub struct Delivery {
-    pub tests: Vec<TestOutcome>,
+    pub tests: Vec<SubtestOutcome>,
     pub harness_status: f64,
     pub harness_message: String,
 }
@@ -70,30 +83,18 @@ pub fn probe_timeout(runtime: &mut DomRuntime, report: &mut RunReport) -> Option
     take_delivery(runtime)
 }
 
+/// Install the page support scripts: the `document.fonts` stand-in every
+/// page needs before any of its own scripts run.
+///
+/// The testharness delivery sink is *not* installed here. It lives only for
+/// the document run itself: the run site hands [`deliver`] to
+/// [`DomRuntime::run_document_with_callback`] together with
+/// [`SINK_SYMBOL_DESCRIPTION`], so a page whose report script never claims
+/// the sink leaves nothing behind either.
 pub fn install_page_support(
     runtime: &mut DomRuntime,
 ) -> Result<(), raikiri_js::runtime::RuntimeError> {
     runtime.evaluate(DOCUMENT_FONTS_SCRIPT)?;
-    install_result_sink(runtime.context_mut())
-        .map_err(|error| raikiri_js::runtime::RuntimeError::JavaScript(error.to_string())) // cov:ignore: defining a fresh symbol-keyed property on the global object does not fail.
-}
-
-pub fn install_result_sink(context: &mut Context) -> JsResult<()> {
-    let sink = FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(deliver))
-        .name(js_string!("deliver"))
-        .length(2)
-        .build();
-    let key = JsSymbol::new(Some(JsString::from(SINK_SYMBOL_DESCRIPTION)));
-    let key =
-        key.ok_or_else(|| boa_engine::JsNativeError::range().with_message("out of symbols"))?; // cov:ignore: symbol ids run out only after 2^64 symbols.
-    let descriptor = PropertyDescriptor::builder()
-        .value(sink)
-        .writable(false)
-        .enumerable(false)
-        .configurable(true);
-    context
-        .global_object()
-        .define_property_or_throw(key, descriptor, context)?;
     Ok(())
 }
 
@@ -118,7 +119,7 @@ pub fn deliver(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
                 .get(js_string!("status"), context)?
                 .to_number(context)?;
             let message = string_property(&test, "message", context)?;
-            delivery.tests.push(test_outcome(name, status, message));
+            delivery.tests.push(subtest_outcome(name, status, message));
         }
     }
     if let Some(status) = status_value.as_object() {
@@ -158,14 +159,14 @@ pub fn status_word(status: f64) -> Option<&'static str> {
     })
 }
 
-pub fn test_outcome(name: String, status: f64, message: String) -> TestOutcome {
+pub fn subtest_outcome(name: String, status: f64, message: String) -> SubtestOutcome {
     match status_word(status) {
-        None => TestOutcome {
+        None => SubtestOutcome {
             name,
             passed: true,
             message,
         },
-        Some(word) => TestOutcome {
+        Some(word) => SubtestOutcome {
             name,
             passed: false,
             message: format!("{word}: {message}"),

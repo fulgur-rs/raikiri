@@ -138,8 +138,9 @@ fn floor_blocks_a_get_to_a_loopback_ip_literal_through_the_real_agent() {
     // DNS), and `SsrfSafeResolver` rejects it before any socket is
     // opened, so this is deterministic and makes no real network I/O.
     let provider = UreqHttpProvider::new();
+    let url = Url::parse("http://127.0.0.1:1/").unwrap();
     let request = Request {
-        url: Url::parse("http://127.0.0.1:1/").unwrap(),
+        url: url.clone(),
         method: RaikiriMethod::Get,
         content_type: None,
         headers: Vec::new(),
@@ -157,6 +158,16 @@ fn floor_blocks_a_get_to_a_loopback_ip_literal_through_the_real_agent() {
                 if matches!(v.violation_type, ViolationType::PrivateNetworkBlocked)
         ),
         "expected NetworkError::PolicyViolation(PrivateNetworkBlocked), got {err:?}"
+    );
+    // Direct-blocked (no redirect): the violation must name the request
+    // URL itself, since that is the hop the floor rejected.
+    let NetworkError::PolicyViolation(v) = &err else {
+        unreachable!()
+    };
+    assert_eq!(
+        v.url, url,
+        "direct-blocked PolicyViolation.url must name the request URL, got {}",
+        v.url
     );
 }
 

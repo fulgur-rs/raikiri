@@ -422,6 +422,13 @@ pub(crate) fn run(runtime: &mut DomRuntime) -> RunReport {
     let uncaught_before = with_state(context, |s| s.event_loop.uncaught_errors.len()).unwrap_or(0);
     let console_before = with_state(context, |s| s.console.len()).unwrap_or(0);
 
+    if report.aborted.is_none()
+        && let Err(error) = super::dispatch::sync_all_event_handler_content_attributes(context)
+    {
+        let reason = event_loop::abort_for(&error).unwrap_or(Abort::Recursion);
+        report.aborted = Some(event_loop::abort(context, reason));
+    }
+
     let elements = collect_script_elements(context);
     {
         let mut executor = Executor::new(context, &mut report);

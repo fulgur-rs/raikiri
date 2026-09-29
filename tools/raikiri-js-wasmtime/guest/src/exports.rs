@@ -86,7 +86,11 @@ fn dispatch(request: GuestRequest) -> Result<GuestValue, String> {
                 runtime.evaluate(&s).map_err(|e| e.to_string())?;
                 Ok(GuestValue::Unit)
             }
-            GuestOperation::RunDocument => Ok(GuestValue::Report(runtime.run_document().into())),
+            GuestOperation::RunDocument => Ok(GuestValue::Report(
+                runtime
+                    .run_document_with_callback(harness::SINK_SYMBOL_DESCRIPTION, harness::deliver)
+                    .into(),
+            )),
             GuestOperation::ProbeTimeout(r) => {
                 let mut report = r.into_native();
                 // Preserve probe delivery for the following TakeResults operation.

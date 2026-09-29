@@ -4,50 +4,48 @@
 //!
 //! # Internal dogfooding contract
 //!
-//! [`PageScene`] は raikiri 内部 pipeline (fragmentation + reflow +
-//! LayoutBuffer) を通り抜けた後の **1 page 分の immutable snapshot**。
-//! 内部の validation / raster paths は forward iterate + batch operation で
-//! 消費し、reflow / re-fragmentation の concern は持たない (raikiri 内部完結)。
+//! [`PageScene`] is an **immutable snapshot of one page** after it passes through
+//! raikiri's internal pipeline (fragmentation + reflow + LayoutBuffer).
+//! Internal validation and raster paths consume it through forward iteration and
+//! batch operations; they do not handle reflow or re-fragmentation themselves.
 //!
 //! # Node identity
 //!
-//! [`raikiri_traits::NodeId`] を key として page 内で分布する DOM node を
-//! 表現する。raikiri crate の Document (umbrella re-export) と PageScene
-//! が **同一 NodeId 空間** を共有するため、
-//! consumer は 1 個の `NodeId` を Document 側の property lookup と
-//! PageScene 側の drawable / fragment lookup に **conversion なしで**
-//! 使い回せる (確立済みの design decision)。
+//! [`raikiri_traits::NodeId`] identifies DOM nodes distributed across a page.
+//! The raikiri crate's Document (umbrella re-export) and PageScene share the
+//! **same NodeId space**. A consumer can therefore use one `NodeId` for Document
+//! property lookups and PageScene drawable / fragment lookups **without conversion**
+//! (an established design decision).
 //!
 //! # Landing scope: pub type surface
 //!
-//! Pub type surface のみ landing (`#[non_exhaustive]` で future field 追加を
-//! semver-non-breaking に保つ)。内部 pipeline から `PageScene` を実際に
-//! populate する path は将来の streaming pagination 対応で fill される。
+//! Only the public type surface was initially landed (`#[non_exhaustive]` keeps
+//! future field additions semver-non-breaking). The path that populates `PageScene`
+//! from the internal pipeline is filled in as part of future streaming pagination.
 //!
-//! # Landing scope: html_to_png の PageScene 経由 refactor
+//! # Landing scope: html_to_png refactor through PageScene
 //!
-//! 内部 `html_to_png` pipeline を PageScene 経由に refactor。
-//! [`build_page_scene`] で post-layout Document から metadata + fragments を
-//! 抽出した [`PageScene`] を organize し、[`PageScene::rasterize`] が
-//! `raikiri_paint::paint_single_page` + `anyrender_vello_cpu` + PNG encode の
-//! byte-identical triple を verbatim reuse する。
+//! The internal `html_to_png` pipeline was refactored through PageScene.
+//! [`build_page_scene`] assembles a [`PageScene`] with metadata and fragments
+//! extracted from the post-layout Document. [`PageScene::rasterize`] reuses the
+//! byte-identical sequence of `raikiri_paint::paint_single_page`,
+//! `anyrender_vello_cpu`, and PNG encoding verbatim.
 //!
-//! この段階では `drawables` field を empty のままにした (glyph run /
-//! position 情報を持たない empty entries に populate すると emission order
-//! が変わり byte-identical が破れるため、意図的な hard constraint)。
+//! At this stage, `drawables` was left empty on purpose. Populating entries
+//! without glyph runs or position information would change emission order and
+//! break byte identity; this was a hard constraint.
 //!
-//! # Landing scope: drawables populate (narrowed, items 1-3)
+//! # Landing scope: populate drawables (narrowed, items 1-3)
 //!
-//! [`build_page_scene`] が `drawables` を実際に populate するようになった
-//! (post-layout Element node → [`crate::BlockEntry`]、post-layout Text node →
-//! [`crate::ParagraphEntry`]、[`crate::entries`] module doc参照)。ただし
-//! **paint pipeline は今回も `PageDrawables` を一切消費しない** —
-//! [`PageScene::rasterize`] は引き続き `dom` + `cascade` を thread して
-//! `raikiri_paint::paint_single_page` を verbatim call する (下記
-//! `rasterize` doc参照)。populate と consume が分離されているため、この
-//! 変更は byte-identical VRT に影響しない。`raikiri_paint::paint_single_page`
-//! を `PageDrawables` 消費に rework する話 (元 item 4) は crate-topology
-//! 判断待ちで将来の作業に分離済み。
+//! [`build_page_scene`] now populates `drawables` (post-layout Element nodes →
+//! [`crate::BlockEntry`], post-layout Text nodes → [`crate::ParagraphEntry`]; see
+//! the [`crate::entries`] module docs). **The paint pipeline still does not
+//! consume `PageDrawables`**: [`PageScene::rasterize`] continues to pass `dom`
+//! and `cascade` to `raikiri_paint::paint_single_page` verbatim (see the
+//! `rasterize` docs below). Keeping population separate from consumption makes
+//! this change byte-identical in VRT. Reworking
+//! `raikiri_paint::paint_single_page` to consume `PageDrawables` (the original
+//! item 4) remains future work pending a crate-topology decision.
 
 use crate::PageDrawables;
 use crate::entries::{BlockEntry, ParagraphEntry};
@@ -58,130 +56,133 @@ use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox};
 use std::collections::BTreeMap;
 
-/// `PageScene` 内部の座標に使う type alias。
+/// Type alias for coordinates within `PageScene`.
 ///
-/// これは `raikiri` crate の dogfooding snapshot 用であり、fulgur-facing
-/// coordinate contract ではない。Newtype ではなく alias とし、arithmetic は
-/// Rust の primitive f32 operator を直接使えるようにする (初期の minimal
-/// surface 判断、将来 unit-safety を強化する場合は newtype 化が別 decision)。
+/// This is for a dogfooding snapshot in the `raikiri` crate, not the
+/// fulgur-facing coordinate contract. It is an alias rather than a newtype,
+/// so arithmetic can use Rust's primitive f32 operators directly. This was
+/// the initial minimal-surface decision; stronger unit safety would require
+/// a separate decision to introduce a newtype.
 ///
 /// # Unit contract issue: `Pt` currently carries CSS px, not PDF pt
 ///
-/// `build_page_scene` は `PageMetadata.size` / [`Fragment`] fields
-/// (本 `Pt` 型) に **CSS px** 値 (1/96 in、PageBox / taffy `unrounded_layout`
-/// 由来) を populate している。本 doc は "PDF point 1/72 in" を promise する
-/// ため fulgur consumer が pt として読むと約 33% の geometry drift を起こす
-/// (byte-identical raster path は影響なし — paint は Node arena を CSS px で
-/// 再 walk する)。unit 変換 or type rename の resolution は今後の作業に
-/// 持ち越し (byte-identical maintenance が primary scope だったため defer、
-/// 将来 resolve 予定)。
+/// `build_page_scene` populates `PageMetadata.size` and [`Fragment`] fields
+/// (of this `Pt` type) with **CSS px** values (1/96 in, from PageBox / taffy
+/// `unrounded_layout`). This documentation promises "PDF point 1/72 in", so a
+/// fulgur consumer that reads these values as pt gets about 33% geometry drift.
+/// The byte-identical raster path is unaffected: paint walks the Node arena
+/// again in CSS px. Unit conversion or a type rename is deferred to future
+/// work because byte-identical maintenance was the primary scope.
 ///
-/// 後続の [`crate::entries`] 群 (`BlockEntry` の
-/// `layout_size` / `border_widths` 等) も同じ `Pt` alias を再利用し、同じ
-/// CSS-px-in-Pt debt を意図的に踏襲する (新たな別種の known unit mismatch を作らない
-/// ための選択、[`crate::entries`] module doc参照)。
+/// The later [`crate::entries`] types (`BlockEntry`'s `layout_size`,
+/// `border_widths`, etc.) reuse the same `Pt` alias and deliberately inherit
+/// this CSS-px-in-Pt debt rather than introduce another kind of known unit
+/// mismatch (see the [`crate::entries`] module docs).
 pub type Pt = f32;
 
-/// Page 向きを示す enum。
+/// Page orientation.
 ///
-/// CSS Paged Media の `size: portrait | landscape` を反映する consumer-facing
-/// property。将来 `size: <named-size>` (A4 / Letter etc.) を
-/// [`PageMetadata::page_name`] と組み合わせて解釈する時の primary axis。
+/// A consumer-facing property reflecting CSS Paged Media's
+/// `size: portrait | landscape`. It is the primary axis for future
+/// interpretation of `size: <named-size>` (A4 / Letter, etc.) together with
+/// [`PageMetadata::page_name`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Orientation {
-    /// 縦長 (width < height)。CSS の default。
+    /// Portrait (width < height), the CSS default.
     #[default]
     Portrait,
-    /// 横長 (width > height)。
+    /// Landscape (width > height).
     Landscape,
 }
 
-/// Page 全体の metadata (size / 名前 / 向き)。
+/// Metadata for an entire page (size / name / orientation).
 ///
-/// `size` は Pt 単位 `(width, height)`。CSS `@page` rule の `size` descriptor と
-/// consumer 側の canvas size を紐付ける consumer contract。
+/// `size` is `(width, height)` in Pt. The consumer contract connects the
+/// CSS `@page` rule's `size` descriptor to the consumer's canvas size.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageMetadata {
-    /// Page の (幅, 高さ) を Pt で保持。
+    /// Page (width, height) in Pt.
     pub size: (Pt, Pt),
     /// Zero-based position in the paginated document.
     pub page_index: u32,
-    /// CSS `@page :first { size: A4 landscape; }` 等で名前付き page を
-    /// 選択する場合の page name。無名 page (default) の場合は `None`。
+    /// Name of the page selected by CSS rules such as
+    /// `@page :first { size: A4 landscape; }`. `None` for an unnamed (default) page.
     pub page_name: Option<String>,
-    /// [`Orientation::Portrait`] / [`Orientation::Landscape`]。
+    /// [`Orientation::Portrait`] / [`Orientation::Landscape`].
     pub orientation: Orientation,
 }
 
-/// 1 個の [`NodeId`] に対応する 1 fragment の座標 (body-content-area-relative Pt、
-/// fulgur drawables.rs:430-438 の per-fragment coordinate semantic 準拠)。
+/// Coordinates of one fragment corresponding to a [`NodeId`] (in Pt,
+/// relative to the body content area, following Fulgur's per-fragment
+/// coordinate semantics in drawables.rs:430-438).
 ///
-/// Multi-page block (`<div>` が page break を跨いで 2 fragment に分割) を
-/// PageScene 側では `fragments: BTreeMap<NodeId, Vec<Fragment>>` の
-/// entry 複数として表現する。`page_index` は fragment がどの page に属するか
-/// を identify するための cross-page 参照 (単一 PageScene 内では固定値)。
+/// PageScene represents a multi-page block (for example, a `<div>` split into
+/// two fragments across a page break) as multiple entries in
+/// `fragments: BTreeMap<NodeId, Vec<Fragment>>`. `page_index` identifies the
+/// fragment's page across pages; it is fixed within one PageScene.
 ///
 /// Re-exported as `PageSceneFragment` to distinguish these scene coordinates
 /// from the layout views used by drawing consumers.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct Fragment {
-    /// この fragment を含む page の 0-based index。
+    /// Zero-based index of the page containing this fragment.
     pub page_index: u32,
-    /// Fragment 左上 x (border-box、body-content-area origin 起点、Pt)。
+    /// Fragment top-left x (border box, relative to the body-content-area origin, Pt).
     pub x: Pt,
-    /// Fragment 左上 y (border-box、body-content-area origin 起点、Pt)。
+    /// Fragment top-left y (border box, relative to the body-content-area origin, Pt).
     pub y: Pt,
-    /// Fragment 幅 (border-box、Pt)。
+    /// Fragment width (border box, Pt).
     pub width: Pt,
-    /// Fragment 高さ (border-box、Pt)。
+    /// Fragment height (border box, Pt).
     pub height: Pt,
 }
 
-/// 1 page 分の immutable snapshot。`raikiri` crate 内の dogfooding / validation
-/// path が page 単位で forward iterate して消費する pub 型。
+/// Immutable snapshot of one page. Public type consumed one page at a time
+/// by forward-iterating dogfooding and validation paths within `raikiri`.
 ///
-/// Fulgur-facing page output は `raikiri-dom` を中心に設計され、この型はその
-/// 外部契約ではない。
+/// Fulgur-facing page output is designed primarily in `raikiri-dom`; this
+/// type is not that external contract.
 ///
-/// # Field 意味
+/// # Field meanings
 ///
-/// - [`page_metadata`](PageScene::page_metadata): page の size / 名前 / 向き
-/// - [`node_ids`](PageScene::node_ids): この page に含まれる全 DOM node の
-///   [`NodeId`]、raikiri 内部 fragmentation pass が確定した順序で並ぶ
-/// - [`fragments`](PageScene::fragments): NodeId ごとの per-fragment 座標。
-///   単一 node が page 内で 1 fragment に収まる場合は `Vec` 長 1
-/// - [`drawables`](PageScene::drawables): per-attribute node map ([`PageDrawables`]
-///   参照)、ECS 風 shape
-/// - [`root_id`](PageScene::root_id) / [`body_id`](PageScene::body_id):
-///   `<html>` / `<body>` node の NodeId、consumer が root-level styling
-///   (background / opacity) を lookup する時の entry point
-/// - [`body_offset_pt`](PageScene::body_offset_pt): html → body の margin
-///   collapse を折り込んだ page-absolute offset (fulgur drawables.rs:430-438
-///   の `body_offset_pt` semantic 準拠)。consumer が [`fragments`](PageScene::fragments)
-///   の per-fragment (x, y) (body-content-area-relative) に加算することで
-///   page-absolute 座標を得る
+/// - [`page_metadata`](PageScene::page_metadata): page size / name / orientation
+/// - [`node_ids`](PageScene::node_ids): [`NodeId`] values for every DOM node on
+///   this page, in the order established by raikiri's internal fragmentation pass
+/// - [`fragments`](PageScene::fragments): per-fragment coordinates for each NodeId;
+///   the `Vec` has length 1 when a node occupies one fragment on the page
+/// - [`drawables`](PageScene::drawables): per-attribute node map (see
+///   [`PageDrawables`]), with an ECS-like shape
+/// - [`root_id`](PageScene::root_id) / [`body_id`](PageScene::body_id): NodeIds
+///   of the `<html>` / `<body>` nodes; entry points for consumers looking up
+///   root-level styling (background / opacity)
+/// - [`body_offset_pt`](PageScene::body_offset_pt): page-absolute offset after
+///   html → body margin collapse (following `body_offset_pt` semantics in
+///   Fulgur drawables.rs:430-438). Consumers add this to the body-content-area-
+///   relative per-fragment (x, y) in [`fragments`](PageScene::fragments) to get
+///   page-absolute coordinates
 /// - [`margin_boxes`](PageScene::margin_boxes): matching `@page` margin-box
 ///   declaration bags for the downstream slot-layout pass
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageScene {
-    /// Page の size / 名前 / 向き。
+    /// Page size / name / orientation.
     pub page_metadata: PageMetadata,
-    /// この page に含まれる全 NodeId (raikiri 内部 pass 確定順)。
+    /// All NodeIds on this page (in raikiri internal pass order).
     pub node_ids: Vec<NodeId>,
-    /// NodeId ごとの per-fragment 座標。
+    /// Per-fragment coordinates keyed by NodeId.
     pub fragments: BTreeMap<NodeId, Vec<Fragment>>,
-    /// Per-attribute node map ([`PageDrawables`] 参照)。
+    /// Per-attribute node map (see [`PageDrawables`]).
     pub drawables: PageDrawables,
-    /// `<html>` root NodeId。存在しない document は `None`。
+    /// `<html>` root NodeId, or `None` if the document has no root.
     pub root_id: Option<NodeId>,
-    /// `<body>` NodeId。存在しない document は `None`。
+    /// `<body>` NodeId, or `None` if the document has no body.
     pub body_id: Option<NodeId>,
-    /// html → body margin collapse を折り込んだ page-absolute offset (Pt, Pt) —
-    /// Fragment 座標 (body-content-area-relative) に加算して page-absolute 座標を得る。
+    /// Page-absolute offset (Pt, Pt) accounting for html → body margin collapse.
+    /// Add it to body-content-area-relative fragment coordinates to obtain
+    /// page-absolute coordinates.
     pub body_offset_pt: (Pt, Pt),
     /// Cascaded margin-box declaration bags for this page, in source order.
     ///
@@ -196,51 +197,56 @@ pub struct PageScene {
 }
 
 impl PageScene {
-    /// 1 page 分の snapshot を A4 (or 指定 `PageBox`) canvas に raster して PNG bytes を返す。
+    /// Rasterize a one-page snapshot on an A4 (or supplied `PageBox`) canvas
+    /// and return PNG bytes.
     ///
-    /// # なぜ snapshot が `dom` + `cascade` を param に取るのか
+    /// # Why does a snapshot take `dom` and `cascade` parameters?
     ///
-    /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) は
-    /// minimal field を populate されているが、paint 消費
-    /// 側はまだ切り替わっていない — glyph run 自体 (実 shape / position) は
-    /// 依然 `parley::Layout` 型そのものであり [`crate::entries`] の field type
-    /// 方針 (raikiri-style/parley 型を持たない) の対象外なので、真の paint
-    /// truth は post-layout `Node.text_layout` (DOM arena) に住んだまま
-    /// [`raikiri_paint::paint_single_page`] が DFS で消費する。従って
-    /// byte-identical output を維持するため rasterize は `dom` + `cascade` を
-    /// thread して既存 paint pipeline を verbatim reuse する。`paint_single_page`
-    /// を `PageDrawables` 消費に rework する話 (真の snapshot semantics へ
-    /// 到達し `dom` / `cascade` param を drop する) は crate-topology 判断待ちで
-    /// 将来の作業に分離済み。
+    /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) have their
+    /// minimal fields populated, but paint has not switched to consuming them.
+    /// Glyph runs (their actual shapes and positions) still live in
+    /// `parley::Layout`, outside the field-type policy for [`crate::entries`]
+    /// (which excludes raikiri-style/parley types). The source of truth for
+    /// paint therefore remains post-layout `Node.text_layout` in the DOM arena,
+    /// which [`raikiri_paint::paint_single_page`] consumes by DFS. To maintain
+    /// byte-identical output, rasterize still passes `dom` and `cascade` through
+    /// to the existing paint pipeline verbatim. Reworking `paint_single_page`
+    /// to consume `PageDrawables` (achieving actual snapshot semantics and
+    /// dropping the `dom` / `cascade` parameters) is separate future work
+    /// pending a crate-topology decision.
     ///
-    /// # 内部
-    /// 1. `page_box.{width,height}.ceil() as u32` で pixel buffer 寸法を得る (html_to_png と同一)
-    /// 2. `anyrender::render_to_buffer::<VelloCpuImageRenderer, _>` で `PaintScene` を build
-    /// 3. `raikiri_paint::paint_single_page(scene, dom, cascade, page_box)` を verbatim call
-    /// 4. `encode_png` (`tiny_skia::Pixmap::encode_png`) で RGBA8 → PNG serialize
+    /// # Internals
+    /// 1. Use `page_box.{width,height}.ceil() as u32` for pixel buffer dimensions
+    ///    (the same as html_to_png).
+    /// 2. Build `PaintScene` with `anyrender::render_to_buffer::<VelloCpuImageRenderer, _>`.
+    /// 3. Call `raikiri_paint::paint_single_page(scene, dom, cascade, page_box)` verbatim.
+    /// 4. Serialize RGBA8 to PNG with `encode_png` (`tiny_skia::Pixmap::encode_png`).
     ///
     /// # Panics
-    /// - `page_box.width.ceil()` / `page_box.height.ceil()` を u32 に cast した結果が 0
-    ///   (invalid `tiny_skia::IntSize`)
-    /// - `anyrender_vello_cpu` 出力 buffer 長 != `width * height * 4` (invariant violation)
-    /// - `tiny_skia::Pixmap::encode_png` 失敗 (well-formed pixmap では実際には起きない)
-    /// - (debug build のみ) `cascade` と `dom` が同じ `cascade()` 呼び出しに由来しない
-    ///   (`cascade.computed.len() != dom.node_count()`) —
-    ///   `raikiri_paint` の module doc `## Contract` の caller-responsibility 契約違反。
-    ///   [`raikiri_paint::paint_single_page`] 冒頭の `debug_assert!` が検査する。
-    ///   release build ではこの assert 自体が消える。その場合の挙動は違反の
-    ///   方向で異なる: `cascade.computed.len() < dom.node_count()` なら walk
-    ///   中の raw index site (`cascade.computed[node_id]`) が in-bounds を
-    ///   超えて "index out of bounds" で panic するが、逆方向
-    ///   (`cascade.computed.len() > dom.node_count()`) は同じ index が常に
-    ///   in-bounds のまま残るため panic せず、別 document の computed values
-    ///   を silent に誤用したまま raster が完了する。
+    /// - Casting `page_box.width.ceil()` or `page_box.height.ceil()` to u32 gives 0
+    ///   (invalid `tiny_skia::IntSize`).
+    /// - The `anyrender_vello_cpu` output buffer length differs from
+    ///   `width * height * 4` (invariant violation).
+    /// - `tiny_skia::Pixmap::encode_png` fails (not expected for a well-formed pixmap).
+    /// - (Debug builds only) `cascade` and `dom` did not come from the same
+    ///   `cascade()` call (`cascade.computed.len() != dom.node_count()`). This
+    ///   violates the caller-responsibility contract in the `raikiri_paint`
+    ///   module docs under `## Contract`. The `debug_assert!` at the start of
+    ///   [`raikiri_paint::paint_single_page`] checks it. The assert disappears
+    ///   in release builds. There, behavior depends on the direction of the
+    ///   mismatch: if `cascade.computed.len() < dom.node_count()`, a raw index
+    ///   site (`cascade.computed[node_id]`) in the walk panics with "index out
+    ///   of bounds". In the other direction
+    ///   (`cascade.computed.len() > dom.node_count()`), the index stays in bounds;
+    ///   rasterization completes while silently using computed values from
+    ///   another document.
     ///
-    /// pre-layout Document を渡すと `Node.text_layout` が空で glyph 抜けの PNG が出る
-    /// (undefined、caller は `layout_single_page` 完了後に呼ぶ責任)。
+    /// Passing a pre-layout Document produces a PNG with missing glyphs because
+    /// `Node.text_layout` is empty. Behavior is undefined; callers must wait
+    /// for `layout_single_page` to complete.
     #[must_use]
     pub fn rasterize(&self, dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> Vec<u8> {
-        // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer (html_to_png と同一 rounding)
+        // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer (same rounding as html_to_png)
         let width = page_box.width.ceil() as u32;
         let height = page_box.height.ceil() as u32;
 
@@ -261,13 +267,13 @@ impl PageScene {
         encode_png(&rgba, width, height)
     }
 
-    /// [`Self::rasterize`] と同一だが、`<img>` の decode 済み pixel を
-    /// `pixel_source` から取得して実際に描画する。
+    /// Like [`Self::rasterize`], but retrieves decoded `<img>` pixels from
+    /// `pixel_source` and actually draws them.
     ///
-    /// `_with_images` であって `_with_resolver` でないのは、この段が受け取る
-    /// のが `ImagePixelSource` (decode 済み pixel の読み出し口) であって
-    /// `ReplacedResolver` ではないため — intrinsic size の resolve は layout
-    /// 前に完了している ([`crate::html_to_png_with_resolver`] 参照)。
+    /// This is named `_with_images`, not `_with_resolver`, because this stage
+    /// takes an `ImagePixelSource` (an accessor for decoded pixels), not a
+    /// `ReplacedResolver`. Intrinsic size resolution already happened before
+    /// layout (see [`crate::html_to_png_with_resolver`]).
     #[must_use]
     pub fn rasterize_with_images(
         &self,
@@ -297,35 +303,36 @@ impl PageScene {
     }
 }
 
-/// Post-layout Document から metadata + fragments + drawables を抽出し
-/// [`PageScene`] を construct する。
+/// Extract metadata, fragments, and drawables from a post-layout Document
+/// to construct a [`PageScene`].
 ///
-/// Internal integration — `html_to_png_impl` から
-/// `layout_single_page` 完了後に呼ばれる。`cascade` param が live 化し
-/// (旧 `_cascade`)、DFS walk 中に Element node を
-/// [`BlockEntry`]、Text node を [`ParagraphEntry`] として `drawables` へ
-/// insert する (§module doc の landing scope 参照)。他 9 Entry 型は
-/// 対応する pipeline stage が無いため insert されない ([`crate::entries`]
-/// module doc参照)。
+/// Internal integration: called by `html_to_png_impl` after
+/// `layout_single_page` completes. The `cascade` parameter is now active
+/// (formerly `_cascade`): during the DFS walk, it inserts Element nodes into
+/// `drawables` as [`BlockEntry`] and Text nodes as [`ParagraphEntry`] (see the
+/// landing scope in the module docs). The other nine Entry types are not
+/// inserted because their corresponding pipeline stages do not exist (see
+/// the [`crate::entries`] module docs).
 ///
 /// # NodeId identity mapping
 ///
-/// raikiri-dom arena index (`usize`) を `raikiri_traits::NodeId(u64)` に
-/// `NodeId::new(idx as u64)` で 1:1 射影する ("同一 NodeId 空間" を promise)。
-/// 将来 真の PageDrawables 経由 paint に切り替わる時に本 mapping の
-/// correctness が effective になる、現状は paint に影響しない cosmetic 属性。
+/// Map raikiri-dom arena indices (`usize`) 1:1 to `raikiri_traits::NodeId(u64)`
+/// via `NodeId::new(idx as u64)`, honoring the promise of a shared NodeId
+/// space. This mapping becomes functionally important when paint switches to
+/// consuming PageDrawables; for now it is metadata and does not affect paint.
 ///
 /// # Fragment coordinate semantics
 ///
-/// [`Fragment`] は body-content-area-relative Pt。body 自身は
-/// `(x, y) = (0, 0)`、size は page dimensions。以降の descendant は
-/// `raikiri_paint::walk::paint_document` と同じ DFS stack 順で
-/// `parent_abs + node.unrounded_layout.location` を積算した body-relative 座標。
+/// [`Fragment`] uses Pt relative to the body content area. The body itself
+/// has `(x, y) = (0, 0)` and page dimensions as its size. Descendants use
+/// body-relative coordinates accumulated as
+/// `parent_abs + node.unrounded_layout.location`, in the same DFS stack order
+/// as `raikiri_paint::walk::paint_document`.
 ///
-/// `body_offset_pt` は page-absolute origin における body 位置 — 現状 @page
-/// margin なしで body_id が taffy root として (0, 0) から compute されるため
-/// 常に `(0.0, 0.0)`。将来 @page margin が導入された時点で cascade から
-/// 引き出す予定。
+/// `body_offset_pt` is the body's position relative to the page-absolute
+/// origin. With no @page margins yet and the body computed from (0, 0) as the
+/// taffy root, it is always `(0.0, 0.0)`. A future change will derive it from
+/// the cascade when @page margins are introduced.
 /// Build the first page of a document using the compatibility single-page
 /// coordinates.
 pub fn build_page_scene(dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> PageScene {
@@ -479,27 +486,27 @@ pub fn build_page_scene_for_page_named(
     }
 }
 
-/// Element node の `id` attribute を [`raikiri_traits::Dom`] trait 経由で取得
-/// する。
+/// Get an Element node's `id` attribute through the
+/// [`raikiri_traits::Dom`] trait.
 ///
-/// `Document::get_node(usize) -> &raikiri_dom::Node` (本 module の DFS が使う
-/// raw arena accessor) には attribute lookup が無い
-/// (`crates/raikiri-dom/src/node.rs` 参照)。`NodeId` を経由した trait-based
-/// lookup (`Dom::node` → `Node::as_element` → `Element::id`) を別途呼ぶ
-/// (`crates/raikiri-dom/src/dom_impl.rs` 参照 — raw arena accessor と
-/// trait-based element accessor が element-attribute access で unify されて
-/// いないための second lookup path)。空文字列 `id=""` は trait 既定 contract
-/// どおり `None`。
+/// `Document::get_node(usize) -> &raikiri_dom::Node` (the raw arena accessor
+/// used by this module's DFS) has no attribute lookup (see
+/// `crates/raikiri-dom/src/node.rs`). Instead, perform a second, trait-based
+/// lookup through `NodeId` (`Dom::node` → `Node::as_element` → `Element::id`;
+/// see `crates/raikiri-dom/src/dom_impl.rs`). This second path is necessary
+/// because the raw arena accessor and the trait-based element accessor do
+/// not share element-attribute access. An empty `id=""` yields `None`, as
+/// specified by the trait's default contract.
 fn element_id(dom: &Document, node_id: NodeId) -> Option<String> {
     use raikiri_traits::{Dom as _, Element as _, Node as _};
     dom.node(node_id)?.as_element()?.id().map(str::to_string)
 }
 
-/// DFS から最初の `<tag>` element を返す (in-document のみ)。root_id / body_id
-/// 抽出用の internal helper。`raikiri_paint::walk::find_body` と同じ contract
-/// (inert subtree skip、tag 一致で確定) を tag 汎化した shape。
-/// 本 helper は find_body-shaped pattern の 3rd copy — consolidation 判断は
-/// 意図的に見送り済み (duplication として容認)。
+/// Return the first `<tag>` element found by DFS (only in-document nodes).
+/// Internal helper for extracting root_id / body_id. It generalizes the
+/// contract of `raikiri_paint::walk::find_body` (skip inert subtrees; accept
+/// the first matching tag). This is the third copy of the find_body-shaped
+/// pattern; consolidation was intentionally deferred and duplication accepted.
 fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
     let mut stack: Vec<usize> = vec![dom.root_index()];
     while let Some(idx) = stack.pop() {
@@ -517,15 +524,17 @@ fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
     None
 }
 
-/// Premultiplied RGBA8 buffer を PNG bytes に serialize する (`tiny_skia::Pixmap` 経由)。
+/// Serialize a premultiplied RGBA8 buffer to PNG bytes (via `tiny_skia::Pixmap`).
 ///
-/// `rgba` は `width * height * 4` bytes 厳密要求。`anyrender_vello_cpu` の出力は
-/// premultiplied RGBA8 で `tiny_skia` も同 format のため wrap → serialize。
+/// `rgba` must have exactly `width * height * 4` bytes. Both the
+/// `anyrender_vello_cpu` output and `tiny_skia` use premultiplied RGBA8,
+/// so wrap the buffer and serialize it.
 ///
 /// # Panics
 /// - `rgba.len() != width * height * 4`
 /// - `width == 0 || height == 0` (invalid `tiny_skia::IntSize`)
-/// - PNG serialization 失敗 (well-formed pixmap では実際には起きない、invariant violation 扱い)
+/// - PNG serialization fails (not expected for a well-formed pixmap;
+///   treated as an invariant violation).
 fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     let expected = (width as usize) * (height as usize) * 4;
     assert_eq!(

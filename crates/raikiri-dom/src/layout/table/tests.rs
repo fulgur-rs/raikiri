@@ -998,14 +998,22 @@ fn absolute_auto_table_uses_definite_containing_block_width() {
 }
 
 // -----------------------------------------------------------------
-// distribute_columns — pure column distributor (avail/min/max/pct).
+// distribute_columns_with_authored with no authored tracks — pure column
+// distributor (avail/min/max/pct). With all-false authored flags this matches
+// the old plain distributor exactly.
 // -----------------------------------------------------------------
 
 #[test]
 fn distribute_columns_exact_fit_uses_min_widths_unchanged() {
     // avail exactly matches the summed min: neither the grow nor the
     // shrink branch fires, so the result is just `min`.
-    let widths = super::distribute_columns(30.0, &[10.0, 20.0], &[50.0, 50.0], &[0.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        30.0,
+        &[10.0, 20.0],
+        &[50.0, 50.0],
+        &[0.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [10.0, 20.0]);
 }
 
@@ -1013,7 +1021,13 @@ fn distribute_columns_exact_fit_uses_min_widths_unchanged() {
 fn distribute_columns_grows_toward_max_then_shares_remainder_equally() {
     // avail exceeds the summed max: every column first grows to its
     // own max, then the still-leftover space is split equally.
-    let widths = super::distribute_columns(30.0, &[0.0, 0.0], &[10.0, 10.0], &[0.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        30.0,
+        &[0.0, 0.0],
+        &[10.0, 10.0],
+        &[0.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [15.0, 15.0]);
 }
 
@@ -1021,7 +1035,13 @@ fn distribute_columns_grows_toward_max_then_shares_remainder_equally() {
 fn distribute_columns_percentage_over_100_percent_is_scaled_down() {
     // pct sums to 120% of avail: the `psum > 1.0` branch scales every
     // percentage down by 1/psum before applying it.
-    let widths = super::distribute_columns(100.0, &[0.0, 0.0], &[100.0, 100.0], &[0.6, 0.6]);
+    let widths = super::distribute_columns_with_authored(
+        100.0,
+        &[0.0, 0.0],
+        &[100.0, 100.0],
+        &[0.6, 0.6],
+        &[false, false],
+    );
     assert!((widths[0] - 50.0).abs() < 0.01, "widths: {widths:?}");
     assert!((widths[1] - 50.0).abs() < 0.01, "widths: {widths:?}");
 }
@@ -1031,7 +1051,13 @@ fn distribute_columns_shrinks_percentage_driven_column_when_over_avail() {
     // The pct-driven column (50px) plus the min-floored column (20px)
     // exceed avail (50px): shrink comes only out of the pct column's
     // slack above its own min (column 1 already sits at its min).
-    let widths = super::distribute_columns(50.0, &[0.0, 20.0], &[100.0, 100.0], &[1.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        50.0,
+        &[0.0, 20.0],
+        &[100.0, 100.0],
+        &[1.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [30.0, 20.0]);
 }
 
@@ -1041,7 +1067,13 @@ fn distribute_columns_min_floor_holds_when_shrink_budget_is_zero() {
     // percentage columns: every column already sits at its own min,
     // so the shrink budget is zero and the table overflows rather
     // than compressing columns below their intrinsic minimum.
-    let widths = super::distribute_columns(10.0, &[20.0, 30.0], &[20.0, 30.0], &[0.0, 0.0]);
+    let widths = super::distribute_columns_with_authored(
+        10.0,
+        &[20.0, 30.0],
+        &[20.0, 30.0],
+        &[0.0, 0.0],
+        &[false, false],
+    );
     assert_eq!(widths, [20.0, 30.0]);
 }
 
@@ -1764,6 +1796,70 @@ fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets()
 }
 
 #[test]
+fn resolve_column_widths_definite_avail_nonfit_keeps_colspan_minimum() {
+    // None + Definite(50) with a colspan=2 cell forcing 100px: the
+    // max-full sum (100) exceeds avail (50), so the non-fit path runs.
+    // It must keep the colspan-derived minimum (50 per column), matching
+    // the known-width branch, not shrink to 25 per column.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let span_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    doc.append_element(
+        Some(span_cell),
+        "div",
+        Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::length(10.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let c0 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    let c1 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![],
+        cells: vec![
+            make_cell(span_cell, 0, 0, 2, 1, Dimension::auto()),
+            make_cell(c0, 1, 0, 1, 1, Dimension::auto()),
+            make_cell(c1, 1, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+    let inputs = LayoutInput {
+        known_dimensions: Size {
+            width: None,
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(50.0),
+            height: AvailableSpace::MaxContent,
+        },
+        ..column_probe_input()
+    };
+    let widths = super::resolve_column_widths(
+        &mut doc,
+        &grid,
+        inputs,
+        Size {
+            width: 0.0,
+            height: 0.0,
+        },
+    );
+
+    assert!((widths[0] - 50.0).abs() < 1.0, "widths: {widths:?}");
+    assert!((widths[1] - 50.0).abs() < 1.0, "widths: {widths:?}");
+    assert!(
+        widths.iter().sum::<f32>() >= 100.0 - 1.0,
+        "colspan minimum must hold even when avail is smaller: {widths:?}"
+    );
+}
+
+#[test]
 fn resolve_column_widths_col_percent_ignored_for_unoccupied_column() {
     let mut doc = Document::new();
     let grid = super::TableGrid {
@@ -2057,5 +2153,179 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
         (td_layout.size.width - 60.0).abs() < 2.0,
         "single track should include both 10px spacing gaps (40 + 2*10 = 60), got {}",
         td_layout.size.width
+    );
+}
+
+// -----------------------------------------------------------------
+// get_colspan — WHATWG HTML 4.9.12.1 ("Forming a table", "Cells" step):
+// missing / unparseable / zero defaults to 1, values above 1000 clamp
+// to 1000. Regression: values above u16::MAX (e.g. "100000") used to
+// fail `parse::<u16>` and fall back to 1 instead of clamping to 1000.
+// -----------------------------------------------------------------
+
+fn colspan_of(value: Option<&str>) -> u16 {
+    let mut doc = Document::new();
+    let td = doc.append_element(None, "td", Style::default(), None::<&str>);
+    if let Some(v) = value {
+        doc.set_element_attributes(td, vec![("colspan".into(), v.into())]);
+    }
+    super::get_colspan(&doc, td)
+}
+
+#[test]
+fn get_colspan_normal_value_passes_through() {
+    assert_eq!(colspan_of(Some("2")), 2);
+    assert_eq!(colspan_of(Some("1000")), 1000);
+}
+
+#[test]
+fn get_colspan_missing_zero_and_invalid_default_to_one() {
+    assert_eq!(colspan_of(None), 1);
+    assert_eq!(colspan_of(Some("0")), 1);
+    assert_eq!(colspan_of(Some("abc")), 1);
+}
+
+#[test]
+fn get_colspan_clamps_values_above_1000() {
+    assert_eq!(colspan_of(Some("1001")), 1000);
+    assert_eq!(colspan_of(Some("65535")), 1000);
+}
+
+#[test]
+fn get_colspan_huge_value_clamps_to_1000_not_one() {
+    // "100000" overflows u16: the old `parse::<u16>` failed and fell
+    // back to 1; parsing wide (u32) clamps it to 1000 per spec.
+    assert_eq!(colspan_of(Some("70000")), 1000);
+    assert_eq!(colspan_of(Some("100000")), 1000);
+}
+
+#[test]
+fn fixed_auto_width_shrink_wraps_to_content() {
+    // CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
+    // automatic layout algorithm; §17.5.2: such a table does not fill its
+    // containing block. One 50px cell must shrink-wrap, not fill A4.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; table-layout: fixed"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = doc.append_element(
+        Some(tr),
+        "td",
+        Style::default(),
+        Some("display: table-cell"),
+    );
+    doc.append_element(
+        Some(td),
+        "div",
+        Style::default(),
+        Some("width: 50px; height: 10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    let table_layout = doc.nodes[table].unrounded_layout;
+    assert!(
+        (table_layout.size.width - 50.0).abs() < 2.0,
+        "fixed+auto table should shrink-wrap to 50px content, got {}",
+        table_layout.size.width
+    );
+}
+
+#[test]
+fn fixed_specified_width_fills_to_specified_width() {
+    // CSS 2.1 §17.5.2.1: a fixed-layout table with an explicit width uses
+    // that width as the distribution basis. Guards on the auto fallback
+    // must not change this path.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; table-layout: fixed; width: 400px"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = doc.append_element(
+        Some(tr),
+        "td",
+        Style::default(),
+        Some("display: table-cell"),
+    );
+    doc.append_element(
+        Some(td),
+        "div",
+        Style::default(),
+        Some("width: 50px; height: 10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    let table_layout = doc.nodes[table].unrounded_layout;
+    assert!(
+        (table_layout.size.width - 400.0).abs() < 2.0,
+        "fixed+400px table should fill to 400px, got {}",
+        table_layout.size.width
+    );
+}
+
+#[test]
+fn auto_width_shrink_wraps_to_content_baseline() {
+    // Baseline: auto layout with no specified width shrink-wraps
+    // (CSS 2.1 §17.5.2.2). Fixed+auto must match this after the fix.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; table-layout: auto"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = doc.append_element(
+        Some(tr),
+        "td",
+        Style::default(),
+        Some("display: table-cell"),
+    );
+    doc.append_element(
+        Some(td),
+        "div",
+        Style::default(),
+        Some("width: 50px; height: 10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    let table_layout = doc.nodes[table].unrounded_layout;
+    assert!(
+        (table_layout.size.width - 50.0).abs() < 2.0,
+        "auto+auto table should shrink-wrap to 50px content, got {}",
+        table_layout.size.width
     );
 }

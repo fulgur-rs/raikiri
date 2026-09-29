@@ -10,23 +10,20 @@ use super::color::*;
 use super::common::*;
 use super::text::*;
 
-/// `border-*-color` の value parser — `currentcolor` keyword を先取りしてから
-/// 既存 [`parse_color`] に委譲する。
+/// Parse `border-*-color` values by recognizing `currentcolor` first, then delegating other colors to
+/// [`parse_color`].
 ///
-/// CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
-/// の border-*-color grammar は `<color>` そのもの、`<color>` production は
-/// CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>
-/// `currentcolor` keyword を含む。しかし本 crate の [`parse_color`] は
-/// cssparser の `parse_named_color` (RGB triple mapping)
-/// 経由のため `currentcolor` は named-color table 未収載として `None` 側に
-/// 落ちる — 本 helper が Ident 段で先取りする必要がある。resolution 委譲の
-/// rationale は [`BorderColor`] enum doc 参照 (paint scope 責務)。
+/// CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color> defines the
+/// `border-*-color` grammar as `<color>`. That production includes the `currentcolor` keyword from
+/// CSS Color 3 §4.4 <https://www.w3.org/TR/css-color-3/#currentColor-def>. This crate's
+/// [`parse_color`] uses cssparser's `parse_named_color` (an RGB triple mapping), whose named-color table
+/// excludes `currentcolor`. The helper must recognize that identifier first. See the [`BorderColor`] enum
+/// doc for why used-value resolution belongs to painting.
 ///
 pub(super) fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
-    // `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、
-    // sibling `parse_margin_side` line 1892 と同 shape の keyword intercept)。
-    // 失敗時 `try_parse` が rewind、続く `parse_color` が Ident (named /
-    // transparent) / Hash / Function の全 alternative を担当。
+    // `expect_ident_matching` follows cssparser's ASCII case-insensitive matching convention. Like
+    // sibling `parse_margin_side`, this intercepts a keyword before trying other forms. On failure,
+    // `try_parse` rewinds so `parse_color` can handle Ident (named / transparent), Hash, or Function.
     if input
         .try_parse(|i| i.expect_ident_matching("currentcolor"))
         .is_ok()
@@ -36,20 +33,17 @@ pub(super) fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderCol
     parse_color(input).map(BorderColor::Resolved)
 }
 
-/// `<length-percentage> | auto` の共通 parser — margin longhand 1 side 分。
+/// Parse `<length-percentage> | auto` for one margin longhand side.
 ///
-/// grammar reference: CSS Box 3 §3.1
-/// <https://www.w3.org/TR/css-box-3/#margin-physical> "Value:
-/// `<length-percentage> | auto`"。
+/// Grammar reference: CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical> "Value:
+/// `<length-percentage> | auto`".
 ///
-/// # Order of alternative
+/// # Order of alternatives
 ///
-/// `auto` ident branch を **先に** try_parse する — [`parse_length_value`] は内部で
-/// `input.next()` を unconditional に消費 (fail 時も token を戻さない) するため、
-/// naive な "try length first, then auto" だと `margin: auto` の `auto` ident
-/// が length parser で drop され後段の auto match が届かない。try_parse で
-/// checkpoint 経由の rewind を確保する (sibling: [`parse_content_list_items`](super::content::parse_content_list_items) の
-/// bare `<string>` literal 分岐と同 pattern)。
+/// Try the `auto` identifier first. [`parse_length_value`] consumes `input.next()` even on failure, so
+/// trying length first would discard the identifier in `margin: auto` before the `auto` branch could run.
+/// `try_parse` establishes a checkpoint and rewinds on failure, as in the bare `<string>` literal branch
+/// of [`parse_content_list_items`](super::content::parse_content_list_items).
 ///
 /// `expect_ident_matching` is ASCII case-insensitive, so `AUTO` and `Auto`
 /// are accepted as well.
@@ -60,10 +54,9 @@ pub(crate) fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAu
     parse_length_value(input, true).map(LengthOrAuto::Length)
 }
 
-/// `margin: <'margin-top'>{1,4}` shorthand — 1-4 value expansion 実装。
+/// Expand the 1–4 values of the `margin: <'margin-top'>{1,4}` shorthand.
 ///
-/// grammar reference: CSS Box 3 §3.2
-/// <https://www.w3.org/TR/css-box-3/#margin-shorthand>。
+/// Grammar reference: CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>.
 ///
 /// # Expansion rules (spec verbatim, §3.2)
 ///
@@ -76,21 +69,19 @@ pub(crate) fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAu
 ///
 /// # Trailing garbage handling
 ///
-/// 5+ value (`margin: 10px 20px 30px 40px 50px`) は本 helper では 4 value 消費
-/// して残り 1 token を unconsumed で return する。caller の
-/// [`mod@crate::rule`] の `DeclParser` の
-/// [`cssparser::DeclarationParser::parse_value`]
-/// impl が `expect_exhausted` で余剰 token を
-/// 検知して declaration ごと drop する (既存 [`parse_font_family`] 系と同じ
-/// 責務分担、`rejects_extra_length_after_font_size` 系 test で pattern を pin)。
+/// With five values (`margin: 10px 20px 30px 40px 50px`), this helper consumes the first four and
+/// leaves the last token unconsumed. The caller's `DeclParser` in [`mod@crate::rule`] detects the extra
+/// token with `expect_exhausted` in its [`cssparser::DeclarationParser::parse_value`] implementation
+/// and drops the entire declaration. This matches the handling of [`parse_font_family`] and the
+/// `rejects_extra_length_after_font_size` test.
 pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAuto>> {
     let v1 = parse_margin_side(input)?;
-    // 2nd value 不在 → 1 value case: 全 4 side に spread (§3.2 "If there is only
-    // one component value, it applies to all sides")。
+    // Without a second value, apply the first to all four sides (§3.2: "If there is only one component
+    // value, it applies to all sides").
     let Some(v2) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
         return Some(Sides::all(v1));
     };
-    // 3rd 不在 → 2 value case: top/bottom = 1st, right/left = 2nd。
+    // Without a third value: top/bottom = first, right/left = second.
     let Some(v3) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
         return Some(Sides {
             top: v1,
@@ -99,7 +90,7 @@ pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
             left: v2,
         });
     };
-    // 4th 不在 → 3 value case: top = 1st, right/left = 2nd, bottom = 3rd。
+    // Without a fourth value: top = first, right/left = second, bottom = third.
     let Some(v4) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
         return Some(Sides {
             top: v1,
@@ -108,11 +99,10 @@ pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
             left: v2,
         });
     };
-    // 4 values: clockwise from top (top, right, bottom, left)。5th 以降は
-    // 本 helper では消費せず、caller の `expect_exhausted` で drop される
-    // (property.rs test `margin_shorthand_leaves_extra_values_for_caller_exhausted_check`
-    //  で parse_value 単体挙動、rule.rs test `margin_shorthand_five_values_declaration_dropped`
-    //  で end-to-end drop を pin)。
+    // Four values go clockwise from the top (top, right, bottom, left). This helper leaves any fifth
+    // value unconsumed for the caller's `expect_exhausted` to reject. The property.rs test
+    // `margin_shorthand_leaves_extra_values_for_caller_exhausted_check` checks this helper; the rule.rs
+    // test `margin_shorthand_five_values_declaration_dropped` checks the complete declaration.
     Some(Sides {
         top: v1,
         right: v2,
@@ -121,69 +111,60 @@ pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
     })
 }
 
-/// `margin-inline: <'margin-top'>{1,2}` / `margin-block: <'margin-top'>{1,2}`
-/// shorthand を [`StartEnd<LengthOrAuto>`] に expand する — 1-2 value
-/// expansion。
+/// Expand `margin-inline: <'margin-top'>{1,2}` / `margin-block: <'margin-top'>{1,2}` shorthand to
+/// [`StartEnd<LengthOrAuto>`] — 1-2 value expansion.
 ///
-/// grammar reference: CSS Logical Properties and Values 1 §4.2
-/// <https://www.w3.org/TR/css-logical-1/#propdef-margin-inline>: "The first
-/// value represents the start edge style, and the second value represents
-/// the end edge style. If only one value is given, it applies to both the
-/// start and end edges." — `margin-block` の propdef も同じ文言・同じ
-/// grammar (`<'margin-top'>{1,2}`) を共有するため、この 1 helper を
-/// `margin-inline`/`margin-block` 両方の parser arm で共用する
-/// ([`PropertyValue::MarginInline`] doc 参照 — 物理 axis (left/right か
-/// top/bottom か) を決めるのは呼び出し側が選ぶ `PropertyValue` variant で
-/// あり、この関数自体は axis を知らない)。
+/// Grammar reference: CSS Logical Properties and Values 1 §4.2
+/// <https://www.w3.org/TR/css-logical-1/#propdef-margin-inline>: "The first value represents the start edge
+/// style, and the second value represents the end edge style. If only one value is given, it applies to
+/// both the start and end edges." The `margin-block` property definition uses the same wording and
+/// the same grammar (`<'margin-top'>{1,2}`), this helper serves both `margin-inline` and `margin-block`.
+/// The caller chooses a `PropertyValue` variant to select the physical axis (left/right or top/bottom);
+/// this function does not know that axis. See the [`PropertyValue::MarginInline`] doc.
 ///
 /// # Robustness
 ///
-/// 3 個目以降の value は本 helper では consume せず leftover として残す →
-/// caller (`rule.rs::DeclParser`) の `expect_exhausted` が declaration
-/// ごと drop する ([`parse_margin_shorthand`] の "Trailing garbage
-/// handling" 節と同型)。
+/// This helper leaves a third or later value unconsumed. The caller (`rule.rs::DeclParser`) detects
+/// the leftover with `expect_exhausted` and drops the declaration, as described under "Trailing garbage
+/// handling" in [`parse_margin_shorthand`].
 pub(super) fn parse_margin_logical_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<StartEnd<LengthOrAuto>> {
     let start = parse_margin_side(input)?;
-    // 2nd value 不在 → 1 value case: start/end 両方に spread (spec "If only
-    // one value is given, it applies to both the start and end edges")。
+    // Without a second value, apply the first to both edges (spec: "If only one value is given, it
+    // applies to both the start and end edges").
     let Some(end) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
         return Some(StartEnd::both(start));
     };
     Some(StartEnd { start, end })
 }
 
-/// `width: auto | <length-percentage [0,∞]>` を parse する。
+/// Parse `width: auto | <length-percentage [0,∞]>`.
 ///
-/// grammar reference: CSS Sizing 3 §3.1.1
-/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties> "Value:
-/// `auto | <length-percentage [0,∞]> | min-content | max-content |
-/// fit-content(<length-percentage>)`"、"Initial: auto"、"Inherited: no"。
+/// Grammar reference: CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>
+/// "Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
+/// fit-content(<length-percentage>)`", "Initial: auto", "Inherited: no".
 ///
-/// # 非対応 (spec-valid、将来対応)
+/// # Not supported (spec-valid, future support)
 ///
-/// `min-content` / `max-content` / `fit-content()` は intrinsic sizing keyword
-/// で未実装 — 本 helper では受理せず自然に `None` に落ちる (`auto` ident
-/// 分岐で `expect_ident_matching("auto")` が fail、続く `parse_length_value` が
-/// keyword / function token を Dimension / Percentage arm fall-through で drop)。
-/// 負値 (`width: -10px`) は spec grammar `[0,∞]` violation として drop する。
+/// The intrinsic sizing forms `min-content`, `max-content`, and `fit-content()` are not implemented.
+/// They return `None`: `expect_ident_matching("auto")` rejects their identifiers, and the following
+/// `parse_length_value` rejects their keyword or function tokens in its Dimension / Percentage match.
+/// Negative values (`width: -10px`) also violate the specification's `[0,∞]` grammar and are dropped.
 ///
 /// # Order of alternatives
 ///
-/// [`parse_margin_side`] と同 pattern の "auto ident branch 先行 try_parse":
-/// [`parse_length_value`] は内部で `input.next()` を unconditional に消費する
-/// (fail 時も token を戻さない) ため、naive な "try length first, then auto"
-/// だと `width: auto` の `auto` ident が length parser で drop され後段の auto
-/// match が届かない。`try_parse` で checkpoint 経由の rewind を確保する。
+/// Like [`parse_margin_side`], try the `auto` identifier branch first. [`parse_length_value`] consumes
+/// `input.next()` unconditionally, even when parsing fails. If the length branch ran first, it would
+/// discard the `auto` identifier in `width: auto` before the fallback could match it.
+/// `try_parse` establishes a checkpoint and rewinds on failure.
 ///
 /// # Non-negative constraint
 ///
-/// [`parse_padding_side`] と同 pattern の全 [`Length`] variant OR-pattern check —
-/// spec `[0,∞]` の closed interval を parse-time enforce (Verification #4:
-/// `width: -10px` → `None` → declaration drop)。padding と shape は同じだが
-/// `auto` keyword 分岐が先行する (padding は `auto` を受理しない grammar
-/// `<length-percentage [0,∞]>` のみ)。
+/// As in [`parse_padding_side`], an OR-pattern checks every [`Length`] variant at parse time for the
+/// closed interval `[0,∞]` (Verification #4: `width: -10px` → `None` → declaration dropped). The only
+/// structural difference is the preceding `auto` branch: padding's `<length-percentage [0,∞]>` grammar
+/// does not allow `auto`.
 pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
@@ -232,71 +213,63 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `padding-{top,right,bottom,left}` の single-side value を parse する。
+/// Parse the single-side value of `padding-{top,right,bottom,left}`.
 ///
-/// grammar: `<length-percentage [0,∞]>` (CSS Box 3 §4.1
-/// <https://www.w3.org/TR/css-box-3/#padding-physical>)。spec verbatim:
-/// "Negative values for padding properties are invalid." — 負値は grammar 違反
-/// として declaration ごと drop する。
+/// Grammar: `<length-percentage [0,∞]>` (CSS Box 3 §4.1
+/// <https://www.w3.org/TR/css-box-3/#padding-physical>). The specification states verbatim: "Negative
+/// values for padding properties are invalid." A negative value invalidates the declaration.
 ///
-/// # 実装 note
+/// # Implementation note
 ///
-/// 1. [`parse_length_value`] を `allow_percentage=true` で呼ぶ (grammar が
-///    `<length-percentage>`)。dimension 未対応 unit / `auto` keyword / non-numeric
-///    token は同 helper が `None` に落とす (font-size 経路と同 pattern)。
-/// 2. 全 [`Length`] variant の payload ([`Length::payload`] 経由) に対し
-///    `>= 0.0` を確認、負値は `None` 返し (`Percent(-10.0)` = `-10%` も含む —
-///    Verification #5 で pin)。
+/// 1. Call [`parse_length_value`] with `allow_percentage=true` for the `<length-percentage>` grammar.
+///    Unsupported dimension units, the `auto` keyword, and other nonnumeric tokens return `None`, as
+///    they do in the font-size parser.
+/// 2. Check that every [`Length`] variant's payload (via [`Length::payload`]) is `>= 0.0`.
+///    Negative values return `None`, including `Percent(-10.0)` = `-10%` (Verification #5).
 ///
 /// # Sibling pattern
 ///
-/// [`parse_font_size`] の `<length-percentage>` 分岐 (ident 分岐で `None` に
-/// なった後の tail) と同形 — どちらも `allow_percentage=true` で
-/// [`parse_length_value`] を呼び、[`Length::payload`] で全 [`Length`] variant の
-/// payload を抽出して `>= 0.0` を post-filter する (tail 部分の body は
-/// identical)。`parse_font_size` は後に `<absolute-size>` /
-/// `<relative-size>` / `math` の ident 分岐 (`parse_font_size_keyword`) が
-/// 前段に付いたため関数全体としては同形ではなくなったが、この tail 部分の
-/// ロジックは identical。
+/// This follows the `<length-percentage>` tail of [`parse_font_size`] after its identifier branch
+/// returns `None`. Both call [`parse_length_value`] with `allow_percentage=true`, extract payloads
+/// through [`Length::payload`] for every [`Length`] variant, then check `>= 0.0`. Their tail bodies match.
+/// The preceding identifier branch (`parse_font_size_keyword`) for `<absolute-size>`, `<relative-size>`,
+/// and `math` now makes the complete functions different, but not those tails.
 ///
-/// 両者が非対称だった時期 (font-size が `<length>` px-only scope で、padding
-/// だけが `<length-percentage>` の 5 variant を受けていた頃) の記述は
-/// font-relative unit 対応で解消済み。
+/// An older description of their asymmetry no longer applies: font-size once accepted only px lengths,
+/// while padding accepted all five `<length-percentage>` variants. Support for font-relative units
+/// removed that difference.
 pub(super) fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
-    // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid."。
+    // CSS Box 3 §4.1: "Negative values for padding properties are invalid."
     (length.payload() >= 0.0).then_some(length)
 }
 
-/// `padding: <'padding-top'>{1,4}` shorthand を [`Sides<Length>`] に expand する。
+/// Expand `padding: <'padding-top'>{1,4}` shorthand to [`Sides<Length>`].
 ///
-/// CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand> の
-/// 1-4 value expansion (逐語引用ではないので `verbatim` 表記は使わない):
+/// The 1–4 value expansion follows CSS Box 3 §4.2
+/// <https://www.w3.org/TR/css-box-3/#padding-shorthand>. This is a paraphrase, not a verbatim quote:
 ///
 /// - 1 value: all 4 sides = value
-/// - 2 values: top/bottom = 1st, left/right = 2nd
-/// - 3 values: top = 1st, left/right = 2nd, bottom = 3rd
+/// - 2 values: top/bottom = first, left/right = second
+/// - 3 values: top = first, left/right = second, bottom = third
 /// - 4 values: top / right / bottom / left (clockwise from top)
 ///
 /// # Robustness
 ///
-/// - 5 個目以降の value は本関数では consume せず leftover として残す →
-///   caller (`rule.rs::DeclParser`) の `expect_exhausted` が declaration
-///   ごと drop する (`padding: 1px 2px 3px 4px 5px` → invalid, drop)。
-/// - 0 value (input が empty) は 1st `parse_padding_side` が `None` を返し
-///   全体 `None` propagate。
-/// - 各 value の non-negative constraint は [`parse_padding_side`] が個別に
-///   enforce (負値混じり `padding: 10px -5px` → 2nd で `None`、全体 drop)。
+/// - This function leaves a fifth or later value unconsumed. The caller (`rule.rs::DeclParser`) uses
+///   `expect_exhausted` to drop the entire declaration (`padding: 1px 2px 3px 4px 5px`).
+/// - With no values, the first `parse_padding_side` returns `None`, which propagates to the whole parse.
+/// - [`parse_padding_side`] enforces each value's nonnegative constraint. For `padding: 10px -5px`,
+///   the second value returns `None` and the whole declaration is dropped.
 pub(super) fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> {
-    // 1st value 必須。無ければ全体 drop (0-value form は grammar 違反)。
+    // The first value is required. Without it, the 0-value form violates the grammar.
     let v1 = parse_padding_side(input)?;
-    // 2-4 value は sequential `try_parse` で optional 取得。`try_parse` は
-    // 失敗時に parser position を rewind するため、前段 None 時にも下段の
-    // try_parse は同 token を再 read → 同 fail、guard 不要 (自然 short-circuit)。
+    // Values 2–4 are optional and parsed with successive `try_parse` calls. Each failed call rewinds,
+    // so if one value is absent, later calls see the same token and fail too; no guard is needed.
     let v2 = input.try_parse(parse_padding_side_res).ok();
     let v3 = input.try_parse(parse_padding_side_res).ok();
     let v4 = input.try_parse(parse_padding_side_res).ok();
-    // spec (CSS Box 3) §4.2 1-4 value expansion (code, not a spec quote):
+    // CSS Box 3 §4.2: 1–4 value expansion (this is a paraphrase, not a specification quote).
     let sides = match (v2, v3, v4) {
         (None, _, _) => Sides::all(v1),
         (Some(h), None, _) => Sides {
@@ -321,18 +294,18 @@ pub(super) fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Side
     Some(sides)
 }
 
-/// [`parse_padding_side`] の `Result` 版 — `try_parse` は closure 内で
-/// `Result` を要求するため wrapper 化。
+/// `Result` version of [`parse_padding_side`] — `try_parse` requires `Result` in a closure, so it is a
+/// wrapper.
 pub(super) fn parse_padding_side_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {
     parse_padding_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `padding-inline: <'padding-top'>{1,2}` / `padding-block: <'padding-top'>{1,2}`
-/// shorthand を [`StartEnd<Length>`] に expand する — 1-2 value expansion。
+/// Expand `padding-inline: <'padding-top'>{1,2}` / `padding-block: <'padding-top'>{1,2}` shorthand to
+/// [`StartEnd<Length>`] — 1-2 value expansion.
 ///
-/// grammar reference: CSS Logical Properties and Values 1 §4.4
+/// Grammar reference: CSS Logical Properties and Values 1 §4.4
 /// <https://www.w3.org/TR/css-logical-1/#propdef-padding-inline> — same
 /// "first value = start, second value = end, one value spreads to both"
 /// text as [`parse_margin_logical_shorthand`] documents in full for the
@@ -342,13 +315,10 @@ pub(super) fn parse_padding_side_res<'i>(
 ///
 /// # Robustness
 ///
-/// 1st value の non-negative constraint 違反は [`parse_padding_side`] の
-/// `?` propagation でそのまま `None` になる。2nd value 位置の違反は
-/// `try_parse` が rewind するため **1-value form の `Some` として扱われ**、
-/// 違反した token は unconsumed のまま残る → caller
-/// (`rule.rs::DeclParser`) の `expect_exhausted` がその leftover を検知して
-/// declaration ごと drop する ([`parse_padding_shorthand`] の "Robustness"
-/// 節と同型。
+/// A negative first value returns `None` through [`parse_padding_side`] and `?`. If the second value
+/// is invalid, `try_parse` rewinds and the helper temporarily returns the one-value `Some` form. The
+/// invalid token remains unconsumed, so the caller (`rule.rs::DeclParser`) detects it through
+/// `expect_exhausted` and drops the declaration. See "Robustness" in [`parse_padding_shorthand`].
 pub(super) fn parse_padding_logical_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<StartEnd<Length>> {
@@ -360,60 +330,52 @@ pub(super) fn parse_padding_logical_shorthand(
     })
 }
 
-/// `border-width` の `medium` keyword (= spec 上の initial value) に対応する
-/// px 値。
+/// Pixel value for the `border-width` `medium` keyword (its specification-defined initial value).
 ///
 /// CSS Backgrounds 3 §3.3 "Line Thickness: the border-width properties"
-/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) 本文 verbatim:
-/// "The thin, medium, and thick keywords are equivalent to 1px, 3px, and 5px,
-/// respectively." — `font-size` の `medium` (UA 裁量、
-/// [`crate::computed::INITIAL_FONT_SIZE_PX`] 参照) とは異なり、こちらは
-/// **spec が規範的に定める厳密値**であり、raikiri の選択ではない。
+/// (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) states verbatim: "The thin, medium,
+/// and thick keywords are equivalent to 1px, 3px, and 5px, respectively." Unlike `font-size`'s
+/// `medium` (a UA choice; see [`crate::computed::INITIAL_FONT_SIZE_PX`]), these exact values are
+/// normative requirements of the specification, not Raikiri choices.
 ///
 /// The implementation uses one shared constant for the `medium` keyword and
 /// the omitted shorthand width. The initial border value reuses the same
 /// constant.
 pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 
-/// `border-{top,right,bottom,left}-width` の single-side value を parse する。
+/// Parse the single-side value of `border-{top,right,bottom,left}-width`.
 ///
-/// Grammar: `<line-width>` = `<length [0,∞]> | thin | medium | thick`
-/// (CSS Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>)。
-/// **`<percentage>` は含まれない** — padding とは違う (
-/// `parse_length_value(input, false)` = `<length>` mode を渡す)。
+/// Grammar: `<line-width>` = `<length [0,∞]> | thin | medium | thick` (CSS Backgrounds 3 §3.3
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-width>). Unlike padding, this grammar excludes
+/// `<percentage>`; pass `parse_length_value(input, false)` to select `<length>` mode.
 ///
-/// # Keyword mapping (spec 規定値)
+/// # Keyword mapping (specification-defined values)
 ///
-/// spec §3.3 は 3 keyword を normative に規定する — verbatim: "The thin,
-/// medium, and thick keywords are equivalent to 1px, 3px, and 5px,
-/// respectively." 対応表:
+/// Section 3.3 defines three keyword values verbatim: "The thin, medium, and thick keywords are
+/// equivalent to 1px, 3px, and 5px, respectively." The mapping is:
 /// - `thin`   → `Length::Px(1.0)`
 /// - `medium` → `Length::Px(3.0)` (initial value)
 /// - `thick`  → `Length::Px(5.0)`
 ///
-/// UA 裁量ではなく spec 規定の equivalence なので、独立実装の制約下でも
-/// そのまま採用できる (Chromium / Firefox / WebKit の実装とも一致)。
+/// These values come from the specification, not UA discretion. Using them does not depend on another
+/// implementation; Chromium, Firefox, and WebKit also use the same mapping.
 ///
 /// # Sign / range
 ///
-/// spec `<length [0,∞]>` の non-negative 制約は本 helper が enforce する
-/// (負値 → `None` = declaration drop)。sibling [`parse_padding_side`] と同じ
-/// post-filter pattern だが、`Length::Percent` variant は生成されない
-/// (`allow_percentage=false` により Percentage token 自体が reject される)。
+/// This helper enforces the `<length [0,∞]>` constraint: a negative value returns `None` and drops the
+/// declaration. It uses the same post-filter pattern as [`parse_padding_side`], but never creates a
+/// `Length::Percent` variant because `allow_percentage=false` rejects Percentage tokens.
 ///
 /// # Non-goals
 ///
-/// - **(a) spec-invalid → drop**: 負値 (`-1px`)、未知 keyword (`fat` 等)、
-///   spec-invalid unit (`%` は grammar に含まれない → drop)。
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(b) 非対応**: `calc()` / `var()` は未実装 (将来対応)、silent drop。
+/// - **(a) spec-invalid → drop**: Negative value (`-1px`), unknown keyword (`fat`, etc.), spec-invalid unit
+///   (`%` is not included in grammar → drop).
+/// - **(b) Unsupported**: CSS-wide keywords are not yet implemented and are silently dropped. The
+///   "CSS-wide keyword" section of the [`PropertyValue`] doc lists the five keywords and explains why.
+/// - **(b) Unsupported**: `calc()` / `var()` are not yet implemented and are silently dropped.
 pub(super) fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Length> {
-    // 1. keyword branch (thin / medium / thick) を先に try — `parse_length_value`
-    //    は unconditional に token を consume するため、`try_parse` で rewind を
-    //    確保する必要がある (sibling `parse_margin_side` の `auto` branch と同
-    //    pattern)。
+    // 1. Try thin / medium / thick first. `parse_length_value` consumes a token even on failure, so
+    // `try_parse` must rewind first, as in the `auto` branch of `parse_margin_side`.
     let keyword = input.try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
         let ident = i.expect_ident()?.clone();
         match ident.to_ascii_lowercase().as_str() {
@@ -426,74 +388,81 @@ pub(super) fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Leng
     if let Ok(l) = keyword {
         return Some(l);
     }
-    // 2. `<length [0,∞]>` — allow_percentage=false で `<length>` mode
-    //    (Percentage token は reject される、`<percentage>` は grammar 外)。
+    // 2. `<length [0,∞]>` — `<length>` mode with allow_percentage=false (Percentage token is rejected,
+    // `<percentage>` is outside the grammar).
     let length = parse_length_value(input, false)?;
-    // spec `<length [0,∞]>` の non-negative constraint — `Length::payload` は
-    // `Percent` も含む全 variant に対して定義されているが、`Percent` は
-    // `allow_percentage=false` により本関数へは到達し得ない (unreachable、
-    // dead value であって dead code ではない — helper 自体は border-width
-    // 専用ではないため分岐を割ることはしない)。
+    // Enforce `<length [0,∞]>`. `Length::payload` also works for `Percent`, but
+    // `allow_percentage=false` prevents that variant from reaching this function. The variant is
+    // unreachable here, not dead code: the shared helper also serves other properties.
     (length.payload() >= 0.0).then_some(length)
 }
 
-/// [`parse_border_width_side`] の `Result` 版 — `try_parse` は closure 内で
-/// `Result` を要求するため wrapper 化 ([`parse_padding_side_res`] と同 pattern)。
+/// `Result` version of [`parse_border_width_side`] — `try_parse` requires `Result` within the closure, so
+/// it is made into a wrapper (same pattern as [`parse_padding_side_res`]).
 fn parse_border_width_side_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {
     parse_border_width_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `border-{top,right,bottom,left}-style` の single-side value を parse する。
+/// Parse the single-side value of `border-{top,right,bottom,left}-style`.
 ///
-/// Grammar: `<line-style>` = `none | hidden | dotted | dashed | solid | double
-/// | groove | ridge | inset | outset` (CSS Backgrounds 3 §3.2
-/// <https://www.w3.org/TR/css-backgrounds-3/#border-style>)。
-/// ASCII case-insensitive で ident と照合 (sibling
-/// [`parse_display`](super::layout::parse_display) / [`parse_text_align`] と同 flavor)。
+/// Grammar: `<line-style>` = `none | hidden | dotted | dashed | solid | double | groove | ridge | inset |
+/// outset` (CSS Backgrounds 3 §3.2 <https://www.w3.org/TR/css-backgrounds-3/#border-style>).
+/// Match identifiers ASCII case-insensitively, as do
+/// [`parse_display`](super::layout::parse_display) and [`parse_text_align`].
 ///
 /// # Non-goals
 ///
-/// - **(a) spec-invalid → drop**: 未知 keyword (`wavy` 等) は silent drop。
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
+/// - **(a) Spec-invalid → drop**: Unknown keywords such as `wavy` are silently dropped.
+/// - **(b) Unsupported**: CSS-wide keywords are not yet implemented and are silently dropped. The
+///   "CSS-wide keyword" section of the [`PropertyValue`] doc lists the five keywords and explains why.
 pub(super) fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(BorderStyle::None),
-        "hidden" => Some(BorderStyle::Hidden),
-        "dotted" => Some(BorderStyle::Dotted),
-        "dashed" => Some(BorderStyle::Dashed),
-        "solid" => Some(BorderStyle::Solid),
-        "double" => Some(BorderStyle::Double),
-        "groove" => Some(BorderStyle::Groove),
-        "ridge" => Some(BorderStyle::Ridge),
-        "inset" => Some(BorderStyle::Inset),
-        "outset" => Some(BorderStyle::Outset),
-        _ => None,
-    }
+    BorderStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `parse_border_style_side` の `Result` 版 (`try_parse` 用)。
+/// `Result` version of `parse_border_style_side` (for `try_parse`).
 fn parse_border_style_side_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<BorderStyle, ParseError<'i, ()>> {
     parse_border_style_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `parse_border_color` の `Result` 版 (`try_parse` 用)。
+/// `Result` version of `parse_border_color` (for `try_parse`).
 fn parse_border_color_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<BorderColor, ParseError<'i, ()>> {
     parse_border_color(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `border-style: <line-style>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。
-/// 1-4 value expansion は [`parse_padding_shorthand`] と同型 (1 → all、
-/// 2 → vertical/horizontal、3 → top/horizontal/bottom、4 → clockwise)。
-/// 5 value 以降は caller の `expect_exhausted` が drop (padding precedent)。
+/// Parse a single CSS-wide keyword (`inherit` / `initial` / `unset` / `revert` /
+/// `revert-layer`) ASCII case-insensitively.
+///
+/// CSS Cascading 4 §7.3 and CSS Cascading 5 §7.3.5 require every property to accept
+/// these keywords as a lone value. Border longhands and the `border` / `border-right`
+/// shorthands implement that contract through [`CssWideKeyword`]; other properties
+/// keep their existing silent-drop behavior. The caller decides the payload mapping;
+/// this helper only recognizes the keyword.
+///
+/// Returns `None` for any other identifier so the caller can fall through to its
+/// component grammar. A CSS-wide keyword combined with other components
+/// (`border-right: inherit solid`) is rejected downstream by the caller's
+/// `expect_exhausted` (see [`crate::rule`] `DeclParser`), not here.
+pub(super) fn parse_css_wide_keyword(input: &mut Parser<'_, '_>) -> Option<CssWideKeyword> {
+    let ident = input.expect_ident().ok()?.clone();
+    CssWideKeyword::from_css_ident(ident.as_ref())
+}
+
+/// `Result` version of [`parse_css_wide_keyword`] for `try_parse`.
+pub(super) fn parse_css_wide_keyword_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssWideKeyword, ParseError<'i, ()>> {
+    parse_css_wide_keyword(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// Parse `border-style: <line-style>{1,4}` (CSS Backgrounds 3 §3.4). Expand values as in
+/// [`parse_padding_shorthand`]: one for all sides, two for vertical/horizontal, three for
+/// top/horizontal/bottom, or four clockwise. The caller's `expect_exhausted` rejects a fifth value.
 pub(super) fn parse_border_style_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<Sides<BorderStyle>> {
@@ -525,9 +494,9 @@ pub(super) fn parse_border_style_shorthand(
     Some(sides)
 }
 
-/// `border-width: <line-width>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。
-/// 各 value の grammar は [`parse_border_width_side`] (thin/medium/thick +
-/// 非負 `<length>`)、1-4 expansion は [`parse_padding_shorthand`] と同型。
+/// Parse `border-width: <line-width>{1,4}` (CSS Backgrounds 3 §3.4). Each value follows
+/// [`parse_border_width_side`] (thin/medium/thick or a nonnegative `<length>`). Expand one to four
+/// values as in [`parse_padding_shorthand`].
 pub(super) fn parse_border_width_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> {
     let v1 = parse_border_width_side(input)?;
     let v2 = input.try_parse(parse_border_width_side_res).ok();
@@ -557,9 +526,9 @@ pub(super) fn parse_border_width_shorthand(input: &mut Parser<'_, '_>) -> Option
     Some(sides)
 }
 
-/// `border-color: <color>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。各
-/// value の grammar は [`parse_border_color`] (`currentcolor` / named /
-/// hash / function)、1-4 expansion は [`parse_padding_shorthand`] と同型。
+/// Parse `border-color: <color>{1,4}` (CSS Backgrounds 3 §3.4). Each value follows
+/// [`parse_border_color`] (`currentcolor`, named, hash, or function). Expand one to four values as in
+/// [`parse_padding_shorthand`].
 pub(super) fn parse_border_color_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<Sides<BorderColor>> {
@@ -591,78 +560,69 @@ pub(super) fn parse_border_color_shorthand(
     Some(sides)
 }
 
-/// `border: <line-width> || <line-style> || <color>` shorthand を parse する。
+/// Parse `border: <line-width> || <line-style> || <color>` shorthand.
 ///
-/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>。
-/// 4 side 全てに同一 [`Border`] を配る (`Sides::all`)。
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>.
+/// Distribute the same [`Border`] to all four sides with `Sides::all`.
 ///
 /// # `||` (any-order) grammar semantics
 ///
-/// spec CSS Values 4 §2.2 "Component Value Combinators"
-/// <https://www.w3.org/TR/css-values-4/#component-combinators> verbatim:
-/// "A double bar (||) separates two or more options: one or more of them must
-/// occur, in any order." — 本 shorthand では:
-/// - each component は最大 1 回 (2 回目の同 slot ident は spec-invalid = drop)
-/// - at least 1 component が必須 (0 component の empty `border:` は drop)
-/// - order は自由 (`1px solid red` / `red 1px solid` / `solid 1px` 全て valid)
+/// CSS Values 4 §2.2 "Component Value Combinators"
+/// <https://www.w3.org/TR/css-values-4/#component-combinators> states verbatim: "A double bar (||) separates two
+/// or more options: one or more of them must occur, in any order." — In this shorthand:
+/// - Each component occurs at most once; a second value for the same slot invalidates the declaration.
+/// - At least one component is required; an empty `border:` declaration is dropped.
+/// - Components can occur in any order (`1px solid red`, `red 1px solid`, and `solid 1px` are valid).
 ///
-/// # Loop 実装
+/// # Loop implementation
 ///
-/// unfilled slot (width / style / color) を loop で peel:
-/// 1. `try_parse` で order-independent に各 slot の parser を試す
-/// 2. 埋まっている slot に match する token に当たったら stop (spec 準拠、caller
-///    の `expect_exhausted` が leftover を drop する — 例: `border: 1px 2px` は
-///    `1px` を width に置いた後 `2px` は既に埋まっている width slot に match して
-///    stop、caller が leftover を検出して declaration ごと drop)
-/// 3. 全 slot が埋まった or どの parser も match しなくなったら break
-/// 4. 少なくとも 1 slot が埋まっていれば `Some`、0 slot なら `None`
+/// In a loop, fill the width, style, and color slots:
+/// 1. Use `try_parse` to try each available slot, independent of token order.
+/// 2. Stop when a token would fill an occupied slot. For `border: 1px 2px`, `1px` fills width and
+///    `2px` cannot fill it again. The caller's `expect_exhausted` drops the leftover and the declaration.
+/// 3. Break when all slots are filled or no parser matches.
+/// 4. `Some` if at least 1 slot is filled, `None` if 0 slot is filled.
 ///
-/// # Initial value fill (省略成分)
+/// # Initial value fill (omitted component)
 ///
-/// spec §3.4 verbatim: "Omitted values are set to their initial values."
-/// 各成分の initial:
-/// - width 省略 → `Length::Px(3.0)` (medium initial)
-/// - style 省略 → `BorderStyle::None` (initial、spec §3.2)
-/// - color 省略 → [`BorderColor::CurrentColor`] (spec §3.1 initial、used-value
-///   resolution は paint scope 責務)
+/// Section 3.4 states verbatim: "Omitted values are set to their initial values." For each component:
+/// - width omitted → `Length::Px(3.0)` (medium initial)
+/// - style omitted → `BorderStyle::None` (initial, spec §3.2)
+/// - color omitted → [`BorderColor::CurrentColor`] (spec §3.1 initial; used-value resolution is the
+///   paint layer's responsibility).
 ///
-/// # Non-goals (spec deviation 明示)
+/// # Non-goals (spec deviation explicit)
 ///
-/// spec §3.4 では border shorthand が **border-image-* も reset** する (spec
-/// verbatim: "The border shorthand also resets border-image to its initial
-/// value.") が、本 crate は border-image を実装していないため
-/// reset side effect を省略。
-/// border-image longhand 実装時に統合する。
+/// Section 3.4 also requires the border shorthand to reset `border-image-*` properties (verbatim:
+/// "The border shorthand also resets border-image to its initial value."). This crate does not yet
+/// implement border-image, so it omits that reset. Add it when border-image longhands are implemented.
 ///
 /// # Sibling pattern
 ///
-/// [`parse_margin_shorthand`] / [`parse_padding_shorthand`] は `{1,4}`
-/// multiplier (順序固定、side ごとに違う値) だが、本 shorthand は `||` (any-order、
-/// side は 4 side 共通) — 別 pattern。sibling は `try_parse` 経由の rewind と
-/// initial fill の点で共通 principle を持つ。
+/// [`parse_margin_shorthand`] and [`parse_padding_shorthand`] use `{1,4}`: values have a fixed order
+/// and may differ by side. This shorthand uses `||`: components appear in any order, and each side gets
+/// the same result. All three use `try_parse` to rewind and fill omitted components with initial values.
 pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
     let mut width: Option<Length> = None;
     let mut style: Option<BorderStyle> = None;
     let mut color: Option<BorderColor> = None;
 
-    // `||` grammar: at least 1 component 必須、each component 最大 1 回、
-    // order 自由。全 slot 満了 or 未 match token 到達で break。
+    // `||` grammar: at least 1 component required, each component at most once, order optional. Break when
+    // all slots are filled or no parser matches the next token.
     //
-    // 各 iteration は "unfilled slot を順に try_parse、成功したら continue、
-    // どの slot にも match しなかったら break" の shape。`continue` の前に slot
-    // 満了 check を置くことで、埋まっている slot に対する 2 回目 (`border: 1px
-    // 2px`) は自動的に fall-through して break (caller の `expect_exhausted` が
-    // 残 token を検知して declaration drop)。
+    // Each iteration tries parsers for unfilled slots in order, continuing on a match and breaking if none
+    // matches. Checking whether slots are full before `continue` ensures a second value for an occupied
+    // slot (`border: 1px 2px`) falls through and breaks. The caller's `expect_exhausted` then sees the remaining
+    // token and drops the declaration.
     loop {
-        // 全 slot 満了 → break (leftover token は caller `expect_exhausted` が drop)
+        // All slots filled → break (the caller drops leftover tokens through `expect_exhausted`).
         if width.is_some() && style.is_some() && color.is_some() {
             break;
         }
 
-        // width slot (unfilled のみ試行) — keyword (thin/medium/thick) と length
-        // の両方を扱う helper を direct 呼ぶ。`try_parse` で失敗時 rewind。
-        // `let Ok(..) = ..` の nested-if は clippy::collapsible-if を回避するため
-        // let-chain (rust 1.88+) で 1 段化。
+        // Width slot: try it only if empty, using a helper for thin/medium/thick and lengths.
+        // `try_parse` rewinds on failure. A Rust 1.88+ let-chain keeps the nested `let Ok(..)` check
+        // in one conditional and avoids clippy::collapsible-if.
         if width.is_none()
             && let Ok(v) = input.try_parse(parse_border_width_side_res)
         {
@@ -670,10 +630,9 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
             continue;
         }
 
-        // style slot — ident が 10 keyword に match すれば埋める。`try_parse` で
-        // 失敗時 rewind (width keyword `thin` / `medium` / `thick` を先に試すため
-        // style keyword `none` / `solid` などとの間の ambiguity は無い、ident 集合が
-        // disjoint)。
+        // Style slot: fill it if the identifier matches one of ten keywords; rewind on failure.
+        // Width keywords `thin` / `medium` / `thick` are tried first and do not overlap with style
+        // keywords such as `none` / `solid`.
         if style.is_none()
             && let Ok(s) = input.try_parse(|i| -> Result<BorderStyle, ParseError<'_, ()>> {
                 parse_border_style_side(i).ok_or_else(|| i.new_custom_error(()))
@@ -683,11 +642,9 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
             continue;
         }
 
-        // color slot — `parse_border_color` を reuse。hex / named / rgb(a) /
-        // transparent の全 alternative + `currentcolor` keyword (CSS Color 3
-        // §4.4) を受理。4 longhand parse site (border-{top,right,bottom,left}-color)
-        // と同じ helper を経由することで sibling convention consistency を
-        // 担保。
+        // Color slot: reuse `parse_border_color` for hex, named colors, rgb(a), transparent, and
+        // `currentcolor` (CSS Color 3 §4.4). The four border-{top,right,bottom,left}-color
+        // longhands use the same helper.
         if color.is_none()
             && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
                 parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
@@ -697,74 +654,121 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
             continue;
         }
 
-        // どの unfilled slot にも match しなかった → 埋まっている slot に対する
-        // 2 回目の指定 or 未知 token。break で loop 終了、caller の
-        // `expect_exhausted` が leftover を drop する (`border: 1px 2px` →
-        // `2px` は width slot 満了で本 fall-through 到達、declaration ごと drop)。
+        // No unfilled slot matches: the token is unknown or repeats a filled slot. Break and leave it
+        // for the caller's `expect_exhausted` to reject. For `border: 1px 2px`, `2px` cannot fill the
+        // already occupied width slot, so the entire declaration is dropped.
         break;
     }
 
-    // spec `||` grammar: at least 1 component 必須。0 component (empty `border:`
-    // or 未知 keyword only) は `None` = declaration drop。
+    // The `||` grammar requires at least one component. An empty `border:` declaration or a single
+    // unknown keyword has none, so return `None` and drop the declaration.
     if width.is_none() && style.is_none() && color.is_none() {
         return None;
     }
 
-    // 省略成分は spec §3.4 の initial value で埋める。
+    // Fill in the omitted components with the initial value from spec §3.4.
     let border = Border {
         width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)), // medium
         style: style.unwrap_or(BorderStyle::None),
-        // §3.1 initial "currentcolor" — used-value resolution は paint scope
-        // 責務。
+        // §3.1 initial "currentcolor" — used-value resolution belongs to the paint layer.
         color: color.unwrap_or(BorderColor::CurrentColor),
     };
     Some(Sides::all(border))
 }
 
-/// `height: <length-percentage [0,∞]> | auto` を parse する。
+/// Parse `border-right: <line-width> || <line-style> || <color>` single-side shorthand.
 ///
-/// grammar reference: CSS Sizing 3 §3.1.1 "Preferred Size Properties"
-/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>。value
-/// grammar は `auto | <length-percentage [0,∞]> | min-content | max-content |
-/// fit-content(<length-percentage>)`、initial value `auto`、Inheritance `No`。
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines `border-right` as the three right-side longhands with the same `||`
+/// component grammar as [`parse_border_shorthand`]. Only the expansion target differs:
+/// one [`Border`] for the right side instead of [`Sides::all`] for all four.
+///
+/// The `||` loop, occupied-slot rejection, empty-declaration drop, and omitted-component
+/// initial fill all match [`parse_border_shorthand`]. CSS-wide keywords are not accepted
+/// here; the `parse_value` dispatch tries [`parse_css_wide_keyword`] first and maps it
+/// to [`PropertyValue::BorderRightCssWide`], so a lone `inherit` never reaches this
+/// function. A combined `inherit solid` therefore fails `expect_exhausted` downstream
+/// rather than being silently truncated.
+pub(crate) fn parse_border_right_shorthand(input: &mut Parser<'_, '_>) -> Option<Border> {
+    let mut width: Option<Length> = None;
+    let mut style: Option<BorderStyle> = None;
+    let mut color: Option<BorderColor> = None;
+
+    loop {
+        if width.is_some() && style.is_some() && color.is_some() {
+            break;
+        }
+        if width.is_none()
+            && let Ok(v) = input.try_parse(parse_border_width_side_res)
+        {
+            width = Some(v);
+            continue;
+        }
+        if style.is_none()
+            && let Ok(s) = input.try_parse(|i| -> Result<BorderStyle, ParseError<'_, ()>> {
+                parse_border_style_side(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            style = Some(s);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
+                parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(c);
+            continue;
+        }
+        break;
+    }
+    if width.is_none() && style.is_none() && color.is_none() {
+        return None;
+    }
+    Some(Border {
+        width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
+        style: style.unwrap_or(BorderStyle::None),
+        color: color.unwrap_or(BorderColor::CurrentColor),
+    })
+}
+
+/// Parse `height: <length-percentage [0,∞]> | auto`.
+///
+/// Grammar reference: CSS Sizing 3 §3.1.1 "Preferred Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>. The value grammar is `auto |
+/// <length-percentage [0,∞]> | min-content | max-content | fit-content(<length-percentage>)`;
+/// the initial value is `auto`, and inheritance is `No`.
 ///
 /// # Scope carving
 ///
-/// - **(a) spec-invalid → drop**: 負値 (`height: -10px`) は grammar `[0,∞]` 違反、
-///   全 [`Length`] variant の payload に対し `>= 0.0` post-filter で reject
-///   ([`parse_padding_side`] の非負フィルタ pattern と同 shape)。
-/// - **(b) 非対応 — 未対応 sizing keyword**: `min-content` /
-///   `max-content` / `fit-content(<length-percentage>)` は現状 scope
-///   外、silent drop (auto ident branch から外れる他 keyword は
-///   `expect_ident_matching("auto")` が失敗 → length parser の Dimension /
-///   Percentage arm でも受理されず None に落ちる)。
-/// - **(b) 非対応 — CSS-wide keyword**: 未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical。同 ident 経路で他 keyword と同じく
-///   落ちる。
-/// - **calc() / var()**: 未実装、本 task scope 外
-///   (`Token::Function` は `parse_length_value` が Dimension / Percentage 以外を
-///   silent drop)。
+/// - **(a) spec-invalid → drop**: Negative value (`height: -10px`) violates grammar `[0,∞]`, rejected by
+///   `>= 0.0` post-filter for every [`Length`] variant payload, as in
+///   [`parse_padding_side`].
+/// - **(b) Unsupported sizing forms**: `min-content`, `max-content`, and
+///   `fit-content(<length-percentage>)` are outside the current scope and are silently dropped. They fail
+///   `expect_ident_matching("auto")`, then the length parser rejects their keyword or function tokens
+///   rather than matching a Dimension / Percentage.
+/// - **(b) Unsupported — CSS-wide keywords**: Not yet implemented. The identifier parser silently
+///   drops them like other unknown keywords. The "CSS-wide keyword" section of the [`PropertyValue`]
+///   doc lists the five keywords and explains why.
+/// - **calc() / var()**: Not implemented, outside this task scope (for `Token::Function`,
+///   `parse_length_value` silently drops anything other than Dimension / Percentage).
 ///
 /// # Order of alternative (sibling: [`parse_margin_side`])
 ///
-/// `auto` ident branch を **先に** try_parse する — [`parse_length_value`] は内部
-/// で `input.next()` を unconditional に消費するため、naive な "try length first,
-/// then auto" だと `height: auto` の `auto` ident が length parser で drop され
-/// 後段の auto match が届かない。`try_parse` で checkpoint 経由の rewind を
-/// 確保する ([`parse_margin_side`] と同 pattern — margin の grammar `<length-
-/// percentage> | auto` と同 shape を LengthOrAuto payload で共有)。
+/// Try the `auto` identifier branch **first**. [`parse_length_value`] consumes `input.next()` even on
+/// failure; trying length first would discard the identifier in `height: auto` before the `auto` match
+/// could run. `try_parse` establishes a checkpoint and rewinds on failure. This follows
+/// [`parse_margin_side`], whose `<length-percentage> | auto` grammar also uses a `LengthOrAuto` payload.
 ///
 /// `expect_ident_matching` is ASCII case-insensitive, so `AUTO` and `Auto`
 /// are accepted as well.
 ///
 /// # Non-negative filter (sibling: [`parse_padding_side`])
 ///
-/// spec `<length-percentage [0,∞]>` (§3.1.1) の非負制約は [`Length::payload`]
-/// 経由で全 [`Length`] variant の payload に対し `>= 0.0` を確認 —
-/// [`parse_padding_side`] の同名 pattern を踏襲 (`<length-percentage [0,∞]>`
-/// grammar と非負フィルタが対応する sibling)。`Percent(-10.0)` = `-10%` も
-/// 含めて全 variant 経由で reject する。
+/// To enforce the specification's `<length-percentage [0,∞]>` constraint (§3.1.1), use
+/// [`Length::payload`] to check every [`Length`] variant's payload against `>= 0.0`. This matches the nonnegative filter
+/// in [`parse_padding_side`]. It also rejects `Percent(-10.0)` (`-10%`).
 pub(super) fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
@@ -813,15 +817,13 @@ pub(super) fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `min-width` / `min-height` / `min-block-size: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する。
+/// Parse `min-width` / `min-height` / `min-block-size: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content`.
 ///
-/// Grammar reference: CSS Sizing 3 §4 "Minimum Size Properties"
-/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>。initial value
-/// `auto`、Inheritance `No`。sibling [`parse_max_size`] (CSS Sizing 3 §5) と
-/// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
-/// (min の initial は `auto`、`none` は max-only grammar)。
-/// 非負制約 (`[0,∞]` → [`Length::payload`] post-filter) と intrinsic keyword の
-/// Auto placeholder mapping は sibling と同一。
+/// CSS Sizing 3 §4 "Minimum Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties> specifies initial value `auto` and
+/// inheritance `No`. This follows the shape of [`parse_max_size`] (CSS Sizing 3 §5), replacing its
+/// max-only `none` branch with the minimum size's `auto` branch. Both enforce `[0,∞]` by filtering
+/// through [`Length::payload`] and map intrinsic keywords to an Auto placeholder.
 pub(super) fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(LengthOrAuto::Auto);
@@ -870,15 +872,13 @@ pub(super) fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto>
     (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する.
+/// Parse `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content`.
 ///
-/// Grammar reference: CSS Sizing 3 §4 "Minimum Size Properties"
-/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>。initial value
-/// `auto`、Inheritance `No`。sibling `parse_max_size` (CSS Sizing 3 §5) と
-/// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
-/// (min の initial は `auto`、`none` は max-only grammar)。
-/// 非負制約 (`[0,∞]` → `Length::payload` post-filter) と intrinsic keyword の
-/// Auto placeholder mapping は sibling と同一。
+/// CSS Sizing 3 §4 "Minimum Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties> specifies initial value `auto` and
+/// inheritance `No`. Like `parse_max_size` (CSS Sizing 3 §5), this parser filters `[0,∞]` through
+/// `Length::payload` and maps intrinsic keywords to an Auto placeholder. Only the first keyword branch
+/// changes: minimum sizes use `auto`, while the maximum size grammar alone uses `none`.
 pub(super) fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
@@ -927,61 +927,49 @@ pub(super) fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto>
     (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `box-sizing: <ident>` を parse する
-/// (CSS Sizing 3 §3.3 <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
+/// Parse `box-sizing: <ident>` (CSS Sizing 3 §3.3 <https://www.w3.org/TR/css-sizing-3/#box-sizing>).
 ///
-/// Spec value grammar (§3.3): `content-box | border-box`。ASCII
-/// case-insensitive で ident を比較する (CSS Values 3 §3.1 "Pre-defined
-/// Keywords"、sibling [`parse_display`](super::layout::parse_display) / [`parse_text_align`] と同 flavor)。
+/// Value grammar (§3.3): `content-box | border-box`. Compare identifiers ASCII case-insensitively,
+/// following CSS Values 3 §3.1 "Pre-defined Keywords" and the same approach as
+/// [`parse_display`](super::layout::parse_display) and [`parse_text_align`].
 ///
-/// # Scope carving ([`BoxSizing`] doc-comment に詳述)
+/// # Scope carving (details in [`BoxSizing`] doc-comment)
 ///
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(a) spec-invalid**: 他 keyword (`padding-box` — CSS-UI 3 draft 相当
-///   だが css-sizing-3 では削除、`margin-box` 等) は silent drop = `None`。
+/// - **(b) Unsupported**: CSS-wide keywords are not yet implemented and are silently dropped. The
+///   "CSS-wide keyword" section of the [`PropertyValue`] doc lists the five keywords and explains why.
+/// - **(a) Spec-invalid**: Other keywords such as `padding-box` (from a CSS-UI 3 draft, removed from
+///   css-sizing-3) and `margin-box` silently return `None`.
 pub(super) fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "content-box" => Some(BoxSizing::ContentBox),
-        "border-box" => Some(BoxSizing::BorderBox),
-        _ => None,
-    }
+    BoxSizing::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `overflow-x` / `overflow-y: <ident>` を parse する (
-/// CSS Overflow 3 §3.1 <https://www.w3.org/TR/css-overflow-3/#overflow-properties>)。
+/// Parse `overflow-x` / `overflow-y: <ident>` (CSS Overflow 3 §3.1
+/// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>).
 ///
-/// Spec value grammar (§3.1): `visible | hidden | clip | scroll | auto`。
-/// ASCII case-insensitive で ident を比較する (sibling [`parse_box_sizing`] /
-/// [`parse_direction`] と同 flavor)。 CSS Overflow also defines the legacy
-/// `overlay` spelling as an alias for `auto`; it is normalized to the same
+/// Value grammar (§3.1): `visible | hidden | clip | scroll | auto`. Match identifiers ASCII
+/// case-insensitively, as do [`parse_box_sizing`] and [`parse_direction`]. CSS Overflow also defines
+/// the legacy `overlay` spelling as an alias for `auto`; it is normalized to the same
 /// [`OverflowValue::Auto`] variant rather than adding a separate computed value.
 ///
-/// # Scope carving ([`OverflowValue`] doc-comment に詳述)
+/// # Scope carving (details in [`OverflowValue`] doc-comment)
 ///
-/// - **(a) spec-invalid**: 上記 5 keyword と legacy alias `overlay` 以外の
-///   ident は silent drop = `None`。
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
+/// - **(a) Spec-invalid**: An identifier other than these five keywords or the legacy `overlay` alias
+///   silently returns `None`.
+/// - **(b) Unsupported**: CSS-wide keywords are not yet implemented and are silently dropped. The
+///   "CSS-wide keyword" section of the [`PropertyValue`] doc lists the five keywords and explains why.
 pub(super) fn parse_overflow_value(input: &mut Parser<'_, '_>) -> Option<OverflowValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "visible" => Some(OverflowValue::Visible),
-        "hidden" => Some(OverflowValue::Hidden),
-        "clip" => Some(OverflowValue::Clip),
-        "scroll" => Some(OverflowValue::Scroll),
-        "auto" | "overlay" => Some(OverflowValue::Auto),
-        _ => None,
+    let ident = input.expect_ident().ok()?;
+    // The legacy `overlay` spelling is an alias for `auto` with no separate
+    // computed-value variant (see `OverflowValue`).
+    if ident.eq_ignore_ascii_case("overlay") {
+        return Some(OverflowValue::Auto);
     }
+    OverflowValue::from_css_ident(ident)
 }
 
-/// `overflow: <'overflow-block'>{1,2}` shorthand — 1-2 value expansion。
+/// `overflow: <'overflow-block'>{1,2}` shorthand — 1-2 value expansion.
 ///
-/// grammar reference: CSS Overflow 3 §3.1
-/// <https://www.w3.org/TR/css-overflow-3/#overflow-properties>。
+/// Grammar reference: CSS Overflow 3 §3.1 <https://www.w3.org/TR/css-overflow-3/#overflow-properties>.
 ///
 /// # Expansion rule (spec verbatim, §3.1)
 ///
@@ -989,53 +977,48 @@ pub(super) fn parse_overflow_value(input: &mut Parser<'_, '_>) -> Option<Overflo
 /// values of overflow-x and overflow-y in that order. If the second value is
 /// omitted, it is copied from the first."
 ///
-/// [`parse_margin_shorthand`] と同じ try_parse 積み上げ pattern の 2-value
-/// 版 (1-4 value ではなく 1-2 value であること以外は同型)。
+/// Like [`parse_margin_shorthand`], stack `try_parse` calls to expand values; here the shorthand
+/// accepts one or two values rather than one to four.
 ///
 /// # Trailing garbage handling
 ///
-/// 3rd value (`overflow: hidden scroll auto`) は本 helper では 2 value 消費
-/// して残り 1 token を unconsumed で return する。caller の
-/// [`mod@crate::rule`] の `DeclParser` の
-/// [`cssparser::DeclarationParser::parse_value`] impl が `expect_exhausted`
-/// で余剰 token を検知して declaration ごと drop する
-/// ([`parse_margin_shorthand`] doc の「Trailing garbage handling」節と同じ
-/// 責務分担)。
+/// For `overflow: hidden scroll auto`, this helper consumes two values and leaves the third token
+/// unconsumed. The caller's `DeclParser` in [`mod@crate::rule`] uses its
+/// [`cssparser::DeclarationParser::parse_value`] implementation to detect the extra token with
+/// `expect_exhausted` and drop the entire declaration. This follows the division
+/// of responsibility described in the "Trailing garbage handling" section of the [`parse_margin_shorthand`] doc.
 pub(super) fn parse_overflow_shorthand(input: &mut Parser<'_, '_>) -> Option<OverflowXY> {
     let v1 = parse_overflow_value(input)?;
-    // 2nd value 不在 → 1 value case: 両 axis に spread (§3.1 "If the second
-    // value is omitted, it is copied from the first.")。
+    // Without a second value, copy the first to both axes (§3.1: "If the second value is omitted,
+    // it is copied from the first.").
     let Some(v2) = input.try_parse(|i| parse_overflow_value(i).ok_or(())).ok() else {
         return Some(OverflowXY::both(v1));
     };
     Some(OverflowXY { x: v1, y: v2 })
 }
 
-/// `position: static | sticky | running(<custom-ident>)` を parse する
-/// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax> および
-/// CSS Positioned Layout Module Level 3 §3
-/// <https://www.w3.org/TR/css-position-3/#sticky-pos>)。
+/// Parse `position: static | sticky | running(<custom-ident>)` (CSS GCPM 3 §1.2.1
+/// <https://www.w3.org/TR/css-gcpm-3/#running-syntax> and CSS Positioned Layout Module Level 3 §3
+/// <https://www.w3.org/TR/css-position-3/#sticky-pos>).
 ///
-/// 現状 scope:
-/// - `static` — [`PositionValue::Static`]、`inherit_from` の初期状態と一致するため
-///   apply_value が no-op でも問題ない。cascade winner selection では
-///   先行 `running(...)` を上書き suppress する identity 用途
-///   (standalone-static test だけでは実効性が問えない点に注意)。
-/// - `sticky` — [`PositionValue::Sticky`]、CSS Positioned Layout §3。
-///   現状は parse のみ受理し `apply_value` は `Static` 同様に no-op (将来の
-///   layout 連携まで保持する)。
-/// - `running(<custom-ident>)` — [`PositionValue::Running`]、apply_value が
-///   1-item `RunningTemplate` を computed.running_templates に seed する。
-/// - 他 keyword (`relative` / `absolute` / `fixed`) は未実装、silent drop = `None`。
+/// Current scope:
+/// - `static` — [`PositionValue::Static`], it matches the initial state of `inherit_from`, so there is no
+///   problem even if apply_value is no-op. In cascade winner selection, the identity is used to overwrite and
+///   suppress the preceding `running(...)` (note that the effectiveness cannot be tested with
+///   standalone-static tests alone).
+/// - `sticky` — [`PositionValue::Sticky`], CSS Positioned Layout §3. Parsing accepts it, but
+///   `apply_value` remains a no-op like `Static` until layout support is connected.
+/// - `running(<custom-ident>)` — [`PositionValue::Running`], apply_value seeds 1-item `RunningTemplate`
+///   into computed.running_templates.
+/// - Other keywords (`relative` / `absolute` / `fixed`) are not implemented and silently return `None`.
 ///
-/// `<custom-ident>` の除外は string-set と同じ規約:
-/// [`is_reserved_custom_ident`] (CSS-wide keyword + `default`) に加えて
-/// `none` を弾く。`none` は position property の他 spec-defined keyword
-/// では無いが、custom-ident としては予約 alternative の慣行を残しつつ、
-/// runtime resolve で `element(none)` 参照を誤って matching させないためのガード
-/// (string-set の `none` reject と同じ扱い)。
+/// `<custom-ident>` follows the string-set exclusion convention: [`is_reserved_custom_ident`] rejects
+/// CSS-wide keywords and `default`, and this parser also rejects `none`. Although `none` is not another
+/// specification-defined keyword for `position`, reserving it follows the alternative-keyword
+/// convention and prevents runtime resolution from mistakenly matching `element(none)`. String-set
+/// rejects `none` for the same reason.
 pub(super) fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue> {
-    // `static` は現状 scope で受理する keyword の一つ。
+    // `static` is currently one of the keywords accepted by scope.
     if input
         .try_parse(|i| i.expect_ident_matching("static"))
         .is_ok()
@@ -1066,8 +1049,8 @@ pub(super) fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue
     {
         return Some(PositionValue::Sticky);
     }
-    // `running(<custom-ident>)`。function name は ASCII case-insensitive、
-    // 中身の custom-ident は case-preserving で SmolStr に格納。
+    // `running(<custom-ident>)`. The function name is ASCII case-insensitive, and the content custom-ident
+    // is case-preserving and stored in SmolStr.
     let running = input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
         let fn_name = i.expect_function()?.clone();
         if !fn_name.eq_ignore_ascii_case("running") {
@@ -1084,8 +1067,8 @@ pub(super) fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue
     running.ok().map(PositionValue::Running)
 }
 
-/// `top` / `right` / `bottom` / `left: auto | <length-percentage>` を parse する
-/// (CSS Positioned Layout Module Level 3 §3).
+/// Parse `top` / `right` / `bottom` / `left: auto | <length-percentage>` (CSS Positioned Layout Module
+/// Level 3 §3).
 pub(super) fn parse_inset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
@@ -1094,18 +1077,16 @@ pub(super) fn parse_inset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     Some(LengthOrAuto::Length(length))
 }
 
-/// `z-index: auto | <integer>` を parse する (CSS2 §9.9.1
-/// <https://www.w3.org/TR/CSS2/visuren.html#z-index>, [`ZIndexValue`] doc
-/// 参照)。
+/// Parse `z-index: auto | <integer>` (CSS2 §9.9.1
+/// <https://www.w3.org/TR/CSS2/visuren.html#z-index>; see the [`ZIndexValue`] doc).
 ///
-/// `auto` ident branch を先に try_parse する — [`parse_margin_side`] と同じ
-/// order-of-alternative 理由 (同関数 doc 参照)、ここでは the two branches
-/// (`auto` ident と integer token) の token kind が既に不連続なので必須では
-/// ないが、既存 sibling と同じ並びに揃える。
+/// Try the `auto` identifier first, following the order in [`parse_margin_side`] (see its doc).
+/// Here the alternatives already have distinct token kinds (`auto` identifier versus integer), so
+/// this order is not required for correctness, but it stays consistent with the other parser.
 ///
-/// integer 本体は [`parse_counter_property`](super::content::parse_counter_property) の `<integer>` 抽出と同じ
-/// `expect_integer` 直接呼び出し — CSS Values 3 §4.2 "Integers: the
-/// `<integer>` type" により符号付き (負値含む) を許容し、range 制限は無い。
+/// Extract `<integer>` directly with `expect_integer`, as in
+/// [`parse_counter_property`](super::content::parse_counter_property). CSS Values 3 §4.2
+/// "Integers: the `<integer>` type" allows signed values, including negative ones, without a range limit.
 pub(super) fn parse_z_index(input: &mut Parser<'_, '_>) -> Option<ZIndexValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(ZIndexValue::Auto);
@@ -1116,11 +1097,10 @@ pub(super) fn parse_z_index(input: &mut Parser<'_, '_>) -> Option<ZIndexValue> {
         .map(ZIndexValue::Integer)
 }
 
-/// `border-radius` の 1--4 個の circular `<length>` を四隅へ展開する。
+/// Expand one to four circular `<length>` values of `border-radius` across the four corners.
 ///
-/// CSS Backgrounds and Borders 3 §5 の shorthand expansion に従い、値は
-/// top-left, top-right, bottom-right, bottom-left の順で解釈する。
-/// percentage は受理するが、slash 以降の楕円形指定と負値は受理しない。
+/// CSS Backgrounds and Borders 3 §5 orders them top-left, top-right, bottom-right, bottom-left.
+/// Percentages are accepted; elliptical radii after a slash and negative values are not.
 pub(super) fn parse_border_radius(input: &mut Parser<'_, '_>) -> Option<BorderRadius> {
     let first = parse_non_negative_length_percentage(input)?;
     let second = input
@@ -1171,13 +1151,12 @@ fn parse_length_allow_negative_res<'i>(
     parse_length_allow_negative(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `<length>{2,4}` の box-shadow length run を parse する。
+/// Parse the box-shadow length run of `<length>{2,4}`.
 ///
-/// offset-x/offset-y/spread-radius はいずれも sign 制限なしのため、
-/// [`parse_shadow_length_reject_nan`]/`_res` 経由で `!is_nan()` guard を
-/// 通す (同関数 doc 参照)。blur-radius (3rd slot) は既存の
-/// `value.payload() >= 0.0` チェックが NaN も incidental に
-/// 弾くため、追加 guard は不要 (`NaN >= 0.0` は IEEE 754 で `false`)。
+/// Offset-x, offset-y, and spread-radius have no sign restriction, so apply the `!is_nan()` guard via
+/// [`parse_shadow_length_reject_nan`]/`_res` (see the function's doc). Blur-radius, the third slot,
+/// needs no additional guard: its existing `value.payload() >= 0.0` check also rejects NaN because
+/// `NaN >= 0.0` is `false` under IEEE 754.
 pub(super) fn parse_box_shadow_lengths<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<(Length, Length, Length, Length), ParseError<'i, ()>> {
@@ -1244,7 +1223,7 @@ fn parse_box_shadow_item(input: &mut Parser<'_, '_>) -> Option<BoxShadowItem> {
     })
 }
 
-/// `box-shadow: none | <shadow>#` を parse する。
+/// Parse `box-shadow: none | <shadow>#`.
 pub(super) fn parse_box_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<BoxShadowItem>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
@@ -1256,7 +1235,7 @@ pub(super) fn parse_box_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<BoxShad
         .ok()
 }
 
-/// `outline` shorthand の width/style/color components を any-order で parse する。
+/// Parse the width/style/color components of `outline` shorthand in any-order.
 pub(super) fn parse_outline(input: &mut Parser<'_, '_>) -> Option<Outline> {
     let mut width: Option<Length> = None;
     let mut style: Option<OutlineStyle> = None;
@@ -1299,8 +1278,8 @@ pub(super) fn parse_outline(input: &mut Parser<'_, '_>) -> Option<Outline> {
     })
 }
 
-/// `outline-color` の value parser。CSS UI 3 §4.4 の `invert | <color>` を受理し、
-/// `currentcolor` は `<color>` の keyword として専用 variant に保持する。
+/// Parse `outline-color`. Accept `invert | <color>` from CSS UI 3 §4.4, and keep the
+/// `currentcolor` keyword in a dedicated variant.
 pub(super) fn parse_outline_color(input: &mut Parser<'_, '_>) -> Option<OutlineColor> {
     if input
         .try_parse(|i| i.expect_ident_matching("invert"))
@@ -1320,23 +1299,12 @@ pub(super) fn parse_outline_color(input: &mut Parser<'_, '_>) -> Option<OutlineC
 /// Parse one `outline-style` keyword. The outline shorthand and longhand share
 /// this helper so `auto` cannot accidentally become valid for border styles.
 pub(super) fn parse_outline_style_side(input: &mut Parser<'_, '_>) -> Option<OutlineStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(OutlineStyle::None),
+    match OutlineStyle::from_css_ident(input.expect_ident().ok()?) {
         // Keep the existing `outline: hidden` rejection. The enum retains the
         // keyword for representation completeness, but this parser scope does
         // not accept it.
-        "hidden" => None,
-        "dotted" => Some(OutlineStyle::Dotted),
-        "dashed" => Some(OutlineStyle::Dashed),
-        "solid" => Some(OutlineStyle::Solid),
-        "double" => Some(OutlineStyle::Double),
-        "groove" => Some(OutlineStyle::Groove),
-        "ridge" => Some(OutlineStyle::Ridge),
-        "inset" => Some(OutlineStyle::Inset),
-        "outset" => Some(OutlineStyle::Outset),
-        "auto" => Some(OutlineStyle::Auto),
-        _ => None,
+        Some(OutlineStyle::Hidden) => None,
+        other => other,
     }
 }
 

@@ -70,6 +70,21 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::OutlineWidth(l)
         | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
 
+        PropertyValue::BorderTopWidthCssWide(kw)
+        | PropertyValue::BorderRightWidthCssWide(kw)
+        | PropertyValue::BorderBottomWidthCssWide(kw)
+        | PropertyValue::BorderLeftWidthCssWide(kw)
+        | PropertyValue::BorderTopStyleCssWide(kw)
+        | PropertyValue::BorderRightStyleCssWide(kw)
+        | PropertyValue::BorderBottomStyleCssWide(kw)
+        | PropertyValue::BorderLeftStyleCssWide(kw)
+        | PropertyValue::BorderTopColorCssWide(kw)
+        | PropertyValue::BorderRightColorCssWide(kw)
+        | PropertyValue::BorderBottomColorCssWide(kw)
+        | PropertyValue::BorderLeftColorCssWide(kw)
+        | PropertyValue::BorderCssWide(kw)
+        | PropertyValue::BorderRightCssWide(kw) => Some(kw.as_css_str().to_owned()),
+
         PropertyValue::Top(v)
         | PropertyValue::Right(v)
         | PropertyValue::Bottom(v)
@@ -377,6 +392,46 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
                 .join(", "),
         }),
 
+        // Single-keyword properties whose parser accepts exactly the keywords
+        // in their keyword table (ASCII case-insensitively) with no legacy
+        // remap, so the specified keyword serializes as its canonical
+        // lowercase spelling (`CENTER` becomes `center` instead of echoing
+        // the raw input):
+        // - `text-align` keeps `match-parent`/`justify-all`/`-internal-center`/
+        //   `inherit` as specified here; resolving them against the parent
+        //   belongs to the cascade, and the computed layer filters the
+        //   intermediate-only ones out.
+        // - `text-transform` accepts components in any order and normalizes to
+        //   the table order (`FULL-WIDTH CAPITALIZE` becomes
+        //   `capitalize full-width`).
+        // - `word-break: break-word` keeps its keyword here; its
+        //   cross-property effect on `overflow-wrap` belongs to the cascade.
+        // - `text-justify: distribute` keeps its legacy keyword here; the
+        //   computed layer remaps it to `inter-character`.
+        // - `white-space` accepts only single classic keywords (this parser
+        //   does no shorthand expansion), and `writing-mode` accepts only the
+        //   five modern keywords (no SVG legacy values), so neither needs a
+        //   remap here. The `writing-mode` renderer fallback lives in the
+        //   computed-value layer, outside this function.
+        PropertyValue::TextAlign(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::Direction(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextTransform(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::WordBreak(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::OverflowWrap(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::WhiteSpace(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::WhiteSpaceCollapse(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextWrap(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextWrapStyle(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::Hyphens(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::LineBreak(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextJustify(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextAlignLast(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextCombineUpright(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextOrientation(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::UnicodeBidi(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::FontVariantCaps(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::WritingMode(value) => Some(value.as_css_str().to_owned()),
+
         // Not canonically serialized yet: callers fall back to echoing the
         // raw input. A new variant must be added either to an arm above or
         // here, so the choice is explicit rather than a silent wildcard.
@@ -399,7 +454,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Content(..)
         | PropertyValue::StringSet(..)
         | PropertyValue::Position(..)
-        | PropertyValue::TextAlign(..)
         | PropertyValue::TextIndent(..)
         | PropertyValue::MarginTopInherit
         | PropertyValue::MarginRightInherit
@@ -415,9 +469,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderBottomColor(..)
         | PropertyValue::BorderLeftColor(..)
         | PropertyValue::Border(..)
+        | PropertyValue::BorderRight(..)
         | PropertyValue::BorderStyle(..)
         | PropertyValue::BoxSizing(..)
-        | PropertyValue::Direction(..)
         | PropertyValue::OverflowX(..)
         | PropertyValue::OverflowY(..)
         | PropertyValue::Overflow(..)
@@ -425,11 +479,8 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TextDecoration(..)
         | PropertyValue::VerticalAlign(..)
         | PropertyValue::FontStyle(..)
-        | PropertyValue::TextTransform(..)
         | PropertyValue::Visibility(..)
         | PropertyValue::ZIndex(..)
-        | PropertyValue::WordBreak(..)
-        | PropertyValue::OverflowWrap(..)
         | PropertyValue::LetterSpacing(..)
         | PropertyValue::WordSpacing(..)
         | PropertyValue::BreakBefore(..)
@@ -437,11 +488,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BreakInside(..)
         | PropertyValue::Float(..)
         | PropertyValue::Clear(..)
-        | PropertyValue::WhiteSpace(..)
-        | PropertyValue::WhiteSpaceCollapse(..)
-        | PropertyValue::TextWrap(..)
         | PropertyValue::TextWrapShorthand(..)
-        | PropertyValue::TextWrapStyle(..)
         | PropertyValue::FlexDirection(..)
         | PropertyValue::FlexWrap(..)
         | PropertyValue::FlexGrow(..)
@@ -458,16 +505,8 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::ColumnGap(..)
         | PropertyValue::Gap(..)
         | PropertyValue::PlaceContent(..)
-        | PropertyValue::Hyphens(..)
         | PropertyValue::TabSize(..)
-        | PropertyValue::LineBreak(..)
-        | PropertyValue::TextJustify(..)
         | PropertyValue::TextAlignAll(..)
-        | PropertyValue::TextAlignLast(..)
-        | PropertyValue::TextCombineUpright(..)
-        | PropertyValue::TextOrientation(..)
-        | PropertyValue::UnicodeBidi(..)
-        | PropertyValue::FontVariantCaps(..)
         | PropertyValue::Quotes(..)
         | PropertyValue::TextShadow(..)
         | PropertyValue::BorderRadius(..)
@@ -496,7 +535,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::PlaceSelf(..)
         | PropertyValue::Orphans(..)
         | PropertyValue::Widows(..)
-        | PropertyValue::WritingMode(..)
         | PropertyValue::RubyPosition(..)
         | PropertyValue::BackgroundRepeat(..)
         | PropertyValue::BackgroundAttachment(..)

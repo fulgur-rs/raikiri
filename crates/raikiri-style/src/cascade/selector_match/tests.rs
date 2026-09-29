@@ -705,6 +705,7 @@ fn next_sibling_combinator_does_not_match_parent_child_relationship() {
             &[StyleNodeId::new(div as u64)],
             StyleQuirksMode::NoQuirks,
             None,
+            false,
         ),
         None,
         "div + p must not match a p that is div's child, not its sibling"
@@ -715,7 +716,7 @@ fn next_sibling_combinator_does_not_match_parent_child_relationship() {
 fn descendant_and_child_combinator_are_distinguished_on_the_same_grandchild() {
     // Same grandchild `<li>` as above, matched instead by a descendant
     // (space) combinator on `ol` — must match, unlike the child (`>`)
-    // combinator case, directly exercising "descendant と child の区別"
+    // combinator case, directly exercising the "descendant versus child distinction"
     // called out in the acceptance criteria. `background-color` again
     // (see the sibling test above) so a match is provably direct, not
     // inherited from the also-matching direct `<li>`.
@@ -1094,7 +1095,7 @@ fn child_combinator_composes_with_sibling_combinator_further_left() {
     // the `ancestors` slice `match_from_element` carries onward is
     // already `.y`'s own ancestor chain, so `.last()` correctly resolves
     // to `.y`'s parent for the `LaterSibling` step (see
-    // `match_combinator_chain`'s "親の解決" doc note).
+    // `match_combinator_chain`'s "resolving the parent" doc note).
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
     doc.push_text(s, ".x ~ .y > .z { background-color: red }");
@@ -1179,6 +1180,7 @@ fn descendant_combinator_deep_unsatisfiable_chain_does_not_explode() {
         &ancestors,
         StyleQuirksMode::NoQuirks,
         None,
+        false,
     );
     let elapsed = start.elapsed();
 
@@ -1226,6 +1228,7 @@ fn later_sibling_combinator_deep_unsatisfiable_run_does_not_explode() {
         &[],
         StyleQuirksMode::NoQuirks,
         None,
+        false,
     );
     let elapsed = start.elapsed();
 
@@ -1276,6 +1279,7 @@ fn match_complex_selector_list_rejects_unsupported_component_via_safety_net() {
             &[],
             StyleQuirksMode::NoQuirks,
             None,
+            false,
         ),
         None,
         "NonTSPseudoClass component must fall through the safety net"
@@ -2351,7 +2355,7 @@ fn resolve_case_sensitivity_non_html_namespace_element_is_case_sensitive() {
     // Same `[type=...]` shape as the sibling test above, but the element
     // carries an explicit non-HTML namespace (SVG) — `resolve_case_sensitivity`
     // must fall back to case-sensitive matching for it (own doc comment:
-    // "SVG 等 non-HTML namespace の element は case-sensitive 側に倒す").
+    // "elements in non-HTML namespaces, such as SVG, use case-sensitive matching").
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
     doc.push_text(s, "[type=\"text\"] { color: red }");

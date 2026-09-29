@@ -1,19 +1,19 @@
-//! `raikiri_traits::Dom / Node / Element` および `raikiri_style::StyleDom /
+//! `raikiri_traits::Dom / Node / Element` and `raikiri_style::StyleDom /
 //! StyleNode / StyleElement` implementations on Document.
 //!
-//! `NodeRef<'a>` と `ElementRef<'a>` は Document の内部 arena を borrow する
-//! 軽量 wrapper。GAT 経由で trait method の返り値型を安定させる。
+//! `NodeRef<'a>` and `ElementRef<'a>` are lightweight wrappers that borrow
+//! the internal Document arena. GATs keep trait method return types stable.
 //!
 //! # Two trait families, one arena
 //!
-//! `raikiri_traits::Dom / Node / Element` は raikiri-html / raikiri-paint /
-//! raikiri umbrella が共有する neutral DOM abstraction。`raikiri_style::StyleDom
-//! / StyleNode / StyleElement` は raikiri-style が Stylo pattern に沿って自前
-//! で持つ CSS-engine 向け abstraction。両者は概念
-//! 上ほぼ相似形だが、raikiri-style は raikiri-traits に依存しないため、
-//! `impl StyleDom for Document` は `raikiri_traits::Dom` に delegate せず
-//! Document arena に直接 dispatch する (blanket compat 経路を排除した atomic
-//! decoupling — 詳細は crates/raikiri-style/src/style_dom.rs のヘッダ参照)。
+//! `raikiri_traits::Dom / Node / Element` is the neutral DOM abstraction shared by
+//! raikiri-html / raikiri-paint / the raikiri umbrella. `raikiri_style::StyleDom
+//! / StyleNode / StyleElement` is the CSS-engine abstraction that raikiri-style
+//! maintains itself, following the Stylo pattern. The two are conceptually
+//! almost identical, but raikiri-style does not depend on raikiri-traits.
+//! Thus `impl StyleDom for Document` dispatches directly to the Document arena
+//! rather than delegating to `raikiri_traits::Dom` (atomic decoupling that removes
+//! the blanket compatibility path; see the header of crates/raikiri-style/src/style_dom.rs).
 //! Bodies shared byte-identically across the two families
 //! (as_element / text_content / is_in_document / tag_name /
 //! inline_style_source / namespace_uri / attr / id) live once as private
@@ -35,7 +35,7 @@ pub struct NodeRef<'a> {
     id: usize,
 }
 
-/// Element reference (kind == Element の Node を型で narrow したもの)。
+/// Element reference (a Node narrowed by type to kind == Element).
 pub struct ElementRef<'a> {
     node: &'a Node,
 }
@@ -73,11 +73,11 @@ impl<'a> NodeRef<'a> {
 
 impl<'a> ElementRef<'a> {
     fn tag_name(&self) -> &str {
-        // ElementRef は as_element() が Some を返した後の view なので必ず
-        // NodeData::Element (invariant)、それ以外は panic 相当。
+        // ElementRef is a view returned after as_element() yields Some, so this must be
+        // NodeData::Element (invariant); anything else would be equivalent to a panic.
         match &self.node.data {
             crate::node::NodeData::Element(e) => e.tag_name.as_str(),
-            _ => "", // defensive: 到達しない
+            _ => "", // defensive: unreachable
         }
     }
 
@@ -171,8 +171,8 @@ impl raikiri_traits::Dom for Document {
     }
 
     fn node_count(&self) -> usize {
-        // Document::node_count() の trait 経由 view。arena 全 node の数
-        // (detached を含む)。
+        // Trait-based view of Document::node_count(): the number of all arena nodes,
+        // including detached nodes.
         Document::node_count(self)
     }
 }
@@ -213,10 +213,10 @@ impl<'a> raikiri_traits::Element for ElementRef<'a> {
         self.namespace_uri()
     }
 
-    // NB: has_class() は raikiri-traits::Element の default impl を使用。
-    // default が self.attr(...) 経由で lookup するため、attr() だけ override
-    // すれば has_class も追従する (DRY / 契約準拠)。id() は attr() と異なる
-    // 正規化契約 (空値 = absent) を持つため個別 override する
+    // NB: has_class() uses the default implementation of raikiri-traits::Element.
+    // The default looks up the class through self.attr(...), so overriding attr()
+    // also updates has_class (DRY and contract compliance). Unlike attr(), id()
+    // has a normalization contract (empty value = absent), so override it separately.
     // (shared inherent `id()` above; see its doc).
 
     fn attr(&self, local: &str) -> Option<&str> {
@@ -283,6 +283,10 @@ impl StyleDom for Document {
     fn quirks_mode(&self) -> StyleQuirksMode {
         convert_quirks_mode(Document::quirks_mode(self))
     }
+
+    fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {
+        Document::parent_of(self, child.0 as usize).map(|p| StyleNodeId::new(p as u64))
+    }
 }
 
 /// [`raikiri_traits::QuirksMode`] (raikiri-html's parse-time mirror of
@@ -314,11 +318,11 @@ impl<'a> StyleNode for NodeRef<'a> {
         // NodeData variant → StyleNodeKind projection. Direct arena lookup —
         // no raikiri_traits::NodeKind bridge.
         //
-        // Comment / ProcessingInstruction / DocumentFragment arms を追加。
-        // cascade / rule-tree walk は Element のみ処理する契約
-        // (crates/raikiri-style/src/cascade.rs / ruletree.rs) なので、追加 kind
-        // は自動的に non-styling。両 trait family で kind() の projection が
-        // 一致することは Two-way invariant の一部。
+        // Added Comment / ProcessingInstruction / DocumentFragment arms.
+        // The cascade / rule-tree walkers only process Elements by contract
+        // (crates/raikiri-style/src/cascade.rs / ruletree.rs), so the added kinds
+        // are non-styling automatically. Matching kind() projections in both trait
+        // families are part of the two-way invariant.
         match &self.doc.nodes[self.id].data {
             crate::node::NodeData::Element(_) => StyleNodeKind::Element,
             crate::node::NodeData::Text(_) => StyleNodeKind::Text,
@@ -357,10 +361,10 @@ impl<'a> StyleElement for ElementRef<'a> {
         self.namespace_uri()
     }
 
-    // NB: has_class() は raikiri_style::StyleElement の default impl を使用。
-    // default が self.attr(...) 経由で lookup するため、attr() だけ override
-    // すれば has_class も追従する (DRY / 契約準拠)。id() は attr() と異なる
-    // 正規化契約 (空値 = absent) を持つため個別 override する
+    // NB: has_class() uses the default implementation of raikiri_style::StyleElement.
+    // The default looks up the class through self.attr(...), so overriding attr()
+    // also updates has_class (DRY and contract compliance). Unlike attr(), id()
+    // has a normalization contract (empty value = absent), so override it separately.
     // (shared inherent `id()` above; see its doc).
 
     fn attr(&self, local: &str) -> Option<&str> {

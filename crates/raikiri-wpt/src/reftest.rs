@@ -605,31 +605,51 @@ pub fn discover_all_pairs_with_docroot(walk_root: &Path, docroot: &Path) -> Vec<
 /// handles stylesheets, while replaced-element and paint-time URLs are read
 /// from the DOM/computed values after parsing; keeping one absolute URL in all
 /// three paths lets the file provider and image cache share a key.
-fn absolutize_wpt_resource_urls(html: &str, resource_base: Option<&Path>) -> String {
-    let Some(resource_base) = resource_base else {
-        return html.to_owned();
-    };
-    let Ok(base_url) = raikiri::Url::from_directory_path(resource_base) else {
-        return html.to_owned();
-    };
-    let prefix = base_url.to_string();
-    let mut html = html
-        .replace("\"support/", &format!("\"{prefix}support/"))
-        .replace("'support/", &format!("'{prefix}support/"));
+///
+/// Relative `support/` URLs resolve against the page directory, the same base
+/// the parser uses, so a quoted `src="support/x.js"` resolves identically to
+/// the same URL written unquoted. URLs rooted at `/` resolve against the WPT
+/// checkout instead.
+fn absolutize_wpt_resource_urls(
+    html: &str,
+    page_base: Option<&Path>,
+    wpt_root: Option<&Path>,
+) -> String {
+    let mut html = html.to_owned();
+    if let Some(page_base) = page_base
+        && let Ok(base_url) = raikiri::Url::from_directory_path(page_base)
+    {
+        let prefix = base_url.to_string();
+        html = html
+            .replace("\"support/", &format!("\"{prefix}support/"))
+            .replace("'support/", &format!("'{prefix}support/"));
+    }
 
     // WPT URLs beginning with `/` are rooted at the checkout, not at the
     // host filesystem root.  Convert the bundled Ahem stylesheet link to a
     // file URL so the parser's ordinary external-stylesheet path can load it.
     // The stylesheet keeps its `/fonts/Ahem.ttf` source URL; WptFontLoader
     // resolves that URL against the same WPT checkout.
-    let wpt_root = resource_base.ancestors().find(|candidate| {
-        candidate.join("fonts").join("Ahem.ttf").is_file()
-            || candidate.join("fonts").join("ahem.css").is_file()
-    });
+    let fonts_root = wpt_root
+        .filter(|root| {
+            root.join("fonts").join("Ahem.ttf").is_file()
+                || root.join("fonts").join("ahem.css").is_file()
+        })
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            page_base.and_then(|base| {
+                base.ancestors()
+                    .find(|candidate| {
+                        candidate.join("fonts").join("Ahem.ttf").is_file()
+                            || candidate.join("fonts").join("ahem.css").is_file()
+                    })
+                    .map(Path::to_path_buf)
+            })
+        });
     // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
-    if let Some(wpt_root) = wpt_root
+    if let Some(fonts_root) = fonts_root
         // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
-        && let Ok(root_url) = raikiri::Url::from_directory_path(wpt_root)
+        && let Ok(root_url) = raikiri::Url::from_directory_path(&fonts_root)
     // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
     {
         let fonts_prefix = root_url.to_string();
@@ -1591,7 +1611,7 @@ pub(crate) fn prepare_wpt_live_document(
         base_url: stylesheet_base.clone(),
     };
 
-    let html = absolutize_wpt_resource_urls(html, wpt_root.as_deref());
+    let html = absolutize_wpt_resource_urls(html, page_base.as_deref(), wpt_root.as_deref());
     let html = expand_viewport_units(&html, width as f32, height as f32);
     let image_resolver = wpt_root
         .as_ref()
@@ -1639,6 +1659,60 @@ pub(crate) fn prepare_wpt_live_document(
     })
 }
 
+/// Whether `node_id` is a stylesheet-bearing `<style>` element for the live path.
+///
+/// Matches the fragment parser's `stylesheet_sources` projection, which keeps
+/// HTML/XHTML and SVG-namespace `<style>` text. The previous live reconcile
+/// used [`raikiri_dom::Node::is_non_rendered_html_element`], which rejects
+/// SVG-namespace elements, so an `innerHTML`-inserted SVG `<style>` never
+/// reached the cascade.
+fn is_live_stylesheet_style(document: &raikiri_dom::Document, node_id: usize) -> bool {
+    let Some(node) = document.get_node(node_id) else {
+        return false;
+    };
+    if node.tag_name() != Some("style") {
+        return false;
+    }
+    matches!(
+        document.element_namespace_uri(node_id),
+        Some("http://www.w3.org/1999/xhtml") | Some("http://www.w3.org/2000/svg")
+    )
+}
+
+/// Raw CSS text of a live `<style>` element, with the XHTML CDATA wrapper
+/// removed the same way the fragment parser's projection does.
+fn live_stylesheet_text(document: &raikiri_dom::Document, node_id: usize) -> String {
+    let Some(node) = document.get_node(node_id) else {
+        return String::new();
+    };
+    let mut text = String::new();
+    for &child in &node.children {
+        if let Some(value) = document
+            .get_node(child)
+            .and_then(|child| child.text_content())
+        {
+            text.push_str(value);
+        }
+    }
+    let trimmed = text.trim();
+    trimmed
+        .strip_prefix("<![CDATA[")
+        .and_then(|inner| inner.strip_suffix("]]>"))
+        .map_or_else(|| text.clone(), ToOwned::to_owned)
+}
+
+fn live_stylesheet_has_content(document: &raikiri_dom::Document, node_id: usize) -> bool {
+    let Some(node) = document.get_node(node_id) else {
+        return false;
+    };
+    node.children.iter().any(|&child| {
+        document
+            .get_node(child)
+            .and_then(|child| child.text_content())
+            .is_some_and(|text| !text.is_empty())
+    })
+}
+
 pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
     document: &raikiri_dom::Document,
     target: usize,
@@ -1646,8 +1720,7 @@ pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
     let Some(target_node) = document.get_node(target) else {
         return Vec::new();
     };
-    let target_is_style =
-        target_node.tag_name() == Some("style") && target_node.is_non_rendered_html_element();
+    let target_is_style = is_live_stylesheet_style(document, target);
     let mut pending = if target_is_style {
         vec![target]
     } else {
@@ -1658,13 +1731,15 @@ pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
         let Some(node) = document.get_node(node_id) else {
             continue; // cov:ignore: child indices in a valid append-only document always name arena nodes.
         };
-        if node.tag_name() == Some("style") && node.is_non_rendered_html_element() {
-            let source = node
-                .children
-                .iter()
-                .filter_map(|&child| document.get_node(child)?.text_content())
-                .collect();
-            sources.push(source);
+        if is_live_stylesheet_style(document, node_id) {
+            if live_stylesheet_has_content(document, node_id) {
+                let source = live_stylesheet_text(document, node_id);
+                if !source.is_empty() {
+                    sources.push(source);
+                }
+            }
+            // `<style>` contents are CSS text, not nested HTML elements.
+            continue;
         }
         pending.extend(node.children.iter().rev().copied());
     }
@@ -1673,20 +1748,28 @@ pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
 
 pub(crate) fn update_live_wpt_stylesheet_sources(
     setup: &mut LiveWptSetup,
-    removed_sources: Vec<String>,
-    added_sources: Vec<String>,
+    previous_sources: &[String],
+    current_sources: &[String],
     wpt_root: &Path,
 ) {
-    let mut stylesheet_sources = setup.uncascaded.stylesheet_sources.clone();
-    for removed in removed_sources {
-        if let Some(index) = stylesheet_sources
-            .iter()
-            .position(|source| source == &removed)
-        {
-            stylesheet_sources.remove(index);
+    if previous_sources == current_sources {
+        return;
+    }
+    // Preserve parser-loaded `<link>` sheets: they are the author entries that
+    // did not come from connected `<style>` elements. Removing the previous
+    // inline sheets in multiset order leaves them in their original order.
+    let mut remaining = setup.uncascaded.stylesheet_sources.clone();
+    for previous in previous_sources {
+        if let Some(index) = remaining.iter().position(|source| source == previous) {
+            remaining.remove(index);
         }
     }
-    stylesheet_sources.extend(added_sources);
+    // Author order follows tree order. The previous diff appended added sheets
+    // at the end, so a script-connected `<style>` preceding an existing sheet
+    // never matched document order. Rebuilding from the current tree order
+    // fixes that; link sheets stay untouched at the front.
+    let mut stylesheet_sources = remaining;
+    stylesheet_sources.extend(current_sources.iter().cloned());
     if setup.uncascaded.stylesheet_sources == stylesheet_sources {
         return;
     }
@@ -1704,6 +1787,7 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_wpt_inner_html_fragment(
     markup: &str,
     context_tag: &str,
@@ -1711,8 +1795,10 @@ pub(crate) fn parse_wpt_inner_html_fragment(
     width: u32,
     height: u32,
     document_base_url: Option<&raikiri::Url>,
+    page_base: Option<&Path>,
     wpt_root: &Path,
 ) -> Result<raikiri_html::UncascadedDocument, String> {
+    let page_base = page_base.and_then(|base| std::fs::canonicalize(base).ok());
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
     let stylesheet_network = wpt_root.as_ref().map(|_| raikiri_net::FileNetworkProvider);
     let opts = raikiri::ParseOptions {
@@ -1722,7 +1808,7 @@ pub(crate) fn parse_wpt_inner_html_fragment(
             .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
         base_url: document_base_url.cloned(),
     };
-    let markup = absolutize_wpt_resource_urls(markup, wpt_root.as_deref());
+    let markup = absolutize_wpt_resource_urls(markup, page_base.as_deref(), wpt_root.as_deref());
     let markup = expand_viewport_units(&markup, width as f32, height as f32);
     raikiri_html::parse_fragment(
         markup.as_bytes(),
@@ -1755,7 +1841,7 @@ fn render_raikiri_pages_inner(
     let stylesheet_base =
         resource_base.and_then(|path| raikiri::Url::from_directory_path(path).ok());
     let font_loader = WptFontLoader::discover(font_base.or(resource_base));
-    let html = absolutize_wpt_resource_urls(html, resource_base);
+    let html = absolutize_wpt_resource_urls(html, resource_base, None);
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }

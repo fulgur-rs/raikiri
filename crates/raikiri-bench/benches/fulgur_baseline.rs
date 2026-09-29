@@ -60,7 +60,7 @@
 //!    [`raikiri::html_to_png_with_fonts`]
 //!    (`parse_html` → `layout_single_page` → `build_page_scene` →
 //!    `PageScene::rasterize`), and it is hard-pinned to a single `PageBox::A4`
-//!    page (`crates/raikiri/src/html_to_png.rs` doc comment: "単一ページのみ").
+//!    page (`crates/raikiri/src/html_to_png.rs` doc comment: "single page only").
 //!    There is no multi-page flow to measure a *pagination* cost against.
 //!
 //!    **What this file actually does about it:** it does not construct a

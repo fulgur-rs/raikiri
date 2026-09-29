@@ -1,9 +1,9 @@
-//! Single-page layout driver — `layout_single_page` を pub 提供。
+//! Single-page layout driver — publicly provides `layout_single_page`.
 //!
-//! Pipeline: cascade (raikiri-style) 出力 + Document arena + PageBox から
-//! taffy compute_root_layout を駆動し、text intrinsic size は parley 0.10 の
-//! 最小統合で pre-shape する。現在の scope は単一 A4 ページ、ASCII Latin、
-//! parley system font default (byte-identical cross-machine は将来 font pinning で対応予定)。
+//! Pipeline: uses the cascade (raikiri-style) output, Document arena, and PageBox
+//! to drive taffy compute_root_layout; pre-shapes intrinsic text size through a
+//! minimal integration with parley 0.10. Current scope: one A4 page, ASCII Latin,
+//! and the parley system-font default (cross-machine byte identity requires future font pinning).
 //!
 //! Single-page and paged-layout entry points are public;
 //! implementation helpers remain crate-private.

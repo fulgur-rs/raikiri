@@ -2316,7 +2316,7 @@ mod tests {
 
     #[test]
     fn direction_inherits_from_parent_element() {
-        // CSS Writing Modes 4 §2.1: direction は **inherited**.
+        // CSS Writing Modes 4 §2.1: direction is **inherited**.
         use crate::property::Direction;
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some("direction: rtl"));

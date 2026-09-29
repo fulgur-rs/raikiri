@@ -1,5 +1,5 @@
 //! Structured named results for comparing compile-time JS backends.
-use raikiri_js::TestOutcome;
+use crate::testharness_page::SubtestOutcome;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 /// Ordered results or an explicit page-level execution error.
@@ -24,7 +24,7 @@ pub struct NamedResult {
 }
 impl ResultRecord {
     /// Capture one file's complete outcome.
-    pub fn new(test_id: &str, tests: &[TestOutcome], error: Option<String>) -> Self {
+    pub fn new(test_id: &str, tests: &[SubtestOutcome], error: Option<String>) -> Self {
         Self {
             test_id: test_id.into(),
             tests: tests

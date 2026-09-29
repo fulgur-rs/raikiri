@@ -1,28 +1,29 @@
 use super::*;
-/// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
+/// Walk the Document arena with DFS and return the arena index of the first `<body>` element.
 ///
-/// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
-/// deep DOM で stack overflow を回避)。fragment parse (no `<body>`) では
-/// `None`、caller が `LayoutError::Internal` に昇格させる。
+/// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid stack
+/// overflows in deeply nested DOMs. Return `None` for a fragment parse (no `<body>`);
+/// the caller promotes this to `LayoutError::Internal`.
 ///
-/// `!is_in_document()` の subtree
-/// (`<template>` descendants など) を skip する。inert subtree 内に `<body>`
-/// tag があってもそれを本物の body として選ばないため — 例えば
-/// `<template><body>ghost</body></template>` の後に real `<body>` が来る HTML
-/// で ghost body を選んでしまうと後続の layout / paint が inert subtree に対して
-/// 実行されてしまう。
+/// Skip subtrees whose root is `!is_in_document()`
+/// (such as a detached `<template>` contents fragment). A `<body>` within an
+/// inert subtree must not be selected as the actual body. For example, if real
+/// `<body>` follows `<template><body>ghost</body></template>` in the HTML
+/// (the ghost lives in the template's detached contents fragment), choosing
+/// the ghost body would run the subsequent layout / paint on an inert subtree.
+///
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
         let node = &doc.nodes[node_idx];
         if !node.is_in_document() {
-            // inert subtree — 本 subtree の中に body があっても選ばない。
+            // inert subtree — do not select a body inside it.
             continue;
         }
         if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
             return Some(node_idx);
         }
-        // children を reverse push すると document order で pop される
+        // Reverse-pushing children makes the stack pop them in document order.
         for &child in node.children.iter().rev() {
             stack.push(child);
         }
@@ -30,11 +31,11 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     None
 }
 
-/// `<body>` の taffy::Style.size を PageBox の width / height (CSS px) に強制する。
+/// Force the `<body>` taffy::Style.size to the PageBox width / height (CSS px).
 ///
-/// CSS Paged Media の initial containing block = @page size。現行実装は @page 非対応
-/// のため body.style.size に直接注入する妥協。将来 @page cascade + per-page
-/// PageBox を導入する際に `<html>` root style に site を昇格予定。
+/// CSS Paged Media defines initial containing block = @page size. Since @page is
+/// not yet supported, the current implementation injects it into body.style.size.
+/// When @page cascade + per-page PageBox arrive, move this site to the `<html>` root style.
 #[cfg_attr(
     not(test),
     expect(

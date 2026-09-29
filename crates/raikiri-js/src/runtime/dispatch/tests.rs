@@ -866,3 +866,133 @@ fn window_on_error_uses_the_ordinary_calling_convention_for_a_plain_event() {
          got instanceof Event && !(got instanceof ErrorEvent)",
     );
 }
+
+// ---- Event handler content attributes (HTML section 8.1.7.1) ----
+
+#[test]
+fn onclick_content_attribute_compiles_and_dispatches_with_event_param() {
+    let (mut host, _, _, body) = StubHost::page();
+    let div = host.document.create_detached_element("div").unwrap();
+    host.document
+        .set_element_attribute(
+            div,
+            "onclick",
+            "window.hit = (window.hit || 0) + 1; window.kind = event.type;",
+        )
+        .unwrap();
+    host.document.append_child(body, div).unwrap();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(&mut rt, "window.hit === undefined");
+    ok(
+        &mut rt,
+        "document.querySelector('div').dispatchEvent(new Event('click'));          window.hit === 1 && window.kind === 'click'",
+    );
+    // A second dispatch runs the same compiled function again.
+    ok(
+        &mut rt,
+        "document.querySelector('div').dispatchEvent(new Event('click')); window.hit === 2",
+    );
+}
+
+#[test]
+fn body_onload_content_attribute_forwards_to_window() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.document
+        .set_element_attribute(body, "onload", "window.fired = (this === window);")
+        .unwrap();
+    let mut rt = DomRuntime::new(host).unwrap();
+    // Both IDL getters read the same forwarded window slot.
+    ok(
+        &mut rt,
+        "typeof window.onload === 'function' && document.body.onload === window.onload",
+    );
+    ok(&mut rt, "window.fired === undefined");
+    ok(
+        &mut rt,
+        "window.dispatchEvent(new Event('load')); window.fired === true",
+    );
+}
+
+#[test]
+fn dynamic_set_attribute_wires_and_remove_clears_sharing_the_idl_slot() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var d = document.createElement('div'); document.body.appendChild(d);          d.setAttribute('onclick', 'window.n = 1;');          d.dispatchEvent(new Event('click')); window.n === 1",
+    );
+    ok(
+        &mut rt,
+        "d.setAttribute('onclick', 'window.n = 2;');          d.dispatchEvent(new Event('click')); window.n === 2",
+    );
+    ok(&mut rt, "d.getAttribute('onclick') === 'window.n = 2;'");
+    ok(
+        &mut rt,
+        "d.removeAttribute('onclick'); d.onclick === null &&          (d.dispatchEvent(new Event('click')), window.n === 2)",
+    );
+    // An IDL write overwrites compiled content, and content overwrites IDL back.
+    ok(
+        &mut rt,
+        "d.setAttribute('onclick', 'window.n = 3;');          d.onclick = function(){ window.n = 4; };          d.dispatchEvent(new Event('click')); window.n === 4",
+    );
+    ok(
+        &mut rt,
+        "d.setAttribute('onclick', 'window.n = 5;');          d.dispatchEvent(new Event('click')); window.n === 5",
+    );
+    // A content handler returning exactly false cancels a cancelable event.
+    ok(
+        &mut rt,
+        "d.setAttribute('onclick', 'return false;');          d.dispatchEvent(new Event('click', {cancelable:true})) === false",
+    );
+}
+
+#[test]
+fn invalid_content_attribute_syntax_clears_without_throwing() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var d = document.createElement('div'); document.body.appendChild(d);          d.setAttribute('onclick', 'window.n = 10;'); true",
+    );
+    ok(
+        &mut rt,
+        "d.setAttribute('onclick', '((('); d.onclick === null",
+    );
+    ok(
+        &mut rt,
+        "d.dispatchEvent(new Event('click')) === true && window.n === undefined",
+    );
+    ok(
+        &mut rt,
+        "d.setAttribute('onclick', 'window.n = 11;');          d.dispatchEvent(new Event('click')); window.n === 11",
+    );
+}
+
+#[test]
+fn body_onerror_content_attribute_receives_five_arguments() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.document
+        .set_element_attribute(
+            body,
+            "onerror",
+            "window.got = event + '|' + source + '|' + lineno + '|' + colno; return true;",
+        )
+        .unwrap();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "window.dispatchEvent(new ErrorEvent('error',          {message:'boom', filename:'f.js', lineno:7, colno:3, cancelable:true})) === false",
+    );
+    ok(&mut rt, "window.got === 'boom|f.js|7|3'");
+}
+
+#[test]
+fn inner_html_replacement_keeps_idl_handler_slots_elsewhere() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.onclick = function(){ window.kept = true; };          document.body.innerHTML = 'text'; document.body.onclick !== null",
+    );
+    ok(
+        &mut rt,
+        "document.body.dispatchEvent(new Event('click')); window.kept === true",
+    );
+}

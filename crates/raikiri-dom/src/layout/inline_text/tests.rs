@@ -161,7 +161,10 @@ fn boundary_shaping_adjacency_uses_the_characters_on_the_boundary() {
     let _br = doc.append_element(Some(br_block), "br", Style::default(), None::<&str>);
     let _br_right = doc.append_text(br_block, "ع");
 
-    // Comments and template contents render nothing inline.
+    // Comments and template contents render nothing inline. The template
+    // text lives in the detached contents fragment (the parser's shape), so
+    // the shaping walk never reaches it; an ordinary light-DOM child of the
+    // template element would stay in-document instead.
     let skipped_block = block(&mut doc);
     let skipped_left = doc.append_text(skipped_block, "ع");
     let _comment = doc.append_comment(Some(skipped_block), "x");
@@ -171,7 +174,8 @@ fn boundary_shaping_adjacency_uses_the_characters_on_the_boundary() {
         Style::default(),
         Some("display:inline"),
     );
-    let _template_text = doc.append_text(template, "A");
+    let frag = doc.allocate_template_fragment_root(template);
+    let _template_text = doc.append_text(frag, "A");
     let _skipped_right = doc.append_text(skipped_block, "ع");
 
     // An authored ZWJ at the neighbor's edge still continues the context.
@@ -801,7 +805,7 @@ fn preshape_text_populates_text_layout_for_text_nodes() {
         "text 'Hi' must have non-zero line height"
     );
 
-    // Element / Document は None のまま
+    // Keep Element / Document at None.
     assert!(
         doc.nodes[html].text_layout().is_none(),
         "html element is not text"
@@ -2406,17 +2410,17 @@ fn establish_minimal_line_boxes_leading_br_does_not_add_leading_blank_line() {
     );
 }
 
-/// sites 7-8 — `preshape_text` の `cv.line_height` → parley
-/// `StyleProperty::LineHeight`。site 5 (`font-size`) と同じ「guard を
-/// 外すと fail ではなく hang する」site だが、機構は別
-/// (`sanitize_line_height` の doc参照 — `next_x <= max_advance` ではなく
-/// `running_line_height > line_max_height` が恒真になる)。
+/// Sites 7-8: `cv.line_height` in `preshape_text` → parley's
+/// `StyleProperty::LineHeight`. Like site 5 (`font-size`), removing the guard
+/// hangs instead of failing, but through a different mechanism (see
+/// `sanitize_line_height`: `running_line_height > line_max_height` remains
+/// true, rather than `next_x <= max_advance` remaining false).
 ///
-/// 通常の `cascade()` だけで非有限値を作れる — `line-height: 1e40`
-/// (unitless number)、`line-height: 1e40px` (absolute length) はいずれも
-/// cssparser の f64→f32 変換で `+Inf` に saturate する (site 5 の
-/// `font-size: 1e40px` と同じ機構)。font-size と違い 2 element も
-/// bypass も要らない。
+/// Ordinary `cascade()` can produce non-finite values: both
+/// `line-height: 1e40` (unitless) and `line-height: 1e40px` (absolute)
+/// saturate to `+Inf` during cssparser's f64→f32 conversion, just as at
+/// site 5 for `font-size: 1e40px`. Unlike font-size, this needs neither a
+/// second element nor a bypass.
 #[test]
 fn nonfinite_line_height_is_clamped_before_parley() {
     fn shaped_height(inline_style: &str) -> f32 {
@@ -2443,8 +2447,8 @@ fn nonfinite_line_height_is_clamped_before_parley() {
         doc.nodes[text].text_layout().unwrap().height()
     }
 
-    /// guard 消失時の hang を有界時間の失敗に変える wrapper — site 5 の
-    /// `shaped_height_bounded` と同じ構造 (doc参照)。
+    /// Bound a guard-regression hang so it becomes a timed test failure.
+    /// Same structure as site 5's `shaped_height_bounded` (see its docs).
     fn shaped_height_bounded(inline_style: &str) -> f32 {
         use std::sync::mpsc::RecvTimeoutError;
 
@@ -2490,20 +2494,20 @@ fn nonfinite_line_height_is_clamped_before_parley() {
 
 // ── site 6: sanitize_font_weight ─────────────
 //
-// sanitize_finite / sanitize_taffy と同型の unit test。`ComputedValues`
-// が全 field `pub` であることに由来する非有限 font_weight (f32 格上げで
-// 型による排除ができなくなった) が
-// `parley::FontWeight::new` の直前で有限 + `[1,1000]` に収まることを
-// 直接検証する。
+// Unit tests analogous to sanitize_finite / sanitize_taffy. They verify
+// that non-finite font_weight values (possible because all `ComputedValues`
+// fields are `pub` and the f32 promotion removed type-level exclusion)
+// become finite and stay in `[1,1000]` immediately before
+// `parley::FontWeight::new`.
 
 #[test]
 fn sanitize_font_weight_maps_nan_to_normal_fallback() {
-    // `f32::clamp` は NaN を NaN のまま返すので、この分岐が無いと NaN が
-    // 素通りする。fallback は `0.0` ではなく `FALLBACK_FONT_WEIGHT`
-    // (400.0、CSS Fonts 4 §2.2 "Font weight: the font-weight property"
-    // <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal> の
-    // `normal` の computed value) — `sanitize_finite` の length 系 site
-    // とは異なる fallback を選ぶ理由は `sanitize_font_weight` の doc 参照。
+    // `f32::clamp` returns NaN for NaN, so without this branch it passes
+    // through. Use `FALLBACK_FONT_WEIGHT` instead of `0.0` (400.0, the
+    // computed value of `normal` under CSS Fonts 4 §2.2,
+    // <https://www.w3.org/TR/css-fonts-4/#valdef-font-weight-normal>).
+    // See `sanitize_font_weight` for why this differs from the fallback
+    // used at length-related `sanitize_finite` sites.
     let mut diag = Vec::new();
     assert_eq!(
         sanitize_font_weight(f32::NAN, &mut diag),
@@ -2536,21 +2540,22 @@ fn sanitize_font_weight_clamps_infinities_to_bounds() {
 
 #[test]
 fn sanitize_font_weight_clamps_out_of_range_finite_values() {
-    // 有限でも範囲外なら寄せる (「有限化するだけ」ではない) —
-    // `sanitize_taffy_clamps_out_of_range_finite_values` の font-weight 版。
+    // Also clamp finite values outside the range; this is not just
+    // finiteness checking (the font-weight counterpart of
+    // `sanitize_taffy_clamps_out_of_range_finite_values`).
     let mut diag = Vec::new();
     assert_eq!(sanitize_font_weight(1e30, &mut diag), MAX_FONT_WEIGHT);
     assert_eq!(sanitize_font_weight(-1e30, &mut diag), MIN_FONT_WEIGHT);
-    // `0.0` は length 系 site では有効な値だが font-weight の妥当域
-    // `[1, 1000]` の外 — MIN_FONT_WEIGHT に寄る。
+    // `0.0` is valid for length sinks but below font-weight's valid
+    // `[1, 1000]` range, so clamp it to MIN_FONT_WEIGHT.
     assert_eq!(sanitize_font_weight(0.0, &mut diag), MIN_FONT_WEIGHT);
     assert_eq!(diag.len(), 3);
 }
 
 #[test]
 fn sanitize_font_weight_passes_through_in_range_values() {
-    // 通常値 (fractional weight 含む) は
-    // bit-identical に素通しする。
+    // Let ordinary values, including fractional weights, pass through
+    // bit-identically.
     let mut diag = Vec::new();
     for v in [
         MIN_FONT_WEIGHT,
@@ -2650,18 +2655,17 @@ fn line_height_to_parley_maps_all_three_variants() {
 
 #[test]
 fn preshape_text_pushes_computed_font_style_into_parley_run_attrs() {
-    // `preshape_text` が `cv.font_style` を実際に RangedBuilder へ push して
-    // いることを、shape 済 `Run` の font-matching 属性から確認する。
+    // Check that `preshape_text` really pushes `cv.font_style` into
+    // RangedBuilder by inspecting the shaped `Run`'s font-matching attrs.
     //
-    // `GlyphRun::style()` (`parley::layout::Style<B>`) は brush /
-    // underline / strikethrough / 非公開 line_height 等のみで
-    // `font_style` field を持たないため使えない。代わりに
-    // `Run::font_attrs()` (`&fontique::Attributes`, `pub style: FontStyle`
-    // field を持つ) を使う — これは実際に選ばれた font file の属性では
-    // なく、font matching に**渡された** CSS-requested attribute
-    // そのもの (parley `shape` module が `RangedBuilder` へ push した
-    // `StyleProperty::FontStyle` から直接組み立てる) なので、実行環境に
-    // italic face を持つフォントがあるかどうかに関わらず決定的に検証できる。
+    // `GlyphRun::style()` (`parley::layout::Style<B>`) only has brush,
+    // underline, strikethrough, and private line_height, not font_style.
+    // Instead, use `Run::font_attrs()` (`&fontique::Attributes`, with a
+    // public `style: FontStyle` field). This captures the CSS-requested
+    // attribute passed to font matching, not the chosen font file's attrs:
+    // parley's `shape` module builds it directly from `StyleProperty::FontStyle`
+    // pushed to `RangedBuilder`. The check is deterministic regardless of
+    // whether the environment has any italic font face.
     use parley::{FontContext, LayoutContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -2694,7 +2698,7 @@ fn preshape_text_pushes_computed_font_style_into_parley_run_attrs() {
             // instead of a GlyphRun — preshape_text (this file) never
             // pushes an inline box, matching the same premise
             // `crates/raikiri-paint/src/text.rs`'s glyph-draw walk
-            // relies on ("InlineBox は現状生成されない" there), so
+            // relies on ("InlineBox is not currently generated" there), so
             // this is unreachable for plain text today.
             panic!("expected shaped text to produce a GlyphRun, got an InlineBox");
         };
@@ -2723,16 +2727,15 @@ fn preshape_text_pushes_computed_font_style_into_parley_run_attrs() {
 
 #[test]
 fn preshape_text_pushes_computed_line_height_into_parley_run_metrics() {
-    // `preshape_text` が `cv.line_height` を実際に RangedBuilder へ push
-    // していることを、shape 済 `Run` の `RunMetrics::line_height` から
-    // 確認する。`font_style` の兄弟 test と違い `Run::font_attrs()` では
-    // 検証できない (`fontique::Attributes` に line-height 相当の field は
-    // 無い) — 代わりに `Run::metrics()` (`&RunMetrics`, `pub line_height:
-    // f32` field を持つ) を使う。`Number` / `Length` はいずれも font
-    // metrics (ascent / descent / leading) に依存しない計算式
-    // (`parley-0.10.0/src/layout/data.rs` の `push_run` 内 `match
-    // style.line_height`) なので、実行環境のフォントに関わらず厳密な値で
-    // 決定的に検証できる。
+    // Confirm that `preshape_text` pushes `cv.line_height` to RangedBuilder
+    // by reading `RunMetrics::line_height` from the shaped `Run`.
+    // Unlike the sibling `font_style` test, `Run::font_attrs()` cannot
+    // verify it: `fontique::Attributes` has no line-height field. Instead,
+    // use `Run::metrics()` (`&RunMetrics`, with a public `line_height: f32`
+    // field). Both `Number` and `Length` use formulas independent of font
+    // metrics (ascent / descent / leading), in the `match style.line_height`
+    // within `push_run` in `parley-0.10.0/src/layout/data.rs`. Thus the
+    // exact result is deterministic across installed fonts.
     use parley::{FontContext, LayoutContext, PositionedLayoutItem};
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -2814,31 +2817,28 @@ fn preshape_text_pushes_computed_line_height_into_parley_run_metrics() {
 
 #[test]
 fn preshape_text_sanitizes_non_finite_font_weight_bypassing_cascade() {
-    // `ComputedValues` は全 field が `pub` なので、cascade を経由しない
-    // 直接構築 (ここでは cascade() 後に該当 node の font_weight だけを
-    // 上書きする形で再現) から非有限値が来る経路がある。この経路が
-    // `preshape_text` を panic させないこと — sink 直前で
-    // `sanitize_font_weight` が有限化すること — を確認する。
+    // Every `ComputedValues` field is `pub`, so a non-finite font_weight can
+    // arrive through direct construction without cascade. Model this by
+    // overwriting only that node's font_weight after cascade(). Verify that
+    // `sanitize_font_weight` makes it finite immediately before the sink
+    // and prevents `preshape_text` from panicking.
     //
-    // `CascadeResult` / `ComputedValues` はどちらも `#[non_exhaustive]`
-    // なので、raikiri-dom (外部 crate) からは struct literal で直接
-    // construct できない。正当な `cascade()` 呼び出しで得た
-    // `CascadeResult` の `pub computed: Vec<ComputedValues>` を後から
-    // 上書きすることで、「cascade を経由しない値」を再現する — これは
-    // `ComputedValues::font_weight` の doc が挙げる
-    // `crate::page::cascade_page` の継承元 root 引数と同じ攻撃面
-    // (呼び出し元が任意の `ComputedValues` を用意して渡せる) の縮図。
+    // Both `CascadeResult` and `ComputedValues` are `#[non_exhaustive]`,
+    // so raikiri-dom (an external crate) cannot construct them as struct
+    // literals. Overwrite `pub computed: Vec<ComputedValues>` in the
+    // `CascadeResult` returned by a valid `cascade()` call. This models
+    // an uncascaded value and the same attack surface as the inherited root
+    // argument of `crate::page::cascade_page` mentioned in the docs for
+    // `ComputedValues::font_weight`: a caller can supply arbitrary values.
     //
-    // `text_layout().is_some()` だけでは「panic しなかった」ことしか
-    // 検証できない — 将来誰かが `preshape_text` から
-    // `sanitize_font_weight` の呼び出しを誤って外しても (parley が
-    // 非有限値を panic せず黒箱処理する場合)、それは検知できない。
-    // そこで `doc.layout_warnings` (`sanitize_font_weight` が実際に
-    // clamp した時だけ push する `LayoutWarn::NonFiniteClamped`
-    // の蓄積先) を直接検査し、sink 直前に渡った raw 値と、そこから
-    // 実際に有限化された値の両方を assert する — 配線が外れれば
-    // site `"font-weight"` の event が一切積まれなくなるので、
-    // その断線をここで検知できる。
+    // Testing only `text_layout().is_some()` would prove merely that no
+    // panic occurred. If `sanitize_font_weight` were mistakenly removed
+    // from `preshape_text`, parley might handle non-finite input opaquely
+    // without panicking. Inspect `doc.layout_warnings`, where
+    // `sanitize_font_weight` pushes `LayoutWarn::NonFiniteClamped` only
+    // when it clamps a value, and assert both the raw input reaching the
+    // sink and its sanitized output. Disconnecting the guard would remove
+    // every event at site `"font-weight"`, which this check detects.
     use parley::{FontContext, LayoutContext};
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -2876,9 +2876,9 @@ fn preshape_text_sanitizes_non_finite_font_weight_bypassing_cascade() {
                  text_layout despite a non-finite font_weight bypassing cascade"
         );
 
-        // 配線検証: font-size はこの test では触っていないので clamp は
-        // 発火せず、"font-weight" site の event だけが (毎 case とも
-        // clamp が実際に効くので) ちょうど 1 件積まれるはず。
+        // Wiring check: this test leaves font-size unchanged, so no clamp
+        // fires there. Every case must produce exactly one event at the
+        // "font-weight" site, because each case actually needs clamping.
         let font_weight_events: Vec<LayoutWarn> = doc
             .layout_warnings
             .iter()
@@ -3248,6 +3248,51 @@ fn preshape_text_applies_computed_word_spacing_ch_to_advance() {
 }
 
 #[test]
+fn preshape_text_adds_calc_ch_absolute_offset_to_measured_spacing() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    fn shaped_width(inline_style: &str, text: &str) -> f32 {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+        let text = doc.append_text(p, text);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        doc.nodes[text]
+            .text_layout()
+            .expect("text should be shaped")
+            .full_width()
+    }
+
+    // `calc(1ch + 5px)` must equal the measured `1ch` plus the 5px offset per
+    // spacing unit (two glyphs for letter-spacing, one space for word-spacing).
+    let letter_ch = shaped_width("letter-spacing: 1ch", "AB");
+    let letter_calc = shaped_width("letter-spacing: calc(1ch + 5px)", "AB");
+    assert!(
+        (letter_calc - letter_ch - 10.0).abs() < 0.01,
+        "letter-spacing: ch={letter_ch}, calc={letter_calc}"
+    );
+    let word_ch = shaped_width("word-spacing: 1ch", "A B");
+    let word_calc = shaped_width("word-spacing: calc(1ch + 5px)", "A B");
+    assert!(
+        (word_calc - word_ch - 5.0).abs() < 0.01,
+        "word-spacing: ch={word_ch}, calc={word_calc}"
+    );
+}
+
+#[test]
 fn preshape_text_measures_inherited_ch_spacing_with_the_declaring_font() {
     use parley::{FontContext, LayoutContext};
     use raikiri_style::{build_rule_tree, cascade};
@@ -3417,6 +3462,66 @@ fn text_transform_maps_case_width_kana_and_language_tailoring() {
         apply_text_transform("ⓐ ⓑ", TextTransform::Capitalize, ""),
         "ⓐ ⓑ"
     );
+}
+
+#[test]
+fn full_width_maps_unicode_wide_and_narrow_compatibility_forms() {
+    for (narrow, wide) in [
+        (' ', '\u{3000}'),
+        ('!', '\u{FF01}'),
+        ('~', '\u{FF5E}'),
+        ('\u{A2}', '\u{FFE0}'),
+        ('\u{AF}', '\u{FFE3}'),
+        ('\u{2985}', '\u{FF5F}'),
+        ('\u{FF61}', '\u{3002}'),
+        ('\u{FF76}', '\u{30AB}'),
+        ('\u{FF9E}', '\u{3099}'),
+        ('\u{FFA1}', '\u{3131}'),
+        ('\u{FFE8}', '\u{2502}'),
+        ('\u{FFEE}', '\u{25CB}'),
+    ] {
+        assert_eq!(full_width_char(narrow), wide, "narrow={narrow:?}");
+        assert_eq!(full_width_char(wide), wide, "wide={wide:?}");
+    }
+    assert_eq!(full_width_char('漢'), '漢');
+    assert_eq!(
+        apply_text_transform("A ｶﾞ ¢", TextTransform::FullWidth, ""),
+        "Ａ　カ\u{3099}　￠"
+    );
+}
+
+#[test]
+fn full_width_covers_all_non_ascii_unicode_compatibility_pairs() {
+    // Unicode 14.0 UCD mappings: inverted <wide> and direct <narrow>.
+    // Keep expected pairs independent of the match arm order.
+    let mappings = concat!(
+        "A2:FFE0 A3:FFE1 A5:FFE5 A6:FFE4 AC:FFE2 AF:FFE3 20A9:FFE6 ",
+        "2985:FF5F 2986:FF60 FF61:3002 FF62:300C FF63:300D FF64:3001 FF65:30FB ",
+        "FF66:30F2 FF67:30A1 FF68:30A3 FF69:30A5 FF6A:30A7 FF6B:30A9 FF6C:30E3 ",
+        "FF6D:30E5 FF6E:30E7 FF6F:30C3 FF70:30FC FF71:30A2 FF72:30A4 FF73:30A6 ",
+        "FF74:30A8 FF75:30AA FF76:30AB FF77:30AD FF78:30AF FF79:30B1 FF7A:30B3 ",
+        "FF7B:30B5 FF7C:30B7 FF7D:30B9 FF7E:30BB FF7F:30BD FF80:30BF FF81:30C1 ",
+        "FF82:30C4 FF83:30C6 FF84:30C8 FF85:30CA FF86:30CB FF87:30CC FF88:30CD ",
+        "FF89:30CE FF8A:30CF FF8B:30D2 FF8C:30D5 FF8D:30D8 FF8E:30DB FF8F:30DE ",
+        "FF90:30DF FF91:30E0 FF92:30E1 FF93:30E2 FF94:30E4 FF95:30E6 FF96:30E8 ",
+        "FF97:30E9 FF98:30EA FF99:30EB FF9A:30EC FF9B:30ED FF9C:30EF FF9D:30F3 ",
+        "FF9E:3099 FF9F:309A FFA0:3164 FFA1:3131 FFA2:3132 FFA3:3133 FFA4:3134 ",
+        "FFA5:3135 FFA6:3136 FFA7:3137 FFA8:3138 FFA9:3139 FFAA:313A FFAB:313B ",
+        "FFAC:313C FFAD:313D FFAE:313E FFAF:313F FFB0:3140 FFB1:3141 FFB2:3142 ",
+        "FFB3:3143 FFB4:3144 FFB5:3145 FFB6:3146 FFB7:3147 FFB8:3148 FFB9:3149 ",
+        "FFBA:314A FFBB:314B FFBC:314C FFBD:314D FFBE:314E FFC2:314F FFC3:3150 ",
+        "FFC4:3151 FFC5:3152 FFC6:3153 FFC7:3154 FFCA:3155 FFCB:3156 FFCC:3157 ",
+        "FFCD:3158 FFCE:3159 FFCF:315A FFD2:315B FFD3:315C FFD4:315D FFD5:315E ",
+        "FFD6:315F FFD7:3160 FFDA:3161 FFDB:3162 FFDC:3163 FFE8:2502 FFE9:2190 ",
+        "FFEA:2191 FFEB:2192 FFEC:2193 FFED:25A0 FFEE:25CB ",
+    );
+    let pairs = mappings.split_ascii_whitespace().collect::<Vec<_>>();
+    assert_eq!(pairs.len(), 131);
+    for pair in pairs {
+        let (from, to) = pair.split_once(':').expect("source:target mapping");
+        let parse = |hex| char::from_u32(u32::from_str_radix(hex, 16).unwrap()).unwrap();
+        assert_eq!(full_width_char(parse(from)), parse(to), "{pair}");
+    }
 }
 
 #[test]

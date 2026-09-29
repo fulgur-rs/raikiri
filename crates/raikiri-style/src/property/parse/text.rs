@@ -11,15 +11,15 @@ use crate::property::types::*;
 use super::color::*;
 use super::common::*;
 
-/// `font-family: <family-name>#` を parse する。
+/// Parses `font-family: <family-name>#`.
 ///
-/// comma-separated な family-name の list。各 family-name は quoted string
-/// (`"Times New Roman"`) か、unquoted identifier の連続 (`Times New Roman` =
-/// 3 ident が空白区切りで 1 family、CSS4 で有効) のいずれか。
+/// A comma-separated list of family names. Each family name is either a quoted string
+/// (`"Times New Roman"`) or a sequence of unquoted identifiers (`Times New Roman` =
+/// three space-separated identifiers forming one family, valid in CSS4).
 ///
-/// 末尾で comma が続かなければ loop を止め、残り input (`!important` 等) は
-/// 手を付けずに downstream (caller の `parse_important` / `expect_exhausted`)
-/// に委ねる — `!` を garbage として拒否しないための Finding 3 対応。
+/// If no comma follows, the loop stops and leaves the remaining input (`!important`, etc.)
+/// untouched for downstream handling (the caller's `parse_important` / `expect_exhausted`).
+/// This addresses Finding 3 by not rejecting `!` as garbage.
 pub(super) fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<FontFamilyName>> {
     let mut families = Vec::new();
     loop {
@@ -131,28 +131,52 @@ pub(super) fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndent
 
 fn parse_text_indent_length(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
     input
-        .try_parse(|i| parse_text_indent_calc(i).ok_or_else(|| i.new_custom_error::<(), ()>(())))
+        .try_parse(|i| {
+            parse_text_indent_calc_with_ch(i).ok_or_else(|| i.new_custom_error::<(), ()>(()))
+        })
         .ok()
         .or_else(|| parse_length_value(input, true).map(TextIndentLength::Length))
 }
 
 fn parse_text_indent_calc(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
+    parse_text_indent_calc_impl(input, false)
+}
+
+/// Like [`parse_text_indent_calc`] but also accepts `ch` terms. Only the
+/// properties whose computed value can carry font-metric provenance
+/// (`text-indent`, `letter-spacing`, `word-spacing`) opt in; every other
+/// caller keeps rejecting `ch` inside `calc()` rather than dropping it later.
+fn parse_text_indent_calc_with_ch(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
+    parse_text_indent_calc_impl(input, true)
+}
+
+fn parse_text_indent_calc_impl(
+    input: &mut Parser<'_, '_>,
+    allow_ch: bool,
+) -> Option<TextIndentLength> {
     input
         .try_parse(|i| -> Result<TextIndentLength, ParseError<'_, ()>> {
             match i.next()?.clone() {
                 Token::Function(name) if name.eq_ignore_ascii_case("calc") => {}
                 token => return Err(i.new_unexpected_token_error(token)),
             }
-            i.parse_nested_block(parse_text_indent_calc_terms)
+            i.parse_nested_block(|i| parse_text_indent_calc_terms(i, allow_ch))
         })
         .ok()
 }
 
 fn parse_text_indent_calc_terms<'i>(
     input: &mut Parser<'i, '_>,
+    allow_ch: bool,
 ) -> Result<TextIndentLength, ParseError<'i, ()>> {
-    let value = parse_text_indent_calc_sum(input)?;
-    if value.em == 0.0 {
+    let value = parse_text_indent_calc_sum(input, allow_ch)?;
+    if value.ch != 0.0 {
+        if value.percent == 0.0 && value.px == 0.0 && value.em == 0.0 {
+            Ok(TextIndentLength::Length(Length::Ch(value.ch)))
+        } else {
+            Ok(TextIndentLength::Calc(value))
+        }
+    } else if value.em == 0.0 {
         if value.percent == 0.0 {
             Ok(TextIndentLength::Length(Length::Px(value.px)))
         } else if value.px == 0.0 {
@@ -169,19 +193,25 @@ fn parse_text_indent_calc_terms<'i>(
 
 fn parse_text_indent_calc_sum<'i>(
     input: &mut Parser<'i, '_>,
+    allow_ch: bool,
 ) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
-    let mut value = parse_text_indent_calc_term(input)?;
+    let mut value = parse_text_indent_calc_term(input, allow_ch)?;
     while !input.is_exhausted() {
         let sign = match input.next()?.clone() {
             Token::Delim('+') => 1.0,
             Token::Delim('-') => -1.0,
             token => return Err(input.new_unexpected_token_error(token)),
         };
-        let term = parse_text_indent_calc_term(input)?;
+        let term = parse_text_indent_calc_term(input, allow_ch)?;
         value.percent += sign * term.percent;
         value.px += sign * term.px;
         value.em += sign * term.em;
-        if !value.percent.is_finite() || !value.px.is_finite() || !value.em.is_finite() {
+        value.ch += sign * term.ch;
+        if !value.percent.is_finite()
+            || !value.px.is_finite()
+            || !value.em.is_finite()
+            || !value.ch.is_finite()
+        {
             return Err(input.new_custom_error(()));
         }
     }
@@ -190,10 +220,11 @@ fn parse_text_indent_calc_sum<'i>(
 
 fn parse_text_indent_calc_term<'i>(
     input: &mut Parser<'i, '_>,
+    allow_ch: bool,
 ) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
     let start = input.state();
     if matches!(input.next()?.clone(), Token::ParenthesisBlock) {
-        return input.parse_nested_block(parse_text_indent_calc_sum);
+        return input.parse_nested_block(|i| parse_text_indent_calc_sum(i, allow_ch));
     }
     input.reset(&start);
 
@@ -209,50 +240,69 @@ fn parse_text_indent_calc_term<'i>(
             percent: 0.0,
             px,
             em: 0.0,
+            ch: 0.0,
         },
         Length::Pt(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 72.0),
             em: 0.0,
+            ch: 0.0,
         },
         Length::Cm(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 2.54),
             em: 0.0,
+            ch: 0.0,
         },
         Length::Mm(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 25.4),
             em: 0.0,
+            ch: 0.0,
         },
         Length::Q(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 101.6),
             em: 0.0,
+            ch: 0.0,
         },
         Length::In(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * 96.0,
             em: 0.0,
+            ch: 0.0,
         },
         Length::Pc(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * 16.0,
             em: 0.0,
+            ch: 0.0,
         },
         Length::Em(em) => LengthPercentageCalc {
             percent: 0.0,
             px: 0.0,
             em,
+            ch: 0.0,
         },
         Length::Percent(percent) => LengthPercentageCalc {
             percent,
             px: 0.0,
             em: 0.0,
+            ch: 0.0,
+        },
+        Length::Ch(ch) if allow_ch => LengthPercentageCalc {
+            percent: 0.0,
+            px: 0.0,
+            em: 0.0,
+            ch,
         },
         _ => return Err(input.new_custom_error(())),
     };
-    if value.percent.is_finite() && value.px.is_finite() && value.em.is_finite() {
+    if value.percent.is_finite()
+        && value.px.is_finite()
+        && value.em.is_finite()
+        && value.ch.is_finite()
+    {
         Ok(value)
     } else {
         Err(input.new_custom_error(()))
@@ -260,61 +310,61 @@ fn parse_text_indent_calc_term<'i>(
 }
 
 /// `font-size: <absolute-size> | <relative-size> | <length-percentage [0,∞]> |
-/// math` を parse する。
+/// math`.
 ///
 /// Grammar (CSS Fonts 4 §2.5 "Font size: the font-size property"
 /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>):
-/// `<absolute-size> | <relative-size> | <length-percentage [0,∞]> | math`。
+/// The grammar is `<absolute-size> | <relative-size> | <length-percentage [0,∞]> | math`.
 ///
-/// - `<absolute-size>` (`xx-small` … `xxx-large`、`medium`) — [`parse_font_size_keyword`]
-///   が §2.5.1 の scaling-factor table を `medium` = 16px 基準で解決し、
-///   [`PropertyValue::FontSize`] (`Length::Px`) を返す。
-/// - `<relative-size>` (`larger` / `smaller`) — 継承先依存のため
-///   [`PropertyValue::FontSizeRelative`] を返し、解決は
+/// - `<absolute-size>` (`xx-small` … `xxx-large`, `medium`) — [`parse_font_size_keyword`]
+///   resolves the §2.5.1 scaling-factor table relative to `medium` = 16px and
+///   returns [`PropertyValue::FontSize`] (`Length::Px`).
+/// - `<relative-size>` (`larger` / `smaller`) — Its result depends on inheritance,
+///   so this parser returns [`PropertyValue::FontSizeRelative`] and leaves resolution
 ///   [`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]
-///   に委ねる (詳細は同 variant の doc)。
-/// - `<length-percentage [0,∞]>` — 本関数の後半、[`parse_length_value`] 経由。
-/// - `math` — 未実装 (MathML scaling algorithm が丸ごと未対応) として
-///   `None` に落とす。
+///   to that code (see the variant's documentation for details).
+/// - `<length-percentage [0,∞]>` — Handled later in this function via [`parse_length_value`].
+/// - `math` — Not implemented (the entire MathML scaling algorithm is unsupported),
+///   so the parser returns `None`.
 ///
-/// # ident 分岐を先に `try_parse` する理由
+/// # Why the identifier branch uses `try_parse` first
 ///
-/// `<absolute-size>` / `<relative-size>` / `math` はいずれも単一 ident token。
-/// [`parse_margin_side`](super::box_model::parse_margin_side) の `auto` 分岐と同じ pattern — [`parse_length_value`]
-/// は内部で `input.next()` を unconditional に消費するため、ident 分岐は
-/// checkpoint 経由の rewind (`try_parse`) で先に試す必要がある。
+/// `<absolute-size>`, `<relative-size>`, and `math` are all single identifier tokens.
+/// As in the `auto` branch of [`parse_margin_side`](super::box_model::parse_margin_side), [`parse_length_value`]
+/// consumes `input.next()` unconditionally, so the identifier branch must be tried
+/// first with a rewind checkpoint (`try_parse`).
 ///
 /// Relative and percentage lengths are resolved by the cascade using the
 /// parent and root font-size bases required by CSS Values 4.
 ///
 /// # Non-negative constraint
 ///
-/// grammar の `[0,∞]` を parse-time enforce する。[`parse_padding_side`](super::box_model::parse_padding_side) /
-/// [`parse_width`](super::box_model::parse_width) と同じ [`Length::payload`] 経由の全 [`Length`] variant check
-/// — `-5px` だけでなく `-50%` / `-1em` も drop する。`<absolute-size>` /
-/// `<relative-size>` は grammar 上そもそも符号を持たないので本 constraint の
-/// 対象外 (ident 分岐は `parse_length_value` に達する前に return する)。
+/// The grammar's `[0,∞]` constraint is enforced at parse time. As in [`parse_padding_side`](super::box_model::parse_padding_side) /
+/// [`parse_width`](super::box_model::parse_width), [`Length::payload`] is used to check every [`Length`] variant
+/// — not only `-5px` but also `-50%` and `-1em` are dropped. `<absolute-size>` and
+/// `<relative-size>` cannot be signed under the grammar and therefore are not subject
+/// to this constraint (the identifier branch returns before `parse_length_value`).
 ///
-/// # `lh` / `rlh` は受理し、親基準で解決する
+/// # Accept `lh` / `rlh` and resolve them against the parent
 ///
-/// [`Length::Lh`] doc の「自己参照」節: CSS Values 4 §6.1.1 は `lh`/`rlh` が
-/// `line-height` **または font-\* property** の値として、それが指す要素自身に
-/// 使われたときは親 (または「親が無ければ initial values」) の line-height /
-/// font metrics を基準にする、と規定する。`font-size` はまさにその
-/// font-\* property であり、grammar 上 `lh`/`rlh` を排除する根拠は無い
-/// (CSS Fonts 4 の `font-size` grammar `<absolute-size> | <relative-size> |
-/// <length-percentage [0,∞]>` の `<length-percentage>` は `<length>` を含み、
-/// CSS Values 4 §6.1.1 の `<length>` production は `lh`/`rlh` を除外しない)。
+/// See the "self-reference" section in the [`Length::Lh`] documentation: CSS Values 4 §6.1.1
+/// specifies that `lh`/`rlh` used in a `line-height` **or font-\* property** on the
+/// element they reference use the parent's line height or font metrics (or initial
+/// values if there is no parent). `font-size` is precisely such a
+/// font-\* property, and its grammar does not exclude `lh`/`rlh`
+/// (the CSS Fonts 4 `font-size` grammar `<absolute-size> | <relative-size> |
+/// <length-percentage [0,∞]>` includes `<length>` through `<length-percentage>`, and
+/// the CSS Values 4 §6.1.1 `<length>` production does not exclude `lh`/`rlh`).
 ///
-/// 当初は、この解決 (「親の computed line-height」を
-/// font-size 解決の基準として渡す) が `line-height`
-/// (`finalize`/`finalize_as_root` が既に持つ `parent: &ComputedValues` を
-/// そのまま使える) より高コストに見えたため drop していたが、実際に実装した
-/// ところコストは局所的だった — [`crate::resolve::resolve_font_size`] の
-/// `self_reference_basis` 引数、および [`crate::specified::SpecifiedValues::finalize`]
-/// 内の 2, 3 行の並べ替えで足りる (`parent` は本関数の呼び出しに入る前に
-/// tree walk で既に確定済みのため、cross-node な phase 順序の変更は不要 —
-/// [`mod@crate::resolve`] module doc の「想定される 4 段階」節参照)。
+/// Originally, we dropped these units because passing the parent's computed line height
+/// as the basis for font-size resolution seemed more expensive than for `line-height`
+/// (`finalize`/`finalize_as_root` already have `parent: &ComputedValues` available).
+/// In practice, the implementation was local: it only needed
+/// the `self_reference_basis` argument of [`crate::resolve::resolve_font_size`] and
+/// a two- or three-line reorder in [`crate::specified::SpecifiedValues::finalize`]
+/// (the parent is already computed before this function is called during the
+/// tree walk, so no cross-node phase ordering change is needed; see the
+/// "expected four stages" section of the [`mod@crate::resolve`] module documentation).
 pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return parse_font_size_keyword(&ident);
@@ -323,36 +373,36 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValu
     (length.payload() >= 0.0).then_some(PropertyValue::FontSize(length))
 }
 
-/// `<absolute-size>` / `<relative-size>` / `math` の ident 部分を parse する
-/// ([`parse_font_size`] の helper)。
+/// Parses the identifier portion of `<absolute-size>`, `<relative-size>`, or `math`
+/// (a helper for [`parse_font_size`]).
 ///
 /// # `<absolute-size>` scaling-factor table
 ///
 /// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
-/// <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> の表をそのまま
-/// 写す (`resolve_relative_weight` の "算術式で書いてはいけない"
-/// 方針と同じ理由 — 分数のまま持つことで丸め誤差の議論を spec 引用だけで
-/// 閉じられる)。`medium` は raikiri の固定基準
-/// ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px、
-/// [`crate::specified::SpecifiedValues::initial`] doc 参照) を再利用する:
+/// The table at <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> is copied
+/// directly (for the same reason as the "do not use an arithmetic expression" policy
+/// in `resolve_relative_weight`: keeping fractions allows the rounding-error
+/// discussion to rely solely on the specification). `medium` reuses Raikiri's fixed
+/// baseline ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px; see
+/// the documentation for [`crate::specified::SpecifiedValues::initial`]):
 ///
 /// | keyword | xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large |
 /// |---|---|---|---|---|---|---|---|---|
 /// | factor | 3/5 | 3/4 | 8/9 | 1 | 6/5 | 3/2 | 2/1 | 3/1 |
 ///
-/// 同 §の "an UA applying these guidelines should nevertheless avoid creating
-/// font sizes of less than 9 device pixels per EM unit" は "should" (RFC 2119
-/// 弱勧告)。本 table の最小値は `xx-small` = `16 * 3/5 = 9.6px` で、9px の
-/// 下限を上回るため clamp は不要 (実装しない理由は「未対応」ではなく
-/// 「`medium` = 16px 基準ではこの guideline を最初から満たす」こと)。
+/// The guideline in that section, "an UA applying these guidelines should nevertheless avoid creating
+/// font sizes of less than 9 device pixels per EM unit," says "should" (an RFC 2119
+/// weak recommendation). The minimum in this table, `xx-small` = `16 * 3/5 = 9.6px`,
+/// exceeds 9px, so no clamp is needed. This is not an unsupported feature:
+/// a `medium` baseline of 16px already satisfies the guideline.
 ///
 /// # `<relative-size>`
 ///
-/// [`RelativeFontSize`] doc 参照。
+/// See the [`RelativeFontSize`] documentation.
 ///
 /// # `math`
 ///
-/// 未実装 (spec-valid だが対応外)。
+/// Not implemented (valid under the specification, but unsupported).
 fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
     const MEDIUM_PX: f32 = crate::computed::INITIAL_FONT_SIZE_PX;
     let px = match ident.to_ascii_lowercase().as_str() {
@@ -366,138 +416,138 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
         "xxx-large" => MEDIUM_PX * (3.0 / 1.0),
         "larger" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger)),
         "smaller" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller)),
-        // `math` はここに落ちる (spec-valid だが未対応)。
-        // 未知 ident も同じく drop。
+        // `math` ends up here (valid under the specification, but unsupported).
+        // Unknown identifiers are also dropped here.
         _ => return None,
     };
     Some(PropertyValue::FontSize(Length::Px(px)))
 }
 
-/// `line-height: normal | <number> | <length-percentage>` を parse する。
+/// Parses `line-height: normal | <number> | <length-percentage>`.
 ///
 /// Grammar: CSS Inline 3 §5.1 "Line Spacing: the line-height property"
 /// (<https://www.w3.org/TR/css-inline-3/#line-height-property>) — value
-/// alternative は 3 branch:
+/// There are three alternatives:
 ///
 /// 1. `normal` keyword → [`LineHeight::Normal`]
-/// 2. `<number [0,∞]>` bare number (Token::Number、unit なし) → [`LineHeight::Number`]
+/// 2. `<number [0,∞]>` is a bare number (Token::Number, without a unit) → [`LineHeight::Number`]
 /// 3. `<length-percentage [0,∞]>` → [`LineHeight::Length`] with reused Length variant
 ///
 /// # Number vs Length grammar distinction
 ///
-/// spec は `<number>` と `<length-percentage>` を別 alternative として持つため
-/// 1 token レベルで区別が要る (Token::Number = unitless / Token::Dimension =
-/// unit-bearing / Token::Percentage)。unitless `1.5` と dimensioned `1.5em` を
-/// 別 variant に mapping することで、下流 (paint) が unitless number の
-/// spec special behavior "specified value を child が inherit する"
-/// (§5.1 "When a child element inherits a computed value...") と、length の
-/// 通常 resolve context を区別できる。
+/// The specification treats `<number>` and `<length-percentage>` as separate alternatives,
+/// so they must be distinguished at the token level (Token::Number is unitless,
+/// Token::Dimension has a unit, and Token::Percentage is a percentage). Mapping
+/// unitless `1.5` and dimensioned `1.5em` to different variants lets downstream
+/// paint code distinguish the special rule for unitless numbers ("the specified value
+/// is inherited by children," §5.1 "When a child element inherits a computed value...")
+/// from ordinary length resolution.
 ///
 /// # Ordering
 ///
 /// `normal` (`try_parse` + `expect_ident_matching`) → bare number
-/// (`try_parse(|i| expect_number_stable(i))` — Dimension/Percentage に対しては rewind
-/// して失敗) → [`parse_length_value`] (`allow_percentage = true`)。この順で
-/// `1.5` は Number branch、`1.5em` / `1.5px` / `150%` は Length branch に確定分岐。
+/// First, `try_parse(|i| expect_number_stable(i))` fails and rewinds for Dimension/Percentage;
+/// then [`parse_length_value`] (`allow_percentage = true`) is tried. Thus,
+/// `1.5` takes the Number branch, whereas `1.5em`, `1.5px`, and `150%` take the Length branch.
 ///
 /// # Non-negative
 ///
-/// spec `[0,∞]` により全 branch で negative reject:
-/// - Number branch: `n >= 0.0` guard、負なら `None` = declaration drop
-/// - Length branch: 全 payload の inner f32 に `>= 0.0` guard、負なら drop
+/// The specification's `[0,∞]` rejects negative values in every branch:
+/// - Number branch: the `n >= 0.0` guard returns `None` for negatives, dropping the declaration.
+/// - Length branch: a `>= 0.0` guard on each inner f32 payload drops negatives.
 ///
-/// spec-invalid → drop: spec grammar が range を parse-time
-/// で制約するため、reject 自体が spec 準拠。
+/// A negative value is invalid under the specification and is dropped because the grammar
+/// constrains the range at parse time; rejection itself conforms to the specification.
 ///
 /// # Non-goals
 ///
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(b) 非対応**: `calc()` / `var()` は未実装 (css-variables-and-math)、
-///   silent drop
-/// - **(a) spec-invalid → drop**: `<number>` / `<length-percentage>` の負値、
-///   `auto` / `medium` 等 spec-invalid keyword は spec grammar 違反、drop
+/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
+///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
+///   the canonical list of five keywords and the rationale.
+/// - **(b) Unsupported**: `calc()` / `var()` are not implemented (css-variables-and-math);
+///   both are silently dropped.
+/// - **(a) Invalid under the specification → dropped**: negative `<number>` / `<length-percentage>` values;
+///   `auto`, `medium`, and other invalid keywords violate the grammar and are dropped.
 pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
-    // 1. `normal` keyword — spec initial value。
+    // 1. Match the `normal` keyword (the initial value in the specification).
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
         .is_ok()
     {
         return Some(LineHeight::Normal);
     }
-    // 2. bare `<number [0,∞]>` — Token::Number (unit なし)。
-    //    Dimension (`1.5em`) / Percentage (`150%`) に対しては `expect_number` が
-    //    Err を返し `try_parse` が rewind するため、Length branch へフォールスルー。
-    //    Number token を commit した後は必ずここで確定させる (accept か drop):
-    //    `try_parse` は `Ok` の path で cursor を戻さないため、外側 `&& n >= 0.0`
-    //    で reject すると consumed cursor のまま Length branch に落ち、
-    //    `line-height: -0.5 20px` が `20px` として silently accept される
-    //    (spec-invalid CSS を通す correctness bug)。
+    // 2. Match a bare `<number [0,∞]>` (Token::Number, without a unit).
+    //       For Dimension (`1.5em`) / Percentage (`150%`), `expect_number` returns
+    //       Err and `try_parse` rewinds, falling back to the Length branch.
+    //       Once a Number token is committed, this branch must decide to accept or drop it:
+    //       `try_parse` does not rewind the cursor on an `Ok` path. Rejecting with an outer `&& n >= 0.0`
+    //       would leave the consumed cursor in the Length branch, so
+    //       `line-height: -0.5 20px` would silently accept `20px`
+    //       (a correctness bug that accepts CSS invalid under the specification).
     if let Ok(n) = input.try_parse(|i| expect_number_stable(i)) {
-        // spec `<number [0,∞]>` 違反 → declaration drop (Length branch へ落とさない)。
+        // A value outside the specification's `<number [0,∞]>` range drops the declaration (do not fall through to Length).
         return (n >= 0.0).then_some(LineHeight::Number(n));
     }
-    // 3. `<length-percentage [0,∞]>` — helper で全 unit + `%` を受理、
-    //    negative は post-filter で drop (helper 自体は sign check しない仕様、
-    //    parse_length_value doc "Sign / range" 参照)。
+    // 3. Match `<length-percentage [0,∞]>`; the helper accepts every unit and `%`.
+    //       Negative values are dropped by a post-filter (the helper deliberately does not check signs;
+    //       see "Sign / range" in the parse_length_value documentation).
     let l = parse_length_value(input, true)?;
-    // spec `[0,∞]`: 負値は grammar 違反 → declaration drop。
+    // The specification's `[0,∞]` makes a negative value invalid, so drop the declaration.
     (l.payload() >= 0.0).then_some(LineHeight::Length(l))
 }
 
-/// `tab-size: <number [0,∞]> | <length [0,∞]>` を parse する (CSS Text
+/// Parses `tab-size: <number [0,∞]> | <length [0,∞]>` (CSS Text
 /// Module Level 3 §4.2 "Tab Character Size: the tab-size property"
-/// <https://www.w3.org/TR/css-text-3/#tab-size-property>)。
+/// <https://www.w3.org/TR/css-text-3/#tab-size-property>).
 ///
 /// # Ordering
 ///
-/// [`parse_line_height`] と同じ 2-branch shape (bare `<number>` を先に試し、
-/// Dimension/Percentage には rewind して Length branch へ) から `normal`
-/// branch を除いたもの — tab-size の grammar に `normal` alternative は無い。
-/// `<length>` 側は `allow_percentage = false`
-/// ([`parse_length_value`] — spec propdef "Percentages: N/A" が根拠、
-/// [`TabSize::Length`] doc 参照)。
+/// This follows the two-branch shape of [`parse_line_height`]: try a bare `<number>` first,
+/// then rewind for Dimension/Percentage and try the Length branch. It omits the `normal`
+/// branch because `tab-size` has no `normal` alternative in its grammar.
+/// The `<length>` branch uses `allow_percentage = false`
+/// (see [`parse_length_value`]; the specification says "Percentages: N/A", and
+/// the [`TabSize::Length`] documentation explains why).
 ///
 /// # Non-negative
 ///
-/// spec `[0,∞]` (両 branch) — 全 branch で negative reject:
-/// - Number branch: `n >= 0.0` guard、負なら `None` = declaration drop
-/// - Length branch: payload の inner f32 に `>= 0.0` guard、負なら drop
+/// The specification's `[0,∞]` applies to both branches, rejecting negatives:
+/// - Number branch: `n >= 0.0` returns `None` for negatives and drops the declaration.
+/// - Length branch: `>= 0.0` on the inner f32 payload drops negatives.
 ///
-/// [`parse_line_height`] doc の「Number token を commit した後は必ずここで
-/// 確定させる」節と同じ懸念がここにも当てはまる — `try_parse` は `Ok` の
-/// path で cursor を戻さないため、Number branch を通った後に外側で reject
-/// すると `tab-size: -1 20px` が `20px` として silently accept されてしまう
-/// (spec-invalid CSS を通す correctness bug)。
+/// The concern in the "commit a Number token" section of the [`parse_line_height`]
+/// documentation also applies here: `try_parse` does not rewind an `Ok` path. If an
+/// outer check rejects after the Number branch, `tab-size: -1 20px` would silently
+/// accept `20px` instead (a correctness bug that accepts invalid CSS).
+/// Do not fall through after a committed Number token.
 ///
-/// # `calc()` の扱い
+/// # Handling `calc()`
 ///
-/// `<length>` alternative の additive `calc()` (`calc(10px + 0.5em)` 等) は
-/// [`parse_word_spacing`] / [`parse_letter_spacing`] と同じ
-/// `parse_text_indent_calc` 経路で受理し、[`TabSize::Calc`] に保持する
-/// (percentage 項は spec propdef "Percentages: N/A" により reject、
-/// [`TabSize::Length`] doc 参照)。`sign()` / container-relative unit
-/// (`cqw` 等) を含む calc は同 helper が受理しないため drop のまま
-/// (general math + container query 対応待ち)。
+/// The additive `<length>` form of `calc()` (such as `calc(10px + 0.5em)`) is accepted
+/// through the same `parse_text_indent_calc` path as [`parse_word_spacing`] and
+/// [`parse_letter_spacing`], and is stored as [`TabSize::Calc`]. Percentage
+/// terms are rejected per "Percentages: N/A" in the property definition (see
+/// the [`TabSize::Length`] documentation). Calculations with `sign()` or
+/// container-relative units such as `cqw` are still dropped because the helper
+/// does not accept them (pending general math and container query support).
 ///
 /// # Non-goals
 ///
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(b) 非対応**: `var()` は未実装、silent drop。`calc()` は上記「`calc()`
-///   の扱い」節の additive `px` + `em` subset のみ対応し、`sign()` /
-///   container-relative unit を含む形は未対応のまま drop する。
-/// - **(a) spec-invalid → drop**: `<number>` / `<length>` の負値、`auto` 等
-///   spec-invalid keyword、percentage は spec grammar 違反、drop。
+/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
+///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
+///   the canonical list of five keywords and the rationale.
+/// - **(b) Unsupported**: `var()` is silently dropped. `calc()` only supports the additive
+///   `px` + `em` subset described in "Handling `calc()`" above; calculations with `sign()` or
+///   container-relative units remain unsupported and are dropped.
+/// - **(a) Invalid under the specification → dropped**: negative `<number>` / `<length>` values,
+///   invalid keywords such as `auto`, and percentages violate the grammar and are dropped.
 pub(super) fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
-    // 0. additive `<length>` calc — `parse_word_spacing` と同じ helper。
-    //    percentage 項は "Percentages: N/A" により reject (drop)。
-    //    collapsed single length (例: `calc(10px)`) は Length branch と
-    //    同じ non-negative filter に通す。mixed calc の derived 負値は
-    //    通過させ、computed 時の clamp (`resolve_tab_size`)
-    //    に委ねる (CSS Values 4 §10.7)。
+    // 0. Try additive `<length>` calc with the same helper as `parse_word_spacing`.
+    //       Reject percentage terms because the property definition says "Percentages: N/A".
+    //       Apply the Length branch's non-negative filter to a collapsed single length
+    //       (such as `calc(10px)`). Allow negative results from mixed calc expressions,
+    //       deferring the clamp at computed-value time to `resolve_tab_size`
+    //       (CSS Values 4 §10.7).
     if let Some(parsed) = parse_text_indent_calc(input) {
         return match parsed {
             TextIndentLength::Length(l) => {
@@ -516,15 +566,15 @@ pub(super) fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
             }
         };
     }
-    // 1. bare `<number [0,∞]>` — Token::Number (unit なし)。Dimension
-    //    (`4px`) に対しては `expect_number` が Err を返し `try_parse` が
-    //    rewind するため、Length branch へフォールスルー。
+    // 1. Match a bare `<number [0,∞]>` (Token::Number, without a unit). For Dimension
+    //       (`4px`), `expect_number` returns Err and `try_parse` rewinds,
+    //       falling back to the Length branch.
     if let Ok(n) = input.try_parse(|i| expect_number_stable(i)) {
-        // spec `[0,∞]` 違反 → declaration drop (Length branch へ落とさない、
-        // 上記 doc 節参照)。
+        // A value outside the specification's `[0,∞]` range drops the declaration; do not fall through to Length.
+        // See the documentation above.
         return (n >= 0.0).then_some(TabSize::Number(n));
     }
-    // 2. `<length [0,∞]>` — percentage 非対応 (allow_percentage = false)。
+    // 2. Match `<length [0,∞]>` without percentages (`allow_percentage = false`).
     let l = parse_length_value(input, false)?;
     (l.payload() >= 0.0).then_some(TabSize::Length(l))
 }
@@ -540,7 +590,7 @@ pub(crate) fn parse_word_spacing(input: &mut Parser<'_, '_>) -> Option<WordSpaci
     {
         return Some(WordSpacingValue::Normal);
     }
-    if let Some(parsed) = parse_text_indent_calc(input) {
+    if let Some(parsed) = parse_text_indent_calc_with_ch(input) {
         return Some(match parsed {
             TextIndentLength::Length(length) => WordSpacingValue::Length(length),
             TextIndentLength::Calc(calc) => WordSpacingValue::Calc(calc),
@@ -559,7 +609,7 @@ pub(crate) fn parse_letter_spacing(input: &mut Parser<'_, '_>) -> Option<LetterS
     {
         return Some(LetterSpacingValue::Normal);
     }
-    if let Some(parsed) = parse_text_indent_calc(input) {
+    if let Some(parsed) = parse_text_indent_calc_with_ch(input) {
         return Some(match parsed {
             TextIndentLength::Length(length) => LetterSpacingValue::Length(length),
             TextIndentLength::Calc(calc) => LetterSpacingValue::Calc(calc),
@@ -568,7 +618,7 @@ pub(crate) fn parse_letter_spacing(input: &mut Parser<'_, '_>) -> Option<LetterS
     parse_length_value(input, true).map(LetterSpacingValue::Length)
 }
 
-/// `font-weight: <font-weight-absolute> | bolder | lighter` を parse する。
+/// Parses `font-weight: <font-weight-absolute> | bolder | lighter`.
 ///
 /// CSS Fonts 4 §2.2 "Font weight: the font-weight property"
 /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>:
@@ -577,42 +627,42 @@ pub(crate) fn parse_letter_spacing(input: &mut Parser<'_, '_>) -> Option<LetterS
 /// <font-weight-absolute> = [ normal | bold | <number [1,1000]> ]
 /// ```
 ///
-/// - `normal` = 400 / `bold` = 700 (spec §2.2 の keyword 定義)
-/// - `bolder` / `lighter` は継承値依存の relative weight。parse 段では解けない
-///   ため sentinel variant ([`FontWeightValue::Bolder`] /
-///   [`FontWeightValue::Lighter`]) で保持し、[`crate::cascade::apply_value`]
-///   が親の computed weight から解決する。
+/// - `normal` = 400 / `bold` = 700 (keyword definitions in §2.2 of the specification).
+/// - `bolder` / `lighter` are relative weights that depend on the inherited value.
+///   They cannot be resolved during parsing, so they are stored as sentinel variants
+///   ([`FontWeightValue::Bolder`] / [`FontWeightValue::Lighter`]), and [`crate::cascade::apply_value`]
+///   resolves them from the parent's computed weight.
 ///
-/// ASCII case-insensitive matching は CSS Values 3 §3.1 "Pre-defined Keywords"
-/// <https://www.w3.org/TR/css-values-3/#keywords> 準拠 (sibling
-/// `parse_display` / `parse_content_*` と同 convention)。
+/// ASCII case-insensitive matching follows CSS Values 3 §3.1 "Pre-defined Keywords"
+/// <https://www.w3.org/TR/css-values-3/#keywords> (the same convention as the sibling
+/// `parse_display` and `parse_content_*` parsers).
 ///
 /// # Range (spec grammar)
 ///
 /// spec §2.2: "Only values greater than or equal to 1, and less than or equal
-/// to 1000, are valid, and all other values are invalid"。したがって `0` /
-/// `1001` / `-100` の reject は **spec grammar そのもの** であり、stricter
-/// policy ではない。範囲判定は **丸める前の指定値** に対して行う (spec の
-/// "values" は author が書いた `<number>` を指すため、`0.6` や `1000.4` は
-/// 丸めれば範囲内になるが invalid)。
+/// to 1000, are valid, and all other values are invalid." Therefore rejecting `0`,
+/// `1001`, and `-100` follows **the specification's grammar itself**, not a stricter
+/// policy. Check the **specified value before rounding** ("values" in the specification
+/// means the author's `<number>`; `0.6` and `1000.4` are invalid even though rounding
+/// would bring them into range).
 ///
 /// Fractional values are preserved as `f32`; relative-weight resolution uses
 /// the unrounded computed value.
 ///
 pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
     match &next_numeric_stable(input).ok()? {
-        // `<number [1,1000]>`。`value` field (f32) を見るので `1e3` のような
-        // scientific notation や fractional もそのまま受理される (どちらも
-        // CSS Values 3 の `<number>` production として spec-valid)。fraction は
-        // 丸めずそのまま computed value まで運ぶ (上記 doc 参照)。
-        // token 取得は `next_numeric_stable` 経由 (module doc「Numeric-token
-        // NaN stabilization」節参照) — zero-mantissa/huge-exponent
-        // (`0e999`) と huge-mantissa/underflowing-exponent (例:
-        // `50` に等しい `5` + 400 zeros + `e-399`) の両方の cssparser
-        // tokenizer artifact をここで訂正済のため、この範囲判定が実際に
-        // `NaN` を見ることはもう無い。±inf (`1e400` 等、真正の magnitude
-        // overflow) は依然どちらか片方の比較が false になり reject される
-        // (§2.2 "all other values are invalid" と一致)。
+        // Check `<number [1,1000]>`. Inspect the f32 `value` field, so scientific notation
+        // such as `1e3` and fractional values are accepted as written (both are valid
+        // productions of CSS Values 3 `<number>`). Carry fractions to the computed value
+        // without rounding (see the documentation above).
+        // Read tokens via `next_numeric_stable` (see the module's "Numeric-token
+        // NaN stabilization" section). It corrects both zero mantissas with huge exponents
+        // (`0e999`) and huge mantissas with underflowing exponents (for example,
+        // `5` followed by 400 zeros and `e-399`, which equals `50`). Both cssparser
+        // tokenizer artifacts have already been corrected here, so this range check
+        // will no longer see `NaN`. An actual magnitude overflow to ±inf (`1e400`, etc.)
+        // still fails one of the comparisons and is rejected, in agreement with
+        // §2.2, "all other values are invalid."
         Token::Number { value, .. } if *value >= 1.0 && *value <= 1000.0 => {
             Some(FontWeightValue::Absolute(*value))
         }
@@ -630,21 +680,21 @@ pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeight
     }
 }
 
-/// `font-style: <ident>` を parse する (CSS Fonts 4 §2.4
-/// <https://www.w3.org/TR/css-fonts-4/#font-style-prop>)。
+/// Parses `font-style: <ident>` (CSS Fonts 4 §2.4,
+/// <https://www.w3.org/TR/css-fonts-4/#font-style-prop>).
 ///
 /// Value grammar (§2.4, full property grammar): `normal | italic | left |
-/// right | oblique <angle [-90deg,90deg]>?`。本 parser は `normal` /
-/// `italic` / bare `oblique` の 3 keyword のみ受理する ([`FontStyle`] doc の
-/// Scope carving 節参照) — `oblique` に続く `<angle>` 引数と `left` / `right`
-/// は spec-valid だが未実装のため、他の未知 ident と同じく silent drop =
-/// `None` とする。`oblique <angle>` (例: `oblique 14deg`) はこの関数自体は
-/// `oblique` の ident だけを consume して成功で返るが、後続の `<angle>`
-/// token が未消費のまま残るため、宣言全体が caller ([`mod@crate::rule`] の
-/// `DeclParser`) の exhaustive-consumption check で drop される
-/// ([`parse_text_transform`] doc の「case keyword が先」ケースと同 mechanism)。
-/// ASCII case-insensitive で ident を比較する (sibling [`parse_direction`]
-/// と同 flavor)。
+/// right | oblique <angle [-90deg,90deg]>?`. This parser accepts only three keywords:
+/// `normal`, `italic`, and bare `oblique` (see the Scope carving section of the
+/// [`FontStyle`] documentation). An `<angle>` argument after `oblique`, and `left` / `right`,
+/// are valid under the specification but unsupported; like other unknown identifiers,
+/// they cause a silent drop (`None`). For `oblique <angle>` (such as `oblique 14deg`),
+/// this function consumes only the `oblique` identifier and returns success, but the
+/// following `<angle>` token remains unconsumed. The caller's exhaustive-consumption
+/// check (the `DeclParser` in [`mod@crate::rule`]) drops the entire declaration
+/// (the same mechanism as the "case keyword first" example in [`parse_text_transform`]).
+/// Compare identifiers case-insensitively in ASCII (as the sibling [`parse_direction`]
+/// parser does).
 pub(super) fn parse_text_spacing_trim(input: &mut Parser<'_, '_>) -> Option<TextSpacingTrim> {
     TextSpacingTrim::from_css_ident(input.expect_ident().ok()?)
 }
@@ -874,25 +924,19 @@ pub(super) fn parse_font_variation_settings(
 }
 
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(FontStyle::Normal),
-        "italic" => Some(FontStyle::Italic),
-        "oblique" => Some(FontStyle::Oblique),
-        _ => None,
-    }
+    FontStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `font-variant-caps: <ident>` を parse する (CSS Fonts Module Level 3 §6.6
-/// <https://www.w3.org/TR/css-fonts-3/#font-variant-caps-prop>)。
+/// Parses `font-variant-caps: <ident>` (CSS Fonts Module Level 3 §6.6,
+/// <https://www.w3.org/TR/css-fonts-3/#font-variant-caps-prop>).
 ///
 /// Value grammar (§6.6, full property grammar): `normal | small-caps |
 /// all-small-caps | petite-caps | all-petite-caps | unicase |
-/// titling-caps`。本 parser はこの 7 keyword 全てを受理する
-/// ([`FontVariantCaps`] doc の「7 keyword の意味」節参照)。それ以外の ident は
-/// spec-invalid = 未知 ident として silent drop = `None` とする。
-/// ASCII case-insensitive で ident を比較する (sibling [`parse_font_style`]
-/// と同 flavor)。
+/// titling-caps`. This parser accepts all seven keywords (see "Meaning of the seven
+/// keywords" in the [`FontVariantCaps`] documentation). Other identifiers are
+/// invalid under the specification and are silently dropped as unknown (`None`).
+/// Compare identifiers case-insensitively in ASCII (as the sibling [`parse_font_style`]
+/// parser does).
 pub(super) fn parse_font_variant_caps(input: &mut Parser<'_, '_>) -> Option<FontVariantCaps> {
     FontVariantCaps::from_css_ident(input.expect_ident().ok()?)
 }
@@ -953,44 +997,44 @@ pub(super) fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTra
     }
 }
 
-/// `word-break: <ident>` を parse する (CSS Text 3 §5.1
-/// <https://www.w3.org/TR/css-text-3/#word-break-property>)。
+/// Parses `word-break: <ident>` (CSS Text 3 §5.1,
+/// <https://www.w3.org/TR/css-text-3/#word-break-property>).
 ///
 /// Value grammar (§5.1, full property grammar): `normal | keep-all |
-/// break-all | break-word`。本 parser は `normal` / `keep-all` /
-/// `break-all` の 3 keyword のみ受理する ([`WordBreak`] doc の Scope
-/// carving 節参照) — 4th keyword `break-word` (deprecated,
-/// `word-break: normal` + `overflow-wrap: anywhere` の compound 相当) は
-/// spec-valid だが未実装のため、他の未知 ident と同じく silent drop =
-/// `None` とする。ASCII case-insensitive で ident を比較する (sibling
-/// `parse_font_style` と同 flavor)。
+/// break-all | break-word`. This parser accepts only `normal`, `keep-all`, and
+/// `break-all` (see the Scope carving section of the [`WordBreak`] documentation).
+/// The fourth keyword, `break-word`, is deprecated and equivalent to the combination
+/// of `word-break: normal` and `overflow-wrap: anywhere`. Although it is valid under
+/// the specification, it is unsupported and is silently dropped (`None`) like other
+/// unknown identifiers. Compare identifiers case-insensitively in ASCII (as the sibling
+/// `parse_font_style` parser does).
 pub(super) fn parse_word_break(input: &mut Parser<'_, '_>) -> Option<WordBreak> {
     WordBreak::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `overflow-wrap: <ident>` (`word-wrap` legacy alias 名でも呼ばれる、
-/// [`OverflowWrap`] doc の「legacy alias」節参照) を parse する (CSS Text 3
-/// §5.4 <https://www.w3.org/TR/css-text-3/#overflow-wrap-property>)。
+/// Parses `overflow-wrap: <ident>` (also known by the legacy alias `word-wrap`;
+/// see the "legacy alias" section of the [`OverflowWrap`] documentation) (CSS Text 3
+/// §5.4, <https://www.w3.org/TR/css-text-3/#overflow-wrap-property>).
 ///
-/// Value grammar (§5.4): `normal | break-word | anywhere` — 3 keyword とも
-/// 受理する (`WordBreak` の deprecated `break-word` とは異なり、
-/// `overflow-wrap` 自身の `break-word` は deprecated ではない spec-valid
-/// keyword、[`OverflowWrap`] doc 参照)。ASCII case-insensitive で ident を
-/// 比較する (sibling `parse_word_break` と同 flavor)。
+/// The value grammar (§5.4) is `normal | break-word | anywhere`; all three keywords
+/// are accepted. Unlike the deprecated `break-word` of `WordBreak`,
+/// `overflow-wrap`'s own `break-word` is a valid, non-deprecated keyword (see
+/// the [`OverflowWrap`] documentation). Compare identifiers case-insensitively in ASCII
+/// (as the sibling `parse_word_break` parser does).
 pub(super) fn parse_overflow_wrap(input: &mut Parser<'_, '_>) -> Option<OverflowWrap> {
     OverflowWrap::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `white-space: <ident>` を parse する (CSS Text 3 §3
-/// <https://www.w3.org/TR/css-text-3/#white-space-property>)。
+/// Parses `white-space: <ident>` (CSS Text 3 §3,
+/// <https://www.w3.org/TR/css-text-3/#white-space-property>).
 ///
 /// Value grammar (§3, full property grammar): `normal | pre | nowrap |
-/// pre-wrap | break-spaces | pre-line`。本 parser は `normal` / `pre` /
-/// `nowrap` / `pre-wrap` / `pre-line` の 5 keyword のみ受理する
-/// ([`WhiteSpace`] doc の Scope carving 節参照) — 6th keyword
-/// `break-spaces` は spec-valid だが未実装のため、他の未知 ident と同じく
-/// silent drop = `None` とする。ASCII case-insensitive で ident を比較する
-/// (sibling `parse_word_break` と同 flavor)。
+/// pre-wrap | break-spaces | pre-line`. This parser accepts only five keywords:
+/// `normal`, `pre`, `nowrap`, `pre-wrap`, and `pre-line` (see the Scope carving
+/// section of the [`WhiteSpace`] documentation). The sixth keyword,
+/// `break-spaces`, is valid under the specification but unsupported and is silently
+/// dropped (`None`) like other unknown identifiers. Compare identifiers
+/// case-insensitively in ASCII (as the sibling `parse_word_break` parser does).
 pub(super) fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
     WhiteSpace::from_css_ident(input.expect_ident().ok()?)
 }
@@ -1002,15 +1046,15 @@ pub(super) fn parse_white_space_collapse(input: &mut Parser<'_, '_>) -> Option<W
     WhiteSpaceCollapse::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `hyphens: <ident>` を parse する (CSS Text 3 §5.3
-/// <https://www.w3.org/TR/css-text-3/#hyphens-property>)。
+/// Parses `hyphens: <ident>` (CSS Text 3 §5.3,
+/// <https://www.w3.org/TR/css-text-3/#hyphens-property>).
 ///
-/// Value grammar (§5.3): `none | manual | auto` — 3 keyword とも受理する。
-/// `auto` は `manual` に collapse せず、parse 段では別 keyword として
-/// そのまま [`Hyphens::Auto`] を返す ([`Hyphens`] doc の「Downstream
-/// handoff」節 — 両者の扱いの一致は downstream consumer 側の実装判断であり、
-/// この parser の責務ではない)。ASCII case-insensitive で ident を比較する
-/// (sibling `parse_word_break` と同 flavor)。
+/// The value grammar (§5.3) is `none | manual | auto`; all three keywords are accepted.
+/// Do not collapse `auto` into `manual`. Parsing preserves the separate keyword
+/// as [`Hyphens::Auto`] (see the "Downstream handoff" section of the [`Hyphens`]
+/// documentation). Whether downstream consumers treat the two values alike is
+/// their implementation choice, not this parser's responsibility. Compare
+/// identifiers case-insensitively in ASCII (as the sibling `parse_word_break` parser does).
 /// Parses the `text-wrap-mode: wrap | nowrap` longhand (CSS Text 4 §5.1).
 pub(super) fn parse_text_wrap_mode(input: &mut Parser<'_, '_>) -> Option<TextWrapMode> {
     TextWrapMode::from_css_ident(input.expect_ident().ok()?)
@@ -1243,8 +1287,8 @@ pub(super) fn parse_text_justify(input: &mut Parser<'_, '_>) -> Option<TextJusti
     TextJustify::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `text-autospace: normal | <autospace> | auto` を parse する
-/// (CSS Text 4 §6.2.1 <https://drafts.csswg.org/css-text-4/#text-autospace-property>)。
+/// Parses `text-autospace: normal | <autospace> | auto`
+/// (CSS Text 4 §6.2.1, <https://drafts.csswg.org/css-text-4/#text-autospace-property>).
 /// `<autospace>` is `no-autospace | [ ideograph-alpha || ideograph-numeric ||
 /// punctuation ] || [ insert | replace ]`.
 pub(super) fn parse_text_autospace(input: &mut Parser<'_, '_>) -> Option<TextAutospace> {
@@ -1334,45 +1378,35 @@ pub(super) fn parse_word_space_transform(input: &mut Parser<'_, '_>) -> Option<W
 }
 
 pub(super) fn parse_text_align_all(input: &mut Parser<'_, '_>) -> Option<TextAlignAll> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "start" => Some(TextAlignAll::Start),
-        "end" => Some(TextAlignAll::End),
-        "left" => Some(TextAlignAll::Left),
-        "right" => Some(TextAlignAll::Right),
-        "center" => Some(TextAlignAll::Center),
-        "justify" => Some(TextAlignAll::Justify),
-        "match-parent" => Some(TextAlignAll::MatchParent),
-        _ => None,
-    }
+    TextAlignAll::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
     TextAlignLast::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `display: <ident>` を parse する。
+/// Parses `display: <ident>`.
 ///
 /// CSS Display 3 §2 "Box Layout Modes: the display property"
-/// <https://www.w3.org/TR/css-display-3/#propdef-display>。現状受理する
-/// keyword は 18 つ:
+/// <https://www.w3.org/TR/css-display-3/#propdef-display>. Currently, it accepts
+/// 18 keywords:
 ///
 /// - `block` — `<display-outside>` (block flow)
-/// - `inline` — `<display-outside>` (inline flow、initial value)
+/// - `inline` — `<display-outside>` (inline flow, the initial value).
 /// - `inline-block` — `<display-legacy>` (inline flow-root)
 /// - `none` — `<display-box>` (subtree omitted from box tree)
-/// - `flex` — `<display-inside>` (§2.2) keyword、outer-defaulting rule
-///   により `block flex` と等価
-/// - `grid` — `<display-inside>` (§2.2) keyword、outer-defaulting rule
-///   により `block grid` と等価
-/// - `list-item` — `<display-listitem>` keyword、outer-defaulting rule
-///   により `block flow list-item` と等価。HTML Living Standard の default
-///   UA stylesheet が `li` に指定する
-///   (<https://html.spec.whatwg.org/multipage/rendering.html#lists>)。
-///   [`DisplayValue::ListItem`] の doc が言う通り keyword acceptance のみ
-///   — marker box 生成は本 crate scope 外。
-/// - `contents` — `<display-box>` (§2.5)、要素自身が box を生成しない
-///   ([`DisplayValue::Contents`] doc 参照)
+/// - `flex` — a `<display-inside>` (§2.2) keyword, equivalent to `block flex`
+///   under the outer-defaulting rule.
+/// - `grid` — a `<display-inside>` (§2.2) keyword, equivalent to `block grid`
+///   under the outer-defaulting rule.
+/// - `list-item` — a `<display-listitem>` keyword, equivalent to `block flow list-item`
+///   under the outer-defaulting rule. The default HTML Living Standard UA stylesheet
+///   assigns this to `li`
+///   (<https://html.spec.whatwg.org/multipage/rendering.html#lists>).
+///   As the [`DisplayValue::ListItem`] documentation notes, only the keyword is accepted;
+///   generating marker boxes is outside this crate's scope.
+/// - `contents` — `<display-box>` (§2.5); the element itself generates no box
+///   (see the [`DisplayValue::Contents`] documentation).
 /// - `table` — `<display-internal>` (block-level table wrapper)
 /// - `inline-table` — `<display-internal>` (inline-level table wrapper)
 /// - `table-row-group` — `<display-internal>` (`<tbody>`)
@@ -1384,12 +1418,12 @@ pub(super) fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAl
 /// - `table-cell` — `<display-internal>` (`<td>`, `<th>`)
 /// - `table-caption` — `<display-internal>` (`<caption>`)
 ///
-/// `inline-flex` / `inline-grid` は現在の layout bridge ではそれぞれ
-/// `flex` / `grid` と同じ formatting context として受理する (inline-level
-/// shrink-to-fit の区別は未実装)。`flow-root` 等の他 keyword は未実装のため
-/// silent drop (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
+/// The layout bridge currently accepts `inline-flex` and `inline-grid` using the
+/// same formatting contexts as `flex` and `grid`, respectively (it does not yet
+/// distinguish inline-level shrink-to-fit). Other keywords such as `flow-root` are
+/// unsupported and silently dropped (`None`). Compare identifiers case-insensitively
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
-/// keyword は ASCII case-insensitive)。
+/// in ASCII, as CSS Values 3 requires for keywords.
 pub(super) fn parse_text_combine_upright(input: &mut Parser<'_, '_>) -> Option<TextCombineUpright> {
     TextCombineUpright::from_css_ident(input.expect_ident().ok()?)
 }
@@ -1402,125 +1436,114 @@ pub(super) fn parse_unicode_bidi(input: &mut Parser<'_, '_>) -> Option<UnicodeBi
     UnicodeBidi::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `text-align: <ident>` を parse する
-/// (CSS Text 3 §6.1 <https://www.w3.org/TR/css-text-3/#text-align-property>)。
+/// Parses `text-align: <ident>`
+/// (CSS Text 3 §6.1, <https://www.w3.org/TR/css-text-3/#text-align-property>).
 ///
 /// Spec value grammar (§6.1): `start | end | left | right | center | justify |
-/// match-parent | justify-all`。加えて inherited property の CSS-wide `inherit`
-/// と HTML UA-only `-internal-center` を内部 cascade 用に受理する。ASCII
-/// case-insensitive で ident を比較する
-/// (CSS spec 慣行、sibling [`parse_string_fetch`](super::content::parse_string_fetch) / [`parse_content_part`](super::content::parse_content_part) /
-/// [`parse_content_text_keyword`](super::content::parse_content_text_keyword) と同 flavor)。
+/// match-parent | justify-all`. Additionally, CSS-wide `inherit` for this inherited
+/// property and the HTML UA-only `-internal-center` are accepted for the internal cascade.
+/// Compare identifiers case-insensitively in ASCII
+/// (the CSS convention, also used by sibling [`parse_string_fetch`](super::content::parse_string_fetch) / [`parse_content_part`](super::content::parse_content_part) /
+/// [`parse_content_text_keyword`](super::content::parse_content_text_keyword)).
 ///
-/// # Scope carving ([`TextAlign`] doc-comment に詳述)
+/// # Scope carving (detailed in the [`TextAlign`] documentation)
 ///
-/// - **(b) 非対応**: `<string>` value は silent drop。CSS Text 3
-///   §6.1 の grammar には無く、CSS Text 4 §7.1
-///   <https://www.w3.org/TR/css-text-4/#text-align-property> で追加された
-///   alternative (semantics は同 §7.2 "Character-based Alignment in a Table
-///   Column")。
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(a) spec-invalid**: 未知 keyword (`middle` 等) は silent drop = `None`。
+/// - **(b) Unsupported**: `<string>` values are silently dropped. They are absent
+///   from the grammar in CSS Text 3 §6.1 and were added in CSS Text 4 §7.1
+///   <https://www.w3.org/TR/css-text-4/#text-align-property> as an
+///   alternative (see §7.2, "Character-based Alignment in a Table
+///   Column," for its semantics).
+/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
+///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
+///   the canonical list of five keywords and the rationale.
+/// - **(a) Invalid under the specification**: unknown keywords such as `middle` are silently dropped (`None`).
 pub(super) fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
     TextAlign::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses the implemented `hanging-punctuation` subset from CSS Text 3 §8.2.1.
 pub(super) fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<HangingPunctuation> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(HangingPunctuation::None),
-        "first" => Some(HangingPunctuation::First),
-        _ => None,
-    }
+    HangingPunctuation::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `direction: <ident>` を parse する
-/// (CSS Writing Modes 4 §2.1 <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
+/// Parses `direction: <ident>`
+/// (CSS Writing Modes 4 §2.1, <https://www.w3.org/TR/css-writing-modes-4/#direction>).
 ///
-/// Spec value grammar (§2.1): `ltr | rtl`。ASCII case-insensitive で ident を
-/// 比較する (sibling [`parse_text_align`] と同 flavor)。
+/// The value grammar (§2.1) is `ltr | rtl`. Compare identifiers case-insensitively in ASCII
+/// (as the sibling [`parse_text_align`] parser does).
 ///
-/// # Scope carving ([`Direction`] doc-comment に詳述)
+/// # Scope carving (detailed in the [`Direction`] documentation)
 ///
-/// - **部分対応**: CSS-wide `inherit` は computed cascade で親の値へ解決する。
-///   他の CSS-wide keyword (`initial` / `unset` / `revert` / `revert-layer`) は
-///   未実装で silent drop。
-/// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
+/// - **Partially supported**: the computed cascade resolves CSS-wide `inherit` to the parent's value.
+///   Other CSS-wide keywords (`initial`, `unset`, `revert`, `revert-layer`) are
+///   unsupported and silently dropped.
+/// - **(a) Invalid under the specification**: identifiers other than `ltr` / `rtl` are silently dropped (`None`).
 pub(super) fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
     Direction::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `writing-mode: <ident>` を parse する
-/// (CSS Writing Modes 4 §3.2 <https://www.w3.org/TR/css-writing-modes-4/#propdef-writing-mode>)。
+/// Parses `writing-mode: <ident>`
+/// (CSS Writing Modes 4 §3.2, <https://www.w3.org/TR/css-writing-modes-4/#propdef-writing-mode>).
 ///
 /// Spec value grammar (§3.2): `horizontal-tb | vertical-rl | vertical-lr |
-/// sideways-rl | sideways-lr`。ASCII case-insensitive で ident を比較する
-/// (sibling [`parse_direction`] と同 flavor)。5 keyword とも spec 通り
-/// 受理する — `vertical-rl` 以降 4 keyword の computed value normalization は
-/// 本関数の責務ではなく [`resolve_writing_mode`] が担う ([`WritingMode`] doc の
-/// Scope carving 節参照)。
+/// sideways-rl | sideways-lr`. Compare identifiers case-insensitively in ASCII
+/// (as the sibling [`parse_direction`] parser does). All five keywords are accepted
+/// as specified. Normalizing computed values for the four keywords starting at `vertical-rl`
+/// belongs to [`resolve_writing_mode`], not this function (see the Scope carving
+/// section of the [`WritingMode`] documentation).
 ///
-/// # Scope carving ([`WritingMode`] doc-comment に詳述)
+/// # Scope carving (detailed in the [`WritingMode`] documentation)
 ///
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(a) spec-invalid**: 上記 5 keyword 以外の ident は silent drop = `None`。
+/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
+///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
+///   the canonical list of five keywords and the rationale.
+/// - **(a) Invalid under the specification**: identifiers other than the five listed keywords are silently dropped (`None`).
 pub(super) fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMode> {
     WritingMode::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `ruby-position` keywords (CSS Ruby Layout 1 §3).
 pub(super) fn parse_ruby_position(input: &mut Parser<'_, '_>) -> Option<RubyPosition> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "over" => Some(RubyPosition::Over),
-        "under" => Some(RubyPosition::Under),
-        "inter-character" => Some(RubyPosition::InterCharacter),
-        _ => None,
-    }
+    RubyPosition::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `text-decoration-line: none | [ underline || overline || line-through ||
-/// blink ]` を parse する (CSS Text Decoration Module Level 3 §2.1
-/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>)。
+/// blink ]` (CSS Text Decoration Module Level 3 §2.1,
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-line-property>).
 ///
 /// # top-level alternative (`none` vs. `||` combination)
 ///
-/// grammar は `none | [ ... ]` — `none` は他 4 keyword と併記不可能な
-/// **別 alternative** (`none underline` は spec-invalid) であり、`none` 自体が
-/// `||` combination の一員ではない。よって `none` を最初に単独で試し、
-/// 一致すれば即 return する。
+/// The grammar is `none | [ ... ]`: `none` cannot be combined with the other four
+/// keywords; it is a **separate alternative** (`none underline` is invalid under
+/// the specification), not a member of the `||` combination. Try `none` on its own
+/// first and return immediately when it matches.
 ///
 /// # `||` (any-order, each-at-most-once) loop
 ///
-/// `none` に一致しなければ、[`parse_border_shorthand`](super::box_model::parse_border_shorthand) の per-slot
-/// `try_parse` loop と同じ shape で 4 keyword を順不同・重複無しに peel する
-/// (詳細な rationale は同関数 doc 参照)。4 keyword の ident 集合は互いに
-/// disjoint (border shorthand の width/style/color 3 slot が disjoint なのと
-/// 同じ理由 — 単純に別々の語)。
+/// If `none` does not match, peel four keywords in any order without repetition,
+/// using the same per-slot `try_parse` loop as [`parse_border_shorthand`](super::box_model::parse_border_shorthand)
+/// (see that function's documentation for the rationale). The identifier sets of
+/// the four keywords are disjoint, just as the width/style/color slots of a border
+/// shorthand are disjoint: they are simply different words.
 ///
-/// - unfilled flag (未 true の bool field) のみ試行
-/// - 埋まっている flag に対する 2 回目の同一 keyword は、その flag の
-///   `try_parse` を試さない (falls through) ので match せず loop を抜ける —
-///   caller ([`mod@crate::rule`] の `DeclParser`) の `expect_exhausted` が
-///   leftover token を検知して declaration ごと drop する
-///   (`text-decoration-line: underline underline` は 0 decl になる)
-/// - 4 flag とも埋まった、またはどの keyword にも match しなくなったら break
-/// - 1 個も flag が立たなければ (`none` でもなく、`||` combination も 0 個)
-///   `None` — spec `||` grammar の "one or more of them must occur" 違反
+/// - Try only unfilled flags (bool fields that are not yet true).
+/// - A second occurrence of a keyword for an already-filled flag is not tried by
+///   that flag's `try_parse`; it falls through without matching and exits the loop.
+///   The caller's `expect_exhausted` (the `DeclParser` in [`mod@crate::rule`])
+///   detects the leftover token and drops the entire declaration
+///   (`text-decoration-line: underline underline` produces zero declarations).
+/// - Break when all four flags are filled or no keyword matches.
+/// - If no flags were set (neither `none` nor a nonempty `||` combination), return
+///   `None`: the specification's `||` grammar requires "one or more of them".
 pub(crate) fn parse_text_decoration_line(input: &mut Parser<'_, '_>) -> Option<TextDecorationLine> {
-    // top-level alternative: `none`。`||` combination とは併記不可 (上記 doc)。
+    // Try the top-level `none` alternative, which cannot coexist with `||` (see above).
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(TextDecorationLine::NONE);
     }
-    // top-level alternative: `spelling-error` / `grammar-error`。互いに
-    // 排他、かつ `||` group とも併記不可 — 単独 ident の場合のみ受理し、
-    // 後続 token が残れば caller の `expect_exhausted` が落とす
-    // (spec grammar `none | [ ... ] | spelling-error | grammar-error`)。
+    // Try the top-level `spelling-error` / `grammar-error` alternatives. They are mutually
+    // exclusive and cannot coexist with the `||` group. Accept a bare identifier only;
+    // the caller's `expect_exhausted` drops any leftover tokens
+    // (per the grammar `none | [ ... ] | spelling-error | grammar-error`).
     if input
         .try_parse(|i| i.expect_ident_matching("spelling-error"))
         .is_ok()
@@ -1572,33 +1595,33 @@ pub(crate) fn parse_text_decoration_line(input: &mut Parser<'_, '_>) -> Option<T
     }
 
     if line == TextDecorationLine::NONE {
-        // `none` は上で既に処理済み — ここに来るのは 0 keyword しか
-        // match しなかった場合のみ (未知 ident、または value 自体が空)。
+        // `none` has already been handled above. Reaching this point means no keyword
+        // matched (the identifier is unknown or the value is empty).
         return None;
     }
     Some(line)
 }
 
-/// `text-decoration-style: solid | double | dotted | dashed | wavy` を
-/// parse する (CSS Text Decoration Module Level 3 §2.2
-/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-style-property>)。
-/// ASCII case-insensitive で ident を比較する (sibling
-/// [`parse_border_style_side`](super::box_model::parse_border_style_side) と同 flavor)。
+/// Parses `text-decoration-style: solid | double | dotted | dashed | wavy`.
+/// See CSS Text Decoration Module Level 3 §2.2,
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-style-property>.
+/// Compare identifiers case-insensitively in ASCII (as the sibling
+/// [`parse_border_style_side`](super::box_model::parse_border_style_side) parser does).
 pub(super) fn parse_text_decoration_style(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationStyle> {
     TextDecorationStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `text-decoration-color: <color>` を parse する (CSS Text Decoration Module
+/// Parses `text-decoration-color: <color>` (CSS Text Decoration Module
 /// Level 3 §2.3
-/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-color-property>)。
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-color-property>).
 ///
-/// [`parse_border_color`](super::box_model::parse_border_color) と同型 — `currentcolor` keyword (CSS Color 3 §4.4)
-/// を先取りしてから [`parse_color`] (hex / named / `rgb(a)` / `transparent`)
-/// に委譲する。独立した helper にしてあるのは、両 property が異なる
-/// payload 型 ([`TextDecorationColor`] / [`BorderColor`]) を持つため —
-/// [`parse_border_color`](super::box_model::parse_border_color) 自体は border-*-color 専用のまま変更しない。
+/// This has the same form as [`parse_border_color`](super::box_model::parse_border_color): it consumes the
+/// `currentcolor` keyword (CSS Color 3 §4.4) before delegating to [`parse_color`]
+/// (hex / named / `rgb(a)` / `transparent`). It has its own helper because the
+/// two properties have different payload types ([`TextDecorationColor`] / [`BorderColor`]);
+/// [`parse_border_color`](super::box_model::parse_border_color) remains specific to border-*-color.
 pub(super) fn parse_text_decoration_color(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationColor> {
@@ -1612,24 +1635,24 @@ pub(super) fn parse_text_decoration_color(
 }
 
 /// `text-decoration: <'text-decoration-line'> || <'text-decoration-style'> ||
-/// <'text-decoration-color'>` shorthand を parse する (CSS Text Decoration
+/// <'text-decoration-color'>` shorthand (CSS Text Decoration
 /// Module Level 3 §2.4
-/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property>)。
+/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property>).
 ///
-/// [`parse_border_shorthand`](super::box_model::parse_border_shorthand) と同じ 3-slot `||` loop (line / style / color)
-/// — 詳細な rationale・loop 構造・initial value fill の判断根拠は同関数 doc
-/// 参照。3 slot の ident/token 集合は互いに disjoint: line keyword
-/// (`none`/`underline`/`overline`/`line-through`/`blink`) と style keyword
-/// (`solid`/`double`/`dotted`/`dashed`/`wavy`) はどちらも named CSS color
-/// ではなく ([`parse_named_color`](cssparser::color::parse_named_color) のテーブルに無い)、[`parse_color`] の
-/// Ident 分岐に誤って吸われることはない。
+/// This uses the same three-slot `||` loop (line / style / color) as [`parse_border_shorthand`](super::box_model::parse_border_shorthand).
+/// See that function's documentation for the loop's rationale, structure, and rules
+/// for filling initial values. The identifier/token sets of the three slots are disjoint:
+/// line keywords (`none`/`underline`/`overline`/`line-through`/`blink`) and style
+/// keywords (`solid`/`double`/`dotted`/`dashed`/`wavy`) are not named CSS colors
+/// (they are absent from the table in [`parse_named_color`](cssparser::color::parse_named_color)),
+/// so the identifier branch of [`parse_color`] cannot consume them by mistake.
 ///
-/// # Initial value fill (省略成分)
+/// # Filling initial values for omitted components
 ///
 /// spec §2.4 verbatim: "Omitted values are set to their initial values."
-/// - line 省略 → [`TextDecorationLine::NONE`] (§2.1 initial)
-/// - style 省略 → [`TextDecorationStyle::Solid`] (§2.2 initial)
-/// - color 省略 → [`TextDecorationColor::CurrentColor`] (§2.3 initial)
+/// - Omitted line → [`TextDecorationLine::NONE`] (§2.1 initial value).
+/// - Omitted style → [`TextDecorationStyle::Solid`] (§2.2 initial value).
+/// - Omitted color → [`TextDecorationColor::CurrentColor`] (§2.3 initial value).
 pub(crate) fn parse_text_decoration_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationShorthand> {
@@ -1678,8 +1701,8 @@ pub(crate) fn parse_text_decoration_shorthand(
         break;
     }
 
-    // spec `||` grammar: at least 1 component 必須。0 component は `None` =
-    // declaration drop (`parse_border_shorthand` と同じ判断)。
+    // The specification's `||` grammar requires at least one component. Zero components
+    // return `None` and drop the declaration (as in `parse_border_shorthand`).
     if line.is_none() && style.is_none() && color.is_none() && thickness.is_none() {
         return None;
     }
@@ -1692,20 +1715,20 @@ pub(crate) fn parse_text_decoration_shorthand(
     })
 }
 
-/// `text-decoration-skip-ink: auto | none | all` を parse する
-/// (ED §2.10.4 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property>)。
-/// ASCII case-insensitive で ident を比較する (sibling [`parse_text_decoration_style`]
-/// と同 flavor)。
+/// Parses `text-decoration-skip-ink: auto | none | all`
+/// (ED §2.10.4, <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property>).
+/// Compare identifiers case-insensitively in ASCII (as the sibling [`parse_text_decoration_style`]
+/// parser does).
 pub(super) fn parse_text_decoration_skip_ink(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationSkipInk> {
     TextDecorationSkipInk::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `text-decoration-skip-spaces: none | all | [ start || end ]` を parse する
-/// (ED §2.10.3 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-spaces-property>)。
-/// `none` / `all` は単独 (top-level alternative)、`start` / `end` は `||`
-/// loop で各最大 1 回 ([`parse_text_decoration_line`] の 4-keyword loop と同形)。
+/// Parses `text-decoration-skip-spaces: none | all | [ start || end ]`
+/// (ED §2.10.3, <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-spaces-property>).
+/// `none` / `all` are separate top-level alternatives; `start` / `end` each appear
+/// at most once in the `||` loop (like the four-keyword loop in [`parse_text_decoration_line`]).
 pub(super) fn parse_text_decoration_skip_spaces(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationSkipSpaces> {
@@ -1740,12 +1763,12 @@ pub(super) fn parse_text_decoration_skip_spaces(
     }
 }
 
-/// `text-decoration-thickness: auto | from-font | <length-percentage>` を parse する
-/// (ED §2.4.1 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-thickness-property>)。
-/// `<line-width>` (`thin`/`medium`/`thick`) は scope 外のため drop
-/// ([`TextDecorationThickness`] doc 参照)。`<length-percentage>` は
-/// [`parse_length_value`] (`allow_percentage=true`) に委譲し、sign check
-/// はしない (spec grammar に range 制限なし)。
+/// Parses `text-decoration-thickness: auto | from-font | <length-percentage>`
+/// (ED §2.4.1, <https://drafts.csswg.org/css-text-decor-4/#text-decoration-thickness-property>).
+/// `<line-width>` (`thin`/`medium`/`thick`) is out of scope and is dropped
+/// (see the [`TextDecorationThickness`] documentation). Delegate `<length-percentage>`
+/// to [`parse_length_value`] (`allow_percentage=true`) without a sign check;
+/// the specification's grammar imposes no range limit.
 pub(super) fn parse_text_decoration_thickness(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationThickness> {
@@ -1761,7 +1784,7 @@ pub(super) fn parse_text_decoration_thickness(
     parse_length_value(input, true).map(TextDecorationThickness::Length)
 }
 
-/// `text-underline-offset: auto | <length-percentage>` を parse する。
+/// Parses `text-underline-offset: auto | <length-percentage>`.
 ///
 /// CSS Text Decoration 4 §2.8 defines the non-`auto` form as a
 /// `<length-percentage>`. Percentages stay relative in computed style and are
@@ -1781,14 +1804,14 @@ pub(super) fn parse_text_underline_offset(
     parse_length_value(input, true).map(TextUnderlineOffset::Length)
 }
 
-/// `text-decoration-inset: <length>{1,2} | auto` を parse する
-/// (ED §2.9.1 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-inset-property>)。
-/// ED grammar は `<length-percentage>` だが WPT が `%` を reject するため
-/// `allow_percentage=false` ([`TextDecorationInset`] doc 参照)。負値・
-/// `calc()` は受理する (`calc` は [`parse_value`](super::parse_value) の deferred 経路が
-/// 事前に `DeferredValue` 化し、`純粋 [`Length`] のみ
-/// ここに届く)。1 値目の場合は 2 値目を 1 値目に複製する
-/// (margin/padding の 2-value 規則と同型)。
+/// Parses `text-decoration-inset: <length>{1,2} | auto`
+/// (ED §2.9.1, <https://drafts.csswg.org/css-text-decor-4/#text-decoration-inset-property>).
+/// The ED grammar specifies `<length-percentage>`, but WPT rejects `%`, so
+/// `allow_percentage=false` (see the [`TextDecorationInset`] documentation). Negative
+/// values and `calc()` are accepted: the deferred path in [`parse_value`](super::parse_value)
+/// converts `calc` to `DeferredValue` beforehand, so only plain [`Length`]
+/// values reach this function. For one value, duplicate it as the second value
+/// (as in the two-value margin/padding rule).
 pub(super) fn parse_text_decoration_inset(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationInset> {
@@ -1804,13 +1827,13 @@ pub(super) fn parse_text_decoration_inset(
     Some(TextDecorationInset::Lengths { start, end })
 }
 
-/// `text-emphasis-position: auto | ([ over | under ] && [ right | left ]?)` を parse する
-/// (ED §3.4 <https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>)。
-/// `auto` 単独、それ以外は vertical 必須 (`over`/`under`) +
-/// horizontal 任意 (`right`/`left`)、順序自由・各最大 1 回。
+/// Parses `text-emphasis-position: auto | ([ over | under ] && [ right | left ]?)`
+/// (ED §3.4, <https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>).
+/// `auto` stands alone. Otherwise, the vertical component (`over`/`under`) is required,
+/// and the horizontal component (`right`/`left`) is optional. Either order is allowed, and each appears at most once.
 ///
-/// `auto` 以外の位置に `auto` が来たら leftover として caller が drop する
-/// ([`parse_font_style`] の oblique-angle 取扱いと同 mechanism)。
+/// An `auto` in any other position remains as a leftover token for the caller to drop
+/// (the same mechanism used for oblique angles in [`parse_font_style`]).
 pub(super) fn parse_text_emphasis_position(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextEmphasisPosition> {
@@ -1952,13 +1975,13 @@ pub(super) fn parse_text_emphasis_shorthand(
     })
 }
 
-/// `text-underline-position: auto | [ from-font | under ] || [ left | right ]` を parse する
-/// (ED §2.7 <https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>)。
-/// 3 slot (`from-font` / `under` / horizontal) の `||` loop +
-/// post-check: `from-font` と `under` の併記は reject
-/// (`under from-font` invalid)、`left`+`right` 併記も reject
-/// (`left right` invalid、horizontal slot が 1 個のため
-/// loop 段階で保証)、`auto` 単独 (leftover は caller が drop)。
+/// Parses `text-underline-position: auto | [ from-font | under ] || [ left | right ]`
+/// (ED §2.7, <https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>).
+/// The `||` loop has three slots (`from-font`, `under`, and horizontal), followed
+/// by checks that reject combining `from-font` and `under`
+/// (`under from-font` is invalid) or combining `left` and `right`
+/// (`left right` is invalid and is already prevented by the single horizontal slot).
+/// `auto` stands alone; the caller drops leftover tokens.
 pub(super) fn parse_text_underline_position(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextUnderlinePosition> {
@@ -2006,35 +2029,35 @@ pub(super) fn parse_text_underline_position(
     Some(pos)
 }
 
-/// `vertical-align: <ident> | <length-percentage>` を parse する (CSS 2.1 §10.8.1
-/// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
+/// Parses `vertical-align: <ident> | <length-percentage>` (CSS 2.1 §10.8.1,
+/// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>).
 /// `calc()` functions are handled earlier by `parse_value`'s shared math path;
 /// this helper receives their simplified value or a plain length/percentage.
 ///
-/// Ident は ASCII case-insensitive で比較する (sibling [`parse_direction`]
-/// / [`parse_text_decoration_style`] と同 flavor)。ident 側を先に
-/// `try_parse` で試し、ident token でなければ (= dimension/number token
-/// の可能性があれば) `<length>` として再挑戦する — [`parse_flex_basis`](super::layout::parse_flex_basis)
-/// / [`parse_letter_spacing`] と同じ「keyword 群 → length
-/// フォールバック」構造。
+/// Compare identifiers case-insensitively in ASCII (as the sibling [`parse_direction`]
+/// and [`parse_text_decoration_style`] parsers do). Try the identifier branch first
+/// with `try_parse`. If the token is not an identifier (and could be a dimension/number),
+/// retry it as `<length>`, following the same keyword-to-length fallback structure as
+/// [`parse_flex_basis`](super::layout::parse_flex_basis) and [`parse_letter_spacing`].
+/// Both parsers use the same checkpoint-based retry.
 ///
-/// # Scope carving ([`VerticalAlign`] doc-comment に詳述)
+/// # Scope carving (detailed in the [`VerticalAlign`] documentation)
 ///
-/// - **(b) 非対応**: `top` / `bottom` keyword は silent drop = `None` —
-///   [`VerticalAlign`] doc 参照 (inline formatting context 依存)。
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
+/// - **(b) Unsupported**: `top` / `bottom` are silently dropped (`None`);
+///   see the [`VerticalAlign`] documentation (they depend on the inline formatting context).
+/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
+///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
+///   the canonical list of five keywords and the rationale.
 /// - **(a) spec-invalid**: `baseline` / `sub` / `super` / `middle` /
-///   `text-top` / `text-bottom` 以外の ident、および `<length>` /
-///   `<percentage>` grammar に合わない token は silent drop = `None`。
-/// - `<length>` / `<percentage>` に non-negative filter は掛けない — spec が
-///   "Raise (positive value) or lower (negative value)" と明示的に負値を
-///   許容する ([`parse_letter_spacing`] と同じ判断、
-///   `padding`/`border-width` の non-negative constraint とは対照的)。
-///   percentage の解決は [`crate::resolve::resolve_vertical_align`] が
-///   `used_line_height_length` 基準で行い、`normal` 時は `0px` fallback
-///   (同関数 doc 参照)。
+///   `text-top` / `text-bottom` are invalid identifiers here. These and tokens outside
+///   the `<length>` / `<percentage>` grammar are silently dropped (`None`).
+/// - Do not apply a non-negative filter to `<length>` / `<percentage>`; the specification
+///   explicitly permits negatives: "Raise (positive value) or lower (negative value)."
+///   This follows [`parse_letter_spacing`] and contrasts with the non-negative
+///   constraint for `padding`/`border-width`. Percentages are resolved against
+///   `used_line_height_length` by [`crate::resolve::resolve_vertical_align`],
+///   with a `0px` fallback for `normal`
+///   (see that function's documentation).
 pub(super) fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return match ident.to_ascii_lowercase().as_str() {
@@ -2052,13 +2075,13 @@ pub(super) fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<Vertica
     parse_length_value(input, true).map(VerticalAlign::Length)
 }
 
-/// `text-shadow: <color>? && <length>{2,3}` 成分の `<color>` slot。
+/// The `<color>` slot of a `text-shadow: <color>? && <length>{2,3}` component.
 ///
-/// [`parse_border_color`](super::box_model::parse_border_color) / [`parse_text_decoration_color`] と同型 —
-/// `currentcolor` keyword (CSS Color 3 §4.4) を先取りしてから
-/// [`parse_color`] (hex / named / `rgb(a)` / `transparent`) に委譲する。
-/// 独立した helper にしてあるのは、他 2 者と異なる payload 型
-/// ([`TextShadowColor`]) を持つため。
+/// This follows the same pattern as [`parse_border_color`](super::box_model::parse_border_color) and [`parse_text_decoration_color`]:
+/// it consumes `currentcolor` (CSS Color 3 §4.4) first, then delegates to
+/// [`parse_color`] (hex / named / `rgb(a)` / `transparent`).
+/// This helper is separate because its payload type differs from the other two:
+/// [`TextShadowColor`].
 pub(super) fn parse_text_shadow_color(input: &mut Parser<'_, '_>) -> Option<TextShadowColor> {
     if input
         .try_parse(|i| i.expect_ident_matching("currentcolor"))
@@ -2084,11 +2107,13 @@ fn parse_text_shadow_calc(input: &mut Parser<'_, '_>) -> Option<TextShadowLength
                     percent: 0.0,
                     px,
                     em: 0.0,
+                    ch: 0.0,
                 },
                 TextIndentLength::Length(Length::Em(em)) => LengthPercentageCalc {
                     percent: 0.0,
                     px: 0.0,
                     em,
+                    ch: 0.0,
                 },
                 TextIndentLength::Calc(calc) => calc,
                 TextIndentLength::Length(_) => return Err(i.new_custom_error(())),
@@ -2154,7 +2179,7 @@ fn parse_text_shadow_lengths_with_mode<'i>(
     Ok((x, y, blur))
 }
 
-/// `text-shadow` の 1 shadow entry — `<color>? && <length>{2,3}`。
+/// One `text-shadow` entry: `<color>? && <length>{2,3}`.
 /// This calc-aware parser is separate from `parse_drop_shadow_item`, which
 /// preserves the filter parser's existing plain-length behavior.
 ///
@@ -2163,20 +2188,20 @@ fn parse_text_shadow_lengths_with_mode<'i>(
 /// spec CSS Values 4 §2.2 "Component Value Combinators"
 /// <https://www.w3.org/TR/css-values-4/#component-combinators> verbatim: "A
 /// double ampersand (&&) separates two or more components, all of which must
-/// occur, in any order." — 本 grammar では:
-/// - length run (`<length>{2,3}`) は必須、1 回のみ
-/// - `<color>` はその自身の `?` multiplier により 0 or 1 回
-/// - 両者の順序は自由 (`1px 1px red` / `red 1px 1px` 全て valid)、ただし
-///   length run 自体は contiguous (`1px red 1px` のように間へ `<color>` を
-///   挟むことはできない — [`parse_text_shadow_lengths_with_calc`] が 1 unit として
-///   parse する)
+/// occur, in any order." For this grammar:
+/// - A length run (`<length>{2,3}`) is required and occurs once.
+/// - `<color>` occurs zero or one time, as specified by its `?` multiplier.
+/// - Either order is valid (`1px 1px red` / `red 1px 1px`), but
+///   the length run itself must be contiguous (`1px red 1px` cannot insert
+///   `<color>` between the lengths; [`parse_text_shadow_lengths_with_calc`] parses them
+///   as one unit).
 ///
-/// # Loop 実装
+/// # Loop implementation
 ///
-/// [`parse_border_shorthand`](super::box_model::parse_border_shorthand) の `||` loop と同じ shape — unfilled slot
-/// (length run / color) を loop で peel、`try_parse` で order-independent に
-/// 試す。length run を先に試すのは任意の順序選択 (どちらを先に試しても
-/// 結果は変わらない、`try_parse` が失敗時に必ず rewind するため)。
+/// Like the `||` loop of [`parse_border_shorthand`](super::box_model::parse_border_shorthand), this loop peels unfilled slots
+/// (length run / color) in any order using `try_parse`.
+/// Trying the length run first is arbitrary: either order produces the same result,
+/// because `try_parse` always rewinds on failure.
 pub(super) fn parse_text_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextShadowItem> {
     parse_text_shadow_item_with_mode(input, true)
 }
@@ -2229,16 +2254,16 @@ fn parse_text_shadow_item_with_mode(
     })
 }
 
-/// `text-shadow: none | <shadow>#` を parse する。
+/// Parses `text-shadow: none | <shadow>#`.
 ///
 /// CSS Text Decoration Module Level 3 §4
-/// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>。
+/// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>.
 ///
-/// `none` = 空 list (top-level alternative) — [`parse_content`](super::content::parse_content) /
-/// [`parse_counter_property`](super::content::parse_counter_property) と同じ shape。comma-separated list は
-/// `cssparser::Parser::parse_comma_separated` に委譲 (各 item の未消費
-/// leftover token は同メソッドの `parse_until_before` → `parse_entirely`
-/// が自動検知して declaration ごと drop する)。
+/// `none` means an empty list (a top-level alternative), as in [`parse_content`](super::content::parse_content) and
+/// [`parse_counter_property`](super::content::parse_counter_property). Delegate the comma-separated list to
+/// `cssparser::Parser::parse_comma_separated`; unconsumed tokens in any item
+/// are detected by that method's `parse_until_before` → `parse_entirely`
+/// and drop the entire declaration.
 pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextShadowItem>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
@@ -2250,67 +2275,67 @@ pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextSh
         .ok()
 }
 
-/// `font` shorthand の `font-size` 成分 — [`parse_font_size`] の返す
-/// 2 通り ([`PropertyValue::FontSize`] / [`PropertyValue::FontSizeRelative`])
-/// をそのまま運ぶ small enum。[`FontShorthand`] の payload 専用で、
-/// [`ComputedValues`] / [`SpecifiedValues`] には入らず、umbrella crate からも
-/// re-export しない ([`BackgroundShorthand`] と同じ扱い)。
+/// The `font-size` component of the `font` shorthand. [`parse_font_size`] returns
+/// two forms ([`PropertyValue::FontSize`] / [`PropertyValue::FontSizeRelative`]); carry them
+/// unchanged in a small enum. This is private to the [`FontShorthand`] payload and
+/// never enters [`ComputedValues`] / [`SpecifiedValues`] or gets re-exported by
+/// the umbrella crate (as with [`BackgroundShorthand`]).
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FontShorthandSize {
-    /// `<length-percentage>` / absolute-size keyword — [`parse_font_size`] の
-    /// [`PropertyValue::FontSize`] 側。展開先は同 variant。
+    /// `<length-percentage>` / absolute-size keyword: [`parse_font_size`] returns the
+    /// [`PropertyValue::FontSize`] variant, into which this component expands.
     Absolute(Length),
-    /// `larger` / `smaller` — [`parse_font_size`] の
-    /// [`PropertyValue::FontSizeRelative`] 側。展開先は同 variant
-    /// (key はどちらも [`PropertyKey::FontSize`])。
+    /// `larger` / `smaller`: [`parse_font_size`] returns the
+    /// [`PropertyValue::FontSizeRelative`] variant, into which this component expands
+    /// (both use [`PropertyKey::FontSize`] as their key).
     Relative(RelativeFontSize),
 }
 
-/// `font` shorthand の specified value carrier — CSS Fonts 4 §2.1 "Font
+/// Specified-value carrier for the `font` shorthand: CSS Fonts 4 §2.1, "Font
 /// shorthand: the font property"
-/// (<https://www.w3.org/TR/css-fonts-4/#font-prop>)。
+/// (<https://www.w3.org/TR/css-fonts-4/#font-prop>).
 ///
 /// Spec grammar (full): `[ [ <'font-style'> || <font-variant-css2> ||
 /// <'font-weight'> || <font-width-css3> ]? <'font-size'> [ / <'line-height'> ]?
-/// <'font-family'># ] | <system-font>`。本実装の subset:
+/// <'font-family'># ] | <system-font>`. This implementation supports the following subset:
 ///
 /// # Scope carving
 ///
-/// - **Preface** (`||` 3 slot): `font-style` は [`parse_font_style`] の範囲
-///   (`normal` / `italic` / bare `oblique`)、`font-weight` は
-///   [`parse_font_weight`] の全範囲 (`normal` / `bold` / `bolder` /
-///   `lighter` / `<number [1,1000]>`) を受理。`font-variant-css2`
-///   (`normal` / `small-caps`) は [`FontVariantCaps::Normal`] /
-///   [`FontVariantCaps::SmallCaps`] に畳む — CSS Fonts 3 §6.9 の `font-variant`
-///   shorthand 全体ではなく CSS2 subset のみ対応。`font-variant-caps` だけを
-///   preface から parse し、他の supported `font-variant-*` longhand は shorthand
-///   適用時の reset-only subproperty として扱う。
-///   `font-width-css3` (`font-stretch`) longhand は本 crate に存在しないため
-///   `normal` のみ consume して捨てる (initial と同じ値なので reset 効果は
-///   observable ではない)。`normal` 以外の stretch keyword
-///   (`condensed` 等)・`font-variant-css2` 外の variant 指定は preface の
-///   どの slot にも match せず、後続の `font-size` parse が失敗するため
-///   declaration 全体が drop される (spec-valid だが未対応 = silent drop、
-///   本 crate の一般 policy)。
+/// - **Preface** (three `||` slots): `font-style` uses the range of [`parse_font_style`]
+///   (`normal`, `italic`, and bare `oblique`); `font-weight` accepts everything
+///   supported by [`parse_font_weight`] (`normal`, `bold`, `bolder`,
+///   `lighter`, and `<number [1,1000]>`). `font-variant-css2`
+///   (`normal` / `small-caps`) maps to [`FontVariantCaps::Normal`] /
+///   [`FontVariantCaps::SmallCaps`]. Only the CSS2 subset is supported, not the
+///   full `font-variant` shorthand in CSS Fonts 3 §6.9. Only `font-variant-caps` is
+///   parsed from the preface; other supported `font-variant-*` longhands are treated
+///   as reset-only subproperties when applying the shorthand.
+///   This crate has no `font-width-css3` (`font-stretch`) longhand, so
+///   it consumes and discards only `normal` (the initial value, so its reset has
+///   no observable effect). Other stretch keywords
+///   (such as `condensed`) and variant values outside `font-variant-css2` do not
+///   match any preface slot. The subsequent `font-size` parse then fails,
+///   dropping the entire declaration (valid but unsupported; silently dropped
+///   under this crate's general policy).
 /// - **System fonts** (`caption` / `icon` / `menu` / `message-box` /
-///   `small-caption` / `status-bar`) は受理しない — longhand への分解が
-///   UA 依存で本 crate の font model に載らないため、declaration ごと drop。
-/// - **`font-size`** は [`parse_font_size`] をそのまま使う (absolute-size
-///   keyword / `larger` / `smaller` / `<length-percentage>` 全範囲)。
-/// - **`line-height`** (`/ ...` 付きの場合のみ) は [`parse_line_height`] を
-///   そのまま使う (`normal` / `<number>` / `<length-percentage>` 全範囲)。
-/// - **`font-family`** は [`parse_font_family`] をそのまま使う
-///   (`<family-name>#`、1 要素以上必須)。
+///   `small-caption` / `status-bar`) are not accepted: decomposition into longhands
+///   is UA-dependent and cannot be represented by this crate's font model, so drop the declaration.
+/// - **`font-size`** uses [`parse_font_size`] directly (all supported absolute-size
+///   keywords, `larger`, `smaller`, and `<length-percentage>` values).
+/// - **`line-height`** uses [`parse_line_height`] directly when `/ ...` is present,
+///   accepting `normal`, `<number>`, and `<length-percentage>`.
+/// - **`font-family`** uses [`parse_font_family`] directly,
+///   requiring at least one `<family-name>` in `<family-name>#`.
 ///
 /// # Initial value fill (omitted components)
 ///
 /// CSS Fonts 4 §2.1 verbatim: "The 'font' property is a shorthand for
 /// [font-style, font-variant, font-weight, font-size, line-height,
-/// font-family]" — 省略成分は spec initial value で埋める
-/// ([`BackgroundShorthand`] doc の同名節と同じ規則)。
+/// font-family]": fill omitted components with their initial values under the specification
+/// (the same rule described in the [`BackgroundShorthand`] documentation).
 /// The shorthand also resets the currently modeled reset-only subproperties to
 /// their initial values: `font-kerning`, `font-language-override`,
 /// `font-optical-sizing`, `font-variant-east-asian`, `font-variant-emoji`,
@@ -2318,64 +2343,64 @@ pub enum FontShorthandSize {
 /// and `font-variation-settings`. They are not part of the parsed grammar payload;
 /// `font-variant-caps` is the grammar's `variant` slot. `font-palette` and
 /// `font-synthesis` are not reset by `font`.
-/// [`parse_font_shorthand`] は省略された `style` → [`FontStyle::Normal`]、
-/// `variant` → [`FontVariantCaps::Normal`]、 `weight` → `400`、
-/// `line-height` → [`LineHeight::Normal`] で埋める (`size` と `family` は
-/// 必須のため省略不可)。埋め値は各 standalone longhand の initial と同一
-/// ([`crate::specified::SpecifiedValues::initial`] の対応 field が canonical)。
+/// [`parse_font_shorthand`] fills omitted `style` with [`FontStyle::Normal`],
+/// `variant` with [`FontVariantCaps::Normal`], `weight` with `400`, and
+/// `line-height` with [`LineHeight::Normal`]. `size` and `family` cannot be
+/// omitted. The fill values equal the standalone longhands' initial values
+/// (the matching fields of [`crate::specified::SpecifiedValues::initial`] are canonical).
 ///
-/// [`crate::rule::expand_shorthand_into`] が [`PropertyValue::Font`] を
+/// [`crate::rule::expand_shorthand_into`] expands [`PropertyValue::Font`] into
 /// [`PropertyValue::FontStyle`] / [`PropertyValue::FontVariantCaps`] /
 /// [`PropertyValue::FontWeight`] / size ([`PropertyValue::FontSize`] /
 /// [`PropertyValue::FontSizeRelative`]) / [`PropertyValue::LineHeight`] /
-/// [`PropertyValue::FontFamily`] と、8 supported reset-only longhand
+/// [`PropertyValue::FontFamily`] and eight supported reset-only longhands
 /// ([`PropertyValue::FontKerning`], [`PropertyValue::FontLanguageOverride`],
 /// [`PropertyValue::FontOpticalSizing`], [`PropertyValue::FontVariantEastAsian`],
 /// [`PropertyValue::FontVariantEmoji`], [`PropertyValue::FontVariantLigatures`],
-/// [`PropertyValue::FontVariantNumeric`], [`PropertyValue::FontVariantPosition`])、
-/// [`PropertyValue::FontVariationSettings`] (`normal` reset) の 15 longhand に展開する —
-/// margin/padding/border/outline shorthand precedent と同じ
-/// "parse-time expansion, never reaches cascade" 設計 (詳細は同関数の doc)。
+/// [`PropertyValue::FontVariantNumeric`], [`PropertyValue::FontVariantPosition`]),
+/// and [`PropertyValue::FontVariationSettings`] (`normal` reset), for 15 longhands in total.
+/// This follows the margin/padding/border/outline shorthand precedent:
+/// "parse-time expansion, never reaches cascade" (see that function's documentation).
 ///
-/// `#[non_exhaustive]` は付けない — sibling shorthand-only carrier
+/// Do not add `#[non_exhaustive]`; as with the sibling shorthand-only carriers
 /// ([`GridLineShorthand`] / [`TextDecorationShorthand`] /
-/// [`BackgroundShorthand`]) と同じ理由 (本型は [`PropertyValue::Font`] の
-/// payload 専用で、[`ComputedValues`] / [`SpecifiedValues`] には入らず、
-/// umbrella crate からも re-export しない)。
+/// [`BackgroundShorthand`]), this is only the payload of
+/// [`PropertyValue::Font`], not part of [`ComputedValues`] / [`SpecifiedValues`],
+/// and is not re-exported from the umbrella crate.
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontShorthand {
-    /// `font-style` 成分 — 省略時は [`FontStyle::Normal`] (spec initial)。
+    /// `font-style` component: defaults to [`FontStyle::Normal`] (initial value in the specification).
     pub style: FontStyle,
-    /// `font-variant-css2` 成分 — 省略時は [`FontVariantCaps::Normal`]
-    /// (spec initial)。`small-caps` は [`FontVariantCaps::SmallCaps`]。
+    /// `font-variant-css2` component: defaults to [`FontVariantCaps::Normal`]
+    /// (initial value in the specification). `small-caps` is [`FontVariantCaps::SmallCaps`].
     pub variant: FontVariantCaps,
-    /// `font-weight` 成分 — 省略時は `400` (`normal`、spec initial)。
+    /// `font-weight` component: defaults to `400` (`normal`, the initial value).
     pub weight: FontWeightValue,
-    /// `font-size` 成分 (必須) — [`FontShorthandSize`] 参照。
+    /// Required `font-size` component: see [`FontShorthandSize`].
     pub size: FontShorthandSize,
-    /// `line-height` 成分 — 省略時は [`LineHeight::Normal`] (spec initial)。
+    /// `line-height` component: defaults to [`LineHeight::Normal`] (the initial value).
     pub line_height: LineHeight,
-    /// `font-family` 成分 (必須) — [`parse_font_family`] の結果を共有する
-    /// `Arc` ([`PropertyValue::FontFamily`] と同じ DoS 対策 pattern)。
+    /// Required `font-family` component: shares the result of [`parse_font_family`] in an
+    /// `Arc` (the same DoS protection pattern as [`PropertyValue::FontFamily`]).
     pub family: Arc<Vec<FontFamilyName>>,
 }
 
-/// `font` shorthand を parse する ([`FontShorthand`] doc の grammar 節参照)。
+/// Parses the `font` shorthand (see the grammar section in [`FontShorthand`]).
 ///
-/// [`parse_background_shorthand`](super::visual::parse_background_shorthand) と同じ loop 構造: preface の各 unfilled
-/// slot を `try_parse` で順に試し、成功したら slot を埋めて loop 先頭に戻る。
-/// preface が確定したら必須の `font-size`、任意の `/ line-height`、必須の
-/// `font-family` を順に parse する。`font-size` / `font-family` のいずれかが
-/// 無い場合は `None` (declaration 全体が drop される)。leftover は呼び出し元
-/// (`rule.rs` の declaration parser) の `expect_exhausted` が丸ごと drop する
-/// ([`parse_background_shorthand`](super::visual::parse_background_shorthand) と同じ契約)。
+/// Like the loop in [`parse_background_shorthand`](super::visual::parse_background_shorthand), try each unfilled preface
+/// slot in sequence with `try_parse`, fill it on success, and return to the top of the loop.
+/// After the preface, parse the required `font-size`, optional `/ line-height`, and required
+/// `font-family` in order. If either `font-size` or `font-family` is missing,
+/// return `None` and drop the entire declaration. The caller's
+/// `expect_exhausted` (the declaration parser in `rule.rs`) drops leftover tokens
+/// (the same contract as [`parse_background_shorthand`](super::visual::parse_background_shorthand)).
 pub(super) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontShorthand> {
-    // System-font keyword は longhand に分解できないため先に reject
-    // (`font: menu` 等が preface の `normal` 扱いで誤って受理されるのを防ぐ)。
-    // `try_parse` で囲むため cursor は消費されない。
+    // Reject system-font keywords first because they cannot be decomposed into longhands;
+    // otherwise `font: menu`, etc., might be mistaken for `normal` in the preface.
+    // The cursor is not consumed because the check uses `try_parse`.
     let is_system_font = [
         "caption",
         "icon",
@@ -2397,8 +2422,8 @@ pub(super) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontSho
     let mut style: Option<FontStyle> = None;
     let mut variant: Option<FontVariantCaps> = None;
     let mut weight: Option<FontWeightValue> = None;
-    // `font-stretch` longhand は本 crate に無いため `normal` のみ consume
-    // して捨てる (`FontShorthand` doc の Scope carving 節参照)。
+    // This crate has no `font-stretch` longhand, so consume and discard only `normal`;
+    // see the Scope carving section of the `FontShorthand` documentation.
     let mut stretch_seen = false;
 
     loop {
@@ -2446,24 +2471,24 @@ pub(super) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontSho
         break;
     }
 
-    // 必須の `font-size` (`parse_font_size` が `PropertyValue` を返すため
-    // `FontShorthandSize` に畳む — 同関数はこの 2 variant しか返さない)。
+    // Parse the required `font-size`. `parse_font_size` returns a `PropertyValue`,
+    // so map it into `FontShorthandSize` (only these two variants can be returned).
     let size = match parse_font_size(input)? {
         PropertyValue::FontSize(length) => FontShorthandSize::Absolute(length),
         PropertyValue::FontSizeRelative(relative) => FontShorthandSize::Relative(relative),
-        // cov:ignore: `parse_font_size` は上記 2 variant しか返さない
-        // (同関数の 2 return path が canonical) — 到達不能。
+        // cov:ignore: `parse_font_size` returns only the two variants above;
+        // its two return paths are canonical. This branch is unreachable.
         _ => return None,
     };
 
-    // 任意の `/ line-height`。
+    // Parse the optional `/ line-height`.
     let line_height = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
         parse_line_height(input)?
     } else {
         LineHeight::Normal
     };
 
-    // 必須の `font-family` (`<family-name>#`、1 要素以上)。
+    // Parse the required `font-family` (`<family-name>#` with at least one element).
     let family = parse_font_family(input)?;
 
     Some(FontShorthand {

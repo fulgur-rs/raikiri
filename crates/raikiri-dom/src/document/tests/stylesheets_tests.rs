@@ -22,8 +22,8 @@ fn document_add_stylesheet_appends_in_call_order() {
 
 #[test]
 fn document_add_stylesheet_borrow_variant_zero_alloc() {
-    // Cow::Borrowed を渡した場合、内部 storage も Borrowed のまま保持される
-    // ことを as_ref() 経由で確認する (pointer 比較で same 'static addr)。
+    // Passing Cow::Borrowed retains Borrowed in internal storage;
+    // verify through as_ref() (pointer equality with the same 'static address).
     let mut doc = Document::new();
     let ua: &'static str = "html { display: block }";
     doc.add_stylesheet(Cow::Borrowed(ua), StylesheetKind::UserAgent);

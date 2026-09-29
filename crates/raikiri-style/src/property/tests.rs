@@ -23,8 +23,8 @@ fn parse_entire(source: &str, name: &str) -> Option<PropertyValue> {
 
 fn content_items(source: &str) -> Vec<ContentComponent> {
     match parse(source, "content") {
-        // PropertyValue::Content(Arc<Vec<..>>) を expose するため
-        // (*v).clone() で Vec を deref-clone。tests は既存 shape のまま検証。
+        // Expose PropertyValue::Content(Arc<Vec<..>>) by
+        // using (*v).clone() to deref-clone the Vec. Tests still verify the existing shape.
         Some(PropertyValue::Content(v)) => (*v).clone(),
         other => panic!("expected PropertyValue::Content, got {other:?}"),
     }

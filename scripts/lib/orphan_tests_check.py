@@ -3,7 +3,7 @@
 
 ## Why this exists
 
-AGENTS.md's "unit test は tests.rs に分離する" convention moves
+AGENTS.md's "move unit tests to tests.rs" convention moves
 `#[cfg(test)] mod tests { ... }` out of the file it tests and into a sibling
 `tests.rs` (or, for a source file with several independently named test
 groups, a `tests/` directory of one file per group — see

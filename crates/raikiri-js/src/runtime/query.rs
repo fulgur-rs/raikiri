@@ -9,24 +9,14 @@
 //! - <https://dom.spec.whatwg.org/#interface-parentnode>
 //! - <https://dom.spec.whatwg.org/#interface-element>
 //!
-//! # Known limitation: sibling combinators/structural pseudo-classes on a disconnected tree
-//!
-//! Every selector-matching entry point here (`querySelector`/
-//! `querySelectorAll`/`matches`/`closest`) ultimately calls
-//! [`raikiri_style::SelectorQuery::matches_scoped`], whose sibling
-//! combinators (`+`/`~`) and structural pseudo-classes
-//! (`:first-child`/`:nth-child()`/etc.) key off raikiri-dom's
-//! `IS_IN_DOCUMENT` flag rather than this binding's own ancestor-chain
-//! plumbing. That flag is only ever set for nodes reachable from the real
-//! document root (`mark_in_document_flags`, called before every walk
-//! here), so it stays clear for every node in a tree that either has never
-//! been attached, or is attached only under a `DocumentFragment` (whose
-//! contents are never part of the main document tree). A query against
-//! such a tree can therefore under-match a sibling combinator or
-//! structural pseudo-class even when both the queried element and the
-//! sibling/position in question are real elements of that tree.
-//! Descendant/child combinators are unaffected -- they walk the ancestor
-//! chain this binding itself constructs, never that flag.
+//! Sibling combinators (`+`/`~`) and structural pseudo-classes
+//! (`:first-child`/`:nth-child()`/etc.) work on disconnected trees as well as
+//! attached ones: [`raikiri_style::SelectorQuery::matches_scoped`] gates those
+//! candidates by same-tree-as-subject (the subject's own parent via
+//! `parent_id`), not by raikiri-dom's `IS_IN_DOCUMENT` flag. `:root` still
+//! matches only the document element (parent is the `Document` node and
+//! in-document), never a disconnected root or `DocumentFragment` top-level
+//! child.
 
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue};
@@ -47,10 +37,16 @@ use super::webidl::{
 /// `index` itself, and stopping at the first non-Element ancestor
 /// (Document, DocumentFragment, or simply a detached node with no
 /// parent) rather than continuing past it.
+///
+/// Builds a parent map with one O(N) scan (`node_count` + `get_node` +
+/// `children`, all O(1) per node) and then walks the chain O(depth),
+/// instead of calling `Document::parent_of` (an O(N) arena scan) per level
+/// for O(depth*N).
 fn element_ancestors(doc: &Document, index: usize) -> Vec<StyleNodeId> {
+    let map = parent_map(doc);
     let mut chain = Vec::new();
     let mut current = index;
-    while let Some(parent) = doc.parent_of(current) {
+    while let Some(parent) = map.get(current).copied().flatten() {
         if doc.get_node(parent).map(|n| n.kind()) != Some(NodeKind::Element) {
             break;
         }
@@ -59,6 +55,24 @@ fn element_ancestors(doc: &Document, index: usize) -> Vec<StyleNodeId> {
     }
     chain.reverse();
     chain
+}
+
+/// Immediate-parent map for [`element_ancestors`]: `map[child] == Some(parent)`
+/// iff `child` appears in `parent`'s `children`. One pass over the arena,
+/// O(N + total children).
+fn parent_map(doc: &Document) -> Vec<Option<usize>> {
+    let n = doc.node_count();
+    let mut map = vec![None; n];
+    for i in 0..n {
+        if let Some(node) = doc.get_node(i) {
+            for &child in &node.children {
+                if child < n {
+                    map[child] = Some(i);
+                }
+            }
+        }
+    }
+    map
 }
 
 /// Pre-order walk of every **element** that is a descendant of `root` in
@@ -369,17 +383,9 @@ pub(crate) const DOCUMENT_QUERY_MEMBERS: Members = Members {
 // ---- id, className -------------------------------------------------------
 
 /// `Element.matches` (DOM §4.9): binds `:scope` to `this` itself
-/// ("`:scope` elements « this »" in the spec's own wording).
-///
-/// **Known limitation**: sibling combinators (`+`/`~`) and structural
-/// pseudo-classes that key off document position consult raikiri-dom's
-/// `IS_IN_DOCUMENT` bit, which is only ever set for nodes reachable from
-/// the real document root; a `matches` call against an element in a
-/// detached tree (never attached, or attached only under a
-/// `DocumentFragment`) can therefore under-match those forms even when
-/// `this` and the sibling in question are both real elements of that
-/// detached tree. Descendant/child combinators are unaffected -- they walk
-/// this binding's own always-accurate ancestor chain, not that bit.
+/// ("`:scope` elements « this »" in the spec's own wording). Sibling
+/// combinators and structural pseudo-classes use same-tree gating, so they
+/// match correctly on disconnected trees as well.
 fn element_matches(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let query = parsed_selector(context, args)?;
@@ -398,8 +404,8 @@ fn element_matches(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 /// first one that matches `selectors` with `:scope` bound to `this` --
 /// fixed for every candidate in the walk, not re-derived per candidate
 /// (the spec's "`:scope` elements « this »" is the same single-element set
-/// throughout its own step 3 loop). See [`element_matches`]'s doc for the
-/// same disconnected-tree sibling-combinator limitation.
+/// throughout its own step 3 loop). Sibling and structural matching use the
+/// same same-tree gating as [`element_matches`].
 fn element_closest(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let query = parsed_selector(context, args)?;

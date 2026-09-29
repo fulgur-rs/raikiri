@@ -1,42 +1,40 @@
-//! Per-page per-attribute drawable maps (ECS 風 struct-of-arrays shape).
+//! Per-page, per-attribute drawable maps (an ECS-style struct of arrays).
 //!
-//! [`PageDrawables`] は [`PageScene`](crate::PageScene) が保持する
-//! per-attribute node map の集合。1 page 内の全 drawable state を
-//! attribute 単位 (block / paragraph / image / svg / …) に分離して並べる
-//! ことで、`raikiri` crate 内の dogfooding / validation path における
-//! forward iterate と batch operation を cache-friendly / SIMD-friendly に保つ。
-//! Fulgur-facing output contract は `raikiri-dom` を中心に別途定義する。
+//! [`PageDrawables`] groups the per-attribute node maps held by
+//! [`PageScene`](crate::PageScene). It separates all drawable state for one
+//! page by attribute (block, paragraph, image, SVG, etc.) so forward iteration
+//! and batch processing in raikiri's dogfooding and validation paths remain
+//! cache- and SIMD-friendly. The Fulgur-facing output contract is defined
+//! separately, primarily in `raikiri-dom`.
 //!
-//! # TrackedMap の役割
+//! # Purpose of TrackedMap
 //!
-//! [`TrackedMap`] は `BTreeMap<NodeId, V>` に **append-only insertion log** を
-//! 添えた薄い wrapper。log を保持する主目的は 2 点:
+//! [`TrackedMap`] wraps `BTreeMap<NodeId, V>` with an **append-only insertion
+//! log**. The log serves two purposes:
 //!
-//! 1. Deterministic iteration semantics (BTreeMap ordering) を consumer に
-//!    そのまま公開して byte-identical output を保証する
-//! 2. 将来 raikiri 内部の convert pass が「特定 subtree の
-//!    scope 内で新規挿入された NodeId のみ」を再訪する時、log の tail 参照
-//!    で O(inserted-since) に置換可能な mechanism を先行 landing する
+//! 1. Expose deterministic BTreeMap iteration order to consumers to preserve
+//!    byte-identical output.
+//! 2. Prepare a future raikiri conversion pass to revisit only NodeIds newly
+//!    inserted within a subtree scope, by reading the log tail in
+//!    O(inserted-since) time.
 //!
-//! Insertion log tail 読み出し API (`mark` / `since`) は現時点では
-//! **pub にしない**。raikiri PageScene = per-page immutable snapshot
-//! semantics では初期 unused、将来 raikiri 内部の convert /
-//! reflow pass が必要とした時点で pub 化を再判断する。これは dogfooding
-//! surface の設計であり、fulgur-facing API の約束ではない。
+//! The log-tail API (`mark` / `since`) is **not public** yet. It is unused
+//! while PageScene is an immutable per-page snapshot; publication should be
+//! reconsidered if internal conversion or reflow passes need it. This is a
+//! dogfooding design, not a promise about the Fulgur-facing API.
 //!
-//! # 参考 shape
+//! # Reference shape
 //!
-//! Field 集合は fulgur drawables.rs (v0.12)
-//! を reference shape として選定。fulgur 21 field のうち、[`PageDrawables`] は
-//! 13 field を採用する。残り 8 field は 2 分類:
+//! Fulgur drawables.rs (v0.12) provides the field reference. Of its 21
+//! fields, [`PageDrawables`] adopts 13. The other eight fall into two groups:
 //!
-//! - **3 field は [`PageScene`](crate::PageScene) に relocate**: body_offset_pt
-//!   / root_id / body_id は per-page global state (fulgur は Drawables に flat
-//!   保持、raikiri は snapshot scope で page-level state を PageScene に集約)
-//! - **5 field は raikiri では不要**: paragraph_slices / root_dir_rtl /
-//!   synthetic_id_counter / li_lbl_ids / li_lbody_ids は fulgur の reflow-
-//!   machinery / PDF-tag-tree / RTL page priming 系、raikiri snapshot semantics
-//!   には無関係
+//! - **Three moved to [`PageScene`](crate::PageScene)**: body_offset_pt,
+//!   root_id, and body_id are page-global state. Fulgur keeps them flat in
+//!   Drawables; raikiri collects them at the page snapshot level.
+//! - **Five unnecessary in raikiri**: paragraph_slices, root_dir_rtl,
+//!   synthetic_id_counter, li_lbl_ids, and li_lbody_ids serve Fulgur's
+//!   reflow machinery, PDF tag tree, or RTL page priming, none of which
+//!   applies to raikiri's snapshot semantics.
 
 use crate::entries::{
     BlockEntry, BookmarkAnchorEntry, ImageEntry, LinkSpanEntry, ListItemEntry, MulticolRuleEntry,
@@ -45,33 +43,34 @@ use crate::entries::{
 use raikiri_traits::NodeId;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// `BTreeMap<NodeId, V>` + append-only insertion log の thin wrapper。
+/// A thin wrapper around `BTreeMap<NodeId, V>` with an append-only
+/// insertion log.
 ///
 /// # Internal dogfooding contract
 ///
-/// - [`Deref`](std::ops::Deref) 経由で `&BTreeMap<NodeId, V>` として読み出せる
-///   (deterministic iteration order = key ascending)
-/// - [`insert`](TrackedMap::insert) が唯一の追加 path、log を必ず更新する
-/// - [`get_mut`](TrackedMap::get_mut) は既存 entry の value を書き換える
-///   だけで log に append しない (key 集合を変えない mutation)
+/// - [`Deref`](std::ops::Deref) exposes `&BTreeMap<NodeId, V>` with
+///   deterministic ascending-key iteration.
+/// - [`insert`](TrackedMap::insert) is the only insertion path and always
+///   updates the log.
+/// - [`get_mut`](TrackedMap::get_mut) changes the value of an existing entry
+///   but does not append to the log because the set of keys is unchanged.
 ///
-/// `DerefMut` は意図的に実装しない: `.entry()` / `.extend()` / `iter_mut()`
-/// などの alternate mutation path が log を bypass するのを compile time で
-/// fail させる。
+/// `DerefMut` is intentionally absent. Alternative mutation paths such as
+/// `.entry()`, `.extend()`, and `.iter_mut()` must fail to compile rather
+/// than bypass the insertion log.
 ///
 /// # Fulgur shape reference
 ///
-/// Field 構成は fulgur drawables.rs:65-117 の `TrackedMap<V>` の shape を
-/// reference material として選定。fulgur が O(N²) → O(inserted-since) の
-/// anti-quadratic 動機で書いた rationale は fulgur reflow-machinery
-/// 依存の説明であり、raikiri PageScene = snapshot semantics には
-/// 直接転写しない (raikiri は上記 consumer contract の 2 点のみを
-/// promise する)。
+/// The field arrangement follows `TrackedMap<V>` in Fulgur
+/// drawables.rs:65-117. Fulgur's O(N²) → O(inserted-since) rationale
+/// depends on its reflow machinery and does not directly carry over to
+/// raikiri's snapshot semantics. Raikiri promises only the two consumer
+/// properties above.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct TrackedMap<V> {
     map: BTreeMap<NodeId, V>,
-    /// Append-only insertion log。同じ key の re-insert は log 上重複を許す。
+    /// Append-only insertion log. Re-inserting a key records it again.
     order: Vec<NodeId>,
 }
 
@@ -92,92 +91,89 @@ impl<V> std::ops::Deref for TrackedMap<V> {
 }
 
 impl<V> TrackedMap<V> {
-    /// `key` に `value` を関連付け、insertion log に `key` を append する。
-    /// 既存 entry を上書きする場合も log は append される (log は insertion
-    /// event の羅列であり map の key 集合 snapshot ではない)。
+    /// Associate `value` with `key` and append `key` to the insertion log.
+    /// Replacing an existing entry also appends: this is an event log,
+    /// not a snapshot of the map's distinct keys.
     pub fn insert(&mut self, key: NodeId, value: V) -> Option<V> {
         self.order.push(key);
         self.map.insert(key, value)
     }
 
-    /// 既存 entry の value への `&mut` 参照。key を追加しないため log は
-    /// 更新しない。`key` が map に存在しない場合は `None`。
+    /// Mutable reference to the value of an existing entry. No key is
+    /// inserted or logged. Returns `None` when `key` is absent.
     pub fn get_mut(&mut self, key: &NodeId) -> Option<&mut V> {
         self.map.get_mut(key)
     }
 }
 
-/// 1 page 分の per-attribute drawable map。[`PageScene`](crate::PageScene)
-/// の drawables field として保持され、`raikiri` crate 内の dogfooding / validation
-/// path が attribute 単位で forward iterate して paint する。Fulgur-facing page
-/// output は `raikiri-dom` を中心に定義される。
+/// Per-attribute drawable maps for one page, held in the `drawables`
+/// field of [`PageScene`](crate::PageScene). Raikiri's dogfooding and
+/// validation paths iterate by attribute to paint. Fulgur-facing page
+/// output is defined separately, primarily in `raikiri-dom`.
 ///
-/// # Field 選定基準
+/// # Field selection
 ///
-/// Fulgur drawables.rs の per-attribute map を
-/// reference shape として、raikiri PageScene = immutable per-page snapshot
-/// semantics で意味を持つ 13 field を選定。
-/// fulgur-specific な reflow-machinery / PDF-tag-tree / RTL page priming 系
-/// field (paragraph_slices / synthetic_id_counter / li_lbl_ids / li_lbody_ids
-/// / root_dir_rtl 等) は raikiri では不要のため採用しない。
+/// Fulgur drawables.rs provides the reference per-attribute maps. These
+/// 13 fields make sense for an immutable raikiri page snapshot. Fields
+/// specific to Fulgur's reflow machinery, PDF tagging, and RTL page
+/// priming (paragraph_slices, synthetic_id_counter, li_lbl_ids,
+/// li_lbody_ids, root_dir_rtl, etc.) are not needed here.
 ///
-/// # landing scope
+/// # Landing scope
 ///
-/// 最初は struct field surface のみ landing、その後
-/// 各 Entry 型に fulgur reference と照合した minimal
-/// field を追加し ([`crate::entries`] module doc参照)、
-/// `build_page_scene` (crate::page_scene) が実際に
-/// [`BlockEntry`] / [`ParagraphEntry`] を construct して `block_styles` /
-/// `paragraphs` へ insert するようになった。他 9 field はまだ常に空
-/// (対応する raikiri pipeline stage が無いため、[`crate::entries`] module doc
-/// 参照)。
+/// Initially, only the struct fields existed. Later, minimal fields were
+/// added to each Entry type using the Fulgur reference (see the
+/// [`crate::entries`] module docs). `build_page_scene` (crate::page_scene)
+/// now constructs [`BlockEntry`] and [`ParagraphEntry`] and inserts them
+/// into `block_styles` and `paragraphs`. The other nine fields remain empty
+/// because the matching raikiri pipeline stages do not exist; see the
+/// [`crate::entries`] module docs.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageDrawables {
-    /// Block box (background / border / shadow / opacity 等) の per-node
-    /// state。Fulgur drawables.rs:142-177 の `BlockEntry` shape が
-    /// future populate 時の reference。
+    /// Per-node block-box state (background, border, shadow, opacity, etc.).
+    /// Fulgur drawables.rs:142-177 provides the `BlockEntry` reference for
+    /// future population.
     pub block_styles: TrackedMap<BlockEntry>,
-    /// Paragraph (shaped inline text lines) の per-node state。Fulgur
-    /// drawables.rs:183-191 の `ParagraphEntry` shape が reference。
+    /// Per-node paragraph state (shaped inline lines), based on Fulgur
+    /// drawables.rs:183-191's `ParagraphEntry` shape.
     pub paragraphs: TrackedMap<ParagraphEntry>,
-    /// Raster image の per-node state。Fulgur drawables.rs:205-213 の
-    /// `ImageEntry` shape が reference。
+    /// Per-node raster-image state, based on the `ImageEntry` shape in
+    /// Fulgur drawables.rs:205-213.
     pub images: TrackedMap<ImageEntry>,
-    /// SVG image の per-node state。Fulgur drawables.rs:225-232 の
-    /// `SvgEntry` shape が reference。
+    /// Per-node SVG-image state, based on the `SvgEntry` shape in
+    /// Fulgur drawables.rs:225-232.
     pub svgs: TrackedMap<SvgEntry>,
-    /// Table (outer frame の background / border / shadow) の per-node
-    /// state。Fulgur drawables.rs:243-257 の `TableEntry` shape が reference。
+    /// Per-node table outer-frame state (background, border, shadow), based
+    /// on the `TableEntry` shape in Fulgur drawables.rs:243-257.
     pub tables: TrackedMap<TableEntry>,
-    /// List item marker (text / image / none) の per-node state。Fulgur
-    /// drawables.rs:271-299 の `ListItemEntry` / `ListItemMarker` shape が
-    /// reference。
+    /// Per-node list-item marker state (text, image, or none), based on
+    /// Fulgur drawables.rs:271-299's `ListItemEntry` / `ListItemMarker` shape.
     pub list_items: TrackedMap<ListItemEntry>,
-    /// CSS transform (matrix + origin) の per-node state。TrackedMap 化
-    /// せず単純な BTreeMap で保持 (fulgur drawables.rs:392-405 の
-    /// `TransformEntry` に倣う、subtree scope 集計は insertion log 不要)。
+    /// Per-node CSS transform state (matrix and origin). Use a plain
+    /// BTreeMap rather than TrackedMap, following Fulgur's `TransformEntry`
+    /// (drawables.rs:392-405); subtree aggregation needs no insertion log.
     pub transforms: BTreeMap<NodeId, TransformEntry>,
-    /// Multicol の column-rule 描画 geometry。Fulgur drawables.rs:316-340
-    /// の `MulticolRuleEntry` + `ColumnRuleGeometry` shape が reference。
+    /// Multicolumn column-rule geometry, following `MulticolRuleEntry` and
+    /// `ColumnRuleGeometry` in Fulgur drawables.rs:316-340.
     pub multicol_rules: BTreeMap<NodeId, MulticolRuleEntry>,
-    /// Bookmark anchor (PDF bookmark tree の source)。Fulgur
-    /// drawables.rs:409-413 の `BookmarkAnchorEntry` shape が reference。
+    /// PDF bookmark-tree source anchor, following `BookmarkAnchorEntry`
+    /// in Fulgur drawables.rs:409-413.
     pub bookmark_anchors: BTreeMap<NodeId, BookmarkAnchorEntry>,
-    /// Link span (paragraph 内 glyph run 上に張る hyperlink target)。
-    /// 1 node が複数 span を carry するため `Vec<(NodeId, LinkSpanEntry)>`
-    /// で保持する (fulgur drawables.rs:418-419 の shape に倣う)。
+    /// Hyperlink target span over a paragraph glyph run. A node may have
+    /// multiple spans, so store `Vec<(NodeId, LinkSpanEntry)>`, following
+    /// Fulgur drawables.rs:418-419.
     pub link_spans: Vec<(NodeId, LinkSpanEntry)>,
-    /// Tagged-PDF semantics (tag / parent / alt_text 等) の per-node state。
-    /// Fulgur tagging.rs:57 の `SemanticEntry` shape が reference。
+    /// Per-node tagged-PDF state (tag, parent, alt_text, etc.), based on
+    /// `SemanticEntry` in Fulgur tagging.rs:57.
     pub semantics: BTreeMap<NodeId, SemanticEntry>,
-    /// Inline-box subtree の paint dispatch を skip する NodeId 集合。
-    /// Inline block / inline-flex 等の paint 順序を parent 経由に統合する
-    /// 時の scope marker。
+    /// NodeIds whose inline-box subtrees skip paint dispatch. This marks
+    /// the scope when inline-block/inline-flex paint order is routed through
+    /// the parent.
     pub inline_box_subtree_skip: BTreeSet<NodeId>,
-    /// Inline-box subtree に属する descendant NodeId の一覧。
-    /// [`inline_box_subtree_skip`](PageDrawables::inline_box_subtree_skip) の
-    /// scope 内 descendants を deterministic 順序で並べる。
+    /// Descendant NodeIds belonging to an inline-box subtree. Lists the
+    /// descendants within [`inline_box_subtree_skip`](PageDrawables::inline_box_subtree_skip)
+    /// in deterministic order.
     pub inline_box_subtree_descendants: BTreeMap<NodeId, Vec<NodeId>>,
 }
 

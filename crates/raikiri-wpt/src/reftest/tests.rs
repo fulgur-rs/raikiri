@@ -13,15 +13,148 @@ fn expand_viewport_units_preserves_utf8_text() {
 #[test]
 fn resource_url_absolutization_handles_optional_and_invalid_bases() {
     let html = r#"<img src="support/colors-16x8.png"><img src='support/other.png'>"#;
-    assert_eq!(absolutize_wpt_resource_urls(html, None), html);
+    assert_eq!(absolutize_wpt_resource_urls(html, None, None), html);
     assert_eq!(
-        absolutize_wpt_resource_urls(html, Some(Path::new("relative-base"))),
+        absolutize_wpt_resource_urls(html, Some(Path::new("relative-base")), None),
         html
     );
     let temp = tempfile::tempdir().unwrap();
-    let absolute = absolutize_wpt_resource_urls(html, Some(temp.path()));
+    let absolute = absolutize_wpt_resource_urls(html, Some(temp.path()), None);
     assert_ne!(absolute, html);
     assert!(absolute.contains("support/colors-16x8.png"));
+}
+
+#[test]
+fn quoted_support_urls_resolve_against_page_directory() {
+    let wpt_root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(wpt_root.path().join("fonts")).unwrap();
+    std::fs::write(wpt_root.path().join("fonts").join("Ahem.ttf"), b"font").unwrap();
+    let page_dir = wpt_root.path().join("css").join("css-text");
+    std::fs::create_dir_all(&page_dir).unwrap();
+
+    let page_prefix = raikiri::Url::from_directory_path(&page_dir)
+        .unwrap()
+        .to_string();
+    let root_prefix = raikiri::Url::from_directory_path(wpt_root.path())
+        .unwrap()
+        .to_string();
+
+    let html = r#"<script src="support/check-layout-th.js"></script><script src='support/other.js'></script>"#;
+    let absolute = absolutize_wpt_resource_urls(html, Some(&page_dir), Some(wpt_root.path()));
+    assert!(
+        absolute.contains(&format!("\"{page_prefix}support/check-layout-th.js")),
+        "{absolute}"
+    );
+    assert!(
+        absolute.contains(&format!("'{page_prefix}support/other.js")),
+        "{absolute}"
+    );
+    assert!(
+        !absolute.contains(&format!("{root_prefix}support/")),
+        "quoted support URLs must not resolve against the WPT root: {absolute}"
+    );
+
+    // The same relative URL written unquoted is left for the parser, which
+    // resolves it against the page directory; joining it there must match
+    // the quoted rewriting above.
+    let page_url = raikiri::Url::from_directory_path(&page_dir).unwrap();
+    let unquoted_joined = page_url.join("support/check-layout-th.js").unwrap();
+    assert_eq!(
+        unquoted_joined.to_string(),
+        format!("{page_prefix}support/check-layout-th.js")
+    );
+    let unquoted = "<script src=support/check-layout-th.js></script>";
+    assert_eq!(
+        absolutize_wpt_resource_urls(unquoted, Some(&page_dir), Some(wpt_root.path())),
+        unquoted
+    );
+}
+
+#[test]
+fn live_document_resolves_quoted_support_against_page_directory() {
+    let wpt_root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(wpt_root.path().join("fonts")).unwrap();
+    std::fs::write(wpt_root.path().join("fonts").join("Ahem.ttf"), b"font").unwrap();
+    let page_dir = wpt_root.path().join("css").join("css-text");
+    std::fs::create_dir_all(&page_dir).unwrap();
+
+    let page_prefix = raikiri::Url::from_directory_path(&page_dir)
+        .unwrap()
+        .to_string();
+    let root_prefix = raikiri::Url::from_directory_path(wpt_root.path())
+        .unwrap()
+        .to_string();
+
+    let setup = prepare_wpt_live_document(
+        r#"<script src="support/check-layout-th.js"></script>"#,
+        800,
+        600,
+        &page_dir,
+        wpt_root.path(),
+    )
+    .unwrap();
+    let mut pending = vec![setup.uncascaded.dom.root_index()];
+    let mut found = None;
+    while let Some(index) = pending.pop() {
+        if setup
+            .uncascaded
+            .dom
+            .element_attribute(index, "src")
+            .is_some_and(|src| src.contains("support/check-layout-th.js"))
+        {
+            found = setup
+                .uncascaded
+                .dom
+                .element_attribute(index, "src")
+                .map(str::to_owned);
+            break;
+        }
+        if let Some(node) = setup.uncascaded.dom.get_node(index) {
+            pending.extend(node.children.iter().copied());
+        }
+    }
+    let src = found.expect("live document should keep the support script");
+    assert_eq!(src, format!("{page_prefix}support/check-layout-th.js"));
+    assert_ne!(
+        src,
+        format!("{root_prefix}support/check-layout-th.js"),
+        "quoted support URL must not resolve against the WPT root",
+    );
+}
+
+#[test]
+fn support_absolutization_leaves_absolute_and_http_urls_untouched() {
+    let wpt_root = tempfile::tempdir().unwrap();
+    let page_dir = wpt_root.path().join("page");
+    std::fs::create_dir_all(&page_dir).unwrap();
+    let html = r#"<script src="https://example.com/support/x.js"></script><img src="file:///other/support/y.png"><link rel="stylesheet" href="/other.css">"#;
+    assert_eq!(
+        absolutize_wpt_resource_urls(html, Some(&page_dir), Some(wpt_root.path())),
+        html
+    );
+}
+
+#[test]
+fn fonts_urls_resolve_against_wpt_root_not_page_directory() {
+    let wpt_root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(wpt_root.path().join("fonts")).unwrap();
+    std::fs::write(wpt_root.path().join("fonts").join("ahem.css"), b"css").unwrap();
+    let page_dir = wpt_root.path().join("sub").join("page");
+    std::fs::create_dir_all(&page_dir).unwrap();
+
+    let root_prefix = raikiri::Url::from_directory_path(wpt_root.path())
+        .unwrap()
+        .to_string();
+    let html = r#"<link rel="stylesheet" href="/fonts/ahem.css"><link rel='stylesheet' href='/fonts/ahem.css'>"#;
+    let absolute = absolutize_wpt_resource_urls(html, Some(&page_dir), Some(wpt_root.path()));
+    assert!(
+        absolute.contains(&format!("\"{root_prefix}fonts/ahem.css")),
+        "{absolute}"
+    );
+    assert!(
+        absolute.contains(&format!("'{root_prefix}fonts/ahem.css")),
+        "{absolute}"
+    );
 }
 
 #[test]

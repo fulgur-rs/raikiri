@@ -1,9 +1,9 @@
 //! Arena node type for raikiri-dom's Document.
 //!
-//! Node は Element / Text / Document (root) の 3 種を union で表現する
-//! flat struct。fields は crate-private (raikiri-dom 内部のみ mutate)、
-//! 外部 Consumer は `raikiri_traits::Dom / Node / Element` trait 経由で
-//! 参照する。
+//! A flat struct whose union represents three node types: Element, Text, and
+//! Document (root). Fields are crate-private (mutated only within raikiri-dom);
+//! external consumers access them through the `raikiri_traits::Dom / Node / Element`
+//! traits.
 
 use smol_str::SmolStr;
 use taffy::{Cache, Layout, Style};
@@ -17,8 +17,8 @@ use raikiri_style::property::{
 use raikiri_traits::{IntrinsicBox, NodeKind};
 
 bitflags::bitflags! {
-    /// Node に付随する per-node boolean 属性。blitz `NodeFlags` と **raw bit
-    /// 値まで完全一致**。
+    /// Per-node boolean attributes. Their **raw bit values exactly match**
+    /// blitz `NodeFlags`.
     ///
     /// blitz reference (blitz-dom/src/node/node.rs:50-58):
     /// ```text
@@ -27,33 +27,38 @@ bitflags::bitflags! {
     /// const IS_IN_DOCUMENT = 0b00000100;   // = 1 << 2
     /// ```
     ///
-    /// `IS_IN_DOCUMENT` と `IS_INLINE_ROOT` は使用中。`IS_TABLE_ROOT` (将来の
-    /// table formatting root 用) は blitz と同 bit 位置で予約定義するのみ
-    /// (今は誰も set/clear しないが、bit 位置を確保することで raw-bit 変換
-    /// `NodeFlags::from_bits(blitz_flags.bits())` が将来の blitz-compat 変換で
-    /// 正しく動く)。
+    /// `IS_IN_DOCUMENT` and `IS_INLINE_ROOT` are in use. `IS_TABLE_ROOT` is
+    /// reserved for future table formatting roots at the same bit position as
+    /// blitz. Nothing sets or clears it yet; reserving the bit ensures that the
+    /// raw-bit conversion `NodeFlags::from_bits(blitz_flags.bits())` works for
+    /// future blitz compatibility.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct NodeFlags: u32 {
-        /// Inline formatting context root。[`mod@crate::layout`] の
-        /// `establish_minimal_line_boxes` が、その node が同関数の
-        /// minimal-line-box 条件を満たす block container かどうかで
-        /// set/clear する (`layout_single_page` 呼び出し毎に再計算、set
-        /// のままにも clear のままにもなる — write-only ではない)。bit
-        /// 位置は blitz と同じ。
+        /// Inline formatting context root. `establish_minimal_line_boxes` in
+        /// [`mod@crate::layout`] sets or clears this according to whether the
+        /// node is a block container meeting its minimal-line-box conditions.
+        /// It is recomputed on every `layout_single_page` call and may remain
+        /// either set or clear; it is not write-only. Its bit position matches blitz.
         const IS_INLINE_ROOT = 1 << 0;
-        /// Table formatting context root。将来使用予定 (blitz と同 bit 位置)。
+        /// Table formatting context root, reserved for future use at the same
+        /// bit position as blitz.
         const IS_TABLE_ROOT = 1 << 1;
-        /// この Node が flat tree に含まれるか。`<template>` element の子孫は
-        /// clear、Document root から flat-tree-parent 経由で到達可能な node は
-        /// set。将来 shadow DOM / slot の "shadow-including tree" 意味論を
-        /// 追加する場合、slot 割当てられない host 直下や shadow root 外の
-        /// light-DOM 子孫も同 bit で表現する予定。
+        /// Whether this node belongs to the flat tree. Clear for nodes
+        /// unreachable from the Document root (detached subtrees, including a
+        /// `<template>` element's contents fragment) and for Comment /
+        /// ProcessingInstruction nodes; set for nodes reachable from the
+        /// Document root through flat-tree parents. Ordinary light-DOM
+        /// children appended directly under a `<template>` element stay set —
+        /// only the associated contents fragment is inert. Future shadow DOM /
+        /// slot support will use this bit for "shadow-including tree"
+        /// semantics, including direct host children not assigned to a slot
+        /// and light-DOM descendants outside the shadow root.
         ///
-        /// 維持タイミング:
-        /// - parse: `raikiri-html::sink::finish` の `mark_in_document_flags`
-        ///   phase で single-pass DFS が set/clear
-        /// - mutation runtime (将来): mutator の `process_added_subtree` /
-        ///   `process_removed_subtree` 相当が set/unset
+        /// Maintenance points:
+        /// - Parse: a single-pass DFS sets or clears it in the
+        ///   `mark_in_document_flags` phase of `raikiri-html::sink::finish`.
+        /// - Future mutation runtime: mutator equivalents of
+        ///   `process_added_subtree` / `process_removed_subtree` set or unset it.
         const IS_IN_DOCUMENT = 1 << 2;
         /// Outermost inline SVG root, painted as one replaced item.
         const IS_INLINE_SVG_ROOT = 1 << 3;
@@ -71,20 +76,20 @@ pub(crate) struct Attr {
     pub(crate) value: SmolStr,
 }
 
-/// NodeData: kind 固有 field を集約した tagged union。
+/// NodeData: a tagged union of kind-specific fields.
 ///
-/// blitz `blitz-dom::node::node::NodeData` に対応する shape。将来の
-/// blitz-compat で nominal 変換 (`match data { NodeData::Element(e) => BlitzElement { ... }, ... }`)
-/// できるように field 名を揃える。`Element` variant のみ `Box` で indirection
-/// を挟むのは blitz と同じ選択 (Element の field 数が多く、Text / Document 側の
-/// サイズに Element を引きずられさせないため)。
+/// Its shape corresponds to blitz `blitz-dom::node::node::NodeData`. Field names
+/// match to allow a future nominal blitz-compatible conversion
+/// (`match data { NodeData::Element(e) => BlitzElement { ... }, ... }`). As in blitz,
+/// only the `Element` variant is boxed: its many fields therefore do not increase
+/// the size of the Text and Document variants.
 ///
-/// 注意: この Box は `size_of::<NodeData>()` を小さく抑えるものではない —
-/// `TextData` が `parley::Layout<()>` を直接持つため `Element` variant
-/// (Box 経由でポインタ幅) より大きく、結局 enum 全体は `TextData` のサイズで
-/// 決まる (`clippy::large_enum_variant` が発火するのはこのため)。それでも
-/// `Text` を Box しないのは意図した trade-off: `text_layout()` は paint hot
-/// path から呼ばれるため、追加の indirection を持ち込みたくない。
+/// Note: this box does not reduce `size_of::<NodeData>()`. Because `TextData`
+/// holds `parley::Layout<()>` directly, it is larger than the pointer-sized
+/// boxed `Element` variant and determines the enum's size (hence the
+/// `clippy::large_enum_variant` lint). Leaving `Text` unboxed is intentional:
+/// `text_layout()` is called on the paint hot path, where another indirection
+/// would be undesirable.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 #[allow(
@@ -95,41 +100,41 @@ pub(crate) struct Attr {
 )]
 pub enum NodeData {
     /// HTML / XML element (tag_name + attributes + namespace + inline_style +
-    /// template_contents slot を持つ)。
+    /// template_contents slot).
     Element(Box<ElementData>),
-    /// Character data node。
+    /// Character data node.
     Text(TextData),
-    /// Document root (arena index 0 の virtual node)。
+    /// Document root (the virtual node at arena index 0).
     Document,
-    /// HTML / XML comment node (`<!-- ... -->`)。以前は `"#comment"` tag な
-    /// Element として保持後 sink.finish() で strip していたが、恒久 variant
-    /// 化した。character data を保持するが Element ではない
-    /// (`kind() == NodeKind::Comment`、`as_element() == None`)。
-    /// `mark_in_document_flags` が明示的に `IS_IN_DOCUMENT` bit を clear するため、
-    /// cascade / paint / layout / stylesheet extraction の全 traversal は
-    /// `is_in_document()` gate で自動的に skip する (defense-in-depth: 追加の
-    /// `matches!(kind, Comment)` gate を traversal 側に散らさない)。
+    /// HTML / XML comment node (`<!-- ... -->`). Previously stored as an Element
+    /// tagged `"#comment"` and stripped in sink.finish(), it now has a permanent
+    /// variant. It holds character data but is not an Element
+    /// (`kind() == NodeKind::Comment`, `as_element() == None`).
+    /// `mark_in_document_flags` explicitly clears its `IS_IN_DOCUMENT` bit, so
+    /// cascade, paint, layout, and stylesheet extraction traversals all skip it
+    /// through the `is_in_document()` gate. For defense in depth, this avoids
+    /// scattering extra `matches!(kind, Comment)` gates across traversals.
     Comment(SmolStr),
-    /// Processing instruction node (`<?target data?>`)。target + data の
-    /// pair を保持。同上、`IS_IN_DOCUMENT` bit を clear
-    /// することで traversal から自然に消える。
+    /// Processing instruction node (`<?target data?>`). Holds the target and
+    /// data pair. As above, clearing `IS_IN_DOCUMENT` naturally excludes it
+    /// from traversals.
     ProcessingInstruction {
-        /// PI target (`<?xml-stylesheet ...?>` の `xml-stylesheet` 部分)。
+        /// PI target (the `xml-stylesheet` part of `<?xml-stylesheet ...?>`).
         target: SmolStr,
-        /// PI data (`<?xml-stylesheet href="..."?>` の `href="..."` 部分)。
+        /// PI data (the `href="..."` part of `<?xml-stylesheet href="..."?>`).
         data: SmolStr,
     },
-    /// Document fragment root (`<template>` contents 等の detached subtree の
-    /// 仮想 root)。以前 `"#document-fragment"` pseudo-tag な Element として
-    /// 実装していた shape を恒久 variant 化したもの。
-    /// `kind() == NodeKind::DocumentFragment`、
-    /// `as_element() == None`。Document root からは reachable でないため
-    /// `mark_in_document_flags` は自然に `IS_IN_DOCUMENT` bit を clear する。
+    /// Document fragment root (the virtual root of a detached subtree, such as
+    /// `<template>` contents). This permanent variant replaces the former Element
+    /// with a `"#document-fragment"` pseudo-tag.
+    /// `kind() == NodeKind::DocumentFragment`, `as_element() == None`.
+    /// Because it is unreachable from the Document root,
+    /// `mark_in_document_flags` naturally clears its `IS_IN_DOCUMENT` bit.
     DocumentFragment,
 }
 
 impl NodeData {
-    /// Element variant を crate-private に mut borrow (Document setter 用)。
+    /// Mutably borrow the Element variant within the crate for Document setters.
     #[inline]
     pub(crate) fn as_element_mut(&mut self) -> Option<&mut ElementData> {
         match self {
@@ -138,7 +143,7 @@ impl NodeData {
         }
     }
 
-    /// Text variant を crate-private に mut borrow (layout::preshape_text 用)。
+    /// Mutably borrow the Text variant within the crate for layout::preshape_text.
     #[inline]
     pub(crate) fn as_text_mut(&mut self) -> Option<&mut TextData> {
         match self {
@@ -148,45 +153,48 @@ impl NodeData {
     }
 }
 
-/// Element-only data。blitz `ElementData` に対応。
+/// Element-only data corresponding to blitz `ElementData`.
 ///
-/// `template_contents` は `<template>` element の contents fragment root への
-/// arena index を保持する slot。live 化され、
-/// raikiri-html sink が `create_element` の `ElementFlags::template=true` を
-/// 観測した時 [`crate::Document::allocate_template_fragment_root`] 経由で
-/// populate する。詳細は field 側の doc comment を参照。
+/// `template_contents` holds the arena index of a `<template>` element's
+/// contents fragment root. This live slot is populated through
+/// [`crate::Document::allocate_template_fragment_root`] when the raikiri-html
+/// sink observes `ElementFlags::template=true` in `create_element`.
+/// See the field's documentation for details.
 #[derive(Debug, Clone)]
 pub struct ElementData {
-    /// HTML / XML tag name (例: `"p"`, `"div"`)。html5ever の QualName.local から
-    /// SmolStr に写し取る。
+    /// HTML / XML tag name (for example, `"p"` or `"div"`), copied from
+    /// html5ever's QualName.local into a SmolStr.
     pub(crate) tag_name: SmolStr,
-    /// HTML `style="..."` attribute の生 string (kind == Element 時のみ populate、
-    /// 空文字列 `style=""` は Element trait contract 上 `None` として view 化
-    /// されるが、storage はここでは正規化せず raw 値を持つ)。
+    /// Raw string from the HTML `style="..."` attribute (populated only for
+    /// Elements). The Element trait contract exposes an empty `style=""` as
+    /// `None`, but storage here retains the raw value without normalization.
     pub(crate) inline_style: Option<SmolStr>,
-    /// Element namespace URI (non-HTML の場合のみ `Some`、HTML default は
-    /// `None` を optimized path とする)。例: `Some("http://www.w3.org/2000/svg")`。
+    /// Element namespace URI (`Some` only for non-HTML; the HTML default uses
+    /// `None` as the optimized path). For example,
+    /// `Some("http://www.w3.org/2000/svg")`.
     pub(crate) namespace: Option<SmolStr>,
     /// Element prefix preserved from the parsed qualified name.
     pub(crate) prefix: Option<SmolStr>,
     /// Attributes with their namespace / prefix (source order retained).
-    /// `style` attribute は [`ElementData::inline_style`] に分離済のためここには
-    /// 含めない。
+    /// The `style` attribute is stored separately in
+    /// [`ElementData::inline_style`] and is not included here.
     pub(crate) attributes: Vec<Attr>,
-    /// `<template>` element の contents fragment root への arena index
-    /// (fragment root shape を `NodeData::DocumentFragment` variant として
-    /// 実装)。
+    /// Arena index of a `<template>` element's contents fragment root
+    /// (represented by the `NodeData::DocumentFragment` variant).
     ///
-    /// raikiri-html sink が `create_element` で html5ever の
-    /// `ElementFlags::template = true` を観測した時、[`crate::Document::allocate_template_fragment_root`]
-    /// で detached な [`NodeData::DocumentFragment`] node を allocate し、その arena
-    /// index をここに格納する。`TreeSink::get_template_contents` はこの slot
-    /// を返し、以降 html5ever は template contents を fragment root の子として
-    /// append する (template element 自身の children は空のまま)。
+    /// When the raikiri-html sink observes html5ever's
+    /// `ElementFlags::template = true` in `create_element`, it allocates a
+    /// detached [`NodeData::DocumentFragment`] node through
+    /// [`crate::Document::allocate_template_fragment_root`] and stores its arena
+    /// index here. `TreeSink::get_template_contents` returns this slot, after
+    /// which html5ever appends template contents beneath the fragment root
+    /// (the template element itself keeps no children).
     ///
-    /// blitz `blitz-dom::node::element::ElementData::template_contents` と
-    /// 同名・同 shape。sink が populate しなかった (template 判定を経ずに
-    /// 直接組み立てる test / 将来の manual construction) 場合は `None` のまま。
+    /// This has the same name and shape as blitz
+    /// `blitz-dom::node::element::ElementData::template_contents`. It remains
+    /// `None` if the sink does not populate it (for example, in tests that
+    /// construct nodes directly without template detection, or in future
+    /// manual construction).
     pub(crate) template_contents: Option<usize>,
     /// Resolved intrinsic size (px) for a replaced element (`<img>` only, in
     /// this scope), populated by [`crate::image_resolve::resolve_images`]
@@ -219,18 +227,19 @@ pub struct MulticolTextFragment {
     pub y: f32,
 }
 
-/// Text-only data。blitz `TextNodeData` (nominally) に対応。
+/// Text-only data corresponding nominally to blitz `TextNodeData`.
 #[derive(Debug, Clone)]
 pub struct TextData {
-    /// Character data。
+    /// Character data.
     pub(crate) text_content: SmolStr,
-    /// Text node の pre-shaped parley Layout。
+    /// Pre-shaped parley Layout for a text node.
     ///
-    /// - Populated by [`crate::layout`] の `preshape_text`
-    /// - Consumed by taffy leaf measure closure (intrinsic size) と paint
-    ///   (glyph 位置)
-    /// - Brush type `()` は意図的な choice: color / decoration は持たせない
-    /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア + 再走
+    /// - Populated by `preshape_text` in [`crate::layout`].
+    /// - Consumed by the taffy leaf measure closure (intrinsic size) and paint
+    ///   (glyph positions).
+    /// - Brush type `()` is deliberate: it carries no color or decoration.
+    /// - Invalidation: cleared to None and recomputed on every
+    ///   `layout_single_page` call.
     pub text_layout: Option<parley::Layout<()>>,
     /// Whether paint should normalize horizontal glyph positions for a
     /// single-run `white-space: pre` block.
@@ -254,18 +263,19 @@ pub struct TextData {
     pub(crate) text_indent_rebreak: bool,
 }
 
-/// Arena node (NodeData tagged union として実装)。
+/// Arena node implemented with a NodeData tagged union.
 ///
-/// paint / cascade / layout に必要な kind 非依存の field (children /
-/// unrounded_layout) は Node に残し、kind 固有 field は [`NodeData`] variant
-/// に集約する。かつて pub 化していた 5 field のうち `kind` /
-/// `tag_name` / `text_layout` は accessor method 経由に移行 (`node.kind()` /
-/// `node.tag_name()` / `node.text_layout()`)、`children` / `unrounded_layout`
-/// は pub field 継続。external contract は Node/Element field access 0 件
-/// なので無影響、raikiri-dom 内部 pub_surface check のみ accessor 経由に再 pin。
+/// Kind-independent fields needed by paint, cascade, and layout (children and
+/// unrounded_layout) remain on Node; kind-specific fields reside in [`NodeData`]
+/// variants. Of the five formerly public fields, `kind`, `tag_name`, and
+/// `text_layout` now use accessors (`node.kind()`, `node.tag_name()`, and
+/// `node.text_layout()`); `children` and `unrounded_layout` remain public.
+/// The external contract is unaffected because it accesses no Node/Element
+/// fields; only raikiri-dom's internal pub_surface check was updated to use
+/// the accessors.
 #[derive(Debug, Clone)]
 pub struct Node {
-    /// Taffy layout style。
+    /// Taffy layout style.
     pub(crate) style: Style,
     /// Computed `display` for table dispatch. Bridged to `style.display` for Block/Flex/Grid/None
     /// but retains the full `DisplayValue` (including `Table` family) so table engine routing
@@ -305,60 +315,77 @@ pub struct Node {
     pub(crate) grid_item_row_starts: Box<[(usize, u16)]>,
     /// Resolved grid column count from Taffy's detailed layout information.
     pub(crate) grid_column_count: usize,
-    /// Child arena indices (`Document::nodes` の usize)。
+    /// Child arena indices (`usize` indices into `Document::nodes`).
     pub children: Vec<usize>,
-    /// Taffy layout cache (per-node)。
-    pub(crate) cache: Cache,
-    /// Taffy layout 結果 (compute_root_layout が populate)。
+    /// Arena index of the parent holding this node in its `children`, or
+    /// `None` for the Document root and detached nodes.
     ///
-    /// # 値域契約: 全 `f32` field は有限・`[-1e7, 1e7]` に飽和
+    /// This is the O(1) backing store for [`crate::Document::parent_of`].
+    /// Every tree mutation primitive in `document.rs` / `document/mutation.rs`
+    /// (`append_*` / `attach_child` / `insert_child_before` /
+    /// `detach_from_parent` / `reparent_children` / `retain_children` /
+    /// `set_element_text_content` / `replace_children_from` /
+    /// `from_logical_snapshot`) keeps it in sync with the parent's
+    /// `children` list. It tracks only `children` edges, not a `<template>`
+    /// element's `template_contents` slot (that host link is not a parent).
+    ///
+    /// Direct `children` pushes outside those primitives bypass this field.
+    /// In-crate test setups that do so must also set `parent` (or use the
+    /// primitives) to keep the invariant
+    /// `parent_of(child) == Some(p)` iff `nodes[p].children.contains(&child)`.
+    pub(crate) parent: Option<usize>,
+    /// Per-node Taffy layout cache.
+    pub(crate) cache: Cache,
+    /// Taffy layout result, populated by compute_root_layout.
+    ///
+    /// # Value range contract: all `f32` fields are finite and clamped to `[-1e7, 1e7]`
     ///
     /// `location.{x,y}` / `size.{width,height}` / `content_size.{width,height}`
     /// / `scrollbar_size.{width,height}` / `border.{left,right,top,bottom}` /
-    /// `padding.{left,right,top,bottom}` / `margin.{left,right,top,bottom}` は
-    /// 常に **有限**であり、`[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]` (=
-    /// `[-1e7, 1e7]`、`raikiri_dom::layout` module-private 定数
-    /// `MAX_TAFFY_MAGNITUDE`) に対称飽和している。生成過程で `NaN` になった
-    /// 値は `0.0` に fallback 済み。`±Inf` を
-    /// 含む taffy の生出力がこの field に書き込まれることはない。`order`
-    /// (`u32`) はこの契約の対象外 (非有限になり得ない型)。
+    /// `padding.{left,right,top,bottom}` / `margin.{left,right,top,bottom}` are
+    /// always **finite** and symmetrically clamped to
+    /// `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]` (`[-1e7, 1e7]`, where
+    /// `MAX_TAFFY_MAGNITUDE` is private to the `raikiri_dom::layout` module).
+    /// Values that became `NaN` during computation have already fallen back to
+    /// `0.0`. Raw taffy output containing `±Inf` is never written to this field.
+    /// `order` (`u32`) is outside this contract because it cannot be non-finite.
     ///
-    /// 保証するのは finiteness と magnitude 上限のみで、box model の包含関係
-    /// (CSS Box 3 の content ⊆ padding ⊆ border) は保存しない — field ごとに
-    /// 独立に clamp するため、`size.width` と `padding.{left,right}` が
-    /// 同時に飽和すると `size.width - padding.left - padding.right` が負に
-    /// なりうる。
+    /// Only finiteness and the magnitude limit are guaranteed. Box model
+    /// containment (CSS Box 3's content ⊆ padding ⊆ border) is not preserved:
+    /// fields are clamped independently, so simultaneous saturation of
+    /// `size.width` and `padding.{left,right}` can make
+    /// `size.width - padding.left - padding.right` negative.
     ///
-    /// この契約は [`crate::layout::sanitize_taffy_layout`] が
+    /// [`crate::layout::sanitize_taffy_layout`] enforces this contract at
     /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
-    /// (`taffy_impl.rs`) という taffy → arena 書き込みの唯一の choke point
-    /// で強制する構造的 invariant であり、呼び忘れで破れることがない
-    /// (詳細・証拠は [`crate::layout::sanitize_taffy_layout`] の doc)。
-    /// この field 自体は `pub` だが、`Node` を外部から `&mut` で得る公開
-    /// API は存在しない (`Document::nodes` は `pub(crate)`、[`Node::new_document`]
-    /// 等の constructor もすべて `pub(crate)`、[`crate::Document::get_node`]
-    /// は `&Node` のみ返す) ため、crate 外からこの choke point を経由せず
-    /// 直接書き込む経路は無い。
+    /// (`taffy_impl.rs`), the sole taffy-to-arena write point. This structural
+    /// invariant cannot be broken by forgetting a separate call (see the docs
+    /// for [`crate::layout::sanitize_taffy_layout`] for details and evidence).
+    /// Although this field is `pub`, no public API yields an external `&mut Node`:
+    /// `Document::nodes` and constructors such as [`Node::new_document`] are
+    /// `pub(crate)`, and [`crate::Document::get_node`] returns only `&Node`.
+    /// External callers therefore cannot write it without passing through this
+    /// choke point.
     ///
-    /// この field は `pub` であり [`crate::Document::get_node`] 経由で crate
-    /// 外からも直接観測できる。raikiri-paint の walker
-    /// (`crates/raikiri-paint/src/walk.rs`、`location.x`/`y` を直接積算) と
-    /// raikiri crate の page-scene 抽出 (`crates/raikiri/src/page_scene.rs`、
-    /// `location.{x,y}` / `size.{width,height}` を直接 `Fragment` へ写す) の
-    /// 両方が、この field を再検証せず直接読む — 本契約が dom → paint 境界で
-    /// 非有限幾何から consumer を守る唯一の防壁である。type / field shape /
-    /// access pattern はこの契約と無関係で不変 — 本 doc は dom → paint
-    /// 境界の **観測可能な値の集合**を定める behavioral contract を明文化
-    /// するのみ。
+    /// This `pub` field is directly observable outside the crate through
+    /// [`crate::Document::get_node`]. Both the raikiri-paint walker
+    /// (`crates/raikiri-paint/src/walk.rs`, which directly accumulates
+    /// `location.x`/`y`) and raikiri's page-scene extraction
+    /// (`crates/raikiri/src/page_scene.rs`, which copies `location.{x,y}` and
+    /// `size.{width,height}` directly into `Fragment`) read it without further
+    /// validation. This contract is the sole protection for consumers against
+    /// non-finite geometry at the dom-to-paint boundary. Type, field shape, and
+    /// access pattern are unchanged; this documentation states only the
+    /// behavioral contract for the **set of observable values** at that boundary.
     pub unrounded_layout: Layout,
-    /// Per-node metadata bits (IS_IN_DOCUMENT etc.)。crate-private mutation。
+    /// Per-node metadata bits (IS_IN_DOCUMENT, etc.); mutation is crate-private.
     pub(crate) flags: NodeFlags,
-    /// Node kind + kind 固有 field (tagged union)。
+    /// Node kind and kind-specific fields (tagged union).
     pub(crate) data: NodeData,
 }
 
 impl Node {
-    /// Document root node (arena index 0 用) を構築する。
+    /// Construct the Document root node for arena index 0.
     pub(crate) fn new_document() -> Self {
         Self {
             style: Style::default(),
@@ -379,6 +406,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -386,13 +414,13 @@ impl Node {
         }
     }
 
-    /// Element node を tag name / style / inline_style と共に構築する。
-    /// `namespace` / `attributes` / `template_contents` は初期空/None で、raikiri-html
-    /// sink が finish 時に [`crate::Document::set_element_namespace`] /
-    /// [`crate::Document::set_element_attributes`] で populate する。
-    /// `template_contents` は `<template>` element のみ、sink の `create_element`
-    /// が [`crate::Document::allocate_template_fragment_root`] 経由で eager
-    /// populate する。
+    /// Construct an Element node with its tag name, style, and inline_style.
+    /// `namespace`, `attributes`, and `template_contents` start empty or None.
+    /// At finish, the raikiri-html sink populates the first two through
+    /// [`crate::Document::set_element_namespace`] and
+    /// [`crate::Document::set_element_attributes`]. For `<template>` elements
+    /// only, the sink eagerly populates `template_contents` in `create_element`
+    /// through [`crate::Document::allocate_template_fragment_root`].
     pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
         Self {
             style,
@@ -413,6 +441,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -428,7 +457,7 @@ impl Node {
         }
     }
 
-    /// Text node を character data と共に構築する。
+    /// Construct a Text node with its character data.
     pub(crate) fn new_text(text: SmolStr) -> Self {
         Self {
             style: Style::default(),
@@ -449,6 +478,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -466,11 +496,12 @@ impl Node {
         }
     }
 
-    /// Comment node を character data と共に構築する。
-    /// `IS_IN_DOCUMENT` bit は default true で作られるが、
-    /// [`crate::Document::mark_in_document_flags`] が step 2 の DFS で必ず
-    /// clear する契約 (blitz-compat: comment は flat-tree 上不可視、layout /
-    /// paint / cascade は `is_in_document()` gate で自動 skip)。
+    /// Construct a Comment node with its character data.
+    /// Its `IS_IN_DOCUMENT` bit starts true, but
+    /// [`crate::Document::mark_in_document_flags`] always clears it in the step 2
+    /// DFS. For blitz compatibility, comments are invisible in the flat tree;
+    /// layout, paint, and cascade automatically skip them through the
+    /// `is_in_document()` gate.
     pub(crate) fn new_comment(text: SmolStr) -> Self {
         Self {
             style: Style::default(),
@@ -491,6 +522,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -498,9 +530,9 @@ impl Node {
         }
     }
 
-    /// Processing instruction node を target + data と共に構築する。
-    /// Comment と同じく `IS_IN_DOCUMENT` bit は
-    /// [`crate::Document::mark_in_document_flags`] で clear される。
+    /// Construct a Processing instruction node with its target and data.
+    /// As with Comment nodes, [`crate::Document::mark_in_document_flags`]
+    /// clears its `IS_IN_DOCUMENT` bit.
     pub(crate) fn new_processing_instruction(target: SmolStr, data: SmolStr) -> Self {
         Self {
             style: Style::default(),
@@ -521,6 +553,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -528,11 +561,11 @@ impl Node {
         }
     }
 
-    /// Document fragment root を構築する。detached 状態で
-    /// arena に置くのが典型 (parent なし)、`<template>` contents の virtual
-    /// root として使用する。`IS_IN_DOCUMENT` bit は default true で作られるが、
-    /// Document root から reachable でないため `mark_in_document_flags` で
-    /// clear される。
+    /// Construct a Document fragment root. It is typically placed in the arena
+    /// detached (without a parent) and used as the virtual root of `<template>`
+    /// contents. Its `IS_IN_DOCUMENT` bit starts true, but
+    /// `mark_in_document_flags` clears it because it is unreachable from the
+    /// Document root.
     pub(crate) fn new_document_fragment() -> Self {
         Self {
             style: Style::default(),
@@ -553,6 +586,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -562,10 +596,10 @@ impl Node {
 
     // ─── inherent accessor methods ─────────────────
 
-    /// この Node の [`NodeKind`] を返す。
+    /// Return this Node's [`NodeKind`].
     ///
-    /// 旧 `pub kind: NodeKind` field の accessor 版。
-    /// 呼び出し側は `node.kind` → `node.kind()` の syntax 変更のみ。
+    /// Accessor replacement for the former `pub kind: NodeKind` field.
+    /// Callers only need to change `node.kind` to `node.kind()`.
     #[inline]
     pub fn kind(&self) -> NodeKind {
         match &self.data {
@@ -595,11 +629,11 @@ impl Node {
         }
     }
 
-    /// Element の場合 tag_name を、それ以外は `None` を返す。
+    /// Return tag_name for an Element, or `None` otherwise.
     ///
-    /// 旧 `pub tag_name: Option<SmolStr>` field の accessor 版。
-    /// `Option<&str>` に射影する
-    /// (SmolStr の内部 view で Copy 相当のコスト)。
+    /// Accessor replacement for the former `pub tag_name: Option<SmolStr>`
+    /// field. It projects to `Option<&str>`, an internal SmolStr view with
+    /// roughly the cost of a Copy.
     #[inline]
     pub fn tag_name(&self) -> Option<&str> {
         match &self.data {
@@ -661,10 +695,11 @@ impl Node {
         }
     }
 
-    /// Text の場合 text_layout を、それ以外は `None` を返す。
+    /// Return text_layout for Text, or `None` otherwise.
     ///
-    /// 旧 `pub text_layout: Option<parley::Layout<()>>` field の accessor 版。
-    /// paint hot path から呼ばれるため `#[inline]`。
+    /// Accessor replacement for the former
+    /// `pub text_layout: Option<parley::Layout<()>>` field. It is `#[inline]`
+    /// because it is called on the paint hot path.
     #[inline]
     pub fn text_layout(&self) -> Option<&parley::Layout<()>> {
         match &self.data {
@@ -754,30 +789,30 @@ impl Node {
         }
     }
 
-    /// このノードの `taffy::Style.display == Display::None` を返す。
+    /// Return whether this node has `taffy::Style.display == Display::None`.
     ///
-    /// paint 段で display:none subtree を skip する目的の predicate。size 0
-    /// による代理判定は overflow: visible の legitimate な zero-size 要素を
-    /// silent drop するため誤り。style field
-    /// は crate-private のまま維持し、paint に必要な最小の boolean 述語のみ
-    /// pub で公開する (gradual exposure)。
+    /// Paint uses this predicate to skip display:none subtrees. Treating size 0
+    /// as a proxy would silently drop legitimate zero-size elements with
+    /// overflow: visible. The style field remains crate-private; only the
+    /// minimal boolean predicate needed by paint is public (gradual exposure).
     #[inline]
     pub fn is_display_none(&self) -> bool {
         self.style.display == taffy::Display::None
     }
 
-    /// この Node が flat tree の一員かを返す。
+    /// Return whether this Node belongs to the flat tree.
     #[inline]
     pub fn is_in_document(&self) -> bool {
         self.flags.contains(NodeFlags::IS_IN_DOCUMENT)
     }
 
-    /// `<template>` element の contents fragment root への arena index。
-    /// Element 以外 / fragment root 未 wire の場合は `None`。
+    /// Arena index of a `<template>` element's contents fragment root.
+    /// Returns `None` for non-Elements or if the fragment root was not wired.
     ///
-    /// html5ever `TreeSink::get_template_contents` 実装が sink 経由で消費する。
-    /// blitz `blitz-dom::node::element::ElementData::template_contents` field
-    /// と同等の read-side accessor。
+    /// The html5ever `TreeSink::get_template_contents` implementation consumes
+    /// this through the sink.
+    /// This read-side accessor corresponds to the blitz
+    /// `blitz-dom::node::element::ElementData::template_contents` field.
     #[inline]
     pub fn template_contents(&self) -> Option<usize> {
         match &self.data {
@@ -786,64 +821,65 @@ impl Node {
         }
     }
 
-    /// HTML namespace の "non-rendered" element (metadata content / raw text
-    /// container / ruby parenthesis fallback) を判定する。paint 段で subtree
-    /// ごと skip する gate 用。
+    /// Identify "non-rendered" elements in the HTML namespace (metadata
+    /// content, raw text containers, and ruby parenthesis fallbacks). Paint
+    /// uses this gate to skip their entire subtrees.
     ///
-    /// 対象 (HTML LS §15.3.1 "Hidden elements"、
+    /// Covered elements (HTML LS §15.3.1 "Hidden elements",
     /// <https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>):
     /// `<head>`, `<title>`, `<meta>`, `<link>`, `<base>`, `<noscript>`,
-    /// `<script>`, `<style>`, `<template>`、
-    /// `<datalist>` (§4.10.8、
-    /// <https://html.spec.whatwg.org/multipage/form-elements.html#the-datalist-element>)、
-    /// `<noembed>` / `<noframes>` (§13.2 RAWTEXT parsing)、`<rp>` (§4.5.12
-    /// ruby parenthesis fallback、§15.3.1 hidden-elements rule 直下で
-    /// `display: none` — §15.3.4 "Phrasing content" の ruby CSS も
-    /// `ruby { display: ruby }` / `rt { display: ruby-text }` のみで rp を
-    /// 可視化しないため、ruby-supporting UA 上でも rp は hidden のまま)。
-    /// namespace が
-    /// HTML default (`Node.namespace == None`) or 明示 xhtml
-    /// (`"http://www.w3.org/1999/xhtml"`) の場合のみ true、SVG / MathML
-    /// namespace の同名要素は false (SVG `<style>` / `<script>` は SVG 側
-    /// rendering 責務、HTML paint filter の対象外)。
+    /// `<script>`, `<style>`, `<template>`,
+    /// `<datalist>` (§4.10.8,
+    /// <https://html.spec.whatwg.org/multipage/form-elements.html#the-datalist-element>),
+    /// `<noembed>` / `<noframes>` (§13.2 RAWTEXT parsing), and `<rp>` (§4.5.12
+    /// ruby parenthesis fallback, directly covered by `display: none` in the
+    /// §15.3.1 hidden-elements rule). The ruby CSS in §15.3.4 "Phrasing content"
+    /// also defines only `ruby { display: ruby }` and
+    /// `rt { display: ruby-text }`; it does not make rp visible, even in a UA
+    /// that supports ruby. Returns true only for the default HTML namespace
+    /// (`Node.namespace == None`) or explicit XHTML namespace
+    /// (`"http://www.w3.org/1999/xhtml"`). Same-named elements in SVG or MathML
+    /// return false: rendering SVG `<style>` and `<script>` is the SVG renderer's
+    /// responsibility, outside the HTML paint filter.
     ///
-    /// §15.3.1 hidden-elements rule には `<area>` / `<basefont>` / `<param>`
-    /// も列挙されているが、これらは通常 child content を持たない (`<area>` は
-    /// void、`<basefont>` は obsolete-void、`<param>` は object 内の attribute
-    /// 相当) ため content leak 経路が存在せず本 predicate では扱わない。
+    /// The §15.3.1 hidden-elements rule also lists `<area>`, `<basefont>`, and
+    /// `<param>`. They ordinarily have no child content (`<area>` is void,
+    /// `<basefont>` is obsolete-void, and `<param>` acts like an attribute inside
+    /// an object), so they offer no content leak path and are omitted here.
     ///
-    /// # 動機
+    /// # Motivation
     ///
-    /// UA CSS (`style { display: none }` etc、HTML LS §15.3.1) による hide は
-    /// author / user CSS で override 可能なため、attacker-controlled HTML +
-    /// override CSS で `<style>` `<script>` 内 text が rendered artifact に
-    /// 混入する security surface が残る。paint 側で cascade-independent に
-    /// gate することで defense-in-depth 保証する (datalist / noembed /
-    /// noframes / rp は §15.3.1 完全化のため後から追加)。
+    /// Author or user CSS can override hiding by UA CSS
+    /// (`style { display: none }`, etc.; HTML LS §15.3.1). Attacker-controlled
+    /// HTML plus overriding CSS could therefore expose text from `<style>` or
+    /// `<script>` in rendered output. A cascade-independent paint gate provides
+    /// defense in depth (datalist, noembed, noframes, and rp were added later
+    /// to complete §15.3.1 coverage).
     ///
     /// # Non-goals
     ///
-    /// - `[hidden]` attribute / `inert` attribute の filter は本 predicate
-    ///   scope 外 (将来 `is_display_none()` 側の cascade 経路で扱う予定)
-    /// - `<template>` は既に `is_in_document() == false` の gate で
-    ///   redundant に skip されるが、defense-in-depth で本 predicate にも
-    ///   含める (両 gate 独立に fail-close する)
+    /// - Filtering the `[hidden]` and `inert` attributes is outside this
+    ///   predicate's scope (planned for the cascade path behind
+    ///   `is_display_none()`).
+    /// - The `is_in_document() == false` gate already skips a `<template>`
+    ///   element's detached contents, but this predicate includes the element
+    ///   itself for defense in depth (both gates fail closed independently).
     #[inline]
     pub fn is_non_rendered_html_element(&self) -> bool {
         let NodeData::Element(e) = &self.data else {
             return false;
         };
-        // namespace check: HTML default (None) or explicit xhtml のみ対象。
-        // SVG / MathML の同名 element は SVG rendering 側で処理する。
+        // Namespace check: only the HTML default (None) or explicit XHTML applies.
+        // Same-named SVG / MathML elements use their own rendering paths.
         match e.namespace.as_deref() {
             None => {}
             Some("http://www.w3.org/1999/xhtml") => {}
             _ => return false,
         }
-        // HTML tag name は html5ever が lowercase 化済 (QualName.local)。
-        // Ordering: 元からあった arms を先頭、§15.3.1 完全化のために追加した
-        // 4 arms を末尾にグループ化 (既存 style を preserve しつつ差分の由来を
-        // 明示するため)。
+        // html5ever has already lowercased HTML tag names (QualName.local).
+        // Ordering: keep the original arms first and group the four arms added
+        // for §15.3.1 coverage last, preserving the existing style while making
+        // the origin of the additions clear.
         matches!(
             e.tag_name.as_str(),
             "head"
@@ -855,7 +891,7 @@ impl Node {
                 | "script"
                 | "style"
                 | "template"
-                // §15.3.1 完全化のため追加:
+                // Added to complete §15.3.1 coverage:
                 | "datalist"
                 | "noembed"
                 | "noframes"
@@ -863,10 +899,10 @@ impl Node {
         )
     }
 
-    /// [`NodeFlags::IS_IN_DOCUMENT`] bit を明示的に上書きする (crate-private)。
+    /// Explicitly overwrite the [`NodeFlags::IS_IN_DOCUMENT`] bit (crate-private).
     ///
-    /// `Document::mark_in_document_flags` (sink.finish() から
-    /// 呼ばれる single-pass DFS) が消費する。
+    /// Used by `Document::mark_in_document_flags`, the single-pass DFS called
+    /// from sink.finish().
     #[inline]
     pub(crate) fn set_in_document(&mut self, v: bool) {
         self.flags.set(NodeFlags::IS_IN_DOCUMENT, v);

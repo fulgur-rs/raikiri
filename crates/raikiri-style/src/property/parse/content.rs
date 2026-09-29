@@ -9,14 +9,14 @@ use crate::property::types::*;
 
 use super::common::*;
 
-/// CSS Paged Media 3 §8.1 の `page` を parse する
-/// (<https://www.w3.org/TR/css-page-3/#using-named-pages>)。
+/// Parse the CSS Paged Media 3 §8.1 `page` value
+/// (<https://www.w3.org/TR/css-page-3/#using-named-pages>).
 ///
-/// Grammar: `auto | <custom-ident>`。`auto` 単独、それ以外は CSS-wide keyword
-/// (`inherit`/`initial`/`unset`/`revert`/`revert-layer`) と `default`
-/// を除く単一 ident ([`PageValue`] doc 参照)。
-/// ASCII case-insensitive で比較し、保持する値は
-/// authored のまま (Atom は case-sensitive)。
+/// Grammar: `auto | <custom-ident>`. Accept `auto` on its own; otherwise accept
+/// one identifier except CSS-wide keywords (`inherit`/`initial`/`unset`/`revert`/
+/// `revert-layer`) and `default` (see the [`PageValue`] docs).
+/// Compare ASCII-case-insensitively, but preserve the authored spelling
+/// (Atom is case-sensitive).
 pub(super) fn parse_page_value(input: &mut Parser<'_, '_>) -> Option<PageValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(PageValue::Auto);
@@ -28,36 +28,37 @@ pub(super) fn parse_page_value(input: &mut Parser<'_, '_>) -> Option<PageValue> 
     }
 }
 
-/// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
+/// Parse the value of `counter-reset`, `counter-increment`, or `counter-set`.
 ///
 /// Grammar (CSS Lists 3 §4):
-///   `<counter-name> = <custom-ident>` — CSS-wide keyword (inherit / initial /
-///   unset / revert / revert-layer) + `default` + `none` を除く任意 ident。
-///   `[ <counter-name> <integer>? ]+ | none`。
+///   `<counter-name> = <custom-ident>` — any identifier except CSS-wide keywords
+///   (inherit / initial / unset / revert / revert-layer), `default`, and `none`.
+///   `[ <counter-name> <integer>? ]+ | none`.
 ///
-/// `default_number`: 各 property の spec default (reset=0、increment=1、set=0)。
+/// `default_number`: the spec default for each property (reset=0, increment=1,
+/// set=0).
 ///
-/// `none` を top-level alternative として先に処理。以降は ident + optional
-/// integer を LL(1) で peel。ident が reserved keyword、または最初の token が
-/// ident でない (`counter-reset: 123 abc` 等) 場合は None を返し、rule.rs 側の
-/// silent-drop で declaration が丸ごと落ちる。
+/// Handle `none` as a top-level alternative first. Then peel off identifiers
+/// with optional integers using LL(1). Return `None` if an identifier is
+/// reserved or the first token is not an identifier (`counter-reset: 123 abc`,
+/// for example); rule.rs silently drops the entire declaration.
 ///
-/// 途中 ident (`chapter none`) が reserved の場合は `try_parse` の rewind で
-/// 未消費のまま loop を抜け、caller の `expect_exhausted` (rule.rs)
-/// が leftover token を検出して declaration を drop する。
+/// If a later identifier is reserved (`chapter none`), `try_parse` rewinds it
+/// and exits the loop without consuming it. The caller's `expect_exhausted`
+/// (rule.rs) detects the leftover token and drops the declaration.
 pub(super) fn parse_counter_property(
     input: &mut Parser<'_, '_>,
     default_number: i32,
 ) -> Option<Vec<(SmolStr, i32)>> {
-    // `none` = empty list (top-level alternative)。
+    // `none` = empty list (top-level alternative).
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
     }
 
     let mut result = Vec::new();
     loop {
-        // reserved keyword を counter-name として受理しない (spec §4、`<custom-ident>`
-        // の除外リスト)。try_parse の rewind で reserved 検出時は unconsumed に戻す。
+        // Do not accept reserved keywords as counter names (spec §4 and the
+        // `<custom-ident>` exclusion list). `try_parse` rewinds on a reserved name.
         let name = match input.try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
             let ident = i.expect_ident()?.clone();
             if is_reserved_counter_name(&ident) {
@@ -69,7 +70,7 @@ pub(super) fn parse_counter_property(
             Ok(name) => name,
             Err(_) => break,
         };
-        // optional trailing `<integer>` (missing → property-specific default)。
+        // Optional trailing `<integer>` (missing → property-specific default).
         let value = input
             .try_parse(|i| i.expect_integer())
             .unwrap_or(default_number);
@@ -83,26 +84,26 @@ pub(super) fn parse_counter_property(
     }
 }
 
-/// `quotes` の value を parse する。
+/// Parse the `quotes` value.
 ///
-/// Grammar (legacy CSS2 §12.3.1 subset, [`PropertyValue::Quotes`] doc 参照):
+/// Grammar (legacy CSS2 §12.3.1 subset; see [`PropertyValue::Quotes`] docs):
 ///   `quotes = none | [ <string> <string> ]+`
 ///
-/// `none` を top-level alternative として先に処理。以降は `<string>` を LL(1)
-/// で 2 個ずつ pair にして peel する。
+/// Handle `none` as a top-level alternative first. Then peel off `<string>`
+/// tokens in pairs using LL(1).
 ///
-/// `parse_counter_property` (`<counter-name> <integer>?` — integer 省略時は
-/// property-specific default で補える) と異なり、`<string> <string>` の pair
-/// は片方が欠けた時点でその entry 自体が spec-invalid になる (grammar に
-/// optional 要素が無い) — このため、1 個目の `<string>` を消費した後 2 個目が
-/// 取れない (trailing unpaired `<string>`、またはその位置に `<string>` でない
-/// token が来た) 場合は、途中まで蓄積した pair を捨てて即座に declaration
-/// 全体を drop する (`None` を返す)。counter-* 系のように「ここまでの pair は
-/// 残し、以降を caller の `expect_exhausted` (rule.rs) に委ねる」設計には
-/// しない — 奇数個の `<string>` は `[ <string> <string> ]+` に決して一致しない
-/// ため、削るべき「途中まで正しい prefix」自体が存在しない。
+/// Unlike `parse_counter_property` (`<counter-name> <integer>?`, where a missing
+/// integer uses a property-specific default), a `<string> <string>` pair is
+/// invalid if either part is missing: the grammar has no optional part.
+/// Thus, if the second `<string>` is missing after consuming the first (an
+/// unpaired trailing string or a non-string token in its place), discard any
+/// accumulated pairs and immediately drop the entire declaration by returning
+/// `None`. Do not keep the pairs parsed so far and leave exhaustion checking
+/// to the caller's `expect_exhausted` (rule.rs), as counter-* parsing does:
+/// an odd number of strings cannot match `[ <string> <string> ]+`, so there is
+/// no valid prefix to retain.
 pub(super) fn parse_quotes_property(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, SmolStr)>> {
-    // `none` = empty list (top-level alternative)。
+    // `none` = empty list (top-level alternative).
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
     }
@@ -129,16 +130,17 @@ pub(super) fn parse_quotes_property(input: &mut Parser<'_, '_>) -> Option<Vec<(S
     }
 }
 
-/// `<counter-name>` = `<custom-ident>` の除外リスト (CSS Lists 3 §4 + CSS Values 4
-/// §4.2 <https://www.w3.org/TR/css-values-4/#custom-idents>)。
+/// Exclusion list for `<counter-name> = <custom-ident>` (CSS Lists 3 §4 and
+/// CSS Values 4 §4.2 <https://www.w3.org/TR/css-values-4/#custom-idents>).
 ///
-/// CSS-wide keyword + `default` (Counter Styles L3) + `none` (top-level alternative)
-/// を弾く。case-insensitive 比較。
+/// Reject CSS-wide keywords, `default` (Counter Styles L3), and `none`
+/// (a top-level alternative), comparing case-insensitively.
 ///
-/// これは CSS Values 4 §4.2 の permanent な spec 除外規定であり、**CSS-wide
-/// keyword の実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
-/// が説明する「property value としては未実装」claim
-/// とは別の話なので混同しないこと。
+/// This is a permanent spec exclusion in CSS Values 4 §4.2, **independent
+/// of whether CSS-wide keywords are implemented**. Do not confuse it with
+/// the separate claim that CSS-wide keywords are not yet implemented as
+/// property values, explained in the "CSS-wide keywords" section of the
+/// [`PropertyValue`] docs.
 pub(crate) fn is_reserved_counter_name(ident: &str) -> bool {
     matches!(
         ident.to_ascii_lowercase().as_str(),
@@ -160,23 +162,25 @@ pub(crate) fn parse_consumer_text_value(source: &str) -> Option<Vec<ContentCompo
         .ok()
 }
 
-/// `content: normal | none | <content-list>` を parse する
-/// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>)。
+/// Parse `content: normal | none | <content-list>`
+/// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>).
 ///
-/// `normal` / `none` は spec で意味が異なる (pseudo-element の生成/非生成)。
-/// `normal` は初期値として空 `Vec` に留め、明示的な `none` は内部 sentinel
-/// [`ContentComponent::None`] にして downstream の pseudo-element consumer が
-/// marker を抑制できるようにする。
+/// The spec distinguishes `normal` from `none` (generate vs. suppress a
+/// pseudo-element). Keep `normal` as an empty `Vec` for the initial value,
+/// but represent explicit `none` with the internal [`ContentComponent::None`]
+/// sentinel so downstream pseudo-element consumers can suppress the marker.
 ///
-/// items+ loop は `<string>` literal と function token (`counter(...)` 等) を
-/// 順次 peel する。認識できない token に当たった時点で loop を break、caller
-/// の `expect_exhausted` (rule.rs) が leftover を検知して declaration ごと drop。
+/// The items+ loop peels off `<string>` literals and function tokens (such as
+/// `counter(...)`) in sequence. On an unrecognized token it breaks; the
+/// caller's `expect_exhausted` (rule.rs) sees the leftover token and drops the
+/// entire declaration.
 ///
-/// `alt text` (spec `... [/ <string>...]?`) は現状 scope 外、`/` 以降は
-/// unconsumed のまま caller に返す (現状 rule.rs の `expect_exhausted` により
-/// declaration drop、alt text 対応時に本関数を extend)。
+/// `alt text` (spec `... [/ <string>...]?`) is out of scope for now. Return
+/// `/` and subsequent tokens unconsumed to the caller (currently rule.rs
+/// drops the declaration via `expect_exhausted`; extend this function when
+/// adding alt-text support).
 pub(crate) fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
-    // `normal` / `none` = 空 list (top-level alternative)。
+    // `normal` / `none` = empty list (top-level alternative).
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
         .is_ok()
@@ -191,54 +195,53 @@ pub(crate) fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentCom
     if items.is_empty() { None } else { Some(items) }
 }
 
-/// `<content-list>` の items+ loop 部分。
+/// The items+ loop for `<content-list>`.
 ///
-/// `<string>` bare literal、`<image>` の `<url>` alternative、bare keyword
-/// (`contents` / `<quote>`)、function token (`counter(...)` / `string(...)` /
-/// `target-*()` / `attr(...)` / `content(...)` / `leader(...)`) を順次 peel。
-/// 認識できない token に当たった時点で break — 呼び出し側が leftover を検知
-/// して drop する。
+/// Peel off bare `<string>` literals, the `<url>` alternative of `<image>`,
+/// bare keywords (`contents` / `<quote>`), and function tokens (`counter(...)` /
+/// `string(...)` / `target-*()` / `attr(...)` / `content(...)` / `leader()`).
+/// Break on an unrecognized token; the caller detects the leftover token and
+/// drops the declaration.
 ///
-/// `content` property (`parse_content`) と `string-set` property
-/// (`parse_string_set`) の両方から call されるが、GCPM 3 §1.1.1 は string-set
-/// 向けに CSS Content 3 §2 の broad list を narrower に再定義しているため、
-/// `mode` パラメータで受理 alternative 集合を分岐する:
+/// Both the `content` property (`parse_content`) and the `string-set` property
+/// (`parse_string_set`) call this function. GCPM 3 §1.1.1 narrows the broad
+/// CSS Content 3 §2 list for string-set, so `mode` selects accepted alternatives:
 /// - [`ContentListMode::CssContent3`] — content property (CSS Content 3 §2
-///   <https://www.w3.org/TR/css-content-3/#content-values>)。10 alt full set
-///   を受理 (`<image>` / `contents` / `<quote>` /
-///   `leader()` は後に追加)。
+///   <https://www.w3.org/TR/css-content-3/#content-values>). Accepts the full
+///   set of 10 alternatives (`<image>` / `contents` / `<quote>` / `leader()`
+///   were added later).
 /// - [`ContentListMode::GcpmStringSet`] — string-set property (CSS GCPM 3
-///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>)。`string()` /
-///   `target-counter()` / `target-counters()` / `target-text()` / `<image>` /
-///   `contents` / `<quote>` / `leader()` は GCPM 3 §1.1.1 L82 narrow grammar
-///   に含まれず reject (bare `<string>` literal は両 mode で受理)。
+///   §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list>). Rejects
+///   `string()` / `target-counter()` / `target-counters()` / `target-text()` /
+///   `<image>` / `contents` / `<quote>` / `leader()` because they are absent
+///   from the narrow GCPM 3 §1.1.1 L82 grammar (both modes accept bare
+///   `<string>` literals).
 ///
-/// bare literal 分岐は spec 上両 mode で共通 (どちらの `<content-list>` grammar
-/// も `<string>` を top-level alternative に含む) なので mode 判定なし。他の
-/// 分岐は各 branch 内で mode guard を掛ける ([`parse_content_function`] の
-/// match arm guard と同じ pattern)。`Parser::try_parse` は失敗時に読んだ token
-/// を必ず rewind するため、branch の試行順序は正しさに影響しない
-/// (どの順で並べても等価)。
+/// Both `<content-list>` grammars include `<string>` as a top-level
+/// alternative, so the bare-literal branch needs no mode check. Guard the
+/// other alternatives inside each branch (as in the match-arm guards in
+/// [`parse_content_function`]). `Parser::try_parse` always rewinds tokens on
+/// failure, so the order of branch attempts does not affect correctness.
 ///
-/// (導入後、mode-parameterize を経て `<image>` / `contents` / `<quote>` /
-/// `leader()` を追加)
+/// (After introduction, this was parameterized by mode and `<image>` /
+/// `contents` / `<quote>` / `leader()` were added.)
 pub(super) fn parse_content_list_items(
     input: &mut Parser<'_, '_>,
     mode: ContentListMode,
 ) -> Vec<ContentComponent> {
     let mut items = Vec::new();
     loop {
-        // bare `<string>` literal — 両 mode 共通 (mode gate 不要)。
+        // Bare `<string>` literal — shared by both modes (no mode guard).
         if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
             items.push(ContentComponent::Literal(SmolStr::new(s.as_ref())));
             continue;
         }
-        // `<image>` の `<url>` alternative — CSS Images 3 <url> production
-        // (`url(...)` / `url("...")`) のみ (`<gradient>` は未実装として
-        // defer、`ContentComponent::Image` doc 参照)。`expect_url` は bare
-        // quoted string を受理しない (`<url> = <url()> | <src()>`) ので上の
-        // literal 分岐との誤 overlap は無い。CssContent3 mode 限定
-        // (GCPM 3 §1.1.1 L82 narrow list に `<image>` は含まれない)。
+        // `<url>` alternative of `<image>` — only the CSS Images 3 <url>
+        // production (`url(...)` / `url("...")`); defer `<gradient>` as
+        // unimplemented (see the `ContentComponent::Image` docs). `expect_url`
+        // does not accept bare quoted strings (`<url> = <url()> | <src()>`),
+        // so it cannot overlap the literal branch above. CssContent3 only:
+        // the narrow GCPM 3 §1.1.1 L82 list excludes `<image>`.
         if mode == ContentListMode::CssContent3
             && let Ok(url) = input.try_parse(|i| i.expect_url())
         {
@@ -247,8 +250,8 @@ pub(super) fn parse_content_list_items(
             });
             continue;
         }
-        // bare keyword alternative — `contents` / `<quote>` (function でも
-        // `<string>` でもない ident-only alternative)。CssContent3 mode 限定。
+        // Bare keyword alternatives: `contents` / `<quote>` (identifiers,
+        // neither functions nor `<string>` literals). CssContent3 only.
         if mode == ContentListMode::CssContent3
             && let Ok(c) = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
                 let ident = i.expect_ident()?.clone();
@@ -258,8 +261,8 @@ pub(super) fn parse_content_list_items(
             items.push(c);
             continue;
         }
-        // function — mode に応じて `string()` / `target-*()` / `leader()` を
-        // reject する判定は `parse_content_function` の match arm side で実施。
+        // Function: `parse_content_function` uses match-arm guards to reject
+        // `string()` / `target-*()` / `leader()` according to the mode.
         let parsed = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
             let name = i.expect_function()?.clone();
             i.parse_nested_block(|inner| {
@@ -275,65 +278,64 @@ pub(super) fn parse_content_list_items(
     items
 }
 
-/// `contents` keyword と `<quote>` (`open-quote` / `close-quote` /
-/// `no-open-quote` / `no-close-quote`) の bare-ident alternative をまとめて
-/// 判定する ([`parse_content_list_items`] 専用 helper)。CSS Content 3 §2.3
-/// <https://www.w3.org/TR/css-content-3/#element-content> および §2.4.2
-/// <https://www.w3.org/TR/css-content-3/#quote-values>。
+/// Check the bare-identifier alternatives for `contents` and `<quote>`
+/// (`open-quote` / `close-quote` / `no-open-quote` / `no-close-quote`) together.
+/// This helper is only for [`parse_content_list_items`]. CSS Content 3 §2.3
+/// <https://www.w3.org/TR/css-content-3/#element-content> and §2.4.2
+/// <https://www.w3.org/TR/css-content-3/#quote-values>.
 fn parse_content_bare_keyword(ident: &str) -> Option<ContentComponent> {
-    match ident.to_ascii_lowercase().as_str() {
-        "contents" => Some(ContentComponent::Contents),
-        "open-quote" => Some(ContentComponent::Quote(QuoteKeyword::OpenQuote)),
-        "close-quote" => Some(ContentComponent::Quote(QuoteKeyword::CloseQuote)),
-        "no-open-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoOpenQuote)),
-        "no-close-quote" => Some(ContentComponent::Quote(QuoteKeyword::NoCloseQuote)),
-        _ => None,
+    if ident.eq_ignore_ascii_case("contents") {
+        return Some(ContentComponent::Contents);
     }
+    QuoteKeyword::from_css_ident(ident).map(ContentComponent::Quote)
 }
 
-/// `string-set: none | [ <custom-ident> <content-list> ]#` を parse する
-/// (CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>)。
+/// Parse `string-set: none | [ <custom-ident> <content-list> ]#`
+/// (CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>).
 ///
-/// `none` を top-level alternative として先に処理し、以降は
-/// `(name, content-list)` entry を comma-separated で peel する。
+/// Handle `none` as a top-level alternative first, then peel off
+/// comma-separated `(name, content-list)` entries.
 ///
-/// `<custom-ident>` は CSS-wide keyword + `default` (css-values-4 §4.2
-/// <https://www.w3.org/TR/css-values-4/#custom-idents> が将来の CSS-wide
-/// keyword 用に予約) + `none` (top-level alt、gcpm-3 §1.1.1) を弾く。
+/// Reject CSS-wide keywords, `default` (reserved for future CSS-wide
+/// keywords by CSS Values 4 §4.2
+/// <https://www.w3.org/TR/css-values-4/#custom-idents>), and `none` (the
+/// top-level alternative in GCPM 3 §1.1.1) as `<custom-ident>` names.
 ///
-/// ## Entry separator の strict 化
+/// ## Strict entry separators
 ///
-/// `#` (comma-separated multiplier、CSS Values 4 §2.3
-/// <https://www.w3.org/TR/css-values-4/#mult-comma>) は entry 間に comma を
-/// 要求する一方、**trailing comma を許容しない**。従って comma を consume した
-/// 直後の loop iteration では次 entry の name parse **必須** — 失敗すれば
-/// `#` production 全体が spec-invalid、declaration drop = `None`。
+/// The `#` comma-separated multiplier (CSS Values 4 §2.3
+/// <https://www.w3.org/TR/css-values-4/#mult-comma>) requires commas between
+/// entries but **does not allow a trailing comma**. Thus, after consuming a
+/// comma, the next loop iteration **must** parse another entry name. If it
+/// cannot, the entire `#` production is invalid: drop the declaration with
+/// `None`.
 ///
-/// 初回 iteration で name parse が失敗する case (`string-set: ,`,
-/// `string-set: "x"` 等 name 不在) も含めて `.ok()?` で一律に `None` 上位伝播
-/// する。この strict `?` propagation は sibling
-/// [`parse_optional_counter_style`] と同 principle。
+/// `.ok()?` likewise propagates `None` when the first iteration cannot parse
+/// a name (`string-set: ,`, `string-set: "x"`, etc.). This strict `?`
+/// propagation follows the same principle as sibling
+/// [`parse_optional_counter_style`].
 ///
-/// `<content-list>` は 1+ items 必須 (CSS Content 3 §2)。name の後に 1 item も
-/// peel できなければ malformed → `None` (declaration drop)。
+/// `<content-list>` requires 1+ items (CSS Content 3 §2). If no item can be
+/// peeled off after the name, return `None` and drop the malformed declaration.
 pub(super) fn parse_string_set(
     input: &mut Parser<'_, '_>,
 ) -> Option<Vec<(SmolStr, Vec<ContentComponent>)>> {
-    // `none` = empty list (top-level alternative)。
+    // `none` = empty list (top-level alternative).
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
     }
 
     let mut entries = Vec::new();
     loop {
-        // <custom-ident> — CSS-wide keyword + `default` + `none` を弾く。
-        // 既存 `is_reserved_custom_ident` (css-wide + default) と、property-specific
-        // top-level alternative の `none` reject を組み合わせる (
-        // `is_reserved_custom_ident` docstring の想定 usage)。
+        // <custom-ident>: reject CSS-wide keywords, `default`, and `none`.
+        // Combine the existing `is_reserved_custom_ident` predicate (CSS-wide
+        // keywords + default) with the property-specific top-level `none`
+        // alternative (see the `is_reserved_custom_ident` docs).
         //
-        // `.ok()?` で strict 上位伝播: (a) 初回 iteration で name 不在 = `#`
-        // production 0 entries、(b) 直前 iteration で bottom `expect_comma` が
-        // succeed した直後 = trailing comma、の 2 case を一律 `None` に落とす。
+        // Strictly propagate `.ok()?`: (a) a missing name on the first
+        // iteration means zero entries for the `#` production; (b) a missing
+        // name after `expect_comma` succeeded means a trailing comma. Both
+        // cases return `None`.
         let name = input
             .try_parse(|i| -> Result<SmolStr, ParseError<'_, ()>> {
                 let ident = i.expect_ident()?.clone();
@@ -344,51 +346,52 @@ pub(super) fn parse_string_set(
                 }
             })
             .ok()?;
-        // <content-list> は 1+ items 必須。0 items → declaration drop。
-        // GCPM 3 §1.1.1 narrow local <content-list> = `string()` と `target-*()`
-        // を受理しない (詳細は `ContentListMode` doc)。
+        // <content-list> requires 1+ items; zero drops the declaration.
+        // The narrow local GCPM 3 §1.1.1 <content-list> excludes `string()`
+        // and `target-*()` (see the `ContentListMode` docs).
         let items = parse_content_list_items(input, ContentListMode::GcpmStringSet);
         if items.is_empty() {
             return None;
         }
         entries.push((name, items));
-        // 次 entry の separator: comma で継続、他 token で loop を抜ける
-        // (caller `expect_exhausted` が leftover token を drop)。break 到達時は
-        // 直前の push で entries 非空 — なので tail は無条件 `Some(entries)`。
+        // Continue on a comma separator; otherwise break and let the caller's
+        // `expect_exhausted` reject leftover tokens. A preceding push ensures
+        // entries is nonempty when breaking, so return `Some(entries)` below.
         if input.try_parse(|i| i.expect_comma()).is_err() {
             break;
         }
     }
 
-    // break 到達 = 直前の push を経ている、`.ok()?` 経路以外で loop を抜ける
-    // 唯一の exit なので `entries` は必ず 1+。
+    // Reaching break requires a prior push: aside from `.ok()?`, it is the
+    // only loop exit, so `entries` has at least one item.
     Some(entries)
 }
 
-/// Dispatch on function name (ASCII-case-insensitive、spec identifier 慣行)。
-/// 未知の function name または引数 parse 失敗は `None` — caller の
-/// `parse_nested_block` が custom error に変換する。
+/// Dispatch by function name (ASCII-case-insensitive, as usual for spec
+/// identifiers). Return `None` for unknown names or invalid arguments; the
+/// caller's `parse_nested_block` converts it to a custom error.
 ///
-/// `mode` は property ごとの `<content-list>` 語彙を選ぶ (詳細は
-/// [`ContentListMode`] doc):
+/// `mode` selects each property's `<content-list>` vocabulary (see the
+/// [`ContentListMode`] docs):
 /// - [`ContentListMode::CssContent3`] (`content` property, CSS Content 3 §2)
-///   では全 arm を許可。
+///   permits every arm.
 /// - [`ContentListMode::GcpmStringSet`] (`string-set` property, CSS GCPM 3
-///   §1.1.1) では `string` / `target-counter` / `target-counters` /
-///   `target-text` / `leader` arm を match guard で外し fall-through で `None`
-///   を返す (= declaration drop、caller の `parse_string_set` が
-///   `<content-list>` 0 items → `None`)。`counter` / `counters` / `content` /
-///   `attr` は両 mode で spec grammar に含まれるため gate なし。
+///   §1.1.1) guards out the `string` / `target-counter` / `target-counters` /
+///   `target-text` / `leader` arms, falling through to `None` (declaration
+///   dropped when the caller's `parse_string_set` sees zero `<content-list>`
+///   items). `counter` / `counters` / `content` / `attr` belong to both modes'
+///   spec grammars, so they have no guard.
 ///
-/// `element()` / `<image>` (`url()`) / `contents` / `<quote>` は function 名 dispatch では
-/// なく [`parse_content_list_items`] 側の bare-token branch で扱う (`<image>`
-/// は url token、`contents`/`<quote>` は bare ident であり `expect_function`
-/// にヒットしないため)。
+/// `element()` / `<image>` (`url()`) / `contents` / `<quote>` are handled by
+/// bare-token branches in [`parse_content_list_items`], not by function-name
+/// dispatch: `<image>` is a URL token and `contents`/`<quote>` are bare
+/// identifiers, so `expect_function` does not see them.
 ///
-/// 各 `parse_*_fn` は自身では `expect_exhausted` を呼ばない —
-/// [`parse_content`] 側の `parse_nested_block` が内部で
-/// [`Parser::parse_entirely`] を経由し、closure 成功後の余剰 token を
-/// exhaustion check で拒否する ([`parse_rgb_function`](super::color::parse_rgb_function) と同じ規約)。
+/// Individual `parse_*_fn` functions do not call `expect_exhausted`:
+/// [`parse_content`]'s `parse_nested_block` internally calls
+/// [`Parser::parse_entirely`], which rejects remaining tokens after its
+/// closure succeeds (the same convention as
+/// [`parse_rgb_function`](super::color::parse_rgb_function)).
 fn parse_content_function(
     name: &str,
     mode: ContentListMode,
@@ -415,8 +418,8 @@ fn parse_content_function(
     }
 }
 
-/// `string(<custom-ident> [, [ first | start | last | first-except ]? ])`。
-/// CSS Content 3 §2.7.2 <https://www.w3.org/TR/css-content-3/#string-function>。
+/// `string(<custom-ident> [, [ first | start | last | first-except ]? ])`.
+/// CSS Content 3 §2.7.2 <https://www.w3.org/TR/css-content-3/#string-function>.
 pub(super) fn parse_string_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let name = parse_custom_ident(input)?;
     let fetch = if input.try_parse(|i| i.expect_comma()).is_ok() {
@@ -434,27 +437,20 @@ fn parse_element_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
 }
 
 pub(super) fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "first" => Some(StringFetchMode::First),
-        "start" => Some(StringFetchMode::Start),
-        "last" => Some(StringFetchMode::Last),
-        "first-except" => Some(StringFetchMode::FirstExcept),
-        _ => None,
-    }
+    StringFetchMode::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `<counter-name>` (CSS Lists 3 §4
 /// <https://www.w3.org/TR/css-lists-3/#typedef-counter-name>):
-/// `<custom-ident>` から `none` を追加除外した production。
-/// spec verbatim: "A `<counter-name>` name cannot match the keyword `none`;
-/// such an identifier is invalid as a `<counter-name>`"。
+/// a `<custom-ident>` production that additionally excludes `none`.
+/// The spec says: "A `<counter-name>` name cannot match the keyword `none`;
+/// such an identifier is invalid as a `<counter-name>`".
 ///
-/// counter() / counters() (§4.7) の first argument、および
-/// counter-reset / counter-increment / counter-set property
-/// (§4.1 / §4.2) の name 引数で使う。後者は既に [`parse_counter_property`] が
-/// [`is_reserved_counter_name`]
-/// 経由で reject 済 — 本 helper は前者を同じ predicate に揃えるための wrapper。
+/// Used for the first argument to counter() / counters() (§4.7) and the name
+/// arguments of counter-reset / counter-increment / counter-set (§4.1 / §4.2).
+/// [`parse_counter_property`] already rejects the latter through
+/// [`is_reserved_counter_name`]; this wrapper applies the same predicate to
+/// the former.
 pub(super) fn parse_counter_name(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     let ident = input.expect_ident().ok()?.clone();
     if is_reserved_counter_name(&ident) {
@@ -464,22 +460,22 @@ pub(super) fn parse_counter_name(input: &mut Parser<'_, '_>) -> Option<SmolStr> 
     }
 }
 
-/// `counter(<counter-name>, <counter-style>?)`。
-/// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>。
-/// first argument grammar は §4 `<counter-name>`
-/// (<https://www.w3.org/TR/css-lists-3/#typedef-counter-name>) —
-/// `<custom-ident>` から `none` を追加除外。
+/// `counter(<counter-name>, <counter-style>?)`.
+/// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>.
+/// The first argument follows the §4 `<counter-name>` grammar
+/// (<https://www.w3.org/TR/css-lists-3/#typedef-counter-name>):
+/// `<custom-ident>` with `none` additionally excluded.
 fn parse_counter_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let name = parse_counter_name(input)?;
     let style = parse_optional_counter_style(input)?;
     Some(ContentComponent::Counter { name, style })
 }
 
-/// `counters(<counter-name>, <string>, <counter-style>?)`。
-/// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>。
-/// first argument grammar は §4 `<counter-name>`
-/// (<https://www.w3.org/TR/css-lists-3/#typedef-counter-name>) —
-/// `<custom-ident>` から `none` を追加除外。
+/// `counters(<counter-name>, <string>, <counter-style>?)`.
+/// CSS Lists 3 §4.7 <https://www.w3.org/TR/css-lists-3/#counter-functions>.
+/// The first argument follows the §4 `<counter-name>` grammar
+/// (<https://www.w3.org/TR/css-lists-3/#typedef-counter-name>):
+/// `<custom-ident>` with `none` additionally excluded.
 fn parse_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let name = parse_counter_name(input)?;
     input.expect_comma().ok()?;
@@ -492,20 +488,21 @@ fn parse_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     })
 }
 
-/// optional trailing `, <counter-style>`。省略時は spec default `decimal`
-/// (CSS Lists 3 §4.7 `counter()` / `counters()` の末尾引数
-/// <https://www.w3.org/TR/css-lists-3/#counter-functions>、CSS Content 3 §2.6.1-2
-/// `target-counter()` / `target-counters()` の末尾引数
-/// <https://www.w3.org/TR/css-content-3/#target-counter>)。
+/// Optional trailing `, <counter-style>`. When absent, use the spec default
+/// `decimal` (final argument to `counter()` / `counters()` in CSS Lists 3 §4.7
+/// <https://www.w3.org/TR/css-lists-3/#counter-functions>, and to
+/// `target-counter()` / `target-counters()` in CSS Content 3 §2.6.1-2
+/// <https://www.w3.org/TR/css-content-3/#target-counter>).
 ///
-/// grammar は `<counter-style>?` — `,` を先行させる時は ident 必須。
-/// `,` を consume 後に ident 不在 (`counter(chapter,)` 等の trailing-comma)
-/// は spec-invalid、`None` 上位伝播で declaration ごと drop する
-/// (sibling [`parse_string_fetch`] / [`parse_content_part`] と同じ strict
-/// `?` propagation、silent Decimal fallback は撤去済み)。
+/// The grammar is `<counter-style>?`; if a comma precedes it, an identifier
+/// is mandatory. If no identifier follows a consumed comma (e.g.
+/// `counter(chapter,)`), the trailing comma is invalid. Propagate `None` to
+/// drop the entire declaration (the same strict `?` propagation as siblings
+/// [`parse_string_fetch`] / [`parse_content_part`], rather than a silent
+/// fallback to Decimal).
 fn parse_optional_counter_style(input: &mut Parser<'_, '_>) -> Option<CounterStyle> {
     if input.try_parse(|i| i.expect_comma()).is_ok() {
-        // comma consumed — ident 必須。失敗は None として上位伝播。
+        // Comma consumed: require an identifier and propagate failure as None.
         let ident = input.expect_ident().ok()?.clone();
         Some(counter_style_from_ident(ident.as_ref()))
     } else {
@@ -521,7 +518,7 @@ pub(crate) fn counter_style_from_ident(ident: &str) -> CounterStyle {
     }
 }
 
-/// `attr(<attribute-name> [, <fallback>])`。CSS Content 3 §2.1 and
+/// `attr(<attribute-name> [, <fallback>])`. CSS Content 3 §2.1 and
 /// CSS Values and Units 5 §7.7.1.
 ///
 /// This phase intentionally supports only untyped fallbacks that are either a
@@ -550,11 +547,12 @@ fn parse_attr_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     Some(ContentComponent::AttrFallback { name, fallback })
 }
 
-/// target-* の第 1 引数 `[ <string> | <url> ]` を raw String として抽出。
-/// `url("...")` / `url(...)` / bare `"..."` を統一的に受ける
-/// (cssparser の `expect_url_or_string` を使用)。`<url>` 側の 2 形式は
-/// [`parse_url_value`](super::visual::parse_url_value) と共通だが、bare `<string>` alternative も grammar に
-/// 含む点が一般 `<url>` value type と異なるため、専用 helper として分離する。
+/// Extract the first target-* argument `[ <string> | <url> ]` as a raw String.
+/// Accept `url("...")`, `url(...)`, and bare `"..."` through cssparser's
+/// `expect_url_or_string`. The two `<url>` forms are shared with
+/// [`parse_url_value`](super::visual::parse_url_value), but this grammar also
+/// accepts bare `<string>` values, unlike the general `<url>` value type;
+/// hence this separate helper.
 pub(super) fn parse_target_url(input: &mut Parser<'_, '_>) -> Option<String> {
     input
         .expect_url_or_string()
@@ -562,8 +560,8 @@ pub(super) fn parse_target_url(input: &mut Parser<'_, '_>) -> Option<String> {
         .map(|s| s.as_ref().to_string())
 }
 
-/// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`。
-/// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>。
+/// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`.
+/// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>.
 pub(super) fn parse_target_counter_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let url = parse_target_url(input)?;
     input.expect_comma().ok()?;
@@ -572,8 +570,8 @@ pub(super) fn parse_target_counter_fn(input: &mut Parser<'_, '_>) -> Option<Cont
     Some(ContentComponent::TargetCounter { url, name, style })
 }
 
-/// `target-counters([<string>|<url>], <custom-ident>, <string>, <counter-style>?)`。
-/// CSS Content 3 §2.6.2 <https://www.w3.org/TR/css-content-3/#target-counters>。
+/// `target-counters([<string>|<url>], <custom-ident>, <string>, <counter-style>?)`.
+/// CSS Content 3 §2.6.2 <https://www.w3.org/TR/css-content-3/#target-counters>.
 pub(super) fn parse_target_counters_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let url = parse_target_url(input)?;
     input.expect_comma().ok()?;
@@ -589,8 +587,8 @@ pub(super) fn parse_target_counters_fn(input: &mut Parser<'_, '_>) -> Option<Con
     })
 }
 
-/// `target-text([<string>|<url>], [ content | before | after | first-letter ]?)`。
-/// CSS Content 3 §2.6.3 <https://www.w3.org/TR/css-content-3/#target-text>。
+/// `target-text([<string>|<url>], [ content | before | after | first-letter ]?)`.
+/// CSS Content 3 §2.6.3 <https://www.w3.org/TR/css-content-3/#target-text>.
 fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let url = parse_target_url(input)?;
     let part = if input.try_parse(|i| i.expect_comma()).is_ok() {
@@ -602,59 +600,48 @@ fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> 
 }
 
 pub(super) fn parse_content_part(input: &mut Parser<'_, '_>) -> Option<ContentPart> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "content" => Some(ContentPart::Content),
-        "before" => Some(ContentPart::Before),
-        "after" => Some(ContentPart::After),
-        "first-letter" => Some(ContentPart::FirstLetter),
-        _ => None,
-    }
+    ContentPart::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `content([ text | before | after | first-letter ]?)` (`?` は raikiri の
-/// 受理済み記法であり、GCPM 3 の grammar 自体には無い formal optional
-/// marker ではない)。CSS GCPM 3 §1.1.1.1 "The content() function"
-/// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> の keyword 集合
-/// (`text | before | after | first-letter` の 4 種) をそのまま実装する。
+/// `content([ text | before | after | first-letter ]?)`. The `?` describes
+/// Raikiri's accepted syntax; it is not a formal optional marker in the
+/// GCPM 3 grammar. CSS GCPM 3 §1.1.1.1 "The content() function"
+/// <https://www.w3.org/TR/css-gcpm-3/#funcdef-content> defines precisely
+/// these four keywords (`text | before | after | first-letter`).
 ///
-/// **grammar 選択の根拠**: `content()` は GCPM 3 §1.1.1.1 と CSS Content 3
-/// §2.7.3 <https://www.w3.org/TR/css-content-3/#funcdef-content> の 2 つの
-/// spec に別々に定義されており、2 つの軸で食い違う。(1) keyword 集合 — GCPM 3
-/// は 4 keyword のみ、CSS Content 3 はそこに `marker` を加えた 5 keyword。
-/// (2) 引数の省略可否 — GCPM 3 の production 自体には `?` が無く引数は形式上
-/// 必須だが、CSS Content 3 は `?` 付きで、省略時は `text` を暗黙採用すると
-/// 明記する。この実装は (1) の keyword 集合では GCPM 3 §1.1.1.1 に従い、
-/// `marker` を意図的に reject する。(2) の引数省略可否については逆に
-/// CSS Content 3 §2.7.3 の `?` 付き grammar と同じ挙動 (省略時 `text`
-/// フォールバック) を採用しており、GCPM 3 の厳密な grammar (引数必須) には
-/// 従っていない — 「GCPM 3 に従う」と言えるのは keyword 集合の軸のみである。
-/// これは spec 間の grammar 相反を軸ごとに解決した結果の選択であり、
-/// 実装漏れではない。
+/// **Grammar choice**: GCPM 3 §1.1.1.1 and CSS Content 3 §2.7.3
+/// <https://www.w3.org/TR/css-content-3/#funcdef-content> define `content()`
+/// separately, differing on two axes. (1) Keyword set: GCPM 3 has four,
+/// while CSS Content 3 adds `marker` as a fifth. (2) Optional argument:
+/// the GCPM 3 production has no `?` and formally requires an argument,
+/// while CSS Content 3 has `?` and explicitly defaults an omitted argument
+/// to `text`. This implementation follows GCPM 3 §1.1.1.1 for the keyword
+/// set, intentionally rejecting `marker`. For the optional argument it
+/// instead follows CSS Content 3 §2.7.3, defaulting to `text`, rather than
+/// the stricter GCPM 3 grammar. Thus it follows GCPM 3 only on the keyword
+/// axis. This resolves the conflicting grammars by axis; it is not an
+/// accidental omission.
 ///
-/// **既知の feature gap**: `content` property 側の `<content-list>` は
-/// CSS Content 3 §2 governance (broad grammar、[`ContentListMode::CssContent3`]
-/// 参照) だが、この `content()` 内部の keyword 集合だけは両 property 呼び出し
-/// 元で GCPM 3 §1.1.1.1 の 4-keyword 版のまま unconditional に適用される
-/// (下記 mode dispatch の節参照)。引数省略時の `text` フォールバック挙動は
-/// 既に CSS Content 3 §2.7.3 の記述と一致しているため、CSS Content 3 §2.7.3
-/// の広い grammar を優先実装する必要が生じた場合、残る差分は `marker`
-/// keyword の受理のみ。
+/// **Known feature gap**: the `content` property's `<content-list>` uses the
+/// broader CSS Content 3 §2 grammar (see [`ContentListMode::CssContent3`]),
+/// but the keyword set inside `content()` is unconditionally the four-keyword
+/// GCPM 3 §1.1.1.1 version for both calling properties (see mode dispatch
+/// below). Omitting the argument already defaults to `text` as CSS Content 3
+/// §2.7.3 specifies. If the broader CSS Content 3 §2.7.3 grammar takes
+/// priority later, only accepting `marker` remains to be added.
 ///
-/// bare `content()` (spec 例 `h2 { string-set: heading content() }`、
-/// string-set/GCPM3 側の文脈) では [`ContentTextKeyword::Text`] を
-/// フォールバック値として使う (根拠は GCPM 3 側の spec "default" 宣言では
-/// ない — 詳細は [`ContentTextKeyword`] の doc comment 参照)。target-text()
-/// の第 2 引数と
-/// 違い、keyword は paren 直下に置かれる (comma を先行させない)。
+/// Bare `content()` (e.g. `h2 { string-set: heading content() }` in the
+/// string-set/GCPM3 context) falls back to [`ContentTextKeyword::Text`].
+/// This is not based on a GCPM 3 spec declaration of a default; see the
+/// [`ContentTextKeyword`] docs. Unlike the second argument to target-text(),
+/// this keyword directly follows the opening parenthesis, with no comma.
 ///
-/// GCPM 3 §1.1.1 の narrow `<content-list>` (string-set 側) と CSS Content 3
-/// §2 の broad `<content-list>` (content property 側) の **両方** に対し
-/// unconditional に受理される ([`ContentListMode`] mode gate なし、
-/// mode dispatch 導入後もこの arm は両 mode で unconditional のまま、
-/// [`parse_content_function`] の match arm 参照) — 上記の通り、この
-/// unconditional な適用自体が「受理 keyword 集合は両 property とも
-/// GCPM 3 §1.1.1.1 の 4 種」という選択の実装箇所である。
+/// This function is accepted unconditionally in both the narrow GCPM 3
+/// §1.1.1 `<content-list>` (string-set) and the broad CSS Content 3 §2
+/// `<content-list>` (content property). It has no [`ContentListMode`] guard;
+/// even after mode dispatch was added, its arm in [`parse_content_function`]
+/// remained unconditional. As noted above, this is where the choice of the
+/// four GCPM 3 §1.1.1.1 keywords for both properties is implemented.
 fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let keyword = if input.is_exhausted() {
         ContentTextKeyword::default()
@@ -665,27 +652,21 @@ fn parse_content_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
 }
 
 pub(super) fn parse_content_text_keyword(input: &mut Parser<'_, '_>) -> Option<ContentTextKeyword> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "text" => Some(ContentTextKeyword::Text),
-        "before" => Some(ContentTextKeyword::Before),
-        "after" => Some(ContentTextKeyword::After),
-        "first-letter" => Some(ContentTextKeyword::FirstLetter),
-        _ => None,
-    }
+    ContentTextKeyword::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `leader(<leader-type>)`。CSS Content 3 §2.5.1 "The leader() function"
-/// <https://www.w3.org/TR/css-content-3/#leader-function>。spec production
-/// `leader( <leader-type> )` に `?` が無いため引数は必須
-/// (`parse_leader_type` 失敗 = declaration drop、`leader()` 単体は spec-invalid)。
+/// `leader(<leader-type>)`. CSS Content 3 §2.5.1 "The leader() function"
+/// <https://www.w3.org/TR/css-content-3/#leader-function>. The spec production
+/// `leader( <leader-type> )` has no `?`, so an argument is mandatory:
+/// failure in `parse_leader_type` drops the declaration, and bare `leader()`
+/// is invalid.
 fn parse_leader_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let leader_type = parse_leader_type(input)?;
     Some(ContentComponent::Leader(leader_type))
 }
 
-/// `<leader-type> = dotted | solid | space | <string>`。[`LeaderType`] の doc
-/// も参照 (keyword を正規化せず個別 variant で保持する rationale)。
+/// `<leader-type> = dotted | solid | space | <string>`. See the [`LeaderType`]
+/// docs for why keyword variants are kept separate instead of normalized.
 fn parse_leader_type(input: &mut Parser<'_, '_>) -> Option<LeaderType> {
     if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
         return Some(LeaderType::String(SmolStr::new(s.as_ref())));

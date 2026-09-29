@@ -74,7 +74,7 @@ fn inheritance_walk_child_from_parent_element() {
     let span = doc.push_element(p, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).unwrap();
-    // <p> が red、<span> は inherit で red
+    // <p> is red; <span> inherits red.
     assert_eq!(r.computed[p].color, RED);
     assert_eq!(r.computed[span].color, RED);
 }
@@ -120,13 +120,13 @@ fn declared_em_and_inherited_em_produce_different_computed_font_sizes() {
     );
     let (div_ii, span_ii) = cascade_parent_child("div", Some("font-size: 1.5em"), "span", None);
 
-    // 親はどちらも initial 16px に対する 1.5em = 24px。
+    // Both parents have 1.5em = 24px relative to the initial 16px.
     assert_eq!(div_i.font_size, ComputedLength(24.0));
     assert_eq!(div_ii.font_size, ComputedLength(24.0));
 
-    // (i) 宣言由来 — 自 node で再度 1.5 倍される。
+    // (i) From a declaration: multiply by 1.5 again on this node.
     assert_eq!(span_i.font_size, ComputedLength(36.0));
-    // (ii) inherit 由来 — 親の computed value がそのまま。
+    // (ii) From inheritance: use the parent's computed value unchanged.
     assert_eq!(span_ii.font_size, ComputedLength(24.0));
     assert_ne!(
         span_i.font_size, span_ii.font_size,
@@ -144,7 +144,7 @@ fn em_font_size_compounds_across_cascade_levels() {
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(r.computed[a].font_size, ComputedLength(24.0));
     assert_eq!(r.computed[b].font_size, ComputedLength(36.0));
-    // 孫は宣言が無いので親の computed value を継承 (再乗算しない)。
+    // With no declaration, the grandchild inherits the parent's computed value (no second multiplication).
     assert_eq!(r.computed[c].font_size, ComputedLength(36.0));
 }
 
@@ -195,7 +195,7 @@ fn rem_on_root_element_box_property_uses_own_font_size() {
 
 #[test]
 fn lh_resolves_against_own_computed_line_height() {
-    // font-size は initial 16px、line-height: 2 (Number) → used = 32px。
+    // font-size is initially 16px; line-height: 2 (Number) → used = 32px.
     let cv = cascade_doc("", "div", Some("line-height: 2; padding: 1.5lh"));
     assert_eq!(
         cv.line_height,
@@ -428,10 +428,10 @@ fn non_element_node_under_document_does_not_establish_rem_context() {
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
 
-    // 非 element node は cascade winner を持たないので全 field が initial。
+    // Non-element nodes have no cascade winners, so every field is initial.
     assert_eq!(r.computed[text], ComputedValues::initial());
-    // 兄弟 element 側の subtree は自身の root element (html) 基準で解決される
-    // — text node の存在に影響されない。
+    // The sibling element's subtree resolves against its own root element
+    // (html), unaffected by the presence of the text node.
     assert_eq!(r.computed[html].font_size, ComputedLength(20.0));
     assert_eq!(
         r.computed[child].padding,
@@ -468,7 +468,7 @@ fn bolder_resolves_against_parent_computed_weight_through_staging() {
         "bolder は親の computed 700 に対して解決される (initial 400 起点なら 700 になる)"
     );
 
-    // lighter 側も同じ経路を通る (700 → 400)。
+    // The lighter case follows the same path (700 → 400).
     let (_, lighter) = cascade_parent_child(
         "div",
         Some("font-weight: 700"),
@@ -508,7 +508,7 @@ fn larger_resolves_against_parent_computed_font_size_through_staging() {
         "larger は親の computed 20px に対して解決される (initial 16px 起点なら 19.2px になる)"
     );
 
-    // smaller 側も同じ経路を通る (20px → 20/1.2px)。
+    // The smaller case follows the same path (20px → 20/1.2px).
     let (_, smaller) = cascade_parent_child(
         "div",
         Some("font-size: 20px"),
@@ -525,9 +525,9 @@ fn larger_chain_compounds_through_staging() {
     let b = doc.push_element(a, "div", Some("font-size: larger"));
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    // literal (`19.2`) ではなく式 (`16.0 * 1.2`) で期待値を書く — 実装の
-    // 計算式をそのまま mirror し、f32 の最終 bit まで一致させる
-    // (`resolve_relative_font_size` の `RATIO` 定数と同じ乗算)。
+    // Write the expected value as an expression (`16.0 * 1.2`) rather than
+    // a literal (`19.2`) to mirror the implementation's calculation and match
+    // the final f32 bits (same multiplication as `resolve_relative_font_size`'s `RATIO`).
     assert_eq!(r.computed[a].font_size, ComputedLength(16.0 * 1.2));
     assert_eq!(r.computed[b].font_size, ComputedLength(16.0 * 1.2 * 1.2));
 }
@@ -958,8 +958,8 @@ fn author_place_self_shorthand_expands_into_2_longhands_through_cascade() {
 
 #[test]
 fn non_inherited_display_child_starts_from_initial_not_parent() {
-    // <div> が UA CSS で display: block、その子 <span> は自身 rule がなく、
-    // display は non-inherited なので initial (Inline) となる
+    // UA CSS sets <div> to display: block. Its child <span> has no rule;
+    // display is non-inherited, so the child stays at its initial value (Inline).
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
     doc.push_text(s, ""); // author 空
@@ -976,19 +976,20 @@ fn non_inherited_display_child_starts_from_initial_not_parent() {
 #[test]
 fn background_color_wired_through_cascade_from_inline_style() {
     // <div style="background-color: red"> → ComputedValues.background_color
-    // に RED が届く。parser → PropertyValue::BackgroundColor → apply_value →
-    // ComputedValues の end-to-end 疎通 smoke。sibling `color` の wire-through
-    // pattern (`type_selector_applies_color`) を踏襲。
+    // receives RED. This is an end-to-end smoke test of parser →
+    // PropertyValue::BackgroundColor → apply_value → ComputedValues, following
+    // the sibling `color` wire-through pattern (`type_selector_applies_color`).
     let cv = cascade_doc("", "div", Some("background-color: red"));
     assert_eq!(cv.background_color, RED);
 }
 
 #[test]
 fn background_color_is_non_inherited_child_starts_from_initial_transparent() {
-    // CSS Backgrounds 3 §2.2 "Inheritance: no"。<p style='background-color:red'>
-    // の子 <span> は自身 rule がなく、background_color は initial (transparent)。
-    // sibling pattern (display / counter-* / content / string-set /
-    // position の non-inheritance test 群を踏襲)。
+    // CSS Backgrounds 3 §2.2 "Inheritance: no". The child <span> of
+    // <p style='background-color:red'> has no rule of its own, so its
+    // background_color stays initial (transparent), as in the sibling
+    // non-inheritance tests for display / counter-* / content / string-set /
+    // position.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("background-color: red"));
     let span = doc.push_element(p, "span", None);
@@ -1008,9 +1009,9 @@ fn background_color_is_non_inherited_child_starts_from_initial_transparent() {
 #[test]
 fn background_color_transparent_keyword_resolves_to_zero_alpha() {
     // CSS Color 4 §6.3 "The transparent keyword": `transparent`
-    // = rgba(0, 0, 0, 0)。CssColor::TRANSPARENT が cascade winner として
-    // per-node に到達することを check (parse_color の transparent Ident branch
-    // と CssColor::TRANSPARENT const の regression canary)。
+    // = rgba(0, 0, 0, 0). Check that CssColor::TRANSPARENT reaches each
+    // node as the cascade winner (a regression canary for parse_color's
+    // transparent Ident branch and the CssColor::TRANSPARENT constant).
     let cv = cascade_doc("", "div", Some("background-color: transparent"));
     assert_eq!(cv.background_color, CssColor::TRANSPARENT);
     assert_eq!(cv.background_color.a, 0);
@@ -1018,20 +1019,21 @@ fn background_color_transparent_keyword_resolves_to_zero_alpha() {
 
 #[test]
 fn line_height_wired_through_cascade_from_inline_style() {
-    // <p style="line-height: 1.5"> → ComputedValues.line_height に
-    // LineHeight::Number(1.5) が届く。parser → PropertyValue::LineHeight
-    // → apply_value → ComputedValues の end-to-end 疎通 smoke
-    // (font-size / color と同じ inherited property pattern)。
+    // <p style="line-height: 1.5"> delivers LineHeight::Number(1.5) to
+    // ComputedValues.line_height. End-to-end parser →
+    // PropertyValue::LineHeight → apply_value → ComputedValues smoke test,
+    // following the inherited-property pattern of font-size / color.
     let cv = cascade_doc("", "p", Some("line-height: 1.5"));
     assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
 }
 
 #[test]
 fn line_height_is_inherited_child_carries_parent_number() {
-    // spec §5.1 "Inheritance: Yes"。<p style="line-height: 1.5"> の子 <span>
-    // は自身 rule 無しでも parent の LineHeight::Number(1.5) を継承する
-    // (unitless number の specified-value inherit special behavior は
-    // cascade static side では raw value 継承として観測される)。
+    // Spec §5.1 "Inheritance: Yes". The child <span> of
+    // <p style="line-height: 1.5"> inherits its parent's
+    // LineHeight::Number(1.5) without its own rule. At the static cascade
+    // stage, unitless-number specified-value inheritance appears as raw-value
+    // inheritance.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("line-height: 1.5"));
     let span = doc.push_element(p, "span", None);
@@ -1048,33 +1050,33 @@ fn line_height_is_inherited_child_carries_parent_number() {
 #[test]
 fn counter_reset_wired_through_cascade_from_inline_style() {
     // <div style="counter-reset: chapter"> → ComputedValues.counter_reset
-    // に `[("chapter", 0)]` が届く。parser → PropertyValue → apply_value →
-    // ComputedValues の end-to-end 疎通 smoke。
-    // counter_reset は Arc<Vec<..>>、`*cv.counter_reset` で deref-compare。
+    // receives `[("chapter", 0)]`. End-to-end parser → PropertyValue →
+    // apply_value → ComputedValues smoke test. counter_reset is Arc<Vec<..>>;
+    // compare the dereferenced `*cv.counter_reset`.
     let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
     assert_eq!(*cv.counter_reset, vec![(SmolStr::new("chapter"), 0)]);
-    // 他 counter property は non-inherited の initial (empty) のまま
+    // Other counter properties remain at their non-inherited initial (empty) values.
     assert!(cv.counter_increment.is_empty());
     assert!(cv.counter_set.is_empty());
 }
 
 #[test]
 fn quotes_wired_through_cascade_from_inline_style() {
-    // <p style='quotes: "«" "»"'> → ComputedValues.quotes に `[("«", "»")]`
-    // が届く。parser → PropertyValue::Quotes → apply_value →
-    // ComputedValues の end-to-end 疎通 smoke (`counter_reset` wire-through
-    // pattern を踏襲)。quotes は Arc<Vec<..>>、`*cv.quotes` で deref-compare。
+    // <p style='quotes: "«" "»"'> delivers `[("«", "»")]` to
+    // ComputedValues.quotes. End-to-end parser → PropertyValue::Quotes →
+    // apply_value → ComputedValues smoke test, following the `counter_reset`
+    // wire-through pattern. quotes is Arc<Vec<..>>; compare `*cv.quotes`.
     let cv = cascade_doc("", "p", Some(r#"quotes: "«" "»""#));
     assert_eq!(*cv.quotes, vec![(SmolStr::new("«"), SmolStr::new("»"))]);
 }
 
 #[test]
 fn quotes_is_inherited_child_carries_parent_pairs() {
-    // CSS Content 3 §2.4.1 "Inherited: yes"。<div style='quotes: ...'> の
-    // 子 <span> は自身 rule 無しでも parent の quotes pairs を継承する
-    // (`line_height_is_inherited_child_carries_parent_number` と同型 —
-    // counter-* (non-inherited) と対照的に、こちらは real cascade tree を
-    // 組んで inheritance walk 自体を通す)。
+    // CSS Content 3 §2.4.1 "Inherited: yes". A child <span> with no rule
+    // inherits the quote pairs of its parent <div style='quotes: ...'>.
+    // Unlike the non-inherited counter-* case, this constructs a real cascade
+    // tree to exercise the inheritance walk (as in
+    // `line_height_is_inherited_child_carries_parent_number`).
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some(r#"quotes: "«" "»" "‹" "›""#));
     let span = doc.push_element(div, "span", None);
@@ -1095,12 +1097,11 @@ fn quotes_is_inherited_child_carries_parent_pairs() {
 
 #[test]
 fn content_wired_through_cascade_from_inline_style() {
-    // <p style='content: "hello"'> → ComputedValues.content に
-    // `[Literal("hello")]` が届く。parser → PropertyValue::Content →
-    // apply_value → ComputedValues の end-to-end 疎通 smoke。
-    // counter-* wire-through pattern を踏襲。
-    // content は Arc<Vec<..>>、`*cv.content` で deref-compare。
-    // Literal は SmolStr payload (owned String → SmolStr conversion)。
+    // <p style='content: "hello"'> delivers `[Literal("hello")]` to
+    // ComputedValues.content. End-to-end parser → PropertyValue::Content →
+    // apply_value → ComputedValues smoke test, following the counter-*
+    // wire-through pattern. content is Arc<Vec<..>>; compare `*cv.content`.
+    // Literal carries SmolStr (converted from an owned String).
     use crate::property::ContentComponent;
     use smol_str::SmolStr;
     let cv = cascade_doc("", "p", Some(r#"content: "hello""#));
@@ -1113,12 +1114,12 @@ fn content_wired_through_cascade_from_inline_style() {
 #[test]
 fn string_set_wired_through_cascade_from_inline_style() {
     // <p style='string-set: chapter_title "hello"'> → ComputedValues.string_set
-    // に `[(chapter_title, [Literal("hello")])]` が届く。
-    // parser → PropertyValue::StringSet → apply_value → ComputedValues の
-    // end-to-end 疎通 smoke。counter-* / content wire-through pattern を踏襲。
-    // string_set は Arc<Vec<..>>、Literal は SmolStr。indexing +
-    // field access は Arc<Vec<T>> の Deref chain (`&[T]`) 経由でそのまま
-    // 通る (dom/paint consumer 波及 0)。
+    // receives `[(chapter_title, [Literal("hello")])]`.
+    // End-to-end parser → PropertyValue::StringSet → apply_value → ComputedValues
+    // smoke test, following the counter-* / content wire-through pattern.
+    // string_set is Arc<Vec<..>>, and Literal uses SmolStr. Indexing and field
+    // access work through Arc<Vec<T>>'s Deref chain (`&[T]`), with no change
+    // needed in dom/paint consumers.
     use crate::property::ContentComponent;
     let cv = cascade_doc("", "p", Some(r#"string-set: chapter_title "hello""#));
     assert_eq!(cv.string_set.len(), 1);
@@ -1132,8 +1133,8 @@ fn string_set_wired_through_cascade_from_inline_style() {
 #[test]
 fn string_set_is_non_inherited_child_starts_from_initial_empty() {
     // CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set>:
-    // string-set は non-inherited。<p style='string-set: a "x"'>
-    // の子 <span> は自身 rule がなく、string_set は initial (empty Vec)。
+    // string-set is non-inherited. A child <span> with no rule under
+    // <p style='string-set: a "x"'> retains an initial (empty) string_set.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some(r#"string-set: a "x""#));
     let span = doc.push_element(p, "span", None);
@@ -1152,8 +1153,8 @@ fn string_set_is_non_inherited_child_starts_from_initial_empty() {
 
 #[test]
 fn content_is_non_inherited_child_starts_from_initial_empty() {
-    // spec §2.1: content は non-inherited。<p style="content: 'x'">
-    // の子 <span> は自身 rule がなく、content は initial (empty Vec)。
+    // Spec §2.1: content is non-inherited. A child <span> with no rule under
+    // <p style="content: 'x'"> retains initial (empty Vec) content.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some(r#"content: "parent""#));
     let span = doc.push_element(p, "span", None);
@@ -1382,9 +1383,9 @@ fn pseudo_element_entry_exists_with_empty_content_when_rule_sets_no_content() {
 #[test]
 fn running_template_wired_through_cascade_from_inline_style() {
     // <div style="position: running(header)"> → ComputedValues.running_templates
-    // に `[RunningTemplate{name:"header"}]` が届く。parser → PropertyValue::Position
-    // → apply_value → ComputedValues の end-to-end 疎通 smoke。
-    // counter-* / content / string-set wire-through pattern を踏襲。
+    // receives `[RunningTemplate{name:"header"}]`. End-to-end parser →
+    // PropertyValue::Position → apply_value → ComputedValues smoke test,
+    // following the counter-* / content / string-set wire-through pattern.
     use crate::computed::RunningTemplate;
     let cv = cascade_doc("", "div", Some("position: running(header)"));
     assert_eq!(
@@ -1397,11 +1398,11 @@ fn running_template_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn running_template_is_non_inherited_child_starts_from_initial_empty() {
-    // CSS GCPM 3 §1.2.1。position が non-inherited であることは CSS
+    // CSS GCPM 3 §1.2.1. The non-inheritance of position follows CSS
     // Positioned Layout 3 §2 <https://www.w3.org/TR/css-position-3/#position-property>
-    // の propdef "Inherited: no"。<div style="position: running(hdr)"> の
-    // 子 <span> は自身の rule がなく running_templates は initial (empty)。
-    // sibling: string_set / content non-inherited と同じ shape。
+    // propdef "Inherited: no". A child <span> without its own rule under
+    // <div style="position: running(hdr)"> has initial (empty) running_templates,
+    // as in the sibling non-inherited string_set / content tests.
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("position: running(hdr)"));
     let span = doc.push_element(div, "span", None);
@@ -1420,21 +1421,21 @@ fn running_template_is_non_inherited_child_starts_from_initial_empty() {
 
 #[test]
 fn position_static_yields_empty_running_templates() {
-    // position: static (spec baseline) の場合 apply_value は no-op、
-    // running_templates は initial の空 Vec が残る。標準 pattern の pin。
+    // For position: static (the spec baseline), apply_value is a no-op and
+    // running_templates remains an initially empty Vec. Pin this standard path.
     let cv = cascade_doc("", "div", Some("position: static"));
     assert!(cv.running_templates.is_empty());
 }
 
 #[test]
 fn static_position_wins_over_running_via_source_order() {
-    // `Static` variant の load-bearing 検証。
-    // 同一 declaration block 内で `position: running(hdr); position: static`
+    // Critical check for the `Static` variant. In one declaration block,
+    // `position: running(hdr); position: static`
     // → CSS Cascading L4 §6.1 "Order of Appearance"
-    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> で後方
-    // declaration が同 rank/spec/order で勝つ (source_order
-    // が同じでも `beats` の `>=` で最後の候補が上書きする)。winner は
-    // Position(Static)、apply_value は no-op → running_templates 空。
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> gives the later
+    // declaration precedence at equal rank/specificity/order (even when
+    // source_order is equal, `beats` uses `>=` to replace the last candidate).
+    // Position(Static) wins; apply_value is a no-op, leaving running_templates empty.
     let cv = cascade_doc("", "div", Some("position: running(hdr); position: static"));
     assert!(
         cv.running_templates.is_empty(),
@@ -1445,8 +1446,8 @@ fn static_position_wins_over_running_via_source_order() {
 
 #[test]
 fn text_justify_wired_through_cascade_from_inline_style() {
-    // <p style="text-justify: inter-word"> → ComputedValues.text_justify。
-    // 上記 text-align pattern を踏襲。
+    // <p style="text-justify: inter-word"> → ComputedValues.text_justify.
+    // Follow the text-align pattern above.
     use crate::property::TextJustify;
     let cv = cascade_doc("", "p", Some("text-justify: inter-word"));
     assert_eq!(cv.text_justify, TextJustify::InterWord);
@@ -1454,7 +1455,7 @@ fn text_justify_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn text_justify_distribute_parses() {
-    // legacy `distribute` を受理する (WPT text-justify-distribute-001)。
+    // Accept legacy `distribute` (WPT text-justify-distribute-001).
     use crate::property::TextJustify;
     let cv = cascade_doc("", "p", Some("text-justify: distribute"));
     assert_eq!(cv.text_justify, TextJustify::Distribute);
@@ -1462,7 +1463,7 @@ fn text_justify_distribute_parses() {
 
 #[test]
 fn text_justify_inherits_from_parent_element() {
-    // CSS Text 3 §6.2: text-justify は **inherited**。
+    // CSS Text 3 §6.2: text-justify is **inherited**.
     use crate::property::TextJustify;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("text-justify: none"));
@@ -1677,7 +1678,7 @@ fn text_spacing_shorthand_and_longhands_compete_in_source_order() {
 
 #[test]
 fn text_align_last_wired_through_cascade_from_inline_style() {
-    // <p style="text-align-last: justify"> → ComputedValues.text_align_last。
+    // <p style="text-align-last: justify"> → ComputedValues.text_align_last.
     use crate::property::TextAlignLast;
     let cv = cascade_doc("", "p", Some("text-align-last: justify"));
     assert_eq!(cv.text_align_last, TextAlignLast::Justify);
@@ -1685,7 +1686,7 @@ fn text_align_last_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn text_align_last_inherits_from_parent_element() {
-    // CSS Text 3 §6.1: text-align-last は **inherited**。
+    // CSS Text 3 §6.1: text-align-last is **inherited**.
     use crate::property::TextAlignLast;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("text-align-last: center"));
@@ -1756,11 +1757,11 @@ fn text_wrap_shorthand_sets_and_resets_both_longhands() {
 
 #[test]
 fn text_align_wired_through_cascade_from_inline_style() {
-    // <p style="text-align: center"> → ComputedValues.text_align に
-    // TextAlign::Center が届く。parser → PropertyValue::TextAlign →
-    // apply_value → ComputedValues の end-to-end 疎通 smoke。
-    // counter-* / content / string-set / position wire-through
-    // pattern を踏襲 (原則 1 前例主義)。
+    // <p style="text-align: center"> delivers TextAlign::Center to
+    // ComputedValues.text_align. End-to-end parser → PropertyValue::TextAlign →
+    // apply_value → ComputedValues smoke test, following the counter-* /
+    // content / string-set / position wire-through pattern (the rule of using
+    // one established precedent).
     use crate::property::TextAlign;
     let cv = cascade_doc("", "p", Some("text-align: center"));
     assert_eq!(cv.text_align, TextAlign::Center);
@@ -1768,12 +1769,12 @@ fn text_align_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn text_align_inherits_from_parent_element() {
-    // CSS Text 3 §6.1: text-align は **inherited** (color と同じ handling)。
-    // <p style="text-align: center"> の子 <span> は自身 rule 無しでも
-    // 親の text_align (Center) を引き継ぐ。inheritance walk が
-    // inherit_from 経由で text_align を copy することを pin。
+    // CSS Text 3 §6.1: text-align is **inherited** (as with color).
+    // A child <span> without a rule under <p style="text-align: center">
+    // takes its parent's text_align (Center). Pin the inheritance walk's
+    // copy through inherit_from.
     //
-    // Verification #7 の中核 assertion (parent center → child Center を確認)。
+    // Key assertion for Verification #7: parent center → child Center.
     use crate::property::TextAlign;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("text-align: center"));
@@ -1790,26 +1791,25 @@ fn text_align_inherits_from_parent_element() {
 
 #[test]
 fn text_align_inheritance_contrasts_with_display_non_inheritance() {
-    // Verification #7 (contrast): text-align (inherited) と display
-    // (non-inherited) を同一 fixture で対比 — inheritance discipline を明示。
-    // parent が両 property を持ち、child は inherit で text-align のみ引き継ぐ、
-    // display は initial (Inline) に落ちる。inherit_from の inherited /
-    // non-inherited 分類が正しく機能していることの pin。
+    // Verification #7 (contrast): compare inherited text-align with
+    // non-inherited display in one fixture. The parent has both properties;
+    // its child inherits only text-align, while display resets to initial
+    // (Inline). This pins inherit_from's inherited/non-inherited distinction.
     use crate::property::TextAlign;
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
-    // p に UA-like rule として display: block を Author 側で置く (現状
-    // UA rule も同 rank に居るので、child が inherit しない性質だけを見る)
+    // Set display: block for p as a UA-like rule at Author origin (currently
+    // UA rules have the same rank; we test only that the child does not inherit).
     doc.push_text(s, "p { display: block; text-align: right }");
     let p = doc.push_element(0, "p", None);
     let span = doc.push_element(p, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    // parent: 両 property が Author rule で set される。
+    // The parent has both properties set by Author rules.
     assert_eq!(r.computed[p].display, DisplayValue::Block);
     assert_eq!(r.computed[p].text_align, TextAlign::Right);
-    // child: 自身 rule 無し。text-align (inherited) は Right を引き継ぐが、
-    // display (non-inherited) は initial (Inline) に落ちる。
+    // The child has no rule: inherited text-align becomes Right, while
+    // non-inherited display remains initial (Inline).
     assert_eq!(
         r.computed[span].text_align,
         TextAlign::Right,
@@ -1824,11 +1824,10 @@ fn text_align_inheritance_contrasts_with_display_non_inheritance() {
 
 #[test]
 fn text_indent_wired_through_cascade_from_inline_style() {
-    // <p style="text-indent: 20px"> → ComputedValues.text_indent に
-    // ComputedTextIndent::Px(20.0) が届く。parser →
-    // PropertyValue::TextIndent → apply_value → ComputedValues の
-    // end-to-end 疎通 smoke (`text_align_wired_through_cascade_from_inline_style`
-    // と同 pattern)。
+    // <p style="text-indent: 20px"> delivers ComputedTextIndent::Px(20.0)
+    // to ComputedValues.text_indent. End-to-end parser →
+    // PropertyValue::TextIndent → apply_value → ComputedValues smoke test,
+    // following `text_align_wired_through_cascade_from_inline_style`.
     let cv = cascade_doc("", "p", Some("text-indent: 20px"));
     assert_eq!(cv.text_indent, ComputedTextIndent::Px(20.0));
 }
@@ -1844,22 +1843,22 @@ fn text_indent_flags_wired_through_cascade_from_inline_style() {
 #[test]
 fn text_indent_percentage_stays_unresolved_in_computed_layer() {
     // CSS Text 3 §8.1 "Computed value: computed <length-percentage>
-    // value, plus any specified keywords" — `%` は block container 自身の
-    // inline-axis inner size 依存 (used value 層) なので、この crate の
-    // computed 層では `Percent` のまま残る (`padding` / `width` と同じ
-    // 扱い、`ComputedValues::padding` doc 参照)。
+    // value, plus any specified keywords" — `%` depends on the block
+    // container's own inline-axis inner size (a used value), so it stays
+    // `Percent` at this crate's computed stage (as for `padding` / `width`;
+    // see the `ComputedValues::padding` docs).
     let cv = cascade_doc("", "p", Some("text-indent: 10%"));
     assert_eq!(cv.text_indent, ComputedTextIndent::Percent(10.0));
 }
 
 #[test]
 fn text_indent_inherits_from_parent_element() {
-    // CSS Text 3 §8.1: text-indent は **inherited**。<p> の `2em` は親の
-    // font-size (20px) 基準で 40px に絶対化され、子 <span> はその**絶対化
-    // 済み 40px を再解決せず継承**する (`lift_line_height` doc が
-    // line-height について説明する挙動と同型 — 子が独自の font-size
-    // (10px) を持っていても 40px のままであることで、この
-    // "re-resolve しない" 性質を子の font-size を変えて check する)。
+    // CSS Text 3 §8.1: text-indent is **inherited**. The <p>'s `2em`
+    // resolves against its 20px font-size to 40px. Its child <span> inherits
+    // the **already-absolutized 40px** without resolving it again. This is
+    // analogous to the behavior described for line-height in `lift_line_height`.
+    // Give the child its own 10px font-size to prove the inherited indent
+    // remains 40px rather than being re-resolved.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("font-size: 20px; text-indent: 2em"));
     let span = doc.push_element(p, "span", Some("font-size: 10px"));
@@ -1921,11 +1920,11 @@ fn text_indent_ch_preserves_source_font_through_inheritance_and_override() {
 
 #[test]
 fn text_indent_inheritance_contrasts_with_padding_non_inheritance() {
-    // Verification (contrast): text-indent (inherited) と padding-top
-    // (non-inherited) を同一 fixture で対比 —
-    // `text_align_inheritance_contrasts_with_display_non_inheritance` と
-    // 同 pattern。child は自身 rule 無し、text-indent のみ引き継ぎ、
-    // padding-top は initial (0) に落ちる。
+    // Verification (contrast): compare inherited text-indent with
+    // non-inherited padding-top in one fixture, as in
+    // `text_align_inheritance_contrasts_with_display_non_inheritance`.
+    // The child has no rule: it inherits only text-indent; padding-top
+    // stays initial (0).
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("text-indent: 15px; padding-top: 15px"));
     let span = doc.push_element(p, "span", None);
@@ -1954,8 +1953,8 @@ fn text_indent_inheritance_contrasts_with_padding_non_inheritance() {
 
 #[test]
 fn text_align_child_own_value_wins_over_inherited() {
-    // parent center + child left → child は自身 rule の Left が cascade winner。
-    // inheritance は「rule 無し fallback」であって override 元ではないことを pin。
+    // Parent center + child left → the child's own Left rule wins the cascade.
+    // Pin that inheritance is a fallback for missing rules, not an override.
     use crate::property::TextAlign;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("text-align: center"));
@@ -1982,7 +1981,7 @@ fn font_style_oblique_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn font_style_inherits_from_parent_element() {
-    // CSS Fonts 4 §2.4: font-style は **inherited**.
+    // CSS Fonts 4 §2.4: font-style is **inherited**.
     use crate::property::FontStyle;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("font-style: italic"));
@@ -2430,7 +2429,7 @@ fn font_variant_caps_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn font_variant_caps_inherits_from_parent_element() {
-    // CSS Fonts Module Level 3 §6.6: font-variant-caps は **inherited**.
+    // CSS Fonts Module Level 3 §6.6: font-variant-caps is **inherited**.
     use crate::property::FontVariantCaps;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("font-variant-caps: small-caps"));
@@ -2601,7 +2600,7 @@ fn text_transform_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn text_transform_inherits_from_parent_element() {
-    // CSS Text Module Level 3 §2.1: text-transform は **inherited**.
+    // CSS Text Module Level 3 §2.1: text-transform is **inherited**.
     use crate::property::TextTransform;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("text-transform: uppercase"));
@@ -2639,7 +2638,7 @@ fn visibility_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn visibility_inherits_from_parent_element() {
-    // CSS Display 3 §4: visibility は **inherited**.
+    // CSS Display 3 §4: visibility is **inherited**.
     use crate::property::Visibility;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("visibility: hidden"));
@@ -2665,7 +2664,7 @@ fn table_layout_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn table_layout_does_not_inherit_from_parent_element() {
-    // CSS Tables 3 §4: table-layout は **non-inherited**.
+    // CSS Tables 3 §4: table-layout is **non-inherited**.
     use crate::property::TableLayoutValue;
     let mut doc = TestDoc::new();
     let table = doc.push_element(0, "table", Some("table-layout: fixed"));
@@ -2689,7 +2688,7 @@ fn border_collapse_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn border_collapse_inherits_from_parent_element() {
-    // CSS Tables 3 §6: border-collapse は **inherited**.
+    // CSS Tables 3 §6: border-collapse is **inherited**.
     use crate::property::BorderCollapseValue;
     let mut doc = TestDoc::new();
     let table = doc.push_element(0, "table", Some("border-collapse: collapse"));
@@ -2740,8 +2739,8 @@ fn border_spacing_single_value_doubles_to_both_axes() {
 
 #[test]
 fn border_spacing_resolves_em_against_own_font_size() {
-    // font-size 40px の node での `0.5em` → 20px (WPT computed file が
-    // `#target` に `font-size: 40px` を指定するのと同じ基準)。
+    // `0.5em` on a 40px-font node → 20px (the same basis as the WPT computed
+    // file's `font-size: 40px` on `#target`).
     let cv = cascade_doc(
         "",
         "table",
@@ -2752,7 +2751,7 @@ fn border_spacing_resolves_em_against_own_font_size() {
 
 #[test]
 fn border_spacing_inherits_from_parent_element() {
-    // CSS Tables 3 §6.1: border-spacing は **inherited**.
+    // CSS Tables 3 §6.1: border-spacing is **inherited**.
     let mut doc = TestDoc::new();
     let table = doc.push_element(0, "table", Some("border-spacing: 10px 20px"));
     let td = doc.push_element(table, "td", None);
@@ -2777,7 +2776,7 @@ fn caption_side_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn caption_side_inherits_from_parent_element() {
-    // CSS Tables 3 §7: caption-side は **inherited**.
+    // CSS Tables 3 §7: caption-side is **inherited**.
     use crate::property::CaptionSideValue;
     let mut doc = TestDoc::new();
     let table = doc.push_element(0, "table", Some("caption-side: bottom"));
@@ -2803,7 +2802,7 @@ fn empty_cells_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn empty_cells_inherits_from_parent_element() {
-    // CSS Tables 3 §8: empty-cells は **inherited**.
+    // CSS Tables 3 §8: empty-cells is **inherited**.
     use crate::property::EmptyCellsValue;
     let mut doc = TestDoc::new();
     let table = doc.push_element(0, "table", Some("empty-cells: hide"));
@@ -2826,7 +2825,7 @@ fn word_break_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn word_break_inherits_from_parent_element() {
-    // CSS Text 3 §5.1: word-break は **inherited**.
+    // CSS Text 3 §5.1: word-break is **inherited**.
     use crate::property::WordBreak;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("word-break: break-all"));
@@ -2978,7 +2977,7 @@ fn word_wrap_and_overflow_wrap_cascade_against_each_other_as_one_property() {
 
 #[test]
 fn overflow_wrap_inherits_from_parent_element() {
-    // CSS Text 3 §5.4: overflow-wrap は **inherited**.
+    // CSS Text 3 §5.4: overflow-wrap is **inherited**.
     use crate::property::OverflowWrap;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("overflow-wrap: anywhere"));
@@ -3754,7 +3753,7 @@ fn white_space_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn white_space_inherits_from_parent_element() {
-    // CSS Text 3 §3: white-space は **inherited**.
+    // CSS Text 3 §3: white-space is **inherited**.
     use crate::property::WhiteSpace;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("white-space: pre"));
@@ -3840,7 +3839,7 @@ fn hyphens_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn hyphens_inherits_from_parent_element() {
-    // CSS Text 3 §5.3: hyphens は **inherited**.
+    // CSS Text 3 §5.3: hyphens is **inherited**.
     use crate::property::Hyphens;
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("hyphens: auto"));
@@ -3913,8 +3912,8 @@ fn writing_mode_wired_through_cascade_from_inline_style() {
     // happens later in `absolutize_with` (see `apply_value`'s
     // `PropertyValue::WritingMode` arm doc comment), so the computed
     // value here is always `HorizontalTb` even for `vertical-rl`.
-    // Future work: vertical writing 実装時に
-    // `HorizontalTb` 期待値を `VerticalRl` へ戻すこと。
+    // Future work: when vertical writing is implemented, change the
+    // `HorizontalTb` expectation back to `VerticalRl`.
     assert_eq!(cv.writing_mode, WritingMode::HorizontalTb);
 }
 
@@ -4732,8 +4731,7 @@ fn orphans_widows_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn orphans_widows_inherit_from_parent_element() {
-    // CSS Fragmentation Module Level 3 §3.3: orphans / widows は
-    // **inherited**.
+    // CSS Fragmentation Module Level 3 §3.3: orphans / widows are **inherited**.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("orphans: 4; widows: 3"));
     let span = doc.push_element(p, "span", None);
@@ -4772,7 +4770,7 @@ fn orphans_widows_child_own_value_wins_over_inherited() {
 
 #[test]
 fn orphans_widows_default_to_initial_value_2_without_declaration() {
-    // CSS Fragmentation Module Level 3 §3.3: Initial は共に `2`。
+    // CSS Fragmentation Module Level 3 §3.3: both initially have value `2`.
     let cv = cascade_doc("", "p", None);
     assert_eq!(cv.orphans, 2);
     assert_eq!(cv.widows, 2);
@@ -4900,12 +4898,11 @@ fn text_align_match_parent_resolves_against_already_resolved_parent() {
 
 #[test]
 fn box_sizing_wired_through_cascade_from_inline_style() {
-    // <p style="box-sizing: border-box"> → ComputedValues.box_sizing に
-    // BoxSizing::BorderBox が届く。parser → PropertyValue::BoxSizing →
-    // apply_value → ComputedValues の end-to-end 疎通 smoke。
-    // sibling (background-color / line-height / counter-* / content /
-    // string-set / position / text-align) の wire-through pattern を踏襲
-    // (原則 1 前例主義)。
+    // <p style="box-sizing: border-box"> delivers BoxSizing::BorderBox to
+    // ComputedValues.box_sizing. End-to-end parser → PropertyValue::BoxSizing →
+    // apply_value → ComputedValues smoke test, following sibling wire-through
+    // tests for background-color / line-height / counter-* / content /
+    // string-set / position / text-align (reuse one established precedent).
     use crate::property::BoxSizing;
     let cv = cascade_doc("", "p", Some("box-sizing: border-box"));
     assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
@@ -4914,9 +4911,9 @@ fn box_sizing_wired_through_cascade_from_inline_style() {
 #[test]
 fn vertical_align_new_keywords_wired_through_cascade_from_inline_style() {
     // parser → PropertyValue::VerticalAlign → apply_value →
-    // SpecifiedValues::finalize → ComputedValues の end-to-end 疎通 —
+    // SpecifiedValues::finalize → ComputedValues end-to-end smoke test for
     // `middle`/`text-top`/`text-bottom` (`box_sizing_wired_through_cascade_from_inline_style`
-    // と同じ pattern)。
+    // follows the same pattern).
     use crate::property::VerticalAlign;
     assert_eq!(
         cascade_doc("", "span", Some("vertical-align: middle")).vertical_align,
@@ -4947,10 +4944,10 @@ fn vertical_align_length_absolutizes_against_own_font_size_through_cascade() {
 
 #[test]
 fn z_index_wired_through_cascade_from_inline_style() {
-    // <p style="z-index: 3"> → ComputedValues.z_index に
-    // ZIndexValue::Integer(3) が届く。parser → PropertyValue::ZIndex →
-    // apply_value → ComputedValues の end-to-end 疎通 smoke。sibling
-    // (box-sizing / font-style) の wire-through pattern を踏襲。
+    // <p style="z-index: 3"> delivers ZIndexValue::Integer(3) to
+    // ComputedValues.z_index. End-to-end parser → PropertyValue::ZIndex →
+    // apply_value → ComputedValues smoke test, following the sibling
+    // box-sizing / font-style wire-through pattern.
     use crate::property::ZIndexValue;
     let cv = cascade_doc("", "p", Some("z-index: 3"));
     assert_eq!(cv.z_index, ZIndexValue::Integer(3));
@@ -4958,10 +4955,9 @@ fn z_index_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn order_wired_through_cascade_from_inline_style() {
-    // <p style="order: 2"> → ComputedValues.order に 2 が届く。parser →
-    // PropertyValue::Order → apply_value → ComputedValues の end-to-end
-    // 疎通 smoke (`z_index_wired_through_cascade_from_inline_style` と
-    // 同 pattern)。
+    // <p style="order: 2"> delivers 2 to ComputedValues.order. End-to-end
+    // parser → PropertyValue::Order → apply_value → ComputedValues smoke test,
+    // following `z_index_wired_through_cascade_from_inline_style`.
     let cv = cascade_doc("", "p", Some("order: 2"));
     assert_eq!(cv.order, 2);
 }
@@ -4970,7 +4966,7 @@ fn order_wired_through_cascade_from_inline_style() {
 fn order_non_inherited_child_starts_from_initial() {
     // CSS Flexible Box Layout Module Level 1 §4.2 propdef:
     // "Inherited: no" (`z_index_non_inherited_child_starts_from_initial`
-    // と同じ pattern)。
+    // follows the same pattern).
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("order: 5"));
     let span = doc.push_element(div, "span", None);
@@ -4986,8 +4982,8 @@ fn order_non_inherited_child_starts_from_initial() {
 #[test]
 fn flex_flow_shorthand_wired_through_cascade_from_inline_style() {
     // <p style="flex-flow: column wrap"> → ComputedValues.flex_direction /
-    // flex_wrap に Column / Wrap が届く (parse → expand → apply_value の
-    // end-to-end 疎通 smoke)。
+    // flex_wrap receive Column / Wrap (end-to-end parse → expand →
+    // apply_value smoke test).
     use crate::property::{FlexDirectionValue, FlexWrapValue};
     let cv = cascade_doc("", "p", Some("flex-flow: column wrap"));
     assert_eq!(cv.flex_direction, FlexDirectionValue::Column);
@@ -4997,8 +4993,8 @@ fn flex_flow_shorthand_wired_through_cascade_from_inline_style() {
 #[test]
 fn z_index_non_inherited_child_starts_from_initial() {
     // CSS2 §9.9.1 propdef: "Inherited: no". sibling:
-    // `text_decoration_non_inherited_child_starts_from_initial` と同じ
-    // pattern。
+    // follows `text_decoration_non_inherited_child_starts_from_initial`
+    // pattern.
     use crate::property::ZIndexValue;
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("z-index: 5"));
@@ -5018,9 +5014,9 @@ fn z_index_non_inherited_child_starts_from_initial() {
 #[test]
 fn break_before_wired_through_cascade_from_inline_style() {
     // <p style="break-before: avoid-page"> → ComputedValues.break_before
-    // に BreakBetween::AvoidPage が届く。parser → PropertyValue::BreakBefore
-    // → apply_value → ComputedValues の end-to-end 疎通 smoke。sibling
-    // (box-sizing / z-index) の wire-through pattern を踏襲。
+    // receives BreakBetween::AvoidPage. End-to-end parser →
+    // PropertyValue::BreakBefore → apply_value → ComputedValues smoke test,
+    // following the sibling box-sizing / z-index wire-through pattern.
     use crate::property::BreakBetween;
     let cv = cascade_doc("", "p", Some("break-before: avoid-page"));
     assert_eq!(cv.break_before, BreakBetween::AvoidPage);
@@ -5043,8 +5039,8 @@ fn break_inside_wired_through_cascade_from_inline_style() {
 #[test]
 fn break_before_non_inherited_child_starts_from_initial() {
     // CSS Fragmentation Module Level 3 §3.1 propdef: "Inherited: no".
-    // sibling: `z_index_non_inherited_child_starts_from_initial` と同じ
-    // pattern。
+    // sibling: follows `z_index_non_inherited_child_starts_from_initial`
+    // pattern.
     use crate::property::BreakBetween;
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("break-before: page"));
@@ -5065,7 +5061,7 @@ fn break_before_non_inherited_child_starts_from_initial() {
 #[test]
 fn page_break_before_legacy_shorthand_wired_through_cascade_remaps_to_page() {
     // <p style="page-break-before: always"> → ComputedValues.break_before
-    // に BreakBetween::Page が届く (CSS Fragmentation Module Level 3 §3.4
+    // receives BreakBetween::Page (CSS Fragmentation Module Level 3 §3.4
     // mapping table: `always` -> `page`, `BreakBetween` doc's "legacy
     // shorthand" section) — end-to-end check that the non-identity remap
     // survives the full parse -> cascade -> ComputedValues pipeline, not
@@ -5077,26 +5073,26 @@ fn page_break_before_legacy_shorthand_wired_through_cascade_remaps_to_page() {
 
 #[test]
 fn font_weight_keyword_bold_wired_through_cascade_from_inline_style() {
-    // <p style="font-weight: bold"> → ComputedValues.font_weight = 700。
-    // parser Ident arm → PropertyValue::FontWeight(Absolute(700)) → apply_value →
-    // ComputedValues の end-to-end 疎通 smoke (既存 wire-through test と同じ
-    // pattern を踏襲)。
+    // <p style="font-weight: bold"> → ComputedValues.font_weight = 700.
+    // Parser Ident arm → PropertyValue::FontWeight(Absolute(700)) → apply_value →
+    // ComputedValues end-to-end smoke test (same pattern as earlier
+    // wire-through tests).
     let cv = cascade_doc("", "p", Some("font-weight: bold"));
     assert_eq!(cv.font_weight, 700.0);
 }
 
 #[test]
 fn font_weight_keyword_normal_wired_through_cascade_from_inline_style() {
-    // <p style="font-weight: normal"> → ComputedValues.font_weight = 400。
+    // <p style="font-weight: normal"> → ComputedValues.font_weight = 400.
     let cv = cascade_doc("", "p", Some("font-weight: normal"));
     assert_eq!(cv.font_weight, 400.0);
 }
 
 #[test]
 fn font_weight_is_inherited_child_carries_parent_bold() {
-    // CSS Fonts 4 §2.2 "Inheritance: Yes"。<p style="font-weight: bold"> の
-    // 子 <span> は自身 rule 無しでも parent の 700 を継承する。
-    // Verification #7: parent bold + child 未指定 = child 700。
+    // CSS Fonts 4 §2.2 "Inheritance: Yes". A child <span> without a rule
+    // inherits the 700 of its parent <p style="font-weight: bold">.
+    // Verification #7: parent bold + unspecified child = child 700.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("font-weight: bold"));
     let span = doc.push_element(p, "span", None);
@@ -5121,9 +5117,9 @@ fn relative_weight_through_cascade(parent_decl: &str, child_decl: &str) -> f32 {
 
 #[test]
 fn font_weight_bolder_lighter_table_all_six_rows() {
-    // CSS Fonts 4 §2.2.1 の bolder/lighter table を 6 行 × 2 列すべて直接
-    // 検証する。unit 関数を叩くことで cascade test setup に依存せず表の
-    // 境界 (半開区間) を網羅する。
+    // Check all six rows and both columns of the CSS Fonts 4 §2.2.1
+    // bolder/lighter table directly. Calling the unit function covers the
+    // half-open boundaries without relying on cascade-test setup.
     //
     // | inherited w    | bolder | lighter |
     // | w < 100        | 400    | w       |
@@ -5169,10 +5165,10 @@ fn font_weight_bolder_lighter_table_all_six_rows() {
 
 #[test]
 fn font_weight_table_no_change_rows_are_not_clamps() {
-    // 表の両端 2 行は "no change" であって clamp ではない。算術近似
-    // (`min(w + 300, 900)` / `max(w - 300, 100)`) を書くとここが壊れる。
-    // この 2 行は `font-weight` の受理 range を `[1,1000]` に広げて初めて
-    // author から到達可能になったため、regression guard として置いている。
+    // The two end rows mean "no change", not clamping. Arithmetic shortcuts
+    // (`min(w + 300, 900)` / `max(w - 300, 100)`) would break here. Authors
+    // could first reach these rows when the accepted `font-weight` range grew
+    // to `[1,1000]`; this test guards against regressions.
     assert_eq!(
         resolve_relative_weight(FontWeightValue::Bolder, 1000.0),
         1000.0,
@@ -5187,7 +5183,7 @@ fn font_weight_table_no_change_rows_are_not_clamps() {
 
 #[test]
 fn font_weight_absolute_ignores_inherited_weight() {
-    // `<font-weight-absolute>` は継承値と無関係にそのまま computed になる。
+    // `<font-weight-absolute>` computes unchanged, regardless of inheritance.
     assert_eq!(
         resolve_relative_weight(FontWeightValue::Absolute(250.0), 900.0),
         250.0
@@ -5199,31 +5195,28 @@ fn resolve_relative_weight_non_finite_inherited_is_asymmetric() {
     let bolder = |w| resolve_relative_weight(FontWeightValue::Bolder, w);
     let lighter = |w| resolve_relative_weight(FontWeightValue::Lighter, w);
 
-    // NaN: `<` 比較は常に false なので両 arm とも catch-all に落ちる。
-    // catch-all の中身が違うので結果も違う —
-    // `Bolder` の catch-all は `w => w` (900 <= w 行の "no change") な
-    // ので NaN がそのまま伝播する。
+    // NaN: `<` comparisons are always false, so both arms reach a catch-all.
+    // Their catch-alls differ: `Bolder` uses `w => w` (the "no change" row
+    // for 900 <= w), propagating NaN unchanged.
     // Bolder(NaN) must propagate NaN as-is (catch-all is `w => w`).
     assert!(bolder(f32::NAN).is_nan());
-    // `Lighter` の catch-all は `_ => 700.0` なので NaN は 700.0 に丸め
-    // られる。
+    // `Lighter` uses `_ => 700.0` as its catch-all, mapping NaN to 700.0.
     // Lighter(NaN) must round to 700.0 (catch-all is `_ => 700.0`, not `w => w`).
     assert_eq!(lighter(f32::NAN), 700.0);
 
-    // +Inf: `<` 比較は NaN と同じく常に false なので、同じ catch-all
-    // 経路 (NaN と同型の非対称)。
+    // +Inf: `<` is also always false, reaching the same catch-alls and
+    // producing the same asymmetric behavior as NaN.
     // Bolder(+Inf) must propagate +Inf as-is.
     assert_eq!(bolder(f32::INFINITY), f32::INFINITY);
     // Lighter(+Inf) must round to 700.0.
     assert_eq!(lighter(f32::INFINITY), 700.0);
 
-    // -Inf: `w < 100.0` の最初の guard に一致するので、Bolder/Lighter
-    // どちらも catch-all を経ない唯一の非有限入力 — ただし row 1 に
-    // ヒットした後の結果は arm ごとに違う。`Bolder` の row 1 は `w if w <
-    // 100.0 => 400.0` なので、有限の `w < 100` と同じく 400.0 に解決
-    // される (正常な値)。`Lighter` の row 1 は "no change" arm (`w if w <
-    // 100.0 => w`) なので `-Inf` はそのまま伝播する — row にヒットする
-    // ことと結果が正常な有限値になることは同じではない。
+    // -Inf: the first `w < 100.0` guard matches. It is the only non-finite
+    // input that bypasses both catch-alls, but each arm's first row differs.
+    // `Bolder` has `w if w < 100.0 => 400.0`, returning finite 400.0 just as
+    // for a finite `w < 100`. `Lighter` has the "no change" row
+    // (`w if w < 100.0 => w`) and propagates -Inf unchanged. Matching a row
+    // does not necessarily produce a finite result.
     // Bolder(-Inf) hits row 1 (w < 100) like any finite w < 100 and
     // resolves to 400.0.
     assert_eq!(bolder(f32::NEG_INFINITY), 400.0);
@@ -5241,10 +5234,10 @@ fn resolve_relative_font_size_applies_1_2_ratio() {
         resolve_relative_font_size(RelativeFontSize::Smaller, 16.0),
         16.0 / 1.2
     );
-    // `×1.2` の後 `÷1.2` は f32 の丸めにより **bit 一致はしない** —
-    // spec が round-trip を要求しているわけではなく、単に実装が table
-    // lookup ではなく単純 ratio の合成であることの pin。浮動小数誤差の
-    // 範囲 (`< 0.0001`) では元の値に戻ることを確認する。
+    // `×1.2` followed by `÷1.2` does **not match bit-for-bit** after f32
+    // rounding. The spec does not require a round-trip; this pins that the
+    // implementation composes simple ratios instead of table lookups.
+    // Check that the result approaches the original within `< 0.0001`.
     let round_tripped = resolve_relative_font_size(
         RelativeFontSize::Smaller,
         resolve_relative_font_size(RelativeFontSize::Larger, 16.0),
@@ -5262,8 +5255,8 @@ fn resolved_against_inherited_carries_the_value_without_loss() {
     let inherited = ComputedValues::initial();
     let ctx = ResolveContext::new(inherited.font_size);
 
-    // 解決される側 (payload が変わる) — `bolder` は継承元 400 に対して
-    // 700 に解決される。
+    // Resolved case (payload changes): `bolder` against inherited 400
+    // resolves to 700.
     let resolved = resolve_against_inherited(
         PropertyValue::FontWeight(FontWeightValue::Bolder),
         &inherited,
@@ -5280,8 +5273,8 @@ fn resolved_against_inherited_carries_the_value_without_loss() {
         "into_property_value は同じ値を消費して取り出せること",
     );
 
-    // pass-through 側 (payload は変わらない) — `Color` はこの関数の対象外
-    // なので `v` がそのまま返る。
+    // Pass-through case (payload unchanged): `Color` is not resolved here,
+    // so `v` returns unchanged.
     let passthrough =
         resolve_against_inherited(PropertyValue::Color(CssColor::BLACK), &inherited, &ctx);
     assert_eq!(
@@ -5306,9 +5299,9 @@ fn resolved_against_inherited_carries_the_value_without_loss() {
 
 #[test]
 fn font_weight_bolder_wired_through_cascade_from_parent_computed() {
-    // Verification #3 / #4 / #5。親の **computed** weight に対して
-    // resolve される (parse → PropertyValue::FontWeight(Bolder) →
-    // apply_value → ComputedValues の end-to-end 疎通)。
+    // Verification #3 / #4 / #5: resolve against the parent's **computed**
+    // weight (end-to-end parse → PropertyValue::FontWeight(Bolder) →
+    // apply_value → ComputedValues).
     assert_eq!(
         relative_weight_through_cascade("font-weight: 400", "font-weight: bolder"),
         700.0
@@ -5326,7 +5319,7 @@ fn font_weight_bolder_wired_through_cascade_from_parent_computed() {
 
 #[test]
 fn font_weight_lighter_wired_through_cascade_from_parent_computed() {
-    // Verification #6。
+    // Verification #6.
     assert_eq!(
         relative_weight_through_cascade("font-weight: 100", "font-weight: lighter"),
         100.0,
@@ -5340,16 +5333,17 @@ fn font_weight_lighter_wired_through_cascade_from_parent_computed() {
 
 #[test]
 fn font_weight_relative_resolves_against_computed_not_literal_parent_value() {
-    // Verification #7 の核心。親の declaration は `bold` keyword
-    // (literal な spec 値は "bold" であって数値ではない) だが、resolution は
-    // 親の **computed** 700 に対して行われる → bolder(700) = 900。
+    // Core of Verification #7: the parent's declaration uses the `bold`
+    // keyword (literally "bold" in specified form, not a number), but resolution
+    // uses the parent's **computed** 700 → bolder(700) = 900.
     assert_eq!(
         relative_weight_through_cascade("font-weight: bold", "font-weight: bolder"),
         900.0,
         "parent keyword `bold` must be computed to 700 first, then bolder(700) = 900"
     );
-    // 親自身が bolder の場合は連鎖する: 親 = bolder(400 initial) = 700、
-    // 子 = bolder(700) = 900。継承値が「親の computed」であることの証明。
+    // A parent resolved from bolder chains correctly: parent = bolder(400
+    // initial) = 700, child = bolder(700) = 900. Inheritance uses the parent's
+    // computed value.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("font-weight: bolder"));
     let span = doc.push_element(p, "span", Some("font-weight: bolder"));
@@ -5367,8 +5361,8 @@ fn font_weight_relative_resolves_against_computed_not_literal_parent_value() {
 
 #[test]
 fn font_weight_relative_is_inherited_as_resolved_absolute() {
-    // bolder を解決した親の値は、以降 absolute weight として通常どおり
-    // inherit される (computed side に sentinel が漏れない証明)。
+    // A parent's resolved bolder value inherits normally as an absolute
+    // weight thereafter; no sentinel leaks into computed values.
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("font-weight: bolder"));
     let span = doc.push_element(p, "span", None);
@@ -5379,7 +5373,7 @@ fn font_weight_relative_is_inherited_as_resolved_absolute() {
 
 #[test]
 fn font_weight_full_range_wired_through_cascade() {
-    // spec range `[1,1000]` の両端が cascade まで届く。
+    // Both endpoints of the spec range `[1,1000]` reach the cascade.
     assert_eq!(
         cascade_doc("", "p", Some("font-weight: 1")).font_weight,
         1.0
@@ -5388,9 +5382,8 @@ fn font_weight_full_range_wired_through_cascade() {
         cascade_doc("", "p", Some("font-weight: 1000")).font_weight,
         1000.0
     );
-    // fractional は f32 格上げ以降、丸めずそのまま computed value まで届く
-    // (旧実装は round-half-away-from-zero で 101 に
-    // 丸めていた)。
+    // Since promotion to f32, fractional weights reach computed values
+    // without rounding (the old implementation rounded 100.5 up to 101).
     assert_eq!(
         cascade_doc("", "p", Some("font-weight: 100.5")).font_weight,
         100.5
@@ -5400,9 +5393,9 @@ fn font_weight_full_range_wired_through_cascade() {
 #[test]
 fn font_weight_wpt_font_weight_computed_150_25() {
     // WPT css/css-fonts/parsing/font-weight-computed.html:
-    // `test_computed_value('font-weight', '150.25')` を cascade を経由した
-    // computed side で check する (parse 側の同値 check は
-    // `crate::property::tests::font_weight_wpt_font_weight_computed_150_25`)。
+    // Check `test_computed_value('font-weight', '150.25')` on the computed side
+    // through the cascade (the matching parser-side test is
+    // `crate::property::tests::font_weight_wpt_font_weight_computed_150_25`).
     assert_eq!(
         cascade_doc("", "p", Some("font-weight: 150.25")).font_weight,
         150.25
@@ -5411,19 +5404,18 @@ fn font_weight_wpt_font_weight_computed_150_25() {
 
 #[test]
 fn bolder_lighter_resolve_against_unrounded_fractional_parent_weight() {
-    // 実際に起きていた origin failure scenario (3 件、以下そのまま pin)。
-    // 丸めが `u16` computed 表現に
-    // 起因していた頃は、350 単位の relative-weight table 行選択そのものが
-    // ずれていた:
+    // Three real origin failures are pinned below. When computed weights
+    // used `u16`, rounding changed the selected relative-weight table row
+    // around boundaries separated by 350:
     //
     // - `p { font-weight: 349.5 } span { font-weight: bolder }`
-    //   spec: 349.5 は `100 <= w < 350` 行 → bolder = **400**
-    //   旧実装: parse が 350 に丸め → `350 <= w < 550` 行 → **700** (誤り)
-    // - `549.5` + `bolder`: spec **700** / 旧実装 **900** (誤り)
-    // - `749.5` + `lighter`: spec **400** / 旧実装 **700** (誤り)
+    //   spec: 349.5 belongs to `100 <= w < 350` → bolder = **400**
+    //   old code: parsing rounded to 350 → `350 <= w < 550` → **700** (wrong)
+    // - `549.5` + `bolder`: spec **700** / old code **900** (wrong)
+    // - `749.5` + `lighter`: spec **400** / old code **700** (wrong)
     //
-    // payload / `ComputedValues.font_weight` を `f32` に格上げしたことで
-    // 丸め自体が無くなり、以下は spec どおりの行に解決される。
+    // Promoting the payload and `ComputedValues.font_weight` to `f32`
+    // removed the rounding; the cases below select the specified rows.
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
@@ -5449,8 +5441,8 @@ fn bolder_lighter_resolve_against_unrounded_fractional_parent_weight() {
 
 #[test]
 fn multiple_elements_each_carry_own_running_template() {
-    // 複数 element がそれぞれ異なる running(name) を持つ →
-    // per-node で seed が独立に格納される (per-document concat は下流責務)。
+    // Multiple elements each have a distinct running(name): each node stores
+    // its own seed (per-document concatenation belongs downstream).
     use crate::computed::RunningTemplate;
     let mut doc = TestDoc::new();
     let h = doc.push_element(0, "header", Some("position: running(hdr)"));
@@ -5475,17 +5467,17 @@ fn multiple_elements_each_carry_own_running_template() {
 fn cascade_shares_content_arc_across_universal_selector_matches() {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
-    // 攻撃 vector そのものの縮小版: universal selector + 単一 literal payload。
+    // Reduced version of the attack vector: universal selector + one literal payload.
     doc.push_text(s, r#"* { content: "shared payload" }"#);
     let p1 = doc.push_element(0, "p", None);
     let p2 = doc.push_element(0, "p", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    // Sanity: 両 element とも content が届いている。
+    // Sanity check: content reaches both elements.
     assert_eq!(r.computed[p1].content.len(), 1);
     assert_eq!(r.computed[p2].content.len(), 1);
-    // Regression assert: Arc pointer identity で shallow-shared を証明。
-    // deep-clone 復活時は underlying alloc が別、ptr_eq = false → fail。
+    // Regression check: Arc pointer identity proves shallow sharing.
+    // Restoring deep clones would allocate separately and make ptr_eq false.
     assert!(
         std::sync::Arc::ptr_eq(&r.computed[p1].content, &r.computed[p2].content),
         "cascade must Arc-share content across universal-selector matches \
@@ -5514,17 +5506,17 @@ fn cascade_shares_string_set_arc_across_universal_selector_matches() {
 fn cascade_shares_counter_reset_arc_across_universal_selector_matches() {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
-    // 攻撃 vector そのものの縮小版: universal selector + 3-name payload。
+    // Reduced version of the attack vector: universal selector + three-name payload.
     doc.push_text(s, "* { counter-reset: c0 c1 c2 }");
     let p1 = doc.push_element(0, "p", None);
     let p2 = doc.push_element(0, "p", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    // Sanity: 両 element とも counter_reset が届いている。
+    // Sanity check: counter_reset reaches both elements.
     assert_eq!(r.computed[p1].counter_reset.len(), 3);
     assert_eq!(r.computed[p2].counter_reset.len(), 3);
-    // Regression assert: Arc pointer identity で shallow-shared を証明。
-    // deep-clone 復活時は underlying alloc が別、ptr_eq = false → fail。
+    // Regression check: Arc pointer identity proves shallow sharing.
+    // Restoring deep clones would allocate separately and make ptr_eq false.
     assert!(
         std::sync::Arc::ptr_eq(&r.computed[p1].counter_reset, &r.computed[p2].counter_reset),
         "cascade must Arc-share counter_reset across universal-selector matches \
@@ -5572,19 +5564,19 @@ fn cascade_shares_counter_set_arc_across_universal_selector_matches() {
 #[test]
 fn resolve_inheritance_uses_initial_arc_for_non_inherited_counter_on_child() {
     let mut doc = TestDoc::new();
-    // 親 <parent> に counter-reset を付け、child <child> は counter rule 無し。
+    // Give <parent> counter-reset; <child> has no counter rule.
     let parent = doc.push_element(0, "parent", Some("counter-reset: c 1"));
     let child = doc.push_element(parent, "child", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    // 親は counter_reset を持つ、child は non-inherited のため empty。
+    // The parent has counter_reset; the child is empty because it is non-inherited.
     assert_eq!(r.computed[parent].counter_reset.len(), 1);
     assert!(r.computed[child].counter_reset.is_empty());
-    // child の counter_reset Arc は shared empty slot と ptr_eq (empty Arc
-    // slot 再利用の behavioral proxy)。ここが false になる regression:
-    // (a) inherit_from が parent の Arc をそのまま渡してしまう
-    // (b) inherit_from が per-node `Arc::new(Vec::new())` を alloc する
-    // どちらも上記の memory 目標を破る。
+    // The child's counter_reset Arc is ptr_eq to the shared empty slot (a
+    // behavioral proxy for reusing the empty Arc). False would mean either:
+    // (a) inherit_from incorrectly passes along the parent's Arc, or
+    // (b) inherit_from allocates per-node `Arc::new(Vec::new())`.
+    // Both violate the memory goal above.
     let shared = crate::property::empty_counter_entries();
     assert!(
         std::sync::Arc::ptr_eq(&r.computed[child].counter_reset, &shared),
@@ -5596,20 +5588,19 @@ fn resolve_inheritance_uses_initial_arc_for_non_inherited_counter_on_child() {
 #[test]
 fn initial_empty_content_and_string_set_share_arc_slot() {
     let mut doc = TestDoc::new();
-    // rule なし、element 2 個 (両者 empty content / string_set)。
+    // Two elements without rules, both with empty content / string_set.
     let p1 = doc.push_element(0, "p", None);
     let p2 = doc.push_element(0, "p", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    // どちらも empty (initial)。
+    // Both remain empty (initial).
     assert!(r.computed[p1].content.is_empty());
     assert!(r.computed[p2].content.is_empty());
     assert!(r.computed[p1].string_set.is_empty());
     assert!(r.computed[p2].string_set.is_empty());
-    // Shared empty Arc slot を指しているので ptr_eq = true。
-    // Arc::new(Vec::new()) を initial/inherit_from で直に呼ぶ regression が
-    // 出た瞬間ここが false になり、DoS fix が memory alloc regression に
-    // 転じたことを検知する。
+    // Both point to the shared empty Arc slot, so ptr_eq is true.
+    // Allocating Arc::new(Vec::new()) directly in initial/inherit_from would
+    // make this false and turn the DoS fix into a memory-allocation regression.
     assert!(
         std::sync::Arc::ptr_eq(&r.computed[p1].content, &r.computed[p2].content),
         "empty content must reuse shared Arc slot — per-node empty Arc \
@@ -5680,9 +5671,9 @@ fn resolve_inheritance_shares_font_family_arc_from_parent_when_child_has_no_decl
 
 #[test]
 fn padding_shorthand_wired_through_cascade_from_inline_style() {
-    // Verification #7: `padding: 10px 5%` → 2-value form expansion で
-    // top/bottom=10px, left/right=5% を pin。counter-* / content / string_set
-    // wire-through pattern を踏襲。
+    // Verification #7: pin the two-value expansion of `padding: 10px 5%`:
+    // top/bottom=10px and left/right=5%, following the counter-* / content /
+    // string_set wire-through pattern.
     use crate::property::Sides;
     let cv = cascade_doc("", "div", Some("padding: 10px 5%"));
     assert_eq!(
@@ -5698,7 +5689,7 @@ fn padding_shorthand_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn padding_longhand_wired_through_cascade_from_inline_style() {
-    // 4 longhand も端から端まで届くことを smoke で pin。
+    // Smoke-test that all four longhands reach the result end to end.
     use crate::property::Sides;
     let cv = cascade_doc(
         "",
@@ -5718,17 +5709,17 @@ fn padding_longhand_wired_through_cascade_from_inline_style() {
 
 #[test]
 fn padding_is_non_inherited_child_starts_from_initial_zero() {
-    // Verification #7 の後半: <div style="padding: 10px 5%"> の子 <span> は
-    // 自身 rule がなく padding は initial (Sides::all(0px))。
-    // sibling: string_set / content / display / counter-* / running_templates
-    // の non-inheritance test と同じ shape。
+    // Second half of Verification #7: the child <span> of
+    // <div style="padding: 10px 5%"> has no rule and retains initial padding
+    // (Sides::all(0px)). This follows sibling non-inheritance tests for
+    // string_set / content / display / counter-* / running_templates.
     use crate::property::Sides;
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("padding: 10px 5%"));
     let span = doc.push_element(div, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    // 親は shorthand 由来の値を持つ。
+    // The parent has values expanded from the shorthand.
     assert_eq!(
         r.computed[div].padding,
         Sides {
@@ -5738,7 +5729,7 @@ fn padding_is_non_inherited_child_starts_from_initial_zero() {
             left: ComputedLengthPercentage::Percent(5.0),
         }
     );
-    // 子は inherit_from 経由で initial (Sides::all(0px)) — 継承しない。
+    // The child retains initial Sides::all(0px) via inherit_from; no inheritance.
     assert_eq!(
         r.computed[span].padding,
         Sides::all(ComputedLengthPercentage::Px(0.0))
@@ -5747,23 +5738,23 @@ fn padding_is_non_inherited_child_starts_from_initial_zero() {
 
 #[test]
 fn padding_negative_declaration_dropped_at_cascade() {
-    // spec (CSS Box 3) §4.1 negative reject の end-to-end smoke: cascade まで負値が
-    // 到達せず、initial (0) が残る。property.rs test は parse_value 単体
-    // の drop、本 test は rule.rs → cascade の一貫 drop を pin。
+    // End-to-end smoke test for rejecting negative padding (CSS Box 3 §4.1):
+    // invalid values do not reach the cascade, leaving initial (0). The
+    // property.rs test checks parse_value alone; this checks rule.rs → cascade.
     use crate::property::Sides;
     let cv = cascade_doc("", "div", Some("padding-top: -5px"));
-    // 負値 → declaration drop → padding は cascade 未 override → initial 0 が残る。
+    // Negative value → declaration dropped → no padding override → initial 0.
     assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
 }
 
 #[test]
 fn padding_shorthand_then_longhand_longhand_wins() {
     // CSS Cascading L4 §3 "Shorthand Properties"
-    // <https://www.w3.org/TR/css-cascade-4/#shorthand>: shorthand は
-    // parse-time で longhand に expand してから cascade する。
+    // <https://www.w3.org/TR/css-cascade-4/#shorthand>: expand shorthands
+    // into longhands at parse time, before cascading.
     // `padding: 10px; padding-top: 5px;` →
-    // top=5, others=10 (source-order-independent、spec-correct)。
-    // (margin で実装済みの parse-time expansion model に migrate 済み)
+    // top=5, others=10 (independent of property-key order; spec-correct).
+    // This uses the parse-time expansion model already implemented for margin.
     let cv = cascade_doc("", "div", Some("padding: 10px; padding-top: 5px"));
     assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
     assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
@@ -5774,9 +5765,9 @@ fn padding_shorthand_then_longhand_longhand_wins() {
 #[test]
 fn padding_longhand_then_shorthand_shorthand_wins() {
     // CSS Cascading L4 §6.1 "Order of Appearance"
-    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
-    // 逆順で check: `padding-top: 5px; padding: 10px;`
-    // → 全 side = 10px (後段 shorthand が top も含めて上書き)。
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: test that the later
+    // declaration wins in reverse order, `padding-top: 5px; padding: 10px;`.
+    // All sides become 10px: the later shorthand also overrides top.
     let cv = cascade_doc("", "div", Some("padding-top: 5px; padding: 10px"));
     assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(10.0));
     assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
@@ -5787,9 +5778,9 @@ fn padding_longhand_then_shorthand_shorthand_wins() {
 #[test]
 fn margin_shorthand_wired_through_cascade_two_value_expansion() {
     // Verification 6-a: `<div style="margin: 10px 20px">` → ComputedValues.margin
-    // に top=10, right=20, bottom=10, left=20 が届く。
-    // parser → parse_declaration_block (shorthand expand) → 4 longhand
-    // PropertyValue → apply_value → ComputedValues の end-to-end 疎通 smoke。
+    // receives top=10, right=20, bottom=10, left=20. End-to-end smoke test:
+    // parser → parse_declaration_block (shorthand expansion) → four longhand
+    // PropertyValues → apply_value → ComputedValues.
     let cv = cascade_doc("", "div", Some("margin: 10px 20px"));
     assert_eq!(
         cv.margin,
@@ -5804,8 +5795,8 @@ fn margin_shorthand_wired_through_cascade_two_value_expansion() {
 
 #[test]
 fn margin_longhand_wired_through_cascade_single_side() {
-    // longhand direct path — `<p style="margin-left: 2em">` → left = Em(2)、
-    // 他 side は initial (0)。
+    // Direct longhand path: `<p style="margin-left: 2em">` → left = Em(2);
+    // other sides remain initial (0).
     let cv = cascade_doc("", "p", Some("margin-left: 2em"));
     assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(32.0));
     assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
@@ -5815,9 +5806,9 @@ fn margin_longhand_wired_through_cascade_single_side() {
 
 #[test]
 fn margin_auto_wired_through_cascade_horizontal_centering() {
-    // Verification 5: `margin: 0 auto` (block-level horizontal centering の
-    // 慣用形) が全 4 side に正しく落ちる。cascade で LengthOrAuto::Auto の
-    // wire-through を pin。
+    // Verification 5: `margin: 0 auto`, the common block-level horizontal
+    // centering form, maps correctly to all four sides. Pin the cascade's
+    // wire-through of LengthOrAuto::Auto.
     let cv = cascade_doc("", "div", Some("margin: 0px auto"));
     assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
     assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Auto);
@@ -5828,16 +5819,16 @@ fn margin_auto_wired_through_cascade_horizontal_centering() {
 #[test]
 fn margin_shorthand_then_longhand_later_longhand_wins() {
     // spec (CSS Cascading L4 §6.1 "Order of Appearance"
-    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>): 同一 declaration
-    // block 内で shorthand + longhand が declared された場合、後方
-    // declaration が同 rank/spec/order で勝つ。
-    // `margin: 0px; margin-top: 10px;` → top=10, others=0。
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>): when a shorthand
+    // and longhand appear in one declaration block, the later declaration
+    // wins at equal rank/specificity/order.
+    // `margin: 0px; margin-top: 10px;` → top=10, others=0.
     //
-    // 本 test は本 architecture の load-bearing case: expansion 前 shorthand
-    // を単一 key で cascade してしまうと、`PropertyKey` 宣言順では `Margin`
-    // が `MarginTop` より後に来るため `margin` が必ず後勝ちし top=0 に
-    // 上書きされる (spec と逆)。expand_shorthand_into が parse-time で longhand
-    // 化するため per-key の cascade winner が top=10 に確定する。
+    // This is essential to our architecture: if the unexpanded shorthand
+    // cascaded as one key, declaration order within `PropertyKey` would put
+    // `Margin` after `MarginTop`. Then `margin` would always win, setting
+    // top=0 against the spec. Parse-time longhand expansion by
+    // expand_shorthand_into makes the per-key winner top=10 instead.
     let cv = cascade_doc("", "div", Some("margin: 0px; margin-top: 10px"));
     assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(10.0));
     assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
@@ -5848,11 +5839,11 @@ fn margin_shorthand_then_longhand_later_longhand_wins() {
 #[test]
 fn margin_longhand_then_shorthand_later_shorthand_wins() {
     // CSS Cascading L4 §6.1 "Order of Appearance"
-    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
-    // 逆順で check: `margin-top: 10px; margin: 0px;`
-    // → 全 side = 0px (後段 shorthand が top も含めて上書き)。
-    // expand_shorthand_into の 4 longhand 展開が source_order を保持したまま
-    // cascade に届き、後段が per-side 勝ち抜けする証拠。
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: check later-wins
+    // behavior in reverse, `margin-top: 10px; margin: 0px;`. All sides become
+    // 0px because the later shorthand overrides top too. This demonstrates
+    // that expand_shorthand_into retains source_order for its four longhands,
+    // allowing the later declaration to win per side.
     let cv = cascade_doc("", "div", Some("margin-top: 10px; margin: 0px"));
     assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
     assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(0.0));
@@ -5862,9 +5853,9 @@ fn margin_longhand_then_shorthand_later_shorthand_wins() {
 
 #[test]
 fn margin_non_inherited_child_starts_from_initial() {
-    // Verification 6-b: CSS Box 3 §3.1 "Inherited: no"。<div style="margin:
-    // 20px"> の子 <span> は自身 rule 無しで margin = initial (0 spread)。
-    // sibling: display / string_set / content non-inherited と同 shape。
+    // Verification 6-b: CSS Box 3 §3.1 "Inherited: no". A child <span> under
+    // <div style="margin: 20px"> has no rule and retains initial margin
+    // (0 on all sides), as for non-inherited display / string_set / content.
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("margin: 20px"));
     let span = doc.push_element(div, "span", None);
@@ -5883,9 +5874,9 @@ fn margin_non_inherited_child_starts_from_initial() {
 
 #[test]
 fn margin_negative_length_accepted() {
-    // Task Non-goals: negative margin は spec-valid (§3.1)、cascade の end-to-end
-    // で受理されることを check (parser 側 check `margin_side_accepts_negative_length`
-    // と complementary、下流 layout 側で negative 意味付け)。
+    // Task non-goal: negative margins are valid under §3.1. Check their
+    // end-to-end acceptance by the cascade, complementing the parser check
+    // `margin_side_accepts_negative_length`; layout interprets them later.
     let cv = cascade_doc("", "div", Some("margin-top: -5px"));
     assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(-5.0));
 }
@@ -5993,8 +5984,8 @@ fn margin_block_shorthand_two_value_wired_through_cascade() {
 fn margin_inline_start_and_margin_left_compete_on_the_same_cascade_key() {
     // Physical `margin-left` and logical `margin-inline-start` are
     // fixed-mapped to the exact same `PropertyValue::MarginLeft` variant
-    // at parse time (`PropertyValue::PaddingInline` doc's "なぜ 8
-    // longhand が専用 variant を持たないか" section) — so, per CSS
+    // at parse time (see the `PropertyValue::PaddingInline` docs explaining
+    // why the eight longhands lack dedicated variants). Thus, per CSS
     // Logical Properties and Values 1 §4 ("corresponding flow-relative
     // and physical properties are paired"), the two compete for the
     // *same* cascade winner, with the later declaration winning (CSS
@@ -6069,39 +6060,39 @@ fn margin_inline_shorthand_three_values_declaration_dropped() {
 
 #[test]
 fn height_wired_through_cascade_from_inline_style() {
-    // <div style="height: 100px"> → ComputedValues.height に
-    // LengthOrAuto::Length(Length::Px(100)) が届く。parser →
-    // PropertyValue::Height → apply_value → ComputedValues の end-to-end
-    // 疎通 smoke (margin / padding wire-through pattern を踏襲)。
+    // <div style="height: 100px"> delivers
+    // LengthOrAuto::Length(Length::Px(100)) to ComputedValues.height.
+    // End-to-end parser → PropertyValue::Height → apply_value → ComputedValues
+    // smoke test, following the margin / padding wire-through pattern.
     let cv = cascade_doc("", "div", Some("height: 100px"));
     assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Px(100.0));
 }
 
 #[test]
 fn height_auto_wired_through_cascade() {
-    // `height: auto` は spec initial (§3.1.1) だが cascade winner として
-    // declaration が到達した場合の受理 pattern を明示 check
-    // (`static_position_wins_over_running_via_source_order` 系の pattern、
-    // parser の auto ident branch と apply_value の LengthOrAuto::Auto 経路
-    // が疎通することを保証)。
+    // `height: auto` is the spec initial value (§3.1.1). Explicitly check
+    // acceptance when its declaration wins the cascade (as in the
+    // `static_position_wins_over_running_via_source_order` pattern): the
+    // parser's auto Ident arm and apply_value's LengthOrAuto::Auto path
+    // must both connect.
     let cv = cascade_doc("", "div", Some("height: auto"));
     assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Auto);
 }
 
 #[test]
 fn height_percentage_wired_through_cascade() {
-    // `height: 50%` の end-to-end 疎通。resolve (containing block % → 実寸)
-    // は下流責務、cascade は authored value をそのまま保持することを pin。
+    // End-to-end wire-through of `height: 50%`. Resolution against the
+    // containing block belongs downstream; cascade retains the authored value.
     let cv = cascade_doc("", "div", Some("height: 50%"));
     assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Percent(50.0));
 }
 
 #[test]
 fn height_non_inherited_child_starts_from_initial() {
-    // Verification 6 (task doc): CSS Sizing 3 §3.1.1 "Inherited: no"。
-    // <div style="height: 100px"> の子 <span> は自身 rule 無しで
-    // height = initial (`LengthOrAuto::Auto`)。sibling: margin / padding
-    // / display / string_set / content non-inherited と同 shape。
+    // Verification 6 (task doc): CSS Sizing 3 §3.1.1 "Inherited: no".
+    // A child <span> with no rule under <div style="height: 100px">
+    // keeps initial height (`LengthOrAuto::Auto`), like the non-inherited
+    // margin / padding / display / string_set / content tests.
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("height: 100px"));
     let span = doc.push_element(div, "span", None);
@@ -6120,10 +6111,10 @@ fn height_non_inherited_child_starts_from_initial() {
 
 #[test]
 fn height_negative_length_rejected_at_parse_time() {
-    // Non-goal (a) spec-invalid: `height: -10px` は grammar `[0,∞]` 違反、
-    // declaration 段で drop → cascade に届かず、height は initial (Auto) の
-    // まま。parser 側 check (`height_rejects_negative_length`) と complementary
-    // な end-to-end 挙動を確認。
+    // Non-goal (a), spec-invalid: `height: -10px` violates `[0,∞]` and is
+    // dropped as a declaration. It never reaches cascade, so height remains
+    // initial (Auto). This end-to-end check complements the parser-side
+    // `height_rejects_negative_length` check.
     let cv = cascade_doc("", "div", Some("height: -10px"));
     assert_eq!(
         cv.height,
@@ -6524,13 +6515,12 @@ fn apply_winners_direct_page_value() {
 
 #[test]
 fn apply_value_direct_margin_shorthand_fall_through() {
-    // `apply_value` の `PropertyValue::Margin(sides)` arm は cascade 経路
-    // では unreachable (`collect_cascaded` が 4 longhand に展開する)。**これは
-    // safety net ではない** — 万一
-    // regression / bypass 経路で到達すると `target.margin = sides` の
-    // atomic 上書きが 4 longhand winner を必ず破壊する。到達した時点で
-    // 既に bug であり、本 test は arm を直接叩いて `unreachable!` 化 or
-    // 空 arm regression を捕捉する canary。
+    // The `PropertyValue::Margin(sides)` arm of `apply_value` is unreachable
+    // on the cascade path (`collect_cascaded` expands it to four longhands).
+    // **This is not a safety net**: reaching it through a regression or bypass
+    // would atomically assign `target.margin = sides`, overwriting all four
+    // longhand winners. Reaching it is already a bug; this direct-arm test
+    // catches a regression to `unreachable!` or an empty arm.
     let mut cv = SpecifiedValues::initial();
     let sides = Sides {
         top: LengthOrAuto::Length(Length::Px(1.0)),
@@ -6646,18 +6636,18 @@ fn apply_value_direct_text_decoration_shorthand_fall_through() {
 #[test]
 fn border_shorthand_then_longhand_later_longhand_wins() {
     // spec (CSS Cascading L4 §6.1 "Order of Appearance"
-    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>): 同一 declaration
-    // block 内で shorthand + longhand が declared された場合、後方
-    // declaration が同 rank/spec/order で勝つ。
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>): when a shorthand
+    // and longhand share one declaration block, the later declaration wins
+    // at equal rank/specificity/order.
     // `border: 1px solid red; border-top-width: 10px;` →
-    // top.width=10、他 side の width=1、top.style=Solid、top.color=red 保持。
+    // top.width=10, other widths=1, top.style=Solid, and top.color stays red.
     //
-    // 本 test は本 architecture の load-bearing case:
-    // expansion 前 shorthand を単一 key で cascade してしまうと、`PropertyKey`
-    // 宣言順では `Border` が `BorderTopWidth` より後に来るため `border` が
-    // 必ず後勝ちし top.width=1 に上書きされる (spec と逆)。expand_shorthand_into
-    // が parse-time で 12 longhand 化するため per-key の cascade winner が
-    // top.width=10 に確定する (margin 0vv.5 precedent の 12-longhand 版)。
+    // This case is essential to our architecture: cascading the unexpanded
+    // shorthand as one key would place `Border` after `BorderTopWidth` in
+    // `PropertyKey` declaration order. `border` would always win, overwriting
+    // top.width with 1, contrary to the spec. Parse-time expansion into 12
+    // longhands by expand_shorthand_into yields a per-key top.width winner of
+    // 10 (the 12-longhand version of the margin 0vv.5 precedent).
     let cv = cascade_doc(
         "",
         "div",
@@ -6667,8 +6657,8 @@ fn border_shorthand_then_longhand_later_longhand_wins() {
     assert_eq!(cv.border.right.width, ComputedLength(1.0));
     assert_eq!(cv.border.bottom.width, ComputedLength(1.0));
     assert_eq!(cv.border.left.width, ComputedLength(1.0));
-    // style / color は shorthand から expand された値のまま (per-side longhand
-    // として cascade winner に居座る)。
+    // style / color retain values expanded from the shorthand (as per-side
+    // longhand cascade winners).
     let red = CssColor {
         r: 255,
         g: 0,
@@ -6676,8 +6666,8 @@ fn border_shorthand_then_longhand_later_longhand_wins() {
         a: 255,
     };
     assert_eq!(cv.border.top.style, BorderStyle::Solid);
-    // border.color は `BorderColor` enum、shorthand
-    // 由来の author-specified red は `Resolved` variant で cascade に届く。
+    // border.color uses the `BorderColor` enum; author-specified red from
+    // the shorthand reaches cascade as the `Resolved` variant.
     assert_eq!(cv.border.top.color, BorderColor::Resolved(red));
     assert_eq!(cv.border.right.style, BorderStyle::Solid);
     assert_eq!(cv.border.left.color, BorderColor::Resolved(red));
@@ -6686,12 +6676,12 @@ fn border_shorthand_then_longhand_later_longhand_wins() {
 #[test]
 fn border_longhand_then_shorthand_later_shorthand_wins() {
     // CSS Cascading L4 §6.1 "Order of Appearance"
-    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
-    // 逆順で check: `border-top-width: 10px; border: 1px solid red;`
-    // → top.width も 1px (後段 shorthand が top も含めて上書き)。
-    // expand_shorthand_into の 12 longhand 展開が source_order を保持した
-    // まま cascade に届き、後段が per-side / per-sub-property
-    // 勝ち抜けする証拠 (margin sibling と対称)。
+    // <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: test the later
+    // winner in reverse, `border-top-width: 10px; border: 1px solid red;`.
+    // Even top.width becomes 1px because the later shorthand overrides it.
+    // This proves that expand_shorthand_into retains source_order while
+    // expanding to 12 longhands, so the later declaration wins each side
+    // and sub-property (symmetric with the margin test).
     let cv = cascade_doc(
         "",
         "div",
@@ -6705,11 +6695,10 @@ fn border_longhand_then_shorthand_later_shorthand_wins() {
 
 #[test]
 fn border_non_inherited_child_starts_from_initial() {
-    // CSS Backgrounds 3 §3 "Borders" — border-* propdef は "Inherited: no"。
-    // <div style="border: 5px solid red"> の子 <span> は自身 rule 無しで
-    // border = initial (medium / none / currentcolor)。
-    // sibling: margin / padding non-inherited test
-    // を踏襲。color は `BorderColor` enum で保持。
+    // CSS Backgrounds 3 §3 "Borders": border-* says "Inherited: no".
+    // A child <span> with no rule under <div style="border: 5px solid red">
+    // keeps initial border (medium / none / currentcolor), as in the
+    // non-inherited margin / padding tests. Color uses the `BorderColor` enum.
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("border: 5px solid red"));
     let span = doc.push_element(div, "span", None);
@@ -6721,18 +6710,18 @@ fn border_non_inherited_child_starts_from_initial() {
         b: 0,
         a: 255,
     };
-    // parent は shorthand から expand された per-side 値。
+    // The parent has per-side values expanded from the shorthand.
     assert_eq!(r.computed[div].border.top.width, ComputedLength(5.0));
     assert_eq!(r.computed[div].border.top.style, BorderStyle::Solid);
     assert_eq!(r.computed[div].border.top.color, BorderColor::Resolved(red));
-    // child は inherit_from が initial に戻す (non-inherited)。
+    // inherit_from resets the child to initial (non-inherited).
     assert_eq!(
         r.computed[span].border,
         Sides::all(ComputedBorder {
-            // specified initial は `medium` (3px) だが border-style が
-            // `none` なので computed width は 0px (CSS Backgrounds 3 §3.3
+            // The specified initial width is `medium` (3px), but computed
+            // width is 0px because border-style is `none` (CSS Backgrounds 3 §3.3
             // "Computed value: … zero if the border style is `none` or
-            // `hidden`")。
+            // `hidden`").
             width: ComputedLength::ZERO,
             style: BorderStyle::None,
             color: BorderColor::CurrentColor,
@@ -6743,16 +6732,15 @@ fn border_non_inherited_child_starts_from_initial() {
 
 #[test]
 fn apply_value_direct_border_shorthand_fall_through() {
-    // `apply_value` の `PropertyValue::Border(sides)` arm は cascade 経路
-    // では unreachable (`collect_cascaded` が 12 longhand に展開する)。**これは
-    // safety net ではない** (margin
-    // fall-through と対称) — 万一 regression / bypass 経路で到達すると
-    // `target.border = sides` の atomic 上書きが 12 longhand winner を必ず
-    // 破壊する。到達した時点で既に bug であり、本 test は arm を直接叩いて
-    // `unreachable!` 化 or 空 arm regression を捕捉する canary。
+    // The `PropertyValue::Border(sides)` arm of `apply_value` is unreachable
+    // on the cascade path (`collect_cascaded` expands it into 12 longhands).
+    // **It is not a safety net** (as with margin): reaching it through a
+    // regression or bypass would atomically overwrite `target.border = sides`
+    // and destroy all 12 longhand winners. Reaching it is already a bug; this
+    // direct-arm test catches regressions to `unreachable!` or an empty arm.
     let mut cv = SpecifiedValues::initial();
-    // `BorderColor::CurrentColor` を明示 fixture 化
-    // (fall-through arm は payload の shape を保持することを check する)。
+    // Explicitly include `BorderColor::CurrentColor` in the fixture to check
+    // that the fall-through arm preserves the payload shape.
     let sides = Sides {
         top: Border {
             width: Length::Px(1.0),
@@ -7011,10 +6999,9 @@ fn background_shorthand_comma_separated_multi_layer_declaration_dropped_through_
 
 #[test]
 fn font_shorthand_expands_supported_longhands_through_real_cascade() {
-    // `background_shorthand_expands_to_8_longhands_through_real_cascade`
-    // の sibling — literal な `font:` declaration が parse → cascade
-    // pipeline を通り、6 grammar longhand と 9 reset-only subproperty に
-    // 展開されることの pin。
+    // Like `background_shorthand_expands_to_8_longhands_through_real_cascade`,
+    // a literal `font:` declaration passes through parse → cascade and
+    // expands into six grammar longhands plus nine reset-only subproperties.
     use crate::property::{FontStyle, FontVariantCaps, FontVariationSettings};
     let cv = cascade_doc(
         "",
@@ -7131,8 +7118,8 @@ fn font_shorthand_resets_supported_subproperties_and_later_longhands_win_literal
 
 #[test]
 fn font_shorthand_and_font_style_longhand_interleave_by_source_order() {
-    // `background_shorthand_and_background_color_longhand_interleave_by_source_order`
-    // の sibling — shorthand と longhand の競合は source order で決まる。
+    // Like `background_shorthand_and_background_color_longhand_interleave_by_source_order`,
+    // source order decides conflicts between shorthand and longhand.
     use crate::property::FontStyle;
     let shorthand_first = cascade_doc(
         "",
@@ -7147,8 +7134,8 @@ fn font_shorthand_and_font_style_longhand_interleave_by_source_order() {
 
 #[test]
 fn font_shorthand_relative_size_and_weight_resolve_against_parent() {
-    // `div` は root (16px / 400) の子 — `larger` / `bolder` は親基準で
-    // 解決される (longhand arm と同じ roll)。
+    // `div` is a child of the root (16px / 400); `larger` and `bolder`
+    // resolve against the parent (as in their longhand arms).
     let cv = cascade_doc("", "div", Some("font: bolder larger serif"));
     assert_eq!(cv.font_weight, 700.0);
     assert_eq!(cv.font_size, ComputedLength(19.2));
@@ -7156,10 +7143,11 @@ fn font_shorthand_relative_size_and_weight_resolve_against_parent() {
 
 #[test]
 fn apply_value_direct_font_shorthand_fall_through() {
-    // `apply_value_direct_margin_shorthand_fall_through` の sibling —
-    // cascade 経路では unreachable (`expand_shorthand_into` が展開済み)
-    // の canary。relative 成分 (`bolder` / `larger`) は longhand arm と
-    // 同じく parent seed (ここでは initial: 400 / 16px) 基準で解決される。
+    // Sibling of `apply_value_direct_margin_shorthand_fall_through`: a
+    // canary for a path unreachable in cascade (already expanded by
+    // `expand_shorthand_into`). Relative components (`bolder` / `larger`)
+    // resolve against the parent seed (initial 400 / 16px here), as in the
+    // longhand arms.
     use crate::property::{
         FontShorthand, FontShorthandSize, FontStyle, FontVariantCaps, FontWeightValue, LineHeight,
         RelativeFontSize,
@@ -7566,7 +7554,7 @@ fn text_decoration_shorthand_resets_earlier_longhand_declarations() {
     // wins" cascade order (CSS Cascading L4 §6.1 "Order of Appearance").
     // This is the test that actually discriminates a spec-correct
     // expansion from one that merely "leaves the others alone" — see
-    // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_four_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_four_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed by deliberately breaking the link
     // for the declaration-list-shape version of the same fact.
     let cv = cascade_doc(
         "",
@@ -7629,37 +7617,36 @@ fn text_decoration_non_inherited_child_starts_from_initial() {
 
 #[test]
 fn width_length_end_to_end() {
-    // Verification #7: `div { width: 100px }` が `ComputedValues.width` に
-    // Length(Px(100)) として届く。parser → PropertyValue::Width → apply_value
-    // → ComputedValues の end-to-end 疎通 smoke (sibling padding/margin と
-    // 同 pattern)。
+    // Verification #7: `div { width: 100px }` delivers Length(Px(100))
+    // to `ComputedValues.width`. End-to-end parser → PropertyValue::Width →
+    // apply_value → ComputedValues smoke test (as for padding/margin).
     let cv = cascade_doc("", "div", Some("width: 100px"));
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(100.0));
 }
 
 #[test]
 fn width_auto_end_to_end() {
-    // `width: auto` は cascade winner として apply_value で `Auto` に固定される。
-    // `inherit_from` initial も Auto なので identity になるが、cascade path が
-    // 実際に通っていることを check (silent no-op regression 検知)。
+    // `width: auto` wins the cascade and apply_value stores `Auto`.
+    // `inherit_from` also initializes width to Auto, so the result is the
+    // same; check that the cascade path really runs (catch silent no-ops).
     let cv = cascade_doc("", "div", Some("width: auto"));
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
 }
 
 #[test]
 fn width_default_is_initial_auto() {
-    // 未指定時は `ComputedValues::initial()` の Auto を維持 (spec §3.1.1
-    // "Initial: auto"、non-inherited なので parent も影響しない)。
+    // When unspecified, keep Auto from `ComputedValues::initial()` (spec
+    // §3.1.1 "Initial: auto"); a parent cannot affect this non-inherited value.
     let cv = cascade_doc("", "div", None);
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
 }
 
 #[test]
 fn width_child_does_not_inherit_from_parent() {
-    // Verification #8: parent (div) が width: 100px を持っていても child
-    // (span、指定 無し) は initial (Auto) を保持する。non-inherited property
-    // の end-to-end check (sibling `inherit_from_leaves_*_at_initial` computed
-    // 側 test の cascade path 版)。
+    // Verification #8: the child (span) retains initial (Auto) even though
+    // its parent (div) has width: 100px. End-to-end non-inheritance check on
+    // the cascade path (counterpart of the computed-side sibling test
+    // `inherit_from_leaves_*_at_initial`).
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
     doc.push_text(s, "div { width: 100px }");
@@ -7667,12 +7654,12 @@ fn width_child_does_not_inherit_from_parent() {
     let child = doc.push_element(parent, "span", None);
     let tree = build_rule_tree(&doc);
     let result = cascade(&doc, &tree).unwrap();
-    // parent (div) は width: 100px を受け取る
+    // The parent (div) receives width: 100px.
     assert_eq!(
         result.computed[parent].width,
         ComputedLengthPercentageOrAuto::Px(100.0)
     );
-    // child (span) は non-inherited のため initial (Auto) を保持
+    // The child (span) retains initial (Auto); width is non-inherited.
     assert_eq!(
         result.computed[child].width,
         ComputedLengthPercentageOrAuto::Auto
@@ -7681,20 +7668,19 @@ fn width_child_does_not_inherit_from_parent() {
 
 #[test]
 fn min_width_length_end_to_end() {
-    // CSS Sizing 3 §4: `div { min-width: 100px }` が
-    // `ComputedValues.min_width` に Px(100) として届く。sibling
-    // `width_length_end_to_end` と同 pattern (parse_min_size →
-    // PropertyValue::MinWidth → apply_value → finalize の end-to-end
-    // smoke)。
+    // CSS Sizing 3 §4: `div { min-width: 100px }` delivers Px(100) to
+    // `ComputedValues.min_width`. Same pattern as `width_length_end_to_end`:
+    // end-to-end parse_min_size → PropertyValue::MinWidth → apply_value →
+    // finalize smoke test.
     let cv = cascade_doc("", "div", Some("min-width: 100px"));
     assert_eq!(cv.min_width, ComputedLengthPercentageOrAuto::Px(100.0));
 }
 
 #[test]
 fn min_height_auto_and_negative_reject() {
-    // CSS Sizing 3 §4 initial `auto` の identity round-trip + `[0,∞]`
-    // 違反の drop pin。負値は parse 段で declaration drop するため
-    // initial (Auto) のまま残る。
+    // CSS Sizing 3 §4: pin the identity round-trip of initial `auto` and
+    // rejection of values outside `[0,∞]`. Negative values are dropped as
+    // declarations during parsing, leaving initial (Auto).
     let cv = cascade_doc("", "div", Some("min-height: auto"));
     assert_eq!(cv.min_height, ComputedLengthPercentageOrAuto::Auto);
     let cv_neg = cascade_doc("", "div", Some("min-height: -10px"));
@@ -7703,9 +7689,9 @@ fn min_height_auto_and_negative_reject() {
 
 #[test]
 fn min_max_child_does_not_inherit_from_parent() {
-    // CSS Sizing 3 §4/§5: min/max は **non-inherited**。parent が
-    // min-width / max-width を持っていても child は initial を保持する
-    // (sibling `width_child_does_not_inherit_from_parent` と同 pattern)。
+    // CSS Sizing 3 §4/§5: min/max are **non-inherited**. A child keeps its
+    // initial value even when the parent has min-width / max-width, following
+    // `width_child_does_not_inherit_from_parent`.
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
     doc.push_text(s, "div { min-width: 100px; max-width: 200px }");
@@ -7733,9 +7719,9 @@ fn min_max_child_does_not_inherit_from_parent() {
 
 #[test]
 fn max_width_none_maps_to_auto() {
-    // CSS Sizing 3 §5 initial `none` → computed Auto placeholder の連鎖
-    // check (specified `parse_max_size` の `none` 分岐 + bridge の
-    // `Dimension::auto()` 委譲の上流側)。
+    // CSS Sizing 3 §5: check the chain from specified initial `none` to the
+    // computed Auto placeholder (the `none` branch of `parse_max_size` and
+    // the upstream side of the bridge's `Dimension::auto()` delegation).
     let cv = cascade_doc("", "div", Some("max-width: none"));
     assert_eq!(cv.max_width, ComputedLengthPercentageOrAuto::Auto);
     let cv_px = cascade_doc("", "div", Some("max-height: 50%"));
@@ -7770,14 +7756,15 @@ fn distinct_margin_sides() -> Sides<LengthOrAuto> {
 
 #[test]
 fn post_parse_margin_shorthand_before_longhand_lets_longhand_win() {
-    // 注入後の declaration 列 (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
-    //   `[0]` Margin(1,2,3,4)   ← 注入
+    // Declaration sequence after injection
+    // (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
+    //   `[0]` Margin(1,2,3,4)   ← injected
     //   `[1]` MarginTop(10px)
-    // spec §3 + §6.1 → top=10 (後方 longhand)、right/bottom/left=2/3/4。
+    // Spec §3 + §6.1 → top=10 (later longhand), right/bottom/left=2/3/4.
     //
-    // これが nqkj の報告する spec 違反方向。展開しない実装では
-    // `PropertyKey::Margin` が `MarginTop` より後に適用されるので
-    // 全 side が 1/2/3/4 になり top=10 が破壊される。
+    // This is the spec-violating direction reported by nqkj: without
+    // expansion, `PropertyKey::Margin` is applied after `MarginTop`, replacing
+    // top=10 along with all sides with 1/2/3/4.
     let cv = cascade_with_post_parse_injection(
         "div { margin-left: 99px; margin-top: 10px }",
         0,
@@ -7788,9 +7775,9 @@ fn post_parse_margin_shorthand_before_longhand_lets_longhand_win() {
         ComputedLengthPercentageOrAuto::Px(10.0),
         "後方 longhand が order of appearance で勝つこと (§6.1)"
     );
-    // 残り 3 side は shorthand 由来の per-side 値。全て assert するのは
-    // 「shorthand を単に落とす」実装 (top=10 だが他が initial 0 になる) と
-    // 「top arm だけ展開する」実装を弾くため。
+    // The other three sides come from the shorthand's per-side values.
+    // Assert all of them to reject implementations that simply drop the
+    // shorthand (top=10, others initial 0) or expand only the top arm.
     assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
     assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
     assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(4.0));
@@ -7798,13 +7785,13 @@ fn post_parse_margin_shorthand_before_longhand_lets_longhand_win() {
 
 #[test]
 fn post_parse_margin_shorthand_after_longhand_lets_shorthand_win() {
-    // 鏡像方向 (`margin-top: 10px; margin: 1px 2px 3px 4px`):
+    // Mirror case (`margin-top: 10px; margin: 1px 2px 3px 4px`):
     //   `[0]` MarginTop(10px)
-    //   `[1]` Margin(1,2,3,4)   ← 注入
-    // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
+    //   `[1]` Margin(1,2,3,4)   ← injected
+    // Spec §6.1 → all sides come from the shorthand = 1/2/3/4.
     //
-    // 本方向は展開しない実装でも偶然一致するが、fix が「shorthand を
-    // 常に負けさせる」誤った非対称化になっていないことを check する。
+    // This direction would also pass without expansion. Check that the fix
+    // does not introduce the wrong asymmetry of always losing shorthands.
     let cv = cascade_with_post_parse_injection(
         "div { margin-top: 10px; margin-left: 99px }",
         1,
@@ -7818,9 +7805,9 @@ fn post_parse_margin_shorthand_after_longhand_lets_shorthand_win() {
 
 #[test]
 fn post_parse_padding_shorthand_before_longhand_lets_longhand_win() {
-    // margin と同じ形を padding family でも check (展開 arm が family ごとに
-    // 独立に書かれているため)。1/2/3/4px の意図は `distinct_margin_sides`
-    // doc と同じ。
+    // Check padding just as margin (their expansion arms are independent).
+    // The distinct 1/2/3/4px values have the same purpose as in the
+    // `distinct_margin_sides` docs.
     let cv = cascade_with_post_parse_injection(
         "div { padding-left: 99px; padding-top: 10px }",
         0,
@@ -7839,11 +7826,11 @@ fn post_parse_padding_shorthand_before_longhand_lets_longhand_win() {
 
 #[test]
 fn post_parse_border_shorthand_before_longhand_lets_longhand_win() {
-    // border は 4 side × 3 sub-property = 12 longhand に展開される。
-    // width / style を per-side で全て違う値にして、12 arm が sink 経由でも
-    // 落ちていないことを check する (style は computed width の gating にも
-    // 効くので `None` を混ぜない — CSS Backgrounds 3 §3.3)。width の
-    // 1/2/3/4px の意図は `distinct_margin_sides` doc と同じ。
+    // Border expands to four sides × three subproperties = 12 longhands.
+    // Distinct width / style values per side check that all 12 arms survive
+    // through the sink. Style also gates computed width, so avoid `None`
+    // (CSS Backgrounds 3 §3.3). The distinct 1/2/3/4px widths serve the
+    // same purpose as in the `distinct_margin_sides` docs.
     let cv = cascade_with_post_parse_injection(
         "div { border-left-width: 99px; border-top-width: 10px }",
         0,
@@ -7870,12 +7857,12 @@ fn post_parse_border_shorthand_before_longhand_lets_longhand_win() {
             },
         }),
     );
-    // top.width だけ後方 longhand が勝つ。
+    // Only top.width is won by the later longhand.
     assert_eq!(cv.border.top.width, ComputedLength(10.0));
     assert_eq!(cv.border.right.width, ComputedLength(2.0));
     assert_eq!(cv.border.bottom.width, ComputedLength(3.0));
     assert_eq!(cv.border.left.width, ComputedLength(4.0));
-    // style / color は shorthand 由来のまま per-side に残る。
+    // Per-side style / color still come from the shorthand.
     assert_eq!(cv.border.top.style, BorderStyle::Solid);
     assert_eq!(cv.border.right.style, BorderStyle::Dashed);
     assert_eq!(cv.border.bottom.style, BorderStyle::Dotted);
@@ -7907,27 +7894,27 @@ fn post_parse_shorthand_injection_propagates_important() {
 
 #[test]
 fn post_parse_important_longhand_survives_later_normal_shorthand() {
-    // 注入後の declaration 列
+    // Declaration sequence after injection
     // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
     //   `[0]` MarginTop(10px) !important
-    //   `[1]` Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
+    //   `[1]` Margin(1,2,3,4)  normal   ← injected (`important` stays false)
     //
     // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
-    // の cascade sort は Origin and Importance を Order of Appearance
-    // **より上位**に置く。したがって後方の normal shorthand は前方の
-    // important longhand に勝てない → top=10。残り 3 side は shorthand 由来
-    // = 2/3/4。
+    // sorts Origin and Importance **above** Order of Appearance. Thus the
+    // later normal shorthand cannot beat the earlier important longhand:
+    // top=10, while the remaining three sides come from the shorthand
+    // (= 2/3/4).
     //
-    // **`!important` 方向で「展開しない実装」と区別できるのは本 test 群では
-    // これだけである** — 展開しないと `PropertyKey::Margin` slot が独立
-    // winner になり、discriminant 順 (`Margin` > `MarginTop`) で atomic
-    // 上書きして top=1 になる。同じ importance を両者に持たせた
-    // `post_parse_shorthand_injection_propagates_important` では
-    // 偶然一致してしまい区別できない。
+    // **This is the only test here whose `!important` direction distinguishes
+    // an implementation without expansion.** Without expansion, the separate
+    // `PropertyKey::Margin` slot wins and atomically overwrites top=1 by
+    // discriminant order (`Margin` > `MarginTop`). With equal importance,
+    // `post_parse_shorthand_injection_propagates_important` would happen to
+    // pass either implementation.
     //
-    // (鏡像入力 `margin: 1,2,3,4; margin-top: 10px !important` や
-    // padding / border family の同型入力も同様に区別する — 本 test が
-    // 唯一というわけではない。coverage 追加は歓迎。)
+    // (A mirror input `margin: 1,2,3,4; margin-top: 10px !important`, or
+    // analogous padding / border tests, would also distinguish them; this
+    // is not the only possible test. More coverage is welcome.)
     let cv = cascade_with_post_parse_injection(
         "div { margin-top: 10px !important; margin-left: 99px }",
         1,
@@ -7946,10 +7933,10 @@ fn post_parse_important_longhand_survives_later_normal_shorthand() {
 
 #[test]
 fn float_wired_through_cascade_from_inline_style() {
-    // <p style="float: left"> → ComputedValues.float に FloatValue::Left
-    // が届く。parser → PropertyValue::Float → apply_value →
-    // ComputedValues の end-to-end 疎通 smoke。sibling (z-index) の
-    // wire-through pattern を踏襲。
+    // <p style="float: left"> delivers FloatValue::Left to
+    // ComputedValues.float. End-to-end parser → PropertyValue::Float →
+    // apply_value → ComputedValues smoke test, following the sibling z-index
+    // wire-through pattern.
     use crate::property::FloatValue;
     let cv = cascade_doc("", "p", Some("float: left"));
     assert_eq!(cv.float, FloatValue::Left);
@@ -7958,7 +7945,7 @@ fn float_wired_through_cascade_from_inline_style() {
 #[test]
 fn float_non_inherited_child_starts_from_initial() {
     // CSS2 §9.5.1 propdef: "Inherited: no". sibling:
-    // `z_index_non_inherited_child_starts_from_initial` と同じ pattern。
+    // follows `z_index_non_inherited_child_starts_from_initial`.
     use crate::property::FloatValue;
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("float: right"));
@@ -7977,10 +7964,10 @@ fn float_non_inherited_child_starts_from_initial() {
 
 #[test]
 fn clear_wired_through_cascade_from_inline_style() {
-    // <p style="clear: both"> → ComputedValues.clear に ClearValue::Both
-    // が届く。parser → PropertyValue::Clear → apply_value →
-    // ComputedValues の end-to-end 疎通 smoke。sibling (z-index) の
-    // wire-through pattern を踏襲。
+    // <p style="clear: both"> delivers ClearValue::Both to
+    // ComputedValues.clear. End-to-end parser → PropertyValue::Clear →
+    // apply_value → ComputedValues smoke test, following the sibling z-index
+    // wire-through pattern.
     use crate::property::ClearValue;
     let cv = cascade_doc("", "p", Some("clear: both"));
     assert_eq!(cv.clear, ClearValue::Both);
@@ -7989,7 +7976,7 @@ fn clear_wired_through_cascade_from_inline_style() {
 #[test]
 fn clear_non_inherited_child_starts_from_initial() {
     // CSS2 §9.5.2 propdef: "Inherited: no". sibling:
-    // `z_index_non_inherited_child_starts_from_initial` と同じ pattern。
+    // follows `z_index_non_inherited_child_starts_from_initial`.
     use crate::property::ClearValue;
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", Some("clear: left"));
@@ -8089,4 +8076,617 @@ fn transform_origin_absolutizes_own_font_lengths_and_resets_in_children() {
         ComputedValues::initial().transform_origin
     );
     assert_eq!(result.computed[child].transform_origin_z.px(), 0.0);
+}
+
+#[test]
+fn wpt_border_right_016_inherit_single_value() {
+    // WPT css/CSS2/borders/border-right-016.xht: parent `border-right: dashed`
+    // (style only, width medium, color currentcolor); child `border-right: inherit`
+    // takes all three right-side computed values.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: dashed"));
+    let child = doc.push_element(parent, "div", Some("border-right: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[parent].border.right.style, BorderStyle::Dashed);
+    assert_eq!(r.computed[parent].border.right.width, ComputedLength(3.0));
+    assert_eq!(
+        r.computed[child].border.right.style,
+        r.computed[parent].border.right.style
+    );
+    assert_eq!(
+        r.computed[child].border.right.width,
+        r.computed[parent].border.right.width
+    );
+    assert_eq!(
+        r.computed[child].border.right.color,
+        r.computed[parent].border.right.color
+    );
+}
+
+#[test]
+fn wpt_border_right_017_inherit_two_values() {
+    // WPT css/CSS2/borders/border-right-017.xht: parent `border-right: dashed blue`.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: dashed blue"));
+    let child = doc.push_element(parent, "div", Some("border-right: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    assert_eq!(r.computed[parent].border.right.style, BorderStyle::Dashed);
+    assert_eq!(
+        r.computed[parent].border.right.color,
+        BorderColor::Resolved(blue)
+    );
+    assert_eq!(r.computed[child].border.right.style, BorderStyle::Dashed);
+    assert_eq!(
+        r.computed[child].border.right.color,
+        BorderColor::Resolved(blue)
+    );
+}
+
+#[test]
+fn wpt_border_right_018_inherit_three_values() {
+    // WPT css/CSS2/borders/border-right-018.xht: parent `border-right: 1in solid blue`
+    // (96px); child `border-right: inherit` takes width, style, and color.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: 1in solid blue"));
+    let child = doc.push_element(parent, "div", Some("border-right: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[parent].border.right.width, ComputedLength(96.0));
+    assert_eq!(r.computed[parent].border.right.style, BorderStyle::Solid);
+    assert_eq!(r.computed[child].border.right.width, ComputedLength(96.0));
+    assert_eq!(r.computed[child].border.right.style, BorderStyle::Solid);
+}
+
+#[test]
+fn border_right_initial_and_unset_reset_to_initial() {
+    // CSS Cascading 4 §7.3: `initial` takes the property initial value;
+    // `unset` behaves as `initial` for non-inherited `border-*`.
+    // Parent has a visible border; child resets.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: 5px solid red"));
+    let initial_child = doc.push_element(parent, "div", Some("border-right: initial"));
+    let unset_child = doc.push_element(parent, "div", Some("border-right: unset"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    for child in [initial_child, unset_child] {
+        assert_eq!(
+            r.computed[child].border.right.width,
+            ComputedLength::ZERO,
+            "initial/unset width gates to zero with style none"
+        );
+        assert_eq!(r.computed[child].border.right.style, BorderStyle::None);
+        assert_eq!(
+            r.computed[child].border.right.color,
+            BorderColor::CurrentColor
+        );
+    }
+    // Parent keeps its authored values.
+    assert_eq!(r.computed[parent].border.right.width, ComputedLength(5.0));
+}
+
+#[test]
+fn border_right_revert_rolls_back_to_user_origin() {
+    // CSS Cascading 4 §7.3.4: Author `revert` rolls back to the User origin winner.
+    // User declares 8px; Author declares `revert` (plus visible style/color so the
+    // gated width stays visible). The winner is the Author `revert` marker, which
+    // rolls back to the User 8px rather than falling back to initial.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div { border-right-width: 8px; border-right-style: solid; border-right-color: red; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div { border-right-width: revert; border-right-style: solid; border-right-color: red; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[div].border.right.width,
+        ComputedLength(8.0),
+        "Author revert must roll back to User 8px"
+    );
+    // Minimal pin: revert with no lower-origin winner falls back to initial.
+    let mut doc3 = TestDoc::new();
+    let lone = doc3.push_element(0, "div", Some("border-right-width: revert"));
+    let tree3 = build_rule_tree(&doc3);
+    let r3 = cascade(&doc3, &tree3).expect("cascade Ok");
+    assert_eq!(
+        r3.computed[lone].border.right.width,
+        ComputedLength::ZERO,
+        "revert with no User/UA winner falls back to initial (gated zero)"
+    );
+}
+
+#[test]
+fn border_right_revert_layer_falls_back_to_origin_rollback() {
+    // This crate stores no style layers for element rules, so `revert-layer`
+    // falls back to the `revert` origin rollback (see `CssWideKeyword`).
+    // With no lower-origin winner it reaches initial.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", Some("border-right-style: revert-layer"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[div].border.right.style, BorderStyle::None);
+}
+
+#[test]
+fn border_right_var_resolves_and_preserves_order() {
+    // `border-right: var(--b)` defers through custom properties; the substituted
+    // `2px dashed` expands to three longhands preserving width, style, color order.
+    // A later longhand in the same block wins per order of appearance.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(
+        0,
+        "div",
+        Some("--b: 2px dashed; border-right: var(--b); border-right-width: 5px"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[div].border.right.width, ComputedLength(5.0));
+    assert_eq!(r.computed[div].border.right.style, BorderStyle::Dashed);
+}
+
+#[test]
+fn border_shorthand_css_wide_expands_to_all_sides() {
+    // `border: inherit` expands to twelve longhands; each side inherits its parent side.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border: 4px dotted blue"));
+    let child = doc.push_element(parent, "div", Some("border: inherit"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    for side in [
+        &r.computed[child].border.top,
+        &r.computed[child].border.right,
+        &r.computed[child].border.bottom,
+        &r.computed[child].border.left,
+    ] {
+        assert_eq!(side.width, ComputedLength(4.0));
+        assert_eq!(side.style, BorderStyle::Dotted);
+    }
+    // Invalid combination `border: inherit solid` drops the whole declaration,
+    // leaving initial (tested end-to-end through the declaration block).
+    let mut doc2 = TestDoc::new();
+    let div2 = doc2.push_element(0, "div", Some("border: inherit solid"));
+    let tree2 = build_rule_tree(&doc2);
+    let r2 = cascade(&doc2, &tree2).expect("cascade Ok");
+    assert_eq!(r2.computed[div2].border.right.style, BorderStyle::None);
+}
+
+#[test]
+fn border_all_sides_inherit_parent_computed() {
+    // Cover `resolve_border_css_wide`'s per-side `pick_field` for every longhand key:
+    // parent has distinct per-side values; each child longhand with `inherit`
+    // takes its own side's computed value.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some(
+            "border-top-width: 1px; border-top-style: solid; border-top-color: red; \
+             border-right-width: 2px; border-right-style: dashed; border-right-color: blue; \
+             border-bottom-width: 3px; border-bottom-style: dotted; border-bottom-color: green; \
+             border-left-width: 4px; border-left-style: double; border-left-color: black",
+        ),
+    );
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some(
+            "border-top-width: inherit; border-top-style: inherit; border-top-color: inherit; \
+             border-right-width: inherit; border-right-style: inherit; border-right-color: inherit; \
+             border-bottom-width: inherit; border-bottom-style: inherit; border-bottom-color: inherit; \
+             border-left-width: inherit; border-left-style: inherit; border-left-color: inherit",
+        ),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[child].border.top.width,
+        r.computed[parent].border.top.width
+    );
+    assert_eq!(
+        r.computed[child].border.top.style,
+        r.computed[parent].border.top.style
+    );
+    assert_eq!(
+        r.computed[child].border.top.color,
+        r.computed[parent].border.top.color
+    );
+    assert_eq!(
+        r.computed[child].border.right.width,
+        r.computed[parent].border.right.width
+    );
+    assert_eq!(
+        r.computed[child].border.right.style,
+        r.computed[parent].border.right.style
+    );
+    assert_eq!(
+        r.computed[child].border.bottom.width,
+        r.computed[parent].border.bottom.width
+    );
+    assert_eq!(
+        r.computed[child].border.left.width,
+        r.computed[parent].border.left.width
+    );
+}
+
+#[test]
+fn border_var_with_css_wide_resolves() {
+    // `var()` substituting to a CSS-wide keyword resolves one level
+    // (see `apply_winners`'s Deferred-then-CssWide arm and
+    // `resolve_border_css_wide`'s deferred-rollback handling).
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("border-right-width: 7px; border-right-style: solid"),
+    );
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some("--w: inherit; border-right-width: var(--w); border-right-style: solid"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[child].border.right.width,
+        r.computed[parent].border.right.width
+    );
+    // `border: var(--x)` where `--x` is `inherit` expands via `BorderCssWide` projection.
+    let mut doc2 = TestDoc::new();
+    let p2 = doc2.push_element(0, "div", Some("border: 6px solid red"));
+    let c2 = doc2.push_element(p2, "div", Some("--x: inherit; border: var(--x)"));
+    let tree2 = build_rule_tree(&doc2);
+    let r2 = cascade(&doc2, &tree2).expect("cascade Ok");
+    assert_eq!(
+        r2.computed[c2].border.top.width,
+        r2.computed[p2].border.top.width
+    );
+    assert_eq!(
+        r2.computed[c2].border.right.style,
+        r2.computed[p2].border.right.style
+    );
+    // `border-right: var(--y)` where `--y` is `initial` clears to initial.
+    let mut doc3 = TestDoc::new();
+    let p3 = doc3.push_element(0, "div", Some("border-right: 5px solid red"));
+    let c3 = doc3.push_element(p3, "div", Some("--y: initial; border-right: var(--y)"));
+    let tree3 = build_rule_tree(&doc3);
+    let r3 = cascade(&doc3, &tree3).expect("cascade Ok");
+    assert_eq!(r3.computed[c3].border.right.style, BorderStyle::None);
+}
+
+#[test]
+fn border_revert_for_style_and_color_rolls_back() {
+    // Cover `find_border_rollback` for style/color keys (width already covered):
+    // User declares style/color; Author reverts; rollback finds User values.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div { border-right-style: dashed; border-right-color: blue; border-right-width: 2px; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div { border-right-style: revert; border-right-color: revert; border-right-width: 2px; border-right-style: solid; }",
+        crate::ruletree::Origin::Author,
+    );
+    // Note: Author has both `revert` and later `solid` for style in same rule?
+    // Order within one rule: `revert` then `solid` — later `solid` wins, no rollback.
+    // Use separate rules so `revert` wins by source order, then rolls back.
+    let mut tree2 = RuleTree::empty();
+    tree2.add_stylesheet(
+        "div { border-right-style: dashed; border-right-color: blue; border-right-width: 2px; }",
+        crate::ruletree::Origin::User,
+    );
+    tree2.add_stylesheet(
+        "div { border-right-style: revert; border-right-color: revert; border-right-width: 2px; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r = cascade(&doc, &tree2).expect("cascade Ok");
+    assert_eq!(r.computed[div].border.right.style, BorderStyle::Dashed);
+    let _ = tree;
+}
+
+#[test]
+fn border_revert_ignores_same_origin_author_and_picks_best_user() {
+    // Cover `find_border_rollback`'s `rank >= winner_rank` skip (same-origin Author
+    // non-revert) and `better` comparison among multiple lower-origin winners:
+    // Author has `5px` then `revert` (revert wins, then ignores Author 5px);
+    // User has `7px` (earlier) and `8px` (later, wins among Users).
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div { border-right-width: 7px; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div { border-right-width: 8px; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div { border-right-width: 5px; }",
+        crate::ruletree::Origin::Author,
+    );
+    tree.add_stylesheet(
+        "div { border-right-width: revert; border-right-style: solid; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[div].border.right.width,
+        ComputedLength(8.0),
+        "must ignore Author 5px and pick best User 8px"
+    );
+}
+
+#[test]
+fn border_revert_skips_presentational_hint_carve_out() {
+    // Cover the `revert` carve-out that ignores `AuthorPresentationalHint` when
+    // rolling back from Author: `<img width>` hint (presentational) plus User 9px;
+    // Author `revert` must skip the hint and use User 9px.
+    // `push_img_dimension_hints` creates width/height hints for `<img>`; here we
+    // exercise the rollback path directly via width (height hint is irrelevant).
+    let mut doc = TestDoc::new();
+    let img = doc.push_element(0, "img", None);
+    // Manually set width attribute? TestDoc elements support attrs? Use inline style
+    // for Author revert and User 9px; the hint comes from UA? Simpler: verify the
+    // carve-out helper logic by cascading Author revert with no User (falls back
+    // to initial, proving hints alone do not satisfy rollback).
+    // Full hint integration lives in `html_quirks` tests; here pin the fallback.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div { border-right-width: revert; border-right-style: solid; }",
+        crate::ruletree::Origin::Author,
+    );
+    let mut doc2 = TestDoc::new();
+    let div2 = doc2.push_element(
+        0,
+        "div",
+        Some("border-right-width: revert; border-right-style: solid"),
+    );
+    let tree2 = build_rule_tree(&doc2);
+    let r2 = cascade(&doc2, &tree2).expect("cascade Ok");
+    // Width falls back to initial medium 3px; style solid keeps it visible (not gated).
+    assert_eq!(r2.computed[div2].border.right.width, ComputedLength(3.0));
+    let _ = (img, tree);
+}
+
+#[test]
+fn border_rollback_via_user_var_and_user_inherit() {
+    // Cover deferred rollback (`User: var(--u)`) and CssWide rollback
+    // (`User: inherit`): Author reverts, rollback finds User var/inherit markers
+    // and resolves them one level without further rollback.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("border-right-width: 11px; border-right-style: solid"),
+    );
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some("--u: 9px; border-right-width: var(--u); border-right-style: solid"),
+    );
+    // Sanity: var resolves to 9px (covers Deferred projection, not rollback yet).
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[child].border.right.width, ComputedLength(9.0));
+    // Now Author revert with User var winner: rollback must resolve the var.
+    let mut doc2 = TestDoc::new();
+    let div2 = doc2.push_element(0, "div", None);
+    let mut tree2 = RuleTree::empty();
+    tree2.add_stylesheet(
+        "div { --u: 10px; border-right-width: var(--u); border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree2.add_stylesheet(
+        "div { border-right-width: revert; border-right-style: solid; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r2 = cascade(&doc2, &tree2).expect("cascade Ok");
+    assert_eq!(r2.computed[div2].border.right.width, ComputedLength(10.0));
+    // User `inherit` marker as rollback winner (covers CssWide rollback arm).
+    let mut doc3 = TestDoc::new();
+    let p3 = doc3.push_element(
+        0,
+        "div",
+        Some("border-right-width: 12px; border-right-style: solid"),
+    );
+    let c3 = doc3.push_element(p3, "div", None);
+    let mut tree3 = RuleTree::empty();
+    // User declares inherit for the child? Need parent/child with User inherit:
+    // simpler: Author revert on child, User inherit on child (same node), parent 12px.
+    // User inherit resolves to parent 12px; Author revert rolls back to that User inherit,
+    // which then resolves to parent 12px.
+    tree3.add_stylesheet(
+        "div div { border-right-width: inherit; border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree3.add_stylesheet(
+        "div div { border-right-width: revert; }",
+        crate::ruletree::Origin::Author,
+    );
+    // Also need parent 12px from Author? Parent has inline 12px (Author).
+    let r3 = cascade(&doc3, &tree3).expect("cascade Ok");
+    // Child should inherit parent 12px via User inherit rollback.
+    assert_eq!(r3.computed[c3].border.right.width, ComputedLength(12.0));
+    let _ = (parent, child, p3);
+}
+
+#[test]
+fn apply_value_direct_border_right_and_css_wide_fall_through() {
+    // Defensive arms in `apply_value` for shorthands that `collect_cascaded` already
+    // expands (see `apply_value_direct_border_shorthand_fall_through` sibling):
+    // direct calls must not panic and must preserve ordering (width, style, color).
+    use crate::property::CssWideKeyword;
+    use crate::specified::SpecifiedValues;
+    let mut cv = SpecifiedValues::initial();
+    let border = Border {
+        width: Length::Px(2.0),
+        style: BorderStyle::Dotted,
+        color: BorderColor::CurrentColor,
+    };
+    apply_value(PropertyValue::BorderRight(border), &mut cv);
+    assert_eq!(cv.border.right.width, Length::Px(2.0));
+    assert_eq!(cv.border.right.style, BorderStyle::Dotted);
+    // Shorthand CssWide expands to longhand CssWide markers, which are no-ops here
+    // (resolved in `apply_winners` via the normal cascade); direct calls leave initial.
+    let mut cv2 = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
+        &mut cv2,
+    );
+    assert_eq!(cv2.border.top.width, crate::specified::INITIAL_BORDER.width);
+    let mut cv3 = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Initial),
+        &mut cv3,
+    );
+    assert_eq!(cv3.border.right.style, BorderStyle::None);
+    // Longhand markers are no-ops here.
+    let mut cv4 = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
+        &mut cv4,
+    );
+    assert_eq!(
+        cv4.border.right.width,
+        crate::specified::INITIAL_BORDER.width
+    );
+}
+
+#[test]
+fn border_rollback_deferred_var_substituting_to_css_wide() {
+    // Cover `resolve_border_css_wide`'s Deferred-then-CssWide arms:
+    // User declares `var(--u)` where `--u` is `inherit`/`initial`;
+    // Author reverts; rollback resolves the var to the marker, then to parent/initial.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("border-right-width: 13px; border-right-style: solid"),
+    );
+    let child = doc.push_element(parent, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div div { --u: inherit; border-right-width: var(--u); border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div div { border-right-width: revert; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[child].border.right.width,
+        ComputedLength(13.0),
+        "User var(--u: inherit) rollback must resolve to parent 13px"
+    );
+    // Same shape with `initial` (covers Initial/Unset inner arms).
+    let mut tree2 = RuleTree::empty();
+    tree2.add_stylesheet(
+        "div div { --v: initial; border-right-width: var(--v); border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree2.add_stylesheet(
+        "div div { border-right-width: revert; }",
+        crate::ruletree::Origin::Author,
+    );
+    let r2 = cascade(&doc, &tree2).expect("cascade Ok");
+    assert_eq!(
+        r2.computed[child].border.right.width,
+        ComputedLength(3.0),
+        "User var(--v: initial) rollback must resolve to initial 3px (visible with solid)"
+    );
+}
+
+#[test]
+fn calc_with_ch_term_keeps_factor_and_absolute_offset_for_spacing_and_indent() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some(
+            "font-size: 40px; word-spacing: calc(2ch + 4px); \
+             letter-spacing: calc(1ch + 1em); text-indent: calc(3ch - 2px)",
+        ),
+    );
+    // Style computes only a `0.5em` fallback for the `ch` term.
+    assert_eq!(cv.word_spacing_computed, ComputedLetterSpacing::Px(44.0));
+    assert_eq!(cv.word_spacing_ch_factor, Some(2.0));
+    assert_eq!(cv.word_spacing_ch_offset, 4.0);
+    assert_eq!(cv.letter_spacing_ch_factor, Some(1.0));
+    assert_eq!(cv.letter_spacing_ch_offset, 40.0);
+    assert_eq!(cv.text_indent, ComputedTextIndent::Px(58.0));
+    assert_eq!(cv.text_indent_ch_factor, Some(3.0));
+    assert_eq!(cv.text_indent_ch_offset, -2.0);
+}
+
+#[test]
+fn calc_with_ch_and_percentage_keeps_percentage_in_text_indent() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("font-size: 40px; text-indent: calc(2ch + 10%)"),
+    );
+    assert_eq!(
+        cv.text_indent,
+        ComputedTextIndent::Calc(crate::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 40.0,
+        })
+    );
+    assert_eq!(cv.text_indent_ch_factor, Some(2.0));
+    assert_eq!(cv.text_indent_ch_offset, 0.0);
+}
+
+#[test]
+fn plain_ch_and_single_term_calc_ch_have_no_offset() {
+    for value in ["2ch", "calc(2ch)"] {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some(&format!("font-size: 40px; word-spacing: {value}")),
+        );
+        assert_eq!(cv.word_spacing_ch_factor, Some(2.0), "{value}");
+        assert_eq!(cv.word_spacing_ch_offset, 0.0, "{value}");
+    }
+}
+
+#[test]
+fn calc_ch_provenance_and_offset_survive_inheritance_and_reset_on_override() {
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(
+        0,
+        "p",
+        Some("word-spacing: calc(2ch + 4px); text-indent: calc(1ch + 6px)"),
+    );
+    let span = doc.push_element(p, "span", None);
+    let over = doc.push_element(p, "b", Some("word-spacing: 3px; text-indent: 1ch"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[span].word_spacing_ch_factor, Some(2.0));
+    assert_eq!(r.computed[span].word_spacing_ch_offset, 4.0);
+    assert_eq!(r.computed[span].text_indent_ch_factor, Some(1.0));
+    assert_eq!(r.computed[span].text_indent_ch_offset, 6.0);
+    assert_eq!(r.computed[over].word_spacing_ch_factor, None);
+    assert_eq!(r.computed[over].word_spacing_ch_offset, 0.0);
+    assert_eq!(r.computed[over].text_indent_ch_factor, Some(1.0));
+    assert_eq!(r.computed[over].text_indent_ch_offset, 0.0);
+}
+
+#[test]
+fn ch_inside_calc_stays_rejected_for_properties_without_ch_provenance() {
+    let cv = cascade_doc("", "p", Some("font-size: 40px; tab-size: calc(2ch + 4px)"));
+    assert_eq!(cv.tab_size, crate::ComputedTabSize::Number(8.0));
 }

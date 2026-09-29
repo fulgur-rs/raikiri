@@ -6,6 +6,7 @@
 //! External scripts are read from the WPT checkout on disk; nothing outside
 //! the checkout root is ever read (see [`WptDocumentHost::script_source`]).
 
+use std::any::Any;
 use std::path::{Component, Path, PathBuf};
 
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
@@ -30,14 +31,45 @@ pub(crate) struct WptDocumentHost {
     computed_styles: Option<Vec<raikiri_style::ComputedValues>>,
     /// `<style>` sources connected at the last flush, in tree order.
     style_sources: Vec<String>,
+    /// Descendant content extents per arena index, rebuilt on every `flush`.
+    /// Each entry is the union of descendant border-box right/bottom edges,
+    /// or negative infinity when no descendant has a fragment. The scroll
+    /// size itself still needs the padding box, so it is derived per call
+    /// from this cache without walking the subtree again.
+    scroll_content_extents: Vec<(f64, f64)>,
     #[cfg(test)]
     pub(crate) flushes: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+/// Expand connected `<style>` text the way the fragment parser does.
+///
+/// The fragment parser's `stylesheet_sources` already expands `@import` and
+/// keeps SVG-namespace `<style>` text. The live host keeps only the fragment
+/// DOM, so it expands the reconciled text here with the same document base
+/// and checkout network; without this an `innerHTML`-inserted `@import`
+/// would stay opaque.
+fn expand_live_style_sources(
+    raw: Vec<String>,
+    base_url: Option<&raikiri::Url>,
+    wpt_root: &Path,
+) -> Vec<String> {
+    if std::fs::canonicalize(wpt_root).is_err() {
+        return raw;
+    }
+    let network = raikiri_net::FileNetworkProvider;
+    raikiri_html::expand_live_stylesheet_imports(
+        raw,
+        base_url,
+        Some(&network as &dyn raikiri_traits::NetworkProvider),
+    )
 }
 
 impl WptDocumentHost {
     pub(crate) fn new(setup: LiveWptSetup, wpt_root: &Path) -> Self {
         let root = setup.uncascaded.dom.root_index();
-        let style_sources = live_wpt_stylesheet_sources_in_subtree(&setup.uncascaded.dom, root);
+        let raw = live_wpt_stylesheet_sources_in_subtree(&setup.uncascaded.dom, root);
+        let style_sources =
+            expand_live_style_sources(raw, setup.document_base_url.as_ref(), wpt_root);
         Self {
             setup,
             wpt_root: wpt_root.to_path_buf(),
@@ -46,6 +78,7 @@ impl WptDocumentHost {
             page_scene: None,
             computed_styles: None,
             style_sources,
+            scroll_content_extents: Vec::new(),
             #[cfg(test)]
             flushes: Default::default(),
         }
@@ -107,25 +140,24 @@ impl WptDocumentHost {
         Err(refuse("no such file inside the WPT root"))
     }
 
-    /// Diff the connected `<style>` sources against the last flush and apply
+    /// Reconcile connected `<style>` sources against the last flush and apply
     /// the change to the setup's author stylesheet list. Parser-loaded
-    /// `<link>` sheets in that list are left untouched.
+    /// `<link>` sheets in that list are left untouched at the front; inline
+    /// sheets follow in tree order.
     fn resync_stylesheets(&mut self) {
         let root = self.setup.uncascaded.dom.root_index();
-        let current = live_wpt_stylesheet_sources_in_subtree(&self.setup.uncascaded.dom, root);
-        let mut removed = self.style_sources.clone();
-        let mut added = Vec::new();
-        for source in &current {
-            if let Some(i) = removed.iter().position(|s| s == source) {
-                removed.remove(i);
-            } else {
-                added.push(source.clone());
-            }
+        let raw = live_wpt_stylesheet_sources_in_subtree(&self.setup.uncascaded.dom, root);
+        let current =
+            expand_live_style_sources(raw, self.setup.document_base_url.as_ref(), &self.wpt_root);
+        if current != self.style_sources {
+            let previous = std::mem::replace(&mut self.style_sources, current.clone());
+            update_live_wpt_stylesheet_sources(
+                &mut self.setup,
+                &previous,
+                &current,
+                &self.wpt_root,
+            );
         }
-        if !removed.is_empty() || !added.is_empty() {
-            update_live_wpt_stylesheet_sources(&mut self.setup, removed, added, &self.wpt_root);
-        }
-        self.style_sources = current;
     }
 }
 
@@ -196,15 +228,21 @@ impl DocumentHost for WptDocumentHost {
             page_name,
         ));
         self.computed_styles = Some(cascade.computed);
+        let scene = self.page_scene.as_ref().expect("scene just built");
+        self.scroll_content_extents =
+            compute_scroll_content_extents(&self.setup.uncascaded.dom, scene);
         Ok(())
     }
 
     fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
-        let scene = self
-            .page_scene
-            .as_ref()
-            .ok_or_else(|| HostError("geometry read before flush".into()))?;
-        let Some(border_box) = border_box_of(scene, node) else {
+        let border_box = {
+            let scene = self
+                .page_scene
+                .as_ref()
+                .ok_or_else(|| HostError("geometry read before flush".into()))?;
+            border_box_of(scene, node)
+        };
+        let Some(border_box) = border_box else {
             return Ok(None);
         };
         let computed = self
@@ -220,8 +258,25 @@ impl DocumentHost for WptDocumentHost {
             border_box.right - border(|c| c.border.right.width().px()),
             border_box.bottom - border(|c| c.border.bottom.width().px()),
         );
-        let (scroll_width, scroll_height) =
-            scroll_extent(scene, &self.setup.uncascaded.dom, node, &padding_box);
+        let (content_right, content_bottom) = self
+            .scroll_content_extents
+            .get(node)
+            .copied()
+            .unwrap_or((f64::NEG_INFINITY, f64::NEG_INFINITY));
+        let padding = self
+            .setup
+            .uncascaded
+            .dom
+            .get_node(node)
+            .map(|n| n.unrounded_layout.padding)
+            .unwrap_or_default();
+        let right = padding_box
+            .right
+            .max(content_right + f64::from(padding.right));
+        let bottom = padding_box
+            .bottom
+            .max(content_bottom + f64::from(padding.bottom));
+        let (scroll_width, scroll_height) = (right - padding_box.left, bottom - padding_box.top);
         Ok(Some(BoxGeometry {
             border_box,
             padding_box,
@@ -262,10 +317,20 @@ impl DocumentHost for WptDocumentHost {
             self.setup.page_box.width as u32,
             self.setup.page_box.height as u32,
             self.setup.document_base_url.as_ref(),
+            self.setup.page_resource_base.as_deref(),
             &self.wpt_root,
         )
         .map_err(HostError)?; // cov:ignore: UTF-8 markup is parsed from memory; its reader and parser recover without I/O/encoding errors.
         Ok(fragment.dom)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }
 
@@ -302,47 +367,69 @@ fn border_box_of(scene: &raikiri::PageScene, node: usize) -> Option<DomRect> {
     ))
 }
 
-/// The scrolling area size of `node` (CSSOM View §6 "scrolling area"),
-/// approximated as the union of its padding box with the border boxes of
-/// every descendant that has a fragment, extended by the box's own
-/// end-side padding after that content (CSS Overflow 3 §3.3 "Scrollable
-/// Overflow"; this layout only produces in-flow descendants), measured from
-/// the padding box origin. It is never smaller than the padding box.
-/// Descendants extending above or left of the padding box do not add to it
-/// (they are not reachable by scrolling).
+/// Descendant content extents for every arena index, in one post-order pass.
+///
+/// Each entry is the union of descendant border-box right/bottom edges (the
+/// content half of the scrolling area in CSSOM View §6 "scrolling area":
+/// the union of the padding box with every descendant fragment, extended by
+/// the end-side padding after that content per CSS Overflow 3 §3.3
+/// "Scrollable Overflow"; this layout only produces in-flow descendants).
+/// Negative infinity when no descendant has a fragment. Descendants
+/// extending above or left of the padding box stay in the union; the caller
+/// clamps them out when deriving the scroll size from the padding box
+/// origin, since they are not reachable by scrolling.
 ///
 /// The page scene only has fragments for nodes that intersect the page, so
 /// descendants laid out entirely off the page are not counted.
-///
-/// The end-side padding is the used value from the node's layout (so a
-/// percentage is already resolved against its containing block).
-fn scroll_extent(
-    scene: &raikiri::PageScene,
+fn compute_scroll_content_extents(
     document: &raikiri_dom::Document,
-    node: usize,
-    padding_box: &DomRect,
-) -> (f64, f64) {
-    let (mut content_right, mut content_bottom) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
-    let (mut pending, padding) = document
-        .get_node(node)
-        .map(|n| (n.children.to_vec(), n.unrounded_layout.padding))
-        .unwrap_or_default();
-    while let Some(index) = pending.pop() {
-        if let Some(descendant) = border_box_of(scene, index) {
-            content_right = content_right.max(descendant.right);
-            content_bottom = content_bottom.max(descendant.bottom);
+    scene: &raikiri::PageScene,
+) -> Vec<(f64, f64)> {
+    let count = document.node_count();
+    let mut extents = vec![(f64::NEG_INFINITY, f64::NEG_INFINITY); count];
+    let mut visited = vec![false; count];
+    for start in 0..count {
+        if visited[start] {
+            continue;
         }
-        if let Some(n) = document.get_node(index) {
-            pending.extend(n.children.iter().copied());
+        let mut pending = vec![(start, false)];
+        while let Some((index, expanded)) = pending.pop() {
+            if index >= count {
+                continue;
+            }
+            if expanded {
+                let mut content_right = f64::NEG_INFINITY;
+                let mut content_bottom = f64::NEG_INFINITY;
+                if let Some(node) = document.get_node(index) {
+                    for &child in &node.children {
+                        if let Some(descendant) = border_box_of(scene, child) {
+                            content_right = content_right.max(descendant.right);
+                            content_bottom = content_bottom.max(descendant.bottom);
+                        }
+                        if child < count {
+                            content_right = content_right.max(extents[child].0);
+                            content_bottom = content_bottom.max(extents[child].1);
+                        }
+                    }
+                }
+                extents[index] = (content_right, content_bottom);
+                visited[index] = true;
+            } else {
+                if visited[index] {
+                    continue;
+                }
+                pending.push((index, true));
+                if let Some(node) = document.get_node(index) {
+                    for &child in &node.children {
+                        if child < count && !visited[child] {
+                            pending.push((child, false));
+                        }
+                    }
+                }
+            }
         }
     }
-    let right = padding_box
-        .right
-        .max(content_right + f64::from(padding.right));
-    let bottom = padding_box
-        .bottom
-        .max(content_bottom + f64::from(padding.bottom));
-    (right - padding_box.left, bottom - padding_box.top)
+    extents
 }
 
 /// The runtime's view of computed `position`. `static`, a running element

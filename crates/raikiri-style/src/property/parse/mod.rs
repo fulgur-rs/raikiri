@@ -30,8 +30,8 @@ pub fn is_supported_property_name(name: &str) -> bool {
         .is_ok()
 }
 
-/// Property name + Parser から `PropertyValue` を produce。
-/// 認識できない name / invalid value は `None`。
+/// Produce a `PropertyValue` from a property name and parser.
+/// Return `None` for an unknown name or invalid value.
 pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     if is_custom_property_name(name) {
         let value = consume_deferred_value(input)?;
@@ -108,9 +108,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             }
             // `tab-size` keeps its simple additive length calc instead of
             // reducing it through the generic deferred-value path
-            // (`parse_tab_size` の「`calc()` の扱い」節 — percentage は
-            // Percentages: N/A により reject、`sign()` /
-            // container-relative unit を含む形は drop のまま)。
+            // (see the "Handling `calc()`" section of `parse_tab_size`:
+            // percentages are rejected because Percentages: N/A, while forms with
+            // `sign()` or container-relative units remain dropped).
             if normalized_name == "tab-size" {
                 let mut reparsed_input = ParserInput::new(value.as_ref());
                 let mut reparsed = Parser::new(&mut reparsed_input);
@@ -243,24 +243,24 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
     }
     input.reset(&start);
 
-    // ascii-lowercase 比較で property name を dispatch。
+    // Dispatch property names using ASCII-lowercase comparisons.
     match normalized_name.as_str() {
         "color" => parse_color(input).map(PropertyValue::Color),
         // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
-        // "Base Color: the background-color property"。value grammar は `<color>`、
-        // 直上 sibling `color` arm と同じ parse_color reuse pattern。
+        // "Base Color: the background-color property". Its value grammar is
+        // `<color>`; reuse parse_color as in the `color` arm above.
         "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
-        // Arc wrap は cascade memory 削減 (同種の DoS 対策 fix の
-        // pattern 踏襲、perf 目的で security 対策ではない)。`parse_font_family` は
-        // grammar 上 empty Vec を返さない (`<family-name>#` は 1 要素以上必須、
-        // 同関数の `if families.is_empty() { None }` 参照) ため、counter-* /
-        // content / string-set と異なり shared-empty-slot 分岐は不要。
+        // Wrapping in Arc reduces cascade memory (following similar DoS fixes,
+        // but for performance, not security). `parse_font_family` cannot return
+        // an empty Vec: `<family-name>#` requires at least one item, enforced by
+        // its `if families.is_empty() { None }` check. Unlike counter-*, content,
+        // and string-set, it needs no shared-empty-slot branch.
         "font-family" => parse_font_family(input).map(|v| PropertyValue::FontFamily(Arc::new(v))),
         "font-size" => parse_font_size(input),
         "font-weight" => parse_font_weight(input).map(PropertyValue::FontWeight),
-        // CSS Inline 3 §5.1 line-height。
-        // `normal` / `<number [0,∞]>` / `<length-percentage [0,∞]>` を受理、
-        // 負値と其他 keyword は spec grammar 違反として drop。
+        // CSS Inline 3 §5.1 line-height.
+        // Accept `normal`, `<number [0,∞]>`, and `<length-percentage [0,∞]>`;
+        // reject negatives and other keywords as invalid under the grammar.
         "line-height" => parse_line_height(input).map(PropertyValue::LineHeight),
         "display" => parse_display(input).map(PropertyValue::Display),
         "list-style-type" => parse_list_style_type(input).map(PropertyValue::ListStyleType),
@@ -268,12 +268,12 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             parse_list_style_position(input).map(PropertyValue::ListStylePosition)
         }
         "list-style-image" => parse_list_style_image(input).map(PropertyValue::ListStyleImage),
-        // CSS Lists 3 §4 counter properties。
-        // spec default: reset = 0、increment = 1、set = 0。
-        // Arc wrap は cascade memory DoS 対策 (per-element
-        // clone を shallow bump 化)、空 list は 3 property 共通 shared Arc slot
-        // (`empty_counter_entries`) に落として per-node allocation regression を
-        // 避ける (Content/StringSet の precedent と同 pattern)。
+        // CSS Lists 3 §4 counter properties.
+        // Spec defaults: reset = 0, increment = 1, set = 0.
+        // Arc wrapping reduces cascade memory for DoS resistance (shallow
+        // per-element clones). Empty lists use the shared Arc slot common to all
+        // three properties (`empty_counter_entries`) to avoid per-node allocation
+        // regressions, following the Content/StringSet pattern.
         "counter-reset" => {
             if input
                 .try_parse(|i| i.expect_ident_matching("inherit"))
@@ -304,10 +304,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::CounterSet(Arc::new(v))
             }
         }),
-        // CSS Content 3 §1 content property。
-        // Arc wrap は cascade memory DoS 対策 (per-element clone を
-        // shallow bump 化)、empty list は shared Arc slot に落として per-node allocation
-        // regression を避ける。
+        // CSS Content 3 §1 content property.
+        // Arc wrapping reduces cascade memory for DoS resistance (shallow
+        // per-element clones). Empty lists use a shared Arc slot to avoid
+        // per-node allocation regressions.
         "content" => parse_content(input).map(|v| {
             if v.is_empty() {
                 PropertyValue::Content(empty_content_list())
@@ -315,8 +315,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::Content(Arc::new(v))
             }
         }),
-        // CSS GCPM 3 §1.1.1 string-set。
-        // Arc wrap は同種の DoS 対策 fix と同 rationale。
+        // CSS GCPM 3 §1.1.1 string-set.
+        // Arc wrapping follows the rationale of similar DoS fixes.
         "string-set" => parse_string_set(input).map(|v| {
             if v.is_empty() {
                 PropertyValue::StringSet(empty_string_set_entries())
@@ -324,17 +324,17 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::StringSet(Arc::new(v))
             }
         }),
-        // CSS GCPM 3 §1.2.1 position: running() および CSS Positioned Layout Module Level 3 §3 sticky。
-        // 現状 scope では `static` + `sticky` + `running(<custom-ident>)` を受理、
-        // `relative` / `absolute` / `fixed` は未実装 (将来対応) につき silent drop。
+        // CSS GCPM 3 §1.2.1 running() position and CSS Positioned Layout 3 §3 sticky.
+        // This scope accepts `static`, `sticky`, and `running(<custom-ident>)`;
+        // `relative`, `absolute`, and `fixed` remain unimplemented and silently dropped.
         "position" => parse_position(input).map(PropertyValue::Position),
         "top" => parse_inset(input).map(PropertyValue::Top),
         "right" => parse_inset(input).map(PropertyValue::Right),
         "bottom" => parse_inset(input).map(PropertyValue::Bottom),
         "left" => parse_inset(input).map(PropertyValue::Left),
-        // CSS Text 3 §6.1 text-align。
-        // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
-        // ((b) 非対応、`TextAlign` doc-comment 参照)。
+        // CSS Text 3 §6.1 text-align.
+        // The spec defines a shorthand (text-align-all + text-align-last), but
+        // we store one field (case (b) unsupported; see the `TextAlign` doc comment).
         "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
         // CSS Text 3 §8.2.1. This milestone accepts the inherited `none | first`
         // subset; unsupported valid grammar arms are dropped until their line
@@ -358,18 +358,18 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Text 3 §8.1 text-indent — `<length-percentage>` component only
         // (`hanging`/`each-line` out of scope, `PropertyValue::TextIndent` doc).
         "text-indent" => parse_text_indent(input).map(PropertyValue::TextIndent),
-        // CSS Box 3 §4.1 padding physical longhand。
-        // grammar: <length-percentage `[0,∞]`> — non-negative constraint は
-        // parse_padding_side が enforce (parse-time drop、spec-invalid → None)。
-        // `auto` keyword は spec grammar に含まれず parse_length_value の Dimension /
-        // Percentage arm fall-through で自然 reject。
+        // CSS Box 3 §4.1 padding physical longhand.
+        // Grammar: <length-percentage `[0,∞]`>. parse_padding_side enforces the
+        // non-negative constraint (invalid values are dropped during parsing).
+        // `auto` is not in the grammar and falls through the Dimension / Percentage
+        // arms of parse_length_value, so it is rejected naturally.
         "padding-top" => parse_padding_side(input).map(PropertyValue::PaddingTop),
         "padding-right" => parse_padding_side(input).map(PropertyValue::PaddingRight),
         "padding-bottom" => parse_padding_side(input).map(PropertyValue::PaddingBottom),
         "padding-left" => parse_padding_side(input).map(PropertyValue::PaddingLeft),
         // CSS Box 3 §4.2 padding shorthand: `<'padding-top'>{1,4}`
-        // <https://www.w3.org/TR/css-box-3/#padding-shorthand>。
-        // 1-4 value expansion は parse_padding_shorthand が spec verbatim で適用。
+        // <https://www.w3.org/TR/css-box-3/#padding-shorthand>.
+        // parse_padding_shorthand applies the spec's 1–4 value expansion verbatim.
         "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
         // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
         // padding-block-start/-end — physically fixed-mapped onto the
@@ -393,16 +393,16 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         }
         "padding-block" => parse_padding_logical_shorthand(input).map(PropertyValue::PaddingBlock),
         // CSS Box 3 §3.1 margin-* physical longhand.
-        // <length-percentage> | auto の grammar、negative 許容 (spec 準拠、layout
-        // 側で負値の意味付け)。
+        // Grammar: <length-percentage> | auto. Negatives are allowed by the spec;
+        // layout interprets their meaning.
         "margin-top" => parse_margin_side(input).map(PropertyValue::MarginTop),
         "margin-right" => parse_margin_side(input).map(PropertyValue::MarginRight),
         "margin-bottom" => parse_margin_side(input).map(PropertyValue::MarginBottom),
         "margin-left" => parse_margin_side(input).map(PropertyValue::MarginLeft),
-        // CSS Box 3 §3.2 margin shorthand. 1-4 value
-        // expansion。cascade 段では `PropertyValue::Margin` は `parse_declaration_block`
-        // 内で 4 longhand に展開されるため通常観測しない (詳細は
-        // `PropertyValue::Margin` doc + `crate::rule::expand_shorthand_into`)。
+        // CSS Box 3 §3.2 margin shorthand. Expands 1–4 values. During cascade,
+        // `PropertyValue::Margin` expands into four longhands in `parse_declaration_block`
+        // and is therefore not normally observed (see the `PropertyValue::Margin`
+        // doc and `crate::rule::expand_shorthand_into`).
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
         // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
         // margin-block-start/-end — same physically fixed-mapped pattern as
@@ -419,55 +419,135 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // shared-helper shape as padding-inline/padding-block above.
         "margin-inline" => parse_margin_logical_shorthand(input).map(PropertyValue::MarginInline),
         "margin-block" => parse_margin_logical_shorthand(input).map(PropertyValue::MarginBlock),
-        // CSS Backgrounds 3 §3.3 border-width physical longhand。grammar:
+        // CSS Backgrounds 3 §3.3 border-width physical longhand. Grammar:
         // `<line-width>` = `<length [0,∞]> |
-        // thin | medium | thick`。`<percentage>` は含まれない (padding とは違う点)。
-        // keyword mapping は spec 規定値:
-        // thin=1px、medium=3px、thick=5px。負値は spec grammar 違反 → drop
-        // (`parse_border_width_side` が enforce)。
-        "border-top-width" => parse_border_width_side(input).map(PropertyValue::BorderTopWidth),
-        "border-right-width" => parse_border_width_side(input).map(PropertyValue::BorderRightWidth),
+        // thin | medium | thick`. Unlike padding, it excludes `<percentage>`.
+        // Specified keyword mappings: thin=1px, medium=3px, thick=5px.
+        // Negative values violate the grammar and are dropped by
+        // `parse_border_width_side`.
+        "border-top-width" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderTopWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderTopWidth)
+            }
+        }
+        "border-right-width" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderRightWidth)
+            }
+        }
         "border-bottom-width" => {
-            parse_border_width_side(input).map(PropertyValue::BorderBottomWidth)
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderBottomWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderBottomWidth)
+            }
         }
-        "border-left-width" => parse_border_width_side(input).map(PropertyValue::BorderLeftWidth),
-        // CSS Backgrounds 3 §3.2 border-style physical longhand。grammar:
-        // `<line-style>` = 10 alternative
+        "border-left-width" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderLeftWidthCssWide(kw))
+            } else {
+                parse_border_width_side(input).map(PropertyValue::BorderLeftWidth)
+            }
+        }
+        // CSS Backgrounds 3 §3.2 border-style physical longhand. Grammar:
+        // `<line-style>` has ten alternatives
         // (none / hidden / dotted / dashed / solid / double / groove / ridge /
-        // inset / outset)。他 keyword は silent drop。
-        "border-top-style" => parse_border_style_side(input).map(PropertyValue::BorderTopStyle),
-        "border-right-style" => parse_border_style_side(input).map(PropertyValue::BorderRightStyle),
-        "border-bottom-style" => {
-            parse_border_style_side(input).map(PropertyValue::BorderBottomStyle)
+        // inset / outset). Other keywords are silently dropped.
+        "border-top-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderTopStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderTopStyle)
+            }
         }
-        "border-left-style" => parse_border_style_side(input).map(PropertyValue::BorderLeftStyle),
-        // CSS Backgrounds 3 §3.1 border-color physical longhand
-        // (`parse_border_color` 経由)。grammar: `<color>` に加え
-        // `currentcolor` keyword を先取り (CSS Color 3 §4.4)。`BorderColor` enum
-        // で specified value distinction を保持し、used-value resolution は
-        // paint scope 責務。
-        "border-top-color" => parse_border_color(input).map(PropertyValue::BorderTopColor),
-        "border-right-color" => parse_border_color(input).map(PropertyValue::BorderRightColor),
-        "border-bottom-color" => parse_border_color(input).map(PropertyValue::BorderBottomColor),
-        "border-left-color" => parse_border_color(input).map(PropertyValue::BorderLeftColor),
+        "border-right-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderRightStyle)
+            }
+        }
+        "border-bottom-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderBottomStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderBottomStyle)
+            }
+        }
+        "border-left-style" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderLeftStyleCssWide(kw))
+            } else {
+                parse_border_style_side(input).map(PropertyValue::BorderLeftStyle)
+            }
+        }
+        // CSS Backgrounds 3 §3.1 border-color physical longhand, via
+        // `parse_border_color`. The grammar also accepts `currentcolor` ahead
+        // of `<color>` (CSS Color 3 §4.4). `BorderColor` preserves the specified
+        // value distinction; used-value resolution belongs to painting.
+        "border-top-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderTopColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderTopColor)
+            }
+        }
+        "border-right-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderRightColor)
+            }
+        }
+        "border-bottom-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderBottomColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderBottomColor)
+            }
+        }
+        "border-left-color" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderLeftColorCssWide(kw))
+            } else {
+                parse_border_color(input).map(PropertyValue::BorderLeftColor)
+            }
+        }
         // CSS Backgrounds 3 §3.4 border shorthand: `<line-width> || <line-style>
-        // || <color>` (any-order、each component at most once、at least 1 present)。
-        // 4 side 全てに同一 Border を配る。cascade 段では
-        // `PropertyValue::Border` は `parse_declaration_block` 内で 12 longhand
-        // (4 side × 3 sub-property) に展開されるため通常観測しない (詳細は
-        // `PropertyValue::Border` doc + `crate::rule::expand_shorthand_into`)。
-        "border" => parse_border_shorthand(input).map(PropertyValue::Border),
+        // || <color>` (any order, each component at most once, at least one present).
+        // Apply the same Border to all four sides. During cascade,
+        // `PropertyValue::Border` expands into 12 longhands (four sides × three
+        // subproperties) in `parse_declaration_block` and is not normally observed
+        // (see the `PropertyValue::Border` doc and `crate::rule::expand_shorthand_into`).
+        "border" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderCssWide(kw))
+            } else {
+                parse_border_shorthand(input).map(PropertyValue::Border)
+            }
+        }
+        "border-right" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderRightCssWide(kw))
+            } else {
+                parse_border_right_shorthand(input).map(PropertyValue::BorderRight)
+            }
+        }
         "border-style" => parse_border_style_shorthand(input).map(PropertyValue::BorderStyle),
         "border-width" => parse_border_width_shorthand(input).map(PropertyValue::BorderWidth),
         "border-color" => parse_border_color_shorthand(input).map(PropertyValue::BorderColor),
-        // CSS Sizing 3 §3.1.1 preferred size property。
-        // grammar: `auto | <length-percentage [0,∞]> | min-content | max-content
-        // | fit-content(<length-percentage>)` のうち `auto` + non-negative
-        // `<length-percentage>` のみ受理、min-content / max-content / fit-content()
-        // は未実装 (将来対応) として silent drop、負値は spec `[0,∞]`
-        // violation として drop (parse_width が enforce)。
+        // CSS Sizing 3 §3.1.1 preferred size property.
+        // Of `auto | <length-percentage [0,∞]> | min-content | max-content
+        // | fit-content(<length-percentage>)`, accept only `auto` and non-negative
+        // `<length-percentage>`. Silently drop the unimplemented min-content,
+        // max-content, and fit-content() forms; parse_width rejects negative
+        // values under the spec's `[0,∞]` constraint.
         "width" | "inline-size" => parse_width(input).map(PropertyValue::Width),
-        // CSS Sizing 3 §3.1.1 preferred size — height。
+        // CSS Sizing 3 §3.1.1 preferred size — height.
         "height" | "block-size" => parse_height(input).map(PropertyValue::Height),
         // CSS Sizing 3 §3.2 max-size properties.
         // `none | <length-percentage [0,∞]> | min-content | max-content | fit-content`
@@ -476,13 +556,13 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "min-width" => parse_min_size(input).map(PropertyValue::MinWidth),
         "min-height" => parse_min_size(input).map(PropertyValue::MinHeight),
         "min-block-size" => parse_min_size(input).map(PropertyValue::MinBlockSize),
-        // CSS Sizing 3 §3.3 box-sizing。
-        // value grammar `content-box | border-box`、initial `content-box`、
-        // not inherited、computed value = specified keyword。
+        // CSS Sizing 3 §3.3 box-sizing.
+        // Value grammar `content-box | border-box`, initial `content-box`,
+        // not inherited, computed value = specified keyword.
         "box-sizing" => parse_box_sizing(input).map(PropertyValue::BoxSizing),
-        // CSS Writing Modes 4 §2.1 direction。
-        // value grammar `ltr | rtl`、initial `ltr`、inherited、
-        // computed value = specified keyword (`Direction` doc 参照)。
+        // CSS Writing Modes 4 §2.1 direction.
+        // Value grammar `ltr | rtl`, initial `ltr`, inherited;
+        // computed value = specified keyword (see `Direction` doc).
         "direction" => parse_direction(input).map(PropertyValue::Direction),
         // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand.
         // grammar: visible | hidden | clip | scroll |
@@ -498,8 +578,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "overflow" => parse_overflow_shorthand(input).map(PropertyValue::Overflow),
         // CSS Text Decoration 4 §2.1 text-decoration-line grammar:
         // `none | [ underline || overline || line-through || blink ] |
-        // spelling-error | grammar-error` (Level 3 の 4 keyword に Level 4
-        // の top-level 2 alternative が追加、`TextDecorationLine` doc 参照)。
+        // spelling-error | grammar-error` (Level 4 adds two top-level
+        // alternatives to the four Level 3 keywords; see `TextDecorationLine` doc).
         "text-decoration-line" => {
             parse_text_decoration_line(input).map(PropertyValue::TextDecorationLine)
         }
@@ -514,43 +594,43 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         }
         // §2.4 text-decoration shorthand: `<'text-decoration-line'> ||
         // <'text-decoration-style'> || <'text-decoration-color'> ||
-        // <'text-decoration-thickness'> (ED に thickness が追加、
-        // `TextDecorationShorthand` doc 参照)。
+        // <'text-decoration-thickness'>` (the ED adds thickness;
+        // see `TextDecorationShorthand` doc).
         "text-decoration" => {
             parse_text_decoration_shorthand(input).map(PropertyValue::TextDecoration)
         }
         // CSS Text Decoration 4 ED §2.10.4 text-decoration-skip-ink.
-        // grammar: `auto | none | all` (`TextDecorationSkipInk` doc 参照)。
+        // Grammar: `auto | none | all` (see `TextDecorationSkipInk` doc).
         "text-decoration-skip-ink" => {
             parse_text_decoration_skip_ink(input).map(PropertyValue::TextDecorationSkipInk)
         }
-        // ED §2.10.3 text-decoration-skip-spaces. grammar:
-        // `none | all | [ start || end ]` (`TextDecorationSkipSpaces`
-        // doc 参照)。
+        // ED §2.10.3 text-decoration-skip-spaces. Grammar:
+        // `none | all | [ start || end ]` (see
+        // `TextDecorationSkipSpaces` doc).
         "text-decoration-skip-spaces" => {
             parse_text_decoration_skip_spaces(input).map(PropertyValue::TextDecorationSkipSpaces)
         }
-        // ED §2.4.1 text-decoration-thickness. grammar:
-        // `auto | from-font | <length-percentage>` (`<line-width>` は scope
-        // 外、`TextDecorationThickness` doc 参照)。
+        // ED §2.4.1 text-decoration-thickness. Grammar:
+        // `auto | from-font | <length-percentage>` (`<line-width>` is out of
+        // scope; see `TextDecorationThickness` doc).
         "text-decoration-thickness" => {
             parse_text_decoration_thickness(input).map(PropertyValue::TextDecorationThickness)
         }
-        // ED §2.9.1 text-decoration-inset. grammar: `<length>{1,2} | auto`
-        // (`<percentage>` は WPT が reject するため scope 外、
-        // `TextDecorationInset` doc 参照)。
+        // ED §2.9.1 text-decoration-inset. Grammar: `<length>{1,2} | auto`
+        // (`<percentage>` is out of scope because WPT rejects it;
+        // see `TextDecorationInset` doc).
         "text-decoration-inset" => {
             parse_text_decoration_inset(input).map(PropertyValue::TextDecorationInset)
         }
-        // ED §3.4 text-emphasis-position. grammar:
+        // ED §3.4 text-emphasis-position. Grammar:
         // `auto | ([ over | under ] && [ right | left ]?)`
-        // (`TextEmphasisPosition` doc 参照)。
+        // (see `TextEmphasisPosition` doc).
         "text-emphasis-position" => {
             parse_text_emphasis_position(input).map(PropertyValue::TextEmphasisPosition)
         }
-        // ED §2.7 text-underline-position. grammar:
+        // ED §2.7 text-underline-position. Grammar:
         // `auto | [ from-font | under ] || [ left | right ]`
-        // (`TextUnderlinePosition` doc 参照)。
+        // (see `TextUnderlinePosition` doc).
         "text-underline-position" => {
             parse_text_underline_position(input).map(PropertyValue::TextUnderlinePosition)
         }
@@ -568,8 +648,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "text-underline-offset" => {
             parse_text_underline_offset(input).map(PropertyValue::TextUnderlineOffset)
         }
-        // CSS Paged Media 3 §8.1 page. grammar: `auto | <custom-ident>`
-        // (`PageValue` doc 参照)。
+        // CSS Paged Media 3 §8.1 page. Grammar: `auto | <custom-ident>`
+        // (see `PageValue` doc).
         "page" => parse_page_value(input).map(PropertyValue::Page),
         // CSS 2.1 §10.8.1 vertical-align, restricted to `baseline` / `sub` /
         // `super` / `middle` / `text-top` / `text-bottom` / `<length>`
@@ -814,30 +894,30 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "unicode-bidi" => parse_unicode_bidi(input).map(PropertyValue::UnicodeBidi),
         // CSS Tables 3 §4 table-layout. grammar: `auto | fixed`
         // <https://www.w3.org/TR/css-tables-3/#table-layout-property>
-        // (initial `auto`, not inherited). ASCII case-insensitive
-        // matching は sibling `parse_float` と同 flavor、余剰 token は
-        // caller (`rule.rs::DeclParser`) の `expect_exhausted` が drop する。
+        // (initial `auto`, not inherited). ASCII case-insensitive matching
+        // follows sibling `parse_float`; the caller's `expect_exhausted`
+        // (`rule.rs::DeclParser`) drops any remaining tokens.
         "table-layout" => parse_table_layout(input).map(PropertyValue::TableLayout),
         // CSS Tables 3 §6 border-collapse. grammar: `collapse | separate`
         // <https://www.w3.org/TR/css-tables-3/#border-collapse-property>
-        // (initial `separate`, inherited). matching 規則は直上の
-        // `table-layout` arm と同じ。
+        // (initial `separate`, inherited). Uses the same matching rules
+        // as the `table-layout` arm above.
         "border-collapse" => parse_border_collapse(input).map(PropertyValue::BorderCollapse),
         // CSS Tables 3 §6.1 border-spacing. grammar: `<length>{1,2}`
         // <https://www.w3.org/TR/css-tables-3/#border-spacing-property>
         // (initial `0`, inherited, Percentages: N/A, negative illegal).
-        // `calc()` 混じりは上流の deferred path が `Deferred` に回す
-        // (`width` 等と同型) — ここは plain `<length>` のみ扱う。
+        // Values containing `calc()` take the upstream deferred path to
+        // `Deferred` (as with `width`); this arm handles only plain `<length>`.
         "border-spacing" => parse_border_spacing(input).map(PropertyValue::BorderSpacing),
         // CSS Tables 3 §7 caption-side. grammar: `top | bottom`
         // <https://www.w3.org/TR/css-tables-3/#caption-side-property>
-        // (initial `top`, inherited). matching 規則は直上の
-        // `table-layout` arm と同じ。
+        // (initial `top`, inherited). Uses the same matching rules
+        // as the `table-layout` arm above.
         "caption-side" => parse_caption_side(input).map(PropertyValue::CaptionSide),
         // CSS Tables 3 §8 empty-cells. grammar: `show | hide`
         // <https://www.w3.org/TR/css-tables-3/#empty-cells-property>
-        // (initial `show`, inherited). matching 規則は直上の
-        // `table-layout` arm と同じ。
+        // (initial `show`, inherited). Uses the same matching rules
+        // as the `table-layout` arm above.
         "empty-cells" => parse_empty_cells(input).map(PropertyValue::EmptyCells),
         // CSS Fonts 4 §2.1 font shorthand — 15 longhands (6 grammar components plus
         // 9 modeled reset-only subproperties) are expanded by
@@ -849,7 +929,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Fonts Module Level 3 §6.6 font-variant-caps. grammar: `normal
         // | small-caps | all-small-caps | petite-caps | all-petite-caps |
         // unicase | titling-caps` — all 7 keywords implemented
-        // (`FontVariantCaps` doc's "7 keyword の意味" section). initial
+        // (see `FontVariantCaps` doc's "Meaning of the seven keywords" section). initial
         // `normal`, inherited, computed value = specified keyword. The
         // `font-variant` shorthand has no dispatch arm of its own
         // (`FontVariantCaps` doc's "Scope carving" section — it would need
@@ -858,7 +938,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Content Module Level 3 §2.4.1 (legacy CSS2 §12.3.1 grammar
         // subset: `none | [ <string> <string> ]+`, `auto` / `match-parent`
         // not implemented — see `PropertyValue::Quotes` doc). Arc wrap +
-        // shared-empty-slot は counter-* と同じ DoS 対策 pattern。
+        // shared-empty-slot follows the counter-* DoS mitigation pattern.
         "quotes" => parse_quotes_property(input).map(|v| {
             if v.is_empty() {
                 PropertyValue::Quotes(empty_quotes_entries())
@@ -866,11 +946,11 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::Quotes(Arc::new(v))
             }
         }),
-        // CSS Text Decoration Module Level 3 §4 text-shadow。
-        // Arc wrap は cascade memory DoS 対策 (同種の Content/StringSet/
-        // counter-* fix の pattern 踏襲)、空 list (`none`) は shared Arc slot
-        // (`empty_text_shadow_list`) に落として per-node allocation
-        // regression を避ける。
+        // CSS Text Decoration Module Level 3 §4 text-shadow.
+        // Arc wrapping reduces cascade memory for DoS resistance, following the
+        // Content/StringSet/counter-* fixes. Empty lists (`none`) use the shared
+        // Arc slot (`empty_text_shadow_list`) to avoid per-node allocation
+        // regressions.
         "text-shadow" => parse_text_shadow(input).map(|v| {
             if v.is_empty() {
                 PropertyValue::TextShadow(empty_text_shadow_list())
@@ -922,7 +1002,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "outline-style" => parse_outline_style_side(input).map(PropertyValue::OutlineStyle),
         "outline-color" => parse_outline_color(input).map(PropertyValue::OutlineColor),
         // CSS UI 3 §4.5 outline-offset — <length>, initial 0, non-inherited.
-        // 負値も受理し、border edge からの offset を示す。`<percentage>` は grammar 外。
+        // Negative values are accepted and offset from the border edge; `<percentage>` is outside the grammar.
         "outline-offset" => parse_length_allow_negative(input).map(PropertyValue::OutlineOffset),
         // CSS Grid Layout Module Level 1 §7.2. The common WPT shorthand
         // form is `<grid-template-rows> / <grid-template-columns>`.

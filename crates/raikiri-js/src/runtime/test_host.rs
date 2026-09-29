@@ -1,6 +1,7 @@
 //! Deterministic [`DocumentHost`] for unit tests: a real raikiri-dom
 //! document with fixed geometry and computed values.
 
+use std::any::Any;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -142,5 +143,14 @@ impl DocumentHost for StubHost {
             .get(url)
             .cloned()
             .ok_or_else(|| HostError(format!("no script registered for {url}")))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }

@@ -42,26 +42,24 @@ pub(crate) fn cascade_with_ua(
     target_tag: &str,
     inline: Option<&str>,
 ) -> ComputedValues {
-    // UA rule + Author rule + inline を一気に組み立てて cascade 実行
+    // Build the UA and author rules plus inline styles, then run the cascade.
     let mut doc = TestDoc::new();
-    // Author の <style> は DOM 側から build_rule_tree に読ませる
+    // Have build_rule_tree read the author's <style> from the DOM.
     if !author_css.is_empty() {
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, author_css);
     }
     let e = doc.push_element(0, target_tag, inline);
 
-    // build_rule_tree (Author 集約) + UA add_stylesheet
+    // build_rule_tree gathers Author rules; add_stylesheet adds UA rules.
     let mut tree = build_rule_tree(&doc);
-    // UA CSS を先頭に inject するのではなく、既存の Author rule の後ろに
-    // add してから rank 化で origin 順序を担保する (source_order より rank
-    // が優位)
-    // ただし現状 add_stylesheet の呼び出し順で source_order が振られ
-    // Author が先 (source_order 小)、UA が後 (source_order 大) となる。
-    // rank 化により Origin::UserAgent の Normal は Origin::Author の
-    // Normal より常に低い rank になる (`cascade_rank` doc に正確な値
-    // あり) ので UA rule が Author を上書きすることはない (source_order
-    // に関わらず rank が優先)。
+    // Rather than inserting UA CSS first, add it after the existing Author rules.
+    // Origin rank preserves cascade precedence because rank beats source_order.
+    // Currently, add_stylesheet assigns source_order by call order, so Author
+    // rules come first (lower source_order) and UA rules last (higher source_order).
+    // Ranking always places normal Origin::UserAgent below normal Origin::Author
+    // (see `cascade_rank` for the exact values). UA rules therefore cannot
+    // override Author rules, regardless of source_order.
     if !ua_css.is_empty() {
         tree.add_stylesheet(ua_css, Origin::UserAgent);
     }

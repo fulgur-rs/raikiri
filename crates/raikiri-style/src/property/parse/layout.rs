@@ -10,82 +10,72 @@ use crate::property::types::*;
 
 use super::common::*;
 
-/// `flex-direction: row | row-reverse | column | column-reverse` を parse
-/// する (CSS Flexible Box Layout Module Level 1 §5.1
-/// <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>)。
-/// [`parse_display`] と同じ single-ident ASCII case-insensitive idiom。
+/// Parses `flex-direction: row | row-reverse | column | column-reverse` (CSS
+/// Flexible Box Layout Module Level 1 §5.1
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>).
+/// Uses the same single-ident, ASCII case-insensitive approach as [`parse_display`].
 pub(super) fn parse_flex_direction(input: &mut Parser<'_, '_>) -> Option<FlexDirectionValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "row" => Some(FlexDirectionValue::Row),
-        "row-reverse" => Some(FlexDirectionValue::RowReverse),
-        "column" => Some(FlexDirectionValue::Column),
-        "column-reverse" => Some(FlexDirectionValue::ColumnReverse),
-        _ => None,
-    }
+    FlexDirectionValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `flex-wrap: nowrap | wrap | wrap-reverse` を parse する (CSS Flexible Box
+/// Parses `flex-wrap: nowrap | wrap | wrap-reverse` (CSS Flexible Box
 /// Layout Module Level 1 §5.2
-/// <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>)。
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-wrap-property>).
 pub(super) fn parse_flex_wrap(input: &mut Parser<'_, '_>) -> Option<FlexWrapValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "nowrap" => Some(FlexWrapValue::NoWrap),
-        "wrap" => Some(FlexWrapValue::Wrap),
-        "wrap-reverse" => Some(FlexWrapValue::WrapReverse),
-        _ => None,
-    }
+    FlexWrapValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `<number [0,∞]>` を parse する — `flex-grow` / `flex-shrink` 共有 helper。
+/// Parses `<number [0,∞]>` for both `flex-grow` and `flex-shrink`.
 ///
-/// # Non-negative **と** finite の両方を parse 時に enforce する
+/// # Enforce both non-negativity and finiteness while parsing
 ///
-/// [`parse_line_height`](super::text::parse_line_height) の `<number>` branch と同じ `[0,∞]` non-negative
-/// check に加え、本 helper は **finiteness も** enforce する
-/// ([`PropertyValue::FlexGrow`] doc 参照)。これは本 crate の他の length 系
-/// helper (`parse_length_value` 等) とは非対称な判断で、理由は明示しておく:
-/// `padding`/`width` 等の length は raikiri-dom 側の
-/// `sanitize_taffy`/`sanitize_taffy_layout` という **sink 境界の guard** を
-/// 必ず経由してから taffy に渡る (「guard は sink 境界に置く」という本 crate
-/// 全体の設計方針、`crates/raikiri-dom/src/layout.rs` の非有限 f32 guard 節
-/// 参照) ため parse 層では素通しでよい。一方 `flex-grow`/`flex-shrink` は
-/// raikiri-dom の `bridge_flex` が `taffy::Style::flex_grow`/`flex_shrink`
-/// (共に生 `f32`) へ **無変換で直接 copy する** — 途中に絶対化/sink guard の
-/// 通過点が無いため、`+Inf` を防ぐ唯一の場所が本 parse-time check になる。
-/// `<number [0,∞]>` 自体の f64→f32 変換 (cssparser tokenizer 側) は巨大な
-/// literal (`flex-grow: 1e40`) で `+Inf` を produce しうる。`NaN` についても
-/// 同じ `is_finite()` check が引き続き弾くが、`expect_number_stable`
-/// (module doc「Numeric-token NaN stabilization」節参照) が zero-mantissa
-/// huge-exponent literal (`flex-grow: 0e999`) 由来の `NaN` を acquisition
-/// 時点で既に訂正するため、通常の parse ではこの check が `NaN` を実際に
-/// 弾く場面はもう無い — `+Inf` に対する必須の check という位置づけ。
+/// Like the `<number>` branch of [`parse_line_height`](super::text::parse_line_height), this helper checks
+/// that the number is non-negative (`[0,∞]`). It also requires the number to
+/// be finite (see the [`PropertyValue::FlexGrow`] docs). This differs from
+/// other length helpers in this crate, such as `parse_length_value`.
+/// Lengths such as `padding` and `width` always pass through the
+/// **sink-boundary guards** `sanitize_taffy`/`sanitize_taffy_layout` in
+/// raikiri-dom before reaching taffy. This follows the crate-wide policy of
+/// placing guards at sink boundaries; see the non-finite f32 guard discussion
+/// in `crates/raikiri-dom/src/layout.rs`. The parser can therefore pass those
+/// lengths through. In contrast, raikiri-dom's `bridge_flex` copies
+/// `flex-grow`/`flex-shrink` directly into `taffy::Style::flex_grow`/`flex_shrink`
+/// (both raw `f32` fields), without a conversion or sink guard. This parse-time
+/// check is the only place to reject `+Inf` along that path.
+/// The f64→f32 conversion performed by the cssparser tokenizer for
+/// `<number [0,∞]>` can produce `+Inf` from a huge literal such as
+/// `flex-grow: 1e40`. The same `is_finite()` check also rejects `NaN`.
+/// However, `expect_number_stable` (see "Numeric-token NaN stabilization"
+/// in the module docs) already corrects `NaN` caused by zero-mantissa,
+/// huge-exponent literals such as `flex-grow: 0e999` at acquisition time.
+/// Thus normal parsing no longer reaches this check with `NaN`; it remains
+/// essential for rejecting `+Inf`.
 pub(crate) fn parse_nonneg_finite_number(input: &mut Parser<'_, '_>) -> Option<f32> {
     let n = expect_number_stable(input).ok()?;
     (n.is_finite() && n >= 0.0).then_some(n)
 }
 
-/// [`parse_nonneg_finite_number`] の `Result` 版 — `try_parse` closure 用
-/// ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と同じ wrapper pattern)。range/finite check
-/// の失敗も `Err` として返すため、`try_parse` が呼び出し側で自動的に
-/// rewind する (捕捉した Number token を別 branch へ fall through させない
-/// — [`parse_line_height`](super::text::parse_line_height) doc の「Number token を commit した後は必ず
-/// ここで確定させる」節と同じ懸念を、check 自体を closure 内に置くことで
-/// 構造的に回避する)。
+/// The `Result` form of [`parse_nonneg_finite_number`] for `try_parse`
+/// closures (following the wrapper pattern of
+/// [`parse_padding_side_res`](super::box_model::parse_padding_side_res)). Range and finiteness failures
+/// also return `Err`, so the caller's `try_parse` automatically rewinds.
+/// The captured Number token cannot fall through to another branch. This
+/// addresses the same concern discussed in the "Commit a Number token before
+/// choosing its result" section of the [`parse_line_height`](super::text::parse_line_height) docs by placing
+/// the check inside the closure.
 fn parse_nonneg_finite_number_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<f32, ParseError<'i, ()>> {
     parse_nonneg_finite_number(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `flex-basis: content | <'width'>` を parse する (CSS Flexible Box Layout
+/// Parses `flex-basis: content | <'width'>` (CSS Flexible Box Layout
 /// Module Level 1 §7.2.3
-/// <https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>)。
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>).
 ///
-/// [`parse_width`](super::box_model::parse_width) と同じ 3-branch shape (`auto` → `content` →
-/// `<length-percentage [0,∞]>`) に `content` branch を追加したもの —
-/// [`FlexBasisValue`] doc 参照。
+/// Extends the three-branch shape of [`parse_width`](super::box_model::parse_width) (`auto` → `content` →
+/// `<length-percentage [0,∞]>`) with a `content` branch; see the
+/// [`FlexBasisValue`] docs.
 pub(crate) fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(FlexBasisValue::Auto);
@@ -115,58 +105,59 @@ pub(crate) fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisVa
         return Some(FlexBasisValue::FitContent);
     }
     let length = parse_length_value(input, true)?;
-    // `<'width'>` reuse: CSS Sizing 3 §3.1.1 の `[0,∞]` non-negative
-    // constraint (`parse_width` と同 pattern)。
+    // Reuse `<'width'>` with the CSS Sizing 3 §3.1.1 `[0,∞]` non-negative
+    // constraint, following the same pattern as `parse_width`.
     (length.payload() >= 0.0).then_some(FlexBasisValue::Length(length))
 }
 
-/// [`parse_flex_basis`] の `Result` 版 ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と同じ
-/// wrapper pattern、[`parse_flex_shorthand`] の `try_parse` 用)。
+/// The `Result` form of [`parse_flex_basis`], following the wrapper
+/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
+/// [`parse_flex_shorthand`].
 fn parse_flex_basis_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FlexBasisValue, ParseError<'i, ()>> {
     parse_flex_basis(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `flex: none | [ <'flex-grow'> <'flex-shrink'>? || <'flex-basis'> ]` を
-/// parse する (CSS Flexible Box Layout Module Level 1 §7.1 "The flex
-/// Shorthand" <https://www.w3.org/TR/css-flexbox-1/#flex-property>)。
+/// Parses `flex: none | [ <'flex-grow'> <'flex-shrink'>? || <'flex-basis'> ]`
+/// (CSS Flexible Box Layout Module Level 1 §7.1 "The flex Shorthand"
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-property>).
 ///
-/// [`FlexShorthand`] doc の "Omitted-component defaults" 節が説明する
-/// shorthand-local default (grow=1 / shrink=1 / basis=0px、longhand 自身の
-/// initial とは異なる) をここで適用する。
+/// Applies the shorthand-local defaults described under "Omitted-component
+/// defaults" in the [`FlexShorthand`] docs: grow=1, shrink=1, basis=0px.
+/// These differ from the longhands' own initial values.
 ///
 /// # `none` — exclusive keyword
 ///
-/// spec §7.1 "The keyword none expands to 0 0 auto." — 他の component と
-/// 共存しない (grammar top-level alternative)。
+/// Spec §7.1 says, "The keyword none expands to 0 0 auto." It cannot be
+/// combined with other components because it is a top-level grammar alternative.
 ///
-/// # Component order と unitless-zero ambiguity
+/// # Component order and unitless-zero ambiguity
 ///
-/// grammar は `<flex-grow> <flex-shrink>?` の group と `<flex-basis>` の 2
-/// group を `||` (any order、どちらか 1 つ以上) で combine する。本関数は
-/// 最大 3 回のループで両 group を試す —
-/// **`<flex-grow>` group を毎回先に試す**ことで、spec 本文の以下の
-/// disambiguation 規則をそのまま実現する (verbatim):
+/// The grammar combines a `<flex-grow> <flex-shrink>?` group and a
+/// `<flex-basis>` group with `||`: either order, at least one group. This
+/// function tries both groups in at most three iterations. **Trying the
+/// `<flex-grow>` group first each time** implements the spec's disambiguation
+/// rule directly (verbatim):
 ///
 /// > A unitless zero that is not already preceded by two flex factors must
 /// > be interpreted as a flex factor. To avoid misinterpretation or invalid
 /// > declarations, authors must specify a zero `<'flex-basis'>` component
 /// > with a unit or precede it by two flex factors.
 ///
-/// `grow` が未確定な間は bare `0` を常に number (flex factor) として先取り
-/// consume するため、`flex: 0` は `grow=0` (`<'flex-basis'>` ではない) に
-/// なる。`grow`/`shrink` が両方確定した**後**の bare `0` は
-/// [`parse_flex_basis`] の unitless-zero clause 経由で `flex-basis` として
-/// 解釈される (`flex: 2 3 0` → `basis: Length(Px(0.0))`)。
+/// While `grow` remains unset, this function first consumes bare `0` as a
+/// number (flex factor). Thus `flex: 0` sets `grow=0`, not `<'flex-basis'>`.
+/// Only **after** both `grow` and `shrink` are set does bare `0` become
+/// `flex-basis` through the unitless-zero clause in [`parse_flex_basis`]
+/// (`flex: 2 3 0` → `basis: Length(Px(0.0))`).
 ///
-/// `<flex-shrink>` は grammar 上 `<flex-grow>` に直接後続する成分であり
-/// (独立した `||` alternative ではない)、本関数もそれに合わせて `grow` を
-/// 得た**直後**にのみ `shrink` を試す。
+/// The grammar places `<flex-shrink>` directly after `<flex-grow>` rather
+/// than in a separate `||` alternative. Accordingly, this function tries
+/// `shrink` only **immediately after** obtaining `grow`.
 ///
-/// 5 個目以降の leftover token は本関数では consume せず、[`parse_padding_shorthand`](super::box_model::parse_padding_shorthand)
-/// 等と同じく caller (`rule.rs::DeclParser`) の `expect_exhausted` が
-/// declaration ごと drop する。
+/// This function leaves any fifth or later token unconsumed. As with
+/// [`parse_padding_shorthand`](super::box_model::parse_padding_shorthand), the caller's
+/// `expect_exhausted` (`rule.rs::DeclParser`) drops the whole declaration.
 pub(crate) fn parse_flex_shorthand(input: &mut Parser<'_, '_>) -> Option<FlexShorthand> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(FlexShorthand {
@@ -184,8 +175,8 @@ pub(crate) fn parse_flex_shorthand(input: &mut Parser<'_, '_>) -> Option<FlexSho
             && let Ok(g) = input.try_parse(parse_nonneg_finite_number_res)
         {
             grow = Some(g);
-            // `<flex-shrink>` は `<flex-grow>` に直接後続する成分 — 独立
-            // alternative としては試さない (上記 doc 参照)。
+            // The grammar puts `<flex-shrink>` directly after `<flex-grow>`; do
+            // not try it as an independent alternative (see the docs above).
             if let Ok(s) = input.try_parse(parse_nonneg_finite_number_res) {
                 shrink = Some(s);
             }
@@ -202,59 +193,60 @@ pub(crate) fn parse_flex_shorthand(input: &mut Parser<'_, '_>) -> Option<FlexSho
             break;
         }
     }
-    // grammar 上どちらかの group が最低 1 つは要る — 0-value form
-    // (`flex:` に何も続かない) は invalid。
+    // At least one grammar group is required; the zero-value form
+    // (`flex:` with no following value) is invalid.
     if grow.is_none() && basis.is_none() {
         return None;
     }
     Some(FlexShorthand {
-        // shorthand-local default (`FlexShorthand` doc 参照) — longhand
-        // 自身の initial (grow=0 / basis=auto) とは異なる。
+        // These are shorthand-local defaults (see the `FlexShorthand` docs),
+        // not the longhands' initial values (grow=0 / basis=auto).
         grow: grow.unwrap_or(1.0),
         shrink: shrink.unwrap_or(1.0),
         basis: basis.unwrap_or(FlexBasisValue::Length(Length::Px(0.0))),
     })
 }
 
-/// `order: <integer>` を parse する (CSS Flexible Box Layout Module Level 1
+/// Parses `order: <integer>` (CSS Flexible Box Layout Module Level 1
 /// §4.2 "Display Order: the order property"
-/// <https://www.w3.org/TR/css-flexbox-1/#order-property>、
-/// [`PropertyValue::Order`] doc 参照)。
+/// <https://www.w3.org/TR/css-flexbox-1/#order-property>; see the
+/// [`PropertyValue::Order`] docs).
 ///
-/// `expect_integer` 直接呼び出し — [`parse_z_index`](super::box_model::parse_z_index) と同じ pattern。spec
-/// value grammar は `<integer>` のみ (符号付き、range 制限なし)。
+/// Calls `expect_integer` directly, as [`parse_z_index`](super::box_model::parse_z_index) does.
+/// The grammar accepts only `<integer>`, including signed values, with no range limit.
 pub(super) fn parse_order(input: &mut Parser<'_, '_>) -> Option<i32> {
     input.try_parse(|i| i.expect_integer()).ok()
 }
 
-/// [`parse_flex_direction`] の `Result` 版 ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と
-/// 同じ wrapper pattern、[`parse_flex_flow`] の `try_parse` 用)。
+/// The `Result` form of [`parse_flex_direction`], following the wrapper
+/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
+/// [`parse_flex_flow`].
 fn parse_flex_direction_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FlexDirectionValue, ParseError<'i, ()>> {
     parse_flex_direction(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// [`parse_flex_wrap`] の `Result` 版 ([`parse_flex_direction_res`] と同じ
-/// wrapper pattern、[`parse_flex_flow`] の `try_parse` 用)。
+/// The `Result` form of [`parse_flex_wrap`], following the wrapper
+/// pattern of [`parse_flex_direction_res`], for the `try_parse` in
+/// [`parse_flex_flow`].
 fn parse_flex_wrap_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FlexWrapValue, ParseError<'i, ()>> {
     parse_flex_wrap(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `flex-flow: <'flex-direction'> || <'flex-wrap'>` を parse する (CSS
+/// Parses `flex-flow: <'flex-direction'> || <'flex-wrap'>` (CSS
 /// Flexible Box Layout Module Level 1 §5.3 "Flex Direction and Wrap: the
 /// flex-flow shorthand"
-/// <https://www.w3.org/TR/css-flexbox-1/#flex-flow-property>、
-/// [`FlexFlow`] doc 参照)。
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-flow-property>; see the
+/// [`FlexFlow`] docs).
 ///
-/// `||` (any-order、each component at most once、at least 1 必須) —
-/// 最大 2 回のループで両 component を試す。省略成分は対応 longhand の
-/// initial (direction=row / wrap=nowrap) を適用する。
-/// leftover token は本関数では consume せず、caller
-/// (`rule.rs::DeclParser`) の `expect_exhausted` が declaration ごと drop
-/// する ([`parse_flex_shorthand`] と同じ contract)。
+/// The `||` grammar allows either order, each component at most once, and
+/// requires at least one. Up to two iterations try both components. Omitted
+/// components take their longhands' initial values (direction=row / wrap=nowrap).
+/// This function leaves extra tokens unconsumed. The caller's `expect_exhausted`
+/// (`rule.rs::DeclParser`) drops the declaration, as with [`parse_flex_shorthand`].
 pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
     let mut direction: Option<FlexDirectionValue> = None;
     let mut wrap: Option<FlexWrapValue> = None;
@@ -286,39 +278,27 @@ pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
     })
 }
 
-/// `justify-content` / `align-content` 共有 parser
-/// ([`ContentAlignmentValue`] doc の scope carving 節参照 — `safe`/`unsafe`
-/// prefix、`<baseline-position>`、justify-content 独自の `left`/`right` は
-/// 単一 ident しか consume しない本関数の shape 上、自然に unmatched (2-token
-/// 列や非対応 ident は `_ => None`) になる)。
+/// Shared parser for `justify-content` and `align-content`; see the
+/// scope carving in the [`ContentAlignmentValue`] docs. This function consumes
+/// only one ident. Thus `safe`/`unsafe` prefixes, `<baseline-position>`, and
+/// the `left`/`right` values specific to justify-content remain unmatched:
+/// two-token sequences and unsupported idents return `_ => None`.
 pub(super) fn parse_content_alignment(input: &mut Parser<'_, '_>) -> Option<ContentAlignmentValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(ContentAlignmentValue::Normal),
-        "stretch" => Some(ContentAlignmentValue::Stretch),
-        "space-between" => Some(ContentAlignmentValue::SpaceBetween),
-        "space-evenly" => Some(ContentAlignmentValue::SpaceEvenly),
-        "space-around" => Some(ContentAlignmentValue::SpaceAround),
-        "center" => Some(ContentAlignmentValue::Center),
-        "start" => Some(ContentAlignmentValue::Start),
-        "end" => Some(ContentAlignmentValue::End),
-        "flex-start" => Some(ContentAlignmentValue::FlexStart),
-        "flex-end" => Some(ContentAlignmentValue::FlexEnd),
-        _ => None,
-    }
+    ContentAlignmentValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// [`parse_content_alignment`] の `Result` 版 ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と
-/// 同じ wrapper pattern、[`parse_place_content_shorthand`] の `try_parse` 用)。
+/// The `Result` form of [`parse_content_alignment`], following the wrapper
+/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
+/// [`parse_place_content_shorthand`].
 fn parse_content_alignment_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<ContentAlignmentValue, ParseError<'i, ()>> {
     parse_content_alignment(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `align-items` parser ([`SelfAlignmentValue`] doc の scope carving 節
-/// 参照)。`align-self` (`auto` を追加で受理する) は [`parse_align_self`] が
-/// 本関数を再利用する。
+/// Parser for `align-items`; see the scope carving in the
+/// [`SelfAlignmentValue`] docs. [`parse_align_self`] reuses this function for
+/// `align-self`, while accepting `auto` as an additional value.
 pub(super) fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAlignmentValue> {
     let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
     let _unsafe = !safe
@@ -357,18 +337,19 @@ pub(super) fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAli
     )
 }
 
-/// [`parse_self_alignment`] の `Result` 版 ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と
-/// 同じ wrapper pattern、[`parse_place_items_shorthand`] の `try_parse` 用)。
+/// The `Result` form of [`parse_self_alignment`], following the wrapper
+/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
+/// [`parse_place_items_shorthand`].
 fn parse_self_alignment_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<SelfAlignmentValue, ParseError<'i, ()>> {
     parse_self_alignment(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `align-self: auto | …` parser — `auto` branch を先に試し
-/// (`try_parse` checkpoint、[`parse_width`](super::box_model::parse_width) の "Order of alternatives" 節と
-/// 同じ rationale)、それ以外は [`parse_self_alignment`] (= `align-items` と
-/// 同じ keyword set) に delegate する。
+/// Parser for `align-self: auto | …`. It tries the `auto` branch first
+/// using a `try_parse` checkpoint (as explained under "Order of alternatives"
+/// in the [`parse_width`](super::box_model::parse_width) docs). Other values delegate to
+/// [`parse_self_alignment`], which uses the same keyword set as `align-items`.
 pub(super) fn parse_align_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(AlignSelfValue::Auto);
@@ -414,19 +395,20 @@ pub(super) fn parse_justify_self(input: &mut Parser<'_, '_>) -> Option<AlignSelf
     })
 }
 
-/// [`parse_align_self`] の `Result` 版 ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と同じ
-/// wrapper pattern、[`parse_place_self_shorthand`] の `try_parse` 用)。
+/// The `Result` form of [`parse_align_self`], following the wrapper
+/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
+/// [`parse_place_self_shorthand`].
 fn parse_align_self_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<AlignSelfValue, ParseError<'i, ()>> {
     parse_align_self(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` 共有
-/// parser (CSS Box Alignment Module Level 3 §8.1
-/// <https://www.w3.org/TR/css-align-3/#propdef-row-gap>)。
+/// Shared parser for `row-gap` and `column-gap`:
+/// `normal | <length-percentage [0,∞]>` (CSS Box Alignment Module Level 3 §8.1
+/// <https://www.w3.org/TR/css-align-3/#propdef-row-gap>).
 ///
-/// `normal` branch → length branch の parser. The shared length parser
+/// It tries `normal` before the length branch. The shared length parser
 /// accepts percentages; this property additionally rejects negative values,
 /// matching the `[0,∞]` constraint with [`parse_padding_side`](super::box_model::parse_padding_side).
 pub(crate) fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
@@ -440,31 +422,32 @@ pub(crate) fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNorm
     (length.payload() >= 0.0).then_some(LengthOrNormal::Length(length))
 }
 
-/// [`parse_gap_value`] の `Result` 版 ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と同じ
-/// wrapper pattern、[`parse_gap_shorthand`] の `try_parse` 用)。
+/// The `Result` form of [`parse_gap_value`], following the wrapper
+/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
+/// [`parse_gap_shorthand`].
 fn parse_gap_value_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<LengthOrNormal, ParseError<'i, ()>> {
     parse_gap_value(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `gap: <'row-gap'> <'column-gap'>?` shorthand を parse する (CSS Box
+/// Parses the shorthand `gap: <'row-gap'> <'column-gap'>?` (CSS Box
 /// Alignment Module Level 3 §8.2
-/// <https://www.w3.org/TR/css-align-3/#propdef-gap>)。第 2 成分省略時は
-/// spec 本文通り第 1 成分をそのまま copy する ([`GapShorthand`] doc 参照)。
+/// <https://www.w3.org/TR/css-align-3/#propdef-gap>). When the second component
+/// is omitted, the first is copied unchanged, as the spec requires; see the
+/// [`GapShorthand`] docs.
 pub(crate) fn parse_gap_shorthand(input: &mut Parser<'_, '_>) -> Option<GapShorthand> {
     let row = parse_gap_value(input)?;
     let column = input.try_parse(parse_gap_value_res).unwrap_or(row);
     Some(GapShorthand { row, column })
 }
 
-/// `place-content: <'align-content'> <'justify-content'>?` shorthand を
-/// parse する (CSS Box Alignment Module Level 3 §5.2
-/// <https://www.w3.org/TR/css-align-3/#propdef-place-content>)。第 2 成分
-/// 省略時は spec 本文通り第 1 成分をそのまま copy する
-/// ([`PlaceContentShorthand`] doc 参照 — `<baseline-position>` 例外分岐は
-/// [`ContentAlignmentValue`] が同 variant を持たないため本 crate では
-/// 到達不能)。
+/// Parses the shorthand `place-content: <'align-content'> <'justify-content'>?`
+/// (CSS Box Alignment Module Level 3 §5.2
+/// <https://www.w3.org/TR/css-align-3/#propdef-place-content>). When the second
+/// component is omitted, the first is copied unchanged, as the spec requires;
+/// see the [`PlaceContentShorthand`] docs. The `<baseline-position>` exception
+/// cannot arise in this crate because [`ContentAlignmentValue`] has no such variant.
 pub(crate) fn parse_place_content_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<PlaceContentShorthand> {
@@ -479,25 +462,25 @@ pub(crate) fn parse_place_content_shorthand(
 // CSS Grid Layout Module Level 1 parsers.
 // ─────────────────────────────────────────────────────────────────────────
 
-/// `<custom-ident>` 除外リスト — [`GridLineValue`] 系 production と
-/// `<line-names>` (§7.2.2) の両方で使う ([`is_reserved_custom_ident`] に
-/// `span` / `auto` を追加除外)。
+/// The `<custom-ident>` exclusion list used by both the [`GridLineValue`]
+/// productions and `<line-names>` (§7.2.2). It adds `span` and `auto` to the
+/// exclusions in [`is_reserved_custom_ident`].
 ///
-/// CSS Grid Layout Module Level 1 §8.3 verbatim: "In all the above
+/// CSS Grid Layout Module Level 1 §8.3 says (verbatim): "In all the above
 /// productions, the `<custom-ident>` additionally excludes the keywords
-/// `span` and `auto`"、および §7.2.2 verbatim: "A line name cannot be span
+/// `span` and `auto`"; §7.2.2 also says: "A line name cannot be span
 /// or auto, i.e. the `<custom-ident>` in the `<line-names>` production
-/// excludes the keywords span and auto." — §7.2.2 自身がこの除外を明示的に
-/// `<line-names>` production に適用すると述べている ([`is_reserved_counter_name`](super::content::is_reserved_counter_name)
-/// が base list に `none` を足す precedent と同じ pattern)。
+/// excludes the keywords span and auto." Thus §7.2.2 explicitly applies
+/// this exclusion to `<line-names>`, just as
+/// [`is_reserved_counter_name`](super::content::is_reserved_counter_name) adds `none` to its base list.
 pub(crate) fn is_reserved_grid_line_name(ident: &str) -> bool {
     is_reserved_custom_ident(ident)
         || matches!(ident.to_ascii_lowercase().as_str(), "span" | "auto")
 }
 
-/// [`GridLineValue`] 系 production 内の `<custom-ident>` を parse する
-/// ([`is_reserved_grid_line_name`] の追加除外を適用する点のみ
-/// [`parse_custom_ident`] と異なる)。
+/// Parses `<custom-ident>` within [`GridLineValue`] productions.
+/// It applies the extra exclusions in [`is_reserved_grid_line_name`], unlike
+/// [`parse_custom_ident`].
 fn parse_grid_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     let ident = input.expect_ident().ok()?.clone();
     if is_reserved_grid_line_name(&ident) {
@@ -507,27 +490,29 @@ fn parse_grid_custom_ident(input: &mut Parser<'_, '_>) -> Option<SmolStr> {
     }
 }
 
-/// [`parse_grid_custom_ident`] の `Result` 版 ([`parse_padding_side_res`](super::box_model::parse_padding_side_res) と
-/// 同じ wrapper pattern、`&&`/`||` combinator 内の `try_parse` 用)。
+/// The `Result` form of [`parse_grid_custom_ident`], following the
+/// wrapper pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for `try_parse`
+/// inside `&&`/`||` combinators.
 fn parse_grid_custom_ident_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<SmolStr, ParseError<'i, ()>> {
     parse_grid_custom_ident(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-/// `<line-names> = '[' <custom-ident>* ']'` (CSS Grid Layout Module Level 1
-/// §7.2.2 "Naming Grid Lines: the `[<custom-ident>*]` syntax"
-/// <https://www.w3.org/TR/css-grid-1/#named-lines>) を parse する。
+/// Parses `<line-names> = '[' <custom-ident>* ']'` (CSS Grid Layout
+/// Module Level 1 §7.2.2 "Naming Grid Lines: the `[<custom-ident>*]` syntax"
+/// <https://www.w3.org/TR/css-grid-1/#named-lines>).
 ///
-/// `<line-names>` の `<custom-ident>` は [`is_reserved_grid_line_name`] の
-/// 追加除外 (`span`/`auto`) を**受ける** — §7.2.2 verbatim: "A line name
-/// cannot be span or auto, i.e. the `<custom-ident>` in the `<line-names>`
-/// production excludes the keywords span and auto." (この除外は §8.3 の
-/// `<grid-line>` production 群だけでなく、§7.2.2 自身が明示する)。
+/// The `<custom-ident>` inside `<line-names>` **does** receive the extra
+/// `span`/`auto` exclusions in [`is_reserved_grid_line_name`]. §7.2.2 says
+/// (verbatim): "A line name cannot be span or auto, i.e. the `<custom-ident>`
+/// in the `<line-names>` production excludes the keywords span and auto."
+/// This exclusion applies here, not just to the `<grid-line>` productions
+/// in §8.3.
 ///
-/// `[` が見つからなければ `None` (呼び出し元は
-/// [`parse_line_names_or_empty`] 経由で空 `Vec` へ fallback)。空 `[]` は
-/// `Some(vec![])`。
+/// Returns `None` when `[` is absent; the caller
+/// [`parse_line_names_or_empty`] then falls back to an empty `Vec`.
+/// An empty `[]` returns `Some(vec![])`.
 fn parse_line_names(input: &mut Parser<'_, '_>) -> Option<Vec<SmolStr>> {
     input
         .try_parse(|i| -> Result<Vec<SmolStr>, ParseError<'_, ()>> {
@@ -545,27 +530,27 @@ fn parse_line_names(input: &mut Parser<'_, '_>) -> Option<Vec<SmolStr>> {
         .ok()
 }
 
-/// [`GridTrackList::line_names`] / [`GridTrackRepeat::line_names`] の各
-/// interleave slot を埋める helper — `<line-names>?` (省略可) を空 `Vec` に
-/// 正規化する。
+/// Fills each interleaved slot in [`GridTrackList::line_names`] and
+/// [`GridTrackRepeat::line_names`], normalizing optional `<line-names>?`
+/// to an empty `Vec`.
 fn parse_line_names_or_empty(input: &mut Parser<'_, '_>) -> Vec<SmolStr> {
     parse_line_names(input).unwrap_or_default()
 }
 
-/// `<flex [0,∞]>` — the `fr` unit (CSS Grid Layout Module Level 1 §7.2.4
-/// "Flexible Lengths: the fr unit"
-/// <https://www.w3.org/TR/css-grid-1/#fr-unit>) を parse する。
+/// Parses `<flex [0,∞]>`, the `fr` unit (CSS Grid Layout Module Level 1
+/// §7.2.4 "Flexible Lengths: the fr unit"
+/// <https://www.w3.org/TR/css-grid-1/#fr-unit>).
 ///
-/// non-negative **と** finite を parse 時に enforce する —
-/// [`parse_nonneg_finite_number`] doc と同じ理由 (raikiri-dom bridge が
-/// taffy `MaxTrackSizingFunction::fr` へ無変換で copy する、sink guard を
-/// 経由しない経路)。
+/// Enforces both non-negativity and finiteness while parsing for the same
+/// reason described in the [`parse_nonneg_finite_number`] docs: the raikiri-dom
+/// bridge copies directly to taffy's `MaxTrackSizingFunction::fr` without a
+/// conversion or sink guard.
 ///
-/// token 取得は `next_numeric_stable` 経由 (module doc 冒頭「Numeric-token
-/// NaN stabilization」節参照) — zero-mantissa/huge-exponent literal
-/// (`grid-template-columns: 0e999fr`) を cssparser tokenizer が `NaN` に
-/// collapse する artifact をここで訂正済のため、spec-correct な `Flex(0.0)`
-/// に解決される。
+/// Obtains the token through `next_numeric_stable` (see "Numeric-token NaN
+/// stabilization" near the start of the module docs). The cssparser
+/// tokenizer can collapse a zero-mantissa, huge-exponent literal such as
+/// `grid-template-columns: 0e999fr` to `NaN`. That artifact is corrected
+/// here, so the value resolves to the spec-correct `Flex(0.0)`.
 fn parse_grid_flex_res<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
     match &next_numeric_stable(input)? {
         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("fr") => {
@@ -579,14 +564,13 @@ fn parse_grid_flex_res<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError
     }
 }
 
-/// `<track-breadth> = <length-percentage [0,∞]> | <flex [0,∞]> | min-content
-/// | max-content | auto` を parse する (CSS Grid Layout Module Level 1 §7.2.1
-/// "Track Sizes"
-/// <https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-track-breadth>)。
+/// Parses `<track-breadth> = <length-percentage [0,∞]> | <flex [0,∞]> | min-content
+/// | max-content | auto` (CSS Grid Layout Module Level 1 §7.2.1 "Track Sizes"
+/// <https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-track-breadth>).
 ///
-/// `<length-percentage>` branch は必ず最後に試す —
-/// [`parse_length_value`] は失敗時も token を consume する ([`parse_flex_basis`]
-/// doc の同 rationale 参照) ため、それ以降に別 alternative を試せない。
+/// The `<length-percentage>` branch must be last: [`parse_length_value`]
+/// consumes a token even on failure (as noted in the [`parse_flex_basis`]
+/// docs), so no other alternative could be tried afterward.
 fn parse_track_breadth(input: &mut Parser<'_, '_>) -> Option<GridTrackBreadth> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(GridTrackBreadth::Auto);
@@ -612,10 +596,10 @@ fn parse_track_breadth(input: &mut Parser<'_, '_>) -> Option<GridTrackBreadth> {
     (length.payload() >= 0.0).then_some(GridTrackBreadth::Length(length))
 }
 
-/// `<inflexible-breadth> = <length-percentage [0,∞]> | min-content |
-/// max-content | auto` を parse する (CSS Grid Layout Module Level 1 §7.2.1
-/// <https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-inflexible-breadth>)。
-/// [`parse_track_breadth`] と同型だが `<flex>` branch を持たない。
+/// Parses `<inflexible-breadth> = <length-percentage [0,∞]> | min-content |
+/// max-content | auto` (CSS Grid Layout Module Level 1 §7.2.1
+/// <https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-inflexible-breadth>).
+/// It has the same shape as [`parse_track_breadth`] but no `<flex>` branch.
 fn parse_inflexible_breadth(input: &mut Parser<'_, '_>) -> Option<GridInflexibleBreadth> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(GridInflexibleBreadth::Auto);
@@ -638,9 +622,9 @@ fn parse_inflexible_breadth(input: &mut Parser<'_, '_>) -> Option<GridInflexible
     (length.payload() >= 0.0).then_some(GridInflexibleBreadth::Length(length))
 }
 
-/// `minmax( <inflexible-breadth>, <track-breadth> )` を parse する (CSS Grid
+/// Parses `minmax( <inflexible-breadth>, <track-breadth> )` (CSS Grid
 /// Layout Module Level 1 §7.2.1
-/// <https://www.w3.org/TR/css-grid-1/#funcdef-grid-template-columns-minmax>)。
+/// <https://www.w3.org/TR/css-grid-1/#funcdef-grid-template-columns-minmax>).
 fn parse_grid_minmax_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<(GridInflexibleBreadth, GridTrackBreadth), ParseError<'i, ()>> {
@@ -653,9 +637,9 @@ fn parse_grid_minmax_res<'i>(
     })
 }
 
-/// `fit-content( <length-percentage [0,∞]> )` を parse する (CSS Grid Layout
+/// Parses `fit-content( <length-percentage [0,∞]> )` (CSS Grid Layout
 /// Module Level 1 §7.2.1
-/// <https://www.w3.org/TR/css-grid-1/#funcdef-grid-template-columns-fit-content>)。
+/// <https://www.w3.org/TR/css-grid-1/#funcdef-grid-template-columns-fit-content>).
 fn parse_grid_fit_content_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {
@@ -670,11 +654,11 @@ fn parse_grid_fit_content_res<'i>(
     })
 }
 
-/// `<track-size>` を parse する ([`GridTrackSize`] doc 参照)。3 alternative
-/// を順に試す (`minmax()` → `fit-content()` → bare `<track-breadth>`) —
-/// 前 2 つは固有 function name で判別できるため順序に意味は薄いが、
-/// bare `<track-breadth>` は必ず最後 ([`parse_track_breadth`] doc の
-/// consume-on-failure 注記参照)。
+/// Parses `<track-size>`; see the [`GridTrackSize`] docs. It tries three
+/// alternatives in order: `minmax()` → `fit-content()` → bare `<track-breadth>`.
+/// The first two have distinct function names, so their order matters little.
+/// Bare `<track-breadth>` must come last because it can consume a token on
+/// failure (see the [`parse_track_breadth`] docs).
 fn parse_track_size(input: &mut Parser<'_, '_>) -> Option<GridTrackSize> {
     if let Ok((min, max)) = input.try_parse(parse_grid_minmax_res) {
         return Some(GridTrackSize::MinMax(min, max));
@@ -685,27 +669,28 @@ fn parse_track_size(input: &mut Parser<'_, '_>) -> Option<GridTrackSize> {
     parse_track_breadth(input).map(GridTrackSize::Breadth)
 }
 
-/// [`GridTrackBreadth`] が `<fixed-breadth>` (= `<length-percentage>`のみ)
-/// かどうか — [`grid_track_size_is_fixed`] の component。
+/// Checks whether [`GridTrackBreadth`] is a `<fixed-breadth>` (only a
+/// `<length-percentage>`); used by [`grid_track_size_is_fixed`].
 fn grid_track_breadth_is_fixed(b: &GridTrackBreadth) -> bool {
     matches!(b, GridTrackBreadth::Length(_))
 }
 
-/// [`GridInflexibleBreadth`] が `<fixed-breadth>` かどうか —
-/// [`grid_track_size_is_fixed`] の component。
+/// Checks whether [`GridInflexibleBreadth`] is a `<fixed-breadth>`;
+/// used by [`grid_track_size_is_fixed`].
 fn grid_inflexible_breadth_is_fixed(b: &GridInflexibleBreadth) -> bool {
     matches!(b, GridInflexibleBreadth::Length(_))
 }
 
-/// [`GridTrackSize`] が `<fixed-size>` 制約 (CSS Grid Layout Module Level 1
-/// §7.2.1 `<fixed-size> = <fixed-breadth> | minmax( <fixed-breadth>,
-/// <track-breadth> ) | minmax( <inflexible-breadth>, <fixed-breadth> )`) を
-/// 満たすかどうか — [`GridTrackSize`] doc の "fixed-size 制約" 節参照。
+/// Checks whether [`GridTrackSize`] satisfies the `<fixed-size>` constraint
+/// (CSS Grid Layout Module Level 1 §7.2.1: `<fixed-size> = <fixed-breadth> |
+/// minmax( <fixed-breadth>, <track-breadth> ) |
+/// minmax( <inflexible-breadth>, <fixed-breadth> )`); see "fixed-size constraint"
+/// in the [`GridTrackSize`] docs.
 ///
-/// `minmax()` は min/max のどちらか一方が `<fixed-breadth>` であれば足りる
-/// (spec 上両方が fixed である必要はない — `minmax(100px, 1fr)` は valid
-/// `<fixed-size>`)。`fit-content()` は `<fixed-size>` の grammar に
-/// alternative が無いため常に `false`。
+/// For `minmax()`, either the minimum or maximum must be a `<fixed-breadth>`;
+/// the spec does not require both to be fixed. For example,
+/// `minmax(100px, 1fr)` is a valid `<fixed-size>`. `fit-content()` is always
+/// `false`, because the `<fixed-size>` grammar has no such alternative.
 pub(crate) fn grid_track_size_is_fixed(t: &GridTrackSize) -> bool {
     match t {
         GridTrackSize::Breadth(b) => grid_track_breadth_is_fixed(b),
@@ -716,8 +701,8 @@ pub(crate) fn grid_track_size_is_fixed(t: &GridTrackSize) -> bool {
     }
 }
 
-/// `repeat()` の repetition count (`<integer [1,∞]>` / `auto-fill` /
-/// `auto-fit`) を parse する ([`GridRepeatCount`] doc 参照)。
+/// Parses the repetition count of `repeat()` (`<integer [1,∞]>`,
+/// `auto-fill`, or `auto-fit`); see the [`GridRepeatCount`] docs.
 fn parse_grid_repeat_count(input: &mut Parser<'_, '_>) -> Option<GridRepeatCount> {
     if input
         .try_parse(|i| i.expect_ident_matching("auto-fill"))
@@ -735,15 +720,15 @@ fn parse_grid_repeat_count(input: &mut Parser<'_, '_>) -> Option<GridRepeatCount
     (n >= 1).then_some(GridRepeatCount::Count(n as u32))
 }
 
-/// `repeat( <count>, [ <line-names>? <track-size> ]+ <line-names>? )` を
-/// parse する ([`GridTrackRepeat`] doc 参照)。count が
-/// [`GridRepeatCount::Count`] か [`GridRepeatCount::AutoFill`]/
-/// [`GridRepeatCount::AutoFit`] かで inner track が `<track-size>` /
-/// `<fixed-size>` のどちらの grammar に従うべきかが変わる
-/// ([`GridTrackRepeat`] doc の "許可される count と `<fixed-size>` 制約"
-/// 節参照) が、本関数は grammar 上共通の shape (full `<track-size>`) で
-/// parse し、`<fixed-size>` 制約は [`parse_grid_template_tracks`] が
-/// track list 全体を見て post-validate する。
+/// Parses `repeat( <count>, [ <line-names>? <track-size> ]+ <line-names>? )`;
+/// see the [`GridTrackRepeat`] docs. Whether count is
+/// [`GridRepeatCount::Count`], [`GridRepeatCount::AutoFill`], or
+/// [`GridRepeatCount::AutoFit`] determines whether inner tracks must follow
+/// the `<track-size>` or `<fixed-size>` grammar (see "Allowed counts and the
+/// `<fixed-size>` constraint" in the [`GridTrackRepeat`] docs). This function
+/// parses the common, full `<track-size>` grammar. Then
+/// [`parse_grid_template_tracks`] checks the `<fixed-size>` constraint against
+/// the complete track list.
 fn parse_grid_repeat_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GridTrackRepeat, ParseError<'i, ()>> {
@@ -768,16 +753,17 @@ fn parse_grid_repeat_res<'i>(
     })
 }
 
-/// [`parse_grid_repeat_res`] の `Option` 版 —
-/// [`parse_grid_track_list`] の alternation 用。
+/// The `Option` form of [`parse_grid_repeat_res`] for alternation in
+/// [`parse_grid_track_list`].
 pub(crate) fn parse_grid_repeat(input: &mut Parser<'_, '_>) -> Option<GridTrackRepeat> {
     input.try_parse(parse_grid_repeat_res).ok()
 }
 
-/// `<track-list>` / `<auto-track-list>` の component 列 (`[ <line-names>?
-/// [ <track-size> | <track-repeat> ] ]+ <line-names>?`) を parse する。
-/// `<fixed-size>` 制約の検査は行わない ([`grid_track_list_obeys_auto_repeat_constraint`]
-/// が呼び出し元 [`parse_grid_template_tracks`] で担う)。
+/// Parses the sequence of components in `<track-list>` / `<auto-track-list>`:
+/// `[ <line-names>? [ <track-size> | <track-repeat> ] ]+ <line-names>?`.
+/// It does not check the `<fixed-size>` constraint;
+/// [`grid_track_list_obeys_auto_repeat_constraint`] performs that check in the
+/// caller [`parse_grid_template_tracks`].
 fn parse_grid_track_list(input: &mut Parser<'_, '_>) -> Option<GridTrackList> {
     let mut line_names = vec![parse_line_names_or_empty(input)];
     let mut components = Vec::new();
@@ -801,18 +787,17 @@ fn parse_grid_track_list(input: &mut Parser<'_, '_>) -> Option<GridTrackList> {
     }
 }
 
-/// [`parse_grid_track_list`] が返した [`GridTrackList`] が spec の 2 制約を
-/// 満たすかどうかを検査する (post-parse validation、
-/// [`GridTrackRepeat`] doc の "許可される count と `<fixed-size>` 制約" 節参照):
+/// Checks whether [`parse_grid_track_list`] returns a [`GridTrackList`]
+/// that satisfies two spec constraints after parsing (see "Allowed counts and
+/// the `<fixed-size>` constraint" in the [`GridTrackRepeat`] docs):
 ///
-/// 1. CSS Grid Layout Module Level 1 §7.2.3.1 verbatim: "It can only appear
-///    once in the track list" — auto-fill/auto-fit repeat は track list 中
-///    に高々 1 つ。
-/// 2. §7.2.3.1 verbatim: "Automatic repetitions (auto-fill or auto-fit)
-///    cannot be combined with fully intrinsic or flexible sizes" —
-///    auto-repeat が存在する場合、track list 中の**他の全 track**
-///    (bare track と他の repeat() の中身の両方、auto-repeat 自身の中身も
-///    含む) が [`grid_track_size_is_fixed`] を満たす必要がある。
+/// 1. CSS Grid Layout Module Level 1 §7.2.3.1 says (verbatim): "It can only appear
+///    once in the track list." At most one auto-fill/auto-fit repeat is allowed.
+/// 2. §7.2.3.1 says (verbatim): "Automatic repetitions (auto-fill or auto-fit)
+///    cannot be combined with fully intrinsic or flexible sizes." If an
+///    auto-repeat is present, **every other track** in the track list, both bare
+///    tracks and those inside other `repeat()` calls, as well as the tracks
+///    inside the auto-repeat itself, must satisfy [`grid_track_size_is_fixed`].
 fn grid_track_list_obeys_auto_repeat_constraint(list: &GridTrackList) -> bool {
     let auto_repeat_count = list
         .components
@@ -837,10 +822,10 @@ fn grid_track_list_obeys_auto_repeat_constraint(list: &GridTrackList) -> bool {
     })
 }
 
-/// `grid-template-columns` / `grid-template-rows`: `none | <track-list> |
-/// <auto-track-list>` を parse する (CSS Grid Layout Module Level 1 §7.2
-/// <https://www.w3.org/TR/css-grid-1/#track-sizing>、[`GridTemplateTracks`]
-/// doc 参照)。
+/// Parses `grid-template-columns` / `grid-template-rows`:
+/// `none | <track-list> | <auto-track-list>` (CSS Grid Layout Module Level 1 §7.2
+/// <https://www.w3.org/TR/css-grid-1/#track-sizing>); see the
+/// [`GridTemplateTracks`] docs.
 pub(super) fn parse_grid_area_shorthand(input: &mut Parser<'_, '_>) -> Option<GridAreaShorthand> {
     let row_start = parse_grid_line(input)?;
     input.try_parse(|i| i.expect_delim('/')).ok()?;
@@ -877,11 +862,11 @@ pub(crate) fn parse_grid_template_tracks(input: &mut Parser<'_, '_>) -> Option<G
     Some(GridTemplateTracks::List(Arc::new(list)))
 }
 
-/// `grid-auto-columns` / `grid-auto-rows`: `<track-size>+` を parse する
+/// Parses `grid-auto-columns` / `grid-auto-rows`: `<track-size>+`
 /// (CSS Grid Layout Module Level 1 §7.6
-/// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-columns>)。
-/// `<track-list>` と異なり `repeat()` も `<line-names>` interleaving も
-/// grammar に含まれない — bare `<track-size>` の並びのみ。
+/// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-columns>).
+/// Unlike `<track-list>`, this grammar has neither `repeat()` nor interleaved
+/// `<line-names>`: it accepts only a sequence of bare `<track-size>` values.
 pub(super) fn parse_grid_auto_track_list(
     input: &mut Parser<'_, '_>,
 ) -> Option<Arc<Vec<GridTrackSize>>> {
@@ -896,14 +881,14 @@ pub(super) fn parse_grid_auto_track_list(
     }
 }
 
-/// `grid-auto-flow: [ row | column ] || dense` を parse する (CSS Grid
+/// Parses `grid-auto-flow: [ row | column ] || dense` (CSS Grid
 /// Layout Module Level 1 §7.7
-/// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-flow>)。
+/// <https://www.w3.org/TR/css-grid-1/#propdef-grid-auto-flow>).
 ///
-/// `dense` 単独 (axis 省略) は [`GridAutoFlowValue::RowDense`] に畳む —
-/// axis 省略時の default が `row` であるため ([`GridAutoFlowValue`] doc の
-/// 同型注記参照)。両 group とも順序自由 (`||`) なので最大 2 回のループで
-/// 両方を試す。
+/// A standalone `dense` (with no axis) maps to
+/// [`GridAutoFlowValue::RowDense`] because the default axis is `row` (see the
+/// isomorphic-value note in the [`GridAutoFlowValue`] docs). Both groups may
+/// appear in either order (`||`), so at most two iterations try both.
 pub(super) fn parse_grid_auto_flow(input: &mut Parser<'_, '_>) -> Option<GridAutoFlowValue> {
     #[derive(Clone, Copy)]
     enum Axis {
@@ -945,8 +930,9 @@ pub(super) fn parse_grid_auto_flow(input: &mut Parser<'_, '_>) -> Option<GridAut
     }
 }
 
-/// `span <integer [1,∞]> || <custom-ident>` (`span` ident は呼び出し元が
-/// 既に consume 済み) を parse する — [`parse_grid_line`] の tail helper。
+/// Parses `span <integer [1,∞]> || <custom-ident>` after the caller has
+/// already consumed the `span` ident. This is the tail helper for
+/// [`parse_grid_line`].
 fn parse_grid_line_span_tail(input: &mut Parser<'_, '_>) -> Option<GridLineValue> {
     let mut number: Option<u32> = None;
     let mut name: Option<SmolStr> = None;
@@ -972,23 +958,23 @@ fn parse_grid_line_span_tail(input: &mut Parser<'_, '_>) -> Option<GridLineValue
         (Some(n), Some(name)) => Some(GridLineValue::SpanNamed(name, n)),
         (Some(n), None) => Some(GridLineValue::Span(n)),
         (None, Some(name)) => Some(GridLineValue::SpanNamed(name, 1)),
-        // `span` の直後に何も続かない — grammar 上 `span &&
-        // [ <integer> || <custom-ident> ]` の右辺 group が必須のため invalid。
+        // Nothing follows `span`; invalid because the right-hand group in
+        // `span && [ <integer> || <custom-ident> ]` is required.
         (None, None) => None,
     }
 }
 
-/// `<grid-line>` を parse する ([`GridLineValue`] doc 参照)。
+/// Parses `<grid-line>`; see the [`GridLineValue`] docs.
 ///
-/// `[ [ <integer> ] && <custom-ident>? ]` alternative は order-free
-/// (`&&`) なので、`<integer>` を最大 2 回のループで先に/後に両方試す —
-/// **`<integer>` が一度も現れなければ** (`number.is_none()`)、それは
-/// この alternative ではなく別の top-level alternative `<custom-ident>`
-/// (単独) にマッチしたことを意味し、[`GridLineValue::Named`]
-/// (bare-ident、shorthand omission-copy 規則の対象) を返す —
-/// [`GridLineValue::NamedLine`] (`<integer>` 併記、対象外) とは
-/// [`GridLineShorthand`] doc の spec verbatim 引用が要求する区別
-/// ([`parse_grid_line_shorthand`] 参照)。
+/// The `[ [ <integer> ] && <custom-ident>? ]` alternative is order-free
+/// (`&&`), so at most two iterations try `<integer>` before or after the
+/// custom ident. If **no `<integer>` appears** (`number.is_none()`), the
+/// input instead matches the separate, top-level `<custom-ident>` alternative.
+/// This returns [`GridLineValue::Named`] (a bare ident subject to the
+/// shorthand omission-copy rule), rather than [`GridLineValue::NamedLine`]
+/// (which has an accompanying `<integer>` and is not copied). The verbatim
+/// spec quotation in the [`GridLineShorthand`] docs requires this distinction;
+/// see [`parse_grid_line_shorthand`].
 pub(crate) fn parse_grid_line(input: &mut Parser<'_, '_>) -> Option<GridLineValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(GridLineValue::Auto);
@@ -1014,8 +1000,8 @@ pub(crate) fn parse_grid_line(input: &mut Parser<'_, '_>) -> Option<GridLineValu
         break;
     }
     match (number, name) {
-        // `0` は spec verbatim "Negative integers or zero are invalid" —
-        // named の有無に関わらず reject。
+        // Spec verbatim: "Negative integers or zero are invalid." Reject `0`
+        // regardless of whether a name is present.
         (Some(0), _) => None,
         (Some(n), Some(name)) => Some(GridLineValue::NamedLine(name, n)),
         (Some(n), None) => Some(GridLineValue::Line(n)),
@@ -1024,18 +1010,19 @@ pub(crate) fn parse_grid_line(input: &mut Parser<'_, '_>) -> Option<GridLineValu
     }
 }
 
-/// `grid-row` / `grid-column`: `<grid-line> [ / <grid-line> ]?` shorthand を
-/// parse する ([`GridLineShorthand`] doc 参照)。
+/// Parses the `grid-row` / `grid-column` shorthand:
+/// `<grid-line> [ / <grid-line> ]?`; see the [`GridLineShorthand`] docs.
 pub(crate) fn parse_grid_line_shorthand(input: &mut Parser<'_, '_>) -> Option<GridLineShorthand> {
     let start = parse_grid_line(input)?;
     if input.try_parse(|i| i.expect_delim('/')).is_ok() {
         let end = parse_grid_line(input)?;
         return Some(GridLineShorthand { start, end });
     }
-    // spec 本文 verbatim (`GridLineShorthand` doc 引用): 第 2 成分省略時、
-    // 第 1 成分が `<custom-ident>` (= `GridLineValue::Named`、`<integer>`
-    // 併記なしの bare 形のみ) なら第 2 成分にもその名前を copy、それ以外は
-    // `auto`。
+    // The spec text quoted in the `GridLineShorthand` docs says: when
+    // the second component is omitted, copy the first component's name into
+    // the second only if the first is a `<custom-ident>` (the bare
+    // `GridLineValue::Named` form, without an accompanying `<integer>`).
+    // Otherwise the second component is `auto`.
     let end = match &start {
         GridLineValue::Named(name) => GridLineValue::Named(name.clone()),
         _ => GridLineValue::Auto,
@@ -1043,27 +1030,27 @@ pub(crate) fn parse_grid_line_shorthand(input: &mut Parser<'_, '_>) -> Option<Gr
     Some(GridLineShorthand { start, end })
 }
 
-/// `grid-template-areas` の 1 `<string>` を cell token 列へ分解する。
+/// Splits one `<string>` from `grid-template-areas` into cell tokens.
 ///
-/// CSS Grid Layout Module Level 1 §7.3 verbatim tokenization 規則
+/// CSS Grid Layout Module Level 1 §7.3 gives this verbatim tokenization rule
 /// (<https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>):
 /// "Tokenize the string into a list of the following tokens, using
-/// longest-match semantics": ident code point の並び (named cell) / `.` の
-/// 並び (null cell) / whitespace (無視、トークン化されない) / それ以外
-/// (trash token → invalid)。
+/// longest-match semantics." Consecutive ident code points make a named cell;
+/// consecutive `.` characters make a null cell; whitespace is ignored rather
+/// than tokenized; anything else produces an invalid trash token.
 ///
-/// `None` を返すのは trash token を検出した場合のみ (spec verbatim: "A
-/// trash token is a syntax error, and makes the declaration invalid.")。
+/// Returns `None` only when it finds a trash token. The spec says (verbatim):
+/// "A trash token is a syntax error, and makes the declaration invalid."
 ///
-/// whitespace 判定は `char::is_whitespace()` (Unicode `White_Space`
-/// property、`U+3000` 等の非 ASCII whitespace も含む) ではなく CSS Syntax 3
-/// の whitespace 定義 (<https://www.w3.org/TR/css-syntax-3/#whitespace>)
-/// verbatim: "A newline, U+0009 CHARACTER TABULATION, or U+0020 SPACE" を
-/// 直接使う — newline は同 spec の input preprocessing
-/// (<https://www.w3.org/TR/css-syntax-3/#input-preprocessing>) で
-/// U+000D/U+000C が U+000A に正規化された後の定義なので、ここでは `'\n'`
-/// のみを見ればよい (CR/FF は stylesheet 全体の tokenize 前処理で
-/// 消えている前提)。
+/// For whitespace, use the CSS Syntax 3 definition
+/// (<https://www.w3.org/TR/css-syntax-3/#whitespace>), rather than
+/// `char::is_whitespace()` (the Unicode `White_Space` property, which also
+/// includes non-ASCII whitespace such as `U+3000`). The spec says (verbatim):
+/// "A newline, U+0009 CHARACTER TABULATION, or U+0020 SPACE." Its input
+/// preprocessing (<https://www.w3.org/TR/css-syntax-3/#input-preprocessing>)
+/// normalizes U+000D/U+000C to U+000A. Thus only `'
+/// '` needs checking here:
+/// CR and FF have already been removed during stylesheet tokenization.
 fn tokenize_grid_area_row(s: &str) -> Option<Vec<Option<SmolStr>>> {
     let mut cells = Vec::new();
     let mut chars = s.chars().peekable();
@@ -1092,39 +1079,39 @@ fn tokenize_grid_area_row(s: &str) -> Option<Vec<Option<SmolStr>>> {
     Some(cells)
 }
 
-/// CSS Syntax 3 の "ident code point" (letter / digit / `-` / `_` /
-/// non-ASCII) を近似する classifier — [`tokenize_grid_area_row`] の
-/// named-cell token 分解専用。escape sequence (`\XX`) は考慮しない —
-/// `<string>` token の value は cssparser が既に unescape した literal
-/// character 列であり、`grid-template-areas` の string tokenization
-/// (§7.3) 自体は再度 CSS syntax としての escape 解釈を行わない (spec の
-/// 定義がそのまま code point 単位の分類であるため)。
+/// Approximates the CSS Syntax 3 "ident code point" classifier (letter,
+/// digit, `-`, `_`, or non-ASCII) solely for named-cell tokenization in
+/// [`tokenize_grid_area_row`]. It does not process escape sequences (`\XX`):
+/// cssparser has already unescaped the `<string>` token's literal character
+/// values. String tokenization for `grid-template-areas` (§7.3) does not
+/// reinterpret CSS escapes; its definition classifies code points directly.
 fn is_grid_area_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-' || !c.is_ascii()
 }
 
-/// [`tokenize_grid_area_row`] 済みの row 列から [`GridTemplateAreas`] を
-/// 構築する — named area の bounding box を算出し、spec §7.3 verbatim の
-/// "If a named grid area spans multiple grid cells, but those cells do not
-/// form a single filled-in rectangle, the declaration is invalid." を検査
-/// する。
+/// Builds rows already processed by [`tokenize_grid_area_row`] into
+/// [`GridTemplateAreas`]. It computes the bounding boxes of named areas and
+/// checks the verbatim §7.3 requirement: "If a named grid area spans multiple
+/// grid cells, but those cells do not form a single filled-in rectangle, the
+/// declaration is invalid."
 ///
-/// `rows` は呼び出し元 ([`parse_grid_template_areas`]) が非空を保証する
-/// (空なら呼び出し元が先に `None` を返す)。
+/// The caller [`parse_grid_template_areas`] guarantees that `rows` is nonempty;
+/// otherwise it returns `None` before calling this function.
 fn build_grid_template_areas(
     rows: Vec<Vec<Option<SmolStr>>>,
     row_strings: Vec<SmolStr>,
 ) -> Option<GridTemplateAreas> {
     let row_count = rows.len();
     let column_count = rows[0].len();
-    // spec 本文 verbatim: "All strings must define the same number of cell
-    // tokens ... and at least one cell token, or else the declaration is
+    // The spec says (verbatim): "All strings must define the same number
+    // of cell tokens ... and at least one cell token, or else the declaration is
     // invalid."
     if column_count == 0 || rows.iter().any(|r| r.len() != column_count) {
         return None;
     }
-    // (name, row_min, row_max, col_min, col_max) — 初出順、線形 scan
-    // (area 名の種類数は現実的に小さいため HashMap を持ち込まない)。
+    // (name, row_min, row_max, col_min, col_max), in first-seen order.
+    // Use a linear scan because a realistic grid has few distinct area names;
+    // there is no need for a HashMap.
     let mut bounds: Vec<(SmolStr, usize, usize, usize, usize)> = Vec::new();
     for (r, row) in rows.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
@@ -1164,10 +1151,10 @@ fn build_grid_template_areas(
     })
 }
 
-/// `grid-template-areas: none | <string>+` を parse する (CSS Grid Layout
+/// Parses `grid-template-areas: none | <string>+` (CSS Grid Layout
 /// Module Level 1 §7.3
-/// <https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>、
-/// [`GridTemplateAreasValue`] doc 参照)。
+/// <https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>);
+/// see the [`GridTemplateAreasValue`] docs.
 pub(crate) fn parse_grid_template_areas(
     input: &mut Parser<'_, '_>,
 ) -> Option<GridTemplateAreasValue> {
@@ -1188,11 +1175,11 @@ pub(crate) fn parse_grid_template_areas(
         .map(|areas| GridTemplateAreasValue::Areas(Arc::new(areas)))
 }
 
-/// `place-items: <'align-items'> <'justify-items'>?` shorthand を parse
-/// する (CSS Box Alignment Module Level 3 §7.3
-/// <https://www.w3.org/TR/css-align-3/#propdef-place-items>)。第 2 成分
-/// 省略時は spec 本文通り第 1 成分をそのまま copy する
-/// ([`PlaceItemsShorthand`] doc 参照)。
+/// Parses the shorthand `place-items: <'align-items'> <'justify-items'>?`
+/// (CSS Box Alignment Module Level 3 §7.3
+/// <https://www.w3.org/TR/css-align-3/#propdef-place-items>). When the second
+/// component is omitted, the first is copied unchanged, as the spec requires;
+/// see the [`PlaceItemsShorthand`] docs.
 pub(crate) fn parse_place_items_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<PlaceItemsShorthand> {
@@ -1201,101 +1188,74 @@ pub(crate) fn parse_place_items_shorthand(
     Some(PlaceItemsShorthand { align, justify })
 }
 
-/// `place-self: <'align-self'> <'justify-self'>?` shorthand を parse する
+/// Parses the shorthand `place-self: <'align-self'> <'justify-self'>?`
 /// (CSS Box Alignment Module Level 3 §6.3
-/// <https://www.w3.org/TR/css-align-3/#propdef-place-self>)。第 2 成分
-/// 省略時の copy 規則は [`parse_place_items_shorthand`] と同じ。
+/// <https://www.w3.org/TR/css-align-3/#propdef-place-self>). When the second
+/// component is omitted, the copy rule matches [`parse_place_items_shorthand`].
 pub(crate) fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfShorthand> {
     let align = parse_align_self(input)?;
     let justify = input.try_parse(parse_align_self_res).unwrap_or(align);
     Some(PlaceSelfShorthand { align, justify })
 }
 
-/// `float: <ident>` を parse する (CSS2 §9.5.1
-/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float>, [`FloatValue`]
-/// doc 参照)。
+/// Parses `float: <ident>` (CSS2 §9.5.1
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float>; see the
+/// [`FloatValue`] docs).
 ///
-/// Value grammar: `left | right | none` (`inherit` は上記 "CSS-wide
-/// keyword (canonical)" 節により未対応)。ASCII case-insensitive matching
-/// は sibling `parse_word_break` と同 flavor。
+/// Value grammar: `left | right | none`. This parser does not support
+/// `inherit` because of the "CSS-wide keyword (canonical)" policy described
+/// above. ASCII case-insensitive matching follows sibling `parse_word_break`.
 pub(super) fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(FloatValue::None),
-        "left" => Some(FloatValue::Left),
-        "right" => Some(FloatValue::Right),
-        "inline-start" => Some(FloatValue::InlineStart),
-        "inline-end" => Some(FloatValue::InlineEnd),
-        "footnote" => Some(FloatValue::Footnote),
-        _ => None,
-    }
+    FloatValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `clear: <ident>` を parse する (CSS2 §9.5.2
-/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>, [`ClearValue`]
-/// doc 参照)。
+/// Parses `clear: <ident>` (CSS2 §9.5.2
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>; see the
+/// [`ClearValue`] docs).
 ///
-/// Value grammar: `none | left | right | both` (`inherit` は上記
-/// "CSS-wide keyword (canonical)" 節により未対応)。ASCII case-insensitive
-/// matching は sibling `parse_float` と同 flavor。
+/// Value grammar: `none | left | right | both`. This parser does not support
+/// `inherit` because of the "CSS-wide keyword (canonical)" policy described
+/// above. ASCII case-insensitive matching follows sibling `parse_float`.
 pub(super) fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(ClearValue::None),
-        "left" => Some(ClearValue::Left),
-        "right" => Some(ClearValue::Right),
-        "both" => Some(ClearValue::Both),
-        "inline-start" => Some(ClearValue::InlineStart),
-        "inline-end" => Some(ClearValue::InlineEnd),
-        _ => None,
-    }
+    ClearValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `table-layout: <ident>` を parse する (CSS Tables 3 §4
-/// <https://www.w3.org/TR/css-tables-3/#table-layout-property>,
-/// [`TableLayoutValue`] doc 参照)。
+/// Parses `table-layout: <ident>` (CSS Tables 3 §4
+/// <https://www.w3.org/TR/css-tables-3/#table-layout-property>); see the
+/// [`TableLayoutValue`] docs.
 ///
-/// Value grammar: `auto | fixed`。ASCII case-insensitive matching は
-/// sibling [`parse_unicode_bidi`](super::text::parse_unicode_bidi) と同 flavor、余剰 token
-/// (`table-layout: auto fixed` 等) は caller (`rule.rs::DeclParser`) の
-/// `expect_exhausted` が drop する。
+/// Value grammar: `auto | fixed`. ASCII case-insensitive matching follows
+/// sibling [`parse_unicode_bidi`](super::text::parse_unicode_bidi). The caller's `expect_exhausted`
+/// (`rule.rs::DeclParser`) drops any extra tokens, such as
+/// `table-layout: auto fixed`.
 pub(super) fn parse_table_layout(input: &mut Parser<'_, '_>) -> Option<TableLayoutValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TableLayoutValue::Auto),
-        "fixed" => Some(TableLayoutValue::Fixed),
-        _ => None,
-    }
+    TableLayoutValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `border-collapse: <ident>` を parse する (CSS Tables 3 §6
-/// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>,
-/// [`BorderCollapseValue`] doc 参照)。
+/// Parses `border-collapse: <ident>` (CSS Tables 3 §6
+/// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>); see the
+/// [`BorderCollapseValue`] docs.
 ///
-/// Value grammar: `collapse | separate`。matching 規則は sibling
-/// [`parse_table_layout`] と同じ。
+/// Value grammar: `collapse | separate`. Matching follows the same rules as
+/// sibling [`parse_table_layout`].
 pub(super) fn parse_border_collapse(input: &mut Parser<'_, '_>) -> Option<BorderCollapseValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "collapse" => Some(BorderCollapseValue::Collapse),
-        "separate" => Some(BorderCollapseValue::Separate),
-        _ => None,
-    }
+    BorderCollapseValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `border-spacing: <length>{1,2}` を parse する (CSS Tables 3 §6.1
-/// <https://www.w3.org/TR/css-tables-3/#border-spacing-property>,
-/// [`BorderSpacingValue`] doc 参照)。
+/// Parses `border-spacing: <length>{1,2}` (CSS Tables 3 §6.1
+/// <https://www.w3.org/TR/css-tables-3/#border-spacing-property>); see the
+/// [`BorderSpacingValue`] docs.
 ///
-/// 各成分は [`parse_non_negative_length`] (`<length [0,∞]>`、
-/// `<percentage>` alternative なし — spec の Percentages: N/A と
-/// "Negative lengths are illegal" を共に enforce)。unitless `0` は
-/// [`parse_length_value`] の CSS Values 3 §5 unitless-zero clause で
-/// `Px(0.0)` として受理される (WPT computed の `"0"` → `"0px"` case)。
-/// 第 2 成分省略時は第 1 成分を copy する (spec 本文 +
-/// [`GapShorthand`] と同型)。3 成分以上・bare non-zero number・`%` は
-/// caller (`rule.rs::DeclParser`) の `expect_exhausted` / 各成分の `None`
-/// で drop する。
+/// Each component uses [`parse_non_negative_length`] (`<length [0,∞]>`),
+/// with no `<percentage>` alternative. This enforces both the spec's
+/// "Percentages: N/A" and "Negative lengths are illegal" requirements.
+/// Unitless `0` is accepted as `Px(0.0)` under the CSS Values 3 §5
+/// unitless-zero clause in [`parse_length_value`] (the WPT computed case
+/// `"0"` → `"0px"`). When the second component is omitted, the first is
+/// copied, as required by the spec and as in [`GapShorthand`].
+/// The caller's `expect_exhausted` (`rule.rs::DeclParser`) or a component's
+/// `None` result drops declarations with three or more components, a bare
+/// non-zero number, or `%`.
 pub(super) fn parse_border_spacing(input: &mut Parser<'_, '_>) -> Option<BorderSpacingValue> {
     let horizontal = parse_non_negative_length(input)?;
     let vertical = input
@@ -1307,70 +1267,30 @@ pub(super) fn parse_border_spacing(input: &mut Parser<'_, '_>) -> Option<BorderS
     })
 }
 
-/// `caption-side: <ident>` を parse する (CSS Tables 3 §7
-/// <https://www.w3.org/TR/css-tables-3/#caption-side-property>,
-/// [`CaptionSideValue`] doc 参照)。
+/// Parses `caption-side: <ident>` (CSS Tables 3 §7
+/// <https://www.w3.org/TR/css-tables-3/#caption-side-property>); see the
+/// [`CaptionSideValue`] docs.
 ///
-/// Value grammar: `top | bottom`。ASCII case-insensitive matching は
-/// sibling [`parse_table_layout`] と同 flavor、余剰 token
-/// (`caption-side: top bottom` 等) は caller (`rule.rs::DeclParser`) の
-/// `expect_exhausted` が drop する。
+/// Value grammar: `top | bottom`. ASCII case-insensitive matching follows
+/// sibling [`parse_table_layout`]. The caller's `expect_exhausted`
+/// (`rule.rs::DeclParser`) drops extra tokens such as
+/// `caption-side: top bottom`.
 pub(super) fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSideValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "top" => Some(CaptionSideValue::Top),
-        "bottom" => Some(CaptionSideValue::Bottom),
-        _ => None,
-    }
+    CaptionSideValue::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `empty-cells: <ident>` を parse する (CSS Tables 3 §8
-/// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>,
-/// [`EmptyCellsValue`] doc 参照)。
+/// Parses `empty-cells: <ident>` (CSS Tables 3 §8
+/// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>); see the
+/// [`EmptyCellsValue`] docs.
 ///
-/// Value grammar: `show | hide`。matching 規則は sibling
-/// [`parse_caption_side`] と同じ。
+/// Value grammar: `show | hide`. Matching follows the same rules as sibling
+/// [`parse_caption_side`].
 pub(super) fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCellsValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "show" => Some(EmptyCellsValue::Show),
-        "hide" => Some(EmptyCellsValue::Hide),
-        _ => None,
-    }
+    EmptyCellsValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
-    // sibling multi-keyword idiom (parse_string_fetch / parse_content_part /
-    // parse_content_text_keyword) に揃える。ASCII case-insensitive matching は
-    // to_ascii_lowercase() 経由 (parse-time allocation は一 declaration 一回)。
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "block" => Some(DisplayValue::Block),
-        "inline" => Some(DisplayValue::Inline),
-        "inline-block" => Some(DisplayValue::InlineBlock),
-        "flow-root" => Some(DisplayValue::FlowRoot),
-        "none" => Some(DisplayValue::None),
-        // The current layout bridge models the outer display type as block,
-        // so inline-flex/inline-grid share the corresponding formatting
-        // context until inline-level shrink-to-fit support is added.
-        "flex" => Some(DisplayValue::Flex),
-        "inline-flex" => Some(DisplayValue::InlineFlex),
-        "grid" => Some(DisplayValue::Grid),
-        "inline-grid" => Some(DisplayValue::InlineGrid),
-        "list-item" => Some(DisplayValue::ListItem),
-        "contents" => Some(DisplayValue::Contents),
-        "table" => Some(DisplayValue::Table),
-        "inline-table" => Some(DisplayValue::InlineTable),
-        "table-row-group" => Some(DisplayValue::TableRowGroup),
-        "table-header-group" => Some(DisplayValue::TableHeaderGroup),
-        "table-footer-group" => Some(DisplayValue::TableFooterGroup),
-        "table-row" => Some(DisplayValue::TableRow),
-        "table-column-group" => Some(DisplayValue::TableColumnGroup),
-        "table-column" => Some(DisplayValue::TableColumn),
-        "table-cell" => Some(DisplayValue::TableCell),
-        "table-caption" => Some(DisplayValue::TableCaption),
-        _ => None,
-    }
+    DisplayValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_list_style_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {
@@ -1401,25 +1321,20 @@ pub(super) fn parse_list_style_type(input: &mut Parser<'_, '_>) -> Option<ListSt
 
 /// Parse `list-style-position: inside | outside`.
 pub(super) fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<ListStylePosition> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "inside" => Some(ListStylePosition::Inside),
-        "outside" => Some(ListStylePosition::Outside),
-        _ => None,
-    }
+    ListStylePosition::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `orphans` / `widows: <integer>` の value を parse する (CSS Fragmentation
+/// Parses the value of `orphans` / `widows: <integer>` (CSS Fragmentation
 /// Module Level 3 §3.3 "Breaks Between Lines: orphans, widows"
 /// <https://www.w3.org/TR/css-break-3/#widows-orphans>).
 ///
-/// `expect_integer` 直接呼び出しは [`parse_z_index`](super::box_model::parse_z_index) / [`parse_counter_property`](super::content::parse_counter_property)
-/// と同じ pattern。この 2 property は `<integer>` を **正の値のみ**に制限する
-/// spec 独自の制約を持つ点が sibling と異なる: "Only positive integers are
-/// allowed as values of orphans and widows. Negative values and zero are
-/// invalid and must cause the declaration to be ignored." — 0 以下は
-/// spec-invalid として `None` (declaration が丸ごと drop される、
-/// 他の out-of-range `<integer>`/`<length>` value と同じ扱い)。
+/// Calls `expect_integer` directly, like [`parse_z_index`](super::box_model::parse_z_index) and
+/// [`parse_counter_property`](super::content::parse_counter_property). Unlike those siblings, these two
+/// properties restrict `<integer>` to **positive values**. The spec says:
+/// "Only positive integers are allowed as values of orphans and widows.
+/// Negative values and zero are invalid and must cause the declaration to be
+/// ignored." Values of zero or less therefore return `None` and drop the
+/// whole declaration, as with other out-of-range `<integer>`/`<length>` values.
 pub(super) fn parse_positive_integer(input: &mut Parser<'_, '_>) -> Option<i32> {
     let value = input.try_parse(|i| i.expect_integer()).ok()?;
     if value > 0 { Some(value) } else { None }
@@ -1481,61 +1396,49 @@ pub(super) fn parse_columns_shorthand(input: &mut Parser<'_, '_>) -> Option<Colu
         .ok()
 }
 
-/// `break-before: <ident>` / `break-after: <ident>` を parse する (CSS
+/// Parses `break-before: <ident>` / `break-after: <ident>` (CSS
 /// Fragmentation Module Level 3 §3.1
-/// <https://www.w3.org/TR/css-break-3/#break-between>)。
+/// <https://www.w3.org/TR/css-break-3/#break-between>).
 ///
-/// この crate の scope で受理する 4 keyword ([`BreakBetween`] doc の Scope
-/// carving 節参照): `auto` / `avoid` / `avoid-page` / `page`。propdef の
-/// 残り 8 keyword (`left` / `right` / `recto` / `verso` / `avoid-column` /
-/// `column` / `avoid-region` / `region`) と、現行 spec grammar に無い
-/// `always` / `all` は他の未知 ident と同じく silent drop (`None`)。ASCII
-/// case-insensitive で ident を比較する ([`parse_word_break`](super::text::parse_word_break) 等 sibling と
-/// 同 flavor)。
+/// This crate accepts four keywords within its scope (see "Scope carving"
+/// in the [`BreakBetween`] docs): `auto`, `avoid`, `avoid-page`, and `page`.
+/// The eight remaining keywords in the property definition (`left`, `right`,
+/// `recto`, `verso`, `avoid-column`, `column`, `avoid-region`, `region`), along
+/// with `always` and `all` (absent from the current spec grammar), silently
+/// drop with `None` like other unknown idents. Idents are compared ASCII
+/// case-insensitively, as in sibling
+/// [`parse_word_break`](super::text::parse_word_break).
 pub(super) fn parse_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(BreakBetween::Auto),
-        "avoid" => Some(BreakBetween::Avoid),
-        "avoid-page" => Some(BreakBetween::AvoidPage),
-        "page" => Some(BreakBetween::Page),
-        _ => None,
-    }
+    BreakBetween::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `break-inside: <ident>` を parse する (CSS Fragmentation Module Level 3
-/// §3.2 <https://www.w3.org/TR/css-break-3/#break-within>)。
+/// Parses `break-inside: <ident>` (CSS Fragmentation Module Level 3
+/// §3.2 <https://www.w3.org/TR/css-break-3/#break-within>).
 ///
-/// この crate の scope で受理する 3 keyword ([`BreakInside`] doc の Scope
-/// carving 節参照): `auto` / `avoid` / `avoid-page`。propdef の残り 2
-/// keyword (`avoid-column` / `avoid-region`) は他の未知 ident と同じく
-/// silent drop (`None`)。ASCII case-insensitive で ident を比較する
-/// ([`parse_break_between`] と同 flavor)。
+/// This crate accepts three keywords within its scope (see "Scope carving"
+/// in the [`BreakInside`] docs): `auto`, `avoid`, and `avoid-page`.
+/// The other two keywords in the property definition, `avoid-column` and
+/// `avoid-region`, silently drop with `None` like other unknown idents.
+/// Idents are compared ASCII case-insensitively, as in [`parse_break_between`].
 pub(super) fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInside> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(BreakInside::Auto),
-        "avoid" => Some(BreakInside::Avoid),
-        "avoid-page" => Some(BreakInside::AvoidPage),
-        _ => None,
-    }
+    BreakInside::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// `page-break-before: <ident>` / `page-break-after: <ident>` — CSS2.1
-/// legacy shorthand for `break-before` / `break-after` — を parse し、
-/// [`BreakBetween`] へ remap する (CSS Fragmentation Module Level 3 §3.4
-/// <https://www.w3.org/TR/css-break-3/#page-break-properties>,
-/// [`BreakBetween`] doc の「legacy shorthand」節の mapping table 参照)。
+/// Parses `page-break-before: <ident>` / `page-break-after: <ident>`,
+/// the CSS2.1 legacy shorthands for `break-before` / `break-after`. These
+/// map to [`BreakBetween`] (CSS Fragmentation Module Level 3 §3.4
+/// <https://www.w3.org/TR/css-break-3/#page-break-properties>; see the mapping
+/// table under "legacy shorthand" in the [`BreakBetween`] docs).
 ///
-/// CSS2.1 自身の `page-break-before` / `page-break-after` propdef grammar
-/// (verbatim, <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-before>)
-/// は `auto | always | avoid | left | right`。本 parser はそのうち
-/// `auto` / `avoid` / `always` の 3 keyword のみ受理する — `left` /
-/// `right` は `break-before`/`break-after` 側で未実装 ([`BreakBetween`] doc
-/// の Scope carving 節) の値へ remap されるため、この legacy shorthand
-/// 経由でも同じく受理しない。`always` は spec の mapping table どおり
-/// [`BreakBetween::Page`] へ remap する (identity ではない — `auto` /
-/// `avoid` は identity)。
+/// CSS2.1 defines the `page-break-before` / `page-break-after` grammar as
+/// `auto | always | avoid | left | right` (verbatim,
+/// <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-before>).
+/// This parser accepts only `auto`, `avoid`, and `always`. Because `left` and
+/// `right` would map to values not implemented for `break-before` or
+/// `break-after` (see "Scope carving" in the [`BreakBetween`] docs), the
+/// legacy shorthands do not accept them either. The spec's mapping table
+/// maps `always` to [`BreakBetween::Page`], rather than leaving it unchanged;
+/// `auto` and `avoid` map to themselves.
 pub(super) fn parse_legacy_page_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -1546,16 +1449,16 @@ pub(super) fn parse_legacy_page_break_between(input: &mut Parser<'_, '_>) -> Opt
     }
 }
 
-/// `page-break-inside: <ident>` — CSS2.1 legacy shorthand for
-/// `break-inside` — を parse する (CSS Fragmentation Module Level 3 §3.4,
-/// [`BreakInside`] doc の「legacy shorthand」節参照)。
+/// Parses `page-break-inside: <ident>`, the CSS2.1 legacy shorthand
+/// for `break-inside` (CSS Fragmentation Module Level 3 §3.4; see
+/// "legacy shorthand" in the [`BreakInside`] docs).
 ///
-/// CSS2.1 自身の `page-break-inside` propdef grammar (verbatim,
-/// <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-inside>) は
-/// `avoid | auto` のみ (`always` / `left` / `right` は無い) — この 2
-/// keyword を [`BreakInside`] へ identity mapping する。`break-inside`
-/// 自身が持つ `avoid-page` は CSS2.1 の `page-break-inside` grammar には
-/// 無いため受理しない。
+/// The CSS2.1 `page-break-inside` grammar is `avoid | auto` (verbatim,
+/// <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-inside>).
+/// It does not contain `always`, `left`, or `right`. Both accepted keywords
+/// map unchanged to [`BreakInside`]. The `avoid-page` value available to
+/// `break-inside` is absent from the CSS2.1 `page-break-inside` grammar, so
+/// this parser does not accept it.
 pub(super) fn parse_legacy_page_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInside> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {

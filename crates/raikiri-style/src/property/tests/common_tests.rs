@@ -4,10 +4,10 @@ use super::*;
 
 // ── parse_length_value helper ────────────────────
 //
-// helper 単体を叩く共通 fixture — property dispatcher (`parse_value`) を経由せず
-// 5 unit sample (`px` / `em` / `rem` / `%` / `pt`) の parse を直接 verify する。
-// `parse_font_size` 経由 test は上流に既存 (`font_size_parse_px` 等)、そちらは
-// px-only post-filter を verify するので分離する。
+// Shared fixture exercising the helper directly, without going through the property
+// dispatcher (`parse_value`): directly verify parsing of five sample units
+// (`px` / `em` / `rem` / `%` / `pt`). Upstream `parse_font_size` tests already exist
+// (`font_size_parse_px`, etc.); those verify the px-only post-filter separately.
 
 fn parse_length(source: &str, allow_percentage: bool) -> Option<Length> {
     let mut input = ParserInput::new(source);
@@ -18,54 +18,54 @@ fn parse_length(source: &str, allow_percentage: bool) -> Option<Length> {
 #[test]
 fn parse_length_value_accepts_px() {
     assert_eq!(parse_length("10px", false), Some(Length::Px(10.0)));
-    // length-percentage mode でも px 受理 (mode 非依存)。
+    // Accept px in length-percentage mode as well (independent of mode).
     assert_eq!(parse_length("10px", true), Some(Length::Px(10.0)));
 }
 
 #[test]
 fn parse_length_value_accepts_em() {
     // CSS Values 4 §6.1.1 em (https://www.w3.org/TR/css-values-4/#em):
-    // authored `1.2em` を Length::Em(1.2) にそのまま保持 (resolve は下流責務)。
+    // Preserve authored `1.2em` unchanged as Length::Em(1.2) (resolution is downstream).
     assert_eq!(parse_length("1.2em", false), Some(Length::Em(1.2)));
 }
 
 #[test]
 fn parse_length_value_accepts_rem() {
     // CSS Values 4 §6.1.1 rem (https://www.w3.org/TR/css-values-4/#rem):
-    // root element の font-size 基準、authored value を Length::Rem に格納。
+    // Store the authored value in Length::Rem, relative to the root element's font size.
     assert_eq!(parse_length("1rem", false), Some(Length::Rem(1.0)));
 }
 
 #[test]
 fn parse_length_value_accepts_pt() {
     // CSS Values 4 §6.2 absolute lengths (https://www.w3.org/TR/css-values-4/#absolute-lengths):
-    // 1pt = 1/72 in, 1in = 96px、resolve 側で 12pt → 16px 相当に変換。
+    // 1pt = 1/72in and 1in = 96px; resolution converts 12pt to about 16px.
     assert_eq!(parse_length("12pt", false), Some(Length::Pt(12.0)));
 }
 
 #[test]
 fn parse_length_value_accepts_percentage_when_allowed() {
     // CSS Values 4 §5.5 (https://www.w3.org/TR/css-values-4/#percentages):
-    // `<length-percentage>` mode でのみ受理。cssparser `unit_value = 0.5` を
-    // × 100.0 で authored `50` に戻して Length::Percent(50.0) に格納。
+    // Accept only in `<length-percentage>` mode. Multiply cssparser's `unit_value = 0.5`
+    // by 100.0 to recover the authored `50` and store Length::Percent(50.0).
     assert_eq!(parse_length("50%", true), Some(Length::Percent(50.0)));
 }
 
 #[test]
 fn parse_length_value_extreme_percentage_saturates_to_f32_max_not_inf() {
-    // `1e40%` は cssparser tokenizer 側で
-    // `unit_value = 1e40 / 100.0 = 1e38` (f32 有限範囲 `3.4028235e38` 内)
-    // になるが、authored number へ戻す本 helper の `× 100.0` 自体が
-    // f32 overflow を起こし +Inf を作っていた (fix 前)。
+    // The cssparser tokenizer parses `1e40%` as
+    // `unit_value = 1e40 / 100.0 = 1e38` (within the finite f32 range, `3.4028235e38`),
+    // but this helper's `× 100.0` to recover the authored number
+    // overflowed f32 and produced +Inf (before the fix).
     //
     // CSS Values 4 §5 "Range Checking and Precision for Numeric Types"
     // <https://www.w3.org/TR/css-values-4/#numeric-types>:
     // "When a value cannot be explicitly supported due to
     // range/precision limitations, it must be converted to the closest
-    // value supported by the implementation" — 非有限は許容されないため、
-    // 符号を保持しつつ f32::MAX に寄った有限値を check する。
+    // value supported by the implementation" — non-finite values are not allowed;
+    // check a finite value near f32::MAX while preserving its sign.
     assert_eq!(parse_length("1e40%", true), Some(Length::Percent(f32::MAX)));
-    // 符号保持も合わせて check (負の overflow は -f32::MAX へ)。
+    // Also check sign preservation (negative overflow approaches -f32::MAX).
     assert_eq!(
         parse_length("-1e40%", true),
         Some(Length::Percent(-f32::MAX))
@@ -156,28 +156,28 @@ fn stabilize_nan_percentage_value_is_a_no_op_for_non_nan_input() {
 
 #[test]
 fn parse_length_value_rejects_percentage_in_length_only_mode() {
-    // `<length>` mode (font-size 等) では `%` は grammar 外、None を返す。
+    // In `<length>` mode (e.g. font-size), `%` is outside the grammar: return None.
     assert_eq!(parse_length("50%", false), None);
 }
 
 #[test]
 fn parse_length_value_rejects_unsupported_unit() {
-    // (b) 非対応 — viewport-relative unit / `cap` / `rcap` は本 helper で
-    // 引き続き silent drop。`lh` / `rlh` は受理側へ移った
-    // (下記 `parse_length_value_accepts_lh` / `_rlh` を参照)。
+    // (b) Unsupported — this helper still silently drops viewport-relative units,
+    // `cap`, and `rcap`; `lh` and `rlh` have moved to the accepted set
+    // (see `parse_length_value_accepts_lh` / `_rlh` below).
     assert_eq!(parse_length("10vw", false), None);
     assert_eq!(parse_length("1cap", true), None);
-    // container-query unit (CSS Contain 3 §6) — `_` arm 直前 comment が
-    // 挙げる `cq*` 一覧をこの assertion で check する。comment のみで
-    // test 未網羅だと、将来 `cq*` 対応 arm が誤って追加されても
-    // どの test も落ちず canonical comment が silent に stale 化する
-    // (spec-lens follow-up として追加)。
+    // Container-query units (CSS Contain 3 §6): check the `cq*` list cited in
+    // the comment just before the `_` arm with this assertion. If the comment
+    // has no test coverage, a future incorrect `cq*` support arm could be added
+    // without failing any tests, silently making the canonical comment stale
+    // (added as a spec-lens follow-up).
     assert_eq!(parse_length("10cqw", false), None);
 }
 
 #[test]
 fn parse_length_value_accepts_lh() {
-    // https://www.w3.org/TR/css-values-4/#lh — authored value をそのまま保持。
+    // https://www.w3.org/TR/css-values-4/#lh — preserve the authored value unchanged.
     assert_eq!(parse_length("1.5lh", false), Some(Length::Lh(1.5)));
 }
 
@@ -187,11 +187,11 @@ fn parse_length_value_accepts_rlh() {
     assert_eq!(parse_length("2rlh", false), Some(Length::Rlh(2.0)));
 }
 
-// ── 追加 font-relative unit (CSS Values 4 §6.1.1) ──
+// ── Additional font-relative units (CSS Values 4 §6.1.1) ──
 
 #[test]
 fn parse_length_value_accepts_ex() {
-    // https://www.w3.org/TR/css-values-4/#ex — authored value をそのまま保持。
+    // https://www.w3.org/TR/css-values-4/#ex — preserve the authored value unchanged.
     assert_eq!(parse_length("2ex", false), Some(Length::Ex(2.0)));
 }
 
@@ -225,7 +225,7 @@ fn parse_length_value_accepts_ric() {
     assert_eq!(parse_length("1.5ric", false), Some(Length::Ric(1.5)));
 }
 
-// ── 追加 absolute unit (CSS Values 4 §6.2) ──
+// ── Additional absolute units (CSS Values 4 §6.2) ──
 
 #[test]
 fn parse_length_value_accepts_cm() {
@@ -239,8 +239,8 @@ fn parse_length_value_accepts_mm() {
 
 #[test]
 fn parse_length_value_accepts_q() {
-    // `Q` — unit token は `to_ascii_lowercase()` を経て `"q"` として dispatch
-    // される。case-insensitivity test でも uppercase `Q` を確認する。
+    // `Q`: the unit token passes through `to_ascii_lowercase()` and dispatches
+    // as `"q"`. The case-insensitivity test also covers uppercase `Q`.
     assert_eq!(parse_length("40Q", false), Some(Length::Q(40.0)));
 }
 
@@ -258,13 +258,13 @@ fn parse_length_value_accepts_pc() {
 fn parse_length_value_accepts_unitless_zero_only() {
     // CSS Values 3 §5 <https://www.w3.org/TR/css-values-3/#lengths>:
     // "For zero lengths the unit identifier is optional (i.e. can be
-    // syntactically represented as the `<number>` 0)." — bare `0` は
-    // mode 非依存で Length::Px(0.0) 受理 (両 mode 網羅で mode-independence pin)。
+    // syntactically represented as the `<number>` 0)." — accept bare `0`
+    // as Length::Px(0.0) in either mode (cover both to pin mode independence).
     assert_eq!(parse_length("0", false), Some(Length::Px(0.0)));
     assert_eq!(parse_length("0", true), Some(Length::Px(0.0)));
-    // 非零 unitless number は grammar 上 length ではない — `== 0.0` guard で
-    // 分岐して下段 `_ => None` fallthrough で drop。drop 経路は mode 非依存
-    // (guard を通らず fallthrough する path が両 mode 共通) のため 1 mode で pin。
+    // A nonzero unitless number is not a length in the grammar: the `== 0.0` guard
+    // branches, then the `_ => None` fall-through drops it. The drop path is
+    // independent of mode (both bypass the guard and fall through), so pin one mode.
     assert_eq!(parse_length("5", false), None);
     assert_eq!(parse_length("-1", false), None);
 }
@@ -277,22 +277,22 @@ fn parse_length_value_rejects_non_numeric_token() {
 
 #[test]
 fn parse_length_value_preserves_negative_sign() {
-    // helper は sign check を行わない — property ごとに要件が異なるため
-    // (font-size は non-negative post-filter、margin は negative 許容)。
+    // The helper does not check signs; requirements differ by property
+    // (font-size has a nonnegative post-filter; margin accepts negatives).
     assert_eq!(parse_length("-5px", false), Some(Length::Px(-5.0)));
     assert_eq!(parse_length("-1em", false), Some(Length::Em(-1.0)));
 }
 
 #[test]
 fn parse_length_value_unit_dispatch_case_insensitive() {
-    // CSS spec: unit identifier は ASCII case-insensitive。
+    // CSS spec: unit identifiers are ASCII case-insensitive.
     assert_eq!(parse_length("10PX", false), Some(Length::Px(10.0)));
     assert_eq!(parse_length("1.5EM", false), Some(Length::Em(1.5)));
     assert_eq!(parse_length("2Rem", false), Some(Length::Rem(2.0)));
     assert_eq!(parse_length("14Pt", false), Some(Length::Pt(14.0)));
-    // `unit.to_ascii_lowercase()` の dispatch key はすべて lowercase
-    // (`"q"` / `"in"` 等) — uppercase 単位が正しく畳み込まれることを
-    // 個別に確認する (`Q` は特に取り違えやすい)。
+    // All dispatch keys for `unit.to_ascii_lowercase()` are lowercase
+    // (`"q"`, `"in"`, etc.): check that uppercase units fold correctly
+    // one by one (`Q` is especially easy to get wrong).
     assert_eq!(parse_length("10IN", false), Some(Length::In(10.0)));
     assert_eq!(parse_length("40Q", false), Some(Length::Q(40.0)));
     assert_eq!(parse_length("2CM", false), Some(Length::Cm(2.0)));

@@ -8,9 +8,9 @@ use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
 use taffy::{Dimension, Display, Size, Style};
 
-/// hello-world (`<html><head></head><body><p style="color:red">Hi</p></body></html>`) を
-/// layout_single_page まで完了させた Document + CascadeResult を返す。
-/// このモジュールの test 全ての共通 setup。
+/// Return a Document + CascadeResult for hello-world
+/// (`<html><head></head><body><p style="color:red">Hi</p></body></html>`)
+/// after `layout_single_page`; shared setup for all tests in this module.
 fn hello_world_paint_setup() -> (Document, raikiri_style::CascadeResult) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -405,14 +405,14 @@ fn paint_img_filename_color_uses_padding_aware_background_path() {
 
 #[test]
 fn paint_single_page_without_body_returns_early() {
-    // fragment (Document → <p> 直子、no <body>) → paint_document は早期 return するが
-    // canvas background (white) は依然として emit される。
+    // Fragment (Document → direct `<p>` child, no `<body>`): `paint_document`
+    // returns early, but still emits the white canvas background.
     let mut doc = Document::new();
     let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
     let _t = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    // layout_single_page はここでは呼ばない (Err になる)、paint 単体で canvas のみ emit するかを test。
+    // Do not call `layout_single_page` here (it returns Err); test canvas painting alone.
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
     assert_eq!(
@@ -437,13 +437,13 @@ fn paint_single_page_without_body_returns_early() {
 
 #[test]
 fn paint_single_page_skips_zero_size_subtree() {
-    // display:none 相当を模した zero-size element (display: None, size 明示) が
-    // walk されないことを pin。paint_element の early return が正しく発火する
-    // regression check (layout side でも empty_display_none_leaf... で check 済)。
+    // Pin that a zero-size element modeling display:none (Display::None,
+    // explicit size) is not walked. This checks `paint_element`'s early return
+    // (the layout-side `empty_display_none_leaf...` test covers that side).
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    // hidden element を body 直下に置く (display: None、size 0)
+    // Put the hidden element directly under body (Display::None, size 0).
     let hidden_style = Style {
         display: Display::None,
         size: Size {
@@ -457,7 +457,7 @@ fn paint_single_page_skips_zero_size_subtree() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-    // hidden の layout size は 0 になっているはず (taffy LayoutOutput::HIDDEN)
+    // The hidden element should have zero layout size (taffy LayoutOutput::HIDDEN).
     let hidden_layout = doc.get_node(hidden).unwrap().unrounded_layout;
     assert_eq!(
         hidden_layout.size.width, 0.0,
@@ -465,7 +465,7 @@ fn paint_single_page_skips_zero_size_subtree() {
     );
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-    // text が 未実装の間も、実装後も glyph run は 0 個のはず (hidden 配下の text は skip)
+    // Its text must emit no glyph runs, whether or not text painting is implemented.
     let glyph_commands: Vec<_> = scene
         .commands
         .iter()
@@ -517,32 +517,32 @@ fn paint_single_page_clips_overflow_hidden_descendants() {
 
 #[test]
 fn paint_single_page_paints_zero_size_display_block_subtree() {
-    // display:none test 単独では、旧
-    // "size == 0 で skip" の実装でも pass するため、修正 (is_display_none 判定
-    // への切替) の regression protection にならない。この test は逆側 —
-    // display:block だが size=0 の container の中に text 子供を置き、
-    // GlyphRun が **emit される** ことを assert する。旧 size-based skip では
-    // container が skipped → 子 text の GlyphRun が失われて test failure。
-    // 現行 is_display_none 判定では container は Display::Block なので walk
-    // 継続 → 子 text の GlyphRun が emit される。
+    // The display:none test alone would pass even with the old size == 0
+    // skip rule, so it cannot prevent regressions in the `is_display_none`
+    // fix. This tests the converse: put a text child inside a display:block
+    // container of size 0 and assert that a GlyphRun **is emitted**. Under
+    // the old size-based skip, the container and its child would be skipped,
+    // losing the GlyphRun. Under the current `is_display_none` check, the
+    // Display::Block container is walked and the child's GlyphRun is emitted.
+    // This distinguishes zero-size blocks from hidden elements.
     //
-    // `apply_computed_to_style` が
-    // bridge_size (width component) を dispatch するようになった。fixture の
-    // 手構築 `taffy::Style { size.width = length(0) }` は `cv.width` = Auto
-    // 初期値で上書きされる (`<container>` に author width なしのため)。
-    // width=auto の Display::Block は containing width (=A4) に stretch され、
-    // `size.width == 0.0` sanity assert が失敗する。修正: inline に
-    // `"width: 0px; height: 0px"` を与え cv.{width,height} =
-    // ComputedLengthPercentageOrAuto::Px(0.0) を bridge が翻訳するようにする。
-    // 当初 height は bridge されておらず、
-    // `zero_block_style.size.height = length(0.0)` の手構築値を **保持** して
-    // sanity assert を維持していた。
+    // `apply_computed_to_style` now dispatches `bridge_size` for width.
+    // The hand-built `taffy::Style { size.width = length(0) }` in this
+    // fixture would be overwritten by the initial `cv.width` = Auto
+    // (because `<container>` has no author width). An auto-width
+    // Display::Block stretches to the containing width (A4), so the
+    // `size.width == 0.0` sanity check would fail. Instead, specify
+    // `"width: 0px; height: 0px"` inline so the bridge translates
+    // cv.{width,height} = ComputedLengthPercentageOrAuto::Px(0.0).
+    // Initially, height was not bridged, so the hand-built
+    // `zero_block_style.size.height = length(0.0)` still preserved the
+    // zero-height sanity check.
     //
-    // その後 bridge_size が
-    // `style.size = Size { width, height }` の struct literal を書くように
-    // なり、height も bridge 対象になった。上記 `zero_block_style` の
-    // `size.height = length(0.0)` 手構築値は inline `height: 0px` 由来の
-    // 同値で上書きされるため現在は冗長 (behavior 差はなし)。
+    // Later, `bridge_size` began writing a struct literal for
+    // `style.size = Size { width, height }`, bridging height as well.
+    // The hand-built `size.height = length(0.0)` is now redundant because
+    // the inline `height: 0px` overwrites it with the same value.
+    // Behavior is unchanged.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -558,8 +558,8 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
         Some(body),
         "container",
         zero_block_style,
-        // width / height とも bridge が clobber するため inline で明示
-        // (height も bridge 対象)。
+        // The bridge overwrites both width and height, so set them inline
+        // (height is bridged too).
         Some("width: 0px; height: 0px"),
     );
     let _text = doc.append_text(container, "visible");
@@ -567,7 +567,7 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
 
-    // sanity: container の size は 0 (explicit width/height=0 を尊重)
+    // Sanity check: honor the explicit zero width and height.
     let container_layout = doc.get_node(container).unwrap().unrounded_layout;
     assert_eq!(
         container_layout.size.width, 0.0,
@@ -596,7 +596,7 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
 
 #[test]
 fn paint_single_page_hello_world_emits_one_glyph_run() {
-    // hello-world "Hi" → 1 GlyphRun が emit されることを pin。
+    // Pin that hello-world "Hi" emits one GlyphRun.
     let (doc, cr) = hello_world_paint_setup();
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -658,8 +658,8 @@ fn paint_single_page_line_break_anywhere_paints_text() {
 
 #[test]
 fn paint_single_page_uses_inherited_color_as_brush() {
-    // <p style="color:red"> → cascade で red が inherit → text の brush が
-    // (255, 0, 0, 255) になることを pin。cascade → shape 系譜の regression 保護。
+    // `<p style="color:red">` passes red through the cascade to its text brush
+    // (255, 0, 0, 255); guard the cascade-to-shaping path against regressions.
     use anyrender::types::Paint;
     use peniko::Color;
 
@@ -983,30 +983,30 @@ fn paint_single_page_ancestor_decoration_propagates_and_keeps_origin_color() {
 
 #[test]
 fn paint_single_page_positions_glyphs_via_absolute_offset() {
-    // body / p / text の accumulate location が draw_glyphs の transform に
-    // 正しく反映されることを exact-match で check する。
+    // Match exactly how the body/p/text accumulated locations appear in the
+    // `draw_glyphs` transform.
     //
-    // 従来 `translation >= 0` の弱い assertion では identity transform (=
-    // accumulation を丸ごと忘れた実装) でも pass してしまう。<p> に非ゼロの
-    // taffy margin を付けて p.location.x/y を non-zero に押し、accumulation
-    // logic を実 exercise する。expected = body.location + p.location +
-    // text.location (block layout の flow 累積)。
+    // A weak `translation >= 0` check also passes for an identity transform
+    // (which omits accumulation entirely). Add a nonzero taffy margin to `<p>`
+    // so p.location.x/y is nonzero and the accumulation logic is exercised.
+    // Expected: body.location + p.location + text.location (block-flow
+    // accumulation).
     //
-    // `apply_computed_to_style` が
-    // `bridge_margin` で cascade → taffy 変換を行うため、hand-set した
-    // taffy `Style { margin: ... }` は cascade の initial 0 で上書きされる。
-    // 従って margin は CSS inline (`style="margin: ..."`) 経路で与える —
-    // これが production の real code path とも整合する。
+    // `apply_computed_to_style` converts cascade values to taffy through
+    // `bridge_margin`, so the cascade's initial zero overwrites a hand-built
+    // taffy `Style { margin: ... }`. Specify the margin through inline CSS
+    // (`style="margin: ..."`) instead; this also matches the production
+    // code path.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    // `margin: 20px 0px 0px 20px` (top=20, right=0, bottom=0, left=20) — 従来の
-    // hand-set と同 shape を CSS で再現。`0px` は明示 (raikiri-style
-    // `parse_length_value` は bare unitless `0` を受理しない spec-subset
-    // 実装のため、shorthand の 4 side で unit を全 side に付ける)。
-    // `color:red` は既存 assertion で brush 経路の regression check として
-    // 保持されているため concatenate する。
+    // `margin: 20px 0px 0px 20px` (top=20, right=0, bottom=0, left=20)
+    // recreates the old hand-built shape in CSS. Specify `0px` explicitly:
+    // raikiri-style `parse_length_value` does not accept bare unitless `0`
+    // in this spec subset, so all four shorthand sides need units.
+    // Preserve `color:red` by concatenating it: an existing assertion uses
+    // it to catch brush-path regressions.
     let p = doc.append_element(
         Some(body),
         "p",
@@ -1018,8 +1018,8 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
 
-    // margin=20 が p.location を non-zero に押していることを確認 (accumulation
-    // logic を exercise する前提が satisfy されていることの sanity check)。
+    // Check that margin=20 makes p.location nonzero: a precondition for
+    // actually exercising the accumulation logic.
     let p_loc = doc.get_node(p).unwrap().unrounded_layout.location;
     assert!(
         p_loc.x >= 20.0,
@@ -1032,7 +1032,7 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
         p_loc.y
     );
 
-    // 期待累積 = body.location + p.location + text.location
+    // Expected accumulated location = body.location + p.location + text.location.
     let (expected_x, expected_y) =
         [body, p, text]
             .iter()
@@ -1051,9 +1051,9 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
     else {
         unreachable!()
     };
-    // Affine の translation 成分は as_coeffs() の `[4, 5]` (2 次元 identity +
-    // translation)。kurbo::Affine には translation() getter が無いため
-    // as_coeffs() で decode する。
+    // Affine translation is in `[4, 5]` of `as_coeffs()` (2D identity plus
+    // translation). kurbo::Affine has no translation() getter, so decode
+    // those coefficients directly.
     let coeffs = glyph_cmd.transform.as_coeffs();
     let epsilon = 1e-5f64;
     assert!(
@@ -1077,17 +1077,17 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
 }
 
 /// `<html><head></head><body><p><span style="{span_style}">Sub</span></p></body></html>`
-/// を通した後、`<span>` 内の Text の (唯一の) GlyphRun の transform Y
-/// 成分 (`as_coeffs()[5]`) を返す。`span_style` が `None` の場合
-/// `style` 属性自体を省略する (author `vertical-align` なし、cascade は
-/// `VerticalAlign::Baseline` の initial value へ落ちる)。
+/// After processing it, return the Y transform component (`as_coeffs()[5]`)
+/// of the only GlyphRun for the Text inside `<span>`. If `span_style` is `None`,
+/// omit the `style` attribute (no author `vertical-align`, so the cascade
+/// uses the initial `VerticalAlign::Baseline`).
 ///
-/// `<p>` / `<span>` とも author font-size を与えないため、CSS initial
-/// (16px) がそのまま used font-size になる — `vertical-align: sub`/
-/// `super` の shift 量 ([`crate::walk::vertical_align_shift_px`]) の基準
-/// である「`<span>` の親 (`<p>`) の used font-size」は全 test 共通で
-/// 16px 固定。`paint_single_page_vertical_align_*` 系 test の共通
-/// helper。
+/// Neither `<p>` nor `<span>` specifies an author font-size, so the CSS
+/// initial value (16px) is the used font-size. The parent (`<p>`) used
+/// font-size underlying the `vertical-align: sub` / `super` shift in
+/// [`crate::walk::vertical_align_shift_px`] is thus always 16px here.
+/// Shared helper for the `paint_single_page_vertical_align_*` tests.
+///
 fn span_text_glyph_y(span_style: Option<&str>) -> f32 {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -1198,15 +1198,15 @@ fn paint_single_page_vertical_align_sub_on_block_level_element_does_not_shift() 
 
 #[test]
 fn paint_single_page_vertical_align_nested_sub_composes_by_addition() {
-    // Two nested `<span vertical-align: sub>` levels, both with the
-    // same 16px parent-font-size basis — this crate's `shift_y`
-    // stack-frame accumulation (`crate::walk::paint_document`'s doc,
-    // "Nested vertical-align の合成" note on
-    // `vertical_align_shift_px`) sums each ancestor's own shift, so
-    // the total should be twice the single-level shift. This
-    // composition rule has no spec citation (documented as an
-    // approximation) — this test pins the *mechanical* accumulation
-    // behavior, not a spec requirement.
+    // Two nested `<span vertical-align: sub>` levels use the same 16px
+    // parent-font-size basis. This crate's `shift_y` stack-frame accumulator
+    // (documented in `crate::walk::paint_document` and the nested-shift
+    // note in `vertical_align_shift_px`) sums each ancestor's shift. The
+    // total should be twice the single-level shift. No spec cites this
+    // composition rule; it is documented as an approximation. This test
+    // pins the *mechanical* accumulation, not a spec requirement.
+    // Both spans use the same inherited font-size for their parent basis.
+    // The comparison below verifies the accumulated offset.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
@@ -1251,24 +1251,24 @@ fn paint_single_page_vertical_align_nested_sub_composes_by_addition() {
     );
 }
 
-/// `<p>H<sub>2</sub>O</p>` を `raikiri_html::parse` + the UA
-/// stylesheet (`sub { vertical-align: sub }` + `sub, sup { font-size:
-/// smaller; ... }`, `minimal.css`) を通し、`<sub>` の "2" text の
-/// GlyphRun の transform Y 成分を返す。
+/// Process `<p>H<sub>2</sub>O</p>` with `raikiri_html::parse` and the UA
+/// stylesheet (`sub { vertical-align: sub }` plus `sub, sup { font-size:
+/// smaller; ... }` from `minimal.css`), then return the Y transform component
+/// of the GlyphRun for the "2" text inside `<sub>`.
 ///
-/// `build_rule_tree` は author `<style>` element だけを拾い、UA CSS を
-/// 自動では含まない (`raikiri_style::ruletree::walk_style_elements` の
-/// doc: "UA CSS は含まれない — raikiri-html::parse が
-/// Document::add_stylesheet 経由で UA を注入しており、
-/// Document::stylesheets() 経路で raikiri umbrella が別途消費する契約")
-/// — このため呼び出し側で明示的に `rules.add_stylesheet(MINIMAL_UA_CSS,
-/// Origin::UserAgent)` する。
+/// `build_rule_tree` collects only author `<style>` elements and does not
+/// include UA CSS automatically (the `raikiri_style::ruletree::walk_style_elements`
+/// docs say that raikiri-html::parse injects UA CSS via
+/// Document::add_stylesheet, while the raikiri umbrella separately consumes it
+/// via Document::stylesheets()). Thus the caller must explicitly call
+/// `rules.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent)`.
+/// This adds the UA declarations omitted by `build_rule_tree`.
 ///
-/// `extra_head_style` は `<head>` 内 `<style>` として追加される author
-/// declaration (Origin::Author は同 specificity の UA 宣言に cascade
-/// 上優先するため、`sub { vertical-align: baseline; }` を渡せば UA の
-/// `sub { vertical-align: sub }` を上書きできる — `font-size: smaller`
-/// は UA のまま残る)。
+/// `extra_head_style` adds author declarations through a `<style>` element
+/// in `<head>`. Origin::Author outranks UA declarations of equal specificity:
+/// passing `sub { vertical-align: baseline; }` overrides the UA rule
+/// `sub { vertical-align: sub }`, but keeps the UA's
+/// `font-size: smaller` declaration.
 fn ua_sub_text_glyph_y(extra_head_style: &str) -> f32 {
     use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, parse};
     use raikiri_style::Origin;
@@ -1348,9 +1348,9 @@ fn paint_single_page_ua_sub_shift_uses_parent_font_size_not_subs_own_shrunk_size
 
 #[test]
 fn paint_single_page_skips_empty_text() {
-    // text_layout が None (empty text) の Text node は draw_glyphs を呼ばず
-    // silent skip する contract。preshape_text が empty text で text_layout = None
-    // を残す仕様と対称。
+    // A Text node whose text_layout is None (empty text) must silently skip
+    // `draw_glyphs`. This mirrors `preshape_text`, which leaves text_layout
+    // as None for empty text.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -1375,9 +1375,9 @@ fn paint_single_page_skips_empty_text() {
 
 #[test]
 fn paint_single_page_can_be_called_multiple_times() {
-    // 同じ Document を 2 回 paint、2 回とも同じ command sequence を produce
-    // (state mutation なし、re-entrance safety pin)。将来 paint 側で cache
-    // 導入した時の silent regression 検出用 pin。
+    // Paint the same Document twice and require the same command sequence
+    // both times (no state mutation, reentrancy). Catch silent regressions
+    // if paint-side caching is added later.
     let (doc, cr) = hello_world_paint_setup();
 
     let mut scene1 = Scene::new();
@@ -1409,23 +1409,23 @@ fn paint_single_page_can_be_called_multiple_times() {
     assert_eq!(glyph_count1, 1, "hello world must emit exactly 1 GlyphRun");
 }
 
-/// HTML の hidden elements
-/// (`<style>` / `<script>` / `<noscript>` / `<datalist>` / `<noembed>` /
-/// `<noframes>` / `<rp>` 等) 内の text が rendered artifact に混入しない
-/// ことを check する。
+/// Check that text inside HTML hidden elements (`<style>` / `<script>` /
+/// `<noscript>` / `<datalist>` / `<noembed>` / `<noframes>` / `<rp>` and others)
+/// does not leak into the rendered output.
+/// Surrounding text must remain visible as well.
 ///
-/// 各 fixture では:
-/// - inert element 手前の "before" text と後ろの "after" text を配置し、
-///   それらは正しく painted (GlyphRun 2 個) される
-/// - inert element 内の raw text は painted されない (leak 検出)
+/// In each fixture:
+/// - Put "before" text before the inert element and "after" text after it;
+///   both must be painted (two GlyphRuns).
+/// - Raw text inside the inert element must not be painted (no leak).
 ///
-/// 単純な "painted 0 個" 判定だと inert filter が **全** subtree を dumb
-/// に潰しても pass してしまうため、"before/after は残る + inert 内は消える"
-/// の 3-way discriminant で filter が正確に働くことを assert する。
+/// Merely testing for zero painted glyphs would also pass if the inert filter
+/// wrongly removed the **entire** subtree. The three-way check (keep before
+/// and after; drop inert content) verifies that the filter is precise.
 ///
 /// HTML LS §15.3.1 "Hidden elements"
 /// (<https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>)
-/// が primary source。
+/// is the primary source.
 fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
     use raikiri_html::{ParseOptions, parse};
 
@@ -1451,8 +1451,8 @@ fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
             _ => None,
         })
         .collect();
-    // GlyphRun 数 = 2 (before + after)。inert が leak なら 3、boundary が
-    // 落ちるなら 1 or 0。3-way discriminant で filter over-collapse も検知。
+    // Exactly two GlyphRuns (before + after): a leak yields three, while a
+    // lost boundary yields one or zero. Also detect over-filtering.
     assert_eq!(
         glyph_commands.len(),
         2,
@@ -1461,12 +1461,12 @@ fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
         glyph_commands.len()
     );
     // 2-of-3 selection (before + inert
-    // survived、after 落ちた) でも count==2 で pass する余地を封じる。
-    // 総 glyph 数を "before" (6 chars) + "after" (5 chars) = 11 の
-    // exact match で pin。inert content が leak なら len が増える、
-    // boundary text が落ちれば len が減る。
-    // 各 assert_inert_html_content_not_painted call site が同じ
-    // fixture "before…after" 文字列前提であることに依存。
+    // A count of two could still pass if one boundary vanished while inert
+    // content survived. Pin the total glyph count to "before" (6 chars) plus
+    // "after" (5 chars) = 11. Leaked inert content increases the count;
+    // losing boundary text decreases it. Each caller of
+    // `assert_inert_html_content_not_painted` must use the same
+    // "before…after" fixture text.
     let total_glyphs: usize = glyph_commands.iter().map(|cmd| cmd.glyphs.len()).sum();
     assert_eq!(
         total_glyphs,
@@ -1480,9 +1480,9 @@ fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
 #[test]
 fn paint_single_page_skips_style_subtree_content() {
     // <body>before<style>#a{color:red}</style>after</body>
-    // <style> は HTML LS §15.3.1 "Hidden elements"、
-    // その raw text (`#a{color:red}`) は paint されない。
-    // before / after の text は painted (GlyphRun 2 個)。
+    // HTML LS §15.3.1 "Hidden elements" covers <style>; its raw text
+    // (`#a{color:red}`) must not be painted. The before/after text
+    // must be painted (two GlyphRuns).
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<style>#a{color:red}</style>after</body></html>",
         "style",
@@ -1492,7 +1492,7 @@ fn paint_single_page_skips_style_subtree_content() {
 #[test]
 fn paint_single_page_skips_script_subtree_content() {
     // <body>before<script>alert(1)</script>after</body>
-    // <script> raw text は paint されない (HTML LS §4.12.1)。
+    // Do not paint <script> raw text (HTML LS §4.12.1).
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<script>alert(1)</script>after</body></html>",
         "script",
@@ -1502,39 +1502,39 @@ fn paint_single_page_skips_script_subtree_content() {
 #[test]
 fn paint_single_page_skips_noscript_subtree_content() {
     // <body>before<noscript>fallback</noscript>after</body>
-    // scripting_enabled=true (html5ever default、parse.rs で default 継承)
-    // 下では <noscript> 内容は raw text tokenize されるため paint 対象外。
-    // 将来 scripting_enabled=false に切替えた場合は本 test を quarantine → 再設計。
+    // With scripting_enabled=true (html5ever default, inherited in parse.rs),
+    // <noscript> content is tokenized as raw text and must not be painted.
+    // If scripting_enabled becomes false, quarantine and redesign this test.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<noscript>fallback</noscript>after</body></html>",
         "noscript",
     );
 }
 
-// §15.3.1 完全化 4 element (datalist / noembed /
-// noframes / rp)。style / script / noscript / template fixture と
-// 同じ 3-way discriminant (`before` + `after` = 11 glyphs、inert 内 text
-// leak なら total_glyphs > 11) を継承する。
+// Four remaining §15.3.1 elements (datalist / noembed / noframes / rp).
+// Like style / script / noscript / template fixtures, these use the
+// same three-way check (`before` + `after` = 11 glyphs; leaked inert text
+// makes total_glyphs > 11).
 //
-// 各 element の HTML5 parsing 挙動:
-// - `<datalist>`: 通常 element、内部 character token は Text 子として保持
-//   (HTML LS §4.10.8)。§15.3.1 UA `display:none` を override CSS 経路で
-//   剥がしても paint 側 predicate が subtree を落とす。
-// - `<noembed>` / `<noframes>`: "in body" 挿入モードで RAWTEXT tokenizer
-//   state へ遷移 (HTML LS §13.2.6.4.7)、内部 chunk は 1 Text 子として保持。
-// - `<rp>`: 通常 element parsing。`<ruby>` 外でも "in body" 挿入モード
-//   は rp を通常挿入する ("current node が ruby / rtc でない" の条件で
-//   parse error mark が付くのみで structure は維持、HTML LS §13.2.6.4.7)。
-//   §15.3.1 hidden-elements rule 直下で unconditionally `display: none`
-//   (§15.3.4 "Phrasing content" の ruby CSS も ruby / rt のみを扱い
-//   rp を可視化しない)。ruby 実装未搭載環境でも defense-in-depth で
-//   content-leak 経路を予防閉塞。
+// HTML5 parsing behavior for each element:
+// - `<datalist>` is a normal element; its character tokens remain Text
+//   children (HTML LS §4.10.8). Even if author CSS overrides §15.3.1's
+//   UA `display:none`, the paint-side predicate skips its subtree.
+// - `<noembed>` / `<noframes>` switch to the RAWTEXT tokenizer in the
+//   "in body" insertion mode (HTML LS §13.2.6.4.7); their text is one child.
+// - `<rp>` is parsed as a normal element. Even outside `<ruby>`, "in body"
+//   inserts it normally (when the current node is not ruby / rtc, only a
+//   parse error is marked; structure remains, HTML LS §13.2.6.4.7).
+//   The §15.3.1 hidden-elements rule sets `display: none` unconditionally;
+//   §15.3.4 "Phrasing content" only styles ruby / rt, not rp. The paint-side
+//   defense-in-depth gate prevents content leaks even without ruby support.
+//
 
 #[test]
 fn paint_single_page_skips_datalist_subtree_content() {
     // <body>before<datalist>hidden</datalist>after</body>
-    // <datalist> は §15.3.1 hidden-elements rule で `display: none`。
-    // author override で hidden content が glyph に混入する経路を閉じる。
+    // §15.3.1 hides <datalist> with `display: none`. Prevent author CSS
+    // overrides from leaking its content into painted glyphs.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<datalist>hidden</datalist>after</body></html>",
         "datalist",
@@ -1544,8 +1544,8 @@ fn paint_single_page_skips_datalist_subtree_content() {
 #[test]
 fn paint_single_page_skips_noembed_subtree_content() {
     // <body>before<noembed>hidden</noembed>after</body>
-    // <noembed> は RAWTEXT parsing (§13.2.6.4.7)、内部 "hidden" は raw text
-    // として Text 子で保持され、§15.3.1 で display:none。
+    // <noembed> uses RAWTEXT parsing (§13.2.6.4.7): its internal "hidden"
+    // raw text remains a Text child, then §15.3.1 applies display:none.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<noembed>hidden</noembed>after</body></html>",
         "noembed",
@@ -1555,7 +1555,7 @@ fn paint_single_page_skips_noembed_subtree_content() {
 #[test]
 fn paint_single_page_skips_noframes_subtree_content() {
     // <body>before<noframes>hidden</noframes>after</body>
-    // <noframes> も §13.2.6.4.7 で RAWTEXT parsing、§15.3.1 hidden-elements。
+    // <noframes> also uses RAWTEXT parsing (§13.2.6.4.7) and §15.3.1 hiding.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<noframes>hidden</noframes>after</body></html>",
         "noframes",
@@ -1565,12 +1565,12 @@ fn paint_single_page_skips_noframes_subtree_content() {
 #[test]
 fn paint_single_page_skips_rp_subtree_content() {
     // <body>before<rp>hidden</rp>after</body>
-    // <rp> は ruby parenthesis fallback。`<ruby>` 外でも "in body" 挿入
-    // モードは rp を通常挿入する (§13.2.6.4.7 "current node が ruby / rtc
-    // でない" 条件で parse error mark のみ付き structure は維持)。
-    // §15.3.1 hidden-elements rule 直下で `display: none` (§15.3.4 ruby
-    // CSS も ruby / rt のみ扱い rp を可視化しない)。ruby 未搭載環境でも
-    // defense-in-depth で content-leak を閉じる。
+    // <rp> is fallback parentheses for ruby. "In body" inserts it normally
+    // even outside `<ruby>` (§13.2.6.4.7: a current node other than ruby / rtc
+    // marks a parse error but preserves the structure).
+    // §15.3.1 hides it via `display: none`; §15.3.4 only styles ruby / rt
+    // and does not make rp visible. This defense-in-depth gate prevents
+    // content leaks even without ruby support.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<rp>hidden</rp>after</body></html>",
         "rp",
@@ -1579,9 +1579,9 @@ fn paint_single_page_skips_rp_subtree_content() {
 
 #[test]
 fn paint_single_page_skips_template_subtree_content_via_inert_predicate() {
-    // <template> は既に is_in_document() gate で skip されるが、defense-in-depth
-    // で is_non_rendered_html_element() 側も個別に発火するかを pin。
-    // "before<template>...</template>after" で 2 GlyphRun (before + after)。
+    // <template> is already skipped by the is_in_document() gate. Also pin
+    // that is_non_rendered_html_element() independently skips it.
+    // "before<template>...</template>after" yields two GlyphRuns.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<template><p>secret</p></template>after</body></html>",
         "template",
@@ -1590,14 +1590,14 @@ fn paint_single_page_skips_template_subtree_content_via_inert_predicate() {
 
 #[test]
 fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
-    // UA CSS の template { display: none } rule 存在に
-    // 依存せず、template subtree の paint を is_in_document() predicate gate で
-    // 明示的に skip する contract 回帰 pin。silent bug fix regression。
+    // Pin the contract: the is_in_document() predicate explicitly skips
+    // template subtrees regardless of any UA CSS template { display: none }
+    // rule. Prevent regression of this formerly silent bug.
     //
-    // Setup: <body><template><p>should_not_paint</p></template></body>。
-    // 現在 UA CSS には template rule 無し (minimal.css 確認済)、default
-    // Display::Block になる。gate 追加前は paint に降りて GlyphRun が emit
-    // されていた silent bug 表面。
+    // Setup: <body><template><p>should_not_paint</p></template></body>.
+    // Current UA CSS has no template rule (checked in minimal.css), so its
+    // default is Display::Block. Before the gate, painting descended into
+    // the subtree and emitted a GlyphRun without reporting the bug.
     use raikiri_html::{ParseOptions, parse};
 
     let html = b"<html><head></head><body>\
@@ -1609,7 +1609,7 @@ fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
         base_url: None,
     };
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
-    // parse は UncascadedDocument を返す。dom を取り出して cascade + layout + paint。
+    // parse returns an UncascadedDocument; extract its DOM, then cascade, layout, and paint.
     let mut doc = uncascaded.dom;
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1634,13 +1634,13 @@ fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
 #[cfg(debug_assertions)]
 #[should_panic(expected = "must equal document.node_count()")]
 fn paint_single_page_debug_asserts_cascade_document_length_match() {
-    // module doc `## Contract` の `cascade.computed.len() ==
-    // document.node_count()` を意図的に破り (cascade 後に arena へ
-    // node を 1 つ足して `cascade.computed` を置き去りにする)、
-    // `paint_single_page` 冒頭の debug_assert がその契約違反を捕まえて
-    // panic することを check する。release build (debug_assertions off)
-    // では debug_assert 自体が消えるため #[cfg(debug_assertions)] で
-    // gate する — さもないと `cargo test --release` で失敗する。
+    // Intentionally violate the module doc's `## Contract` (`cascade.computed.len() ==
+    // document.node_count()`) by adding a node to the arena after cascading,
+    // leaving `cascade.computed` behind. Check that `paint_single_page`'s
+    // initial debug_assert catches the violation and panics. In release
+    // builds this assertion is omitted, so gate this test with
+    // #[cfg(debug_assertions)]; otherwise `cargo test --release` fails.
+    // Release builds deliberately do not enforce this invariant.
     let (mut doc, cr) = hello_world_paint_setup();
     doc.append_element(Some(0), "p", Style::default(), None::<&str>);
     let mut scene = Scene::new();

@@ -16,41 +16,41 @@ use taffy::Style;
 
 use crate::types::UncascadedDocument;
 
-/// html5ever `TreeSink` の raikiri 実装。Handle は raikiri-dom arena の
-/// index (`usize`)、Output は [`UncascadedDocument`]。QualName / Attribute
-/// の metadata table を RefCell 内 FxHashMap で保持し、raikiri-dom::Node に
-/// html5ever 固有型を漏らさない (独立実装)。
+/// The raikiri implementation of html5ever `TreeSink`. Handles are indices
+/// (`usize`) into the raikiri-dom arena; output is [`UncascadedDocument`].
+/// Store QualName / Attribute metadata in an FxHashMap inside a RefCell,
+/// keeping html5ever-specific types out of raikiri-dom::Node.
 pub struct RaikiriTreeSink {
     document: RefCell<Document>,
-    /// Handle → 完全な QualName (namespace + local)。`elem_name()` の
-    /// 返り値 `Ref<'_, QualName>` の裏にある。`finish()` 時に non-HTML namespace
-    /// のみ raikiri-dom::Node.namespace に wire する。
+    /// Handle → full QualName (namespace + local name). This backs the
+    /// `Ref<'_, QualName>` returned by `elem_name()`. On `finish()`, copy only
+    /// non-HTML namespaces to raikiri-dom::Node.namespace.
     qual_names: RefCell<FxHashMap<usize, QualName>>,
-    /// Handle → attribute 列。parse 中は merge (add_attrs_if_missing) で更新。
-    /// `finish()` 時に null-namespace attr を raikiri-dom::Node.attributes に、
-    /// `style` attribute のみ raikiri-dom::Node.inline_style に分離して wire
-    /// namespaced attr (xlink:href 等) は将来に defer。
+    /// Handle → attributes. During parsing, `add_attrs_if_missing` merges them.
+    /// On `finish()`, copy null-namespace attributes to raikiri-dom::Node.attributes
+    /// and separate the `style` attribute into raikiri-dom::Node.inline_style.
+    /// Support for namespaced attributes such as xlink:href is deferred.
     attributes: RefCell<FxHashMap<usize, Vec<Attribute>>>,
-    /// html5ever が報告した非致命 parse error の buffer。finish() で
-    /// UncascadedDocument.warnings に移設。
+    /// Buffer of nonfatal parse errors reported by html5ever. Move these to
+    /// UncascadedDocument.warnings on `finish()`.
     warnings: RefCell<Vec<RenderWarning>>,
-    /// Document 全体の quirks mode。cascade phase が参照する予定。
+    /// Document-wide quirks mode, intended for use by the cascade.
     quirks_mode: Cell<QuirksMode>,
-    /// `parse_error` が `warnings` に記録する件数の上限 (`None` = 無制限)。
-    /// [`raikiri_traits::RenderLimits::max_parse_warnings`] から consult
-    /// される想定の値 — 詳しい rationale はそちらの field doc を参照。
+    /// Maximum number of warnings recorded by `parse_error` (`None` = unlimited).
+    /// Intended to receive [`raikiri_traits::RenderLimits::max_parse_warnings`];
+    /// see that field's documentation for the rationale.
     max_parse_warnings: Option<usize>,
 }
 
 impl RaikiriTreeSink {
-    /// 新規 sink を construct。Document は arena index 0 に virtual root を持つ
-    /// 空 Document で初期化される。
+    /// Construct a new sink with an empty Document whose virtual root is at
+    /// arena index 0.
     ///
-    /// `max_parse_warnings` は [`TreeSink::parse_error`] が記録する warning
-    /// 件数の上限 (`None` = 無制限)。呼び出し側は通常
-    /// `raikiri_traits::RenderLimits::max_parse_warnings` の値をそのまま渡す
-    /// (`raikiri_html::parse` は default 値、`raikiri::parse_html_with_limits`
-    /// は consumer が設定した値を渡す)。
+    /// `max_parse_warnings` caps the warnings recorded by [`TreeSink::parse_error`]
+    /// (`None` = unlimited). Callers normally pass the value of
+    /// `raikiri_traits::RenderLimits::max_parse_warnings` directly.
+    /// `raikiri_html::parse` uses the default; `raikiri::parse_html_with_limits`
+    /// passes the value configured by the consumer.
     pub fn new(max_parse_warnings: Option<usize>) -> Self {
         Self {
             document: RefCell::new(Document::new()),
@@ -62,13 +62,13 @@ impl RaikiriTreeSink {
         }
     }
 
-    /// Element 用の detached node を construct し、metadata table に QualName /
-    /// attrs を登録する。
+    /// Construct a detached element node and register its QualName and attributes
+    /// in the metadata tables.
     ///
-    /// `Node.inline_style` / `Node.namespace` / `Node.attributes` の integration は
-    /// [`RaikiriTreeSink::finish`] で metadata table から一括 populate する
-    /// ここでは Document への tag + default Style 登録と
-    /// metadata table への full-fidelity 保存のみ行う。
+    /// Populate `Node.inline_style`, `Node.namespace`, and `Node.attributes`
+    /// from the metadata tables together in [`RaikiriTreeSink::finish`].
+    /// Here, only register the tag and default Style in the Document and store
+    /// full-fidelity metadata in the side tables.
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
         let tag: SmolStr = AsRef::<str>::as_ref(&name.local).into();
         let idx =
@@ -80,11 +80,11 @@ impl RaikiriTreeSink {
         idx
     }
 
-    /// Text を parent の最後の child に追記する。
+    /// Append Text to the parent's last child.
     ///
-    /// HTML tokenizer は一つの inline run を複数 callback に分割することが
-    /// ある。隣接 Text を別々の block leaf にすると通常フローで誤改行
-    /// するため、TreeSink 契約どおり末尾 Text と結合する。
+    /// The HTML tokenizer may split a single inline run across callbacks.
+    /// Separate adjacent Text nodes would become separate block leaves and cause
+    /// spurious line breaks in normal flow. Merge with the last Text node as required by TreeSink.
     fn append_text_smart(&self, parent: usize, text: StrTendril) {
         self.document
             .borrow_mut()
@@ -109,34 +109,34 @@ impl TreeSink for RaikiriTreeSink {
         let qual_names = self.qual_names.into_inner();
         let attributes = self.attributes.into_inner();
 
-        // metadata table を raikiri-dom::Node にコピー。
-        // qual_names → Node.namespace (non-HTML のみ)。
-        // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
+        // Copy metadata tables into raikiri-dom::Node.
+        // qual_names → Node.namespace (non-HTML only).
+        // attributes → Node.attributes (null namespace, excluding style) + Node.inline_style.
         wire_side_tables(&mut document, &qual_names, &attributes);
 
-        // html5ever が set_quirks_mode callback で報告した値を Document 自体
-        // に持たせる。cascade phase (raikiri-style の id/class selector
-        // matching) が `impl StyleDom for Document` 経由でこの値を読む。
+        // Store the value reported by html5ever's set_quirks_mode callback on the
+        // Document itself. The cascade (raikiri-style id/class selector matching)
+        // reads it through `impl StyleDom for Document`.
         let quirks_mode = convert_quirks(self.quirks_mode.get());
         document.set_quirks_mode(quirks_mode);
 
-        // 旧 strip_non_element_stubs (pseudo-tag な
-        // "#comment" / "#pi" Element を tree から physical 除去) を廃止。
-        // Comment / ProcessingInstruction は NodeData::Comment /
-        // NodeData::ProcessingInstruction variant として tree 内に persist する
-        // (WHATWG DOM §4 NodeType との alignment)。両 variant は
-        // `mark_in_document_flags` step 2 で IS_IN_DOCUMENT bit が clear される
-        // 契約であり、したがって:
-        // - TaffyChildIter の is_in_document filter で layout child count に leak
-        //   しない (raikiri-dom/src/taffy_impl.rs:38,61,71 の filter)
-        // - extract_inline_stylesheets / find_head_element / find_body の
-        //   is_in_document() gate + Element gate で自動 skip
-        // - cascade / paint 全 traversal も同 gate で skip
+        // Remove the old strip_non_element_stubs behavior (which physically removed
+        // pseudo-tag "#comment" and "#pi" Elements from the tree).
+        // Persist Comment and ProcessingInstruction as the NodeData::Comment and
+        // NodeData::ProcessingInstruction variants in the tree, matching WHATWG
+        // DOM §4 NodeType. Both variants have their IS_IN_DOCUMENT bit cleared
+        // by `mark_in_document_flags` step 2. Therefore:
         //
-        // template subtree の IS_IN_DOCUMENT bit を clear
-        // + detached node (foster parenting transient) + Comment/PI の
-        // bit を clear する。extract_inline_stylesheets が is_in_document() gate
-        // 経由でこれらを skip するため、その前に走らせる。
+        // - The TaffyChildIter is_in_document filter excludes them from layout child
+        //   counts (raikiri-dom/src/taffy_impl.rs:38,61,71).
+        // - extract_inline_stylesheets / find_head_element / find_body skip them via
+        //   the is_in_document() and Element gates.
+        // - All cascade and paint traversals skip them through the same gates.
+        //
+        // Clear IS_IN_DOCUMENT on detached template contents, detached nodes
+        // (transient foster parenting), and Comment/PI nodes. Do this before
+        // extract_inline_stylesheets, which skips them through the
+        // is_in_document() gate.
         document.mark_in_document_flags();
 
         let stylesheet_sources = extract_inline_stylesheets(&document);
@@ -152,8 +152,8 @@ impl TreeSink for RaikiriTreeSink {
         let mut warnings = self.warnings.borrow_mut();
 
         let Some(cap) = self.max_parse_warnings else {
-            // 無制限 (Consumer が明示的に `max_parse_warnings = None` を
-            // 設定した場合のみ到達する)。
+            // Unlimited (only reached when a consumer explicitly sets
+            // `max_parse_warnings = None`).
             warnings.push(RenderWarning {
                 kind: WarningKind::HtmlParseError {
                     message: msg.into_owned(),
@@ -164,11 +164,11 @@ impl TreeSink for RaikiriTreeSink {
             return;
         };
         if cap == 0 {
-            // 実 warning 用の slot は無いが、cap>0 の場合と同じく「1件以上の
-            // parse error が発生したが suppress された」ことを示す synthetic
-            // entry を最初の呼び出し時にだけ 1 件積む。無条件 no-op だと
-            // parse error が 0 件だったケースと区別できず、cap>0 の
-            // trip-and-record semantics と非対称な silent disable になる。
+            // There is no slot for a real warning, but—as for cap > 0—add a synthetic
+            // entry on the first call indicating that at least one parse error occurred
+            // and was suppressed. An unconditional no-op would make this case
+            // indistinguishable from zero parse errors and would silently disable the
+            // trip-and-record behavior used for cap > 0.
             if warnings.is_empty() {
                 warnings.push(RenderWarning {
                     kind: WarningKind::HtmlParseError {
@@ -181,10 +181,9 @@ impl TreeSink for RaikiriTreeSink {
             return;
         }
 
-        // 最後の 1 slot は「以降 suppress した」ことを示す synthetic entry
-        // 専用に予約する (silent drop だと cap 件とそれを大幅に超える件数を
-        // consumer が区別できない)。よって実際の parse error は cap-1 件まで
-        // 記録する。
+        // Reserve the last slot for a synthetic entry indicating that later errors
+        // were suppressed. Without it, consumers could not distinguish exactly cap
+        // errors from many more. Record at most cap - 1 real parse errors.
         let last_real_slot = cap - 1;
         match warnings.len().cmp(&last_real_slot) {
             std::cmp::Ordering::Less => {
@@ -224,13 +223,13 @@ impl TreeSink for RaikiriTreeSink {
 
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> usize {
         let idx = self.make_element(name, attrs);
-        // html5ever は `<template>` element を作る時
-        // `flags.template=true` を渡す (markup5ever `create_element_with_flags`)。
-        // その場で fragment root を eager allocate + template_contents slot に
-        // wire することで、後続の `TreeSink::append(get_template_contents(t), ...)`
-        // が fragment root に子を積む。template element 自身の children は
-        // 空のまま (blitz と同じ shape、詳細は
-        // `Document::allocate_template_fragment_root` doc)。
+        // When creating a `<template>` element, html5ever sets
+        // `flags.template=true` (markup5ever `create_element_with_flags`).
+        // Eagerly allocate a fragment root and store it in the template_contents
+        // slot. Later `TreeSink::append(get_template_contents(t), ...)` calls
+        // append children to the fragment root. The template element's own children
+        // remain empty, as in blitz; see
+        // `Document::allocate_template_fragment_root` documentation.
         if flags.template {
             self.document
                 .borrow_mut()
@@ -240,18 +239,18 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn create_comment(&self, text: StrTendril) -> usize {
-        // NodeData::Comment variant として恒久保持
-        // (以前は "#comment" pseudo-tag Element + sink.finish 内で strip)。
-        // detached (parent=None) で allocate、html5ever が後で append(parent, ...)
-        // で attach する。
+        // Persist as a NodeData::Comment variant
+        // (previously a "#comment" pseudo-tag Element stripped in sink.finish).
+        // Allocate detached (parent=None); html5ever later attaches it with
+        // append(parent, ...).
         self.document
             .borrow_mut()
             .append_comment(None, text.to_string())
     }
 
     fn create_pi(&self, target: StrTendril, data: StrTendril) -> usize {
-        // NodeData::ProcessingInstruction variant として
-        // 恒久保持 (以前は "#pi" pseudo-tag Element + strip)。
+        // Persist as a NodeData::ProcessingInstruction variant
+        // (previously a "#pi" pseudo-tag Element that was stripped).
         self.document.borrow_mut().append_processing_instruction(
             None,
             target.to_string(),
@@ -276,9 +275,9 @@ impl TreeSink for RaikiriTreeSink {
         prev_element: &usize,
         child: NodeOrText<usize>,
     ) {
-        // 将来 foster parenting の proper impl を書く。現状の hello-world
-        // では発火しないので defensive fallback: parent がいれば insert_before、
-        // いなければ prev_element の子に append。
+        // Implement proper foster parenting later. It does not arise in the
+        // current hello-world case; for now, insert_before if there is a parent,
+        // otherwise append as a child of prev_element.
         let has_parent = self.document.borrow().parent_of(*element).is_some();
         if has_parent {
             self.append_before_sibling(element, child);
@@ -287,11 +286,11 @@ impl TreeSink for RaikiriTreeSink {
         }
     }
 
-    // NB: raikiri-dom は NodeKind::Comment /
-    // NodeKind::ProcessingInstruction を variant として持つようになったため、
-    // create_comment / create_pi は上で直接
-    // NodeData variant を allocate している。旧 `#comment` / `#pi` pseudo-tag
-    // + strip_non_element_stubs 二段構えは廃止。
+    // Note: raikiri-dom now represents NodeKind::Comment and
+    // NodeKind::ProcessingInstruction as variants, so create_comment and
+    // create_pi directly allocate the corresponding NodeData variants above.
+    // The old two-stage "#comment" / "#pi" pseudo-tag and
+    // strip_non_element_stubs approach is gone.
 
     fn append_doctype_to_document(
         &self,
@@ -299,22 +298,22 @@ impl TreeSink for RaikiriTreeSink {
         _public_id: StrTendril,
         _system_id: StrTendril,
     ) {
-        // 現状 doctype node 化しない。quirks_mode は別 callback で通知される。
+        // Do not create a doctype node yet; a separate callback reports quirks_mode.
     }
 
     fn get_template_contents(&self, target: &usize) -> usize {
-        // `create_element` が `flags.template=true`
-        // を観測した時 `template_contents` slot に fragment root の arena index
-        // を wire している。ここで返した index が html5ever の以降の
-        // `TreeSink::append` の parent handle として使われる (template contents
-        // は fragment root の子として積まれ、template element 自身は空の
-        // children を保つ)。
+        // When `create_element` sees `flags.template=true`, it stores
+        // the fragment root's arena index in the `template_contents` slot.
+        // The index returned here becomes the parent handle for subsequent
+        // html5ever `TreeSink::append` calls: template contents become children
+        // of the fragment root, while the template element itself retains
+        // an empty children list.
         //
-        // Defensive fallback: sink 経由でない直接組み立て (unit test 等) で
-        // `template_contents` が未 wire な場合は旧挙動どおり `*target` を返す。
-        // Node::is_in_document() gate は既存経路 (直接構築時の
-        // `mark_in_document_flags` の template skip) が引き続き cover するので
-        // silent bug には至らない。
+        // Defensive fallback: directly built elements (for example, in unit tests)
+        // may lack a wired `template_contents` slot. Return `*target` as before.
+        // Nodes appended through this fallback become ordinary light-DOM
+        // children of the template element, which stay in-document per the
+        // template-contents contract (only the wired fragment is inert).
         let doc = self.document.borrow();
         doc.get_node(*target)
             .and_then(|n| n.template_contents())
@@ -337,17 +336,17 @@ impl TreeSink for RaikiriTreeSink {
             .expect("append_before_sibling: sibling has no parent");
         match new_node {
             NodeOrText::AppendNode(c) => {
-                // detach if already attached (TreeSink 契約: new_node は old
-                // parent を持ちうる)
+                // Detach if already attached (TreeSink contract: new_node can have an
+                // old parent).
                 self.document.borrow_mut().detach_from_parent(c);
                 self.document
                     .borrow_mut()
                     .insert_child_before(parent, *sibling, c);
             }
             NodeOrText::AppendText(text) => {
-                // 新規 Text node を arena に作成 (detached にできない — append_text
-                // が parent 必須のため、まず parent 末尾に append → 直後 detach
-                // → insert_before の 3 step)。
+                // Create a new Text node in the arena. It cannot start detached because
+                // append_text requires a parent: append it to the parent's end, detach it,
+                // then insert_before.
                 let text_id = self
                     .document
                     .borrow_mut()
@@ -385,7 +384,7 @@ impl TreeSink for RaikiriTreeSink {
         // HTML5 §13.2.5 Tree construction: MathML `annotation-xml` element is
         // an HTML integration point iff its `encoding` attribute value is an
         // ASCII case-insensitive match for `text/html` or `application/xhtml+xml`.
-        // metadata table (qual_names + attributes) から直接判定する。
+        // Inspect metadata tables (qual_names + attributes) directly.
         let qual_names = self.qual_names.borrow();
         let Some(name) = qual_names.get(handle) else {
             return false;
@@ -398,9 +397,9 @@ impl TreeSink for RaikiriTreeSink {
             return false;
         };
         // HTML spec §13.2.5.32: duplicate attribute → ignore later occurrences
-        // (first-wins)。`wire_side_tables` / `sink_first_wins_on_duplicate_style_attribute`
-        // で check されている契約と整合させるため、any() ではなく find() で最初の
-        // null-ns encoding attr を取り、その value のみで判定する。
+        // (first-wins). To honor the contract checked by `wire_side_tables` and
+        // `sink_first_wins_on_duplicate_style_attribute`, use find() rather than
+        // any(): take the first null-namespace encoding attribute and inspect only its value.
         let Some(encoding) = attrs
             .iter()
             .find(|a| a.name.ns == ns!() && AsRef::<str>::as_ref(&a.name.local) == "encoding")
@@ -591,9 +590,9 @@ fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_traits::Nod
     out
 }
 
-/// Document tree の `<head>` element を DFS (iterative) で探す。
-/// 通常 `<html>` の直下 first-child だが html5ever tree building で位置が
-/// 変わる場合もあるので linear scan。見つからない場合 None。
+/// Find the `<head>` element in the Document tree with iterative DFS.
+/// It is usually the first child under `<html>`, but html5ever tree building
+/// can place it elsewhere. Return None if a linear scan finds no head.
 fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
     use raikiri_traits::{Dom, Element, Node};
 
@@ -613,36 +612,36 @@ fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
     None
 }
 
-/// `<head>` 内で最初に現れる、非空 `href` 属性を持つ `<base>` element の
-/// href 値を document order (tree order) で探す。見つからなければ `None`。
+/// Find the first `<base>` element with a nonempty `href` inside `<head>`
+/// in document (tree) order. Return `None` if there is none.
 ///
-/// HTML Standard の "document base URL" algorithm
-/// (§4.2.7 The base element / §urls-and-fetching "document base URL") は
-/// "文書内で href 属性を**持つ**最初の `<base>` element" の frozen base URL
-/// を document base URL とする — 値が空文字列であっても「href 属性を持つ」
-/// 判定には数える。本実装はそれを厳密には満たせない:
-/// `raikiri_traits::Element::attr` は空文字列の属性値を `None` に正規化する
-/// 契約 (`collect_external_stylesheet_hrefs` の `disabled` 属性コメント参照)
-/// のため、`href=""` を持つ `<base>` と href 属性自体が無い `<base>` をこの
-/// trait surface からは区別できない (`has_attribute` 相当が無く、追加は
-/// raikiri-traits の public surface 拡張になるため本変更の範囲外)。そのため
-/// 厳密な spec 挙動 (`<base href=""><base
-/// href="https://cdn.example/">` のような文書で、1 つ目の空 href base が
-/// document base URL を確定させ 2 つ目が無視される) ではなく、非空 href を
-/// 持つ最初の `<base>` を採用する — 実務上の文書ではほぼ同じ結果になる
-/// (空 href の base 単体なら、どのみち fallback base URL への self-join に
-/// 帰着し無視した場合と同じ URL になる)。
+/// The HTML Standard's "document base URL" algorithm
+/// (§4.2.7 The base element / §urls-and-fetching "document base URL")
+/// uses the frozen base URL of the first `<base>` element **with an href
+/// attribute** in the document, even if that attribute has an empty value.
+/// This implementation cannot strictly reproduce that behavior:
+/// `raikiri_traits::Element::attr` normalizes empty attribute values to `None`
+/// (see the `disabled` attribute discussion in
+/// `collect_external_stylesheet_hrefs`). Thus the trait cannot distinguish
+/// `<base href="">` from `<base>` without an href attribute: it lacks a
+/// `has_attribute` method, and adding one would expand the public raikiri-traits API.
+/// Instead of the strict behavior (for example, in `<base href=""><base
+/// href="https://cdn.example/">`, the first, empty href freezes the document
+/// base URL and the second element is ignored), choose the first `<base>` with
+/// a nonempty href. This gives nearly the same result for ordinary documents.
+/// With only an empty-href `<base>`, joining against the fallback base URL
+/// returns that same URL as ignoring the element would.
 ///
-/// 探索範囲は `collect_external_stylesheet_hrefs` と同じ head-only DFS —
-/// `<body>` 内の `<base>` は同じ理由で defer (今の scope では `<head>` 外の
-/// stylesheet link 自体を扱っていないので、`<body>` 内 `<base>` を見ても
-/// 適用対象が無い)。
+/// Search only inside the head with DFS, as in
+/// `collect_external_stylesheet_hrefs`. Defer `<base>` elements in `<body>`:
+/// this scope does not process stylesheet links outside `<head>`, so there
+/// would be no stylesheet to which a body `<base>` could apply.
 ///
-/// href 値は trim する: `Element::attr` は truly-empty (`""`) のみ filter
-/// する契約なので、空白のみの `href="   "` はここに届く。trim しないと
-/// `resolve_url` の `Url::join("   ")` が (`collect_external_stylesheet_hrefs`
-/// の link href コメントと同じ理由で) base URL 自身に解決されてしまい、
-/// 「href 属性はあるが実質空」なケースを誤って override として扱う。
+/// Trim href values. `Element::attr` filters only truly empty strings (`""`),
+/// so whitespace-only `href="   "` values reach this code. Without trimming,
+/// `Url::join("   ")` in `resolve_url` would resolve to the base URL itself
+/// (as described for link hrefs in `collect_external_stylesheet_hrefs`),
+/// mistaking an effectively empty href for an override.
 pub(crate) fn find_document_base_href(doc: &Document) -> Option<String> {
     use raikiri_traits::{Dom, Element, Node};
 
@@ -675,41 +674,40 @@ pub(crate) fn find_document_base_href(doc: &Document) -> Option<String> {
     None
 }
 
-/// `<head>` 内の `<link rel="stylesheet" href="...">` を document order で
-/// 収集する。
+/// Collect `<link rel="stylesheet" href="...">` elements inside `<head>`
+/// in document order.
 ///
-/// 外部 link の収集は head-only DFS scope のまま — `<body>` 内 `<link>` は
-/// inline `<style>` の body 対応とは別に defer。実際の fetch
-/// (`NetworkProvider` 経由の I/O) はここでは行わない: `TreeSink::finish()`
-/// (このモジュール) は I/O を持たない契約を保つ必要がある (sink 実装が
-/// 観測可能な副作用を追加すると wall/sink 対象)。href の収集のみ行い、実
-/// fetch は `ParseOptions::network` / `base_url` にアクセスできる
-/// `parse.rs::parse_with_sink` 側の post-processing に委ねる。
+/// Keep collection of external links scoped to head-only DFS. Body `<link>`
+/// support is deferred separately from body inline `<style>` support.
+/// Do not fetch resources here (`NetworkProvider` I/O): `TreeSink::finish()`
+/// in this module must remain free of I/O. Adding observable side effects
+/// to the sink would cross the wall/sink boundary. Collect hrefs only; defer
+/// fetching to post-processing in `parse.rs::parse_with_sink`, where
+/// `ParseOptions::network` and `base_url` are available.
 ///
-/// `disabled` boolean attribute は判定しない: `raikiri_traits::Element::attr`
-/// は値なし/空文字列 (`disabled` / `disabled=""` いずれも) を `None` に正規化
-/// する契約 (`raikiri-dom/src/dom_impl.rs::ElementRef::attr` の
-/// `.filter(|s| !s.is_empty())`) のため、属性の**値**ではなく**有無**を問う
-/// boolean attribute はこの trait surface からは判別できない
-/// (`has_attribute` 相当が無い)。追加は raikiri-traits の public surface
-/// 変更 = wall/traits 対象であり、本 task 単独で unilateral に広げない
-/// (follow-up は別途追跡する)。
+/// Do not inspect the `disabled` boolean attribute. The
+/// `raikiri_traits::Element::attr` contract normalizes valueless and empty
+/// values (`disabled` and `disabled=""`) to `None` (see
+/// `raikiri-dom/src/dom_impl.rs::ElementRef::attr` and its
+/// `.filter(|s| !s.is_empty())`). The trait cannot inspect the **presence**
+/// of a boolean attribute rather than its **value**, because it lacks
+/// `has_attribute`. Adding that method would expand the public raikiri-traits
+/// API and cross wall/traits; it is tracked as a separate follow-up.
 ///
-/// ここで収集する href はまだ `<base>` element を反映していない生の
-/// attribute 値: `<head>` 内の `<base href>` の探索・resolve は
-/// [`find_document_base_href`] が別途担い、実際に "どの base URL に対して
-/// href を解決するか" の合成は `parse.rs::fetch_external_stylesheets` が行う
-/// (この関数自体は URL 解決を一切しない、収集のみの純粋関数のまま)。
+/// The hrefs collected here are raw attribute values, not yet adjusted
+/// for `<base>`. [`find_document_base_href`] separately locates and resolves
+/// `<base href>` inside `<head>`. The choice of base URL for resolving each
+/// href belongs to `parse.rs::fetch_external_stylesheets`. This function
+/// only collects hrefs; it does not resolve URLs.
 ///
-/// `title` 属性付き `rel="alternate stylesheet"` の preferred/selected
-/// stylesheet set semantics は未実装 — 非空 title を持つ alternate link を
-/// 常に除外する挙動とその spec 上の根拠は `is_stylesheet_link` の doc
-/// 参照。逆方向の残存する spec 逸脱もここに書いておく (`is_stylesheet_link`
-/// 側ではカバーされていない点): 非 alternate な titled link (preferred
-/// stylesheet) は preferred set の追跡が無いため常に適用してしまい、spec
-/// 通りなら「複数の named stylesheet set のうち preferred set 以外は
-/// 無効化する」べきところを無視している。この逸脱は `<link>` /
-/// `<style>` 双方に共通する。
+/// Preferred/selected stylesheet-set semantics for `rel="alternate stylesheet"`
+/// with a `title` are not implemented. See the `is_stylesheet_link` docs for
+/// why alternate links with nonempty titles are always excluded. Another
+/// deviation remains, in the other direction, and is not covered there:
+/// titled non-alternate links (preferred stylesheets) are always applied
+/// because preferred sets are not tracked. Per spec, a named set other than
+/// the preferred set should be disabled when there are multiple sets;
+/// that behavior is missing for both `<link>` and `<style>`.
 #[cfg(test)]
 pub(crate) fn collect_external_stylesheet_hrefs(
     doc: &Document,
@@ -723,48 +721,48 @@ pub(crate) fn collect_external_stylesheet_hrefs(
         .collect()
 }
 
-/// `rel` トークンリストに `stylesheet` (ASCII case-insensitive) が含まれ、
-/// かつ `type` 属性が「無い」か「値が空文字列」か「`text/css` (MIME
-/// パラメータを無視、ASCII case-insensitive)」のいずれかの場合のみ true。
-/// HTML Standard §4.2.4 (The link element) の外部 resource link 判定の該当
-/// 部分のみを実装するサブセット — `media` / `crossorigin` / `integrity` /
-/// `disabled` は現状 scope 外 (`collect_external_stylesheet_hrefs` doc 参照)。
+/// Return true only if the `rel` token list includes `stylesheet` (ASCII
+/// case-insensitive) and `type` is absent, empty, or `text/css`
+/// (case-insensitive, ignoring MIME parameters).
+/// This implements only the relevant external-resource-link checks from
+/// HTML Standard §4.2.4 (The link element). `media`, `crossorigin`,
+/// `integrity`, and `disabled` remain out of scope (see `collect_external_stylesheet_hrefs`).
 ///
-/// `type` 属性の空文字列 (`type=""`) は「属性なし」と同じ「type 未指定」
-/// 扱い — 属性が明示的に存在するかどうかではなく、MIME type の**値**が
-/// 指定されているかどうかが gate の意味だからで、値が空なら制約なし
-/// (stylesheet-compatible とみなす) になる。`Element::attr` は `type=""`
-/// を `Some("")` として返す (`""` を absent と区別する契約、
-/// `raikiri-dom::dom_impl::ElementRef::attr` 参照) ため、この関数側で
-/// 明示的に空文字列を「制約なし」扱いする。
+/// An empty `type` attribute (`type=""`) means no type was specified, just
+/// as if the attribute were absent. The gate checks whether a MIME **value**
+/// was specified, not merely whether the attribute exists, so an empty
+/// value imposes no restriction (and is compatible with stylesheets).
+/// `Element::attr` returns `Some("")` for `type=""`, intentionally distinguishing
+/// it from absence (see `raikiri-dom::dom_impl::ElementRef::attr`). This
+/// function therefore treats an empty value as unrestricted explicitly.
 ///
-/// `type` 属性の非空値の比較は `;` 以降 (MIME parameter、例:
-/// `text/css; charset=utf-8`) を無視する — browser の実際の "type attribute
-/// gate" 挙動 (MIME parameter は無視、essence のみ比較) に合わせる。
+/// For nonempty `type`, ignore anything after `;` (a MIME parameter, such as
+/// `text/css; charset=utf-8`). This matches browsers' actual "type attribute
+/// gate": they ignore parameters and compare only the MIME essence.
 ///
-/// `rel` に `alternate` トークンも含み、かつ `title` 属性が非空の場合は
-/// 無条件に false を返す (適用しない)。CSSOM "add a CSS style sheet"
-/// (<https://drafts.csswg.org/cssom/#add-a-css-style-sheet>) の algorithm
-/// では、この種のスタイルシートは以下によってのみ有効になる:
+/// If `rel` also contains `alternate` and `title` is nonempty, return
+/// false unconditionally (do not apply the sheet). The CSSOM "add a CSS
+/// style sheet" algorithm (<https://drafts.csswg.org/cssom/#add-a-css-style-sheet>)
+/// only enables this type of sheet under these conditions:
 ///
-/// - step 4: alternate flag が unset かつ preferred stylesheet set name が
-///   空文字列の場合に限り、そのシートの title で preferred set name を
-///   書き換える (= alternate なシートは preferred set name の決定に関与
-///   しない)。
-/// - step 5: disabled flag を unset するのは、title が空文字列 / title が
-///   preferred set name (last set name が null の場合) と一致 / title が
-///   last (= user が選択した) set name と一致、のいずれか。
+/// - Step 4 changes the preferred stylesheet set name to this sheet's
+///   title only if the alternate flag is unset and the preferred set name
+///   is empty. Alternate sheets therefore cannot determine the preferred
+///   set name.
+/// - Step 5 unsets the disabled flag if the title is empty, matches the
+///   preferred set name (when the last set name is null), or matches
+///   the last set name selected by the user.
 ///
-/// つまり非空 title を持つ alternate stylesheet が有効になるかどうかは、
-/// 同一文書内の他の `<link>` の title (preferred set name の決定) や
-/// user のスタイルシートセット選択 (last set name) 次第であり、この
-/// crate には両方の追跡機構が一切無い。この関数は単一の `<link>` の
-/// 属性だけを見る stateless な predicate なので、この判定を行う手段が
-/// 無く、常に除外する — 「選択されている場合が spec 上あり得ない」の
-/// ではなく、「選択されているかどうかをこの predicate の情報だけでは
-/// 判定できない」が正確な理由。空 title の alternate stylesheet は
-/// step 5 の第一分岐 (title が空文字列) により無条件で disabled flag が
-/// unset されるので、従来通り適用対象のまま。
+/// Therefore, whether an alternate sheet with a nonempty title is active
+/// depends on titles of other `<link>` elements (which determine the
+/// preferred set name) or the user's selected stylesheet set (last set name).
+/// This crate tracks neither. This predicate sees only attributes of one
+/// `<link>` and cannot make that decision, so it always excludes the sheet.
+/// That does **not** mean the spec could never select such a sheet; rather,
+/// this predicate lacks the information needed to tell if it is selected.
+/// An alternate sheet with an empty title remains applicable: the first
+/// branch of step 5 (empty title) unsets the disabled flag unconditionally,
+/// as before.
 fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>, title: Option<&str>) -> bool {
     let Some(rel) = rel else {
         return false;
@@ -799,26 +797,27 @@ fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>, title: Option<
     })
 }
 
-/// metadata table (`qual_names` / `attributes`) の内容を raikiri-dom::Node に写す。
+/// Copy the contents of the metadata tables (`qual_names` / `attributes`)
+/// into raikiri-dom::Node.
 ///
-/// - `qual_names`: element の namespace URI が HTML default (`ns!(html)`) 以外
-///   なら `Node.namespace` に格納 (HTML default は `None` optimized path のまま)。
-/// - `attributes`: null-namespace attr のみ raikiri-dom に運ぶ (namespaced attr
-///   = `xlink:href` on SVG 等は将来に defer)。`style` attr は `Node.inline_style`
-///   に分離、それ以外は `Node.attributes` の順序保持 Vec に格納。
+/// - `qual_names`: if an element's namespace URI is not the HTML default
+///   (`ns!(html)`), store it in `Node.namespace`; HTML uses optimized `None`.
+/// - `attributes`: copy only null-namespace attributes to raikiri-dom.
+///   Defer namespaced attributes such as SVG `xlink:href`. Separate `style`
+///   into `Node.inline_style`; store the rest in ordered `Node.attributes`.
 ///
-/// `finish()` 時に一度だけ呼ばれる single-pass 変換。parse 中は metadata table
-/// (RefCell) のみ更新し Node は無変更、finish で bulk populate することで
-/// html5ever が add_attrs_if_missing / create_element の順序で attr を差し込む
-/// 呼び出しパターンを気にせず済む。
+/// This single-pass conversion runs once, during `finish()`. During parsing,
+/// only the metadata tables (RefCell) change; Node remains unchanged.
+/// Bulk population on finish handles attributes supplied by html5ever in
+/// either add_attrs_if_missing / create_element callback order.
 fn wire_side_tables(
     doc: &mut Document,
     qual_names: &FxHashMap<usize, QualName>,
     attributes: &FxHashMap<usize, Vec<Attribute>>,
 ) {
     for (idx, name) in qual_names {
-        // HTML default namespace は Node.namespace = None のまま (optimized path)。
-        // それ以外の svg / mathml / xml / ... は URI string を SmolStr で格納。
+        // Keep Node.namespace = None for the default HTML namespace (optimized path).
+        // Store other svg / mathml / xml / ... namespace URIs as SmolStr.
         let namespace =
             (name.ns != ns!(html)).then(|| SmolStr::new(AsRef::<str>::as_ref(&name.ns)));
         let prefix = name
@@ -848,13 +847,12 @@ fn wire_side_tables(
             }
             let local = AsRef::<str>::as_ref(&a.name.local);
             if local == "style" {
-                // 空文字列 `style=""` は Element trait contract 上 None なので
-                // ここでは boundary 正規化せず raw 値のまま Node に格納
-                // (dom_impl 側で filter される)。html5ever は attrs を parse
-                // 段で dedupe する想定だが、契約に依存せず defensive に
-                // first-wins (Node.attributes の find() first-match 挙動と
-                // 整合、HTML spec §13.2.5.32 の "duplicate-attribute → ignore
-                // later occurrences" とも整合)。
+                // The Element trait maps empty `style=""` to None. Keep the raw value
+                // on Node without normalizing it at this boundary; dom_impl filters it.
+                // html5ever is expected to deduplicate attributes during parsing, but do
+                // not depend on that: defensively use first-wins. This matches
+                // Node.attributes.find() first-match behavior and HTML spec §13.2.5.32,
+                // which says to ignore later occurrences of duplicate attributes.
                 if inline_style.is_none() {
                     inline_style = Some(SmolStr::new(a.value.as_ref()));
                 }
@@ -874,8 +872,8 @@ fn wire_side_tables(
     }
 }
 
-/// html5ever `QuirksMode` を raikiri-native `QuirksMode` へ変換する
-/// (implementation boundary: html5ever 型を raikiri-traits に持ち込まない)。
+/// Convert html5ever `QuirksMode` to raikiri-native `QuirksMode`
+/// without exposing an html5ever type in raikiri-traits.
 fn convert_quirks(mode: QuirksMode) -> raikiri_traits::QuirksMode {
     match mode {
         QuirksMode::Quirks => raikiri_traits::QuirksMode::Quirks,

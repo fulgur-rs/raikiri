@@ -4,89 +4,89 @@ use std::marker::PhantomData;
 
 use crate::page::PageContext;
 
-/// LayoutBuffer の lookahead 幅を制御する strategy trait。
+/// Strategy trait controlling the LayoutBuffer lookahead range.
 pub trait LookaheadPolicy {
-    /// widow / orphan 判定のため何行先まで探査するか (None = unbounded)。
+    /// How many lines ahead to probe for widows / orphans (None = unbounded).
     fn max_widow_orphan_lines(&self) -> Option<usize>;
 
-    /// `break-inside: avoid` subtree の最大 block 数 (None = unbounded)。
+    /// Maximum blocks in a `break-inside: avoid` subtree (None = unbounded).
     fn max_break_avoid_subtree_blocks(&self) -> Option<usize>;
 
-    /// flex / grid container の probe layout 上限 (Finding #2 対応)。
+    /// Flex / grid container probe-layout limit (Finding #2).
     ///
-    /// - `None` = unbounded (Batch: container 全体を Fragmentation L3 準拠に layout)
-    /// - `Some(N)` = N ページ相当まで、超えたら ReflowPolicy に委譲
+    /// - `None` = unbounded (Batch: lay out the entire container per Fragmentation L3)
+    /// - `Some(N)` = at most N pages; delegate to ReflowPolicy beyond that
     fn max_container_probe_pages(&self) -> Option<usize>;
 
-    /// cross-size (block-progression direction) 方向の lookahead を許可するか。
+    /// Whether to allow lookahead along the cross-size (block-progression) direction.
     fn allow_cross_size_lookahead(&self) -> bool;
 }
 
-/// target-* の解決方式 (placeholder emit / 事前 registry lookup)。
+/// Target-* resolution mode (placeholder emission / prior registry lookup).
 pub trait TargetResolver {
-    /// 1 target 参照を resolve。
+    /// Resolve one target reference.
     fn resolve(&mut self, req: TargetRequest<'_>, ctx: &PageContext) -> ResolvedTarget;
 }
 
-/// probe 限界到達時の挙動、および dirty tracking の余地。
+/// Behavior on reaching the probe limit, and room for dirty tracking.
 ///
-/// 現状は `AggressiveCommit` のみ実装、`DirtyDeferred` / `FullReflow` は
-/// Future Work (§4 参照)。
+/// Currently only `AggressiveCommit` is implemented; `DirtyDeferred` /
+/// `FullReflow` remain Future Work (see §4).
 pub trait ReflowPolicy {
-    /// probe 限界到達時に "即 fallback commit" するか "dirty flag で defer" するか。
+    /// Whether to commit fallback immediately or defer with a dirty flag at the probe limit.
     fn on_probe_limit(&self, ctx: &ProbeContext) -> ReflowAction;
 
-    /// dirty tracking を使う場合の memory 上限。
+    /// Memory limit when using dirty tracking.
     fn max_dirty_entries(&self) -> Option<usize>;
 }
 
-/// ReflowPolicy が返す action。
+/// Action returned by ReflowPolicy.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ReflowAction {
-    /// 即 fallback で commit、取り消し不可 (Streaming preset default)。
+    /// Commit fallback immediately; cannot be undone (Streaming preset default).
     CommitWithFallback(ContainerOverflowFallback),
-    /// dirty flag で defer、後続情報で reflow (Future Work)。
+    /// Defer with a dirty flag and reflow with later information (Future Work).
     DeferAsDirty {
-        /// defer の deadline。
+        /// Deadline for the deferral.
         deadline: DirtyDeadline,
     },
 }
 
-/// probe 限界時の commit fallback 挙動。
+/// Commit fallback behavior at the probe limit.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerOverflowFallback {
-    /// 次ページに強制配置 (推奨)。
+    /// Force placement on the next page (recommended).
     ForceBreakBefore,
-    /// `align-content` 等を無視した単純分割。
+    /// Simple split ignoring `align-content` and similar properties.
     SimpleFragmentation,
-    /// 現ページに詰めて overflow。
+    /// Pack into the current page and overflow.
     OverflowClipping,
-    /// fail-loud。
+    /// fail-loud.
     Error,
 }
 
-/// DeferAsDirty の deadline。
+/// Deadline for DeferAsDirty.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirtyDeadline {
-    /// 次のページ確定まで defer。
+    /// Defer until the next page is finalized.
     NextPageBoundary,
-    /// 次の container 出現まで defer。
+    /// Defer until the next container appears.
     NextContainerStart,
-    /// document 末尾まで defer (Batch preset で活用)。
+    /// Defer until the end of the document (used by the Batch preset).
     DocumentEnd,
 }
 
-/// ReflowPolicy が受け取る probe context (将来 populate 予定)。
+/// Probe context passed to ReflowPolicy (to be populated later).
 ///
-/// 現時点では opaque placeholder。
+/// Currently an opaque placeholder.
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct ProbeContext {
-    // 将来 populate 予定:
+    // To be populated later:
     //   pub node_id: NodeId,
     //   pub probed_pages: u32,
     //   pub container_kind: ContainerKind,
@@ -100,16 +100,16 @@ impl ProbeContext {
     }
 }
 
-/// TargetResolver が受け取る request。
+/// Request passed to TargetResolver.
 ///
-/// 将来、consumer (raikiri-dom / raikiri-paint) 実装時に field を populate。
+/// Populate the fields when a consumer (raikiri-dom / raikiri-paint) is implemented.
 ///
-/// 現時点では opaque placeholder。
+/// Currently an opaque placeholder.
 #[allow(missing_docs)]
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct TargetRequest<'a> {
-    // 将来 populate 予定:
+    // To be populated later:
     //   pub fragment_id: Symbol,
     //   pub kind: TargetKind,
     //   pub source_page: u32,
@@ -131,15 +131,15 @@ impl<'a> Default for TargetRequest<'a> {
     }
 }
 
-/// TargetResolver が返す resolved 情報。
+/// Resolved information returned by TargetResolver.
 ///
-/// 将来、consumer (raikiri-dom / raikiri-paint) 実装時に variant を populate。
+/// Populate variants when a consumer (raikiri-dom / raikiri-paint) is implemented.
 ///
-/// 現時点では uninhabited。
+/// Currently uninhabited.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ResolvedTarget {
-    // 将来 populate 予定:
+    // To be populated later:
     //   Placeholder { slot_id: TargetSlotId },
     //   Immediate { text: String, kind: TargetKind },
     //   Deferred { fragment_id: Symbol },

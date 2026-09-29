@@ -1,18 +1,18 @@
 //! raikiri-paint — Document + CascadeResult → anyrender::PaintScene walker.
 //!
-//! この crate の設計は docs/feasibility-report.md §3.4 の refute 結果に従い、
-//! bridge trait を挟まず `impl anyrender::PaintScene` を直接消費する。現状は
-//! 単一 A4 ページ + text glyphs + CSS Text Decoration Level 3
-//! (line/style/color) と、element background / border の最小描画を扱う。
+//! This crate follows the refutation in docs/feasibility-report.md §3.4:
+//! it consumes `impl anyrender::PaintScene` directly, without a bridge trait.
+//! It currently handles one A4 page, text glyphs, CSS Text Decoration Level 3
+//! (line/style/color), and minimal element background and border painting.
 //!
 //! ## Contract
 //!
-//! - `document` は `layout_single_page` を呼び終えた post-layout 状態を前提
-//!   (Node.unrounded_layout / Node.text_layout populate 済)
-//! - `cascade.computed.len() == document.node_count()` を前提 (caller 責任)
-//! - `scene.reset()` の呼び出しは caller 責任 (blitz-paint と同じ convention)
-//! - infallible — raikiri-traits::RenderError に Paint variant はない
-//!   (pre-shape / layout 済の Document 消費が原理的 infallible)
+//! - `document` must be post-layout after `layout_single_page` returns
+//!   (Node.unrounded_layout / Node.text_layout have been populated).
+//! - `cascade.computed.len() == document.node_count()` (caller responsibility).
+//! - The caller must call `scene.reset()` (as in blitz-paint).
+//! - Infallible: raikiri-traits::RenderError has no Paint variant because
+//!   consuming an already shaped and laid-out Document cannot fail.
 
 #![allow(rustdoc::private_intra_doc_links)]
 use anyrender::PaintScene;
@@ -25,12 +25,12 @@ mod text;
 mod transform;
 mod walk;
 
-/// 単一 A4 (or 指定 PageBox) ページに Document + CascadeResult を paint する。
+/// Paint Document + CascadeResult onto one A4 (or specified PageBox) page.
 ///
-/// # 呼び出し順序
-/// 1. `walk::paint_canvas_background` — canvas 背景 fill
-/// 2. `walk::paint_document` — body から始まる DFS walk、element background/border と
-///    text node の glyph/decoration を描画
+/// # Call order
+/// 1. `walk::paint_canvas_background` — fill the canvas background.
+/// 2. `walk::paint_document` — walk from the body in DFS order, painting element
+///    backgrounds/borders and text-node glyphs/decorations.
 ///
 /// # Non-goals (current scope)
 /// - Multi-page pagination
@@ -42,21 +42,21 @@ mod walk;
 ///   clipped, but scrollbar geometry and painting remain out of scope.
 /// - z-index / stacking context
 /// - CSS 3D transforms
-/// - DPI scaling (`paint_single_page_scaled` 別関数で将来拡張予定)
+/// - DPI scaling (planned as a separate `paint_single_page_scaled` function)
 ///
 /// # Panics
 ///
-/// - (debug build のみ) `cascade.computed.len() != document.node_count()` —
-///   この crate の module doc `## Contract` の caller-responsibility 契約
-///   違反 (`cascade` と `document` が同じ `cascade()` 呼び出しに由来しない)。
-///   release build ではこの `debug_assert!` 自体が消える。その場合の挙動は
-///   違反の方向で異なる: `cascade.computed.len() < document.node_count()`
-///   なら walk 中の raw index site (`walk::paint_document` /
-///   `text::draw_text_node` の `cascade.computed[node_id]`) が in-bounds を
-///   超えて "index out of bounds" で panic するが、逆方向
-///   (`cascade.computed.len() > document.node_count()`) は同じ index が
-///   常に in-bounds のまま残るため panic せず、別 document の computed
-///   values を silent に誤用したまま paint が完了する。
+/// - (debug builds only) `cascade.computed.len() != document.node_count()` —
+///   violates the caller-responsibility contract in this crate's module docs,
+///   `## Contract` (`cascade` and `document` do not come from the same `cascade()`
+///   call). Release builds omit this `debug_assert!`. Their behavior depends
+///   on the direction of the mismatch: if the computed length is less than
+///   `document.node_count()`, a raw-index site in `walk::paint_document` or
+///   `text::draw_text_node` (`cascade.computed[node_id]`) eventually panics
+///   with "index out of bounds". If it is greater, the indices stay in bounds,
+///   so painting completes without a panic while silently using computed
+///   values from another document.
+///
 pub fn paint_single_page(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -276,14 +276,14 @@ fn paint_single_page_with_origin_and_page_context_impl(
     fixed_page_width: f32,
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
 ) {
-    // walk 本体 (`walk::paint_document` / `text::draw_text_node`) は
-    // `cascade.computed[node_id]` を raw index で読む複数 site を持ち、それぞれが
-    // この crate の module doc `## Contract` (`cascade.computed.len() ==
-    // document.node_count()`) を caller 責任として前提にしている。単一の
-    // enforcement point が無いと、契約違反時にどの raw-index site が最初に
-    // 踏むかで panic message が変わってしまう (generic な "index out of
-    // bounds")。walk 全体の入口であるここで一度だけ検査し、契約を名指しした
-    // message で fail-fast させる。
+    // The walker (`walk::paint_document` / `text::draw_text_node`) has several
+    // raw-index reads of `cascade.computed[node_id]`. Each assumes the caller
+    // meets the module doc's `## Contract` (`cascade.computed.len() ==
+    // document.node_count()`). Without one enforcement point, a violation
+    // produces a different panic depending on which raw-index site is reached
+    // first (a generic "index out of bounds"). Check once at the walker's
+    // entry point and fail fast with a message naming the contract.
+    // This assertion is the single enforcement point.
     debug_assert!(
         cascade.computed.len() == document.node_count(),
         "cascade.computed.len() ({}) must equal document.node_count() ({}) — \
@@ -342,14 +342,14 @@ fn paint_single_page_with_origin_and_page_context_impl(
     }
 }
 
-/// [`paint_single_page`] と同一だが、`<img>` の decode 済み pixel を
-/// `pixel_source` から取得して実際に描画する。
+/// Like [`paint_single_page`], but reads decoded `<img>` pixels from
+/// `pixel_source` and actually paints them.
 ///
-/// 名前が `_with_images` であって `_with_resolver` でないのは、paint 段が
-/// 受け取るのが `ImagePixelSource` (decode 済み pixel の読み出し口) であり、
-/// `ReplacedResolver` (intrinsic size を解決し、その過程で fetch/decode を
-/// 起こしうる) ではないため。resolve は layout 前に済んでいる
-/// (`raikiri_dom::layout_single_page_with_resolver`)。
+/// The name is `_with_images`, not `_with_resolver`, because painting receives
+/// an `ImagePixelSource` (access to decoded pixels), not a `ReplacedResolver`
+/// (which resolves intrinsic sizes and may fetch/decode in the process).
+/// Resolution has already happened before layout
+/// (`raikiri_dom::layout_single_page_with_resolver`).
 pub fn paint_single_page_with_images(
     scene: &mut impl PaintScene,
     document: &Document,

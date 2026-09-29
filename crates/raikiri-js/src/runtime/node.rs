@@ -10,9 +10,15 @@ use super::webidl::{
     this_element, this_node, throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
-/// Record that the DOM changed so the next layout-dependent read flushes.
+/// Record that the DOM changed so the next layout-dependent read flushes,
+/// and bump the live-collection generation so cached collections re-walk.
+/// `dirty` alone cannot serve live collections: a successful flush clears it
+/// while the DOM stays changed.
 pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
-    with_state(context, |s| s.dirty = true)
+    with_state(context, |s| {
+        s.dirty = true;
+        s.generation = s.generation.wrapping_add(1);
+    })
 }
 
 pub(crate) fn js_str(s: &str) -> JsValue {
@@ -282,6 +288,7 @@ fn set_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let name = dom_string(args, 0, context)?;
     let value = dom_string(args, 1, context)?;
     write_attribute(context, index, &name, &value)?;
+    super::dispatch::sync_event_handler_for_attribute(context, index, &name, Some(&value))?;
     Ok(JsValue::undefined())
 }
 
@@ -298,6 +305,7 @@ fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     })?;
     if matches!(removed, Ok(Some(_))) {
         mark_dirty(context)?;
+        super::dispatch::sync_event_handler_for_attribute(context, index, &name, None)?;
     }
     Ok(JsValue::undefined())
 }
@@ -337,16 +345,13 @@ fn namespace_uri(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResu
 /// property": getter steps run the fragment serializing algorithm): a live
 /// serialization of the element's children, computed fresh on every read
 /// from the current arena state rather than a retained source string. An
-/// error means some element under `index` carries an attribute name
-/// `Document::serialize_inner_html` rejects as not a valid XML `Name`.
-/// The HTML fragment serialization algorithm itself never re-validates
-/// attribute names that way (that check is specific to `Element.setAttribute`,
-/// DOM §4.9); an HTML-parsed attribute name only needs to avoid a handful of
-/// forbidden characters, a much larger set than valid XML `Name`s, so a
-/// real HTML fragment parser can legitimately produce a name this fails on.
+/// error means malformed arena state under `index` (out-of-range index,
+/// non-container parent, bad template fragment link, or a Document child).
+/// HTML fragment serialization never validates attribute names (name checks
+/// belong to `Element.setAttribute`, DOM §4.9), so digit-leading and other
+/// non-XML names serialize as stored.
 /// Treated as a host failure, the same as the setter's own fragment-parse
-/// failure, until raikiri-dom's serializer stops applying that check here.
-/// `Document::serialize_inner_html`'s own message names the offending arena
+/// failure. `Document::serialize_inner_html`'s own message may name an arena
 /// index; that index is an implementation detail and must never be
 /// observable from script, so the exception thrown into script carries a
 /// fixed message instead, while the harness-facing host failure keeps the
@@ -359,7 +364,7 @@ fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
         Err(message) => Err(host_failure_with_message(
             context,
             HostError(message),
-            "innerHTML serialization failed: invalid attribute name",
+            "innerHTML serialization failed", // cov:ignore: serialize_inner_html fails only for malformed arena unreachable via public JS API
         )),
     }
 }
@@ -403,6 +408,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
             .replace_children_from(index, &fragment, root);
     })?;
     mark_dirty(context)?;
+    super::dispatch::sync_event_handlers_in_subtree(context, index)?;
     Ok(JsValue::undefined())
 }
 

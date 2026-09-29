@@ -35,13 +35,13 @@ fn dyn_traits_are_object_safe() {
     _assert::<dyn ImagePixelSource>();
     _assert::<dyn NetworkProvider>();
     _assert::<dyn ResourcePolicy>();
-    // Strategy traits (LookaheadPolicy / TargetResolver /
-    // ReflowPolicy) は generic param 経由で受ける (§4 `render_with<L,T,E,R>`
-    // 設計) ため object-safety は要件外。将来 dyn 化が必要なら判断。
+    // Strategy traits (LookaheadPolicy / TargetResolver / EmissionPolicy /
+    // ReflowPolicy) are passed through generic parameters (the §4
+    // `render_with<L,T,E,R>` design), so object safety is not required. Revisit
     //
-    // Dom / Element / Node は今後 associated type / GAT を
-    // 追加する予定で、その段階で non-object-safe になる可能性が高いため
-    // 現時点では assert しない。
+    // Dom / Element / Node will later gain associated types / GATs
+    // and likely become non-object-safe. Do not assert object safety
+    // at this stage.
 }
 
 // ── AbortController semantic ────────────────────────────────
@@ -122,11 +122,11 @@ fn render_limits_defaults() {
     assert_eq!(d.max_target_slots, Some(100_000));
     assert_eq!(d.max_layout_buffer_entries, Some(10_000));
     assert_eq!(d.max_aggregate_bytes, Some(1_073_741_824));
-    // 元は raikiri-html の parse-time input read に対する hard-coded cap
-    // だった 32 MiB を継承。
+    // Inherit the former hard-coded 32 MiB cap on parse-time input reads
+    // from raikiri-html.
     assert_eq!(d.max_input_bytes, Some(32 * 1024 * 1024));
-    // 元は raikiri-html の RaikiriTreeSink 内 hard-coded const だった値
-    // (1024) を継承。
+    // Inherit the former hard-coded value (1024) from raikiri-html's
+    // RaikiriTreeSink.
     assert_eq!(d.max_parse_warnings, Some(1024));
 }
 
@@ -165,18 +165,18 @@ fn render_limits_max_parse_warnings_builder_roundtrip() {
     let via_builder = RenderLimits::builder().max_parse_warnings(Some(16)).build();
     assert_eq!(via_builder.max_parse_warnings, Some(16));
 
-    // Direct field construct pattern (`with_*` ergonomic を持たない
-    // sibling convention に揃えている)。同一 crate 内なので struct update
-    // syntax が使える (external consumer 視点の直接代入 check は
-    // `external_consumer_can_mutate_pub_fields_via_default_shorthand` 側
-    // が担当)。
+    // Direct field construction (matching sibling conventions without
+    // ergonomic `with_*` methods). Struct-update syntax works within this
+    // crate. The external-consumer view of direct assignment is covered by
+    // `external_consumer_can_mutate_pub_fields_via_default_shorthand`
+    // instead.
     let via_field = RenderLimits {
         max_parse_warnings: Some(16),
         ..RenderLimits::default()
     };
     assert_eq!(via_field.max_parse_warnings, Some(16));
 
-    // None も builder 経由で設定可能 (cap 無効化)。
+    // The builder also accepts None to disable the cap.
     let unbounded = RenderLimits::builder().max_parse_warnings(None).build();
     assert_eq!(unbounded.max_parse_warnings, None);
 }
@@ -283,10 +283,10 @@ fn policy_violation_is_error_and_display() {
 }
 
 // ── ViolationType::Display ──────────────
-// Debug-in-Display の排除。Display 出力は stability 契約の対象なので
-// 全 variant の string を check する。Debug format (auto-derived) が
-// variant field 追加時に silently 変わるのを防ぐため、代表 field 値も
-// 合わせて assert する。
+// Eliminate Debug-in-Display. Display output is a stability contract, so
+// check every variant's string. Also assert representative field values
+// to avoid silent changes to auto-derived Debug output when variant
+// fields are added.
 
 #[test]
 fn violation_type_display_simple_variants() {
@@ -343,10 +343,10 @@ fn violation_type_display_string_and_depth_variants() {
 
 #[test]
 fn policy_violation_display_uses_violation_type_display_not_debug() {
-    // PolicyViolation::Display が violation_type / kind を `{}` で format
-    // することを regression check。旧実装は `{:?}` で
-    // "FetchTooLarge { limit: .., actual: .. }" や "Image" を垂れ流していた。
-    // kind Display swap 分の kind assertion も含む。
+    // Regression-check that PolicyViolation::Display formats violation_type
+    // and kind with `{}`. The old implementation used `{:?}`, leaking
+    // "FetchTooLarge { limit: .., actual: .. }" and "Image".
+    // Also assert the kind after the Display swap.
     use url::Url;
     let v = PolicyViolation {
         kind: ResourceKind::Image,
@@ -366,7 +366,7 @@ fn policy_violation_display_uses_violation_type_display_not_debug() {
         !s.contains("FetchTooLarge {"),
         "PolicyViolation Display must not leak ViolationType Debug format, got: {s}"
     );
-    // kind: Display は "image" (lowercase), Debug は "Image" (CamelCase)。
+    // kind: Display is "image" (lowercase), Debug is "Image" (CamelCase).
     assert!(
         s.contains("(image "),
         "PolicyViolation Display must delegate to ResourceKind::Display, got: {s}"
@@ -378,11 +378,11 @@ fn policy_violation_display_uses_violation_type_display_not_debug() {
 }
 
 // ── ResourceKind::Display ───────────────
-// Debug-in-Display の排除 (ViolationType::Display と対になるタスクとして
-// 完結)。Display 出力は stability 契約の対象なので、全 7 variants の
-// string を check する。Debug format (auto-derived) が variant 追加時に
-// silently 変わるのを防ぐため、`violation_type_display_*` pattern に
-// 合わせて per-variant assert_eq! で固定する。
+// Complete the Debug-in-Display removal (paired with ViolationType::Display).
+// Display output is a stability contract; check all seven variant strings.
+// To avoid silent changes to auto-derived Debug output when variants
+// are added, pin each using per-variant assert_eq!, as in the
+// `violation_type_display_*` pattern.
 
 #[test]
 fn resource_kind_display_stylesheet_import() {
@@ -427,13 +427,13 @@ fn resource_kind_display_other() {
 
 #[test]
 fn render_error_policy_display_is_label_only_source_carries_details() {
-    // RenderError::Policy Display は sibling arms (Parse / Cascade / Layout /
-    // Resolver / Network / Sink / Io) と同じ label-only 方針: 詳細は
-    // std::error::Error::source() 経由で PolicyViolation Display に届く。
-    // 「violation_type が Display で format される (Debug ではない)」
-    // regression check は本 test の source 側 assert + 上段 test
+    // RenderError::Policy Display follows the label-only convention of sibling
+    // arms (Parse / Cascade / Layout / Resolver / Network / Sink / Io): details
+    // are available through std::error::Error::source() via PolicyViolation Display.
+    // The regression check that violation_type uses Display, not Debug,
+    // is covered both by this test's source assertion and the test above
     // `policy_violation_display_uses_violation_type_display_not_debug`
-    // (PolicyViolation 直の Display) の両方でカバー。
+    // (direct PolicyViolation Display).
     use std::error::Error;
     use url::Url;
     let v = PolicyViolation {
@@ -631,9 +631,9 @@ fn element_defaults_return_none_or_false() {
         fn tag_name(&self) -> &str {
             "p"
         }
-        // inline_style_source / namespace_uri / id / has_class / attr は
-        // default impl を利用。default attr は "style" のみ
-        // inline_style_source() に delegate、他は None。
+        // inline_style_source / namespace_uri / id / has_class / attr use
+        // default implementations. The default attr delegates only "style"
+        // to inline_style_source(); all others return None.
     }
 
     let e = BareElement;
@@ -642,15 +642,15 @@ fn element_defaults_return_none_or_false() {
     assert_eq!(e.id(), None);
     assert!(!e.has_class("anything"));
     assert_eq!(e.attr("data-foo"), None);
-    // attr("style") default は inline_style_source (これも default None) に
-    // delegate、結果 None。
+    // Default attr("style") delegates to inline_style_source (also None by default),
+    // so the result is None.
     assert_eq!(e.attr("style"), None);
 }
 
 #[test]
 fn element_default_id_and_has_class_delegate_to_attr() {
-    // impl 側が attr() のみ override すれば id() / has_class() /
-    // attr("style") が default 経由で追従することを regression check する。
+    // Regression-check that overriding only attr() in an implementation
+    // makes id() / has_class() / attr("style") follow through their defaults.
     use crate::Element;
 
     struct AttrOnlyElement;
@@ -676,12 +676,12 @@ fn element_default_id_and_has_class_delegate_to_attr() {
     let e = AttrOnlyElement;
     // id() default → self.attr("id")
     assert_eq!(e.id(), Some("main"));
-    // has_class() default → attr("class") を ASCII whitespace で split
+    // Default has_class() splits attr("class") on ASCII whitespace.
     assert!(e.has_class("foo"));
     assert!(e.has_class("bar"));
     assert!(e.has_class("baz"));
     assert!(!e.has_class("qux"));
-    // attr("style") → inline_style_source() へ redirect
+    // attr("style") redirects to inline_style_source().
     assert_eq!(e.attr("style"), Some("color:red"));
 }
 
@@ -689,8 +689,8 @@ fn element_default_id_and_has_class_delegate_to_attr() {
 
 #[test]
 fn warning_kind_html_parse_error_is_constructable() {
-    // #[non_exhaustive] 契約下で raikiri-html crate 相当の external consumer が
-    // 該 variant を build できることを regression 防止する。
+    // Regression-check that an external consumer like raikiri-html can construct
+    // this variant despite the `#[non_exhaustive]` contract.
     let w = crate::WarningKind::HtmlParseError {
         message: String::from("unexpected end tag"),
     };
@@ -719,8 +719,8 @@ fn page_box_default_is_a4() {
 
 #[test]
 fn page_box_external_constructable_via_struct_update_from_a4() {
-    // #[non_exhaustive] pub struct の external constructable pattern。
-    // `..PageBox::A4` を base に width だけ変える。
+    // Externally constructible pattern for a `#[non_exhaustive]` pub struct.
+    // Change only the width using `..PageBox::A4` as a base.
     let landscape_a4 = PageBox {
         width: 1122.5197,
         height: 793.7008,

@@ -25,9 +25,21 @@ impl NetworkProvider for FileNetworkProvider {
             .to_file_path()
             .map_err(|_| NetworkError::Other(format!("invalid file:// URL: {}", request.url)))?;
         let bytes = std::fs::read(&path).map_err(NetworkError::Io)?;
+        // Stylesheet `@import` expansion only inlines responses with a CSS
+        // Content-Type. Local `.css` files have no HTTP headers, so infer the
+        // type from the extension; every other file keeps the historical
+        // image type used by the verification-only image pipeline.
+        let content_type = if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("css"))
+        {
+            Some("text/css".to_string())
+        } else {
+            Some("image/png".to_string())
+        };
         Ok(FetchOutcome::Body(FetchedResource {
             bytes: bytes.into(),
-            content_type: Some("image/png".to_string()),
+            content_type,
             final_url: request.url,
             encoding: None,
         }))

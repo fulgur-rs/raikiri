@@ -7,7 +7,9 @@
 
 use raikiri_js_wasmtime_harness::{Delivery, harness_status_word};
 #[cfg(feature = "js-native")]
-use raikiri_js_wasmtime_harness::{install_page_support, probe_timeout, take_delivery};
+use raikiri_js_wasmtime_harness::{
+    SINK_SYMBOL_DESCRIPTION, deliver, install_page_support, probe_timeout, take_delivery,
+};
 use std::path::Path;
 #[cfg(feature = "js-wasmtime")]
 mod backend;
@@ -16,13 +18,16 @@ compile_error!("select only one JS backend");
 #[cfg(not(any(feature = "js-native", feature = "js-wasmtime")))]
 compile_error!("select a JS backend");
 pub(crate) use raikiri_js_wasmtime_harness::REPORT_SCRIPT;
-#[cfg(test)]
-use raikiri_js_wasmtime_harness::SINK_SYMBOL_DESCRIPTION;
 
-use raikiri_js::TestOutcome;
 #[cfg(feature = "js-native")]
 use raikiri_js::runtime::DomRuntime;
 use raikiri_js::runtime::RunReport;
+// The canonical definition lives in the shared WPT harness support crate
+// (this module cannot own it: that crate cannot depend back on `raikiri-wpt`
+// for it). Re-exported here so page results are named from this module and
+// the `SubtestOutcome` name ends the collision with
+// `crate::runner::TestOutcome`.
+pub use raikiri_js_wasmtime_harness::SubtestOutcome;
 
 use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
 use crate::wpt_host::WptDocumentHost;
@@ -76,7 +81,7 @@ impl std::error::Error for PageError {}
 pub(crate) fn run_testharness_page(
     path: &Path,
     wpt_root: &Path,
-) -> Result<Vec<TestOutcome>, PageError> {
+) -> Result<Vec<SubtestOutcome>, PageError> {
     let mut runtime = prepare_page(path, wpt_root)?;
     let initial = metrics_initial_rss();
     let result = finish_page(&mut runtime);
@@ -94,7 +99,7 @@ pub(crate) fn run_testharness_page_with_preamble(
     path: &Path,
     wpt_root: &Path,
     preamble: &str,
-) -> Result<Vec<TestOutcome>, PageError> {
+) -> Result<Vec<SubtestOutcome>, PageError> {
     let mut runtime = prepare_page(path, wpt_root)?;
     let initial = metrics_initial_rss();
     let result = (|| {
@@ -169,8 +174,8 @@ fn prepare_host(path: &Path, wpt_root: &Path) -> Result<WptDocumentHost, PageErr
 /// leave alone (see [`raikiri_js_wasmtime_harness::probe_timeout`]'s own doc comment), so it falls through
 /// to [`PageError::NoResults`] as if the probe had never run.
 #[cfg(feature = "js-native")]
-fn finish_page(runtime: &mut DomRuntime) -> Result<Vec<TestOutcome>, PageError> {
-    let mut report = runtime.run_document();
+fn finish_page(runtime: &mut DomRuntime) -> Result<Vec<SubtestOutcome>, PageError> {
+    let mut report = runtime.run_document_with_callback(SINK_SYMBOL_DESCRIPTION, deliver);
     let mut delivery = take_delivery(runtime);
     if delivery.is_none()
         && report.aborted.is_none()
@@ -188,7 +193,7 @@ fn finish_page(runtime: &mut DomRuntime) -> Result<Vec<TestOutcome>, PageError> 
 fn page_outcome(
     report: &RunReport,
     delivery: Option<Delivery>,
-) -> Result<Vec<TestOutcome>, PageError> {
+) -> Result<Vec<SubtestOutcome>, PageError> {
     if let Some(reason) = &report.aborted {
         return Err(PageError::Aborted(reason.to_string()));
     }
@@ -222,7 +227,7 @@ mod tests;
 pub(crate) fn run_testharness_page(
     path: &Path,
     wpt_root: &Path,
-) -> Result<Vec<TestOutcome>, PageError> {
+) -> Result<Vec<SubtestOutcome>, PageError> {
     backend::run(path, wpt_root, None)
 }
 #[cfg(feature = "js-wasmtime")]
@@ -230,7 +235,7 @@ pub(crate) fn run_testharness_page_with_preamble(
     path: &Path,
     wpt_root: &Path,
     preamble: &str,
-) -> Result<Vec<TestOutcome>, PageError> {
+) -> Result<Vec<SubtestOutcome>, PageError> {
     backend::run(path, wpt_root, Some(preamble))
 }
 

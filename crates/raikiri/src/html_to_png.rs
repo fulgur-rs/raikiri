@@ -1,25 +1,26 @@
-//! `html_to_png` — dogfooding helper: HTML → first-page PNG bytes (A4 fallback)。
+//! `html_to_png` — a dogfooding helper that renders HTML to first-page PNG bytes
+//! (A4 fallback).
 //!
-//! spec §L1118 の convenience wrapper。VRT (hello-world) / examples 用途。
-//! Consumer が multi-page / custom PageBox / neutral page streaming を要する場合は
-//! Parses HTML, builds a page scene, and rasterizes it to PNG.
+//! This convenience wrapper from spec §L1118 serves VRT (hello-world) tests
+//! and examples. For multiple pages, a custom PageBox, or neutral page
+//! streaming, consumers should chain `parse_html` and `render_streaming`.
 //!
-//! # 現状の契約
-//! - PageBox は `@page { size: ... }` の first-page cascadeを優先し、未指定時は
-//!   `PageBox::A4`。custom PageBox は将来
-//!   `html_to_png_with(input, PageBox, PageDefaults)` variant を追加予定
-//! - `html_to_png` / `html_to_png_with_fonts` は `ReplacedResolver` 不要
-//!   (replaced element 非対応)。`<img>` を実際に fetch→decode→paint する
-//!   経路は [`html_to_png_with_resolver`] を使う
-//! - 単一ページのみ。overflow の 2 ページ目 clip は将来の pagestream state
-//!   machine で対応
-//! - 内部 pipeline:
-//!   `parse_html` → `layout_single_page` → `build_page_scene` →
-//!   `PageScene::rasterize` (`raikiri_paint::paint_single_page` +
-//!   `anyrender::render_to_buffer::<VelloCpuImageRenderer>` + `encode_png` を
-//!   内部で verbatim call) → PNG bytes
-//!   raster / encode の byte-identical triple は [`crate::PageScene::rasterize`]
-//!   に集約された (byte-identical 契約 = 同 triple 呼び出しの verbatim 維持)。
+//! # Current contract
+//! - PageBox uses the first-page cascade of `@page { size: ... }`, falling
+//!   back to `PageBox::A4`. A future
+//!   `html_to_png_with(input, PageBox, PageDefaults)` variant may allow a
+//!   custom PageBox.
+//! - `html_to_png` and `html_to_png_with_fonts` need no `ReplacedResolver`
+//!   because they do not support replaced elements. Use
+//!   [`html_to_png_with_resolver`] to fetch, decode, and paint `<img>`.
+//! - Only the first page is rendered; a future page-stream state machine
+//!   will handle clipping overflow on subsequent pages.
+//! - Pipeline: `parse_html` → `layout_single_page` → `build_page_scene` →
+//!   `PageScene::rasterize` → PNG bytes. The rasterizer preserves the exact
+//!   `raikiri_paint::paint_single_page` +
+//!   `anyrender::render_to_buffer::<VelloCpuImageRenderer>` + `encode_png`
+//!   calls. [`crate::PageScene::rasterize`] centralizes this byte-identical
+//!   raster/encode sequence.
 
 use parley::FontContext;
 use raikiri_html::ParseOptions;
@@ -28,19 +29,19 @@ use raikiri_traits::{PageBox, RenderError};
 use crate::page_scene::build_page_scene;
 use crate::parse_html;
 
-/// `html_to_png` / `html_to_png_with_fonts` の共通実装。VRT test 経路 (pinned
-/// `FontContext`) と production 経路 (`FontContext::new()`) の layout logic を
-/// 1 箇所に集約し、drift を構造的に防止する。
+/// Shared implementation for `html_to_png` and `html_to_png_with_fonts`.
+/// Centralizing the VRT path (pinned `FontContext`) and production path
+/// (`FontContext::new()`) prevents their layout logic from drifting.
 ///
 /// # Errors
-/// - `RenderError::Parse(_)` — `parse_html` からの伝播 (IO / UTF-8 / html5ever)
-/// - `RenderError::Layout(_)` — `layout_single_page` からの伝播 (`<body>` 欠落 /
-///   parley shape / taffy internal)
+/// - `RenderError::Parse(_)` — propagated from `parse_html` (IO / UTF-8 / html5ever)
+/// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
+///   `<body>` / parley shaping / taffy internals)
 pub(crate) fn html_to_png_impl<R: std::io::Read>(
     input: R,
     font_ctx: FontContext,
 ) -> Result<Vec<u8>, RenderError> {
-    // ParseOptions は default 相当 (extra stylesheet / network / base_url 不要)
+    // Default-equivalent ParseOptions: no extra stylesheets, network, or base URL.
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -49,50 +50,49 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
 
     let page_box = PageBox::from_page_size(cascade.page.size());
-    // `into_parts` で所有権ごと分解するので、dom の `&mut` と cascade の `&` を
-    // 同時に取れる。`?` は raikiri-traits の `From<LayoutError> for RenderError`
-    // で LayoutError → RenderError::Layout に自動変換される。
+    // `into_parts` takes ownership of the pieces, allowing `&mut` on the DOM
+    // alongside `&` on the cascade. `?` converts LayoutError to
+    // RenderError::Layout via raikiri-traits' From implementation.
     raikiri_dom::layout_single_page(&mut uncascaded.dom, &cascade, page_box, font_ctx)?;
 
-    // post-layout Document から PageScene snapshot を
-    // 抽出し、byte-identical な raster + encode triple は PageScene::rasterize に
-    // 集約された。dom / cascade は rasterize に thread されて既存 paint pipeline
-    // が verbatim reuse される (PageDrawables 経由 paint 再導出は
-    // byte-identical を破るため defer、rasterize が真の snapshot に至る
-    // までの過渡形として dom + cascade を param に受ける)。
+    // Extract PageScene from the post-layout Document. PageScene::rasterize
+    // centralizes the byte-identical raster/encode sequence and still receives
+    // the DOM and cascade to reuse the existing paint pipeline. Rebuilding
+    // paint through PageDrawables could change bytes, so these parameters
+    // remain until rasterize can operate on a true standalone snapshot.
     let dom = &uncascaded.dom;
     let scene = build_page_scene(dom, &cascade, page_box);
     Ok(scene.rasterize(dom, &cascade, page_box))
 }
 
-/// HTML byte stream を単一の first page (A4 fallback) の PNG に raster する。
+/// Rasterize an HTML byte stream to a PNG of the first page (A4 fallback).
 ///
-/// System font resolver 経由 (`FontContext::new()`) で `html_to_png_impl` に
-/// delegate する。production runtime 用の経路。
+/// Delegate to `html_to_png_impl` with the system font resolver
+/// (`FontContext::new()`). This is the production runtime path.
 ///
 /// # Errors
-/// - `RenderError::Parse(_)` — `parse_html` からの伝播 (IO / UTF-8 / html5ever)
-/// - `RenderError::Layout(_)` — `layout_single_page` からの伝播 (`<body>` 欠落 /
-///   parley shape / taffy internal)
+/// - `RenderError::Parse(_)` — propagated from `parse_html` (IO / UTF-8 / html5ever)
+/// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
+///   `<body>` / parley shaping / taffy internals)
 ///
-/// spec §L1118 の signature literal は `(html: &str)` だが、既存 `parse_html<R: Read>`
-/// と signature を統一するため `impl Read` を採用 (design 決定)。
+/// The spec §L1118 gives the signature `(html: &str)`; this design instead
+/// accepts `impl Read` to match the existing `parse_html<R: Read>` API.
 pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
     html_to_png_impl(input, FontContext::new())
 }
 
-/// Font-aware 版。渡された `FontContext` がそのまま layout に使われる。
+/// Font-aware variant that uses the supplied `FontContext` for layout.
 ///
-/// cross-machine 決定性が必要な VRT test 向け。
-/// `font_ctx` が check 済み (`build_wpt_font_ctx` 経由) の場合、system font
-/// resolver は完全 bypass される。
+/// Intended for VRT tests that need cross-machine reproducibility. When
+/// `font_ctx` has been validated by `build_wpt_font_ctx`, this completely
+/// bypasses the system font resolver.
 ///
 /// # Scope
-/// - VRT test 向け。production runtime は既存 [`html_to_png`] を使う
-/// - 将来 `@font-face` 対応時に production consumer にも展開検討
+/// - Intended for VRT tests; production runtimes should use [`html_to_png`].
+/// - May be extended to production consumers once `@font-face` is supported.
 ///
 /// # Errors
-/// [`html_to_png`] と同じ (`RenderError::Parse` / `RenderError::Layout`)。
+/// Same as [`html_to_png`] (`RenderError::Parse` / `RenderError::Layout`).
 pub fn html_to_png_with_fonts<R: std::io::Read>(
     input: R,
     font_ctx: FontContext,
@@ -100,20 +100,19 @@ pub fn html_to_png_with_fonts<R: std::io::Read>(
     html_to_png_impl(input, font_ctx)
 }
 
-/// [`html_to_png`] と同一だが、`resolver`/`pixel_source` 経由で `<img>` を
-/// 実際に fetch→decode→layout→paint する。
+/// Like [`html_to_png`], but fetches, decodes, lays out, and paints `<img>`
+/// through `resolver` and `pixel_source`.
 ///
-/// `resolver`/`pixel_source` は同一の値を指すことが多い (例:
-/// `raikiri_net::ImageResolver` は両方の trait を実装する) が、この関数は
-/// それを要求しない — 別々の型でもよい。
+/// They often refer to the same value (`raikiri_net::ImageResolver` implements
+/// both traits), but this function also accepts separate types.
 ///
 /// # Errors
-/// [`html_to_png`] と同じ、加えて `RenderError::Resolver` — `resolver` が
-/// いずれかの `<img>` の resolve に失敗した場合。`ReplacedResolver` の
-/// 契約上 `Err` は terminal なので、最初の失敗で render 全体が停止する
-/// (握りつぶして 0×0 にはしない)。placeholder への degrade を望む Consumer
-/// は `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })` を返す —
-/// `raikiri_dom::layout_single_page_with_resolver` の doc 参照。
+/// In addition to errors from [`html_to_png`], returns `RenderError::Resolver`
+/// if `resolver` fails for any `<img>`. The `ReplacedResolver` contract treats
+/// `Err` as terminal: rendering stops at the first error rather than silently
+/// replacing the image with 0×0. Consumers who want a placeholder should
+/// return `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })`; see the
+/// `raikiri_dom::layout_single_page_with_resolver` docs.
 pub fn html_to_png_with_resolver<R, I>(
     input: impl std::io::Read,
     resolver: &R,

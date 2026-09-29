@@ -30,8 +30,8 @@
 //! `PageContext::page_index` field).
 //! `page_index` defaults to 0 and advances via
 //! [`TargetRegistry::begin_page`], which also resets `next_sequence` to 0 —
-//! design §7.6 "Slot ID の安定性保証" states `sequence` is "page 内
-//! 0-indexed" (page-local, not document-wide), so a page-boundary call must
+//! design §7.6 "Slot ID stability guarantee" says `sequence` is
+//! "zero-indexed within each page" (not document-wide), so a page-boundary call must
 //! restart the local count. Calling contract: `begin_page` once per page,
 //! with a monotonically non-decreasing `page_index` (same-index calls are a
 //! no-op; a redundant same-page call is fine, a backward call is not),
@@ -409,8 +409,8 @@ impl TargetRegistry {
     /// Page-boundary hook — advance the page whose target-* dispatches are
     /// being recorded, resetting the page-local sequence counter to 0.
     ///
-    /// Design §7.6 "Slot ID の安定性保証" defines `sequence` as "page 内
-    /// 0-indexed" (page-local, not document-wide); a page-boundary call must
+    /// Design §7.6 "Slot ID stability guarantee" defines `sequence` as
+    /// "zero-indexed within each page" (not document-wide); a page-boundary call must
     /// restart the local count so a re-run over the same input produces the
     /// same [`TargetSlotId`]s (the byte-identical goal Finding #4, design
     /// §7.4/§7.6, exists for). A no-op if `page_index` already matches the
@@ -422,8 +422,8 @@ impl TargetRegistry {
     ///
     /// Panics if `page_index` is less than the registry's current
     /// `page_index` — i.e. `page_index` must be monotonically
-    /// non-decreasing across calls (design §7.6: "page_index は … emit
-    /// された順に増加"; same-index calls remain the documented no-op above,
+    /// non-decreasing across calls (design §7.6: "page_index increases
+    /// in emission order"; same-index calls remain the documented no-op above,
     /// so the enforced contract is non-decreasing, not strictly
     /// increasing). A backward call would otherwise reset `next_sequence`
     /// to 0 while an earlier, still-unresolved `TargetSlot` for that same

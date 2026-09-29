@@ -1,11 +1,11 @@
-//! CSS property value 型と per-property parser。
+//! CSS property value types and per-property parsers.
 //!
-//! 現サポート property の canonical 一覧は `parse_value` の match arm を参照
-//! (該 arm を single source of truth として扱う)。認識できない property name /
-//! invalid value は `parse_value` が `None` を返す (spec 準拠の silent drop、
-//! caller である rule.rs で declaration ごと drop)。
+//! For the canonical list of supported properties, see the `parse_value`
+//! match arms (the single source of truth). For unknown property names or
+//! invalid values, `parse_value` returns `None` (the spec-compliant silent
+//! drop; the caller in rule.rs drops the entire declaration).
 //!
-//! `parse_value` は rule.rs の `DeclParser::parse_value` から呼ばれる。
+//! `parse_value` is called from `DeclParser::parse_value` in rule.rs.
 
 mod types;
 pub use types::*;

@@ -89,7 +89,7 @@ pub(crate) fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 ///   list, and it *would* take priority over the plain `lang` attribute.
 ///   Skipped because raikiri does not parse XML/XHTML documents at all yet
 ///   (`StyleDom::quirks_mode` doc / `resolve_case_sensitivity` doc: "raikiri
-///   は現時点で HTML document のみ対象") — there is no XML-namespace
+///   currently supports only HTML documents") — there is no XML-namespace
 ///   attribute surface to read.
 ///
 /// # `lang=""` stopping inheritance

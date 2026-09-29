@@ -1,15 +1,15 @@
 //! DOM abstraction trait + identifier newtypes.
 //!
-//! `Dom` / `Element` / `Node` は今後 associated type + method を確定する予定。
-//! 現時点では shell として trait だけ用意し、raikiri-dom 側の実装検討と
-//! co-design する。
+//! `Dom` / `Element` / `Node` will gain finalized associated types and methods.
+//! For now, only the trait shells exist; their implementations will be
+//! co-designed with raikiri-dom.
 
 use smol_str::SmolStr;
 
 /// String identifier for GCPM fragments / running templates / named strings /
 /// target-* references.
 ///
-/// SmolStr newtype で inline 最適化を効かせる。GCPM で本格利用開始予定。
+/// A SmolStr newtype enables inline optimization. GCPM will use it extensively.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Symbol(pub SmolStr);
 
@@ -33,8 +33,8 @@ impl From<&str> for Symbol {
 
 /// Stable identifier for DOM nodes across a document.
 ///
-/// `RenderWarning.node_id` などで参照される。raikiri-dom は自 arena の
-/// node index を u64 に射影して produce。
+/// Referenced by `RenderWarning.node_id` and similar fields. raikiri-dom
+/// projects its own arena node index into a u64.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u64);
 
@@ -45,137 +45,137 @@ impl NodeId {
     }
 }
 
-/// DOM node の種別 (Element / Text / Document root / Comment /
-/// ProcessingInstruction / DocumentFragment)。
+/// DOM node kind (Element / Text / Document root / Comment /
+/// ProcessingInstruction / DocumentFragment).
 ///
-/// raikiri-dom node arena の kind field と対応する。
-/// `Comment` / `ProcessingInstruction` / `DocumentFragment` は WHATWG DOM
-/// §4 で列挙された NodeType のうち paged-media rendering に関係する 3 種と
-/// して追加された。`#[non_exhaustive]` により変更は non-breaking (existing
-/// callers は wildcard arm または `matches!(_, Element)` 形式で match する
-/// ため影響なし)。
+/// Corresponds to the kind field in raikiri-dom's node arena.
+/// `Comment` / `ProcessingInstruction` / `DocumentFragment` add the three
+/// NodeTypes from WHATWG DOM §4 relevant to paged-media rendering.
+/// `#[non_exhaustive]` makes the change non-breaking (existing callers
+/// match with a wildcard arm or `matches!(_, Element)`,
+/// so they are unaffected).
 ///
 /// Two-way invariant ([`Node::kind`] / [`Node::as_element`]):
-/// `kind() == NodeKind::Element` iff `as_element().is_some()`。追加された
-/// `Comment` / `ProcessingInstruction` / `DocumentFragment` はすべて
-/// `as_element() == None`。
+/// `kind() == NodeKind::Element` iff `as_element().is_some()`. All added
+/// `Comment` / `ProcessingInstruction` / `DocumentFragment` variants
+/// all return `None` from `as_element()`.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
-    /// HTML / XML element (tag_name あり)。
+    /// HTML / XML element (has a tag_name).
     Element,
-    /// Character data node。
+    /// Character data node.
     Text,
-    /// Document root (arena index 0 に配置される仮想 node)。
+    /// Document root (virtual node at arena index 0).
     Document,
-    /// HTML / XML comment node (`<!-- ... -->`)。character data を保持する
-    /// が Element ではない (`as_element() == None`)。cascade / paint / layout
-    /// traversal は typically `is_in_document()` gate で skip されるが、DOM
-    /// mutation API の対象としては存在する。
+    /// HTML / XML comment node (`<!-- ... -->`). Holds character data
+    /// but is not an Element (`as_element() == None`). Cascade / paint / layout
+    /// traversals typically skip it via `is_in_document()`, but it remains
+    /// available to DOM mutation APIs.
     Comment,
-    /// Processing instruction node (`<?target data?>`、HTML では実質発生
-    /// しないが XML / XHTML では有効)。target + data を保持する。
+    /// Processing instruction node (`<?target data?>`; rare in HTML,
+    /// valid in XML / XHTML). Holds target + data.
     ProcessingInstruction,
-    /// Document fragment root (`<template>` の contents fragment root や
-    /// createDocumentFragment 相当の detached subtree の virtual root)。
-    /// arena 内に detached 状態で存在し、Document root からは reachable
-    /// でない (mark_in_document_flags 後 `is_in_document() == false`)。
-    /// `<template>` fragment root の shape 修正のため追加 (旧:
-    /// `"#document-fragment"` pseudo-tag な Element)。
+    /// Document fragment root (the contents fragment root of `<template>`
+    /// or the virtual root of a detached subtree made by createDocumentFragment).
+    /// Remains detached in the arena and is not reachable from the Document root
+    /// (`is_in_document() == false` after mark_in_document_flags).
+    /// Added to fix the shape of `<template>` fragment roots (formerly
+    /// an Element with the pseudo-tag `"#document-fragment"`).
     DocumentFragment,
 }
 
-/// DOM tree abstraction。raikiri-dom / raikiri-style / raikiri-paint / raikiri
-/// (umbrella) が消費する generic navigation interface。
+/// DOM tree abstraction. raikiri-dom / raikiri-style / raikiri-paint / raikiri
+/// (umbrella) consumes this generic navigation interface.
 ///
-/// **Object-safety**: GAT (`type NodeRef<'a>`) を含むため non-object-safe。
-/// 現状は generic dispatch (`fn walk<D: Dom>(dom: &D)`) を前提。dyn 化が
-/// 必要な場合 (blitz-compat 経由の runtime abstraction 等、将来対応) は
-/// erased wrapper trait を別途用意する。
+/// **Object safety**: This trait has a GAT (`type NodeRef<'a>`) and is not object-safe.
+/// Currently assumes generic dispatch (`fn walk<D: Dom>(dom: &D)`). If dyn dispatch
+/// becomes necessary (for example, future runtime abstraction through blitz-compat),
+/// provide a separate erased wrapper trait.
 pub trait Dom {
-    /// Node reference (borrowed) type。
+    /// Node reference (borrowed) type.
     type NodeRef<'a>: Node
     where
         Self: 'a;
-    /// Element reference (borrowed) type。
+    /// Element reference (borrowed) type.
     type ElementRef<'a>: Element
     where
         Self: 'a;
-    /// Child ID iterator type。
+    /// Child ID iterator type.
     type ChildIter<'a>: Iterator<Item = NodeId>
     where
         Self: 'a;
 
-    /// Document root node の identifier。実装は通常 arena index 0 の Document
-    /// kind node を指す。
+    /// Identifier of the Document root node. Implementations usually refer to the
+    /// Document-kind node at arena index 0.
     fn root_id(&self) -> NodeId;
 
-    /// `id` に対応する Node reference。範囲外なら `None`。
+    /// Node reference for `id`, or `None` if out of range.
     fn node(&self, id: NodeId) -> Option<Self::NodeRef<'_>>;
 
-    /// `id` の direct children を走査する iterator。範囲外 (invalid NodeId)
-    /// なら empty iterator を返す ([`node`](Self::node) の `None` と対称)。
+    /// Iterate over direct children of `id`; return an empty iterator for an
+    /// out-of-range NodeId (symmetric with [`node`](Self::node) returning `None`).
     fn child_ids(&self, id: NodeId) -> Self::ChildIter<'_>;
 
-    /// Arena 内の総 node 数 (Document root および detached / unreachable node
-    /// を含む)。
+    /// Total nodes in the arena (including the Document root and detached /
+    /// unreachable nodes).
     ///
-    /// cascade などの traversal が `Vec<T>` を pre-allocate する用途で使う。
-    /// **契約**: すべての `NodeId(0..node_count as u64)` が [`node`](Self::node)
-    /// で `Some` を返すこと。逆に `id.0 >= node_count as u64` なら `None` を
-    /// 返す。
+    /// Used by traversal code such as cascade to preallocate `Vec<T>`.
+    /// **Contract**: Every `NodeId(0..node_count as u64)` returns `Some` from
+    /// [`node`](Self::node). Conversely, `id.0 >= node_count as u64` returns
+    /// `None`.
     ///
-    /// Default impl は `0` を返す。既存 caller が壊れないための safe fallback
-    /// で、`Dom` を実装する新しい type は override すべき。既存の raikiri-dom
-    /// および raikiri-style の TestDoc impl は override 済み。
+    /// The default implementation returns `0`: a safe fallback for existing callers.
+    /// New implementations of `Dom` should override it. Existing raikiri-dom
+    /// and raikiri-style TestDoc implementations already do.
     fn node_count(&self) -> usize {
         0
     }
 }
 
-/// DOM node abstraction。kind ごとの dispatch と共通 API を提供。
+/// DOM node abstraction providing dispatch by kind and a shared API.
 ///
-/// **Lifetime elision**: 過去は `Node<'a>` の form を持って
-/// いたが、method signature で `'a` を使用しないため drop された。
-/// borrowed Node value 自体の lifetime は `Dom::NodeRef<'a>` の `'a` で
-/// 表現されるため trait param 側は不要。GAT `Element<'b>` は borrowed element
-/// reference の型として残る。
+/// **Lifetime elision**: This was formerly `Node<'a>`, but the lifetime
+/// was dropped because method signatures did not use `'a`.
+/// The lifetime of the borrowed Node value is instead expressed by `'a`
+/// in `Dom::NodeRef<'a>`; the trait parameter is unnecessary. The GAT
+/// `Element<'b>` remains the type of a borrowed element reference.
 pub trait Node {
-    /// Element downcast 用の Element reference type。
+    /// Element reference type used for downcasting.
     type Element<'b>: Element
     where
         Self: 'b;
 
-    /// この node の種別。
+    /// Kind of this node.
     fn kind(&self) -> NodeKind;
 
-    /// kind が Element の場合 Element reference を返す。それ以外 (Text /
-    /// Document / Comment / ProcessingInstruction / DocumentFragment) は
-    /// `None` — Two-way invariant で pinned (`kind() == NodeKind::Element` iff
-    /// `as_element().is_some()`)。
+    /// Return an Element reference if the kind is Element; otherwise
+    /// (Text / Document / Comment / ProcessingInstruction / DocumentFragment)
+    /// return `None` — pinned by the two-way invariant (`kind() == NodeKind::Element` iff
+    /// `as_element().is_some()`).
     fn as_element(&self) -> Option<Self::Element<'_>>;
 
-    /// kind が Text の場合 character data。それ以外 (Element / Document /
-    /// Comment / ProcessingInstruction / DocumentFragment) は `None`。
-    /// Comment / PI が character data 相当を持つ場合でも本 method は Text
-    /// variant のみを返す (kind 分岐で明示区別)。
+    /// Return character data if the kind is Text; otherwise (Element / Document /
+    /// Comment / ProcessingInstruction / DocumentFragment) return `None`.
+    /// Even when Comment / PI have character data, this method returns only the Text
+    /// variant (explicitly distinguishing kinds).
     fn text_content(&self) -> Option<&str>;
 
-    /// この Node が flat tree に含まれるかを返す。`<template>` element の子孫
-    /// は `false`、Document root から flat-tree-parent 経由で到達可能な node
-    /// は `true`。
+    /// Whether this Node belongs to the flat tree. Descendants of `<template>`
+    /// elements return `false`; nodes reachable from the Document root through
+    /// flat-tree-parent edges return `true`.
     ///
-    /// Traversal 側 (cascade / paint / stylesheet extract) はこの predicate
-    /// で inert subtree を統一的に skip する。個別の tag_name 判定
-    /// (`== "template"` 等) を traversal に散らすのは禁止 — 概念が implicit
-    /// になり shadow DOM 追加時に漏れる。
+    /// Traversals (cascade / paint / stylesheet extraction) use this predicate
+    /// to skip inert subtrees consistently. Do not scatter individual tag_name
+    /// checks (`== "template"`, etc.) across traversals: that hides the concept
+    /// and risks omissions when shadow DOM is added.
     ///
     /// # Default impl
     ///
-    /// 常に `true` を返す。概念未対応の Node impl (test 用 unimplemented node 等) が silent
-    /// drop されないための safe fallback (blitz `stylo.rs` `TElement::is_in_document
-    /// -> true` と同じ姿勢)。raikiri-dom `NodeRef` は override して実 bit を
-    /// 返す。
+    /// The default always returns `true`, a safe fallback so Node implementations
+    /// lacking this concept (such as unimplemented test nodes) are not silently
+    /// dropped (like blitz `stylo.rs` `TElement::is_in_document -> true`).
+    /// raikiri-dom `NodeRef` overrides this with the actual flag.
     ///
     /// ```
     /// use raikiri_traits::Node;
@@ -188,7 +188,7 @@ pub trait Node {
     /// #   fn as_element(&self) -> Option<Self::Element<'_>> { None }
     /// #   fn text_content(&self) -> Option<&str> { None }
     /// # }
-    /// // Default impl は常に true — 概念未対応の実装は overriding 不要。
+    /// // The default implementation always returns true; unaware implementations need not override.
     /// let n = DummyNode;
     /// assert!(n.is_in_document());
     /// ```
@@ -197,65 +197,65 @@ pub trait Node {
     }
 }
 
-/// DOM element abstraction。
+/// DOM element abstraction.
 ///
-/// `inline_style_source` / `namespace_uri` / `id` / `has_class` / `attr` が
-/// 追加された。attribute lookup は null-namespace attr のみ (namespaced
-/// attr = xlink:href 等は将来 defer)。
+/// Added `inline_style_source` / `namespace_uri` / `id` / `has_class` / `attr`.
+/// Attribute lookup is limited to null-namespace attributes (namespaced
+/// attributes such as xlink:href are deferred).
 ///
-/// **Lifetime elision**: 過去は `Element<'a>` の form を
-/// 持っていたが、method signature で `'a` を使用しないため drop された。
-/// borrowed Element value 自体の lifetime は `Dom::ElementRef<'a>`
-/// の `'a` で表現されるため trait param 側は不要。
+/// **Lifetime elision**: This was formerly `Element<'a>`, but the lifetime
+/// was dropped because method signatures did not use `'a`.
+/// The lifetime of the borrowed Element value is instead expressed by
+/// `'a` in `Dom::ElementRef<'a>`; the trait parameter is unnecessary.
 pub trait Element {
-    /// HTML / XML tag name (例: `"p"`, `"div"`)。
+    /// HTML / XML tag name (for example, `"p"` or `"div"`).
     fn tag_name(&self) -> &str;
 
-    /// HTML `style="..."` attribute の生 string を返す。
-    /// 未設定または該当 attribute が空文字列 (`style=""`) の場合 `None`。
+    /// Return the raw string of the HTML `style="..."` attribute.
+    /// Return `None` when unset or empty (`style=""`).
     ///
-    /// raikiri-style::cascade が cssparser の declaration-list parser でこの
-    /// 文字列を消費する。`self.attr("style")` の shorthand として
-    /// 別 method を維持。
+    /// raikiri-style::cascade consumes the string through cssparser's
+    /// declaration-list parser. Kept as a separate method rather than an
+    /// alias for `self.attr("style")`.
     ///
-    /// Default impl は `None` — style を持たない Node kind や未対応 impl は
-    /// override 不要。
+    /// The default implementation returns `None`; Node kinds without styles
+    /// and implementations without support need not override it.
     fn inline_style_source(&self) -> Option<&str> {
         None
     }
 
-    /// Element の namespace URI (例: `"http://www.w3.org/2000/svg"`)。
-    /// HTML default namespace の element は `None` を返す (optimized path)。
+    /// Namespace URI of the Element (for example, `"http://www.w3.org/2000/svg"`).
+    /// Elements in the default HTML namespace return `None` (optimized path).
     ///
-    /// html5ever の `QualName.ns` (interned URI) から raikiri-html sink が
-    /// SmolStr に写し取り、raikiri-dom::Node に格納する。
+    /// The raikiri-html sink copies html5ever's `QualName.ns` (interned URI)
+    /// into SmolStr and stores it in raikiri-dom::Node.
     fn namespace_uri(&self) -> Option<&str> {
         None
     }
 
-    /// `id` attribute の値。空文字列 `id=""` は `None` を返す — CSS
-    /// Selectors L4 の ID selector (`#foo`) は空の ID token と一致しないため、
-    /// この empty-is-absent 正規化は `id()` 固有の contract であり、
-    /// [`Element::attr`] 自体の一般契約ではない (`attr()` は attribute の
-    /// 有無と値を独立に追跡し、空文字列値でも `Some("")` を返す — 詳細は
-    /// [`Element::attr`] の doc 参照)。複数 token は spec 上 invalid だが raw
-    /// value をそのまま返す (tokenize しない)。
+    /// Value of the `id` attribute. Empty `id=""` returns `None`: a CSS
+    /// Selectors L4 ID selector (`#foo`) cannot match an empty ID token.
+    /// This empty-is-absent normalization belongs only to `id()`;
+    /// it is not the general contract of [`Element::attr`] (`attr()` tracks
+    /// attribute presence independently of value and returns `Some("")`
+    /// for an empty value; see the [`Element::attr`] docs). Multiple tokens
+    /// are invalid by spec, but the raw value is returned without tokenization.
     ///
-    /// Default impl は [`Element::attr`]`("id")` にそのまま delegate するため、
-    /// `attr()` だけを override した impl では `id()` はこの empty-is-absent
-    /// 正規化を自動的には満たさない。空 `id=""` を `None` として扱う必要が
-    /// ある impl (例: `raikiri-dom::dom_impl::ElementRef`) は `id()` 自体を
-    /// 個別に override すること。
+    /// The default delegates directly to [`Element::attr`]`("id")`, so
+    /// implementations overriding only `attr()` do not automatically satisfy
+    /// the empty-is-absent rule. Implementations that must treat empty
+    /// `id=""` as `None` (such as `raikiri-dom::dom_impl::ElementRef`)
+    /// must override `id()` separately.
     fn id(&self) -> Option<&str> {
         self.attr("id")
     }
 
-    /// `class` attribute (space-separated) に指定 token が含まれているか。
-    /// HTML spec に従い ASCII whitespace (space, tab, LF, CR, FF) で split。
-    /// `class` attribute 自体が無い / 空 / 該当 token 無しは `false`。
+    /// Whether the `class` attribute (space-separated) contains the given token.
+    /// Split on ASCII whitespace (space, tab, LF, CR, FF) per the HTML spec.
+    /// Return `false` if `class` is absent or empty, or the token is absent.
     ///
-    /// Default impl は [`Element::attr`]`("class")` を token 化して判定。
-    /// impl 側は attr だけ override すれば has_class も追従する。
+    /// The default tokenizes [`Element::attr`]`("class")`.
+    /// Implementations need only override attr for has_class to follow.
     fn has_class(&self, class: &str) -> bool {
         if class.is_empty() {
             return false;
@@ -267,27 +267,27 @@ pub trait Element {
         })
     }
 
-    /// null-namespace attribute の value を local name で lookup。
-    /// **attribute の有無と値は独立に追跡する**: 属性が未設定の場合のみ
-    /// `None`、属性が存在すれば値が空文字列であっても `Some("")` を返す。
-    /// CSS Selectors L4 の attribute-presence selector (`[foo]`) や
-    /// exact-value selector (`[foo=""]`)、および HTML の boolean 属性
-    /// (`disabled` / `open` / `hidden` 等) はいずれも値と無関係な「属性の
-    /// 有無」で判定されるため、空文字列を absent と同一視してはならない。
-    /// (`id` だけが持つ empty-is-absent 正規化は [`Element::id`] 側の個別
-    /// contract であり、この一般 `attr()` には適用されない — 詳細は
-    /// [`Element::id`] の doc 参照。)
+    /// Look up a null-namespace attribute by local name.
+    /// **Track attribute presence independently of value**: Return `None` only
+    /// when the attribute is unset; return `Some("")` when it exists but is empty.
+    /// CSS Selectors L4 attribute-presence selectors (`[foo]`) and
+    /// exact-value selectors (`[foo=""]`), as well as HTML boolean attributes
+    /// (`disabled` / `open` / `hidden`, etc.), rely on presence separately
+    /// from value; never treat an empty value as absence.
+    /// (The empty-is-absent normalization of `id` belongs to [`Element::id`]
+    /// and does not apply to general `attr()`; see the [`Element::id`] docs.)
     ///
-    /// `style` を渡した場合の返り値は [`Element::inline_style_source`] と一致
-    /// する (両者は同じ side を参照する view)。`inline_style_source` 自体は
-    /// 「空の `style=""` は `None`」という別の独自 contract を持つ
-    /// ([`Element::inline_style_source`] の doc 参照) — `style` はこの一般
-    /// `attr()` の有無/値分離ルールの例外として、常に
-    /// `inline_style_source()` へそのまま redirect される。Default impl は
-    /// "style" のみ [`inline_style_source`](Element::inline_style_source) を
-    /// 返し、他は (default 実装には attribute storage が無いため) 常に
-    /// `None`。impl 側で `attr` を override する場合も "style" 特別扱いを
-    /// 忘れないよう `self.inline_style_source()` へ redirect すること。
+    ///
+    /// For `style`, the return value matches [`Element::inline_style_source`]
+    /// (both views refer to the same source). `inline_style_source` itself
+    /// has the separate contract that empty `style=""` returns `None`
+    /// (see [`Element::inline_style_source`] docs). Thus `style` is an exception to general `attr()`
+    /// presence/value separation and always delegates directly to
+    /// `inline_style_source()`. The default implementation returns
+    /// [`inline_style_source`](Element::inline_style_source) for "style" only;
+    /// otherwise it always returns `None` (no attribute storage in the
+    /// default implementation). Implementations overriding `attr` should
+    /// also delegate "style" to `self.inline_style_source()`.
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {
             self.inline_style_source()
@@ -297,53 +297,53 @@ pub trait Element {
     }
 }
 
-/// HTML5 quirks mode. raikiri-html が set し、UncascadedDocument
-/// を経由して cascade が参照する。html5ever `QuirksMode` の raikiri
-/// 面ミラー (独立実装: html5ever を trait layer に持ち込まない)。
+/// HTML5 quirks mode. Set by raikiri-html and used by cascade through
+/// UncascadedDocument. A raikiri-side mirror of html5ever `QuirksMode`
+/// (independent implementation: no html5ever dependency in the trait layer).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum QuirksMode {
-    /// Standards mode (`<!DOCTYPE html>` 明示、または QuirksMode 判定に該当せず)。
+    /// Standards mode (explicit `<!DOCTYPE html>` or no quirks-mode trigger).
     #[default]
     NoQuirks,
-    /// Limited quirks mode。
+    /// Limited quirks mode.
     LimitedQuirks,
-    /// Full quirks mode (missing / obsolete DOCTYPE)。
+    /// Full quirks mode (missing / obsolete DOCTYPE).
     Quirks,
 }
 
 // ─────────────────────────────────────────────────────────────
-// StylesheetKind — Document に associate される stylesheet の kind。
+// StylesheetKind — kind of stylesheet associated with a Document.
 // ─────────────────────────────────────────────────────────────
 
-/// Document に associate される stylesheet の kind。
+/// Kind of stylesheet associated with a Document.
 ///
-/// CSS Cascading L4 §6.2 の origin concept を dom-level に反映するための
-/// nominal tag。cascade phase (raikiri umbrella crate) で
-/// `raikiri_style::Origin` にマップされる。
+/// Nominal tag reflecting the CSS Cascading L4 §6.2 origin concept
+/// at the DOM level. Mapped to `raikiri_style::Origin` during the
+/// cascade phase (raikiri umbrella crate).
 ///
-/// 当初は `UserAgent` + `Author` の 2 段のみだった。`User` variant を追加し、
-/// Consumer が `extra_stylesheets` 経由で提供する CSS を独立した user origin
-/// として route できるようにした。旧実装は `Author` に混ぜて扱う暫定
-/// (design doc の Non-goals として明記) だったが、将来 real author-origin
-/// stylesheet (`<link rel=stylesheet>` 等) がこの経路に乗ってきたときに
-/// 誤って user origin 扱いになる regression trap があったため、独立
-/// variant として切り離した。
+/// Initially only `UserAgent` and `Author` existed. Adding the `User` variant
+/// allows CSS supplied through the consumer's `extra_stylesheets` to have
+/// an independent user origin. The old implementation temporarily mixed it
+/// with `Author` (listed as a Non-goal in the design doc), which risked
+/// classifying future real author-origin stylesheets (`<link rel=stylesheet>`,
+/// etc.) on this route as user-origin. The variant prevents that regression.
+///
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StylesheetKind {
-    /// User Agent origin (bundled minimal UA CSS 等)。cascade 内で最弱、
-    /// ただし `!important` の場合は最強 (CSS Cascading L4 §6.3 Importance
-    /// <https://www.w3.org/TR/css-cascade-4/#importance> による origin 順の
-    /// 反転。origin 自体の定義は §6.2
-    /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。
+    /// User Agent origin (bundled minimal UA CSS, etc.). Weakest in the cascade,
+    /// but strongest for `!important` (CSS Cascading L4 §6.3 Importance
+    /// <https://www.w3.org/TR/css-cascade-4/#importance> reverses origin
+    /// precedence; see §6.2 for the definition of origin:
+    /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>).
     UserAgent,
     /// User origin (CSS Cascading L4 §6.2
-    /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>)。Consumer
-    /// が `ParseOptions::extra_stylesheets` 経由で提供する CSS はここに tag
-    /// される (`raikiri-html/src/parse.rs`、`Author` から分離)。
+    /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>). The consumer's
+    /// CSS supplied through `ParseOptions::extra_stylesheets` is tagged here
+    /// (`raikiri-html/src/parse.rs`; separated from `Author`).
     User,
-    /// Author origin (HTML `<style>` element、`<link rel=stylesheet>` 等)。
+    /// Author origin (HTML `<style>` elements, `<link rel=stylesheet>`, etc.).
     Author,
 }
 
@@ -352,19 +352,19 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    /// `Symbol` の `Ord` / `PartialOrd` 実装が SmolStr (= &str) 由来の
-    /// lexicographic order を継承していることを確認する。target-* /
-    /// fragment-id で `BTreeMap<Symbol, _>` の deterministic iteration
-    /// order を根拠にした logic を書く前提の unit contract。
+    /// Verify that `Symbol`'s `Ord` / `PartialOrd` implementation inherits
+    /// lexicographic order from SmolStr (= &str). This unit contract is needed
+    /// before target-* / fragment-id logic relies on the deterministic
+    /// iteration order of `BTreeMap<Symbol, _>`.
     #[test]
     fn symbol_ord_matches_str_lexicographic() {
-        // 2-element comparison: "a" < "b" (str lexicographic)。
+        // 2-element comparison: "a" < "b" (str lexicographic).
         let a = Symbol::from("a");
         let b = Symbol::from("b");
         assert!(a < b);
         assert_eq!(a.cmp(&b), std::cmp::Ordering::Less);
 
-        // BTreeSet insertion 順序に依らず iteration が sorted order で走る。
+        // BTreeSet iterates in sorted order regardless of insertion order.
         let mut set = BTreeSet::new();
         set.insert(Symbol::from("charlie"));
         set.insert(Symbol::from("alpha"));
@@ -373,10 +373,10 @@ mod tests {
         assert_eq!(collected, ["alpha", "bravo", "charlie"]);
     }
 
-    /// `NodeKind` に追加された `Comment` /
-    /// `ProcessingInstruction` / `DocumentFragment` variant が pattern-match
-    /// で discriminate 可能かつ `Element` と PartialEq で区別できることを
-    /// check する (Two-way invariant の trait 側 constraint)。
+    /// Check that the added `NodeKind` variants `Comment` /
+    /// `ProcessingInstruction` / `DocumentFragment` can be distinguished by
+    /// pattern matching and compared as unequal to `Element` with PartialEq
+    /// (a trait-side constraint of the two-way invariant).
     #[test]
     fn node_kind_variants_are_distinct_and_matchable() {
         for kind in [
@@ -387,7 +387,7 @@ mod tests {
             NodeKind::ProcessingInstruction,
             NodeKind::DocumentFragment,
         ] {
-            // 追加された 3 variant はすべて Element とは PartialEq 上区別される。
+            // All three added variants differ from Element under PartialEq.
             if !matches!(kind, NodeKind::Element) {
                 assert_ne!(
                     kind,
@@ -396,7 +396,7 @@ mod tests {
                 );
             }
         }
-        // discriminant 一致性: 同じ variant 同士は equal。
+        // Discriminant consistency: equal variants compare equal.
         assert_eq!(NodeKind::Comment, NodeKind::Comment);
         assert_eq!(
             NodeKind::ProcessingInstruction,
