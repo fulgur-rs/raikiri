@@ -1701,21 +1701,11 @@ fn parse_side_or_corner<'i>(
 fn parse_horizontal_side<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<HorizontalSide, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "left" => Ok(HorizontalSide::Left),
-        "right" => Ok(HorizontalSide::Right),
-        _ => Err(input.new_custom_error(())),
-    }
+    HorizontalSide::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 fn parse_vertical_side<'i>(input: &mut Parser<'i, '_>) -> Result<VerticalSide, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "top" => Ok(VerticalSide::Top),
-        "bottom" => Ok(VerticalSide::Bottom),
-        _ => Err(input.new_custom_error(())),
-    }
+    VerticalSide::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// Nested-block body of `linear-gradient()`/`repeating-linear-gradient()`

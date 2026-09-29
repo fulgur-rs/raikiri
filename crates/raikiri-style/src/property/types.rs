@@ -6944,6 +6944,11 @@ pub enum HorizontalSide {
     Right,
 }
 
+css_keywords!(HorizontalSide {
+    Left => "left",
+    Right => "right",
+});
+
 /// Keyword for [`SideOrCorner::vertical`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6953,6 +6958,11 @@ pub enum VerticalSide {
     /// `bottom`.
     Bottom,
 }
+
+css_keywords!(VerticalSide {
+    Top => "top",
+    Bottom => "bottom",
+});
 
 /// `radial-gradient()` / `repeating-radial-gradient()` (CSS Images 4 §3.2
 /// "Radial Gradients: the radial-gradient() notation"
