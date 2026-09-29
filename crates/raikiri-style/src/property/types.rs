@@ -7533,6 +7533,16 @@ pub enum GeometryBox {
     ViewBox,
 }
 
+css_keywords!(GeometryBox {
+    BorderBox => "border-box",
+    PaddingBox => "padding-box",
+    ContentBox => "content-box",
+    MarginBox => "margin-box",
+    FillBox => "fill-box",
+    StrokeBox => "stroke-box",
+    ViewBox => "view-box",
+});
+
 /// `fill-rule` for [`BasicShape::Polygon`] / [`BasicShape::Path`].
 ///
 /// CSS Shapes Module Level 1 §3.1 "Supported Shapes"
