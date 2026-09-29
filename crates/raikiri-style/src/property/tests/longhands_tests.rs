@@ -203,7 +203,13 @@ fn empty_cells_cascades_from_parent_to_child() {
 /// A keyword longhand that is not part of the table, to pin the derive's
 /// keyword spellings and trait items.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, crate::property::Longhand)]
-#[longhand(name = "x-fixture", initial = ScaleDown, inherited = true, sample = Other)]
+#[longhand(
+    name = "x-fixture",
+    initial = ScaleDown,
+    inherited = true,
+    sample = Other,
+    listed = false
+)]
 enum Fixture {
     ScaleDown,
     #[css("other-name")]
@@ -248,7 +254,8 @@ fn derive_longhand_spells_keywords_in_kebab_case_or_as_overridden() {
     compute = times_font_size,
     computed = f64,
     lift = narrow,
-    sample = 2.0
+    sample = 2.0,
+    listed = false
 )]
 struct ScaledFixture;
 

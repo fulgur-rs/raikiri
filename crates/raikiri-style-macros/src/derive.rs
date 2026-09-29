@@ -7,8 +7,7 @@ use syn::{Data, DeriveInput, Expr, Fields, Ident, LitBool, LitStr, Path, Type};
 
 use crate::case::split_camel;
 
-const KEYS: &str =
-    "`name`, `initial`, `inherited`, `sample`, `value`, `parse`, `compute`, `computed`, `lift`";
+const KEYS: &str = "`name`, `initial`, `inherited`, `sample`, `value`, `parse`, `compute`, `computed`, `lift`, `listed`";
 
 /// The parsed `#[longhand(..)]` attribute.
 #[derive(Default)]
@@ -22,6 +21,7 @@ struct Args {
     compute: Option<Path>,
     computed: Option<Type>,
     lift: Option<Path>,
+    listed: Option<LitBool>,
 }
 
 /// Stores `value` in `slot`, rejecting a second occurrence of the key.
@@ -64,6 +64,8 @@ fn parse_args(input: &DeriveInput) -> syn::Result<(Args, Span)> {
                 set_once(&mut args.computed, meta.value()?.parse()?, key)
             } else if key.is_ident("lift") {
                 set_once(&mut args.lift, meta.value()?.parse()?, key)
+            } else if key.is_ident("listed") {
+                set_once(&mut args.listed, meta.value()?.parse()?, key)
             } else {
                 Err(meta.error(format!("unknown `#[longhand]` key; expected one of {KEYS}")))
             }
@@ -271,11 +273,23 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         None => quote!(computed),
     };
 
+    // A longhand must also be listed in `#[longhands(..)]`, which adds the
+    // `PropertyKey` variant of the same name; without it the property would
+    // compile but never be parsed. `listed = false` opts out (test fixtures).
+    let listed_check = if args.listed.as_ref().is_none_or(|b| b.value) {
+        quote_spanned! {ident.span()=>
+            const _: crate::property::PropertyKey = crate::property::PropertyKey::#ident;
+        }
+    } else {
+        TokenStream::new()
+    };
+
     let initial = resolve_variant(initial, &input);
     let sample = resolve_variant(sample, &input);
 
     Ok(quote! {
         #keyword_impl
+        #listed_check
 
         impl #longhand for #ident {
             const NAME: &'static str = #name;

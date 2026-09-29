@@ -43,6 +43,10 @@
 //! - `computed = <Type>` with `lift = <path>`: a computed type different
 //!   from the specified one, and the `fn(Computed) -> Specified` that page
 //!   context absolutization and inheritance use to turn it back.
+//! - `listed = false`: skips the check that the type is also listed in
+//!   `#[longhands(..)]` (a missing listing is otherwise a compile error at
+//!   the derive: "no variant named `X` found for enum `PropertyKey`"). Only
+//!   test fixtures use it.
 //!
 //! Everything else is generated: the `PropertyValue` / `PropertyKey`
 //! variants, the `key()` projection, name lookup (`longhand_key_for_name`)

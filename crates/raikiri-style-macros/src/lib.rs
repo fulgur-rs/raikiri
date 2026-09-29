@@ -23,9 +23,9 @@ use proc_macro::TokenStream;
 ///
 /// Keys (in any order): `name = "css-name"`, `initial = <expr>`,
 /// `inherited = <bool>` and `sample = <expr>` are required; `value = <Type>`,
-/// `parse = <path>`, `compute = <path>`, `computed = <Type>` and
-/// `lift = <path>` are optional. See `property/longhands.rs` for their
-/// meaning.
+/// `parse = <path>`, `compute = <path>`, `computed = <Type>`,
+/// `lift = <path>` and `listed = <bool>` are optional. See
+/// `property/longhands.rs` for their meaning.
 #[proc_macro_derive(Longhand, attributes(longhand, css))]
 pub fn derive_longhand(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
