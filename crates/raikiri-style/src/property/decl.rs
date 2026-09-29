@@ -45,6 +45,43 @@
 //! `supported_property_names` entry (a test rejects a table name that also
 //! has one).
 //!
+//! # Moving a hand-written property into the table
+//!
+//! Declaring an existing property in `properties!` also means removing its
+//! hand-written pieces:
+//!
+//! - its `PropertyValue` / `PropertyKey` variants and `#[key]` (if any);
+//! - its value enum and `css_keywords!` table in `types.rs`, and its
+//!   `parse_*` function when `keywords:` replaces it;
+//! - its `SpecifiedValues` / `ComputedValues` fields with their
+//!   initializers, the `inherit_from` copy or reset and the `finalize`
+//!   copy;
+//! - its explicit arms in `apply_value` and `resolve_against_inherited`
+//!   (`cascade/inherit.rs`), `expand_shorthand_into` (`rule.rs`),
+//!   `serialize_value`, `absolutize_in_page_context` (`page/absolutize.rs`)
+//!   and the test-only `specified_layer_residue`;
+//! - its entries in the page-cascade test registries (`property_key_samples!`,
+//!   `property_value_variant_registry!`);
+//! - its `parse_value` and `property_key_for_name` arms and its
+//!   `HAND_WRITTEN_NAMES` entry (`names.rs`).
+//!
+//! The build catches most leftovers: the macro rejects a table variant that
+//! clashes with a hand-written one; an old value type of the same name makes
+//! every `crate::property::` use of the name ambiguous; a leftover explicit
+//! arm or registry entry next to `longhand_value_pat!()` is an unreachable
+//! pattern (an error under `clippy -D warnings`), and a leftover `parse_*`
+//! function is dead code. A stale name arm or `HAND_WRITTEN_NAMES` entry
+//! still compiles and only fails `names/tests.rs`. A leftover public
+//! `SpecifiedValues` / `ComputedValues` field of the same name compiles
+//! silently and shadows the table field reached through `Deref`, so check
+//! for it by hand.
+//!
+//! `keywords:` names the generated value enum after the variant
+//! (`"isolation" => Isolation` generates `enum Isolation`). An existing
+//! value type with a different name (such as `EmptyCellsValue` for
+//! `EmptyCells`) must either be renamed at every use, or be kept and
+//! declared with `parse:` and `: ExistingType` instead of `keywords:`.
+//!
 //! # Limits of the generated pass-through
 //!
 //! Every table-declared value takes the same arm, [`longhand_value_pat!`],
