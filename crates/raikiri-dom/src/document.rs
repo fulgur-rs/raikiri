@@ -268,6 +268,7 @@ impl Document {
         ));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
+            self.nodes[id].parent = Some(p);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -282,6 +283,7 @@ impl Document {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(text.into()));
         self.nodes[parent].children.push(id);
+        self.nodes[id].parent = Some(parent);
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         id
@@ -331,6 +333,7 @@ impl Document {
         self.nodes.push(Node::new_comment(text.into()));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
+            self.nodes[id].parent = Some(p);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -359,6 +362,7 @@ impl Document {
             .push(Node::new_processing_instruction(target.into(), data.into()));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
+            self.nodes[id].parent = Some(p);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -407,9 +411,17 @@ impl Document {
             // Follow the drain + extend pattern of reparent_children. The fragment
             // itself is absent from `parent.children` (see contract test (c)).
             let moved: Vec<usize> = self.nodes[child].children.drain(..).collect();
-            self.nodes[parent].children.extend(moved);
+            self.nodes[parent].children.extend(moved.iter().copied());
+            for moved_child in moved {
+                if let Some(node) = self.nodes.get_mut(moved_child) {
+                    node.parent = Some(parent);
+                }
+            }
         } else {
             self.nodes[parent].children.push(child);
+            if let Some(node) = self.nodes.get_mut(child) {
+                node.parent = Some(parent);
+            }
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -477,7 +489,12 @@ impl Document {
             });
             // Vec::splice(pos..pos, moved) inserts at pos in one pass without
             // removing anything. It completes with O(n+k) allocation.
-            kids.splice(pos..pos, moved);
+            kids.splice(pos..pos, moved.iter().copied());
+            for moved_child in moved {
+                if let Some(node) = self.nodes.get_mut(moved_child) {
+                    node.parent = Some(parent);
+                }
+            }
         } else {
             let kids = &mut self.nodes[parent].children;
             if let Some(pos) = kids.iter().position(|&c| c == before) {
@@ -492,19 +509,23 @@ impl Document {
                 );
                 kids.push(child);
             }
+            if let Some(node) = self.nodes.get_mut(child) {
+                node.parent = Some(parent);
+            }
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
     }
 
     /// Return the arena index of the parent holding `child`. Return `None` for
-    /// the root (index 0) or an unattached node. raikiri-dom stores no parent
-    /// pointer because TreeSink calls this infrequently; lookup is O(N).
+    /// the root (index 0), an unattached node, or an out-of-range `child`.
+    ///
+    /// O(1) via the per-node parent pointer kept in sync by every tree
+    /// mutation primitive. The pointer tracks only `children` edges, not a
+    /// `<template>` element's `template_contents` slot (that host link is not
+    /// a parent, so a contents fragment root still reports `None`).
     pub fn parent_of(&self, child: usize) -> Option<usize> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .find_map(|(i, n)| n.children.contains(&child).then_some(i))
+        self.nodes.get(child)?.parent
     }
 
     /// Remove `child` from its current parent and return that parent's index.
@@ -517,6 +538,9 @@ impl Document {
         if let Some(pos) = kids.iter().position(|&c| c == child) {
             kids.remove(pos);
         }
+        if let Some(node) = self.nodes.get_mut(child) {
+            node.parent = None;
+        }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         Some(parent)
@@ -526,7 +550,12 @@ impl Document {
     /// `from` empty. Primitive for html5ever's `TreeSink::reparent_children`.
     pub fn reparent_children(&mut self, from: usize, to: usize) {
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
-        self.nodes[to].children.extend(moved);
+        self.nodes[to].children.extend(moved.iter().copied());
+        for moved_child in moved {
+            if let Some(node) = self.nodes.get_mut(moved_child) {
+                node.parent = Some(to);
+            }
+        }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
     }
@@ -819,11 +848,21 @@ impl Document {
             return Err(format!("textContent target index {id} is not an Element"));
         }
         let text = text.into();
-        self.nodes[id].children.clear();
+        let removed: Vec<usize> = std::mem::take(&mut self.nodes[id].children);
+        for old_child in removed {
+            if let Some(node) = self.nodes.get_mut(old_child)
+                && node.parent == Some(id)
+            {
+                node.parent = None;
+            }
+        }
         if !text.is_empty() {
             let text_id = self.nodes.len();
             self.nodes.push(Node::new_text(text));
             self.nodes[id].children.push(text_id);
+            if let Some(node) = self.nodes.get_mut(text_id) {
+                node.parent = Some(id);
+            }
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -855,7 +894,14 @@ impl Document {
         if !self.nodes[target_parent].children.is_empty() {
             // The parent is already known. Avoid a whole-arena parent lookup
             // and shifting the remaining child IDs for every removed child.
-            self.nodes[target_parent].children.clear();
+            let removed: Vec<usize> = std::mem::take(&mut self.nodes[target_parent].children);
+            for old_child in removed {
+                if let Some(node) = self.nodes.get_mut(old_child)
+                    && node.parent == Some(target_parent)
+                {
+                    node.parent = None;
+                }
+            }
             self.invalidate_layout_cache();
             self.flags_dirty = true;
         }
@@ -1285,12 +1331,22 @@ impl Document {
     /// to `true` on topology changes, like the other mutation primitives.
     pub fn retain_children(&mut self, mut predicate: impl FnMut(usize) -> bool) {
         let mut any_removed = false;
-        for node in &mut self.nodes {
-            let before = node.children.len();
-            node.children.retain(|&c| predicate(c));
-            if node.children.len() != before {
-                any_removed = true;
+        for parent_id in 0..self.nodes.len() {
+            let children = std::mem::take(&mut self.nodes[parent_id].children);
+            let mut kept = Vec::with_capacity(children.len());
+            for child in children {
+                if predicate(child) {
+                    kept.push(child);
+                } else {
+                    any_removed = true;
+                    if let Some(node) = self.nodes.get_mut(child)
+                        && node.parent == Some(parent_id)
+                    {
+                        node.parent = None;
+                    }
+                }
             }
+            self.nodes[parent_id].children = kept;
         }
         if any_removed {
             self.invalidate_layout_cache();

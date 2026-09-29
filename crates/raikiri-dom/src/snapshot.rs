@@ -299,6 +299,17 @@ impl Document {
                 node
             })
             .collect();
+        // Rebuild O(1) parent pointers from the validated `children` lists.
+        // `validate` already enforced single-parent, bounds, and acyclicity,
+        // so every listed child resolves to exactly one parent here.
+        for parent_id in 0..doc.nodes.len() {
+            let children = doc.nodes[parent_id].children.clone();
+            for child in children {
+                if let Some(node) = doc.nodes.get_mut(child) {
+                    node.parent = Some(parent_id);
+                }
+            }
+        }
         doc.flags_dirty = true;
         doc.mark_in_document_flags();
         Ok(doc)

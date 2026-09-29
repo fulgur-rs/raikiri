@@ -205,6 +205,7 @@ fn replace_children_from_splices_document_fragment_children() {
     let fragment = source.nodes.len();
     source.nodes.push(Node::new_document_fragment());
     source.nodes[source_parent].children.push(fragment);
+    source.nodes[fragment].parent = Some(source_parent);
     source.append_text(fragment, "fragment text");
 
     let mut target = Document::new();
@@ -223,6 +224,7 @@ fn replace_children_from_rejects_document_nodes_in_child_lists() {
     let source_parent = source.append_element(Some(0), "section", Style::default(), None::<&str>);
     let source_root = source.root_index();
     source.nodes[source_parent].children.push(source_root);
+    source.nodes[source_root].parent = Some(source_parent);
 
     let mut target = Document::new();
     let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
