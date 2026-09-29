@@ -70,16 +70,18 @@ use super::resolve_directionality;
 ///   pseudo-classes remain outside the scope of this implementation.
 /// - `Component::Root` (`:root`, CSS Selectors L4
 ///   §13.1 <https://www.w3.org/TR/selectors-4/#the-root-pseudo>) — matches
-///   iff `ancestors.is_empty()`. The matcher passes `ancestors`
+///   iff [`is_document_root_element`] (no element ancestor, in-document, and
+///   immediate parent is the `Document` node). The matcher passes `ancestors`
 ///   root-first/immediate-parent-last — [`super::collect::collect_cascaded`]'s
 ///   doc establishes that only `StyleNodeKind::Element` nodes are ever
-///   pushed onto `ancestor_path`, so an empty `ancestors` slice means "no
-///   element ancestor", i.e. this element is the root element of the
-///   document tree — exactly the spec's "root of the document" .
+///   pushed onto `ancestor_path`, so an empty `ancestors` slice alone would
+///   also hold for any disconnected root or fragment top-level child; the
+///   parent + in-document checks exclude those, leaving exactly the spec's
+///   "root of the document" (the `html` element in HTML documents).
 /// - `Component::Scope` (`:scope`, CSS Selectors L4 §14.3.3
 ///   <https://www.w3.org/TR/selectors-4/#the-scope-pseudo>) — matches iff
 ///   `elem_id == scope` when a scope element is given, or falls back to
-///   `:root` semantics (`ancestors.is_empty()`) when it is not — the same
+///   `:root` semantics ([`is_document_root_element`]) when it is not — the same
 ///   two-way rule the upstream `selectors` crate's own matcher applies to
 ///   this component (its `matching.rs`, `Component::Scope | Component::
 ///   ImplicitScope => match context.shared.scope_element { Some(e) => ...,
@@ -141,6 +143,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     use selectors::parser::Component;
 
@@ -244,10 +247,10 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 // invokes this function directly to check the defensive failure.
                 crate::PseudoClass::Hover | crate::PseudoClass::Active => false,
             },
-            Component::Root => ancestors.is_empty(),
+            Component::Root => is_document_root_element(dom, elem_id, ancestors),
             Component::Scope => match scope {
                 Some(scope_id) => elem_id == scope_id,
-                None => ancestors.is_empty(),
+                None => is_document_root_element(dom, elem_id, ancestors),
             },
             Component::Empty => matches_empty(dom, elem_id),
             Component::Negation(selectors) => !selector_slice_matches_with_anchor(
@@ -259,6 +262,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 quirks_mode,
                 relative_anchor,
                 scope,
+                allow_detached,
             ),
             Component::Is(selectors) | Component::Where(selectors) => {
                 selector_slice_matches_with_anchor(
@@ -270,6 +274,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     quirks_mode,
                     relative_anchor,
                     scope,
+                    allow_detached,
                 )
             }
             Component::Has(_) if relative_anchor.is_some() => false,
@@ -280,23 +285,19 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 ancestors,
                 quirks_mode,
                 scope,
+                allow_detached,
             ),
             Component::Nth(data) => {
-                // Root element (`ancestors.is_empty()`) still has a sibling
-                // list — the empty set of *element* siblings under
-                // `dom.root_id()` — per CSS Selectors L3 §6.6
-                // structural-pseudos preamble's sibling-counting framing
-                // (`matches_nth` doc, verbatim); it is not itself excluded
-                // just because it has no *element* parent, unlike
-                // `Component::Root` above. `dom.root_id()` is the Document
-                // node `collect_cascaded` never pushes onto `ancestor_path`
-                // (see that function's doc), and its `child_ids` already
-                // includes the root element — the natural "sibling-list
-                // container" for a root element that in the DOM tree has no
-                // element parent at all. Same root-fallback idiom
-                // `match_combinator_chain`'s `NextSibling`/`LaterSibling`
-                // arms already use.
-                let sibling_parent = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
+                // Sibling-list parent: the element parent when present,
+                // otherwise the true immediate parent (Document for the
+                // document element, a DocumentFragment for fragment
+                // top-level children) via `StyleDom::parent_id`. A detached
+                // root with no parent has no sibling list at all.
+                let Some(sibling_parent) =
+                    ancestors.last().copied().or_else(|| dom.parent_id(elem_id))
+                else {
+                    return false;
+                };
                 matches_nth(
                     dom,
                     sibling_parent,
@@ -306,10 +307,15 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     ancestors,
                     quirks_mode,
                     scope,
+                    allow_detached,
                 )
             }
             Component::NthOf(data) => {
-                let sibling_parent = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
+                let Some(sibling_parent) =
+                    ancestors.last().copied().or_else(|| dom.parent_id(elem_id))
+                else {
+                    return false;
+                };
                 matches_nth_of(
                     dom,
                     sibling_parent,
@@ -319,6 +325,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     ancestors,
                     quirks_mode,
                     scope,
+                    allow_detached,
                 )
             }
             Component::RelativeSelectorAnchor => relative_anchor == Some(elem_id),
@@ -411,16 +418,18 @@ pub(crate) fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool 
 
 #[derive(Clone, Copy)]
 pub(crate) struct SiblingMatchContext<'a> {
+    allow_detached: bool,
     selector_filter: Option<&'a [Selector<RaikiriSelectorImpl>]>,
     ancestors: &'a [StyleNodeId],
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
 }
 
-/// 1-based sibling position of `elem_id` among `parent_id`'s **in-document
-/// element** children, both from the start and from the end, plus the total
-/// count of such siblings — shared arithmetic behind `Component::Nth` and
-/// `Component::NthOf` matching ([`matches_nth`] / [`matches_nth_of`]).
+/// 1-based sibling position of `elem_id` among `parent_id`'s element children
+/// (in-document only when `allow_detached` is false; same-tree elements when
+/// true), both from the start and from the end, plus the total count of such
+/// siblings — shared arithmetic behind `Component::Nth` and `Component::NthOf`
+/// matching ([`matches_nth`] / [`matches_nth_of`]).
 ///
 /// `of_type == false` (`:nth-child`/`:first-child`/`:last-child`/
 /// `:only-child`) counts **all** element siblings regardless of tag; CSS
@@ -463,11 +472,10 @@ pub(crate) fn sibling_position<D: StyleDom>(
         let Some(child_node) = dom.node(child_id) else {
             continue; // cov:ignore: defensive against a detached/inert child_id that dom.node() can't resolve; no StyleDom impl in this crate's test corpus produces one.
         };
-        // `child_ids` is the raw arena view for the style DOM, so detached /
-        // inert nodes can still occur in this iterator. Structural
-        // pseudo-classes operate on the flat-tree sibling list, matching the
-        // gate used by `collect_cascaded` and sibling combinators.
-        if !child_node.is_in_document() {
+        // Candidates are already constrained to the subject's own parent (same
+        // tree); `allow_detached` decides whether inert siblings count. See
+        // `is_candidate_element` doc for the cascade vs query distinction.
+        if !is_candidate_element(dom, child_id, context.allow_detached) {
             continue;
         }
         let Some(sibling) = child_node.as_element() else {
@@ -485,6 +493,7 @@ pub(crate) fn sibling_position<D: StyleDom>(
                 context.ancestors,
                 context.quirks_mode,
                 context.scope,
+                context.allow_detached,
             )
         {
             continue;
@@ -553,6 +562,7 @@ fn matches_nth<D: StyleDom>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     let (from_start, from_end, total) = sibling_position(
         dom,
@@ -561,6 +571,7 @@ fn matches_nth<D: StyleDom>(
         elem_tag,
         data.ty.is_of_type(),
         SiblingMatchContext {
+            allow_detached,
             selector_filter: None,
             ancestors,
             quirks_mode,
@@ -585,6 +596,7 @@ fn matches_nth_of<D: StyleDom>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     let nth_data = data.nth_data();
     let (from_start, from_end, total) = sibling_position(
@@ -594,6 +606,7 @@ fn matches_nth_of<D: StyleDom>(
         elem_tag,
         nth_data.ty.is_of_type(),
         SiblingMatchContext {
+            allow_detached,
             selector_filter: Some(data.selectors()),
             ancestors,
             quirks_mode,
@@ -682,6 +695,7 @@ fn matches_nth_position(
 /// none matches. `specificity_of` computes specificity for the whole complex
 /// selector, across combinators; adding combinators did not change this call
 /// because the `selectors` crate computes it from the complete selector.
+#[allow(clippy::too_many_arguments)] // matching context plus allow_detached for cascade vs query gating
 pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     list: &SelectorList<RaikiriSelectorImpl>,
     dom: &D,
@@ -690,10 +704,20 @@ pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> Option<Specificity> {
     let mut best: Option<Specificity> = None;
     for selector in list.slice() {
-        if selector_matches(dom, selector, elem, elem_id, ancestors, quirks_mode, scope) {
+        if selector_matches(
+            dom,
+            selector,
+            elem,
+            elem_id,
+            ancestors,
+            quirks_mode,
+            scope,
+            allow_detached,
+        ) {
             let spec = specificity_of(selector);
             best = Some(match best {
                 Some(prev) => prev.max(spec),
@@ -704,6 +728,7 @@ pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     best
 }
 
+#[allow(clippy::too_many_arguments)] // thin passthrough carrying matching context plus allow_detached
 fn selector_slice_matches<D: StyleDom, E: StyleElement>(
     selectors: &[Selector<RaikiriSelectorImpl>],
     dom: &D,
@@ -712,6 +737,7 @@ fn selector_slice_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     selector_slice_matches_with_anchor(
         selectors,
@@ -722,6 +748,7 @@ fn selector_slice_matches<D: StyleDom, E: StyleElement>(
         quirks_mode,
         None,
         scope,
+        allow_detached,
     )
 }
 
@@ -735,6 +762,7 @@ fn selector_slice_matches_with_anchor<D: StyleDom, E: StyleElement>(
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     selectors.iter().any(|selector| {
         selector_matches_with_anchor(
@@ -746,10 +774,12 @@ fn selector_slice_matches_with_anchor<D: StyleDom, E: StyleElement>(
             quirks_mode,
             relative_anchor,
             scope,
+            allow_detached,
         )
     })
 }
 
+#[allow(clippy::too_many_arguments)] // thin passthrough carrying matching context plus allow_detached
 fn selector_matches<D: StyleDom, E: StyleElement>(
     dom: &D,
     selector: &Selector<RaikiriSelectorImpl>,
@@ -758,6 +788,7 @@ fn selector_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     selector_matches_with_anchor(
         dom,
@@ -768,6 +799,7 @@ fn selector_matches<D: StyleDom, E: StyleElement>(
         quirks_mode,
         None,
         scope,
+        allow_detached,
     )
 }
 
@@ -785,6 +817,7 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     let mut iter = selector.iter();
     compound_matches(
@@ -796,6 +829,7 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
         quirks_mode,
         relative_anchor,
         scope,
+        allow_detached,
     ) && match iter.next_sequence() {
         None => true,
         Some(combinator) => match_combinator_chain(
@@ -807,6 +841,7 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
             quirks_mode,
             relative_anchor,
             scope,
+            allow_detached,
         ),
     }
 }
@@ -822,6 +857,7 @@ fn has_relative_selector_matches<D: StyleDom>(
     anchor_ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     for relative_selector in relative_selectors {
         let leading_combinator = relative_selector.selector.combinator_at_parse_order(1);
@@ -829,21 +865,25 @@ fn has_relative_selector_matches<D: StyleDom>(
 
         let (roots, candidate_ancestors) = match leading_combinator {
             Combinator::Child | Combinator::Descendant => {
-                let roots = in_document_element_children(dom, anchor_id);
+                let roots = in_document_element_children(dom, anchor_id, allow_detached);
                 let mut candidate_ancestors = anchor_ancestors.to_vec();
                 candidate_ancestors.push(anchor_id);
                 (roots, candidate_ancestors)
             }
             Combinator::NextSibling | Combinator::LaterSibling => {
-                let parent_id = anchor_ancestors
+                let Some(parent_id) = anchor_ancestors
                     .last()
                     .copied()
-                    .unwrap_or_else(|| dom.root_id());
+                    .or_else(|| dom.parent_id(anchor_id))
+                else {
+                    continue;
+                };
                 let roots = following_sibling_elements(
                     dom,
                     parent_id,
                     anchor_id,
                     relative_selector.match_hint.is_next_sibling(),
+                    allow_detached,
                 );
                 (roots, anchor_ancestors.to_vec())
             }
@@ -865,6 +905,7 @@ fn has_relative_selector_matches<D: StyleDom>(
             anchor_id,
             quirks_mode,
             scope,
+            allow_detached,
         ) {
             return true;
         }
@@ -885,6 +926,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
     anchor_id: StyleNodeId,
     quirks_mode: StyleQuirksMode,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     // Keep one mutable ancestor path and record only its length in each stack
     // entry. Cloning the full path into every pending child makes a deep,
@@ -900,14 +942,14 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
 
     while let Some((candidate_id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
-        if !is_in_document_element(dom, candidate_id) {
+        if !is_candidate_element(dom, candidate_id, allow_detached) {
             continue; // cov:ignore: roots are pre-filtered; only a malformed custom DOM can reach this branch
         }
         let Some(node) = dom.node(candidate_id) else {
-            continue; // cov:ignore: is_in_document_element already required a node for this id
+            continue; // cov:ignore: is_candidate_element already required a node for this id
         };
         let Some(elem) = node.as_element() else {
-            continue; // cov:ignore: is_in_document_element already required an element node
+            continue; // cov:ignore: is_candidate_element already required an element node
         };
         if selector_matches_with_anchor(
             dom,
@@ -918,6 +960,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
             quirks_mode,
             Some(anchor_id),
             scope,
+            allow_detached,
         ) {
             return true;
         }
@@ -939,10 +982,15 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
     false
 }
 
-/// Returns direct in-document element children in document order.
-fn in_document_element_children<D: StyleDom>(dom: &D, parent_id: StyleNodeId) -> Vec<StyleNodeId> {
+/// Returns direct element children in document order (`allow_detached` decides
+/// whether inert siblings count; see `is_candidate_element`).
+fn in_document_element_children<D: StyleDom>(
+    dom: &D,
+    parent_id: StyleNodeId,
+    allow_detached: bool,
+) -> Vec<StyleNodeId> {
     dom.child_ids(parent_id)
-        .filter(|&id| is_in_document_element(dom, id))
+        .filter(|&id| is_candidate_element(dom, id, allow_detached))
         .collect()
 }
 
@@ -953,6 +1001,7 @@ fn following_sibling_elements<D: StyleDom>(
     parent_id: StyleNodeId,
     anchor_id: StyleNodeId,
     only_first: bool,
+    allow_detached: bool,
 ) -> Vec<StyleNodeId> {
     let mut following = false;
     let mut result = Vec::new();
@@ -961,7 +1010,7 @@ fn following_sibling_elements<D: StyleDom>(
             following = true;
             continue;
         }
-        if following && is_in_document_element(dom, child_id) {
+        if following && is_candidate_element(dom, child_id, allow_detached) {
             result.push(child_id);
             if only_first {
                 break;
@@ -1003,6 +1052,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    allow_detached: bool,
 ) -> Option<PseudoElem> {
     let pseudo = *selector.pseudo_element()?;
     let mut iter = selector.iter();
@@ -1034,6 +1084,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
         quirks_mode,
         None,
         None,
+        allow_detached,
     ) && match iter.next_sequence() {
         None => true,
         Some(next_combinator) => match_combinator_chain(
@@ -1045,6 +1096,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
             quirks_mode,
             None,
             None,
+            allow_detached,
         ),
     };
     matches.then_some(pseudo)
@@ -1115,9 +1167,12 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// match the parent against a compound; it only needs the parent id as the
 /// lookup key for [`StyleDom::child_ids`]. Even under the root, siblings can
 /// exist: `<h2>` and `<p>` can both be direct document children, as in the
-/// acceptance test. Only the `NextSibling`/`LaterSibling` arms therefore fall
-/// back to [`StyleDom::root_id`] when `ancestors.last()` is `None`. `Child` and
-/// `Descendant` must not fall back: the root never matches a compound.
+/// acceptance test. Only the `NextSibling`/`LaterSibling` arms therefore look
+/// up [`StyleDom::parent_id`] when `ancestors.last()` is `None` (the
+/// `Document` node for the document element, a `DocumentFragment` for
+/// fragment top-level children, `None` for a detached root with no siblings).
+/// `Child` and `Descendant` must not fall back: the root never matches a
+/// compound.
 ///
 /// Other combinators ([`Combinator::PseudoElement`] /
 /// [`Combinator::SlotAssignment`] / [`Combinator::Part`]) are outside this
@@ -1305,6 +1360,7 @@ fn match_combinator_chain<D: StyleDom>(
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> bool {
     struct Frame<'a, 's, D: StyleDom> {
         candidates: PendingCandidates<'a, D>,
@@ -1348,7 +1404,7 @@ fn match_combinator_chain<D: StyleDom>(
     // capacity 4 to 8.
     let mut stack = Vec::with_capacity(4);
     stack.push(Frame {
-        candidates: pending_candidates_for(dom, combinator, current_id, ancestors),
+        candidates: pending_candidates_for(dom, combinator, current_id, ancestors, allow_detached),
         ancestors_unchanged: ancestors,
         iter,
         origin: None,
@@ -1364,7 +1420,9 @@ fn match_combinator_chain<D: StyleDom>(
             return false;
         };
         let Some((candidate_id, candidate_ancestors)) =
-            frame.candidates.next(dom, frame.ancestors_unchanged)
+            frame
+                .candidates
+                .next(dom, frame.ancestors_unchanged, allow_detached)
         else {
             // This level's candidates are exhausted — backtrack to the
             // parent choice point's next candidate. Everything this frame
@@ -1393,6 +1451,7 @@ fn match_combinator_chain<D: StyleDom>(
             quirks_mode,
             relative_anchor,
             scope,
+            allow_detached,
         ) else {
             // Candidate's compound didn't match — try this frame's next
             // candidate (loop back without push/pop). Immediate failure,
@@ -1422,6 +1481,7 @@ fn match_combinator_chain<D: StyleDom>(
                         next_combinator,
                         candidate_id,
                         candidate_ancestors,
+                        allow_detached,
                     ),
                     ancestors_unchanged: candidate_ancestors,
                     iter: matched_iter,
@@ -1483,6 +1543,7 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
         &mut self,
         dom: &D,
         ancestors_unchanged: &'a [StyleNodeId],
+        allow_detached: bool,
     ) -> Option<(StyleNodeId, &'a [StyleNodeId])> {
         match self {
             Self::Child(slot) => slot.take(),
@@ -1506,7 +1567,7 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
                         // `match_combinator_chain`'s driving loop.
                         return None;
                     }
-                    if is_in_document_element(dom, candidate_id) {
+                    if is_candidate_element(dom, candidate_id, allow_detached) {
                         return Some((candidate_id, ancestors_unchanged));
                     }
                 }
@@ -1536,6 +1597,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
     combinator: Combinator,
     current_id: StyleNodeId,
     ancestors: &'a [StyleNodeId],
+    allow_detached: bool,
 ) -> PendingCandidates<'a, D> {
     match combinator {
         Combinator::Child => PendingCandidates::Child(
@@ -1545,11 +1607,28 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
         ),
         Combinator::Descendant => PendingCandidates::Descendant(ancestors),
         Combinator::NextSibling => {
-            let parent_id = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
-            PendingCandidates::NextSibling(immediate_preceding_sibling(dom, parent_id, current_id))
+            let Some(parent_id) = ancestors
+                .last()
+                .copied()
+                .or_else(|| dom.parent_id(current_id))
+            else {
+                return PendingCandidates::Child(None);
+            };
+            PendingCandidates::NextSibling(immediate_preceding_sibling(
+                dom,
+                parent_id,
+                current_id,
+                allow_detached,
+            ))
         }
         Combinator::LaterSibling => {
-            let parent_id = ancestors.last().copied().unwrap_or_else(|| dom.root_id());
+            let Some(parent_id) = ancestors
+                .last()
+                .copied()
+                .or_else(|| dom.parent_id(current_id))
+            else {
+                return PendingCandidates::Child(None);
+            };
             PendingCandidates::LaterSibling {
                 child_iter: dom.child_ids(parent_id),
                 stop_at: current_id,
@@ -1590,17 +1669,50 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
     }
 }
 
-/// Shared predicate: whether a direct child of `parent_id` (in document
-/// order) is an `Element` that satisfies [`StyleNode::is_in_document`].
-/// Both [`immediate_preceding_sibling`] and the `LaterSibling` arm of
-/// [`match_combinator_chain`] use it. The sibling candidate filter must use
-/// the same criterion as the `!node.is_in_document() => continue` gate before
-/// [`super::collect::collect_cascaded`] pushes onto `ancestor_path` (see that
-/// function's documentation). Otherwise an inert element, such as a
-/// `<template>` descendant, could become a sibling-combinator candidate.
-fn is_in_document_element<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
-    dom.node(id)
-        .is_some_and(|node| node.is_in_document() && node.kind() == StyleNodeKind::Element)
+/// Shared predicate: whether `id` is an `Element` candidate for sibling and
+/// structural matching (sibling combinators, `:first-child` etc., `:has()`
+/// regions).
+///
+/// When `allow_detached` is false (stylesheet cascade), both the element kind
+/// and [`StyleNode::is_in_document`] are required, so inert siblings (e.g. a
+/// `set_in_document(false)` mock, or any detached node) are ignored — this is
+/// what keeps `li:nth-child(2 of .featured)` ignoring inert siblings and what
+/// keeps template-contents inertness in the cascade alongside
+/// [`super::collect::collect_cascaded`]'s top-level `!is_in_document` skip
+/// (inert subtrees are never visited as subjects) and the structural fact that
+/// a `<template>` element's contents live in a separate detached fragment
+/// (never in the template element's own `child_ids`).
+///
+/// When true (DOM query entry points via [`crate::SelectorQuery`]), only the
+/// element kind is required. Candidates are enumerated from the subject's own
+/// parent (`parent_id` derived from `ancestors` or [`StyleDom::parent_id`]), so
+/// they are by construction in the same tree as the subject; detached and
+/// `DocumentFragment` trees therefore match correctly.
+fn is_candidate_element<D: StyleDom>(dom: &D, id: StyleNodeId, allow_detached: bool) -> bool {
+    dom.node(id).is_some_and(|node| {
+        node.kind() == StyleNodeKind::Element && (allow_detached || node.is_in_document())
+    })
+}
+
+/// Whether `elem_id` is the document element for `:root` (CSS Selectors L4
+/// §13.1, "root of the document"; in HTML documents the `html` element).
+///
+/// Requires all three: no element ancestor (`ancestors.is_empty()`),
+/// flat-tree membership (`is_in_document`), and an immediate parent that is
+/// the `Document` node itself ([`StyleDom::parent_id`] == [`StyleDom::root_id`]).
+/// Any disconnected root or `DocumentFragment` top-level child fails at least
+/// one of the last two: detached nodes are not in-document, and fragment
+/// children parent to the fragment rather than the `Document` node.
+fn is_document_root_element<D: StyleDom>(
+    dom: &D,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+) -> bool {
+    if !ancestors.is_empty() {
+        return false;
+    }
+    let in_doc = dom.node(elem_id).is_some_and(|node| node.is_in_document());
+    in_doc && dom.parent_id(elem_id) == Some(dom.root_id())
 }
 
 /// Returns the element id immediately preceding `current_id` among the
@@ -1617,13 +1729,14 @@ fn immediate_preceding_sibling<D: StyleDom>(
     dom: &D,
     parent_id: StyleNodeId,
     current_id: StyleNodeId,
+    allow_detached: bool,
 ) -> Option<StyleNodeId> {
     let mut last_element = None;
     for candidate_id in dom.child_ids(parent_id) {
         if candidate_id == current_id {
             return last_element;
         }
-        if is_in_document_element(dom, candidate_id) {
+        if is_candidate_element(dom, candidate_id, allow_detached) {
             last_element = Some(candidate_id);
         }
     }
@@ -1659,6 +1772,7 @@ fn immediate_preceding_sibling<D: StyleDom>(
 /// Returns `Some` with `iter` advanced beyond the matching compound so the
 /// caller can check any remaining compounds to the left, or `None` if the
 /// compound does not match.
+#[allow(clippy::too_many_arguments)] // same matching context as compound_matches plus allow_detached
 fn match_from_element<'s, D: StyleDom>(
     dom: &D,
     elem_id: StyleNodeId,
@@ -1667,6 +1781,7 @@ fn match_from_element<'s, D: StyleDom>(
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
     scope: Option<StyleNodeId>,
+    allow_detached: bool,
 ) -> Option<SelectorIter<'s, RaikiriSelectorImpl>> {
     // Both guards below are defensive and not reachable via the real
     // `collect_cascaded` → `match_complex_selector_list` call path: every
@@ -1711,6 +1826,7 @@ fn match_from_element<'s, D: StyleDom>(
         quirks_mode,
         relative_anchor,
         scope,
+        allow_detached,
     ) {
         return None;
     }

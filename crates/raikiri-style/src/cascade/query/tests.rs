@@ -171,3 +171,57 @@ fn scope_pseudo_class_inside_nth_child_of_selector_list() {
     assert!(!query.matches_scoped(&dom, StyleNodeId::new(li1 as u64), ancestors, scope));
     assert!(!query.matches_scoped(&dom, StyleNodeId::new(li3 as u64), ancestors, scope));
 }
+/// Detached sibling combinators via the DOM query entry point
+/// (`SelectorQuery::matches`, `allow_detached = true`): `b + i` / `b ~ i`
+/// match when both elements share the same detached parent, even though
+/// neither is in-document.
+#[test]
+fn detached_sibling_combinators_match_in_the_same_tree() {
+    let mut dom = TestDoc::new();
+    let parent = dom.push_element(0, "div", None);
+    let b = dom.push_element(parent, "b", None);
+    let i = dom.push_element(parent, "i", None);
+    // Model a detached tree: same parent linkage, but out-of-document.
+    dom.set_in_document(parent, false);
+    dom.set_in_document(b, false);
+    dom.set_in_document(i, false);
+    let ancestors = &[StyleNodeId::new(parent as u64)];
+    let next = SelectorQuery::parse("b + i").unwrap();
+    assert!(next.matches(&dom, StyleNodeId::new(i as u64), ancestors));
+    assert!(!next.matches(&dom, StyleNodeId::new(b as u64), ancestors));
+    let later = SelectorQuery::parse("b ~ i").unwrap();
+    assert!(later.matches(&dom, StyleNodeId::new(i as u64), ancestors));
+}
+
+/// `:first-child`/`:last-child` on a detached tree (same-tree gating).
+#[test]
+fn detached_first_child_last_child_match() {
+    let mut dom = TestDoc::new();
+    let parent = dom.push_element(0, "div", None);
+    let b = dom.push_element(parent, "b", None);
+    let i = dom.push_element(parent, "i", None);
+    dom.set_in_document(parent, false);
+    dom.set_in_document(b, false);
+    dom.set_in_document(i, false);
+    let ancestors = &[StyleNodeId::new(parent as u64)];
+    let first = SelectorQuery::parse(":first-child").unwrap();
+    assert!(first.matches(&dom, StyleNodeId::new(b as u64), ancestors));
+    assert!(!first.matches(&dom, StyleNodeId::new(i as u64), ancestors));
+    let last = SelectorQuery::parse(":last-child").unwrap();
+    assert!(last.matches(&dom, StyleNodeId::new(i as u64), ancestors));
+    assert!(!last.matches(&dom, StyleNodeId::new(b as u64), ancestors));
+}
+
+/// `:root` never matches a disconnected root, even through the query entry
+/// point that allows detached siblings. Only the document element (parent is
+/// the `Document` node and in-document) matches.
+#[test]
+fn root_pseudo_class_does_not_match_a_disconnected_root() {
+    let mut dom = TestDoc::new();
+    let attached = dom.push_element(0, "div", None);
+    let detached = dom.push_element(0, "span", None);
+    dom.set_in_document(detached, false);
+    let query = SelectorQuery::parse(":root").unwrap();
+    assert!(query.matches(&dom, StyleNodeId::new(attached as u64), &[]));
+    assert!(!query.matches(&dom, StyleNodeId::new(detached as u64), &[]));
+}

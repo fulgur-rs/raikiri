@@ -312,23 +312,17 @@ fn scope_pseudo_class_falls_back_to_root_on_a_document_scoped_query() {
     );
 }
 
-/// **Known limitation** (see this module's doc): a sibling combinator's
-/// candidate lookup consults raikiri-dom's `IS_IN_DOCUMENT` flag directly,
-/// which stays clear for every node of a tree that was never attached to
-/// the real document -- including a `DocumentFragment`'s own contents.
-/// `b` really is `i`'s immediately preceding sibling here, but `b + i`
-/// still fails to match because neither is ever marked in-document. This
-/// test pins the current (incorrect) behavior rather than asserting it is
-/// correct.
+/// Sibling combinators use same-tree gating, so they match inside a
+/// `DocumentFragment`'s detached contents as well as in-document.
 #[test]
-fn matches_under_matches_a_sibling_combinator_on_a_fragment_child() {
+fn matches_sibling_combinator_on_a_fragment_child() {
     let mut rt = rt();
     ok(
         &mut rt,
         "var f = document.createDocumentFragment();
          var b = document.createElement('b'); var i = document.createElement('i');
          f.append(b, i);
-         i.matches('b + i') === false",
+         i.matches('b + i') === true",
     );
 }
 
@@ -400,4 +394,51 @@ fn id_and_class_name_setters_mark_dirty() {
     clear_dirty(&mut rt);
     rt.evaluate("d.className = 'y';").unwrap();
     assert!(is_dirty(&mut rt), "className= should mark dirty");
+}
+/// Detached sibling combinators (`+`/`~`) via `matches`/`closest` and
+/// fragment `querySelector(All)` — same-tree gating, not `IS_IN_DOCUMENT`.
+#[test]
+fn detached_sibling_combinators_match_in_the_same_tree() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var d = document.createElement('div'); var b = document.createElement('b'); var i = document.createElement('i'); d.append(b, i); i.matches('b + i') && i.matches('b ~ i') && !b.matches('b + i')",
+    );
+    ok(
+        &mut rt,
+        "var f = document.createDocumentFragment(); var b = document.createElement('b'); var i = document.createElement('i'); f.append(b, i); f.querySelector('b + i') === i && f.querySelectorAll('b ~ i').length === 1",
+    );
+}
+
+/// `:first-child`/`:last-child` on detached and fragment trees.
+#[test]
+fn structural_pseudo_classes_match_on_disconnected_trees() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var d = document.createElement('div'); var b = document.createElement('b'); var i = document.createElement('i'); d.append(b, i); b.matches(':first-child') && i.matches(':last-child') && !b.matches(':last-child') && !i.matches(':first-child')",
+    );
+    ok(
+        &mut rt,
+        "var f = document.createDocumentFragment(); var b = document.createElement('b'); var i = document.createElement('i'); f.append(b, i); b.matches(':first-child') && i.matches(':last-child') && f.querySelector(':first-child') === b",
+    );
+}
+
+/// `:root` matches only the document element, never a disconnected root or
+/// fragment top-level child.
+#[test]
+fn root_pseudo_class_does_not_match_disconnected_roots() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var d = document.createElement('div'); !d.matches(':root')",
+    );
+    ok(
+        &mut rt,
+        "var f = document.createDocumentFragment(); var b = document.createElement('b'); f.appendChild(b); !b.matches(':root') && f.querySelector(':root') === null",
+    );
+    ok(
+        &mut rt,
+        "document.querySelector(':root') === document.documentElement",
+    );
 }

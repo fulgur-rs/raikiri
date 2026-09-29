@@ -169,6 +169,22 @@ pub trait StyleDom {
     fn quirks_mode(&self) -> StyleQuirksMode {
         StyleQuirksMode::NoQuirks
     }
+
+    /// Immediate parent of `child` (any kind: Element, Document,
+    /// DocumentFragment), or `None` for the root itself or a detached node
+    /// with no parent.
+    ///
+    /// Used for sibling/structural parent resolution on disconnected trees
+    /// and for `:root` (which must be the document element, not any
+    /// disconnected root). The default `None` is a safe fallback for shell
+    /// implementations; real DOMs override with a true parent lookup.
+    ///
+    /// Contract: if `Some(parent)`, then `child` appears in
+    /// `child_ids(parent)`. If `None`, `child` is either `root_id()` itself
+    /// or detached.
+    fn parent_id(&self, _child: StyleNodeId) -> Option<StyleNodeId> {
+        None
+    }
 }
 
 /// DOM node abstraction — kind dispatch and common API.
