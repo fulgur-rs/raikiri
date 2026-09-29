@@ -114,24 +114,31 @@ macro_rules! css_keywords {
 /// 1. Add a block to this invocation in `longhands.rs` with the property's CSS
 ///    name, variant name, value type, initial value, inherited status,
 ///    `computed: as_specified`, and a non-initial `sample:` (for test coverage).
-///    Follow the format of existing entries like `"isolation" => Isolation { .. }`,
-///    using `value: keywords { .. }` for keyword enums or `value: SomeType` with
-///    `parse: some_fn` for other types.
+///    Write `sample:` as a path-qualified expression (e.g. `crate::property::Foo::Bar`)
+///    so it resolves at both the table's expansion site and in `page/cascade/tests.rs`,
+///    or import the value type there. Follow the format of existing entries like
+///    `"isolation" => Isolation { .. }`, using `value: keywords { .. }` for keyword
+///    enums or `value: SomeType` with `parse: some_fn` for other types.
 /// 2. Add the property's CSS name to `supported_property_names()` in `names.rs`,
 ///    maintaining alphabetical order (pinned by the
 ///    `longhand_names_are_supported_property_names` test).
-/// 3. The `apply_value` arm in `cascade/inherit.rs` and the `SpecifiedValues` and
-///    `ComputedValues` fields in `specified.rs` and `computed.rs` remain hand-written
-///    until those sites are generated. Pass-through matches in `rule.rs`, the resolve
-///    step in `cascade/inherit.rs`, `page/absolutize.rs`, and `serialize_value`'s
-///    `None` arm are covered by the table, as are the two page-cascade registries.
-///    `computed:` hooks are rejected for now; table payloads must be free of
-///    lengths needing absolutization.
+/// 3. Implement per-property sites in `cascade/inherit.rs`, `specified.rs`, and
+///    `computed.rs`: the `apply_value` arm in `inherit.rs`; the `SpecifiedValues`
+///    field, its initial value in both constructors (initial and `inherit_from`), and
+///    its copy in `absolutize_with`; the `ComputedValues` field and its initial value
+///    (see the per-property doc table at the top of `specified.rs`). Pass-through
+///    matches in `rule.rs`, the resolve step in `cascade/inherit.rs`,
+///    `page/absolutize.rs`, the `serialize_value` `None` arm, and the test-only
+///    residue detector in `page/cascade/tests.rs` are covered by the table, as are
+///    the two page-cascade registries. `computed:` hooks are rejected for now; table
+///    payloads must be free of lengths needing absolutization.
 ///
 /// A table block currently generates: `PropertyKey` and `PropertyValue` enum
 /// variants; the `key()` projection; the name-to-key lookup
 /// (`longhand_key_for_name`); the value parsing dispatch (`parse_longhand_value`);
-/// the `longhand_value_pat!()` pass-through pattern macro; the `LONGHAND_NAMES`
+/// the `longhand_value_pat!()` pass-through pattern macro (used by `rule.rs`,
+/// `cascade/inherit.rs`, `page/absolutize.rs`, `serialize_value`, and the
+/// test-only residue detector in `page/cascade/tests.rs`); the `LONGHAND_NAMES`
 /// constant; the test registries' macros (`with_longhand_samples` and
 /// `with_longhand_variants`); and for keyword value blocks, the value enum with
 /// its `INITIAL` constant.
