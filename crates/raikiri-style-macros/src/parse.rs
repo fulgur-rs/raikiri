@@ -211,9 +211,10 @@ fn parse_entry(input: ParseStream, errors: &mut Errors) -> syn::Result<RawEntry>
     }
     let name: LitStr = input.parse()?;
     input.parse::<Token![=>]>()?;
-    let variant = input.call(Ident::parse_any).map_err(|_| {
-        input.error("expected the `PropertyValue` variant name after `=>`, e.g. `ObjectFit`")
-    })?;
+    let variant = plain_ident(
+        input,
+        "expected the `PropertyValue` variant name after `=>`, e.g. `ObjectFit`",
+    )?;
     let value_ty = if input.peek(Token![:]) {
         input.parse::<Token![:]>()?;
         Some(input.parse::<Type>()?)
@@ -410,9 +411,7 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             errors,
         ),
         "field" => {
-            let value = content
-                .call(Ident::parse_any)
-                .map_err(|_| content.error("expected a field name, e.g. `field: object_fit`"));
+            let value = plain_ident(content, "expected a field name, e.g. `field: object_fit`");
             store(&mut entry.field, k, value, content, had, errors)
         }
         "sample" => store(
@@ -445,6 +444,28 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
     )))
 }
 
+/// An identifier that the expansion can use as a variant, field or module
+/// name: not a Rust keyword and not a raw identifier.
+fn plain_ident(input: ParseStream, expected: &str) -> syn::Result<Ident> {
+    if input.peek(Ident) {
+        let ident: Ident = input.parse()?;
+        if ident.to_string().starts_with("r#") {
+            return Err(syn::Error::new(
+                ident.span(),
+                "raw identifiers are not supported here; choose a name that is not a Rust keyword",
+            ));
+        }
+        return Ok(ident);
+    }
+    if let Some((ident, _)) = input.cursor().ident() {
+        return Err(syn::Error::new(
+            ident.span(),
+            format!("`{ident}` is a Rust keyword; choose another name"),
+        ));
+    }
+    Err(input.error(expected))
+}
+
 fn parse_keywords(content: ParseStream) -> syn::Result<Vec<Keyword>> {
     if !content.peek(token::Bracket) {
         return Err(content.error("expected a keyword list, e.g. `keywords: [Auto, Isolate]`"));
@@ -453,9 +474,10 @@ fn parse_keywords(content: ParseStream) -> syn::Result<Vec<Keyword>> {
     bracketed!(inner in content);
     let list = Punctuated::<Keyword, Token![,]>::parse_terminated_with(&inner, |input| {
         let attrs = input.call(Attribute::parse_outer)?;
-        let ident = input.call(Ident::parse_any).map_err(|_| {
-            input.error("expected a keyword variant, e.g. `Auto` or `ScaleDown = \"scale-down\"`")
-        })?;
+        let ident = plain_ident(
+            input,
+            "expected a keyword variant, e.g. `Auto` or `ScaleDown = \"scale-down\"`",
+        )?;
         let css = if input.peek(Token![=]) {
             input.parse::<Token![=]>()?;
             Some(input.parse::<LitStr>().map_err(|_| {

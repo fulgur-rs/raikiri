@@ -434,3 +434,26 @@ fn key_attribute_mistakes() {
     assert_eq!(count, 4);
     insta::assert_snapshot!("key_attribute_mistakes", rendered);
 }
+
+#[test]
+fn rust_keywords_and_raw_identifiers_are_errors_not_panics() {
+    let src = module(
+        r#"        /// A.
+        "a-prop" => type { keywords: [X, Y], initial: X, inherited: no },
+        /// B.
+        "b-prop" => r#type { keywords: [X, Y], initial: X, inherited: no },
+        /// C.
+        "c-prop" => CProp { keywords: [X, r#fn], initial: X, inherited: no },
+        /// D.
+        "d-prop" => DProp { keywords: [X, Y], initial: X, inherited: no, field: fn },
+        /// E.
+        "type" => Type { keywords: [X, Y], initial: X, inherited: no },"#,
+    );
+    let (expanded, errors) = expand(&src);
+    assert_eq!(errors.len(), 5);
+    insta::assert_snapshot!("rust_keywords", render(&src, &errors));
+    assert_eq!(
+        enum_variants(&expanded, "PropertyValue"),
+        ["Color", "CustomProperty", "CProp", "DProp", "Type"]
+    );
+}

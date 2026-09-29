@@ -321,7 +321,20 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Option<Entry> {
 
     let field = match field {
         Slot::Present(_, field) => field,
-        _ => Ident::new(&split_camel(&variant.to_string(), '_'), variant.span()),
+        _ => {
+            let name = split_camel(&variant.to_string(), '_');
+            if syn::parse_str::<Ident>(&name).is_ok() {
+                Ident::new(&name, variant.span())
+            } else {
+                errors.push(syn::Error::new(
+                    variant.span(),
+                    format!(
+                        "the default field name `{name}` is a Rust keyword; set `field:` to another name"
+                    ),
+                ));
+                Ident::new(&format!("{name}_"), variant.span())
+            }
+        }
     };
 
     let sample_expr = match sample {
