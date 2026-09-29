@@ -7117,6 +7117,13 @@ pub enum BackgroundRepeatKeyword {
     NoRepeat,
 }
 
+css_keywords!(BackgroundRepeatKeyword {
+    Repeat => "repeat",
+    Space => "space",
+    Round => "round",
+    NoRepeat => "no-repeat",
+});
+
 /// Specified value of `background-repeat`.
 ///
 /// CSS Backgrounds and Borders 3 §2.4 "Tiling Images: the

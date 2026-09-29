@@ -2013,14 +2013,7 @@ fn parse_conic_gradient_body<'i>(
 /// grammar). Do not handle `repeat-x`/`repeat-y` here:
 /// [`parse_background_repeat`] handles them as separate top-level alternatives.
 fn parse_background_repeat_keyword(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeatKeyword> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "repeat" => Some(BackgroundRepeatKeyword::Repeat),
-        "space" => Some(BackgroundRepeatKeyword::Space),
-        "round" => Some(BackgroundRepeatKeyword::Round),
-        "no-repeat" => Some(BackgroundRepeatKeyword::NoRepeat),
-        _ => None,
-    }
+    BackgroundRepeatKeyword::from_css_ident(input.expect_ident().ok()?)
 }
 
 fn parse_background_repeat_keyword_res<'i>(

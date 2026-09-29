@@ -19,6 +19,7 @@ macro_rules! assert_keyword_round_trip {
 fn keyword_tables_round_trip_through_their_parsers() {
     assert_keyword_round_trip!(
         BackgroundAttachment,
+        BackgroundRepeatKeyword,
         BorderCollapseValue,
         BorderStyle,
         BoxSizing,
