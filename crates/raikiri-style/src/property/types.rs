@@ -6167,6 +6167,16 @@ pub enum TextAlignAll {
     MatchParent,
 }
 
+css_keywords!(TextAlignAll {
+    Start => "start",
+    End => "end",
+    Left => "left",
+    Right => "right",
+    Center => "center",
+    Justify => "justify",
+    MatchParent => "match-parent",
+});
+
 /// The value of the `text-align-last` property (CSS Text 3 §6.1 longhand).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

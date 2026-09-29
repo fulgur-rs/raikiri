@@ -1334,17 +1334,7 @@ pub(super) fn parse_word_space_transform(input: &mut Parser<'_, '_>) -> Option<W
 }
 
 pub(super) fn parse_text_align_all(input: &mut Parser<'_, '_>) -> Option<TextAlignAll> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "start" => Some(TextAlignAll::Start),
-        "end" => Some(TextAlignAll::End),
-        "left" => Some(TextAlignAll::Left),
-        "right" => Some(TextAlignAll::Right),
-        "center" => Some(TextAlignAll::Center),
-        "justify" => Some(TextAlignAll::Justify),
-        "match-parent" => Some(TextAlignAll::MatchParent),
-        _ => None,
-    }
+    TextAlignAll::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
