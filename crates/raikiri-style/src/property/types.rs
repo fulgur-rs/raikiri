@@ -2074,6 +2074,13 @@ pub enum StringFetchMode {
     FirstExcept,
 }
 
+css_keywords!(StringFetchMode {
+    First => "first",
+    Start => "start",
+    Last => "last",
+    FirstExcept => "first-except",
+});
+
 /// The second argument of `target-text()`:
 /// `[ content | before | after | first-letter ]?`.
 ///
@@ -2110,6 +2117,13 @@ pub enum ContentPart {
     FirstLetter,
 }
 
+css_keywords!(ContentPart {
+    Content => "content",
+    Before => "before",
+    After => "after",
+    FirstLetter => "first-letter",
+});
+
 /// The argument of `content()`: `[ text | before | after | first-letter ]?`.
 /// The `?` describes what Raikiri accepts, consistent with the spec's bare
 /// `content()` example, `h2 { string-set: heading content() }`. It is not a
@@ -2145,6 +2159,13 @@ pub enum ContentTextKeyword {
     FirstLetter,
 }
 
+css_keywords!(ContentTextKeyword {
+    Text => "text",
+    Before => "before",
+    After => "after",
+    FirstLetter => "first-letter",
+});
+
 /// The four keywords of the `<quote>` production.
 ///
 /// CSS Content 3 §2.4.2 "Inserting Quotation Marks: the *-quote keywords"
@@ -2176,6 +2197,13 @@ pub enum QuoteKeyword {
     /// `close-quote` does.
     NoCloseQuote,
 }
+
+css_keywords!(QuoteKeyword {
+    OpenQuote => "open-quote",
+    CloseQuote => "close-quote",
+    NoOpenQuote => "no-open-quote",
+    NoCloseQuote => "no-close-quote",
+});
 
 /// The `<leader-type> = dotted | solid | space | <string>` argument of `leader()`.
 ///
