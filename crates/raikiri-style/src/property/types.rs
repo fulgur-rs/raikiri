@@ -15,7 +15,7 @@ use crate::Atom;
 // those items move to their own modules and get re-exported the same way.
 use super::*;
 
-// The property enums are defined by the `longhands!` invocation in
+// The property enums are defined by the `#[longhands]` module in
 // longhands.rs; re-exported here so sibling modules that import
 // `types::*` keep seeing them next to their payload types.
 pub use super::longhands::{PropertyKey, PropertyValue};
@@ -6177,6 +6177,28 @@ pub enum EmptyCellsValue {
     Hide,
 }
 
+/// `empty-cells`: **inherited**, initial [`EmptyCellsValue::Show`] (CSS
+/// Tables 3 §8 "Empty Cells"
+/// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>; see
+/// [`EmptyCellsValue`]). Grammar: `show | hide`. The computed value is the
+/// specified keyword (no relative lengths to resolve).
+///
+/// The field carries the cascaded value only; empty-cell border and
+/// background painting is layout/paint-time behavior (raikiri-dom /
+/// raikiri-paint).
+#[derive(Longhand)]
+// Keyword-only, carries no length. `hide` is the non-initial worst case
+// (`show` is the initial value).
+#[longhand(
+    name = "empty-cells",
+    value = EmptyCellsValue,
+    initial = EmptyCellsValue::Show,
+    inherited = true,
+    parse = parse_empty_cells,
+    sample = EmptyCellsValue::Hide
+)]
+pub struct EmptyCells;
+
 /// The specified value of `border-spacing`.
 ///
 /// CSS Tables 3 §6.1 "Separated borders: the border-spacing property"
@@ -7138,7 +7160,16 @@ pub struct BackgroundShorthand {
 /// procedure). This crate does not implement that layout application algorithm —
 /// this variant stores only the cascade/computed-value keyword.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Longhand)]
+// Keyword-only, carries no length. `contain` is the non-initial worst case
+// (`fill` is the initial value).
+#[longhand(
+    name = "object-fit",
+    initial = Fill,
+    inherited = false,
+    parse = parse_object_fit,
+    sample = Contain
+)]
 pub enum ObjectFit {
     /// `fill` — the spec's initial value. Stretch replaced content to fit the content box
     /// (without preserving its aspect ratio).
