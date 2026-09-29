@@ -735,38 +735,37 @@ impl LayoutGridContainer for Document {
     }
 }
 
-// SAFETY: with taffy’s `calc` feature enabled, `Style::Dimension` holds
-// a `*const ()` (pointer to a caller-owned calc expression arena) through
-// `CompactLength`. Raw pointers are !Send, making `Style: !Send` and thus
-// `Document: !Send`.
+// SAFETY: with taffy calc support enabled, taffy length types hold
+// a raw pointer to a caller-owned calc payload through a compact tagged
+// representation. Raw pointers are not Send, making `Style` not Send and
+// thus `Document` not Send without this impl.
 //
-// **Invariant (self-contained arena approach)**:
-// Every type holding `Style` within raikiri-dom (Document, a future
-// LayoutBuffer, etc.) stores `CompactLength::calc(ptr)` pointers into
-// the calc arena owned by the same Document (to be added in raikiri-dom).
-// As long as this invariant holds, moving the Document to another thread
-// moves the pointer targets with it, preserving validity.
+// Invariant, self-contained arena approach:
+// Every calc pointer stored in the arena points into the calc payload
+// storage owned by the same Document. That storage keeps pointees alive
+// with heap allocations behind reference counting, so moving the Document
+// to another thread moves the pointer targets with it, preserving validity.
+// The layout bridge and the inline text path are the sole constructors of
+// owned handles: each one pushes the payload into the same Document's
+// storage and then builds the handle from the stored entry.
 //
-// **Do not implement Sync**: raikiri’s planned parallel layout path
-// (16 margin-box slots and parallel column-count computation) uses
-// an `Arc<GcpmSnapshot>` (owned deep copy; design doc
-// §5.4.1) or a read-only `&Style` borrow. No path reads `&Document`
-// concurrently across threads, so Sync is unnecessary. blitz-dom added
-// `unsafe impl Sync for Node` for stylo’s parallel style traversal,
-// but raikiri does not depend on stylo and has no such path.
+// Enforcement at the boundary:
+// The public element constructor sanitizes any externally supplied style
+// before storage, replacing foreign calc handles with safe keyword
+// fallbacks. Cross-document copies go through the same constructor, so the
+// target never adopts the source arena's pointers. The bridge rebuilds
+// owned handles from computed values before each layout pass, so valid
+// styles without calc pass through untouched.
 //
-// **Precedent**: blitz-dom `Node` has a similar `unsafe impl Send`
-// (`blitz-dom-0.3.0-beta.1/src/node/node.rs:136`, without annotation),
-// an established taffy + calc pattern. However, blitz uses an external
-// arena model where the stylo `Arc<ComputedValues>` chain owns calc data;
+// Do not implement Sync: the planned parallel layout path uses an owned
+// deep copy or a read-only borrow of style data. No path reads a shared
+// Document reference concurrently across threads, so Sync is unnecessary.
+// blitz-dom added an unsafe Sync impl for its node type to serve a parallel
+// style traversal that raikiri does not have.
+//
+// Precedent: blitz-dom Node has a similar unsafe Send impl without
+// annotation, an established taffy plus calc pattern. blitz uses an external
+// arena model where a separate computed-values chain owns calc data;
 // raikiri uses a self-contained arena model with different invariants.
-//
-// **Current state**: no path populates calc pointers (Node.style only uses
-// `length(px)` / `percent` / `auto`). When CSS calc() is implemented with
-// the future sandboxed resolver, place the calc arena in raikiri-dom and
-// restrict the API so the sole `CompactLength::calc(...)` call site also
-// allocates the arena entry (structural enforcement). Before calc()
-// is implemented, add a custom lint (`raikiri-lints::no_calc_construction`,
-// design §5.4.1) to raikiri-dom to prevent unexpected construction.
 #[allow(unsafe_code)]
 unsafe impl Send for Document {}
