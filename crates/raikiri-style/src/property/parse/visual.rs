@@ -101,13 +101,7 @@ pub(super) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
 /// but the keyword itself is accepted as spec-valid). Compare identifiers
 /// ASCII case-insensitively (as in [`parse_font_style`]).
 pub(super) fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "visible" => Some(Visibility::Visible),
-        "hidden" => Some(Visibility::Hidden),
-        "collapse" => Some(Visibility::Collapse),
-        _ => None,
-    }
+    Visibility::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Shared parser for the CSS `<url>` value type (CSS Values and Units 4 §4.4

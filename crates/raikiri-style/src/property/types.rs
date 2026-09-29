@@ -1944,6 +1944,12 @@ pub enum Visibility {
     Collapse,
 }
 
+css_keywords!(Visibility {
+    Visible => "visible",
+    Hidden => "hidden",
+    Collapse => "collapse",
+});
+
 /// The value of the `line-height` property (an author CSS type that lays
 /// the groundwork for inline layout).
 ///
