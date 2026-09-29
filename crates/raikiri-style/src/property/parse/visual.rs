@@ -675,17 +675,7 @@ pub(crate) fn parse_mask_image(input: &mut Parser<'_, '_>) -> Option<MaskImage> 
 /// Parse `<geometry-box>` (see the [`GeometryBox`] grammar: seven
 /// keywords).
 fn parse_geometry_box(input: &mut Parser<'_, '_>) -> Option<GeometryBox> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "border-box" => Some(GeometryBox::BorderBox),
-        "padding-box" => Some(GeometryBox::PaddingBox),
-        "content-box" => Some(GeometryBox::ContentBox),
-        "margin-box" => Some(GeometryBox::MarginBox),
-        "fill-box" => Some(GeometryBox::FillBox),
-        "stroke-box" => Some(GeometryBox::StrokeBox),
-        "view-box" => Some(GeometryBox::ViewBox),
-        _ => None,
-    }
+    GeometryBox::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `clip-path: <clip-source> | [ <basic-shape> || <geometry-box> ] | none`
