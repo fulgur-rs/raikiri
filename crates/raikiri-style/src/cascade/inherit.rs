@@ -702,6 +702,8 @@ pub(crate) fn apply_winners(
                                 crate::property::PropertyKey::FontSize => {
                                     Some(PropertyValue::FontSize(Length::Px(inherited.font_size.0)))
                                 }
+                                // cov:ignore: inherit markers are emitted only
+                                // for the three keys handled above by parse_property_value.
                                 _ => None,
                             }
                         }

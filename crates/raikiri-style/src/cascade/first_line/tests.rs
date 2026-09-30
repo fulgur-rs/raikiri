@@ -161,6 +161,9 @@ fn first_line_rejects_unsupported_roots_and_subtrees() {
     let hidden = doc.push_element(root, "span", Some("display:none"));
     let hidden_child = doc.push_element(hidden, "span", None);
     let sibling = doc.push_element(1, "p", Some("display:block"));
+    let detached_sibling = doc.push_element(1, "span", None);
+    doc.nodes[detached_sibling].in_document = false;
+    let text = doc.push_text(root, "actual inline text");
     let result = cascade_with_first_line(
         &doc,
         &build_rule_tree(&doc),
@@ -169,6 +172,7 @@ fn first_line_rejects_unsupported_roots_and_subtrees() {
     )
     .unwrap();
     let first = result.first_line.unwrap();
+    assert_eq!(first.computed[text].as_ref().unwrap().color.r, 255);
     for id in [0, 1, detached, hidden, hidden_child, sibling] {
         assert!(first.computed[id].is_none());
     }
