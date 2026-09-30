@@ -411,33 +411,6 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
     };
 }
 
-/// [`ComputedValues::width`] / [`ComputedValues::height`] (`ComputedLengthPercentageOrAuto`) →
-/// [`taffy::Style::size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §3.1.1
-/// "Preferred Size Properties"
-/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>).
-///
-/// Width support landed first, then height, so both preferred-size axes are
-/// fully bridged. Assign both fields together using a struct literal
-/// (`style.size = Size { width, height }`); the partial-write scaffold is
-/// no longer needed.
-///
-/// See [`computed_length_percentage_or_auto_to_taffy_dimension`] for length policy.
-///
-/// # PageBox compromise
-///
-/// After this bridge, [`apply_page_box_to_body`] overwrites the `<body>`
-/// element's `style.size` with both PageBox dimensions (layout.rs Step 1 →
-/// Step 4). Thus the author values in `<body style="width: 100px; height: 200px">`
-/// are written to taffy by this helper, but PageBox values overwrite them
-/// in Step 4. This is intentional for now (pending an @page cascade and
-/// per-page PageBox refactor). The width author→PageBox overwrite path is
-/// checked by `apply_page_box_clobbers_body_width_from_bridge`. For height,
-/// [`apply_page_box_to_body`] assigns both fields without branching through
-/// the struct literal `style.size = Size { width, height }`; height thus uses
-/// the same overwrite path as width (both fields are written in one statement).
-/// `apply_page_box_to_body_sets_body_style_size_to_page_dimensions` checks that
-/// helper's PageBox output. The width test sufficiently checks the full
-/// bridge→overwrite path; height relies on the structural guarantee to avoid duplication.
 fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
     fn map(value: OverflowValue) -> TaffyOverflow {
         match value {
@@ -473,6 +446,35 @@ fn bridge_position(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec
     };
 }
 
+/// [`ComputedValues::width`] / [`ComputedValues::height`] (`ComputedLengthPercentageOrAuto`) →
+/// [`taffy::Style::size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §3.1.1
+/// "Preferred Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>).
+///
+/// Width support landed first, then height, so both preferred-size axes are
+/// fully bridged. Assign both fields together using a struct literal
+/// (`style.size = Size { width, height }`); the partial-write scaffold is
+/// no longer needed.
+///
+/// See [`computed_length_percentage_or_auto_to_taffy_dimension`] for length policy.
+///
+/// # PageBox compromise
+///
+/// After this bridge, [`apply_page_content_box_to_body`] overwrites the `<body>`
+/// element's `style.size` with the page content-box dimensions
+/// (`layout_single_page` Step 1 → Step 4): the PageBox width/height minus the
+/// used page margins (and the top/bottom page content insets), not the full
+/// paper size. Thus the author values in `<body style="width: 100px; height: 200px">`
+/// are written to taffy by this helper, but content-box values overwrite them
+/// in Step 4. This is intentional for now (pending an @page cascade and
+/// per-page PageBox refactor). The width author→content-box overwrite path is
+/// checked by `apply_page_content_box_clobbers_body_width_from_bridge`. For height,
+/// [`apply_page_content_box_to_body`] assigns both fields without branching through
+/// the struct literal `style.size = Size { width, height }`; height thus uses
+/// the same overwrite path as width (both fields are written in one statement).
+/// `apply_page_content_box_sets_body_style_size_to_content_dimensions` checks that
+/// helper's content-box output. The width test sufficiently checks the full
+/// bridge→overwrite path; height relies on the structural guarantee to avoid duplication.
 fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
     // width and height are written together, so use a struct literal.
     let width = computed_length_percentage_or_auto_to_taffy_dimension(
