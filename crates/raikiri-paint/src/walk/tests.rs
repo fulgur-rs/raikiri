@@ -3210,6 +3210,20 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         &round,
     );
     assert_eq!(background_fill_count(&zero_round), 5);
+    // Space with zero positioning width falls back to a single tile on that axis.
+    let (zero_space_position, zero_space) = background_repeat_fixture("space", "0px 0px");
+    let mut zero_space_scene = Scene::new();
+    paint_background_image(
+        &mut zero_space_scene,
+        &decoded,
+        kurbo::Rect::new(0.0, 0.0, 0.0, 50.0),
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        20.0,
+        10.0,
+        &zero_space_position,
+        &zero_space,
+    );
+    assert_eq!(background_fill_count(&zero_space_scene), 5);
     // Tiny tiles hitting the repeat fan-out bound skip without allocating.
     let mut tiny = Scene::new();
     paint_background_image(
