@@ -834,6 +834,8 @@ fn serialize_fn(entries: &[Entry]) -> TokenStream {
 fn serialize_computed_fn(entries: &[Entry]) -> TokenStream {
     let key = local("key");
     let computed = local("computed");
+    // A `Serialize::Broken` entry counts as serialized: its mistake has
+    // been reported, so the expansion never compiles and the arm is moot.
     let serialized: Vec<&Entry> = entries
         .iter()
         .filter(|e| !matches!(e.serialize, Serialize::None))
@@ -877,6 +879,8 @@ fn serialize_computed_fn(entries: &[Entry]) -> TokenStream {
 /// `longhand_serializes`: whether an entry has `serialize:`.
 fn serializes_fn(entries: &[Entry]) -> TokenStream {
     let key = local("key");
+    // A `Serialize::Broken` entry counts as serialized, as in
+    // `serialize_computed_fn`; the expansion never compiles then.
     let serialized: Vec<_> = entries
         .iter()
         .filter(|e| !matches!(e.serialize, Serialize::None))
