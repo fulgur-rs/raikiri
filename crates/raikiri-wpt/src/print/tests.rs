@@ -316,3 +316,67 @@ fn paints_relative_page_margin_box_background_image() {
     assert!(requests.iter().any(|path| path == "/pages/red.png"));
     assert!(contains_red_pixel(&document.pages[0]));
 }
+
+fn green_png() -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut encoder = png::Encoder::new(&mut output, 2, 2);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().expect("PNG header");
+    writer
+        .write_image_data(&[
+            0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+        ])
+        .expect("PNG pixels");
+    writer.finish().expect("finish PNG");
+    output
+}
+
+fn contains_green_pixel(image: &RenderedImage) -> bool {
+    image
+        .rgba
+        .chunks_exact(4)
+        .any(|pixel| pixel[1] > 200 && pixel[0] < 50 && pixel[2] < 50 && pixel[3] > 200)
+}
+
+#[test]
+fn paints_left_and_right_page_background_images_per_page() {
+    // Page 0 is `:right`, page 1 is `:left`. Different page-context images
+    // must render per page, not only be fetched.
+    let server = TestServer::start(HashMap::from([
+        (
+            "/pages/index.html",
+            TestResponse::ok(
+                "text/html",
+                b"<style>@page{size:32px 32px;margin:0}@page:left{background-image:url('red.png')}@page:right{background-image:url('green.png')}div{height:64px}</style><div></div>"
+                    .to_vec(),
+            ),
+        ),
+        ("/pages/red.png", TestResponse::ok("image/png", red_png())),
+        ("/pages/green.png", TestResponse::ok("image/png", green_png())),
+    ]));
+
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("pages/index.html"),
+        32,
+        32,
+    )
+    .expect("render left/right page background images");
+    let requests = server.finish();
+
+    assert!(requests.iter().any(|path| path == "/pages/red.png"));
+    assert!(requests.iter().any(|path| path == "/pages/green.png"));
+    assert!(
+        document.pages.len() >= 2,
+        "fixture must paginate to cover left and right pages"
+    );
+    assert!(
+        contains_green_pixel(&document.pages[0]),
+        "first (right) page must render its green background image"
+    );
+    assert!(
+        contains_red_pixel(&document.pages[1]),
+        "second (left) page must render its red background image"
+    );
+}
