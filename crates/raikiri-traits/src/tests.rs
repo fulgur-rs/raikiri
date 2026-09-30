@@ -645,6 +645,8 @@ fn element_defaults_return_none_or_false() {
     // Default attr("style") delegates to inline_style_source (also None by default),
     // so the result is None.
     assert_eq!(e.attr("style"), None);
+    // Default namespaced lookup has no storage and returns None.
+    assert_eq!(e.attr_ns("http://www.w3.org/1999/xlink", "href"), None);
 }
 
 #[test]

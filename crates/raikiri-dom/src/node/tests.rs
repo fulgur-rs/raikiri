@@ -194,3 +194,55 @@ mod is_non_rendered_html_element_tests {
         assert!(!doc.is_non_rendered_html_element());
     }
 }
+
+#[cfg(test)]
+mod attribute_ns_tests {
+    use super::*;
+
+    const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+
+    fn element_with_namespaced_attr() -> Node {
+        let mut node = Node::new_element(SmolStr::new("use"), taffy::Style::default(), None);
+        if let NodeData::Element(element) = &mut node.data {
+            element.attributes.push(Attr {
+                namespace: Some(SmolStr::new(XLINK_NS)),
+                prefix: Some(SmolStr::new("xlink")),
+                local: SmolStr::new("href"),
+                value: SmolStr::new("#shape"),
+            });
+            element.attributes.push(Attr {
+                namespace: None,
+                prefix: None,
+                local: SmolStr::new("href"),
+                value: SmolStr::new("#plain"),
+            });
+        }
+        node
+    }
+
+    #[test]
+    fn attribute_ns_finds_namespaced_value_and_ignores_prefix() {
+        let node = element_with_namespaced_attr();
+        assert_eq!(node.attribute_ns(XLINK_NS, "href"), Some("#shape"));
+        assert_eq!(node.attribute("href"), Some("#plain"));
+    }
+
+    #[test]
+    fn attribute_ns_is_exact_and_returns_none_for_mismatch() {
+        let node = element_with_namespaced_attr();
+        assert_eq!(node.attribute_ns(XLINK_NS, "HREF"), None);
+        assert_eq!(
+            node.attribute_ns("http://www.w3.org/2000/svg", "href"),
+            None
+        );
+        assert_eq!(node.attribute_ns(XLINK_NS, "title"), None);
+    }
+
+    #[test]
+    fn attribute_ns_returns_none_for_non_elements() {
+        let text = Node::new_text(SmolStr::new("hi"));
+        assert_eq!(text.attribute_ns(XLINK_NS, "href"), None);
+        let doc = Node::new_document();
+        assert_eq!(doc.attribute_ns(XLINK_NS, "href"), None);
+    }
+}

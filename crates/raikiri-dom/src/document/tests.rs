@@ -2,6 +2,7 @@ use super::*;
 
 mod attach_child_fragment_tests;
 mod element_attribute_mutation_tests;
+mod element_attribute_ns_tests;
 mod find_body_flat_tree_tests;
 mod insert_child_before_fragment_tests;
 mod live_dom_mutation_tests;

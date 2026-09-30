@@ -1674,6 +1674,21 @@ impl Document {
         node.attribute(&local)
     }
 
+    /// Read a namespace-qualified attribute by namespace URI and local name.
+    ///
+    /// DOM `getAttributeNS` semantics: matching is exact, with no ASCII case
+    /// folding, on both foreign and HTML-namespace elements. For example SVG
+    /// `xlink:href` is `namespace = "http://www.w3.org/1999/xlink"`,
+    /// `local = "href"`. Returns `None` for out-of-range ids, non-elements,
+    /// and absent attributes. Renderer-neutral: the value is a plain string
+    /// slice; see [`crate::node::Node::attribute_ns`] for the node-level
+    /// accessor and [`Document::serialize_svg_subtree`] for whole-subtree XML
+    /// source reconstruction.
+    pub fn element_attribute_ns(&self, id: usize, namespace: &str, local: &str) -> Option<&str> {
+        let node = self.nodes.get(id)?;
+        node.attribute_ns(namespace, local)
+    }
+
     /// Serialize an inline SVG element and its subtree as a standalone XML
     /// source, retaining element/attribute namespace URIs and prefixes.
     pub fn serialize_svg_subtree(&self, id: usize) -> Result<Option<String>, String> {
