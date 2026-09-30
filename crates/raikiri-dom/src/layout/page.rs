@@ -50,21 +50,17 @@ pub(crate) fn apply_page_content_box_to_body(
     };
 }
 
-/// Resolve the width of a direct-body absolutely positioned box whose
-/// horizontal insets and preferred width are all `auto`.
-///
-/// Taffy's absolute-position fallback leaves such a box at the containing
-/// block width even when a resolved horizontal margin consumes part of that
-/// width. CSS 2.1 §10.3.7 solves the horizontal constraint instead: the
-/// border box plus both margins must fit the containing block. Do this before
-/// the root layout so text descendants receive the corrected width while
-/// shaping/reflowing; changing only `unrounded_layout` after the compute would
-/// leave their line breaks stale.
-///
-/// The first implementation is deliberately limited to direct `<body>`
-/// children in the static containing block. Nested containing blocks and
-/// viewport-fixed boxes need their own containing-block geometry and remain
-/// on Taffy's normal path until that geometry is available.
+/// CSS 2.1 §10.3.7 note: absolutely positioned non-replaced boxes with
+/// `width:auto` and `left:auto` / `right:auto` use shrink-to-fit sizing
+/// (`min(max(preferred minimum, available), preferred)`), not the containing
+/// block width. Taffy already performs this shrink-to-fit for both direct-body
+/// and nested absolute boxes (verified: an empty direct-body absolute with a
+/// 20px margin and 20px borders lays out to a 20px border box, and a 100px
+/// block child yields a 100px box). A previous pre-layout fill override forced
+/// direct-body boxes to the containing width and broke this case (WPT
+/// line-break-anywhere 70k-pixel mismatches); it was removed so taffy's
+/// shrink-to-fit path applies. Keep float (§10.3.5) and line-break handling
+/// out of this module.
 pub(crate) fn used_style_length_percentage(value: LengthPercentage, basis: f32) -> Option<f32> {
     let raw = value.into_raw();
     let resolved = match raw.tag() {
@@ -99,68 +95,6 @@ pub(crate) fn used_computed_length_percentage_or_auto(
         ComputedLengthPercentageOrAuto::Auto => return None,
     };
     resolved.is_finite().then_some(resolved)
-}
-
-pub(crate) fn resolve_direct_absolute_auto_widths(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    body_id: usize,
-    containing_width: f32,
-) {
-    if !containing_width.is_finite() || containing_width <= 0.0 {
-        return;
-    }
-    let children = document.nodes[body_id].children.clone();
-    for child_id in children {
-        let computed = &cascade.computed[child_id];
-        if !matches!(computed.position, PositionValue::Absolute)
-            || !matches!(computed.width, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(computed.left, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(computed.right, ComputedLengthPercentageOrAuto::Auto)
-        {
-            continue;
-        }
-
-        let style = &document.nodes[child_id].style;
-        let margin_left = used_style_length_percentage_auto(style.margin.left, containing_width)
-            .or_else(|| {
-                used_computed_length_percentage_or_auto(computed.margin.left, containing_width)
-            });
-        let margin_right = used_style_length_percentage_auto(style.margin.right, containing_width)
-            .or_else(|| {
-                used_computed_length_percentage_or_auto(computed.margin.right, containing_width)
-            });
-        if margin_left.is_none() && margin_right.is_none() {
-            continue;
-        }
-        let margin_left = margin_left.unwrap_or(0.0);
-        let margin_right = margin_right.unwrap_or(0.0);
-        let padding_left = used_style_length_percentage(style.padding.left, containing_width);
-        let padding_right = used_style_length_percentage(style.padding.right, containing_width);
-        let Some(padding_left) = padding_left else {
-            continue;
-        };
-        let Some(padding_right) = padding_right else {
-            continue;
-        };
-        let border_left = computed.border.left.width().px();
-        let border_right = computed.border.right.width().px();
-        if !border_left.is_finite() || !border_right.is_finite() {
-            continue;
-        }
-
-        let available_border_box = containing_width - margin_left - margin_right;
-        let width = match computed.box_sizing {
-            StyleBoxSizing::BorderBox => available_border_box,
-            StyleBoxSizing::ContentBox => {
-                available_border_box - border_left - border_right - padding_left - padding_right
-            }
-            _ => available_border_box - border_left - border_right - padding_left - padding_right,
-        };
-        if width.is_finite() {
-            document.nodes[child_id].style.size.width = Dimension::length(width.max(0.0));
-        }
-    }
 }
 
 /// Used page margins resolved from the page-context cascade.
