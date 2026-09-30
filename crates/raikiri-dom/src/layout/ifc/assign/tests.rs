@@ -557,3 +557,75 @@ fn a_paragraph_with_a_float_child_beside_an_outer_float_stays_on_the_parley_path
     assign(&mut fixture);
     assert!(!is_root(&fixture, fixture.root));
 }
+
+#[test]
+fn a_paragraph_with_an_atomic_beside_an_outer_float_is_a_root() {
+    // Only the paragraph's own floats depend on where the outer floats end;
+    // an atomic inline sits in a line like text does.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        span(doc, root, "display:inline-block;width:30px;height:20px");
+        add_sibling(doc, root, "block;float:left;width:30px");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn an_atomic_inline_does_not_make_its_subtree_part_of_the_paragraph() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let atomic = span(doc, root, "display:inline-block;width:30px");
+        doc.append_text(atomic, "ii");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    let atomic = fixture.doc.nodes[fixture.root].children[1];
+    let text = fixture.doc.nodes[atomic].children[0];
+    assert!(
+        !fixture.doc.nodes[text]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
+    );
+}
+
+#[test]
+fn a_paragraph_inside_an_atomic_inline_is_a_root_of_its_own() {
+    // The ancestor walk looks only for multicol, so the outer paragraph does
+    // not block a paragraph that sits in one of its atomic children.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let atomic = span(doc, root, "display:inline-block");
+        let middle = span(doc, atomic, "display:block");
+        let inner = span(doc, middle, "display:block");
+        doc.append_text(inner, "bb cc");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    let atomic = fixture.doc.nodes[fixture.root].children[1];
+    let middle = fixture.doc.nodes[atomic].children[0];
+    let inner = fixture.doc.nodes[middle].children[0];
+    assert!(
+        fixture.doc.nodes[inner]
+            .flags
+            .contains(NodeFlags::IS_IFC_ROOT)
+    );
+}
+
+#[test]
+fn a_paragraph_with_only_an_image_is_not_a_root() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_element(
+            Some(root),
+            "img",
+            taffy::Style::default(),
+            Some("display:inline;width:10px;height:10px"),
+        );
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}

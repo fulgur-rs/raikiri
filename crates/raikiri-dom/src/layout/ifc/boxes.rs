@@ -5,8 +5,8 @@ use super::root::{IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::taffy_impl::resolve_calc;
 use shodo::{
-    AtomicIntrinsics, AtomicSizes, FloatClear, FloatCursor, FloatIntrinsic, FloatSide,
-    LineConstraint, LineResult,
+    AtomicIntrinsic, AtomicIntrinsics, AtomicSize, AtomicSizes, FloatClear, FloatCursor,
+    FloatIntrinsic, FloatSide, LineConstraint, LineResult,
 };
 use taffy::util::ResolveOrZero;
 use taffy::{
@@ -26,6 +26,7 @@ pub(crate) struct IfcBox {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IfcBoxKind {
     Float,
+    Atomic,
 }
 
 /// A float met while laying out the current line. It is not in the context
@@ -96,6 +97,9 @@ fn run_boxes(
     } = geometry;
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
+    // Atomic inlines are sized once, before any line: their width does not
+    // depend on the line they land in.
+    let atomics = measure_atomics(tree, root, geometry);
     // Keeps the paragraph's own floats inside its content box.
     ctx.apply_content_box_inset([edges.0, edges.1]);
 
@@ -139,7 +143,7 @@ fn run_boxes(
                 token,
                 &options,
                 &constraint,
-                &AtomicSizes::EMPTY,
+                &atomics.sizes,
             )
         });
         let Some(result) = result else { break };
@@ -257,8 +261,8 @@ fn run_boxes(
             }
             LineResult::Done => break,
             other => {
-                // Atomic inlines and blocks are not projected into
-                // paragraphs laid out here, so no other result is expected.
+                // Blocks are not projected into paragraphs laid out here,
+                // so no other result is expected.
                 debug_assert!(false, "unexpected line result: {other:?}");
                 break;
             }
@@ -346,14 +350,19 @@ fn resolved_margins(tree: &Document, node: usize, basis: f32) -> taffy::Rect<f32
         .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
 }
 
-/// Lay a float out the way the block algorithm does: resolve its margins
-/// against the container, then give it the room that is left.
-fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> TentativeFloat {
-    let margin = resolved_margins(tree, node, geometry.width);
-    let available = (geometry.width - margin.left - margin.right).max(0.0);
+/// Lay a child of the root out the way taffy's block algorithm lays out a
+/// float: no known size, the root's content width as the percentage basis,
+/// and `available` as the width it may take. It is also how an atomic inline
+/// is sized: shrink-to-fit within the line's content width.
+fn perform_box_layout(
+    tree: &mut Document,
+    node: usize,
+    basis: f32,
+    available: f32,
+) -> taffy::LayoutOutput {
     // What taffy's `perform_child_layout` does; that helper is private to
     // taffy.
-    let output = tree.compute_child_layout(
+    tree.compute_child_layout(
         taffy::NodeId::from(node),
         LayoutInput {
             run_mode: RunMode::PerformLayout,
@@ -365,18 +374,26 @@ fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> Te
                 height: true,
             },
             parent_size: Size {
-                width: Some(geometry.width),
+                width: Some(basis),
                 height: None,
             },
             available_space: Size {
                 width: AvailableSpace::Definite(available),
                 height: AvailableSpace::MaxContent,
             },
-            // A float establishes a new block formatting context: its margins
+            // The box establishes a new block formatting context: its margins
             // do not collapse with its children's.
             vertical_margins_are_collapsible: Line::FALSE,
         },
-    );
+    )
+}
+
+/// Lay a float out the way the block algorithm does: resolve its margins
+/// against the container, then give it the room that is left.
+fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> TentativeFloat {
+    let margin = resolved_margins(tree, node, geometry.width);
+    let available = (geometry.width - margin.left - margin.right).max(0.0);
+    let output = perform_box_layout(tree, node, geometry.width, available);
     let style = &tree.nodes[node].style;
     TentativeFloat {
         node,
@@ -393,6 +410,70 @@ fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> Te
         margin,
         output,
     }
+}
+
+/// Sizes the paragraph needs for its atomic inlines, and the layouts to store
+/// once the lines are final.
+pub(crate) struct AtomicMeasure {
+    pub(crate) sizes: AtomicSizes,
+    pub(crate) outputs: Vec<(usize, taffy::LayoutOutput)>,
+}
+
+/// Measure every atomic inline of the root at the paragraph's content width.
+///
+/// Each atomic is laid out as a node of its own, so this runs outside the
+/// engine state scope: an atomic may hold another ifc root.
+pub(crate) fn measure_atomics(
+    tree: &mut Document,
+    root: &IfcRoot,
+    geometry: FlowGeometry,
+) -> AtomicMeasure {
+    let mut sizes = AtomicSizes::new();
+    let mut outputs = Vec::new();
+    for b in root.boxes.iter().filter(|b| b.kind == IfcBoxKind::Atomic) {
+        let node = b.node;
+        // A child's percentages resolve against the paragraph's content width.
+        let margin = resolved_margins(tree, node, geometry.width);
+        let available = (geometry.width - margin.left - margin.right).max(0.0);
+        let output = perform_box_layout(tree, node, geometry.width, available);
+        let id = shodo::node::NodeId(node as u64);
+        // Only the alphabetic baseline is supplied (horizontal lines). shodo
+        // measures it from the margin-box top and falls back to the margin
+        // box's bottom edge when there is none (CSS 2.1 10.8.1).
+        let baseline = match root.paragraph.required_baseline(id) {
+            Some(shodo::geometry::BaselineKind::Alphabetic) | None => {
+                atomic_baseline(tree, node, &output).map(|b| b + margin.top)
+            }
+            Some(_) => None,
+        };
+        sizes.insert(
+            id,
+            AtomicSize {
+                inline_size: output.size.width,
+                block_size: output.size.height,
+                baseline,
+                margins: shodo::node::Sides {
+                    inline_start: margin.left,
+                    inline_end: margin.right,
+                    block_start: margin.top,
+                    block_end: margin.bottom,
+                },
+            },
+        );
+        outputs.push((node, output));
+    }
+    AtomicMeasure { sizes, outputs }
+}
+
+/// The baseline of an atomic inline from its border-box top, if it has one.
+/// An inline-block that is a scroll container has none: it sits on its
+/// bottom margin edge (CSS 2.1 10.8.1).
+fn atomic_baseline(tree: &Document, node: usize, output: &taffy::LayoutOutput) -> Option<f32> {
+    let overflow = tree.nodes[node].style.overflow;
+    if overflow.x != taffy::Overflow::Visible || overflow.y != taffy::Overflow::Visible {
+        return None;
+    }
+    output.baselines.first
 }
 
 /// Place a float in the context at the line offset `y` and, when performing
@@ -489,6 +570,18 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
                         max_content,
                         side,
                         clear,
+                    },
+                );
+            }
+            IfcBoxKind::Atomic => {
+                let margin = resolved_margins(tree, b.node, basis);
+                let (min_content, max_content) =
+                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                intrinsics.insert_atomic(
+                    shodo::node::NodeId(b.node as u64),
+                    AtomicIntrinsic {
+                        min_content,
+                        max_content,
                     },
                 );
             }

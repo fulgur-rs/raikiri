@@ -1,5 +1,6 @@
 //! Choose the blocks laid out by the shodo inline engine.
 
+use super::boxes::IfcBoxKind;
 use super::projection::{box_kind, project_ifc};
 use super::root::IfcRoot;
 use crate::Document;
@@ -227,7 +228,7 @@ fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, id
 }
 
 /// Whether the paragraph itself holds text other than white space; text inside
-/// its boxes (floats) does not count.
+/// its boxes (floats, atomic inlines) does not count.
 fn has_visible_text(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
@@ -320,7 +321,8 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
         ) else {
             continue;
         };
-        if !projected.boxes.is_empty() && has_float_beside(doc, cascade, idx) {
+        let has_own_floats = projected.boxes.iter().any(|b| b.kind == IfcBoxKind::Float);
+        if has_own_floats && has_float_beside(doc, cascade, idx) {
             continue;
         }
         // Boxes are laid out and painted as nodes of their own, so neither

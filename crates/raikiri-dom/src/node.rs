@@ -681,7 +681,8 @@ impl Node {
     }
 
     /// Children of an ifc root that it lays out as boxes of their own
-    /// (floats), in document order. Empty for any other node.
+    /// (floats and atomic inlines), in document order. Empty for any other
+    /// node.
     #[doc(hidden)]
     pub fn ifc_boxes(&self) -> Vec<usize> {
         self.ifc

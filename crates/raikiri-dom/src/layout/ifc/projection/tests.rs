@@ -84,8 +84,7 @@ fn display_none_children_are_skipped() {
 
 #[test]
 fn constructs_the_inline_path_cannot_place_yet_are_rejected() {
-    let cases: [(&str, &str); 4] = [
-        ("inline-block", "display:inline-block"),
+    let cases: [(&str, &str); 3] = [
         ("block child", "display:block"),
         ("absolute", "display:inline;position:absolute"),
         ("flex child", "display:flex"),
@@ -105,18 +104,74 @@ fn constructs_the_inline_path_cannot_place_yet_are_rejected() {
 }
 
 #[test]
-fn a_replaced_element_is_rejected() {
+fn an_inline_block_is_recorded_as_an_atomic_box() {
     let fixture = block_fixture("", |doc, root| {
-        doc.append_text(root, "aa");
-        doc.append_element(
-            Some(root),
-            "img",
-            taffy::Style::default(),
-            Some("display:inline"),
-        );
+        doc.append_text(root, "aa ");
+        let atomic = span(doc, root, "display:inline-block;width:30px;height:10px");
+        doc.append_text(atomic, "ii");
+        doc.append_text(root, " bb");
     });
-    let error = project(&fixture).expect_err("img");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Atomic);
+    // The atomic's own text is not part of the paragraph.
+    assert!(
+        line_texts(&projected, 500.0)
+            .iter()
+            .all(|t| !t.contains("ii"))
+    );
+}
+
+#[test]
+fn an_img_and_an_inline_svg_are_atomic() {
+    for tag in ["img", "svg"] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            doc.append_element(
+                Some(root),
+                tag,
+                taffy::Style::default(),
+                Some("display:inline;width:10px;height:10px"),
+            );
+        });
+        let projected = project(&fixture).expect(tag);
+        assert_eq!(projected.boxes.len(), 1, "{tag}");
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Atomic, "{tag}");
+    }
+}
+
+#[test]
+fn atomics_that_are_not_placed_yet_stay_unsupported() {
+    for (tag, css) in [
+        ("span", "display:inline-table"),
+        ("span", "display:inline-block;position:relative"),
+        (
+            "span",
+            "display:inline-block;vertical-align:middle;position:absolute",
+        ),
+        ("img", "display:inline;position:relative"),
+        ("video", "display:inline"),
+        ("iframe", "display:inline"),
+        ("input", "display:inline"),
+        ("button", "display:inline"),
+        // An author rule can make a form control `inline-block`; the tag is
+        // what decides, not the display.
+        ("input", "display:inline-block;width:20px;height:10px"),
+        ("button", "display:inline-block;width:20px;height:10px"),
+        ("select", "display:inline-block"),
+        // A floated form control is refused as well, before the float check.
+        ("input", "display:block;float:left;width:20px;height:10px"),
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
+        });
+        let error = project(&fixture).expect_err(css);
+        assert!(
+            matches!(error, IfcError::Unsupported { .. }),
+            "{tag} {css}: {error}"
+        );
+    }
 }
 
 #[test]

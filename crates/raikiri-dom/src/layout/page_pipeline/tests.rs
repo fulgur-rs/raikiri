@@ -2997,8 +2997,8 @@ fn without_the_switch_the_same_paragraph_is_shaped_by_parley() {
 
 use crate::layout::test_support::{
     ahem_font_context, ahem_paragraph, ahem_paragraph_beside_float, ahem_paragraph_beside_floats,
-    ahem_paragraph_in_block_wrapper, ahem_paragraph_with_float, ifc_ahem_fonts, line_start_x,
-    line_text, page_box_800x600,
+    ahem_paragraph_in_block_wrapper, ahem_paragraph_with_atomic, ahem_paragraph_with_float,
+    ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
 };
 
 fn lay_out_with_switch(doc: &mut Document, cascade: &CascadeResult) {
@@ -3854,4 +3854,143 @@ fn a_cleared_float_does_not_shorten_the_line_above_its_clearance() {
     );
     assert_eq!(line_start_x(&lines[1]), Some(30.0));
     assert_eq!(origin(&doc, floats[1]), (0.0, 30.0));
+}
+
+// ── atomic inlines in ifc roots ──────────────────────────────
+
+#[test]
+fn an_inline_block_is_measured_before_the_lines_are_broken() {
+    // "aa " (30px) + a 30x30 inline-block + " bb". The atomic's baseline is its
+    // bottom edge (it has no text), so it rises 30px above the baseline and
+    // the line is 30 + 2 (the strut's descent) = 32px tall.
+    let (mut doc, cascade, _atomic, root) =
+        ahem_paragraph_with_atomic("aa ", "width:30px;height:30px", " bb", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(lines.len(), 1);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 32.0);
+}
+
+#[test]
+fn a_wide_atomic_moves_to_the_next_line() {
+    let (mut doc, cascade, _atomic, root) =
+        ahem_paragraph_with_atomic("aa ", "width:90px;height:10px", " bb", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    // "aa " leaves 70px, the atomic needs 90: it starts the second line. After
+    // it only 10px are left, so " bb" (30px) starts a third line. The line
+    // with the atomic has no text (the placeholder is stripped).
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa", "", "bb"]
+    );
+}
+
+#[test]
+fn a_shrink_to_fit_paragraph_with_an_inline_block_is_as_wide_as_its_content() {
+    // max-content: "aa " (30) + the 30px atomic + "bb" (20) = 80.
+    let (mut doc, cascade, _atomic, root) = ahem_paragraph_with_atomic(
+        "aa ",
+        "width:30px;height:10px",
+        "bb",
+        "float:left;width:auto",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 80.0);
+}
+
+#[test]
+fn an_inline_block_holding_a_paragraph_is_measured() {
+    // The atomic holds a block holding a block with text; the innermost block
+    // is an ifc root of its own (its parent is a block container and its
+    // siblings are blocks). The state of the engine must survive measuring it
+    // from inside the outer paragraph.
+    let (mut doc, _cascade, root) = ahem_paragraph("aa ", "width:100px");
+    let atomic_box = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline-block"),
+    );
+    let middle = doc.append_element(
+        Some(atomic_box),
+        "div",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let inner = doc.append_element(
+        Some(middle),
+        "div",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    doc.append_text(inner, "bb cc");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert!(
+        doc.nodes[inner].is_ifc_root(),
+        "the paragraph inside the atomic is a root of its own"
+    );
+    // The inner paragraph was laid out while the outer one was measured; with
+    // the engine state taken it would store no lines at all.
+    assert_eq!(stored_lines(&doc, inner).lines.len(), 1);
+}
+
+#[test]
+fn an_inline_block_baseline_counts_its_top_margin() {
+    // The atomic holds one line of "ii" (baseline 8px below its border-box
+    // top) and has a 3px top margin, so its baseline is 11px below its margin
+    // box top. The margin box (13px) rises 11px above the line's baseline and
+    // reaches 2px below it: the line is 13px tall with the baseline at 11.
+    let (mut doc, _cascade, root) = ahem_paragraph("aa ", "width:100px");
+    let atomic = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline-block;width:20px;margin-top:3px"),
+    );
+    doc.append_text(atomic, "ii");
+    doc.append_text(root, " bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].block_size(), 13.0);
+    assert_eq!(
+        lines[0].baseline(shodo::geometry::BaselineKind::Alphabetic),
+        11.0
+    );
+}
+
+#[test]
+fn a_clipping_inline_block_sits_on_its_bottom_margin_edge() {
+    // An inline-block that is a scroll container has no baseline (CSS 2.1
+    // 10.8.1): its 10px box rises 10px above the line's baseline instead of
+    // lining its text up with the surrounding text, so the line is 10 + 2
+    // (the strut's descent) = 12px tall.
+    let (mut doc, _cascade, root) = ahem_paragraph("aa ", "width:100px");
+    let atomic = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline-block;width:20px;height:10px;overflow:hidden"),
+    );
+    doc.append_text(atomic, "ii");
+    doc.append_text(root, " bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].block_size(), 12.0);
 }

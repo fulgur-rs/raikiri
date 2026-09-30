@@ -19,7 +19,8 @@ pub(crate) struct IfcRoot {
     pub(crate) indent: ComputedTextIndent,
     /// Lines of the last performed layout, if any.
     pub(crate) lines: Option<IfcLines>,
-    /// Children laid out as boxes of their own (floats), in document order.
+    /// Children laid out as boxes of their own (floats and atomic inlines),
+    /// in document order.
     pub(crate) boxes: Vec<IfcBox>,
 }
 

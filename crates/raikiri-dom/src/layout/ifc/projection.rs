@@ -1,10 +1,12 @@
 //! Project one in-flow block's inline content into a shodo paragraph.
 //!
-//! Text, ordinary inline elements, `<br>` and left or right floats are
-//! projected; a float becomes an anchor in the text and a box laid out on its
-//! own. Anything the inline path cannot place yet (positioned boxes, block
-//! children, inline-blocks, replaced elements, generated content) is rejected
-//! with [`IfcError::Unsupported`] rather than approximated.
+//! Text, ordinary inline elements, `<br>`, left or right floats and atomic
+//! inlines (inline-blocks, images, inline SVG) are projected; a float becomes
+//! an anchor in the text and an atomic a placeholder, and both are laid out as
+//! boxes of their own. Anything the inline path cannot place yet (positioned
+//! boxes, block children, form controls and other replaced elements,
+//! generated content) is rejected with [`IfcError::Unsupported`] rather than
+//! approximated.
 
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
@@ -17,14 +19,20 @@ use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoEle
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
-use shodo::node::{NodeId, OutOfFlowKind, TextSource};
+use shodo::node::{InlineEdges, NodeId, OutOfFlowKind, TextSource};
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Paragraph, ParagraphBuilder};
 
-/// Tags of replaced or form-control elements, which are atomic inlines.
-const ATOMIC_TAGS: &[&str] = &[
-    "img", "svg", "canvas", "video", "audio", "iframe", "object", "embed", "input", "button",
-    "select", "textarea", "math",
+/// Tags of replaced elements the inline engine sizes as atomic inlines.
+const ATOMIC_TAGS: &[&str] = &["img", "svg"];
+
+/// Replaced and form-control elements the inline engine does not size yet.
+/// They are refused whatever their `display` or `float`: an author rule can
+/// make a form control `inline-block`, and taffy would size it as an empty
+/// block.
+const UNSUPPORTED_REPLACED_TAGS: &[&str] = &[
+    "canvas", "video", "audio", "iframe", "object", "embed", "input", "button", "select",
+    "textarea", "math",
 ];
 
 /// A built paragraph together with the block's line options.
@@ -84,8 +92,21 @@ fn reject_generated_content(cascade: &CascadeResult, node: usize) -> Result<(), 
 /// content that belongs to the paragraph.
 pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Option<IfcBoxKind> {
     let cv = cascade.computed.get(id)?;
-    if doc.get_node(id)?.kind() == NodeKind::Element && cv.float != FloatValue::None {
+    let node = doc.get_node(id)?;
+    if node.kind() != NodeKind::Element {
+        return None;
+    }
+    if cv.float != FloatValue::None {
         return Some(IfcBoxKind::Float);
+    }
+    let inline_block = matches!(
+        cv.display,
+        DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
+    );
+    let replaced =
+        cv.display == DisplayValue::Inline && ATOMIC_TAGS.contains(&node.tag_name().unwrap_or(""));
+    if inline_block || replaced {
+        return Some(IfcBoxKind::Atomic);
     }
     None
 }
@@ -105,6 +126,17 @@ fn supported_float(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     }
     if cv.position != PositionValue::Static {
         return Err(unsupported("positioned floats are not placed yet"));
+    }
+    Ok(())
+}
+
+/// An atomic inline the inline engine can place: in normal position.
+fn supported_atomic(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
+    if cv.position != PositionValue::Static {
+        return Err(IfcError::Unsupported {
+            node,
+            reason: "positioned atomic inlines are not placed yet",
+        });
     }
     Ok(())
 }
@@ -191,6 +223,10 @@ pub(crate) fn project_ifc(
                     continue;
                 }
                 let unsupported = |reason: &'static str| IfcError::Unsupported { node: id, reason };
+                let tag = node.tag_name().unwrap_or_default();
+                if UNSUPPORTED_REPLACED_TAGS.contains(&tag) {
+                    return Err(unsupported("this replaced element is not sized yet"));
+                }
                 if cv.float != FloatValue::None {
                     supported_float(cv, id)?;
                     builder.push_out_of_flow(NodeId(id as u64), OutOfFlowKind::Float);
@@ -203,15 +239,27 @@ pub(crate) fn project_ifc(
                     }
                     continue;
                 }
+                if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
+                    supported_atomic(cv, id)?;
+                    let mut atomic_style = style::inline_style(cv, id)?;
+                    atomic_style.lang = language_of(doc, id);
+                    // shodo sizes an atomic from `AtomicSize` alone, margins
+                    // included; the edges are not read for atomics.
+                    builder.push_atomic(NodeId(id as u64), &atomic_style, InlineEdges::default());
+                    boxes.push(IfcBox {
+                        node: id,
+                        kind: IfcBoxKind::Atomic,
+                    });
+                    if let Some(error) = builder.error() {
+                        return Err(IfcError::Limit(error));
+                    }
+                    continue;
+                }
                 if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
                     return Err(unsupported("positioned inline boxes are not supported yet"));
                 }
                 if cv.display != DisplayValue::Inline {
                     return Err(unsupported("only inline-level boxes are projected"));
-                }
-                let tag = node.tag_name().unwrap_or_default();
-                if ATOMIC_TAGS.contains(&tag) {
-                    return Err(unsupported("atomic inlines are not measured yet"));
                 }
                 reject_generated_content(cascade, id)?;
                 let mut inline_style = style::inline_style(cv, id)?;
