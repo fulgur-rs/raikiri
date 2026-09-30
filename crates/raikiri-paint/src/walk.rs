@@ -4518,11 +4518,11 @@ fn paint_document_impl(
                 // other supported relative boxes retain the paint-side offset.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
-                // Text children read `inside_fixed || fixed_in_viewport` (the
-                // value pushed on their frame), so the lines use it too: a
-                // fixed root repeats on every page and its text is not clipped
-                // like flowed text.
-                let ifc_inside_fixed = inside_fixed || fixed_in_viewport;
+                // A paragraph inside a fixed box repeats on every page and is
+                // not clipped like flowed text, as the text branch below does.
+                // (A fixed block is never an ifc root itself: see the
+                // eligibility rules.)
+                let ifc_inside_fixed = inside_fixed;
                 // The page a text node belongs to is looked up on the text node
                 // itself; the block's own page value can differ (an absolutely
                 // positioned box named for a page), so ask as the first text

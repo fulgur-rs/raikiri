@@ -251,17 +251,33 @@ fn a_body_root_takes_the_body_left_margin_like_its_text() {
 }
 
 #[test]
-fn a_fixed_position_root_is_painted_like_fixed_text() {
-    // A fixed box repeats on every page, so its text is drawn even where its
-    // laid-out box does not meet the page. The A4 page is about 1122px tall;
-    // the root sits below it. verify in code: choose a `top` where the parley
-    // path still draws the text; the assertion below requires that.
-    let css = "position:fixed;top:1200px;left:0;width:100px;word-break:break-all";
-    let (off, on) = off_and_on(css, |doc, root| {
-        doc.append_text(root, "abcde");
-    });
-    assert!(!ink(&off).is_empty(), "the parley path draws fixed text");
-    assert_eq!(ink(&on), ink(&off));
+fn a_paragraph_inside_a_fixed_box_is_painted_like_fixed_text() {
+    // A fixed box repeats on every page, so text inside it is drawn even where
+    // its laid-out box does not meet the page. The A4 page is about 1122px
+    // tall; the box sits below it. A fixed block is not itself an ifc root
+    // (see the eligibility rules), so the paragraph is one level down.
+    let build = |doc: &mut Document, root: usize| {
+        let inner = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;word-break:break-all"),
+        );
+        doc.append_text(inner, "abcde");
+    };
+    let css = "position:fixed;top:1200px;left:0;width:100px";
+    let (mut off_doc, cascade, _) = paragraph(css, build);
+    lay_out(&mut off_doc, &cascade, false);
+    let off = ink(&painted(&off_doc, &cascade));
+
+    let (mut on_doc, cascade, root) = paragraph(css, build);
+    lay_out(&mut on_doc, &cascade, true);
+    let inner = on_doc.get_node(root).map(|n| n.children[0]).expect("inner");
+    assert!(on_doc.get_node(inner).is_some_and(|n| n.is_ifc_root()));
+    let on = ink(&painted(&on_doc, &cascade));
+
+    assert!(!off.is_empty(), "the parley path draws fixed text");
+    assert_eq!(on, off);
 }
 
 #[test]
