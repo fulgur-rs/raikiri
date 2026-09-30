@@ -9,10 +9,10 @@ use super::*;
 /// [`layout_single_page`] because callers must opt into this narrow
 /// post-pagination operation.
 ///
-/// Paragraphs laid out by the shodo inline engine are not refreshed here:
-/// their line breaks follow the box width taffy computed, not `max_advance`.
-/// A named page whose width differs from the first layout therefore keeps
-/// the lines from the last layout pass.
+/// Paragraphs laid out by the shodo inline engine are broken again at the
+/// width the parley path would re-shape their text at: the content width of
+/// the nearest ancestor with an authored width, otherwise `max_advance`. Their
+/// box geometry is left as laid out.
 pub fn relayout_text_for_width(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -47,6 +47,7 @@ pub fn relayout_text_for_width(
         &mut layout_cx,
         max_advance,
     );
+    crate::layout::ifc::flow::rebreak_roots(document, cascade, max_advance);
 }
 
 /// Correct the static position of grid abspos items whose placement is `auto`.

@@ -3197,3 +3197,76 @@ fn an_inline_block_baseline_follows_the_last_ifc_line() {
     // Three 10px lines: the last baseline is 20px + the 8px Ahem ascent.
     assert_eq!(output.baselines.first, Some(28.0));
 }
+
+// ── relayout for a page-specific width ───────────────────────
+
+#[test]
+fn relayout_keeps_an_authored_width_root_at_its_width() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:200px");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+    let height_before = doc.nodes[root].unrounded_layout.size.height;
+    // parley keeps the authored 200px whatever the page width is.
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, height_before);
+}
+
+#[test]
+fn relayout_follows_the_page_width_for_an_auto_width_root() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+    let height_before = doc.nodes[root].unrounded_layout.size.height;
+    // No authored width anywhere above: parley re-shapes at `max_advance`,
+    // narrower or wider than the width laid out at.
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    assert_eq!(stored_lines(&doc, root).lines.len(), 3);
+    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+    // Only the lines change; the taffy box is left as it was.
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, height_before);
+}
+
+#[test]
+fn relayout_matches_the_parley_line_count() {
+    use crate::layout::relayout_text_for_width;
+    for (css, max_advance) in [("", 50.0_f32), ("width:200px", 50.0), ("", 800.0)] {
+        let (mut off_doc, cascade, off_root) = ahem_paragraph("aaaa bbbb cccc", css);
+        layout_single_page(
+            &mut off_doc,
+            &cascade,
+            page_box_800x600(),
+            ahem_font_context(),
+        )
+        .expect("layout");
+        relayout_text_for_width(
+            &mut off_doc,
+            &cascade,
+            max_advance,
+            max_advance,
+            ahem_font_context(),
+        );
+        let text = off_doc.nodes[off_root].children[0];
+        let parley_lines = off_doc.nodes[text].text_layout().map(|layout| layout.len());
+
+        let (mut on_doc, cascade, on_root) = ahem_paragraph("aaaa bbbb cccc", css);
+        lay_out_with_switch(&mut on_doc, &cascade);
+        relayout_text_for_width(
+            &mut on_doc,
+            &cascade,
+            max_advance,
+            max_advance,
+            ahem_font_context(),
+        );
+        assert_eq!(
+            Some(stored_lines(&on_doc, on_root).lines.len()),
+            parley_lines,
+            "{css} / {max_advance}"
+        );
+    }
+}

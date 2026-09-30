@@ -369,3 +369,16 @@ fn a_decoration_originating_on_an_inline_element_covers_only_its_text() {
     assert_eq!(off.len(), 1, "the parley path underlines only the span");
     assert_eq!(on, off);
 }
+
+#[test]
+fn a_trailing_empty_line_paints_no_glyphs() {
+    let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
+        doc.append_text(root, "abcd");
+        doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    // The empty second line draws nothing and does not panic.
+    assert_eq!(glyphs(&scene).len(), 4);
+}
