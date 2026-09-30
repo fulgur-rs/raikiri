@@ -2841,7 +2841,12 @@ fn layout_pages_places_footnote_at_page_bottom_without_flow_footprint() {
 }
 
 #[test]
-fn layout_single_page_resolves_direct_absolute_auto_width_with_margin() {
+fn direct_absolute_auto_width_shrink_to_fit_empty_with_margin() {
+    // CSS 2.1 §10.3.7: an absolutely positioned box with `width:auto` and
+    // `left:auto` / `right:auto` shrink-wraps its content instead of filling
+    // the containing block. An empty box with 10px borders on each side has
+    // zero content width, so its border box is 20px wide regardless of the
+    // 20px right margin or the 100px containing width.
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -2868,10 +2873,94 @@ fn layout_single_page_resolves_direct_absolute_auto_width_with_margin() {
     page.height = 100.0;
     layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
 
-    // Content-box width = 100 - 20 (margin) - 20 (horizontal border),
-    // while the resulting border box is 80px wide.
+    // Empty content shrink-wraps to zero; the border box holds only borders.
     let layout = doc.nodes[abs].unrounded_layout;
-    assert!((layout.size.width - 80.0).abs() < 0.001);
+    assert!((layout.size.width - 20.0).abs() < 0.001);
+}
+
+#[test]
+fn direct_absolute_auto_width_shrink_to_fit_block_child() {
+    // CSS 2.1 §10.3.7 shrink-to-fit with a definite-content child: a
+    // direct-body absolute box containing a 100px block must be 100px wide
+    // in an 800px containing block, not stretched to the viewport width.
+    // This is the WPT line-break-anywhere green-square case (70k-pixel
+    // mismatch when the old fill override applied).
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let abs_pos = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:absolute; height:100px"),
+    );
+    let _child = doc.append_element(
+        Some(abs_pos),
+        "div",
+        Style::default(),
+        Some("width:100px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
+
+    let layout = doc.nodes[abs_pos].unrounded_layout;
+    assert!(
+        (layout.size.width - 100.0).abs() < 0.5,
+        "width:auto absolute must shrink-wrap its 100px child, got width={}",
+        layout.size.width
+    );
+}
+
+#[test]
+fn nested_absolute_auto_width_matches_direct_body_shrink() {
+    // The same 100px-child shrink must hold inside a relative wrapper: the
+    // nested path always used taffy directly, so direct-body must match it.
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:relative"),
+    );
+    let abs_pos = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("position:absolute; height:100px"),
+    );
+    let _child = doc.append_element(
+        Some(abs_pos),
+        "div",
+        Style::default(),
+        Some("width:100px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
+
+    let layout = doc.nodes[abs_pos].unrounded_layout;
+    assert!(
+        (layout.size.width - 100.0).abs() < 0.5,
+        "nested width:auto absolute must shrink-wrap its 100px child, got width={}",
+        layout.size.width
+    );
 }
 
 mod page_fragments_tests;

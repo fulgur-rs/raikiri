@@ -281,11 +281,9 @@ pub fn layout_single_page(
     // Step 4: force body.style.size to the page content box, not the full paper size.
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
-    // Taffy's static-position absolute fallback does not account for a
-    // resolved horizontal margin when width/left/right are all auto. Resolve
-    // that narrow case before compute so descendants are shaped against the
-    // same border-box width that the containing-block equation requires.
-    resolve_direct_absolute_auto_widths(document, cascade, body_id, content_width);
+    // CSS 2.1 §10.3.7 absolute width:auto shrink-to-fit needs no pre-pass:
+    // taffy already shrink-wraps direct-body and nested absolute boxes alike.
+    // See the §10.3.7 note on the layout helpers for the removed fill override.
 
     // Step 5: taffy compute
     compute_root_layout(
