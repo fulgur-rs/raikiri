@@ -137,6 +137,23 @@ impl<'a> ElementRef<'a> {
     fn id(&self) -> Option<&str> {
         self.attr("id").filter(|s| !s.is_empty())
     }
+
+    /// Namespace-qualified attribute lookup by namespace URI and local name.
+    ///
+    /// DOM `getAttributeNS` semantics: exact match, no ASCII case folding.
+    /// For example SVG `xlink:href` is read as `("http://www.w3.org/1999/xlink"`,
+    /// `"href")`. Presence is tracked independently of value, mirroring
+    /// [`Self::attr`]. The separate `style` slot is null-namespace only.
+    fn attr_ns(&self, namespace: &str, local: &str) -> Option<&str> {
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => e
+                .attributes
+                .iter()
+                .find(|a| a.namespace.as_deref() == Some(namespace) && a.local == local)
+                .map(|a| a.value.as_str()),
+            _ => None,
+        }
+    }
 }
 
 impl raikiri_traits::Dom for Document {
@@ -221,6 +238,10 @@ impl<'a> raikiri_traits::Element for ElementRef<'a> {
 
     fn attr(&self, local: &str) -> Option<&str> {
         self.attr(local)
+    }
+
+    fn attr_ns(&self, namespace: &str, local: &str) -> Option<&str> {
+        self.attr_ns(namespace, local)
     }
 
     fn id(&self) -> Option<&str> {

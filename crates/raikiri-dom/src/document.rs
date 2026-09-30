@@ -93,6 +93,164 @@ fn push_xml_escaped(output: &mut String, value: &str, attribute: bool) {
     }
 }
 
+/// Strip foreign calc handles from an externally supplied style.
+///
+/// With the `calc` feature enabled, taffy length types hold a raw pointer
+/// through a compact tagged representation. The safe constructor for those
+/// handles takes a plain pointer, so any caller can build a style that
+/// points outside the document arena. Storing such a style would break the
+/// ownership premise behind the `Send` impl, which requires every calc
+/// pointer in the arena to point into the same document's stable payload
+/// storage. The layout bridge rebuilds owned handles from computed values
+/// before each layout pass, so discarding foreign handles here changes no
+/// valid behavior: styles without calc pass through untouched.
+///
+/// Each calc-capable scalar that holds a foreign handle is replaced with a
+/// safe keyword fallback. `Dimension` and `LengthPercentageAuto` fall back
+/// to `auto`, `LengthPercentage` to zero length, and grid track functions
+/// to `auto`. Grid template repetitions keep their count and line names
+/// and only have their track functions sanitized.
+///
+/// The exhaustive field check below pins coverage against future taffy
+/// fields. If taffy adds a style field, this function fails to compile
+/// until the new field is classified here.
+fn sanitize_external_style(mut style: Style) -> Style {
+    fn sanitize_dimension(value: taffy::Dimension) -> taffy::Dimension {
+        if value.into_raw().is_calc() {
+            taffy::Dimension::auto()
+        } else {
+            value
+        }
+    }
+    fn sanitize_length_percentage_auto(
+        value: taffy::LengthPercentageAuto,
+    ) -> taffy::LengthPercentageAuto {
+        if value.into_raw().is_calc() {
+            taffy::LengthPercentageAuto::auto()
+        } else {
+            value
+        }
+    }
+    fn sanitize_length_percentage(value: taffy::LengthPercentage) -> taffy::LengthPercentage {
+        if value.into_raw().is_calc() {
+            taffy::LengthPercentage::length(0.0)
+        } else {
+            value
+        }
+    }
+    fn sanitize_track(value: taffy::TrackSizingFunction) -> taffy::TrackSizingFunction {
+        let min = if value.min.into_raw().is_calc() {
+            taffy::MinTrackSizingFunction::auto()
+        } else {
+            value.min
+        };
+        let max = if value.max.into_raw().is_calc() {
+            taffy::MaxTrackSizingFunction::auto()
+        } else {
+            value.max
+        };
+        taffy::TrackSizingFunction { min, max }
+    }
+
+    {
+        let Style {
+            dummy: _,
+            display: _,
+            item_is_table: _,
+            item_is_replaced: _,
+            box_sizing: _,
+            direction: _,
+            overflow: _,
+            scrollbar_width: _,
+            contain: _,
+            float: _,
+            clear: _,
+            position: _,
+            inset: _,
+            size: _,
+            min_size: _,
+            max_size: _,
+            aspect_ratio: _,
+            margin: _,
+            padding: _,
+            border: _,
+            align_items: _,
+            align_self: _,
+            justify_items: _,
+            justify_self: _,
+            align_content: _,
+            justify_content: _,
+            gap: _,
+            text_align: _,
+            flex_direction: _,
+            flex_wrap: _,
+            flex_basis: _,
+            flex_grow: _,
+            flex_shrink: _,
+            grid_template_rows: _,
+            grid_template_columns: _,
+            grid_auto_rows: _,
+            grid_auto_columns: _,
+            grid_auto_flow: _,
+            grid_template_areas: _,
+            grid_template_column_names: _,
+            grid_template_row_names: _,
+            grid_row: _,
+            grid_column: _,
+        } = &style;
+    }
+
+    style.size.width = sanitize_dimension(style.size.width);
+    style.size.height = sanitize_dimension(style.size.height);
+    style.min_size.width = sanitize_length_percentage_auto(style.min_size.width);
+    style.min_size.height = sanitize_length_percentage_auto(style.min_size.height);
+    style.max_size.width = sanitize_length_percentage_auto(style.max_size.width);
+    style.max_size.height = sanitize_length_percentage_auto(style.max_size.height);
+    style.inset.left = sanitize_length_percentage_auto(style.inset.left);
+    style.inset.right = sanitize_length_percentage_auto(style.inset.right);
+    style.inset.top = sanitize_length_percentage_auto(style.inset.top);
+    style.inset.bottom = sanitize_length_percentage_auto(style.inset.bottom);
+    style.margin.left = sanitize_length_percentage_auto(style.margin.left);
+    style.margin.right = sanitize_length_percentage_auto(style.margin.right);
+    style.margin.top = sanitize_length_percentage_auto(style.margin.top);
+    style.margin.bottom = sanitize_length_percentage_auto(style.margin.bottom);
+    style.padding.left = sanitize_length_percentage(style.padding.left);
+    style.padding.right = sanitize_length_percentage(style.padding.right);
+    style.padding.top = sanitize_length_percentage(style.padding.top);
+    style.padding.bottom = sanitize_length_percentage(style.padding.bottom);
+    style.border.left = sanitize_length_percentage(style.border.left);
+    style.border.right = sanitize_length_percentage(style.border.right);
+    style.border.top = sanitize_length_percentage(style.border.top);
+    style.border.bottom = sanitize_length_percentage(style.border.bottom);
+    style.gap.width = sanitize_length_percentage(style.gap.width);
+    style.gap.height = sanitize_length_percentage(style.gap.height);
+    style.flex_basis = sanitize_dimension(style.flex_basis);
+    for component in style
+        .grid_template_rows
+        .iter_mut()
+        .chain(style.grid_template_columns.iter_mut())
+    {
+        match component {
+            taffy::GridTemplateComponent::Single(track) => {
+                *track = sanitize_track(*track);
+            }
+            taffy::GridTemplateComponent::Repeat(repetition) => {
+                for track in repetition.tracks.iter_mut() {
+                    *track = sanitize_track(*track);
+                }
+            }
+        }
+    }
+    for track in style
+        .grid_auto_rows
+        .iter_mut()
+        .chain(style.grid_auto_columns.iter_mut())
+    {
+        *track = sanitize_track(*track);
+    }
+    style
+}
+
 fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
     namespace.is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI)
         && matches!(
@@ -115,6 +273,7 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
 /// element at index 1 or later, as a child of root index 0.
 #[derive(Debug, Clone)]
 pub struct Document {
+    pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
@@ -210,6 +369,7 @@ impl Document {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
         Self {
+            page_projection: crate::page_projection::PageProjection::default(),
             nodes,
             root: 0,
             layout_dirty: false,
@@ -253,6 +413,12 @@ impl Document {
     /// need no explicit call. Direct cascade callers must synchronize explicitly.
     ///
     /// Returns: the arena index of the added node.
+    ///
+    /// Foreign calc handles in `style` are replaced with safe keyword
+    /// fallbacks before storage, so the arena never holds a pointer it
+    /// does not own. Styles without calc pass through untouched, and the
+    /// layout bridge rebuilds owned calc handles from computed values
+    /// before each layout pass.
     pub fn append_element(
         &mut self,
         parent: Option<usize>,
@@ -260,6 +426,7 @@ impl Document {
         style: Style,
         inline_style: Option<impl Into<SmolStr>>,
     ) -> usize {
+        let style = sanitize_external_style(style);
         let id = self.nodes.len();
         self.nodes.push(Node::new_element(
             tag.into(),
@@ -268,6 +435,7 @@ impl Document {
         ));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
+            self.nodes[id].parent = Some(p);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -282,6 +450,7 @@ impl Document {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(text.into()));
         self.nodes[parent].children.push(id);
+        self.nodes[id].parent = Some(parent);
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         id
@@ -331,6 +500,7 @@ impl Document {
         self.nodes.push(Node::new_comment(text.into()));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
+            self.nodes[id].parent = Some(p);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -359,6 +529,7 @@ impl Document {
             .push(Node::new_processing_instruction(target.into(), data.into()));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
+            self.nodes[id].parent = Some(p);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -407,9 +578,17 @@ impl Document {
             // Follow the drain + extend pattern of reparent_children. The fragment
             // itself is absent from `parent.children` (see contract test (c)).
             let moved: Vec<usize> = self.nodes[child].children.drain(..).collect();
-            self.nodes[parent].children.extend(moved);
+            self.nodes[parent].children.extend(moved.iter().copied());
+            for moved_child in moved {
+                if let Some(node) = self.nodes.get_mut(moved_child) {
+                    node.parent = Some(parent);
+                }
+            }
         } else {
             self.nodes[parent].children.push(child);
+            if let Some(node) = self.nodes.get_mut(child) {
+                node.parent = Some(parent);
+            }
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -477,7 +656,12 @@ impl Document {
             });
             // Vec::splice(pos..pos, moved) inserts at pos in one pass without
             // removing anything. It completes with O(n+k) allocation.
-            kids.splice(pos..pos, moved);
+            kids.splice(pos..pos, moved.iter().copied());
+            for moved_child in moved {
+                if let Some(node) = self.nodes.get_mut(moved_child) {
+                    node.parent = Some(parent);
+                }
+            }
         } else {
             let kids = &mut self.nodes[parent].children;
             if let Some(pos) = kids.iter().position(|&c| c == before) {
@@ -492,19 +676,23 @@ impl Document {
                 );
                 kids.push(child);
             }
+            if let Some(node) = self.nodes.get_mut(child) {
+                node.parent = Some(parent);
+            }
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
     }
 
     /// Return the arena index of the parent holding `child`. Return `None` for
-    /// the root (index 0) or an unattached node. raikiri-dom stores no parent
-    /// pointer because TreeSink calls this infrequently; lookup is O(N).
+    /// the root (index 0), an unattached node, or an out-of-range `child`.
+    ///
+    /// O(1) via the per-node parent pointer kept in sync by every tree
+    /// mutation primitive. The pointer tracks only `children` edges, not a
+    /// `<template>` element's `template_contents` slot (that host link is not
+    /// a parent, so a contents fragment root still reports `None`).
     pub fn parent_of(&self, child: usize) -> Option<usize> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .find_map(|(i, n)| n.children.contains(&child).then_some(i))
+        self.nodes.get(child)?.parent
     }
 
     /// Remove `child` from its current parent and return that parent's index.
@@ -517,6 +705,9 @@ impl Document {
         if let Some(pos) = kids.iter().position(|&c| c == child) {
             kids.remove(pos);
         }
+        if let Some(node) = self.nodes.get_mut(child) {
+            node.parent = None;
+        }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         Some(parent)
@@ -526,7 +717,12 @@ impl Document {
     /// `from` empty. Primitive for html5ever's `TreeSink::reparent_children`.
     pub fn reparent_children(&mut self, from: usize, to: usize) {
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
-        self.nodes[to].children.extend(moved);
+        self.nodes[to].children.extend(moved.iter().copied());
+        for moved_child in moved {
+            if let Some(node) = self.nodes.get_mut(moved_child) {
+                node.parent = Some(to);
+            }
+        }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
     }
@@ -556,6 +752,7 @@ impl Document {
         ns: Option<SmolStr>,
         prefix: Option<SmolStr>,
     ) {
+        self.page_projection.clear();
         let (namespace_changed, affects_tree_flags, affects_layout) = {
             let e = self.nodes[id]
                 .data
@@ -593,6 +790,7 @@ impl Document {
     ///
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
+        self.page_projection.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -623,6 +821,7 @@ impl Document {
             return Err("invalid namespace-qualified attribute name".to_owned());
         }
         let value = value.into();
+        self.page_projection.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -653,6 +852,7 @@ impl Document {
     ///
     /// This updates attribute metadata only; like [`Document::set_element_attributes`],
     /// it does not invalidate layout caches or mark tree membership dirty.
+    /// Stored page placements and links are cleared.
     ///
     /// Returns an error when `local` is not an XML name. HTML-namespace element
     /// names are ASCII-lowercased; foreign-content names preserve their case.
@@ -668,6 +868,7 @@ impl Document {
         if !is_valid_xml_name(local.as_str()) {
             return Err(format!("invalid attribute name: {local}"));
         }
+        self.page_projection.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("set_element_attribute called on non-Element");
         };
@@ -695,31 +896,56 @@ impl Document {
             return Ok(());
         }
 
-        let element = self.nodes[id]
-            .data
-            .as_element_mut()
-            .expect("set_element_attribute called on non-Element");
-        let mut found = false;
-        element.attributes.retain_mut(|attr| {
-            if attr.namespace.is_none() && attr.local == local {
-                if found {
-                    false
+        // Whether this write resizes a canvas bitmap. Computed before the
+        // exclusive borrow below so the immutable canvas check does not
+        // conflict with it.
+        let is_canvas_size_attr =
+            matches!(local.as_str(), "width" | "height") && self.is_canvas_element(id);
+        {
+            let element = self.nodes[id]
+                .data
+                .as_element_mut()
+                .expect("set_element_attribute called on non-Element");
+            let mut found = false;
+            element.attributes.retain_mut(|attr| {
+                if attr.namespace.is_none() && attr.local == local {
+                    if found {
+                        false
+                    } else {
+                        found = true;
+                        attr.value = value.clone();
+                        true
+                    }
                 } else {
-                    found = true;
-                    attr.value = value.clone();
                     true
                 }
-            } else {
-                true
-            }
-        });
-        if !found {
-            element.attributes.push(Attr {
-                namespace: None,
-                prefix: None,
-                local,
-                value,
             });
+            if !found {
+                element.attributes.push(Attr {
+                    namespace: None,
+                    prefix: None,
+                    local: local.clone(),
+                    value: value.clone(),
+                });
+            }
+        }
+        // A canvas width/height change resizes and clears the bitmap (HTML
+        // Standard §4.12.5 always clears, even when the size is unchanged)
+        // and changes the intrinsic size, so layout caches must be
+        // invalidated the same way image resolution does. Huge bitmaps are
+        // cleared lazily (None) to avoid allocating gigabytes for absurd
+        // content-attribute values; the next paint re-creates them on demand.
+        if is_canvas_size_attr {
+            let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
+            let area = u64::from(width) * u64::from(height);
+            if area <= 10_000_000 {
+                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            } else if let Some(node) = self.nodes.get_mut(id)
+                && let NodeData::Element(element) = &mut node.data
+            {
+                element.canvas_bitmap = None;
+            }
+            self.invalidate_layout_cache();
         }
         Ok(())
     }
@@ -731,6 +957,7 @@ impl Document {
     ///
     /// This updates attribute metadata only; it does not invalidate layout
     /// caches or mark tree membership dirty.
+    /// Stored page placements and links are cleared.
     ///
     /// Returns an error when `local` is not an XML name. HTML-namespace element
     /// names are ASCII-lowercased; foreign-content names preserve their case.
@@ -744,6 +971,7 @@ impl Document {
         if !is_valid_xml_name(local) {
             return Err(format!("invalid attribute name: {local}"));
         }
+        self.page_projection.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("remove_element_attribute called on non-Element");
         };
@@ -756,14 +984,28 @@ impl Document {
         } else {
             local.to_owned()
         };
-        let element = self.nodes[id]
-            .data
-            .as_element_mut()
-            .expect("remove_element_attribute called on non-Element");
-        if local == "style" {
-            // Remove any legacy/misrouted list entries as well as the actual
-            // inline-style value, so `attr("style")` has one source of truth.
-            let legacy_value = element
+        let is_canvas_size_attr =
+            matches!(local.as_str(), "width" | "height") && self.is_canvas_element(id);
+        let first_value = {
+            let element = self.nodes[id]
+                .data
+                .as_element_mut()
+                .expect("remove_element_attribute called on non-Element");
+            if local == "style" {
+                // Remove any legacy/misrouted list entries as well as the actual
+                // inline-style value, so `attr("style")` has one source of truth.
+                let legacy_value = element
+                    .attributes
+                    .iter()
+                    .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
+                    .map(|attr| attr.value.clone());
+                element
+                    .attributes
+                    .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
+                return Ok(element.inline_style.take().or(legacy_value));
+            }
+
+            let first_value = element
                 .attributes
                 .iter()
                 .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
@@ -771,17 +1013,24 @@ impl Document {
             element
                 .attributes
                 .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
-            return Ok(element.inline_style.take().or(legacy_value));
+            first_value
+        };
+        // Removing a canvas width/height attribute reverts to the default
+        // size (HTML Standard §4.12.5), clearing the bitmap and changing the
+        // intrinsic size. Only when the attribute actually existed: removing
+        // a missing attribute is a no-op. Huge bitmaps clear lazily, as above.
+        if is_canvas_size_attr && first_value.is_some() {
+            let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
+            let area = u64::from(width) * u64::from(height);
+            if area <= 10_000_000 {
+                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            } else if let Some(node) = self.nodes.get_mut(id)
+                && let NodeData::Element(element) = &mut node.data
+            {
+                element.canvas_bitmap = None;
+            }
+            self.invalidate_layout_cache();
         }
-
-        let first_value = element
-            .attributes
-            .iter()
-            .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
-            .map(|attr| attr.value.clone());
-        element
-            .attributes
-            .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
         Ok(first_value)
     }
 
@@ -819,11 +1068,21 @@ impl Document {
             return Err(format!("textContent target index {id} is not an Element"));
         }
         let text = text.into();
-        self.nodes[id].children.clear();
+        let removed: Vec<usize> = std::mem::take(&mut self.nodes[id].children);
+        for old_child in removed {
+            if let Some(node) = self.nodes.get_mut(old_child)
+                && node.parent == Some(id)
+            {
+                node.parent = None;
+            }
+        }
         if !text.is_empty() {
             let text_id = self.nodes.len();
             self.nodes.push(Node::new_text(text));
             self.nodes[id].children.push(text_id);
+            if let Some(node) = self.nodes.get_mut(text_id) {
+                node.parent = Some(id);
+            }
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -843,6 +1102,11 @@ impl Document {
     /// Existing children are detached together by clearing their parent's
     /// child list. Tree changes mark layout caches and flat-tree membership
     /// dirty in the usual way. The source document is not modified.
+    ///
+    /// Copied styles pass through the same foreign calc sanitization as
+    /// `append_element`, so the target never takes ownership of the source
+    /// arena's calc pointers. The layout bridge rebuilds owned calc handles
+    /// from computed values before the next layout pass.
     pub fn replace_children_from(
         &mut self,
         target_parent: usize,
@@ -855,7 +1119,14 @@ impl Document {
         if !self.nodes[target_parent].children.is_empty() {
             // The parent is already known. Avoid a whole-arena parent lookup
             // and shifting the remaining child IDs for every removed child.
-            self.nodes[target_parent].children.clear();
+            let removed: Vec<usize> = std::mem::take(&mut self.nodes[target_parent].children);
+            for old_child in removed {
+                if let Some(node) = self.nodes.get_mut(old_child)
+                    && node.parent == Some(target_parent)
+                {
+                    node.parent = None;
+                }
+            }
             self.invalidate_layout_cache();
             self.flags_dirty = true;
         }
@@ -1262,6 +1533,7 @@ impl Document {
     ///
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
+        self.page_projection.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -1285,12 +1557,22 @@ impl Document {
     /// to `true` on topology changes, like the other mutation primitives.
     pub fn retain_children(&mut self, mut predicate: impl FnMut(usize) -> bool) {
         let mut any_removed = false;
-        for node in &mut self.nodes {
-            let before = node.children.len();
-            node.children.retain(|&c| predicate(c));
-            if node.children.len() != before {
-                any_removed = true;
+        for parent_id in 0..self.nodes.len() {
+            let children = std::mem::take(&mut self.nodes[parent_id].children);
+            let mut kept = Vec::with_capacity(children.len());
+            for child in children {
+                if predicate(child) {
+                    kept.push(child);
+                } else {
+                    any_removed = true;
+                    if let Some(node) = self.nodes.get_mut(child)
+                        && node.parent == Some(parent_id)
+                    {
+                        node.parent = None;
+                    }
+                }
             }
+            self.nodes[parent_id].children = kept;
         }
         if any_removed {
             self.invalidate_layout_cache();
@@ -1436,6 +1718,311 @@ impl Document {
             name.to_owned()
         };
         node.attribute(&local)
+    }
+
+    /// Read a namespace-qualified attribute by namespace URI and local name.
+    ///
+    /// DOM `getAttributeNS` semantics: matching is exact, with no ASCII case
+    /// folding, on both foreign and HTML-namespace elements. For example SVG
+    /// `xlink:href` is `namespace = "http://www.w3.org/1999/xlink"`,
+    /// `local = "href"`. Returns `None` for out-of-range ids, non-elements,
+    /// and absent attributes. Renderer-neutral: the value is a plain string
+    /// slice; see [`crate::node::Node::attribute_ns`] for the node-level
+    /// accessor and [`Document::serialize_svg_subtree`] for whole-subtree XML
+    /// source reconstruction.
+    pub fn element_attribute_ns(&self, id: usize, namespace: &str, local: &str) -> Option<&str> {
+        let node = self.nodes.get(id)?;
+        node.attribute_ns(namespace, local)
+    }
+
+    /// Whether `id` is an HTML `<canvas>` element (HTML Standard §4.12.5).
+    ///
+    /// Matches the HTML namespace (the parser's `None` default and the
+    /// explicit XHTML URI) with an ASCII case-insensitive tag comparison.
+    /// Foreign-namespace `canvas` elements are not canvases.
+    pub fn is_canvas_element(&self, id: usize) -> bool {
+        let Some(node) = self.nodes.get(id) else {
+            return false;
+        };
+        let NodeData::Element(element) = &node.data else {
+            return false;
+        };
+        if !element.tag_name.eq_ignore_ascii_case("canvas") {
+            return false;
+        }
+        element
+            .namespace
+            .as_deref()
+            .is_none_or(|ns| ns == XHTML_NAMESPACE_URI)
+    }
+
+    /// Parse one canvas width/height content attribute (HTML Standard §4.12.5).
+    ///
+    /// Uses the rules for parsing non-negative integers: surrounding ASCII
+    /// whitespace is ignored, an optional leading `+` is stripped, and the
+    /// remainder must be ASCII digits. Returns `None` when parsing fails so
+    /// the caller falls back to the default (300 for width, 150 for height).
+    fn parse_canvas_dimension(value: &str) -> Option<u32> {
+        let trimmed = value.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r'));
+        let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        // Strip leading zeros to keep `u32` parsing bounded; overlong digit
+        // strings saturate rather than wrap.
+        let digits = digits.trim_start_matches('0');
+        if digits.is_empty() {
+            return Some(0);
+        }
+        if digits.len() > 10 {
+            return Some(u32::MAX);
+        }
+        digits
+            .parse::<u64>()
+            .ok()
+            .map(|v| v.min(u64::from(u32::MAX)) as u32)
+    }
+
+    /// Current width/height of an HTML `<canvas>` element (HTML Standard §4.12.5).
+    ///
+    /// Missing or unparsable attributes fall back to 300×150. Returns `None`
+    /// for non-canvas nodes.
+    pub fn canvas_size(&self, id: usize) -> Option<(u32, u32)> {
+        if !self.is_canvas_element(id) {
+            return None;
+        }
+        let node = self.nodes.get(id)?;
+        let width = node
+            .attribute("width")
+            .and_then(Self::parse_canvas_dimension)
+            .unwrap_or(300);
+        let height = node
+            .attribute("height")
+            .and_then(Self::parse_canvas_dimension)
+            .unwrap_or(150);
+        Some((width, height))
+    }
+
+    /// Borrow a canvas bitmap, if one has been painted.
+    pub fn canvas_bitmap_ref(&self, id: usize) -> Option<&crate::node::CanvasBitmap> {
+        let node = self.nodes.get(id)?;
+        let NodeData::Element(element) = &node.data else {
+            return None;
+        };
+        element.canvas_bitmap.as_ref()
+    }
+
+    /// Clone a canvas bitmap, if one has been painted.
+    pub fn canvas_bitmap(&self, id: usize) -> Option<crate::node::CanvasBitmap> {
+        self.canvas_bitmap_ref(id).cloned()
+    }
+
+    /// Store a canvas bitmap, replacing any previous one.
+    ///
+    /// Bitmap storage never affects layout: the intrinsic size comes from
+    /// the width/height attributes (see [`crate::image_resolve`]), not from
+    /// this bitmap. Callers that changed the size must have updated the
+    /// attributes first (see [`Document::set_element_attribute`], which
+    /// clears the bitmap automatically).
+    pub fn set_canvas_bitmap(&mut self, id: usize, bitmap: crate::node::CanvasBitmap) {
+        if let Some(node) = self.nodes.get_mut(id)
+            && let NodeData::Element(element) = &mut node.data
+        {
+            element.canvas_bitmap = Some(bitmap);
+        }
+    }
+
+    /// Ensure a bitmap matching the current width/height attributes exists,
+    /// creating a transparent-black one when missing or size-mismatched.
+    ///
+    /// Returns the current `(width, height)`, or `None` for non-canvas nodes.
+    pub fn ensure_canvas_bitmap(&mut self, id: usize) -> Option<(u32, u32)> {
+        let (width, height) = self.canvas_size(id)?;
+        let needs_reset = self
+            .canvas_bitmap_ref(id)
+            .is_none_or(|bitmap| bitmap.width != width || bitmap.height != height);
+        if needs_reset {
+            self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+        }
+        Some((width, height))
+    }
+
+    /// Fill `x, y, w, h` (in bitmap px, clipped to the bitmap) with `rgba`.
+    ///
+    /// Opaque fills overwrite; translucent fills composite source-over
+    /// against the existing pixels. Returns `false` for non-canvas nodes.
+    pub fn canvas_fill_rect(
+        &mut self,
+        id: usize,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        rgba: [u8; 4],
+    ) -> bool {
+        if self.ensure_canvas_bitmap(id).is_none() {
+            return false;
+        }
+        let Some(node) = self.nodes.get_mut(id) else {
+            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
+        };
+        let NodeData::Element(element) = &mut node.data else {
+            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
+        };
+        let Some(bitmap) = element.canvas_bitmap.as_mut() else {
+            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
+        };
+        if bitmap.width == 0 || bitmap.height == 0 {
+            return true;
+        }
+        let bw = bitmap.width as i64;
+        let bh = bitmap.height as i64;
+        let x0 = (i64::from(x)).max(0).min(bw) as u32;
+        let y0 = (i64::from(y)).max(0).min(bh) as u32;
+        let x1 = (i64::from(x) + i64::from(w)).max(0).min(bw) as u32;
+        let y1 = (i64::from(y) + i64::from(h)).max(0).min(bh) as u32;
+        if x0 >= x1 || y0 >= y1 {
+            return true;
+        }
+        let (sr, sg, sb, sa) = (
+            u16::from(rgba[0]),
+            u16::from(rgba[1]),
+            u16::from(rgba[2]),
+            u16::from(rgba[3]),
+        );
+        if sa == 255 {
+            for row in y0..y1 {
+                let base = (row * bitmap.width + x0) as usize * 4;
+                let count = (x1 - x0) as usize;
+                for i in 0..count {
+                    let off = base + i * 4;
+                    bitmap.rgba[off] = rgba[0];
+                    bitmap.rgba[off + 1] = rgba[1];
+                    bitmap.rgba[off + 2] = rgba[2];
+                    bitmap.rgba[off + 3] = rgba[3];
+                }
+            }
+            return true;
+        }
+        if sa == 0 {
+            return true;
+        }
+        let inv = 255 - sa;
+        for row in y0..y1 {
+            for col in x0..x1 {
+                let off = ((row * bitmap.width + col) as usize) * 4;
+                let dr = u16::from(bitmap.rgba[off]);
+                let dg = u16::from(bitmap.rgba[off + 1]);
+                let db = u16::from(bitmap.rgba[off + 2]);
+                let da = u16::from(bitmap.rgba[off + 3]);
+                // Source-over with non-premultiplied bytes, rounded.
+                bitmap.rgba[off] = ((sr * sa + dr * inv + 127) / 255).min(255) as u8;
+                bitmap.rgba[off + 1] = ((sg * sa + dg * inv + 127) / 255).min(255) as u8;
+                bitmap.rgba[off + 2] = ((sb * sa + db * inv + 127) / 255).min(255) as u8;
+                bitmap.rgba[off + 3] = ((sa * 255 + da * inv + 127) / 255).min(255) as u8;
+            }
+        }
+        true
+    }
+
+    /// Clear `x, y, w, h` (in bitmap px, clipped) to transparent black.
+    ///
+    /// Unlike [`Document::canvas_fill_rect`] with a transparent color (which
+    /// composites nothing), this overwrites the pixels outright per HTML
+    /// Standard §4.12.5 `clearRect`. Returns `false` for non-canvas nodes.
+    pub fn canvas_clear_rect(&mut self, id: usize, x: i32, y: i32, w: i32, h: i32) -> bool {
+        if self.ensure_canvas_bitmap(id).is_none() {
+            return false;
+        }
+        let Some(node) = self.nodes.get_mut(id) else {
+            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
+        };
+        let NodeData::Element(element) = &mut node.data else {
+            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
+        };
+        let Some(bitmap) = element.canvas_bitmap.as_mut() else {
+            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
+        };
+        if bitmap.width == 0 || bitmap.height == 0 {
+            return true;
+        }
+        let bw = bitmap.width as i64;
+        let bh = bitmap.height as i64;
+        let x0 = (i64::from(x)).max(0).min(bw) as u32;
+        let y0 = (i64::from(y)).max(0).min(bh) as u32;
+        let x1 = (i64::from(x) + i64::from(w)).max(0).min(bw) as u32;
+        let y1 = (i64::from(y) + i64::from(h)).max(0).min(bh) as u32;
+        if x0 >= x1 || y0 >= y1 {
+            return true;
+        }
+        for row in y0..y1 {
+            let base = (row * bitmap.width + x0) as usize * 4;
+            let count = (x1 - x0) as usize;
+            for i in 0..count {
+                let off = base + i * 4;
+                bitmap.rgba[off] = 0;
+                bitmap.rgba[off + 1] = 0;
+                bitmap.rgba[off + 2] = 0;
+                bitmap.rgba[off + 3] = 0;
+            }
+        }
+        true
+    }
+
+    /// Canvas bitmaps in tree order, for harness sidecar transfer.
+    ///
+    /// The live JS document holds bitmaps that HTML serialization drops
+    /// (a canvas bitmap is not part of `innerHTML`). Reftest preparation
+    /// collects them here in tree order and the paint-side injection
+    /// restores them onto the reparsed document in the same order, so the
+    /// Nth live canvas maps to the Nth parsed canvas without polluting
+    /// script-visible attributes.
+    pub fn canvases_in_tree_order(&self) -> Vec<crate::node::CanvasBitmap> {
+        let mut out = Vec::new();
+        let mut stack: Vec<usize> = self
+            .nodes
+            .get(self.root_index())
+            .map(|root| root.children.iter().rev().copied().collect())
+            .unwrap_or_default();
+        while let Some(index) = stack.pop() {
+            let Some(node) = self.nodes.get(index) else {
+                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
+            };
+            if self.is_canvas_element(index) {
+                let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
+                let bitmap = self
+                    .canvas_bitmap(index)
+                    .unwrap_or_else(|| crate::node::CanvasBitmap::cleared(width, height));
+                out.push(bitmap);
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        out
+    }
+
+    /// Restore bitmaps collected by [`Document::canvases_in_tree_order`].
+    ///
+    /// Extra bitmaps are ignored; missing ones leave the parsed canvas
+    /// blank (transparent). Used by the reftest paint path after reparsing.
+    pub fn set_canvases_in_tree_order(&mut self, bitmaps: &[crate::node::CanvasBitmap]) {
+        let mut ids = Vec::new();
+        let mut stack: Vec<usize> = self
+            .nodes
+            .get(self.root_index())
+            .map(|root| root.children.iter().rev().copied().collect())
+            .unwrap_or_default();
+        while let Some(index) = stack.pop() {
+            let Some(node) = self.nodes.get(index) else {
+                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
+            };
+            if self.is_canvas_element(index) {
+                ids.push(index);
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        for (id, bitmap) in ids.iter().zip(bitmaps.iter()) {
+            self.set_canvas_bitmap(*id, bitmap.clone());
+        }
     }
 
     /// Serialize an inline SVG element and its subtree as a standalone XML
@@ -1621,6 +2208,7 @@ impl Document {
     /// `compute_child_layout` (via taffy_impl) clears it lazily. Each mutation
     /// costs O(1); each layout batch incurs amortized O(N) clearing.
     pub(crate) fn invalidate_layout_cache(&mut self) {
+        self.page_projection.clear();
         self.layout_dirty = true;
     }
 

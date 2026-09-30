@@ -405,7 +405,7 @@ fn font_context_new_cost_is_reasonable() {
 /// `apply_computed_to_style`.
 ///
 /// The fixture is a **non-body element** (`<p>`) — because `<body>`'s size will be clobbered by the
-/// subsequent `apply_page_box_to_body`.
+/// subsequent `apply_page_content_box_to_body`.
 fn guarded_style_for(inline: &str) -> taffy::Style {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();

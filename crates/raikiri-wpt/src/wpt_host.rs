@@ -3,8 +3,11 @@
 //! runtime that only calls `flush` when a DOM mutation happened since the
 //! last one, right before a layout-dependent read.
 //!
-//! External scripts are read from the WPT checkout on disk; nothing outside
-//! the checkout root is ever read (see [`WptDocumentHost::script_source`]).
+//! External scripts are read from the WPT checkout on disk, except for two
+//! embedded helpers (the crate's own report script and the verbatim upstream
+//! reftest-wait helper for the unmaterialized `/common` root); nothing else
+//! outside the checkout root is ever read (see
+//! [`WptDocumentHost::script_source`]).
 
 use std::any::Any;
 use std::path::{Component, Path, PathBuf};
@@ -16,6 +19,54 @@ use crate::reftest::{
     LiveWptSetup, live_wpt_stylesheet_sources_in_subtree, parse_wpt_inner_html_fragment,
     update_live_wpt_stylesheet_sources,
 };
+
+/// The shared `/common/reftest-wait.js` helper, verbatim upstream at the
+/// pinned WPT SHA (`scripts/wpt/pinned_sha.txt`). It defines
+/// `takeScreenshot()` (removes `reftest-wait` from the document element),
+/// `takeScreenshotDelayed(timeout)`, and `failIfNot(condition, msg)`.
+/// Served only when the sparse checkout does not materialize the file;
+/// the disk copy wins whenever both exist, so a future `/common` checkout
+/// change takes effect without code churn.
+const REFTEST_WAIT_JS: &str = r#"/**
+ * Remove the `reftest-wait` class on the document element.
+ * The reftest runner will wait with taking a screenshot while
+ * this class is present.
+ *
+ * See https://web-platform-tests.org/writing-tests/reftests.html#controlling-when-comparison-occurs
+ */
+function takeScreenshot() {
+    document.documentElement.classList.remove("reftest-wait");
+}
+
+/**
+ * Call `takeScreenshot()` after a delay of at least |timeout| milliseconds.
+ * @param {number} timeout - milliseconds
+ */
+function takeScreenshotDelayed(timeout) {
+    setTimeout(function() {
+        takeScreenshot();
+    }, timeout);
+}
+
+/**
+ * Ensure that a precondition is met before waiting for a screenshot.
+ * @param {bool} condition - Fail the test if this evaluates to false
+ * @param {string} msg - Error message to write to the screenshot
+ */
+function failIfNot(condition, msg) {
+  const fail = () => {
+    (document.body || document.documentElement).textContent = `Precondition Failed: ${msg}`;
+    takeScreenshot();
+  };
+  if (!condition) {
+    if (document.readyState == "interactive") {
+      fail();
+    } else {
+      document.addEventListener("DOMContentLoaded", fail, false);
+    }
+  }
+}
+"#;
 
 pub(crate) struct WptDocumentHost {
     setup: LiveWptSetup,
@@ -107,6 +158,13 @@ impl WptDocumentHost {
     /// `<wpt_root>/resources/testharnessreport.js` is never read from disk:
     /// it is answered with this crate's own report script, matched on the
     /// candidate path before canonicalization (the file need not exist).
+    ///
+    /// `<wpt_root>/common/reftest-wait.js` is the shared reftest helper
+    /// (verbatim upstream at the pinned WPT SHA, see `REFTEST_WAIT_JS`): the
+    /// stable sparse checkout does not materialize `/common`, so the file is
+    /// tried from disk first and answered from the embedded copy only when
+    /// neither candidate exists. Any other missing support file still fails
+    /// closed as a fetch error; this fallback never suppresses one.
     fn script_source(&self, url: &str) -> Result<String, HostError> {
         let refuse = |reason: &str| HostError(format!("{url}: {reason}"));
         let parsed = raikiri::Url::parse(url).map_err(|_| refuse("not an absolute URL"))?;
@@ -125,7 +183,7 @@ impl WptDocumentHost {
             .filter(|component| matches!(component, Component::Normal(_)))
             .collect();
         let report = root.join("resources").join("testharnessreport.js");
-        for candidate in [path.clone(), root.join(rerooted)] {
+        for candidate in [path.clone(), root.join(&rerooted)] {
             if candidate == report {
                 return Ok(crate::testharness_page::REPORT_SCRIPT.to_owned());
             }
@@ -136,6 +194,12 @@ impl WptDocumentHost {
                 return std::fs::read_to_string(&canonical)
                     .map_err(|error| refuse(&format!("read failed: {error}")));
             }
+        }
+        // The sparse checkout does not materialize `/common`: serve the
+        // embedded verbatim helper only for that one path, after both disk
+        // candidates failed. Anything else still fails closed below.
+        if path.ends_with("common/reftest-wait.js") {
+            return Ok(REFTEST_WAIT_JS.to_owned());
         }
         Err(refuse("no such file inside the WPT root"))
     }

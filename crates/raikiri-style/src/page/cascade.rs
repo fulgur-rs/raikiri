@@ -9,6 +9,7 @@ use crate::cascade::{
     resolve_custom_property_environment, resolve_deferred_value,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
+use crate::media::MediaContext;
 use crate::property::{
     BackgroundImage, BorderStyle, CustomProperty, Length, OutlineStyle, OverflowValue, OverflowXY,
     PropertyKey, PropertyValue, Sides,
@@ -584,6 +585,21 @@ pub fn cascade_page(
     query: &PageContextQuery,
     inheritance: PageInheritance<'_>,
 ) -> PageCascadeResult {
+    cascade_page_with_media_context(rule_tree, query, inheritance, &MediaContext::default())
+}
+
+/// Cascade all `@page` rules in `rule_tree` against `query` and `media_context`.
+///
+/// This is the media-aware sibling of [`cascade_page`]. Rules with no media
+/// condition always apply. Rules nested in `@media` apply only when their
+/// intersected condition matches [`crate::media::MediaContext`], mirroring the
+/// element cascade media prefilter.
+pub fn cascade_page_with_media_context(
+    rule_tree: &RuleTree,
+    query: &PageContextQuery,
+    inheritance: PageInheritance<'_>,
+    media_context: &MediaContext,
+) -> PageCascadeResult {
     // Candidate: (value, important, origin, specificity, source_order).
     // Shape mirrors `cascade::CascadedDecl` per the sibling convention, with
     // `PageSpecificity` in place of `selectors`-crate `Specificity`.
@@ -598,6 +614,12 @@ pub fn cascade_page(
     let mut bleed_best: Option<(u8, u32, PageSpecificity, u32, u32, PageBleed)> = None;
     let mut margin_boxes: Vec<PageMarginBoxCascadeResult> = Vec::new();
     for rule in &rule_tree.page_rules {
+        if rule
+            .media_condition
+            .is_some_and(|condition| !condition.matches(media_context))
+        {
+            continue;
+        }
         // Comma-separated list = OR: rule contributes if any entry matches.
         // Take the highest-specificity matching entry within this rule (spec
         // examples in §"Cascading and page context" show the (f,g,h) triple

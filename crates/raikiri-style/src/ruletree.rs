@@ -1192,6 +1192,7 @@ impl RuleTree {
                         source_order: page_order,
                         layer_order,
                         origin,
+                        media_condition: None,
                     });
                     self.rules.push(CssRule {
                         source_order: rule_order,
@@ -1210,6 +1211,9 @@ impl RuleTree {
                             None,
                             &mut self.media_rules,
                             &mut style_order,
+                            &mut self.page_rules,
+                            &mut page_order,
+                            layer_order,
                             &self.consumer_properties,
                         );
                     }
@@ -1783,11 +1787,16 @@ fn parse_media_style_rule(
     })
 }
 
+// Style and page outputs share one walk to preserve source order.
+#[allow(clippy::too_many_arguments)]
 fn collect_media_style_rules(
     record: &AtRuleRecord,
     parent_condition: Option<MediaCondition>,
     out: &mut Vec<MediaRule>,
     style_order: &mut u32,
+    page_out: &mut Vec<PageRule>,
+    page_order: &mut u32,
+    layer_order: u32,
     consumer_properties: &[ConsumerPropertyRegistration],
 ) {
     let Some(local_condition) = parse_media_condition(&record.prelude) else {
@@ -1815,14 +1824,71 @@ fn collect_media_style_rules(
                     Some(condition),
                     out,
                     style_order,
+                    page_out,
+                    page_order,
+                    layer_order,
                     consumer_properties,
                 );
+            }
+            RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("page") => {
+                let Some(page_rule) =
+                    parse_media_page_rule(nested, condition, *page_order, layer_order)
+                else {
+                    continue;
+                };
+                *page_order = page_order.wrapping_add(1);
+                page_out.push(page_rule);
             }
             // An unknown wrapper may have a completely different grammar. Do
             // not accidentally execute its descendants as ordinary CSS rules.
             RuleNode::AtRule(_) => {}
         }
     }
+}
+
+/// Parse a `@page` rule nested in `@media` into a media-guarded [`PageRule`].
+///
+/// The nested record comes from the opaque `@media` child view, so its prelude
+/// and body are raw strings. The prelude is reparsed with
+/// [`parse_page_prelude`] and the body with [`parse_page_declaration_block`],
+/// the same parsers the top-level `@page` path uses. An unparsable prelude or
+/// a statement body without a block drops the rule, matching the top-level
+/// silent-drop policy for invalid `@page` rules.
+fn parse_media_page_rule(
+    record: &AtRuleRecord,
+    condition: MediaCondition,
+    source_order: u32,
+    layer_order: u32,
+) -> Option<PageRule> {
+    let AtRuleBody::Block(body) = &record.body else {
+        return None;
+    };
+    let mut prelude_input = ParserInput::new(&record.prelude);
+    let mut prelude_parser = Parser::new(&mut prelude_input);
+    let selector = prelude_parser
+        .parse_entirely(|input| parse_page_prelude(input))
+        .ok()?;
+    let mut body_input = ParserInput::new(body);
+    let mut body_parser = Parser::new(&mut body_input);
+    let PageBlockBody {
+        declarations,
+        size_declarations,
+        marks_declarations,
+        bleed_declarations,
+        margin_box_rules,
+    } = parse_page_declaration_block(&mut body_parser);
+    Some(PageRule {
+        selector,
+        declarations,
+        size_declarations,
+        marks_declarations,
+        bleed_declarations,
+        margin_box_rules,
+        source_order,
+        layer_order,
+        origin: record.origin,
+        media_condition: Some(condition),
+    })
 }
 
 /// Intermediate at-rule prelude emitted by [`StyleRuleParser`].
@@ -2137,7 +2203,9 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
 /// PseudoElem::After)` and their bridge,
 /// `Component::Combinator(Combinator::PseudoElement)` (`::before`/`::after`)
 /// were added incrementally, making the type/universal-only name no longer
-/// accurate, so the function was renamed. Other combinators
+/// accurate, so the function was renamed. `PseudoElem::Marker` (`::marker`)
+/// and `PseudoElem::FirstLine` (`::first-line`) joined the same
+/// `Component::PseudoElement` arm later, under the same bridge. Other combinators
 /// (`Combinator::SlotAssignment` / `Combinator::Part`) and `:hover`/`:active`
 /// remain out of scope (see the `cascade.rs::match_combinator_chain` docs).
 /// The two combinators' pseudo syntax (`::slotted()`/`::part()`) cannot occur:
@@ -2330,7 +2398,7 @@ fn is_supported_selector_with_relative_anchor(
             Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => true,
             Component::Combinator(Combinator::PseudoElement) => allow_nth,
             Component::PseudoElement(
-                PseudoElem::Before | PseudoElem::After | PseudoElem::Marker,
+                PseudoElem::Before | PseudoElem::After | PseudoElem::Marker | PseudoElem::FirstLine,
             ) => allow_nth,
             Component::RelativeSelectorAnchor => allow_relative_anchor,
             Component::Invalid(_) => allow_invalid,

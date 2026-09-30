@@ -1,4 +1,5 @@
-//! Child replacement throughput, excluding document construction and drop.
+//! Child replacement and text-append throughput, excluding document
+//! construction and drop.
 //!
 //! Run with `cargo bench -p raikiri-dom --bench mutation`.
 
@@ -31,6 +32,7 @@ fn bench_replace_children(c: &mut Criterion) {
         ("clear", 2000, 0),
         ("clear", 4000, 0),
         ("replace", 2000, 2000),
+        ("replace", 4000, 4000), // cov:ignore: bench harness — new bench row, never instrumented
     ] {
         let (target, parent, first_old) = target_document(children);
         let mut source = Document::new();
@@ -67,8 +69,68 @@ fn bench_replace_children(c: &mut Criterion) {
     group.finish();
 }
 
+// One empty `main` parent under the document root; appends below measure
+// per-call text-node insertion, not tree construction.
+// cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
+fn append_target() -> (Document, usize) {
+    let mut doc = Document::new();
+    let parent = doc.append_element(Some(0), "main", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    (doc, parent)
+}
+
+// cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
+fn bench_text_append(c: &mut Criterion) {
+    let mut group = c.benchmark_group("text_append");
+    // `split` appends N one-character text nodes (one arena node per call);
+    // `coalesced` merges each call into the trailing text node (one arena
+    // node total, at the cost of re-copying the merged string per call).
+    // The pair bounds the split-text-append optimization candidate from both
+    // sides: per-call insertion cost vs retained node count.
+    for name in ["split", "coalesced"] {
+        for n in [500usize, 1000, 2000, 4000] {
+            let (target, parent) = append_target();
+            let base_nodes = target.node_count();
+
+            let mut probe = target.clone();
+            for _ in 0..n {
+                if name == "split" {
+                    probe.append_text(parent, "x");
+                } else {
+                    probe.append_text_coalesced(parent, "x");
+                }
+            }
+            assert_eq!(
+                probe.node_count(),
+                base_nodes + if name == "split" { n } else { 1 }
+            );
+            assert_eq!(probe.serialize_inner_html(parent).unwrap(), "x".repeat(n));
+
+            group.throughput(Throughput::Elements(n as u64));
+            group.bench_with_input(BenchmarkId::new(name, n), &n, |b, _| {
+                b.iter_batched_ref(
+                    || target.clone(),
+                    |doc| {
+                        for _ in 0..n {
+                            if name == "split" {
+                                doc.append_text(parent, "x");
+                            } else {
+                                doc.append_text_coalesced(parent, "x");
+                            }
+                        }
+                    },
+                    BatchSize::PerIteration,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
+// cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     bench_replace_children(&mut criterion);
+    bench_text_append(&mut criterion);
     criterion.final_summary();
 }

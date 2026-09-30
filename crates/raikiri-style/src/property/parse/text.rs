@@ -131,28 +131,52 @@ pub(super) fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndent
 
 fn parse_text_indent_length(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
     input
-        .try_parse(|i| parse_text_indent_calc(i).ok_or_else(|| i.new_custom_error::<(), ()>(())))
+        .try_parse(|i| {
+            parse_text_indent_calc_with_ch(i).ok_or_else(|| i.new_custom_error::<(), ()>(()))
+        })
         .ok()
         .or_else(|| parse_length_value(input, true).map(TextIndentLength::Length))
 }
 
 fn parse_text_indent_calc(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
+    parse_text_indent_calc_impl(input, false)
+}
+
+/// Like [`parse_text_indent_calc`] but also accepts `ch` terms. Only the
+/// properties whose computed value can carry font-metric provenance
+/// (`text-indent`, `letter-spacing`, `word-spacing`) opt in; every other
+/// caller keeps rejecting `ch` inside `calc()` rather than dropping it later.
+fn parse_text_indent_calc_with_ch(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
+    parse_text_indent_calc_impl(input, true)
+}
+
+fn parse_text_indent_calc_impl(
+    input: &mut Parser<'_, '_>,
+    allow_ch: bool,
+) -> Option<TextIndentLength> {
     input
         .try_parse(|i| -> Result<TextIndentLength, ParseError<'_, ()>> {
             match i.next()?.clone() {
                 Token::Function(name) if name.eq_ignore_ascii_case("calc") => {}
                 token => return Err(i.new_unexpected_token_error(token)),
             }
-            i.parse_nested_block(parse_text_indent_calc_terms)
+            i.parse_nested_block(|i| parse_text_indent_calc_terms(i, allow_ch))
         })
         .ok()
 }
 
 fn parse_text_indent_calc_terms<'i>(
     input: &mut Parser<'i, '_>,
+    allow_ch: bool,
 ) -> Result<TextIndentLength, ParseError<'i, ()>> {
-    let value = parse_text_indent_calc_sum(input)?;
-    if value.em == 0.0 {
+    let value = parse_text_indent_calc_sum(input, allow_ch)?;
+    if value.ch != 0.0 {
+        if value.percent == 0.0 && value.px == 0.0 && value.em == 0.0 {
+            Ok(TextIndentLength::Length(Length::Ch(value.ch)))
+        } else {
+            Ok(TextIndentLength::Calc(value))
+        }
+    } else if value.em == 0.0 {
         if value.percent == 0.0 {
             Ok(TextIndentLength::Length(Length::Px(value.px)))
         } else if value.px == 0.0 {
@@ -169,19 +193,25 @@ fn parse_text_indent_calc_terms<'i>(
 
 fn parse_text_indent_calc_sum<'i>(
     input: &mut Parser<'i, '_>,
+    allow_ch: bool,
 ) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
-    let mut value = parse_text_indent_calc_term(input)?;
+    let mut value = parse_text_indent_calc_term(input, allow_ch)?;
     while !input.is_exhausted() {
         let sign = match input.next()?.clone() {
             Token::Delim('+') => 1.0,
             Token::Delim('-') => -1.0,
             token => return Err(input.new_unexpected_token_error(token)),
         };
-        let term = parse_text_indent_calc_term(input)?;
+        let term = parse_text_indent_calc_term(input, allow_ch)?;
         value.percent += sign * term.percent;
         value.px += sign * term.px;
         value.em += sign * term.em;
-        if !value.percent.is_finite() || !value.px.is_finite() || !value.em.is_finite() {
+        value.ch += sign * term.ch;
+        if !value.percent.is_finite()
+            || !value.px.is_finite()
+            || !value.em.is_finite()
+            || !value.ch.is_finite()
+        {
             return Err(input.new_custom_error(()));
         }
     }
@@ -190,10 +220,11 @@ fn parse_text_indent_calc_sum<'i>(
 
 fn parse_text_indent_calc_term<'i>(
     input: &mut Parser<'i, '_>,
+    allow_ch: bool,
 ) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
     let start = input.state();
     if matches!(input.next()?.clone(), Token::ParenthesisBlock) {
-        return input.parse_nested_block(parse_text_indent_calc_sum);
+        return input.parse_nested_block(|i| parse_text_indent_calc_sum(i, allow_ch));
     }
     input.reset(&start);
 
@@ -209,50 +240,69 @@ fn parse_text_indent_calc_term<'i>(
             percent: 0.0,
             px,
             em: 0.0,
+            ch: 0.0,
         },
         Length::Pt(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 72.0),
             em: 0.0,
+            ch: 0.0,
         },
         Length::Cm(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 2.54),
             em: 0.0,
+            ch: 0.0,
         },
         Length::Mm(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 25.4),
             em: 0.0,
+            ch: 0.0,
         },
         Length::Q(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * (96.0 / 101.6),
             em: 0.0,
+            ch: 0.0,
         },
         Length::In(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * 96.0,
             em: 0.0,
+            ch: 0.0,
         },
         Length::Pc(v) => LengthPercentageCalc {
             percent: 0.0,
             px: v * 16.0,
             em: 0.0,
+            ch: 0.0,
         },
         Length::Em(em) => LengthPercentageCalc {
             percent: 0.0,
             px: 0.0,
             em,
+            ch: 0.0,
         },
         Length::Percent(percent) => LengthPercentageCalc {
             percent,
             px: 0.0,
             em: 0.0,
+            ch: 0.0,
+        },
+        Length::Ch(ch) if allow_ch => LengthPercentageCalc {
+            percent: 0.0,
+            px: 0.0,
+            em: 0.0,
+            ch,
         },
         _ => return Err(input.new_custom_error(())),
     };
-    if value.percent.is_finite() && value.px.is_finite() && value.em.is_finite() {
+    if value.percent.is_finite()
+        && value.px.is_finite()
+        && value.em.is_finite()
+        && value.ch.is_finite()
+    {
         Ok(value)
     } else {
         Err(input.new_custom_error(()))
@@ -540,7 +590,7 @@ pub(crate) fn parse_word_spacing(input: &mut Parser<'_, '_>) -> Option<WordSpaci
     {
         return Some(WordSpacingValue::Normal);
     }
-    if let Some(parsed) = parse_text_indent_calc(input) {
+    if let Some(parsed) = parse_text_indent_calc_with_ch(input) {
         return Some(match parsed {
             TextIndentLength::Length(length) => WordSpacingValue::Length(length),
             TextIndentLength::Calc(calc) => WordSpacingValue::Calc(calc),
@@ -559,7 +609,7 @@ pub(crate) fn parse_letter_spacing(input: &mut Parser<'_, '_>) -> Option<LetterS
     {
         return Some(LetterSpacingValue::Normal);
     }
-    if let Some(parsed) = parse_text_indent_calc(input) {
+    if let Some(parsed) = parse_text_indent_calc_with_ch(input) {
         return Some(match parsed {
             TextIndentLength::Length(length) => LetterSpacingValue::Length(length),
             TextIndentLength::Calc(calc) => LetterSpacingValue::Calc(calc),
@@ -874,13 +924,7 @@ pub(super) fn parse_font_variation_settings(
 }
 
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(FontStyle::Normal),
-        "italic" => Some(FontStyle::Italic),
-        "oblique" => Some(FontStyle::Oblique),
-        _ => None,
-    }
+    FontStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `font-variant-caps: <ident>` (CSS Fonts Module Level 3 §6.6,
@@ -1334,17 +1378,7 @@ pub(super) fn parse_word_space_transform(input: &mut Parser<'_, '_>) -> Option<W
 }
 
 pub(super) fn parse_text_align_all(input: &mut Parser<'_, '_>) -> Option<TextAlignAll> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "start" => Some(TextAlignAll::Start),
-        "end" => Some(TextAlignAll::End),
-        "left" => Some(TextAlignAll::Left),
-        "right" => Some(TextAlignAll::Right),
-        "center" => Some(TextAlignAll::Center),
-        "justify" => Some(TextAlignAll::Justify),
-        "match-parent" => Some(TextAlignAll::MatchParent),
-        _ => None,
-    }
+    TextAlignAll::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
@@ -1429,12 +1463,7 @@ pub(super) fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> 
 
 /// Parses the implemented `hanging-punctuation` subset from CSS Text 3 §8.2.1.
 pub(super) fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<HangingPunctuation> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(HangingPunctuation::None),
-        "first" => Some(HangingPunctuation::First),
-        _ => None,
-    }
+    HangingPunctuation::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `direction: <ident>`
@@ -1475,13 +1504,7 @@ pub(super) fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMo
 
 /// Parse `ruby-position` keywords (CSS Ruby Layout 1 §3).
 pub(super) fn parse_ruby_position(input: &mut Parser<'_, '_>) -> Option<RubyPosition> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "over" => Some(RubyPosition::Over),
-        "under" => Some(RubyPosition::Under),
-        "inter-character" => Some(RubyPosition::InterCharacter),
-        _ => None,
-    }
+    RubyPosition::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `text-decoration-line: none | [ underline || overline || line-through ||
@@ -2084,11 +2107,13 @@ fn parse_text_shadow_calc(input: &mut Parser<'_, '_>) -> Option<TextShadowLength
                     percent: 0.0,
                     px,
                     em: 0.0,
+                    ch: 0.0,
                 },
                 TextIndentLength::Length(Length::Em(em)) => LengthPercentageCalc {
                     percent: 0.0,
                     px: 0.0,
                     em,
+                    ch: 0.0,
                 },
                 TextIndentLength::Calc(calc) => calc,
                 TextIndentLength::Length(_) => return Err(i.new_custom_error(())),

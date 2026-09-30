@@ -208,6 +208,41 @@ pub struct ElementData {
     /// `ReplacedResolver` doc for why `Err` is terminal rather than silently
     /// substituting a size).
     pub(crate) image_intrinsic_size: Option<IntrinsicBox>,
+    /// Live 2d bitmap for an HTML `<canvas>` element, populated by script
+    /// through [`crate::Document::set_canvas_bitmap`] and read by paint.
+    /// `None` means no bitmap has been painted yet (transparent, zero-area
+    /// until width/height attributes give an intrinsic size). Stored here
+    /// rather than as an attribute so `getAttribute` never observes it.
+    pub(crate) canvas_bitmap: Option<CanvasBitmap>,
+}
+
+/// Live bitmap of an HTML `<canvas>` element (HTML Standard §4.12.5).
+///
+/// `rgba` holds premultiplied-free `width * height * 4` bytes in row-major
+/// order, transparent black when newly sized. Paint reads this directly;
+/// layout reads only the width/height attributes for the intrinsic size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanvasBitmap {
+    /// Bitmap width in px (the canvas width attribute value).
+    pub width: u32,
+    /// Bitmap height in px (the canvas height attribute value).
+    pub height: u32,
+    /// Row-major RGBA8 bytes, length `width * height * 4`.
+    pub rgba: Vec<u8>,
+}
+
+impl CanvasBitmap {
+    /// A transparent-black bitmap of the given size.
+    pub fn cleared(width: u32, height: u32) -> Self {
+        let len = (u64::from(width) * u64::from(height) * 4)
+            .try_into()
+            .unwrap_or(0);
+        Self {
+            width,
+            height,
+            rgba: vec![0; len],
+        }
+    }
 }
 
 /// One line-range fragment painted into a multicolumn column.
@@ -317,6 +352,23 @@ pub struct Node {
     pub(crate) grid_column_count: usize,
     /// Child arena indices (`usize` indices into `Document::nodes`).
     pub children: Vec<usize>,
+    /// Arena index of the parent holding this node in its `children`, or
+    /// `None` for the Document root and detached nodes.
+    ///
+    /// This is the O(1) backing store for [`crate::Document::parent_of`].
+    /// Every tree mutation primitive in `document.rs` / `document/mutation.rs`
+    /// (`append_*` / `attach_child` / `insert_child_before` /
+    /// `detach_from_parent` / `reparent_children` / `retain_children` /
+    /// `set_element_text_content` / `replace_children_from` /
+    /// `from_logical_snapshot`) keeps it in sync with the parent's
+    /// `children` list. It tracks only `children` edges, not a `<template>`
+    /// element's `template_contents` slot (that host link is not a parent).
+    ///
+    /// Direct `children` pushes outside those primitives bypass this field.
+    /// In-crate test setups that do so must also set `parent` (or use the
+    /// primitives) to keep the invariant
+    /// `parent_of(child) == Some(p)` iff `nodes[p].children.contains(&child)`.
+    pub(crate) parent: Option<usize>,
     /// Per-node Taffy layout cache.
     pub(crate) cache: Cache,
     /// Taffy layout result, populated by compute_root_layout.
@@ -389,6 +441,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -423,6 +476,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -434,6 +488,7 @@ impl Node {
                 attributes: Vec::new(),
                 template_contents: None,
                 image_intrinsic_size: None,
+                canvas_bitmap: None,
             })),
         }
     }
@@ -459,6 +514,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -502,6 +558,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -532,6 +589,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -564,6 +622,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             children: Vec::new(),
+            parent: None,
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
@@ -619,11 +678,22 @@ impl Node {
         }
     }
 
+    /// Element namespace URI, or `None` for non-elements and the HTML namespace.
+    #[inline]
+    pub fn namespace_uri(&self) -> Option<&str> {
+        match &self.data {
+            NodeData::Element(element) => element.namespace.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Return a null-namespace element attribute value, if present.
     ///
     /// The `style` attribute is stored separately from the ordinary attribute
     /// vector and is exposed here as the same raw value for consumers that need
     /// a small DOM-side resource hint (for example a replaced image `src`).
+    /// Namespaced attributes (for example SVG `xlink:href`) are not visible
+    /// here; use [`Node::attribute_ns`] for those.
     #[inline]
     pub fn attribute(&self, local: &str) -> Option<&str> {
         let NodeData::Element(element) = &self.data else {
@@ -636,6 +706,33 @@ impl Node {
             .attributes
             .iter()
             .find(|attribute| attribute.namespace.is_none() && attribute.local == local)
+            .map(|attribute| attribute.value.as_str())
+    }
+
+    /// Return a namespace-qualified element attribute value, if present.
+    ///
+    /// Lookup is by namespace URI and local name (DOM `getAttributeNS`
+    /// semantics), not by prefix. For example SVG `xlink:href` is
+    /// `namespace = "http://www.w3.org/1999/xlink"`, `local = "href"`.
+    /// Matching is exact; unlike HTML null-namespace lookup, no ASCII
+    /// case folding applies. The separate `style` slot is null-namespace
+    /// only, so this always returns `None` for namespaced `style` lookups.
+    /// Returns `None` for non-elements and when no such attribute exists.
+    /// Renderer-neutral: the value is a plain string slice with no SVG or
+    /// renderer types. See [`Node::attribute`] for null-namespace lookup and
+    /// [`crate::Document::serialize_svg_subtree`] for whole-subtree XML
+    /// source reconstruction.
+    #[inline]
+    pub fn attribute_ns(&self, namespace: &str, local: &str) -> Option<&str> {
+        let NodeData::Element(element) = &self.data else {
+            return None;
+        };
+        element
+            .attributes
+            .iter()
+            .find(|attribute| {
+                attribute.namespace.as_deref() == Some(namespace) && attribute.local == local
+            })
             .map(|attribute| attribute.value.as_str())
     }
 

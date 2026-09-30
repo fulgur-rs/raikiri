@@ -412,3 +412,52 @@ fn inline_boxes_report_zero_client_metrics() {
          && s.offsetWidth === 30 && s.offsetHeight === 20 && s.scrollWidth === 26",
     );
 }
+
+#[test]
+fn document_element_scroll_reflects_viewport_while_others_stay_at_origin() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.documentElement.scrollTop === 0 && document.documentElement.scrollLeft === 0 \
+         && document.body.scrollTop === 0 && document.body.scrollLeft === 0",
+    );
+    rt.evaluate("window.scrollBy(0, 4000);").unwrap();
+    ok(
+        &mut rt,
+        "window.scrollY === 4000 && document.documentElement.scrollTop === 4000 \
+         && document.body.scrollTop === 0",
+    );
+    rt.evaluate("document.documentElement.scrollTop = 100;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "window.scrollY === 100 && document.documentElement.scrollTop === 100",
+    );
+    rt.evaluate("document.documentElement.scrollLeft = 30;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "window.scrollX === 30 && document.documentElement.scrollLeft === 30",
+    );
+    rt.evaluate("document.body.scrollTop = 999; document.body.scrollLeft = 999;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "document.body.scrollTop === 0 && document.body.scrollLeft === 0 \
+         && window.scrollY === 100 && window.scrollX === 30",
+    );
+}
+
+#[test]
+fn document_element_scroll_setters_clamp_like_viewport() {
+    let mut rt = rt();
+    rt.evaluate("document.documentElement.scrollTop = -5;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "document.documentElement.scrollTop === 0 && window.scrollY === 0",
+    );
+    rt.evaluate("document.documentElement.scrollTop = NaN;")
+        .unwrap();
+    ok(&mut rt, "document.documentElement.scrollTop === 0");
+}

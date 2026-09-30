@@ -100,6 +100,10 @@ pub(crate) struct PrintRenderResources<'a> {
     pub(crate) image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
     pub(crate) font_loader: Option<&'a dyn raikiri_dom::FontFaceLoader>,
     pub(crate) prepare_cascade_images: Option<&'a dyn Fn(&mut raikiri_style::CascadeResult)>,
+    /// Live canvas bitmaps in tree order, from [`crate::reftest::dynamic`]'s
+    /// sidecar transfer. Restored onto the reparsed document before layout so
+    /// `innerHTML` round-tripping does not drop script-painted pixels.
+    pub(crate) canvas_bitmaps: Option<&'a [raikiri_dom::CanvasBitmap]>,
 }
 
 /// One inclusive, one-based page range from `reftest-pages` metadata.
@@ -1827,6 +1831,17 @@ fn render_raikiri_pages_inner(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
+    render_raikiri_pages_inner_with_canvases(html, width, height, resource_base, font_base, None)
+}
+
+fn render_raikiri_pages_inner_with_canvases(
+    html: &str,
+    width: u32,
+    height: u32,
+    resource_base: Option<&Path>,
+    font_base: Option<&Path>,
+    canvas_bitmaps: Option<&[raikiri_dom::CanvasBitmap]>,
+) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     // URL construction requires an absolute directory. Normalize caller
     // paths here so resource and stylesheet loading work for relative test
     // paths as well as the absolute paths used by the WPT runner.
@@ -1865,6 +1880,7 @@ fn render_raikiri_pages_inner(
                 .as_ref()
                 .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
             prepare_cascade_images: None,
+            canvas_bitmaps,
         },
     )
 }
@@ -1908,6 +1924,9 @@ pub(crate) fn render_raikiri_pages_with_resources(
         authored_page_viewport(&html, width as f32, height as f32);
     let html = expand_viewport_units(&html, viewport_width, viewport_height);
     let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+    if let Some(bitmaps) = resources.canvas_bitmaps {
+        uncascaded.dom.set_canvases_in_tree_order(bitmaps);
+    }
     if let Some(base_url) = base_url {
         crate::http_resources::absolutize_img_sources(&mut uncascaded.dom, base_url);
     }
@@ -2633,11 +2652,12 @@ where
     let ref_html = read_html(&pair.reference)?;
     let fuzzy = fuzzy::metadata(&test_html, pair)?;
     let selections = page_selections_for_pair(&test_html, &pair.reference);
-    let test_html = dynamic::prepare(&test_html, &pair.test, "", config)?;
-    let ref_html = dynamic::prepare(&ref_html, &pair.reference, &pair.reference_suffix, config)?;
-    let ref_html = mirror_default_page_margin(&test_html, &ref_html);
-    let test_doc = render_raikiri_pages_inner(
-        &test_html,
+    let test_prepared = dynamic::prepare(&test_html, &pair.test, "", config)?;
+    let ref_prepared =
+        dynamic::prepare(&ref_html, &pair.reference, &pair.reference_suffix, config)?;
+    let ref_html = mirror_default_page_margin(&test_prepared.html, &ref_prepared.html);
+    let test_doc = render_raikiri_pages_inner_with_canvases(
+        &test_prepared.html,
         config.width,
         config.height,
         if resolve_images {
@@ -2646,9 +2666,10 @@ where
             None
         },
         pair.test.parent(),
+        Some(&test_prepared.canvases),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
-    let ref_doc = render_raikiri_pages_inner(
+    let ref_doc = render_raikiri_pages_inner_with_canvases(
         &ref_html,
         config.width,
         config.height,
@@ -2658,6 +2679,7 @@ where
             None
         },
         pair.reference.parent(),
+        Some(&ref_prepared.canvases),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let (test_selection, reference_selection) = selections;

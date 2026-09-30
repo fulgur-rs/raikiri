@@ -27,9 +27,10 @@ pub struct RaikiriTreeSink {
     /// non-HTML namespaces to raikiri-dom::Node.namespace.
     qual_names: RefCell<FxHashMap<usize, QualName>>,
     /// Handle → attributes. During parsing, `add_attrs_if_missing` merges them.
-    /// On `finish()`, copy null-namespace attributes to raikiri-dom::Node.attributes
-    /// and separate the `style` attribute into raikiri-dom::Node.inline_style.
-    /// Support for namespaced attributes such as xlink:href is deferred.
+    /// On `finish()`, copy null-namespace attributes to raikiri-dom::Node.attributes,
+    /// separate the `style` attribute into raikiri-dom::Node.inline_style,
+    /// and preserve namespace-qualified attributes (for example SVG
+    /// `xlink:href`) with their namespace URI, prefix, and local name.
     attributes: RefCell<FxHashMap<usize, Vec<Attribute>>>,
     /// Buffer of nonfatal parse errors reported by html5ever. Move these to
     /// UncascadedDocument.warnings on `finish()`.
@@ -802,9 +803,10 @@ fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>, title: Option<
 ///
 /// - `qual_names`: if an element's namespace URI is not the HTML default
 ///   (`ns!(html)`), store it in `Node.namespace`; HTML uses optimized `None`.
-/// - `attributes`: copy only null-namespace attributes to raikiri-dom.
-///   Defer namespaced attributes such as SVG `xlink:href`. Separate `style`
-///   into `Node.inline_style`; store the rest in ordered `Node.attributes`.
+/// - `attributes`: copy null-namespace attributes to raikiri-dom and preserve
+///   namespace-qualified attributes such as SVG `xlink:href` with their
+///   namespace URI, prefix, and local name. Separate `style` into
+///   `Node.inline_style`; store the rest in ordered `Node.attributes`.
 ///
 /// This single-pass conversion runs once, during `finish()`. During parsing,
 /// only the metadata tables (RefCell) change; Node remains unchanged.

@@ -1,7 +1,8 @@
 //! `DOMRect` / `DOMRectReadOnly` (Geometry Interfaces Module Level 1 §3),
 //! `Element.getBoundingClientRect`'s return type, and the CSSOM View box
 //! metrics (`offset*`, `client*`, `scroll*`) computed from the host's
-//! [`BoxGeometry`].
+//! [`BoxGeometry`]. The document element's `scrollTop`/`scrollLeft` reflect
+//! the viewport offset; any other element stays at its origin.
 //!
 //! Spec refs: <https://drafts.fxtf.org/geometry/#DOMRect>,
 //! <https://drafts.csswg.org/cssom-view/#extension-to-the-element-interface>,
@@ -446,26 +447,78 @@ fn scroll_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResu
     box_metric(this, context, |g| g.scroll_height)
 }
 
-/// `scrollTop`/`scrollLeft` (CSSOM View §6, `unrestricted double`). This
-/// runtime keeps no scroll state, so every element stays at its origin.
-fn scroll_position(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    this_element(this, context)?;
+/// Whether `index` is the document element (`<html>`): the scrolling
+/// element in standards mode, whose `scrollTop`/`scrollLeft` reflect the
+/// viewport offset (CSSOM View). Any other element keeps no scroll state
+/// and stays at its origin.
+fn is_document_element(index: usize, context: &mut Context) -> JsResult<bool> {
+    let (root, _) = root_and_body(context)?;
+    Ok(Some(index) == root)
+}
+
+/// Clamp an element scroll offset the same way as the viewport: non-finite
+/// becomes zero, negatives become zero.
+fn clamp_element_scroll(value: f64) -> f64 {
+    if !value.is_finite() {
+        0.0
+    } else {
+        value.max(0.0)
+    }
+}
+
+/// `scrollTop` (CSSOM View §6, `unrestricted double`): the viewport vertical
+/// offset when `this` is the document element, zero otherwise.
+fn scroll_top(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    if is_document_element(index, context)? {
+        let y = with_state(context, |s| s.viewport_scroll_y)?;
+        return Ok(JsValue::from(y));
+    }
     Ok(JsValue::from(0))
 }
 
-/// The `scrollTop`/`scrollLeft` setters: the argument still goes through
-/// the `unrestricted double` conversion (running any `valueOf`), then the
-/// scroll request is dropped because nothing scrolls.
-fn set_scroll_position(
-    this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    this_element(this, context)?;
-    args.first()
+/// `scrollLeft` (CSSOM View §6, `unrestricted double`): the viewport
+/// horizontal offset when `this` is the document element, zero otherwise.
+fn scroll_left(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    if is_document_element(index, context)? {
+        let x = with_state(context, |s| s.viewport_scroll_x)?;
+        return Ok(JsValue::from(x));
+    }
+    Ok(JsValue::from(0))
+}
+
+/// The `scrollTop` setter: the argument still goes through the
+/// `unrestricted double` conversion (running any `valueOf`); on the document
+/// element it moves the viewport, on any other element the request is
+/// dropped because element scrolling keeps no state.
+fn set_scroll_top(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let value = args
+        .first()
         .cloned()
         .unwrap_or_default()
         .to_number(context)?;
+    if is_document_element(index, context)? {
+        let y = clamp_element_scroll(value);
+        with_state(context, |s| s.viewport_scroll_y = y)?;
+    }
+    Ok(JsValue::undefined())
+}
+
+/// The `scrollLeft` setter: see `set_scroll_top` for the document-element
+/// versus other-element split.
+fn set_scroll_left(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let value = args
+        .first()
+        .cloned()
+        .unwrap_or_default()
+        .to_number(context)?;
+    if is_document_element(index, context)? {
+        let x = clamp_element_scroll(value);
+        with_state(context, |s| s.viewport_scroll_x = x)?;
+    }
     Ok(JsValue::undefined())
 }
 
@@ -491,8 +544,8 @@ pub(crate) const ELEMENT_METRICS_MEMBERS: Members = Members {
         ("scrollHeight", scroll_height),
     ],
     accessors: &[
-        ("scrollTop", scroll_position, set_scroll_position),
-        ("scrollLeft", scroll_position, set_scroll_position),
+        ("scrollTop", scroll_top, set_scroll_top),
+        ("scrollLeft", scroll_left, set_scroll_left),
     ],
     methods: &[],
 };

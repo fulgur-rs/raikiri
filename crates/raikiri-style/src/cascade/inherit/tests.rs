@@ -7380,6 +7380,38 @@ fn text_decoration_thickness_computes_keywords_and_lengths() {
 }
 
 #[test]
+fn text_decoration_thickness_inherit_takes_parent_computed_value() {
+    // CSS Text Decoration 4 marks this longhand non-inherited (initial `auto`),
+    // so an undeclared child keeps `auto` even under a 10px parent.
+    let (parent, child) =
+        cascade_parent_child("div", Some("text-decoration-thickness: 10px"), "span", None);
+    assert_eq!(
+        parent.text_decoration_thickness,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0))
+    );
+    assert_eq!(
+        child.text_decoration_thickness,
+        ComputedTextDecorationThickness::Auto
+    );
+    // Explicit `inherit` (CSS Cascading 4 section 7.3) takes the parent
+    // computed thickness instead of the initial value.
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("text-decoration-thickness: 10px"),
+        "span",
+        Some("text-decoration-thickness: inherit"),
+    );
+    assert_eq!(
+        parent.text_decoration_thickness,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0))
+    );
+    assert_eq!(
+        child.text_decoration_thickness,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0))
+    );
+}
+
+#[test]
 fn text_emphasis_position_preserves_keywords_and_inherits() {
     let initial = cascade_doc("", "div", None);
     assert_eq!(
@@ -8733,4 +8765,84 @@ fn border_rollback_deferred_var_substituting_to_css_wide() {
         ComputedLength(3.0),
         "User var(--v: initial) rollback must resolve to initial 3px (visible with solid)"
     );
+}
+
+#[test]
+fn calc_with_ch_term_keeps_factor_and_absolute_offset_for_spacing_and_indent() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some(
+            "font-size: 40px; word-spacing: calc(2ch + 4px); \
+             letter-spacing: calc(1ch + 1em); text-indent: calc(3ch - 2px)",
+        ),
+    );
+    // Style computes only a `0.5em` fallback for the `ch` term.
+    assert_eq!(cv.word_spacing_computed, ComputedLetterSpacing::Px(44.0));
+    assert_eq!(cv.word_spacing_ch_factor, Some(2.0));
+    assert_eq!(cv.word_spacing_ch_offset, 4.0);
+    assert_eq!(cv.letter_spacing_ch_factor, Some(1.0));
+    assert_eq!(cv.letter_spacing_ch_offset, 40.0);
+    assert_eq!(cv.text_indent, ComputedTextIndent::Px(58.0));
+    assert_eq!(cv.text_indent_ch_factor, Some(3.0));
+    assert_eq!(cv.text_indent_ch_offset, -2.0);
+}
+
+#[test]
+fn calc_with_ch_and_percentage_keeps_percentage_in_text_indent() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("font-size: 40px; text-indent: calc(2ch + 10%)"),
+    );
+    assert_eq!(
+        cv.text_indent,
+        ComputedTextIndent::Calc(crate::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 40.0,
+        })
+    );
+    assert_eq!(cv.text_indent_ch_factor, Some(2.0));
+    assert_eq!(cv.text_indent_ch_offset, 0.0);
+}
+
+#[test]
+fn plain_ch_and_single_term_calc_ch_have_no_offset() {
+    for value in ["2ch", "calc(2ch)"] {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some(&format!("font-size: 40px; word-spacing: {value}")),
+        );
+        assert_eq!(cv.word_spacing_ch_factor, Some(2.0), "{value}");
+        assert_eq!(cv.word_spacing_ch_offset, 0.0, "{value}");
+    }
+}
+
+#[test]
+fn calc_ch_provenance_and_offset_survive_inheritance_and_reset_on_override() {
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(
+        0,
+        "p",
+        Some("word-spacing: calc(2ch + 4px); text-indent: calc(1ch + 6px)"),
+    );
+    let span = doc.push_element(p, "span", None);
+    let over = doc.push_element(p, "b", Some("word-spacing: 3px; text-indent: 1ch"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[span].word_spacing_ch_factor, Some(2.0));
+    assert_eq!(r.computed[span].word_spacing_ch_offset, 4.0);
+    assert_eq!(r.computed[span].text_indent_ch_factor, Some(1.0));
+    assert_eq!(r.computed[span].text_indent_ch_offset, 6.0);
+    assert_eq!(r.computed[over].word_spacing_ch_factor, None);
+    assert_eq!(r.computed[over].word_spacing_ch_offset, 0.0);
+    assert_eq!(r.computed[over].text_indent_ch_factor, Some(1.0));
+    assert_eq!(r.computed[over].text_indent_ch_offset, 0.0);
+}
+
+#[test]
+fn ch_inside_calc_stays_rejected_for_properties_without_ch_provenance() {
+    let cv = cascade_doc("", "p", Some("font-size: 40px; tab-size: calc(2ch + 4px)"));
+    assert_eq!(cv.tab_size, crate::ComputedTabSize::Number(8.0));
 }

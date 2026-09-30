@@ -12,6 +12,7 @@ use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsString, JsSymbol, JsValue, NativeFunction, Source,
 };
 
+pub(crate) mod canvas;
 pub(crate) mod collections;
 pub(crate) mod dispatch;
 pub(crate) mod document;
@@ -112,6 +113,26 @@ pub(crate) struct State {
     pub current_script: Option<usize>,
     /// `console.*` calls recorded during evaluation, in call order.
     pub console: Vec<window::ConsoleMessage>,
+    /// Per-canvas 2d contexts so `canvas.getContext('2d') === canvas.getContext('2d')`.
+    pub canvas_contexts: HashMap<usize, JsObject>,
+    /// Current `fillStyle` per canvas, `(serialized, rgba)`. Defaults to
+    /// opaque black (`"#000000"`) per HTML Standard §4.12.5.
+    pub canvas_fill_styles: HashMap<usize, (String, [u8; 4])>,
+    /// Viewport scroll offset in CSS px (CSSOM View window scroll). The live
+    /// document layout itself is a single screen page at the configured
+    /// viewport size; this offset is the window's own scroll position over
+    /// that layout, updated by `window.scroll`/`scrollTo`/`scrollBy` and
+    /// observed through `scrollX`/`scrollY` (and their `pageXOffset`/
+    /// `pageYOffset` aliases), the document element's `scrollTop`/
+    /// `scrollLeft`, and `getBoundingClientRect`. Print rendering has no
+    /// viewport scrolling and ignores this offset: each print page paints
+    /// from its own content origin. Clamped to finite values at or above
+    /// zero; positive overflow beyond the scrollable size is kept (the
+    /// host's scrollable size is only known after layout, so max clamping
+    /// happens where layout is available, not here).
+    pub viewport_scroll_x: f64,
+    /// The vertical viewport offset; see `viewport_scroll_x`.
+    pub viewport_scroll_y: f64,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -294,6 +315,10 @@ impl DomRuntime {
             ready_state: document::ReadyState::default(),
             current_script: None,
             console: Vec::new(),
+            canvas_contexts: HashMap::new(),
+            canvas_fill_styles: HashMap::new(),
+            viewport_scroll_x: 0.0,
+            viewport_scroll_y: 0.0,
         };
         let executor = Rc::new(event_loop::RaikiriJobExecutor);
         let built = Context::builder().job_executor(executor).build();

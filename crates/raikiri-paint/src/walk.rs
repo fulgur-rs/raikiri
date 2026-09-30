@@ -32,11 +32,11 @@ use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
 use peniko::{Color, Fill, Mix};
 use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
-    BackgroundImage, Border, BorderColor, BorderStyle, ColumnCountValue, ContentComponent,
-    CounterStyle, CssColor, DisplayValue, FloatValue, Gradient, GradientStopColor, Length,
-    LengthOrAuto, ListStyleType, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
-    PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor,
-    VerticalAlign, Visibility, WritingMode, ZIndexValue,
+    BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle, ColumnCountValue,
+    ContentComponent, CounterStyle, CssColor, DisplayValue, FloatValue, Gradient,
+    GradientStopColor, Length, LengthOrAuto, ListStyleType, ObjectFit, OutlineColor, OutlineStyle,
+    OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign,
+    TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
@@ -434,6 +434,137 @@ fn canvas_background_color(
     .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
 }
 
+fn page_background_clip(cascade: &CascadeResult) -> VisualBox {
+    match page_property(cascade, PropertyKey::BackgroundClip) {
+        Some(PropertyValue::BackgroundClip(clip)) => *clip,
+        _ => ComputedValues::initial().background_clip,
+    }
+}
+
+fn page_background_origin(cascade: &CascadeResult) -> VisualBox {
+    match page_property(cascade, PropertyKey::BackgroundOrigin) {
+        Some(PropertyValue::BackgroundOrigin(origin)) => *origin,
+        _ => ComputedValues::initial().background_origin,
+    }
+}
+
+/// Used page border widths in px for background geometry.
+///
+/// Reads the `@page` border-width longhands directly; unlike
+/// [`page_content_insets`](raikiri_dom::page_content_insets) this helper keeps
+/// border and padding separate so `background-origin`/`background-clip` can
+/// inset them independently. Percentages cannot occur on border widths, so the
+/// basis only matters for defensive non-px lengths.
+fn page_border_widths(cascade: &CascadeResult, area: Rect) -> (f64, f64, f64, f64) {
+    let width = |key: PropertyKey, basis: f64| match page_property(cascade, key) {
+        Some(PropertyValue::BorderTopWidth(value))
+        | Some(PropertyValue::BorderRightWidth(value))
+        | Some(PropertyValue::BorderBottomWidth(value))
+        | Some(PropertyValue::BorderLeftWidth(value)) => {
+            length_to_px(*value, basis as f32, 16.0) as f64
+        }
+        _ => 0.0,
+    };
+    (
+        width(PropertyKey::BorderLeftWidth, area.width()),
+        width(PropertyKey::BorderTopWidth, area.height()),
+        width(PropertyKey::BorderRightWidth, area.width()),
+        width(PropertyKey::BorderBottomWidth, area.height()),
+    )
+}
+
+/// Used page padding in px for background geometry (percentages resolve
+/// against the corresponding area edge, matching page insets).
+fn page_padding_widths(cascade: &CascadeResult, area: Rect) -> (f64, f64, f64, f64) {
+    let padding = |key: PropertyKey, basis: f64| match page_property(cascade, key) {
+        Some(PropertyValue::PaddingTop(value))
+        | Some(PropertyValue::PaddingRight(value))
+        | Some(PropertyValue::PaddingBottom(value))
+        | Some(PropertyValue::PaddingLeft(value)) => {
+            length_to_px(*value, basis as f32, 16.0) as f64
+        }
+        _ => 0.0,
+    };
+    (
+        padding(PropertyKey::PaddingLeft, area.width()),
+        padding(PropertyKey::PaddingTop, area.height()),
+        padding(PropertyKey::PaddingRight, area.width()),
+        padding(PropertyKey::PaddingBottom, area.height()),
+    )
+}
+
+/// Inset `area` (treated as the border box) by `background-origin`.
+/// Invalid `border-area`/`text` origins warn and fall back to `padding-box`.
+fn origin_inset_rect(
+    area: Rect,
+    origin: VisualBox,
+    border: (f64, f64, f64, f64),
+    padding: (f64, f64, f64, f64),
+    image_url: Option<&url::Url>,
+    warnings: &mut Vec<RenderWarning>,
+) -> Rect {
+    let (bl, bt, br, bb) = border;
+    let (pl, pt, pr, pb) = padding;
+    match origin {
+        VisualBox::BorderBox => area,
+        VisualBox::PaddingBox => Rect::new(area.x0 + bl, area.y0 + bt, area.x1 - br, area.y1 - bb),
+        VisualBox::ContentBox => Rect::new(
+            area.x0 + bl + pl,
+            area.y0 + bt + pt,
+            area.x1 - br - pr,
+            area.y1 - bb - pb,
+        ),
+        VisualBox::BorderArea | VisualBox::Text => {
+            warnings.push(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: image_url.map(redacted_image_url),
+                },
+                node_id: None,
+                details:
+                    "background-origin has an unsupported visual box; using padding-box positioning"
+                        .into(),
+            });
+            Rect::new(area.x0 + bl, area.y0 + bt, area.x1 - br, area.y1 - bb)
+        }
+        // cov:ignore: defensive fallback for future `VisualBox` variants
+        _ => Rect::new(area.x0 + bl, area.y0 + bt, area.x1 - br, area.y1 - bb),
+    }
+}
+
+/// Inset `area` (treated as the border box) by `background-clip`.
+///
+/// Returns `None` for `text` (glyph clipping unimplemented) and for the
+/// `border-area` ring (per-strip image tiling unimplemented); callers warn and
+/// skip the image in those cases. Standard boxes return the painting rect.
+fn clip_inset_rect(
+    area: Rect,
+    clip: VisualBox,
+    border: (f64, f64, f64, f64),
+    padding: (f64, f64, f64, f64),
+) -> Option<Rect> {
+    let (bl, bt, br, bb) = border;
+    let (pl, pt, pr, pb) = padding;
+    match clip {
+        VisualBox::BorderBox => Some(area),
+        VisualBox::PaddingBox => Some(Rect::new(
+            area.x0 + bl,
+            area.y0 + bt,
+            area.x1 - br,
+            area.y1 - bb,
+        )),
+        VisualBox::ContentBox => Some(Rect::new(
+            area.x0 + bl + pl,
+            area.y0 + bt + pt,
+            area.x1 - br - pr,
+            area.y1 - bb - pb,
+        )),
+        VisualBox::BorderArea | VisualBox::Text => None,
+        // cov:ignore: defensive fallback for future `VisualBox` variants
+        _ => Some(area),
+    }
+}
+
 fn paint_page_background_image(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -477,16 +608,56 @@ fn paint_page_background_image(
         Some(PropertyValue::BackgroundRepeat(repeat)) => *repeat,
         _ => initial.background_repeat,
     };
+    // `@page` paint/position areas with nonzero margins/borders (CSS Page 3
+    // page box plus CSS Backgrounds 3 sections 2.7-2.8): `area` is the page
+    // border box (full paper for the page background). Origin insets it to the
+    // positioning box; clip insets it to the painting box. `border-area`/`text`
+    // clips are explicitly rejected with a warning instead of silently
+    // omitting pixels.
+    let origin = page_background_origin(cascade);
+    let clip = page_background_clip(cascade);
+    let border = page_border_widths(cascade, area);
+    let padding = page_padding_widths(cascade, area);
+    let positioning = origin_inset_rect(area, origin, border, padding, Some(&url), warnings);
+    let Some(painting) = clip_inset_rect(area, clip, border, padding) else {
+        warnings.push(RenderWarning {
+            kind: WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: Some(redacted_image_url(&url)),
+            },
+            node_id: None,
+            details: "page background-clip has an unsupported visual box; the image was skipped"
+                .into(),
+        });
+        return;
+    };
+    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
+        return;
+    }
     paint_background_from_source(
         scene,
         &url,
-        area,
+        positioning,
+        painting,
         &background_size,
         &background_position,
         &background_repeat,
         pixel_source,
         warnings,
     );
+}
+
+fn canvas_used_padding(computed: &ComputedValues, area_width: f64) -> (f64, f64, f64, f64) {
+    let resolve = |value: ComputedLengthPercentage| match value {
+        ComputedLengthPercentage::Px(px) => px as f64,
+        ComputedLengthPercentage::Percent(percent) => area_width * percent as f64 / 100.0,
+    };
+    (
+        resolve(computed.padding.left),
+        resolve(computed.padding.top),
+        resolve(computed.padding.right),
+        resolve(computed.padding.bottom),
+    )
 }
 
 fn paint_canvas_background_image(
@@ -511,10 +682,47 @@ fn paint_canvas_background_image(
     let Some(url) = background_image_url(raw_url) else {
         return;
     };
+    // Canvas paint/position areas with nonzero page margins and root borders
+    // (CSS Backgrounds 3 section 2.11 propagation plus sections 2.7-2.8):
+    // `area` is the canvas border box (page content area inside margins, or
+    // full paper when margins are zero). Origin/clip inset it by the canvas
+    // owner's border and padding. Unsupported clips warn instead of silently
+    // omitting pixels.
+    let border = (
+        computed.border.left.width().px() as f64,
+        computed.border.top.width().px() as f64,
+        computed.border.right.width().px() as f64,
+        computed.border.bottom.width().px() as f64,
+    );
+    let padding = canvas_used_padding(computed, area.width());
+    let positioning = origin_inset_rect(
+        area,
+        computed.background_origin,
+        border,
+        padding,
+        Some(&url),
+        warnings,
+    );
+    let Some(painting) = clip_inset_rect(area, computed.background_clip, border, padding) else {
+        warnings.push(RenderWarning {
+            kind: WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: Some(redacted_image_url(&url)),
+            },
+            node_id: None,
+            details: "canvas background-clip has an unsupported visual box; the image was skipped"
+                .into(),
+        });
+        return;
+    };
+    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
+        return;
+    }
     paint_background_from_source(
         scene,
         &url,
-        area,
+        positioning,
+        painting,
         &computed.background_size,
         &computed.background_position,
         &computed.background_repeat,
@@ -522,7 +730,6 @@ fn paint_canvas_background_image(
         warnings,
     );
 }
-
 fn background_image_url(raw_url: &str) -> Option<url::Url> {
     let mut url = url::Url::parse(raw_url).ok()?;
     url.set_fragment(None);
@@ -569,6 +776,8 @@ struct MarginBoxPaintSpec {
     background_size: ComputedBackgroundSize,
     background_position: ComputedCssPosition,
     background_repeat: raikiri_style::property::BackgroundRepeat,
+    background_origin: VisualBox,
+    background_clip: VisualBox,
     content_image_lime: bool,
     border_top: Option<(f32, Color)>,
     border_right: Option<(f32, Color)>,
@@ -2138,6 +2347,14 @@ fn margin_box_spec(
         Some(PropertyValue::BackgroundRepeat(repeat)) => *repeat,
         _ => initial.background_repeat,
     };
+    let background_origin = match margin_box_property(rule, PropertyKey::BackgroundOrigin) {
+        Some(PropertyValue::BackgroundOrigin(origin)) => *origin,
+        _ => initial.background_origin,
+    };
+    let background_clip = match margin_box_property(rule, PropertyKey::BackgroundClip) {
+        Some(PropertyValue::BackgroundClip(clip)) => *clip,
+        _ => initial.background_clip,
+    };
     let [border_top, border_right, border_bottom, border_left] =
         margin_box_borders(document, cascade, rule, font_size);
     let margin_auto = margin_box_auto_margins(rule);
@@ -2198,6 +2415,8 @@ fn margin_box_spec(
         background_size,
         background_position,
         background_repeat,
+        background_origin,
+        background_clip,
         content_image_lime,
         border_top,
         border_right,
@@ -2237,16 +2456,57 @@ fn paint_margin_box(
     }
     if let (Some(raw_url), Some(source)) = (spec.background_image_url.as_deref(), pixel_source) {
         if let Some(url) = background_image_url(raw_url) {
-            paint_background_from_source(
-                scene,
-                &url,
+            // Margin-box paint/position areas honor `background-origin`/`background-clip`
+            // like elements (border box is `rect`). Unsupported `text`/`border-area`
+            // clips warn and skip the image instead of silently omitting pixels.
+            let bl = spec.border_left.map(|(w, _)| w as f64).unwrap_or(0.0);
+            let bt = spec.border_top.map(|(w, _)| w as f64).unwrap_or(0.0);
+            let br = spec.border_right.map(|(w, _)| w as f64).unwrap_or(0.0);
+            let bb = spec.border_bottom.map(|(w, _)| w as f64).unwrap_or(0.0);
+            // `spec.padding` is top/right/bottom/left order.
+            let pt = spec.padding[0] as f64;
+            let pr = spec.padding[1] as f64;
+            let pb = spec.padding[2] as f64;
+            let pl = spec.padding[3] as f64;
+            let border = (bl, bt, br, bb);
+            let padding = (pl, pt, pr, pb);
+            let positioning = origin_inset_rect(
                 rect,
-                &spec.background_size,
-                &spec.background_position,
-                &spec.background_repeat,
-                source,
+                spec.background_origin,
+                border,
+                padding,
+                Some(&url),
                 warnings,
             );
+            match clip_inset_rect(rect, spec.background_clip, border, padding) {
+                Some(painting) => {
+                    if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
+                        paint_background_from_source(
+                            scene,
+                            &url,
+                            positioning,
+                            painting,
+                            &spec.background_size,
+                            &spec.background_position,
+                            &spec.background_repeat,
+                            source,
+                            warnings,
+                        );
+                    }
+                }
+                None => {
+                    warnings.push(RenderWarning {
+                        kind: WarningKind::ResourceFallback {
+                            kind: raikiri_traits::ResourceKind::Image,
+                            url: Some(redacted_image_url(&url)),
+                        },
+                        node_id: None,
+                        details:
+                            "margin-box background-clip has an unsupported visual box; the image was skipped"
+                                .into(),
+                    });
+                }
+            }
         }
     } else if spec.background_image_lime {
         scene.fill(
@@ -3801,6 +4061,7 @@ fn paint_document_impl(
                             &cv.background_image,
                             cv.color,
                             cv.background_clip,
+                            cv.background_origin,
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
@@ -3904,6 +4165,26 @@ fn paint_document_impl(
                             cv.visibility != Visibility::Hidden,
                             warnings,
                         )
+                    } else if document.is_canvas_element(node_id) {
+                        let bitmap = document.canvas_bitmap(node_id).unwrap_or_else(|| {
+                            let (w, h) = document.canvas_size(node_id).unwrap_or((300, 150));
+                            raikiri_dom::CanvasBitmap::cleared(w, h)
+                        });
+                        paint_canvas(
+                            scene,
+                            &bitmap,
+                            layout.size.width,
+                            layout.size.height,
+                            paint_x,
+                            paint_y,
+                            &cv.border,
+                            &paint_padding,
+                            cv.object_fit,
+                            &cv.object_position,
+                            cv.overflow.x,
+                            cv.overflow.y,
+                            cv.visibility != Visibility::Hidden,
+                        )
                     } else if let Some(source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
                         && let Some(intrinsic) = source.intrinsic_size(&src_url)
@@ -3959,6 +4240,7 @@ fn paint_document_impl(
                             &BackgroundImage::None,
                             cv.color,
                             cv.background_clip,
+                            cv.background_origin,
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
@@ -4035,19 +4317,20 @@ fn paint_document_impl(
                     stack.push(PaintFrame::PopClip);
                 }
                 // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
-                // the padding box. The current WPT coverage uses `overflow:hidden`
-                // with no padding or border, so the border-box geometry is the
-                // correct clip edge for this path as well. The clip is pushed only
-                // after painting the element itself, then popped after its complete
-                // subtree via the explicit stack frame.
+                // the padding box. Min edges are floored outward so a fractional
+                // padding-box origin does not antialias-cut pixel-snapped descendant
+                // backgrounds (which round to integers); this mirrors the multicol
+                // clip origin flooring. The clip is pushed only after painting the
+                // element itself, then popped after its complete subtree via the
+                // explicit stack frame.
                 let clips_overflow = !matches!(cv.overflow.x, OverflowValue::Visible)
                     || !matches!(cv.overflow.y, OverflowValue::Visible);
                 if clips_overflow {
                     let clip_right = paint_x + layout.size.width - layout.padding.right;
                     let clip_bottom = paint_y + paint_height - layout.padding.bottom;
                     let clip = Rect::new(
-                        (paint_x + layout.padding.left) as f64,
-                        (paint_y + layout.padding.top) as f64,
+                        (paint_x + layout.padding.left).floor() as f64,
+                        (paint_y + layout.padding.top).floor() as f64,
                         if matches!(cv.overflow.x, OverflowValue::Clip) {
                             clip_right.floor() as f64
                         } else {
@@ -4535,6 +4818,109 @@ fn paint_image(
     true
 }
 
+/// Draws an HTML `<canvas>` bitmap with `object-fit`/`object-position`.
+///
+/// Mirrors [`paint_image`]'s sizing and positioning, but reads pixels from
+/// the live [`raikiri_dom::CanvasBitmap`] instead of an [`ImagePixelSource`].
+/// A canvas bitmap is always available at its intrinsic size (transparent
+/// black when script never painted), so unlike `paint_image` this never
+/// emits a resource warning: an empty bitmap simply paints nothing.
+///
+/// Clipping respects `overflow`: `visible` on both axes paints the full
+/// positioned bitmap (CSS Overflow 3 §3.1 lets replaced-element overflow
+/// show, which `overflow-canvas.html` pins); any non-visible axis clips to
+/// the content box, the same box `paint_image` always uses.
+#[allow(clippy::too_many_arguments)]
+fn paint_canvas(
+    scene: &mut impl PaintScene,
+    bitmap: &raikiri_dom::CanvasBitmap,
+    border_box_width: f32,
+    border_box_height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &taffy::Rect<f32>,
+    object_fit: ObjectFit,
+    object_position: &ComputedCssPosition,
+    overflow_x: OverflowValue,
+    overflow_y: OverflowValue,
+    visible: bool,
+) -> bool {
+    let bl = border.left.width().px();
+    let bt = border.top.width().px();
+    let br = border.right.width().px();
+    let bb = border.bottom.width().px();
+    let pl = padding.left;
+    let pr = padding.right;
+    let pt = padding.top;
+    let pb = padding.bottom;
+    let content_x = (abs_x + bl + pl) as f64;
+    let content_y = (abs_y + bt + pt) as f64;
+    let content_w = (border_box_width - bl - br - pl - pr).max(0.0) as f64;
+    let content_h = (border_box_height - bt - bb - pt - pb).max(0.0) as f64;
+    if !visible || content_w <= 0.0 || content_h <= 0.0 {
+        return true;
+    }
+    if bitmap.width == 0 || bitmap.height == 0 {
+        return true;
+    }
+    let natural_w = f64::from(bitmap.width);
+    let natural_h = f64::from(bitmap.height);
+    let (image_w, image_h) = match object_fit {
+        ObjectFit::Fill => (content_w, content_h),
+        ObjectFit::Contain => {
+            let scale = (content_w / natural_w).min(content_h / natural_h);
+            (natural_w * scale, natural_h * scale)
+        }
+        ObjectFit::Cover => {
+            let scale = (content_w / natural_w).max(content_h / natural_h);
+            (natural_w * scale, natural_h * scale)
+        }
+        ObjectFit::None => (natural_w, natural_h),
+        ObjectFit::ScaleDown => {
+            let scale = (content_w / natural_w).min(content_h / natural_h).min(1.0);
+            (natural_w * scale, natural_h * scale)
+        }
+        _ => (content_w, content_h), // cov:ignore: defensive fallback for future ObjectFit variants
+    };
+    if !image_w.is_finite() || !image_h.is_finite() || image_w <= 0.0 || image_h <= 0.0 {
+        return true; // cov:ignore: natural and content sizes are already checked finite and positive above, so this cannot fail here
+    }
+    let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
+    let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);
+    let image_data = peniko::ImageData {
+        data: peniko::Blob::from(bitmap.rgba.clone()),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width: bitmap.width,
+        height: bitmap.height,
+    };
+    let brush = peniko::ImageBrush::new(image_data);
+    let clips_overflow = !matches!(overflow_x, OverflowValue::Visible)
+        || !matches!(overflow_y, OverflowValue::Visible);
+    if clips_overflow {
+        let clip = Rect::new(
+            content_x,
+            content_y,
+            content_x + content_w,
+            content_y + content_h,
+        );
+        scene.push_clip_layer(Affine::IDENTITY, &clip);
+    }
+    scene.fill(
+        peniko::Fill::NonZero,
+        Affine::translate((image_x, image_y))
+            * Affine::scale_non_uniform(image_w / natural_w, image_h / natural_h),
+        brush.as_ref(),
+        None,
+        &Rect::new(0.0, 0.0, natural_w, natural_h),
+    );
+    if clips_overflow {
+        scene.pop_layer();
+    }
+    true
+}
+
 fn natural_object_size(natural: ImageIntrinsicSize) -> (f64, f64) {
     const DEFAULT_WIDTH: f64 = 300.0;
     const DEFAULT_HEIGHT: f64 = 150.0;
@@ -4815,7 +5201,8 @@ fn paint_element_background(
     bg: CssColor,
     bg_image: &BackgroundImage,
     current_color: CssColor,
-    clip: raikiri_style::property::VisualBox,
+    clip: VisualBox,
+    origin: VisualBox,
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
@@ -4845,165 +5232,268 @@ fn paint_element_background(
     if effective.a == 0 && background_url.is_none() {
         return;
     }
-    // background-clip: text — clip to text glyphs (CSS Backgrounds 4 §2.6).
-    // Requires glyph path clipping which is not yet implemented; treat as no opaque rect.
-    // This intentionally leaves coverage gap for text-clip tests (tracked separately).
-    if matches!(clip, raikiri_style::property::VisualBox::Text) {
+    // background-clip: text trims to glyph shapes (CSS Backgrounds 4 section 2.6).
+    // Glyph-path clipping is not implemented; warn and skip so the gap is
+    // visible instead of silently mispainting an opaque rect.
+    if matches!(clip, VisualBox::Text) {
+        if effective.a != 0 || background_url.is_some() {
+            warnings.push(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: background_url
+                        .as_ref()
+                        .map(redacted_image_url),
+                },
+                node_id: None,
+                details:
+                    "background-clip: text for CSS backgrounds is not yet implemented; the background was skipped"
+                        .into(),
+            });
+        }
         return;
     }
-    // Compute inset rect for background-clip per CSS Backgrounds 3 §2.7:
-    // - border-box / border-area: border box (full rect)
-    // - padding-box: padding box (inset by border widths)
-    // - content-box: content box (inset by border + padding)
-    // Width/height is border-box size from taffy layout.
-    let (mut x0, mut y0, mut x1, mut y1) = (
+    // Border-box geometry from taffy layout. `border-radius` percentages
+    // resolve against this box before any origin/clip inset is applied.
+    let (bx0, by0, bx1, by1) = (
         (abs_x as f64).round(),
         (abs_y as f64).round(),
         ((abs_x + width) as f64).round(),
         ((abs_y + height) as f64).round(),
     );
-    // `border-radius` percentages resolve against the border box before an
-    // inner background clip is applied.  Keep that used-value reference while
-    // the clip match below moves the paint rectangle inward.
-    let radius_reference = x1 - x0;
-    let mut radius_inset = (0.0, 0.0, 0.0, 0.0);
+    let radius_reference = bx1 - bx0;
+    let bl = border.left.width().px() as f64;
+    let bt = border.top.width().px() as f64;
+    let br = border.right.width().px() as f64;
+    let bb = border.bottom.width().px() as f64;
+    let pl = padding.left as f64;
+    let pt = padding.top as f64;
+    let pr = padding.right as f64;
+    let pb = padding.bottom as f64;
     let color = Color::from_rgba8(effective.r, effective.g, effective.b, effective.a);
     // When an opaque background and all border sides use the same color, the
-    // visible union is the border-box curve.  Painting that union once avoids
+    // visible union is the border-box curve. Painting that union once avoids
     // a one-pixel seam where an inner clipped fill meets its border ring.
-    let border_box_union = matches!(
-        clip,
-        raikiri_style::property::VisualBox::PaddingBox
-            | raikiri_style::property::VisualBox::ContentBox
-    ) && [&border.top, &border.right, &border.bottom, &border.left]
-        .iter()
-        .all(|side| {
-            side.style() == BorderStyle::Solid
-                && side.width().px() > 0.0
-                && matches!(side.color, BorderColor::Resolved(c) if c == effective)
-        });
+    let border_box_union = matches!(clip, VisualBox::PaddingBox | VisualBox::ContentBox)
+        && [&border.top, &border.right, &border.bottom, &border.left]
+            .iter()
+            .all(|side| {
+                side.style() == BorderStyle::Solid
+                    && side.width().px() > 0.0
+                    && matches!(side.color, BorderColor::Resolved(c) if c == effective)
+            });
     let clip = if border_box_union {
-        raikiri_style::property::VisualBox::BorderBox
+        VisualBox::BorderBox
     } else {
         clip
     };
-    match clip {
-        raikiri_style::property::VisualBox::BorderArea => {
+    // Positioning area from `background-origin` (CSS Backgrounds 3 section 2.8).
+    // `border-area`/`text` are not valid origins; warn and fall back to the
+    // spec initial `padding-box` instead of silently mispositioning.
+    let (px0, py0, px1, py1) = match origin {
+        VisualBox::BorderBox => (bx0, by0, bx1, by1),
+        VisualBox::PaddingBox => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
+        VisualBox::ContentBox => (bx0 + bl + pl, by0 + bt + pt, bx1 - br - pr, by1 - bb - pb),
+        VisualBox::BorderArea | VisualBox::Text => {
+            warnings.push(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: background_url.as_ref().map(redacted_image_url),
+                },
+                node_id: None,
+                details:
+                    "background-origin has an unsupported visual box; using padding-box positioning"
+                        .into(),
+            });
+            (bx0 + bl, by0 + bt, bx1 - br, by1 - bb)
+        }
+        // cov:ignore: defensive fallback for future `VisualBox` variants
+        _ => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
+    };
+    let positioning = Rect::new(px0, py0, px1, py1);
+    // Painting area from `background-clip` (CSS Backgrounds 3 section 2.7).
+    // Width/height is border-box size from taffy layout.
+    let mut radius_inset = (0.0, 0.0, 0.0, 0.0);
+    let painting = match clip {
+        VisualBox::BorderArea => {
             // Border area is the border box minus the padding box (outer ring).
-            // Paint as 4 strips so inner padding/content stays transparent.
-            let bl = border.left.width().px() as f64;
-            let bt = border.top.width().px() as f64;
-            let br = border.right.width().px() as f64;
-            let bb = border.bottom.width().px() as f64;
-            let inner_x0 = x0 + bl;
-            let inner_y0 = y0 + bt;
-            let inner_x1 = x1 - br;
-            let inner_y1 = y1 - bb;
-            // If border is zero or inner invalid, fall back to full rect (border-box)
+            // Paint color as 4 strips so inner padding/content stays transparent.
+            // URL images in the ring need per-strip tiling that is not yet
+            // implemented; warn and skip the image instead of silently omitting it.
+            let inner_x0 = bx0 + bl;
+            let inner_y0 = by0 + bt;
+            let inner_x1 = bx1 - br;
+            let inner_y1 = by1 - bb;
             if inner_x1 <= inner_x0
                 || inner_y1 <= inner_y0
                 || (bl == 0.0 && bt == 0.0 && br == 0.0 && bb == 0.0)
             {
-                let rect = Rect::new(x0, y0, x1, y1);
-                scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+                // Zero borders make the ring equivalent to the border box.
+                // Fall through to the standard border-box path below so URL
+                // images paint normally instead of being skipped.
+                radius_inset = (0.0, 0.0, 0.0, 0.0);
+                Rect::new(bx0, by0, bx1, by1)
+            } else {
+                let top_rect = Rect::new(bx0, by0, bx1, inner_y0);
+                scene.fill(
+                    Fill::NonZero,
+                    kurbo::Affine::IDENTITY,
+                    color,
+                    None,
+                    &top_rect,
+                );
+                let bottom_rect = Rect::new(bx0, inner_y1, bx1, by1);
+                scene.fill(
+                    Fill::NonZero,
+                    kurbo::Affine::IDENTITY,
+                    color,
+                    None,
+                    &bottom_rect,
+                );
+                let left_rect = Rect::new(bx0, inner_y0, inner_x0, inner_y1);
+                scene.fill(
+                    Fill::NonZero,
+                    kurbo::Affine::IDENTITY,
+                    color,
+                    None,
+                    &left_rect,
+                );
+                let right_rect = Rect::new(inner_x1, inner_y0, bx1, inner_y1);
+                scene.fill(
+                    Fill::NonZero,
+                    kurbo::Affine::IDENTITY,
+                    color,
+                    None,
+                    &right_rect,
+                );
+                if background_url.is_some() {
+                    warnings.push(RenderWarning {
+                    kind: WarningKind::ResourceFallback {
+                        kind: raikiri_traits::ResourceKind::Image,
+                        url: background_url
+                            .as_ref()
+                            .map(redacted_image_url),
+                    },
+                    node_id: None,
+                    details:
+                        "background-clip: border-area image tiling in the border ring is not yet implemented; the image was skipped"
+                            .into(),
+                });
+                }
                 return;
             }
-            // Top strip
-            let top_rect = Rect::new(x0, y0, x1, inner_y0);
-            scene.fill(
-                Fill::NonZero,
-                kurbo::Affine::IDENTITY,
-                color,
-                None,
-                &top_rect,
-            );
-            // Bottom strip
-            let bottom_rect = Rect::new(x0, inner_y1, x1, y1);
-            scene.fill(
-                Fill::NonZero,
-                kurbo::Affine::IDENTITY,
-                color,
-                None,
-                &bottom_rect,
-            );
-            // Left strip (between top and bottom)
-            let left_rect = Rect::new(x0, inner_y0, inner_x0, inner_y1);
-            scene.fill(
-                Fill::NonZero,
-                kurbo::Affine::IDENTITY,
-                color,
-                None,
-                &left_rect,
-            );
-            // Right strip
-            let right_rect = Rect::new(inner_x1, inner_y0, x1, inner_y1);
-            scene.fill(
-                Fill::NonZero,
-                kurbo::Affine::IDENTITY,
-                color,
-                None,
-                &right_rect,
-            );
-            return;
         }
-        raikiri_style::property::VisualBox::PaddingBox => {
-            let bl = border.left.width().px() as f64;
-            let bt = border.top.width().px() as f64;
-            let br = border.right.width().px() as f64;
-            let bb = border.bottom.width().px() as f64;
+        VisualBox::PaddingBox => {
             radius_inset = (bl, bt, br, bb);
-            x0 = (x0 + bl).round();
-            y0 = (y0 + bt).round();
-            x1 = (x1 - br).round();
-            y1 = (y1 - bb).round();
+            Rect::new(
+                (bx0 + bl).round(),
+                (by0 + bt).round(),
+                (bx1 - br).round(),
+                (by1 - bb).round(),
+            )
         }
-        raikiri_style::property::VisualBox::ContentBox => {
-            // border inset
-            let bl = border.left.width().px() as f64;
-            let bt = border.top.width().px() as f64;
-            let br = border.right.width().px() as f64;
-            let bb = border.bottom.width().px() as f64;
-            // padding inset from Taffy's used box geometry.
-            let pl = padding.left as f64;
-            let pt = padding.top as f64;
-            let pr = padding.right as f64;
-            let pb = padding.bottom as f64;
+        VisualBox::ContentBox => {
             radius_inset = (bl + pl, bt + pt, br + pr, bb + pb);
-            x0 = (x0 + bl + pl).round();
-            y0 = (y0 + bt + pt).round();
-            x1 = (x1 - br - pr).round();
-            y1 = (y1 - bb - pb).round();
+            Rect::new(
+                (bx0 + bl + pl).round(),
+                (by0 + bt + pt).round(),
+                (bx1 - br - pr).round(),
+                (by1 - bb - pb).round(),
+            )
         }
-        // BorderBox: no inset
-        _ => {}
-    }
+        VisualBox::BorderBox => Rect::new(bx0, by0, bx1, by1),
+        // `text` returns above; this arm is unreachable but keeps the match
+        // exhaustive for future `VisualBox` variants.
+        // cov:ignore: unreachable text arm; early return above handles text
+        VisualBox::Text => Rect::new(bx0, by0, bx1, by1),
+        // cov:ignore: defensive fallback for future `VisualBox` variants
+        _ => Rect::new(bx0, by0, bx1, by1),
+    };
     // Guard against negative or inverted rect after inset (e.g. border larger than box)
-    if x1 <= x0 || y1 <= y0 {
+    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
     fill_rounded_background(
         scene,
         color,
-        x0,
-        y0,
-        x1,
-        y1,
+        painting.x0,
+        painting.y0,
+        painting.x1,
+        painting.y1,
         border_radius,
         radius_inset,
         radius_reference,
     );
     if let (Some(url), Some(source)) = (background_url.as_ref(), pixel_source) {
-        paint_background_from_source(
-            scene,
-            url,
-            Rect::new(x0, y0, x1, y1),
-            background_size,
-            background_position,
-            background_repeat,
-            source,
-            warnings,
-        );
+        // Clip URL images to the same rounded curve as the color fill
+        // (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
+        // Square painting areas skip the extra layer.
+        if let Some(rounded) = rounded_background_path(
+            painting.x0,
+            painting.y0,
+            painting.x1,
+            painting.y1,
+            border_radius,
+            radius_inset,
+            radius_reference,
+        ) {
+            scene.push_clip_layer(Affine::IDENTITY, &rounded);
+            paint_background_from_source(
+                scene,
+                url,
+                positioning,
+                painting,
+                background_size,
+                background_position,
+                background_repeat,
+                source,
+                warnings,
+            );
+            scene.pop_layer();
+        } else {
+            paint_background_from_source(
+                scene,
+                url,
+                positioning,
+                painting,
+                background_size,
+                background_position,
+                background_repeat,
+                source,
+                warnings,
+            );
+        }
     }
+}
+
+/// Rounded background clip matching [`fill_rounded_background`].
+///
+/// Returns `None` when all corner radii are zero so callers can skip the extra
+/// clip layer. Percentages resolve against the border-box `reference` width
+/// before the clip inset, mirroring the color path.
+fn rounded_background_path(
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    radius: &ComputedBorderRadius,
+    inset: (f64, f64, f64, f64),
+    reference: f64,
+) -> Option<BezPath> {
+    let (left, top, right, bottom) = inset;
+    let radii = RoundedRectRadii::new(
+        (used_border_radius(radius.top_left, reference) - left.max(top)).max(0.0),
+        (used_border_radius(radius.top_right, reference) - right.max(top)).max(0.0),
+        (used_border_radius(radius.bottom_right, reference) - right.max(bottom)).max(0.0),
+        (used_border_radius(radius.bottom_left, reference) - left.max(bottom)).max(0.0),
+    );
+    if radii.top_left == 0.0
+        && radii.top_right == 0.0
+        && radii.bottom_right == 0.0
+        && radii.bottom_left == 0.0
+    {
+        return None;
+    }
+    Some(rounded_rect_path(x0, y0, x1, y1, radii))
 }
 
 fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Option<f64> {
@@ -5084,11 +5574,19 @@ fn redacted_image_url(url: &url::Url) -> url::Url {
     redacted
 }
 
+/// Paint one URL background with separate positioning and painting areas.
+///
+/// `positioning` is the `background-origin` box that `background-size` and
+/// `background-position` resolve against (CSS Backgrounds 3 section 2.8).
+/// `painting` is the `background-clip` box that tiling covers and clips to
+/// (CSS Backgrounds 3 section 2.7). Callers with identical boxes (for example
+/// a borderless element with default origin/clip) pass the same [`Rect`] twice.
 #[allow(clippy::too_many_arguments)]
 fn paint_background_from_source(
     scene: &mut impl PaintScene,
     url: &url::Url,
-    area: Rect,
+    positioning: Rect,
+    painting: Rect,
     size: &ComputedBackgroundSize,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
@@ -5099,7 +5597,7 @@ fn paint_background_from_source(
         return;
     };
     let Some((image_w, image_h)) =
-        background_image_dimensions(size, area.width(), area.height(), intrinsic)
+        background_image_dimensions(size, positioning.width(), positioning.height(), intrinsic)
     else {
         return;
     };
@@ -5109,7 +5607,14 @@ fn paint_background_from_source(
     };
     if let Some(decoded) = pixel_source.get_decoded_at_size(url, raster_size, None) {
         paint_background_image(
-            scene, &decoded, area.x0, area.y0, area.x1, area.y1, image_w, image_h, position, repeat,
+            scene,
+            &decoded,
+            positioning,
+            painting,
+            image_w,
+            image_h,
+            position,
+            repeat,
         );
     } else {
         warnings.push(RenderWarning {
@@ -5140,35 +5645,88 @@ fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f64 {
     }
 }
 
-/// Paint one decoded CSS background image in its positioning area.
+/// Paint one decoded CSS background image with origin/clip separation.
 ///
-/// The image is clipped to the caller's background painting area. This keeps
+/// `positioning` is the `background-origin` box: `background-size` resolves
+/// against it and the origin tile is placed inside it by `background-position`
+/// (CSS Backgrounds 3 <https://www.w3.org/TR/css-backgrounds-3/#background-origin>).
+/// `painting` is the `background-clip` box: tiling covers it and the output is
+/// clipped to it (CSS Backgrounds 3
+/// <https://www.w3.org/TR/css-backgrounds-3/#background-clip>). This keeps
 /// URL backgrounds useful to reftests while leaving gradients on the existing
-/// color path. Repetition is deliberately represented by the first tile for
-/// now; the object-fit tranche only consumes `no-repeat` backgrounds.
+/// color path.
+///
+/// Tiling follows CSS Backgrounds 3
+/// <https://www.w3.org/TR/css-backgrounds-3/#background-repeat>:
+/// `repeat` tiles the origin tile in both directions to cover the painting
+/// area, clipping partial edge tiles; `no-repeat` paints only the origin tile;
+/// `space` repeats without clipping or scaling, pinning the first and last
+/// tiles to the positioning edges with even gaps (`background-position` only
+/// places the lone tile when at most one fits); `round` rescales the tile so a
+/// whole number exactly fills the positioning width/height. Mixed axes combine
+/// independently: a `repeat` axis extends to cover `painting` while
+/// `space`/`round` axes stay inside `positioning` and clip to `painting`.
 #[allow(clippy::too_many_arguments)]
 fn paint_background_image(
     scene: &mut impl PaintScene,
     decoded: &raikiri_traits::DecodedImage,
-    x0: f64,
-    y0: f64,
-    x1: f64,
-    y1: f64,
+    positioning: Rect,
+    painting: Rect,
     image_w: f64,
     image_h: f64,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
 ) {
-    if decoded.width == 0 || decoded.height == 0 || x1 <= x0 || y1 <= y0 {
+    if decoded.width == 0 || decoded.height == 0 {
         return;
     }
-    let area_w = x1 - x0;
-    let area_h = y1 - y0;
-    if image_w <= 0.0 || image_h <= 0.0 {
+    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
-    let image_x = x0 + position_offset(position.horizontal, area_w - image_w);
-    let image_y = y0 + position_offset(position.vertical, area_h - image_h);
+    if image_w <= 0.0 || image_h <= 0.0 || !image_w.is_finite() || !image_h.is_finite() {
+        return;
+    }
+    let pos_w = positioning.width();
+    let pos_h = positioning.height();
+    if !pos_w.is_finite() || !pos_h.is_finite() {
+        return;
+    }
+    // Effective tile size after `round` rescaling on each axis. `space` and
+    // `repeat` never rescale, so their effective size stays the base size.
+    let (tile_w, x_count) = round_axis_tiles(pos_w, image_w, repeat.x);
+    let (tile_h, y_count) = round_axis_tiles(pos_h, image_h, repeat.y);
+    // cov:ignore: defensive for non-finite rescaled tiles; base and positioning are finite here
+    if tile_w <= 0.0 || tile_h <= 0.0 || !tile_w.is_finite() || !tile_h.is_finite() {
+        return;
+    }
+    let x_origins = axis_origins(
+        positioning.x0,
+        pos_w,
+        painting.x0,
+        painting.x1,
+        tile_w,
+        image_w,
+        &position.horizontal,
+        &repeat.x,
+        x_count,
+    );
+    let y_origins = axis_origins(
+        positioning.y0,
+        pos_h,
+        painting.y0,
+        painting.y1,
+        tile_h,
+        image_h,
+        &position.vertical,
+        &repeat.y,
+        y_count,
+    );
+    let (Some(x_origins), Some(y_origins)) = (x_origins, y_origins) else {
+        return;
+    };
+    if x_origins.is_empty() || y_origins.is_empty() {
+        return;
+    }
     let image_data = peniko::ImageData {
         data: peniko::Blob::from(decoded.rgba.clone()),
         format: peniko::ImageFormat::Rgba8,
@@ -5177,21 +5735,168 @@ fn paint_background_image(
         height: decoded.height,
     };
     let brush = peniko::ImageBrush::new(image_data);
-    let clip = Rect::new(x0, y0, x1, y1);
-    scene.push_clip_layer(Affine::IDENTITY, &clip);
-    scene.fill(
-        Fill::NonZero,
-        Affine::translate((image_x, image_y))
-            * Affine::scale_non_uniform(
-                image_w / decoded.width as f64,
-                image_h / decoded.height as f64,
-            ),
-        brush.as_ref(),
-        None,
-        &Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64),
+    let tile_shape = Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64);
+    let tile_scale = Affine::scale_non_uniform(
+        tile_w / decoded.width as f64,
+        tile_h / decoded.height as f64,
     );
+    scene.push_clip_layer(Affine::IDENTITY, &painting);
+    for tile_y in &y_origins {
+        for tile_x in &x_origins {
+            // cov:ignore: defensive for non-finite tiles; origins are finite here
+            if !tile_x.is_finite() || !tile_y.is_finite() {
+                continue;
+            }
+            scene.fill(
+                Fill::NonZero,
+                Affine::translate((*tile_x, *tile_y)) * tile_scale,
+                brush.as_ref(),
+                None,
+                &tile_shape,
+            );
+        }
+    }
     scene.pop_layer();
-    let _ = repeat;
+}
+
+/// Rescaled tile size and tile count for one axis under `round`.
+///
+/// `round` rescales so a whole number of tiles exactly fills the positioning
+/// length: `n = max(1, round(positioning / base))`, `effective = positioning / n`.
+/// Other keywords keep the base size; the count is resolved later by
+/// [`axis_origins`] (`space` needs the base size, `repeat` tiles to the
+/// painting area). A non-positive positioning length cannot host a `round`
+/// tile, so the base size is kept and the axis paints a single tile clipped to
+/// the painting area.
+fn round_axis_tiles(
+    positioning_len: f64,
+    base_len: f64,
+    keyword: BackgroundRepeatKeyword,
+) -> (f64, Option<i64>) {
+    if !matches!(keyword, BackgroundRepeatKeyword::Round) {
+        return (base_len, None);
+    }
+    if positioning_len.is_nan() || positioning_len <= 0.0 || base_len.is_nan() || base_len <= 0.0 {
+        return (base_len, Some(1));
+    }
+    let count = (positioning_len / base_len).round() as i64;
+    let count = count.max(1);
+    // Guard against absurd counts from tiny base sizes; tiling is bounded by
+    // the painting-area `repeat` path, but `round`/`space` allocate one entry
+    // per tile inside `positioning`.
+    // cov:ignore: defensive bound for degenerate tiny tiles; tested via empty-repeat guard
+    if count > 10_000 {
+        return (base_len, Some(1));
+    }
+    (positioning_len / count as f64, Some(count))
+}
+
+/// Tile origins for one axis.
+///
+/// `positioning_origin`/`positioning_len` describe the `background-origin` edge;
+/// `painting_min`/`painting_max` describe the `background-clip` edge. `tile`
+/// is the effective (possibly `round`-rescaled) size and `base` the
+/// `background-size` size used for `space` fitting. Returns `None` when the
+/// geometry cannot place a tile (non-finite positioning).
+#[allow(clippy::too_many_arguments)]
+fn axis_origins(
+    positioning_origin: f64,
+    positioning_len: f64,
+    painting_min: f64,
+    painting_max: f64,
+    tile: f64,
+    base: f64,
+    offset: &ComputedCssPositionOffset,
+    keyword: &BackgroundRepeatKeyword,
+    round_count: Option<i64>,
+) -> Option<Vec<f64>> {
+    if !positioning_origin.is_finite() || !positioning_len.is_finite() {
+        return None;
+    }
+    if !painting_min.is_finite() || !painting_max.is_finite() {
+        return None;
+    }
+    match keyword {
+        BackgroundRepeatKeyword::Repeat => {
+            let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+            // cov:ignore: defensive for non-finite offsets; positioning and tile are finite here
+            if !origin.is_finite() {
+                return None;
+            }
+            // Bound the tile fan-out so a degenerate tiny tile cannot allocate
+            // an unbounded origin list; the painting clip keeps the visible
+            // result identical.
+            let start = ((painting_min - origin) / tile).floor() as i64;
+            let end = ((painting_max - origin) / tile).ceil() as i64;
+            // cov:ignore: `end <= start` is defensive for empty painting (checked earlier);
+            // the `> 10_000` bound is covered by the tiny-tile test below
+            if end <= start || end - start > 10_000 {
+                return Some(Vec::new());
+            }
+            Some(
+                (start..end)
+                    .map(|tile_index| origin + tile_index as f64 * tile)
+                    .collect(),
+            )
+        }
+        BackgroundRepeatKeyword::NoRepeat => {
+            let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+            // cov:ignore: defensive for non-finite offsets; inputs are finite here
+            if !origin.is_finite() {
+                return None;
+            }
+            Some(vec![origin])
+        }
+        BackgroundRepeatKeyword::Space => {
+            if base.is_nan() || base <= 0.0 || positioning_len.is_nan() || positioning_len <= 0.0 {
+                let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+                // cov:ignore: defensive for non-finite single-tile fallback
+                return origin.is_finite().then(|| vec![origin]);
+            }
+            let count = (positioning_len / base).floor() as i64;
+            if count <= 1 {
+                let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+                // cov:ignore: defensive for non-finite single-tile fallback
+                return origin.is_finite().then(|| vec![origin]);
+            }
+            // cov:ignore: defensive bound for degenerate tiny tiles; tiny-tile test covers the repeat bound
+            if count > 10_000 {
+                let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+                return origin.is_finite().then(|| vec![origin]);
+            }
+            let gap = (positioning_len - count as f64 * base) / (count - 1) as f64;
+            // cov:ignore: defensive for non-finite gaps; finite inputs give finite gaps here
+            if !gap.is_finite() {
+                return Some(Vec::new());
+            }
+            Some(
+                (0..count)
+                    .map(|index| positioning_origin + index as f64 * (base + gap))
+                    .collect(),
+            )
+        }
+        BackgroundRepeatKeyword::Round => {
+            let count = round_count.unwrap_or(1).max(1);
+            // cov:ignore: defensive bound for degenerate tiny tiles
+            if count > 10_000 {
+                let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+                return origin.is_finite().then(|| vec![origin]);
+            }
+            Some(
+                (0..count)
+                    .map(|index| positioning_origin + index as f64 * tile)
+                    .collect(),
+            )
+        }
+        // cov:ignore: defensive fallback for future repeat keywords
+        _ => {
+            let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+            if !origin.is_finite() {
+                return None;
+            }
+            Some(vec![origin])
+        }
+    }
 }
 
 fn used_border_radius(value: ComputedLengthPercentage, reference: f64) -> f64 {

@@ -52,6 +52,8 @@ use crate::entries::{BlockEntry, ParagraphEntry};
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri_dom::Document;
+use raikiri_style::property::{DisplayValue, FloatValue, PositionValue};
+use raikiri_style::resolve::{ComputedLengthPercentage, ComputedLengthPercentageOrAuto};
 use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox};
 use std::collections::BTreeMap;
@@ -123,13 +125,8 @@ pub struct PageMetadata {
 /// `fragments: BTreeMap<NodeId, Vec<Fragment>>`. `page_index` identifies the
 /// fragment's page across pages; it is fixed within one PageScene.
 ///
-/// # Note on `PageFragment`
-///
-/// The raikiri umbrella also re-exports [`raikiri::PageFragment`](crate::PageFragment)
-/// (from raikiri-traits), which has a different shape. `Fragment` holds
-/// per-node, per-fragment coordinates; `PageFragment` contains an entire
-/// page passed to a sink. Despite their different roles, their similar names
-/// may confuse consumers. They may be renamed later.
+/// Re-exported as `PageSceneFragment` to distinguish these scene coordinates
+/// from the layout views used by drawing consumers.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct Fragment {
@@ -308,6 +305,204 @@ impl PageScene {
     }
 }
 
+/// Resolve a computed margin to used px.
+///
+/// `basis` is the containing-block width (margin percentages resolve against
+/// the width per CSS 2.1 section 8.3). `Auto` maps to zero, which matches the
+/// block-level used-value rule for ordinary flow when `width` is also auto.
+fn used_margin_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> f32 {
+    let resolved = match value {
+        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
+        ComputedLengthPercentageOrAuto::Auto => return 0.0,
+    };
+    if resolved.is_finite() { resolved } else { 0.0 }
+}
+
+/// Resolve computed padding to used px against the same width basis.
+fn used_padding_px(value: ComputedLengthPercentage, basis: f32) -> f32 {
+    let resolved = match value {
+        ComputedLengthPercentage::Px(px) => px,
+        ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
+    };
+    if resolved.is_finite() { resolved } else { 0.0 }
+}
+
+/// Collapse adjoining vertical margins per CSS 2.1 section 8.3.1.
+///
+/// Positive margins combine to their maximum, negative margins to their
+/// minimum (most negative), and mixed signs combine as the largest positive
+/// plus the most negative. Including zero covers the all-positive and
+/// all-negative cases without extra branches.
+fn collapse_margins(values: &[f32]) -> f32 {
+    let mut max_pos = 0.0_f32;
+    let mut min_neg = 0.0_f32;
+    for &value in values {
+        if !value.is_finite() {
+            continue;
+        }
+        if value >= 0.0 {
+            max_pos = max_pos.max(value);
+        } else {
+            min_neg = min_neg.min(value);
+        }
+    }
+    max_pos + min_neg
+}
+
+/// Whether the element has a top border or padding barrier.
+///
+/// A nonzero top border or padding breaks parent-first-child margin
+/// collapsing (CSS 2.1 section 8.3.1). Border uses the absolutized computed
+/// width; padding resolves percentages against the containing-block width.
+fn has_top_barrier(cascade: &CascadeResult, node_idx: usize, content_width: f32) -> bool {
+    let Some(computed) = cascade.computed.get(node_idx) else {
+        return false;
+    };
+    let border = computed.border.top.width().px();
+    if border.is_finite() && border > 0.001 {
+        return true;
+    }
+    let padding = used_padding_px(computed.padding.top, content_width);
+    padding > 0.001
+}
+
+/// Top margin of the first in-flow body child that adjoins the body top.
+///
+/// Returns `None` when no in-flow child adjoins (empty body, only
+/// out-of-flow or `display: none` children, a leading non-whitespace text run,
+/// a leading float, or a body with non-visible vertical overflow). In those
+/// cases the body top does not collapse with a child margin and the caller
+/// falls back to the `<html>`/`<body>` collapsed value alone.
+///
+/// Only the first level is considered. A deeper first-child chain (body with
+/// no barrier whose first child also has no barrier and its own first child)
+/// collapses all three per CSS 2.1 section 8.3.1, but that chain is a
+/// follow-up; this helper stops after one level.
+fn first_in_flow_top_margin(
+    dom: &Document,
+    cascade: &CascadeResult,
+    body_idx: usize,
+    content_width: f32,
+) -> Option<f32> {
+    use raikiri_style::property::OverflowValue;
+
+    if let Some(computed) = cascade.computed.get(body_idx)
+        && !matches!(
+            computed.overflow.y,
+            OverflowValue::Visible | OverflowValue::Clip
+        )
+    {
+        return None;
+    }
+    let body = dom.get_node(body_idx)?;
+    for &child_idx in &body.children {
+        let Some(child) = dom.get_node(child_idx) else {
+            continue; // cov:ignore: body children indices are always valid in a well-formed Document
+        };
+        if !child.is_in_document()
+            || child.is_non_rendered_html_element()
+            || child.is_display_none()
+        {
+            continue;
+        }
+        match child.kind() {
+            NodeKind::Text => {
+                let text = child.text_content().unwrap_or_default();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                return None;
+            }
+            NodeKind::Element => {
+                let Some(computed) = cascade.computed.get(child_idx) else {
+                    continue;
+                };
+                if computed.display == DisplayValue::None {
+                    continue;
+                }
+                if matches!(
+                    computed.position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                ) {
+                    continue;
+                }
+                if !matches!(computed.float, FloatValue::None) {
+                    return None;
+                }
+                return Some(used_margin_px(computed.margin.top, content_width));
+            }
+            _ => continue, // cov:ignore: body children via parsing are only Text or Element
+        }
+    }
+    None
+}
+
+/// Extra page-absolute offset contributed by `<html>`/`<body>` margins.
+///
+/// Horizontally margins never collapse, so the x extra is the plain sum.
+/// Vertically adjoining margins collapse (see [`collapse_margins`]), so the y
+/// extra is the collapsed `<html>`/`<body>`/first-child value minus the first
+/// child's own margin, which keeps the first child's page-absolute position
+/// at the collapsed value while leaving its body-relative fragment untouched.
+/// When the body has a top barrier or no adjoining first child, the y extra
+/// is just the collapsed `<html>`/`<body>` value.
+///
+/// `content_width` is the page content width used as the percent basis.
+/// An `<html>` top barrier (border/padding) disables `<html>`/`<body>`
+/// collapsing; that rare case falls back to the plain sum and is documented
+/// as an approximation.
+fn body_margin_offsets(
+    dom: &Document,
+    cascade: &CascadeResult,
+    body_idx: Option<usize>,
+    html_idx: Option<usize>,
+    content_width: f32,
+) -> (Pt, Pt) {
+    let Some(body_idx) = body_idx else {
+        return (0.0, 0.0);
+    };
+    let basis = if content_width.is_finite() && content_width > 0.0 {
+        content_width
+    } else {
+        0.0
+    };
+    let body_left = cascade
+        .computed
+        .get(body_idx)
+        .map_or(0.0, |computed| used_margin_px(computed.margin.left, basis));
+    let body_top = cascade
+        .computed
+        .get(body_idx)
+        .map_or(0.0, |computed| used_margin_px(computed.margin.top, basis));
+    let (html_left, html_top, html_has_barrier) = html_idx.map_or((0.0, 0.0, false), |idx| {
+        let left = cascade
+            .computed
+            .get(idx)
+            .map_or(0.0, |computed| used_margin_px(computed.margin.left, basis));
+        let top = cascade
+            .computed
+            .get(idx)
+            .map_or(0.0, |computed| used_margin_px(computed.margin.top, basis));
+        let barrier = has_top_barrier(cascade, idx, basis);
+        (left, top, barrier)
+    });
+    let left_extra = html_left + body_left;
+    if html_has_barrier {
+        return (left_extra, html_top + body_top);
+    }
+    let html_body = collapse_margins(&[html_top, body_top]);
+    if has_top_barrier(cascade, body_idx, basis) {
+        return (left_extra, html_body);
+    }
+    let Some(first_top) = first_in_flow_top_margin(dom, cascade, body_idx, basis) else {
+        return (left_extra, html_body);
+    };
+    let collapsed = collapse_margins(&[html_top, body_top, first_top]);
+    (left_extra, collapsed - first_top)
+}
+
 /// Extract metadata, fragments, and drawables from a post-layout Document
 /// to construct a [`PageScene`].
 ///
@@ -335,9 +530,16 @@ impl PageScene {
 /// as `raikiri_paint::walk::paint_document`.
 ///
 /// `body_offset_pt` is the body's position relative to the page-absolute
-/// origin. With no @page margins yet and the body computed from (0, 0) as the
-/// taffy root, it is always `(0.0, 0.0)`. A future change will derive it from
-/// the cascade when @page margins are introduced.
+/// origin, including `@page` margins, `@page` border/padding insets, and the
+/// `<html>`/`<body>` element margins. Horizontally margins never collapse
+/// (CSS 2.1 section 8.3.1), so the x offset is the plain sum. Vertically
+/// adjoining margins collapse to the largest positive plus the most negative
+/// (CSS 2.1 section 8.3.1), so the y offset is the collapsed value minus the
+/// first in-flow child's own top margin (single level only; deeper chains,
+/// `<html>` border/padding, and non-visible `overflow` are follow-ups).
+/// Consumers add this offset to body-content-area-relative fragment
+/// coordinates to obtain page-absolute coordinates.
+///
 /// Build the first page of a document using the compatibility single-page
 /// coordinates.
 pub fn build_page_scene(dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> PageScene {
@@ -388,8 +590,12 @@ pub fn build_page_scene_for_page_named(
     };
 
     let root_id = find_first_element_by_tag(dom, "html").map(|idx| NodeId::new(idx as u64));
+    let html_arena_idx = find_first_element_by_tag(dom, "html");
     let body_arena_idx = find_first_element_by_tag(dom, "body");
     let body_id = body_arena_idx.map(|idx| NodeId::new(idx as u64));
+    let content_width = margins.content_width(page_box).max(0.0);
+    let (body_left_extra, body_top_extra) =
+        body_margin_offsets(dom, cascade, body_arena_idx, html_arena_idx, content_width);
 
     let mut node_ids: Vec<NodeId> = Vec::new();
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
@@ -485,7 +691,10 @@ pub fn build_page_scene_for_page_named(
         drawables,
         root_id,
         body_id,
-        body_offset_pt: (margins.left + insets.left, margins.top + insets.top),
+        body_offset_pt: (
+            margins.left + insets.left + body_left_extra,
+            margins.top + insets.top + body_top_extra,
+        ),
         margin_boxes: cascade.page.margin_boxes().to_vec(),
         content_origin_y,
     }
@@ -558,175 +767,4 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::build_cascaded;
-    use parley::FontContext;
-    use raikiri_html::{ParseOptions, parse};
-
-    /// Parse, cascade, and lay out a hello-world HTML document, then return
-    /// the post-layout Document and CascadeResult. Shared smoke-test setup
-    /// for build_page_scene.
-    fn hello_world_post_layout() -> (Document, CascadeResult) {
-        let opts = ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
-        let uncascaded = parse(&b"<p>Hi</p>"[..], &opts).expect("parse Ok");
-        let cascade = build_cascaded(&uncascaded);
-        let mut dom = uncascaded.dom;
-        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-            .expect("layout Ok");
-        (dom, cascade)
-    }
-
-    /// Check that build_page_scene populates metadata and fragments from a
-    /// post-layout hello-world Document. The recommended integration assertions
-    /// require nonempty node_ids and populated body_id/root_id, preventing
-    /// this path from going untested.
-    #[test]
-    fn build_page_scene_populates_metadata_from_hello_world() {
-        let (dom, cascade) = hello_world_post_layout();
-        let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-
-        assert!(
-            scene.root_id.is_some(),
-            "root_id must resolve to <html> for well-formed document"
-        );
-        assert!(
-            scene.body_id.is_some(),
-            "body_id must resolve to <body> for well-formed document"
-        );
-        assert!(
-            !scene.node_ids.is_empty(),
-            "node_ids must include at least body + descendants"
-        );
-        // DFS starts at body, so body_id must be the first entry in node_ids
-        assert_eq!(
-            scene.node_ids.first().copied(),
-            scene.body_id,
-            "node_ids[0] must be body_id (DFS starts at body, parity with paint_document)"
-        );
-        // Fragments coverage: every id in node_ids has at least one fragment
-        for id in &scene.node_ids {
-            assert!(
-                scene.fragments.get(id).is_some_and(|f| !f.is_empty()),
-                "fragments must have at least one entry for each id in node_ids ({id:?})",
-            );
-        }
-        // Currently: no @page margin; body_offset_pt = (0, 0).
-        assert_eq!(scene.body_offset_pt, (0.0, 0.0));
-        // Page metadata reflects A4
-        assert_eq!(
-            scene.page_metadata.size,
-            (PageBox::A4.width, PageBox::A4.height)
-        );
-        assert_eq!(scene.page_metadata.orientation, Orientation::Portrait);
-    }
-
-    /// Check that build_page_scene populates `drawables` with Element node →
-    /// `BlockEntry` and Text node → `ParagraphEntry` mappings. Regression
-    /// check: it also verifies that the production path exercises the
-    /// non-test `TrackedMap::insert` call site.
-    #[test]
-    fn build_page_scene_consumes_cascaded_margin_box_rules() {
-        let opts = ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
-        let uncascaded = parse(
-            &b"<html><head><style>@page { @top-left { content: \"A\" } }</style></head><body>Hi</body></html>"[..],
-            &opts,
-        )
-        .expect("parse Ok");
-        let cascade = build_cascaded(&uncascaded);
-        let mut dom = uncascaded.dom;
-        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-            .expect("layout Ok");
-        let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-
-        assert_eq!(scene.margin_boxes.len(), 1);
-        assert_eq!(
-            scene.margin_boxes[0].slot,
-            raikiri_style::PageMarginBoxSlot::TopLeft
-        );
-        assert_eq!(scene.margin_boxes[0].declarations.len(), 1);
-    }
-
-    #[test]
-    fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
-        let (dom, cascade) = hello_world_post_layout();
-        let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-
-        // Every Element NodeId in node_ids has a block_styles entry, every
-        // Text NodeId has a paragraphs entry — coverage must exactly match
-        // node_ids (the same set as fragments; do not let them drift).
-        for id in &scene.node_ids {
-            let node = dom
-                .get_node(id.0 as usize)
-                .expect("node_ids entries resolve");
-            match node.kind() {
-                NodeKind::Element => {
-                    assert!(
-                        scene.drawables.block_styles.contains_key(id),
-                        "Element {id:?} must have a block_styles entry"
-                    );
-                }
-                NodeKind::Text => {
-                    assert!(
-                        scene.drawables.paragraphs.contains_key(id),
-                        "Text {id:?} must have a paragraphs entry"
-                    );
-                }
-                _ => {}
-            }
-        }
-
-        // body_id resolves to an Element and must carry a BlockEntry with a
-        // real (non-placeholder) layout_size — proves the cascade/layout
-        // param is actually threaded, not just structurally accepted.
-        let body_id = scene.body_id.expect("hello-world has <body>");
-        let body_entry = scene
-            .drawables
-            .block_styles
-            .get(&body_id)
-            .expect("body must have a BlockEntry");
-        assert!(
-            body_entry.layout_size.is_some(),
-            "BlockEntry.layout_size must be populated from post-layout Node.unrounded_layout"
-        );
-        // Gap fields hold the documented CSS-initial-value placeholders
-        // (entries.rs module doc: opacity/visibility properties don't exist
-        // in ComputedValues yet).
-        assert_eq!(body_entry.opacity, 1.0);
-        assert!(body_entry.visible);
-
-        // At least one paragraph entry must have shaped lines (the "Hi" text
-        // node) — proves text_layout() is actually read, not defaulted.
-        assert!(
-            scene
-                .drawables
-                .paragraphs
-                .values()
-                .any(|p| p.line_count > 0),
-            "at least one ParagraphEntry must have line_count > 0 for shaped \"Hi\" text"
-        );
-    }
-
-    /// Check that PageScene::rasterize returns the same PNG bytes as
-    /// html_to_png. This tests verbatim reuse of the byte-identical sequence
-    /// and pins the primary regression signal locally in this module.
-    #[test]
-    fn rasterize_matches_html_to_png_bytes() {
-        let (dom, cascade) = hello_world_post_layout();
-        let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-        let via_scene = scene.rasterize(&dom, &cascade, PageBox::A4);
-        let via_umbrella = crate::html_to_png(&b"<p>Hi</p>"[..]).expect("html_to_png Ok");
-        assert_eq!(
-            via_scene, via_umbrella,
-            "PageScene::rasterize must produce byte-identical output to html_to_png"
-        );
-    }
-}
+mod tests;

@@ -2324,6 +2324,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
                     percent: -50.0,
                     px: 0.0,
                     em: 2.0,
+                    ch: 0.0,
                 }),
             )),
             fs,
@@ -2337,6 +2338,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             percent: -50.0,
             px: 40.0,
             em: 0.0,
+            ch: 0.0,
         },)),
     );
     // `flex-basis` intrinsic keywords round-trip as keywords through
@@ -3144,7 +3146,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 157;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 158;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3894,6 +3896,7 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::MarginLeftInherit,
         PropertyValue::MarginInherit,
         PropertyValue::BorderRadiusInherit,
+        PropertyValue::TextDecorationThicknessInherit,
         PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit),
@@ -3985,7 +3988,7 @@ macro_rules! property_value_variant_registry {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
                 "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
                 "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
-                "BorderRadiusInherit", "GridArea", "Grid", "TransformOrigin"].len();
+                "BorderRadiusInherit", "TextDecorationThicknessInherit", "GridArea", "Grid", "TransformOrigin"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
@@ -3996,6 +3999,7 @@ macro_rules! property_value_variant_registry {
                     PropertyValue::MarginLeftInherit => "MarginLeftInherit",
                     PropertyValue::MarginInherit => "MarginInherit",
                     PropertyValue::BorderRadiusInherit => "BorderRadiusInherit",
+                    PropertyValue::TextDecorationThicknessInherit => "TextDecorationThicknessInherit",
                     PropertyValue::GridArea(_) => "GridArea",
                     PropertyValue::Grid(_) => "Grid",
                     PropertyValue::TransformOrigin(..) => "TransformOrigin",
@@ -4902,6 +4906,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `border-radius` stores four independent `<length>` corners;
             // every non-px unit is specified-layer residue until phase 3.
             PropertyValue::BorderRadiusInherit => None,
+            // `text-decoration-thickness: inherit` is resolved in phase 2
+            // (see `resolve_against_inherited`); no specified-layer length
+            // remains, same as `BorderRadiusInherit` above.
+            PropertyValue::TextDecorationThicknessInherit => None,
             PropertyValue::BorderRadius(radius) => [
                 radius.top_left,
                 radius.top_right,
@@ -6267,5 +6275,224 @@ fn hyphenate_limit_chars_passes_through_page_value_resolution() {
             before: HyphenateLimitCharsValue::Integer(2),
             after: HyphenateLimitCharsValue::Auto,
         }))
+    );
+}
+
+#[test]
+fn media_guarded_page_size_applies_only_when_media_matches() {
+    // Basic media-conditional page size from the issue example.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media print and (min-width:261px){@page{size:300px 200px}}",
+        Origin::Author,
+    );
+    let matching = MediaContext::with_viewport(crate::media::MediaType::Print, 261, 160);
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &matching,
+    );
+    assert_eq!(
+        result.size(),
+        Some(PageSize::Lengths {
+            width: Length::Px(300.0),
+            height: Length::Px(200.0),
+        })
+    );
+    let non_matching = MediaContext::with_viewport(crate::media::MediaType::Print, 260, 160);
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &non_matching,
+    );
+    assert_eq!(result.size(), None);
+}
+
+#[test]
+fn media_guarded_page_background_applies_only_when_media_matches() {
+    // Page backgrounds must follow the same media gate as size.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media print and (min-width:261px){@page{background-color:red}}",
+        Origin::Author,
+    );
+    let matching = MediaContext::with_viewport(crate::media::MediaType::Print, 261, 160);
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &matching,
+    );
+    assert!(
+        result
+            .declarations()
+            .contains_key(&PropertyKey::BackgroundColor)
+    );
+    let non_matching = MediaContext::with_viewport(crate::media::MediaType::Print, 260, 160);
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &non_matching,
+    );
+    assert!(
+        !result
+            .declarations()
+            .contains_key(&PropertyKey::BackgroundColor)
+    );
+}
+
+#[test]
+fn media_guarded_page_screen_condition_does_not_apply_in_print() {
+    // Screen-only page rules stay inactive in a print context.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@media screen{@page{size:300px 200px}}", Origin::Author);
+    let print = MediaContext::print();
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &print,
+    );
+    assert_eq!(result.size(), None);
+}
+
+#[test]
+fn media_guarded_page_nested_media_conditions_intersect() {
+    // Nested media queries intersect, same as style rules.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media print{@media (min-width:261px){@page{size:300px 200px}}}",
+        Origin::Author,
+    );
+    let matching = MediaContext::with_viewport(crate::media::MediaType::Print, 261, 160);
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &matching,
+    );
+    assert!(result.size().is_some());
+    let non_matching = MediaContext::with_viewport(crate::media::MediaType::Print, 260, 160);
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &non_matching,
+    );
+    assert_eq!(result.size(), None);
+}
+
+#[test]
+fn media_guarded_page_invalid_prelude_is_dropped() {
+    // Invalid page preludes inside media are silently dropped.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media print{@page : left{size:300px 200px}@page{size:100px 50px}}",
+        Origin::Author,
+    );
+    let context = MediaContext::print();
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &context,
+    );
+    assert_eq!(
+        result.size(),
+        Some(PageSize::Lengths {
+            width: Length::Px(100.0),
+            height: Length::Px(50.0),
+        })
+    );
+}
+
+#[test]
+fn media_guarded_page_source_order_respects_document_order() {
+    // Media-guarded pages share source order with top-level pages.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page{size:100px 50px}@media print{@page{size:200px 100px}}",
+        Origin::Author,
+    );
+    let context = MediaContext::print();
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &context,
+    );
+    assert_eq!(
+        result.size(),
+        Some(PageSize::Lengths {
+            width: Length::Px(200.0),
+            height: Length::Px(100.0),
+        })
+    );
+    // An empty contradictory media drops its page, leaving the top-level winner.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page{size:100px 50px}@media (min-width:500px) and (max-width:100px){@page{size:200px 100px}}",
+        Origin::Author,
+    );
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &context,
+    );
+    assert_eq!(
+        result.size(),
+        Some(PageSize::Lengths {
+            width: Length::Px(100.0),
+            height: Length::Px(50.0),
+        })
+    );
+}
+
+#[test]
+fn media_guarded_page_statement_without_block_is_dropped() {
+    // A statement page without a block carries no declarations.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@media print{@page;@page{size:100px 50px}}", Origin::Author);
+    let context = MediaContext::print();
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &context,
+    );
+    assert_eq!(
+        result.size(),
+        Some(PageSize::Lengths {
+            width: Length::Px(100.0),
+            height: Length::Px(50.0),
+        })
+    );
+}
+
+#[test]
+fn media_guarded_page_unsupported_media_drops_page() {
+    // Unsupported media conditions drop the whole block including pages.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media screen and (color){@page{size:300px 200px}}@page{size:100px 50px}",
+        Origin::Author,
+    );
+    let context = MediaContext::print();
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &context,
+    );
+    assert_eq!(
+        result.size(),
+        Some(PageSize::Lengths {
+            width: Length::Px(100.0),
+            height: Length::Px(50.0),
+        })
     );
 }

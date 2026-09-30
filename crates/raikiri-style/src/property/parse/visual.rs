@@ -105,13 +105,7 @@ pub(in crate::property) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Op
 /// but the keyword itself is accepted as spec-valid). Compare identifiers
 /// ASCII case-insensitively (as in [`parse_font_style`]).
 pub(super) fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "visible" => Some(Visibility::Visible),
-        "hidden" => Some(Visibility::Hidden),
-        "collapse" => Some(Visibility::Collapse),
-        _ => None,
-    }
+    Visibility::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Shared parser for the CSS `<url>` value type (CSS Values and Units 4 §4.4
@@ -685,17 +679,7 @@ pub(crate) fn parse_mask_image(input: &mut Parser<'_, '_>) -> Option<MaskImage> 
 /// Parse `<geometry-box>` (see the [`GeometryBox`] grammar: seven
 /// keywords).
 fn parse_geometry_box(input: &mut Parser<'_, '_>) -> Option<GeometryBox> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "border-box" => Some(GeometryBox::BorderBox),
-        "padding-box" => Some(GeometryBox::PaddingBox),
-        "content-box" => Some(GeometryBox::ContentBox),
-        "margin-box" => Some(GeometryBox::MarginBox),
-        "fill-box" => Some(GeometryBox::FillBox),
-        "stroke-box" => Some(GeometryBox::StrokeBox),
-        "view-box" => Some(GeometryBox::ViewBox),
-        _ => None,
-    }
+    GeometryBox::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `clip-path: <clip-source> | [ <basic-shape> || <geometry-box> ] | none`
@@ -791,12 +775,7 @@ fn parse_basic_shape(input: &mut Parser<'_, '_>) -> Option<BasicShape> {
 }
 
 fn parse_fill_rule(input: &mut Parser<'_, '_>) -> Option<FillRule> {
-    let ident = input.expect_ident().ok()?.as_ref().to_ascii_lowercase();
-    match ident.as_str() {
-        "nonzero" => Some(FillRule::NonZero),
-        "evenodd" => Some(FillRule::EvenOdd),
-        _ => None,
-    }
+    FillRule::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Try to parse `<shape-radius>` as `closest-side` / `farthest-side` or `<length-percentage [0,∞]>`.
@@ -1726,21 +1705,11 @@ fn parse_side_or_corner<'i>(
 fn parse_horizontal_side<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<HorizontalSide, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "left" => Ok(HorizontalSide::Left),
-        "right" => Ok(HorizontalSide::Right),
-        _ => Err(input.new_custom_error(())),
-    }
+    HorizontalSide::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 fn parse_vertical_side<'i>(input: &mut Parser<'i, '_>) -> Result<VerticalSide, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "top" => Ok(VerticalSide::Top),
-        "bottom" => Ok(VerticalSide::Bottom),
-        _ => Err(input.new_custom_error(())),
-    }
+    VerticalSide::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// Nested-block body of `linear-gradient()`/`repeating-linear-gradient()`
@@ -1786,23 +1755,11 @@ fn parse_linear_gradient_body<'i>(
 fn parse_radial_shape_keyword<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<RadialShape, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "circle" => Ok(RadialShape::Circle),
-        "ellipse" => Ok(RadialShape::Ellipse),
-        _ => Err(input.new_custom_error(())),
-    }
+    RadialShape::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 fn parse_radial_extent<'i>(input: &mut Parser<'i, '_>) -> Result<RadialExtent, ParseError<'i, ()>> {
-    let ident = input.expect_ident()?.clone();
-    match ident.as_ref().to_ascii_lowercase().as_str() {
-        "closest-side" => Ok(RadialExtent::ClosestSide),
-        "closest-corner" => Ok(RadialExtent::ClosestCorner),
-        "farthest-side" => Ok(RadialExtent::FarthestSide),
-        "farthest-corner" => Ok(RadialExtent::FarthestCorner),
-        _ => Err(input.new_custom_error(())),
-    }
+    RadialExtent::from_css_ident(input.expect_ident()?).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// Authored form of [`RadialSize`]: an intermediate representation before
@@ -2038,14 +1995,7 @@ fn parse_conic_gradient_body<'i>(
 /// grammar). Do not handle `repeat-x`/`repeat-y` here:
 /// [`parse_background_repeat`] handles them as separate top-level alternatives.
 fn parse_background_repeat_keyword(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeatKeyword> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "repeat" => Some(BackgroundRepeatKeyword::Repeat),
-        "space" => Some(BackgroundRepeatKeyword::Space),
-        "round" => Some(BackgroundRepeatKeyword::Round),
-        "no-repeat" => Some(BackgroundRepeatKeyword::NoRepeat),
-        _ => None,
-    }
+    BackgroundRepeatKeyword::from_css_ident(input.expect_ident().ok()?)
 }
 
 fn parse_background_repeat_keyword_res<'i>(

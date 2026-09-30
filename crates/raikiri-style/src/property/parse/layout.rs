@@ -284,20 +284,7 @@ pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
 /// the `left`/`right` values specific to justify-content remain unmatched:
 /// two-token sequences and unsupported idents return `_ => None`.
 pub(super) fn parse_content_alignment(input: &mut Parser<'_, '_>) -> Option<ContentAlignmentValue> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(ContentAlignmentValue::Normal),
-        "stretch" => Some(ContentAlignmentValue::Stretch),
-        "space-between" => Some(ContentAlignmentValue::SpaceBetween),
-        "space-evenly" => Some(ContentAlignmentValue::SpaceEvenly),
-        "space-around" => Some(ContentAlignmentValue::SpaceAround),
-        "center" => Some(ContentAlignmentValue::Center),
-        "start" => Some(ContentAlignmentValue::Start),
-        "end" => Some(ContentAlignmentValue::End),
-        "flex-start" => Some(ContentAlignmentValue::FlexStart),
-        "flex-end" => Some(ContentAlignmentValue::FlexEnd),
-        _ => None,
-    }
+    ContentAlignmentValue::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// The `Result` form of [`parse_content_alignment`], following the wrapper
@@ -1338,12 +1325,7 @@ pub(super) fn parse_list_style_type(input: &mut Parser<'_, '_>) -> Option<ListSt
 
 /// Parse `list-style-position: inside | outside`.
 pub(super) fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<ListStylePosition> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "inside" => Some(ListStylePosition::Inside),
-        "outside" => Some(ListStylePosition::Outside),
-        _ => None,
-    }
+    ListStylePosition::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses the value of `orphans` / `widows: <integer>` (CSS Fragmentation
@@ -1431,14 +1413,7 @@ pub(super) fn parse_columns_shorthand(input: &mut Parser<'_, '_>) -> Option<Colu
 /// case-insensitively, as in sibling
 /// [`parse_word_break`](super::text::parse_word_break).
 pub(super) fn parse_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(BreakBetween::Auto),
-        "avoid" => Some(BreakBetween::Avoid),
-        "avoid-page" => Some(BreakBetween::AvoidPage),
-        "page" => Some(BreakBetween::Page),
-        _ => None,
-    }
+    BreakBetween::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `break-inside: <ident>` (CSS Fragmentation Module Level 3
@@ -1450,13 +1425,7 @@ pub(super) fn parse_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBet
 /// `avoid-region`, silently drop with `None` like other unknown idents.
 /// Idents are compared ASCII case-insensitively, as in [`parse_break_between`].
 pub(super) fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInside> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(BreakInside::Auto),
-        "avoid" => Some(BreakInside::Avoid),
-        "avoid-page" => Some(BreakInside::AvoidPage),
-        _ => None,
-    }
+    BreakInside::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses `page-break-before: <ident>` / `page-break-after: <ident>`,

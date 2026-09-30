@@ -1867,6 +1867,14 @@ mod decl {
         /// [`crate::page`].
         /// (Appended for the same reason as [`Self::TableLayout`].)
         TextDecorationThickness(TextDecorationThickness),
+        /// Marker for `text-decoration-thickness: inherit` on the element path.
+        /// CSS Cascading 4 section 7.3 takes the parent computed value even for this
+        /// non-inherited longhand when `inherit` is specified explicitly
+        /// (CSS Text Decoration 4 `text-decoration-thickness` is non-inherited,
+        /// initial `auto`). The cascade resolves this against the parent computed
+        /// thickness before staging (see [`crate::cascade::apply_winners`]).
+        #[key(TextDecorationThickness)]
+        TextDecorationThicknessInherit,
         /// `text-decoration-inset` — **non-inherited**, initial: `0`
         /// (ED). The element path stages it in
         /// [`crate::specified::SpecifiedValues`] and absolutizes it against the

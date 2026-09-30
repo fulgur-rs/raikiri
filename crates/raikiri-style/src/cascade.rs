@@ -35,7 +35,9 @@ use crate::computed::ComputedValues;
 use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
-use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
+use crate::page::{
+    PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_media_context,
+};
 use crate::property::{PropertyKey, Sides, WritingMode};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
@@ -156,6 +158,19 @@ pub struct CascadeResult {
     /// means "renders as normal" (no box-suppression meaning at all), while
     /// the same empty list on a **pseudo**'s [`Self::pseudo`] entry means
     /// "no box" (§4.1's `content: not none` condition above).
+    ///
+    /// `::marker` (CSS Lists 3 §3.7) shares this same map and the same full-
+    /// `ComputedValues` treatment. `::first-line` (CSS Pseudo-Elements
+    /// Module Level 4 §2.1 `#first-line-pseudo`) also shares it, but map
+    /// presence for a `::first-line` entry carries none of the `content`-
+    /// based box-suppression reading above — `::first-line` has no
+    /// `content`-driven box-generation model at all (see [`PseudoElem`]
+    /// doc), so presence means only "some `::first-line` rule matched this
+    /// element". §2.1.2 `#first-line-styling` also restricts which
+    /// properties may apply through `::first-line`; this crate
+    /// accepts font, background, color, opacity, text decoration and
+    /// supported inline typesetting/layout properties, while excluding
+    /// box geometry, writing-mode, direction and text-orientation.
     pub pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 }
 
@@ -224,6 +239,16 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &mut cascaded,
         media_context,
     );
+    cascade_from_candidates(dom, rule_tree, page_query, &cascaded, media_context)
+}
+
+fn cascade_from_candidates<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    page_query: &PageContextQuery,
+    cascaded: &collect::CascadedArena,
+    media_context: &MediaContext,
+) -> Result<CascadeResult, CascadeError> {
     let opacity_specified = (0..dom.node_count())
         .map(|index| {
             cascaded
@@ -267,7 +292,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         dom,
         dom.root_id(),
         &ComputedValues::initial(),
-        &cascaded,
+        cascaded,
         &mut computed,
         &mut non_ua_margin_sides,
         &mut authored_writing_modes,
@@ -285,10 +310,11 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     let root_computed = root_element_id
         .and_then(|id| computed.get(id.0 as usize))
         .unwrap_or(&computed[dom.root_id().0 as usize]);
-    let page = cascade_page(
+    let page = cascade_page_with_media_context(
         rule_tree,
         page_query,
         PageInheritance::FromRoot(root_computed),
+        media_context,
     );
 
     Ok(CascadeResult {
@@ -316,6 +342,8 @@ pub use query::SelectorQuery;
 mod custom_property;
 mod html_quirks;
 pub(crate) use custom_property::*;
+mod first_line;
+pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line};
 mod inherit;
 pub(crate) use inherit::*;
 
@@ -323,194 +351,4 @@ pub(crate) use inherit::*;
 mod test_support;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cascade::test_support::*;
-    use crate::ruletree::{Origin, build_rule_tree};
-    use crate::test_dom::TestDoc;
-
-    #[test]
-    fn empty_dom_root_has_initial() {
-        let doc = TestDoc::new();
-        let tree = build_rule_tree(&doc);
-        let r = cascade(&doc, &tree).unwrap();
-        assert_eq!(r.computed[0], ComputedValues::initial());
-    }
-
-    fn context_cascade_doc(css: &str, context: MediaContext) -> (TestDoc, usize, CascadeResult) {
-        let mut doc = TestDoc::new();
-        let s = doc.push_element(0, "style", None);
-        doc.push_text(s, css);
-        let element = doc.push_element(0, "p", None);
-        let tree = build_rule_tree(&doc);
-        let result = cascade_with_media_context(&doc, &tree, &context).expect("cascade Ok");
-        (doc, element, result)
-    }
-
-    #[test]
-    fn media_context_selects_print_and_screen_rules() {
-        let css = "@media print { p { color: red } } @media screen { p { color: blue } }";
-        let (_, element, print_result) = context_cascade_doc(css, MediaContext::print());
-        assert_eq!(print_result.computed[element].color, RED);
-        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
-        assert_eq!(screen_result.computed[element].color, BLUE);
-    }
-
-    #[test]
-    fn media_all_matches_both_contexts_and_default_is_print() {
-        let css = "@media all { p { color: red } }";
-        let (_, element, default_result) = context_cascade_doc(css, MediaContext::default());
-        assert_eq!(default_result.computed[element].color, RED);
-        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
-        assert_eq!(screen_result.computed[element].color, RED);
-    }
-
-    #[test]
-    fn media_rules_keep_source_order_against_direct_rules() {
-        let css = "p { color: red } @media print { p { color: blue } } p { color: red }";
-        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
-        assert_eq!(result.computed[element].color, RED);
-
-        let css = "p { color: red } @media print { p { color: blue } }";
-        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
-        assert_eq!(result.computed[element].color, BLUE);
-    }
-
-    #[test]
-    fn nested_media_conditions_are_conjoined_and_unknown_wrappers_do_not_leak() {
-        let css =
-            "@media print { @media all { p { color: red } } @media screen { p { color: blue } } }";
-        let (_, element, print_result) = context_cascade_doc(css, MediaContext::print());
-        assert_eq!(print_result.computed[element].color, RED);
-        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
-        assert_ne!(screen_result.computed[element].color, RED);
-
-        let css = "@supports (display: block) { @media print { p { color: red } } }";
-        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
-        assert_ne!(result.computed[element].color, RED);
-    }
-
-    #[test]
-    fn media_comma_list_and_invalid_features_are_safe() {
-        let css = "@media print, projection { p { color: red } }";
-        let (_, element, print_result) = context_cascade_doc(css, MediaContext::print());
-        assert_eq!(print_result.computed[element].color, RED);
-        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
-        assert_ne!(screen_result.computed[element].color, RED);
-
-        let css = "@media print and (color) { p { color: red } }";
-        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
-        assert_ne!(result.computed[element].color, RED);
-
-        let css = "@media print, { p { color: red } }";
-        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
-        assert_ne!(result.computed[element].color, RED);
-    }
-
-    #[test]
-    fn media_condition_is_applied_to_pseudo_elements() {
-        let css = "@media screen { p::before { content: \"x\"; color: red } }";
-        let (doc, element, print_result) = context_cascade_doc(css, MediaContext::print());
-        let element_id = StyleNodeId::new(element as u64);
-        assert!(
-            !print_result
-                .pseudo
-                .contains_key(&(element_id, PseudoElem::Before))
-        );
-        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
-        let element_id = StyleNodeId::new(element as u64);
-        assert!(
-            screen_result
-                .pseudo
-                .contains_key(&(element_id, PseudoElem::Before))
-        );
-        assert_eq!(doc.node_count(), 4);
-    }
-
-    #[test]
-    fn cascade_result_is_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<CascadeResult>();
-    }
-
-    #[test]
-    fn cascade_deterministic_across_10_runs() {
-        let mut doc = TestDoc::new();
-        let s = doc.push_element(0, "style", None);
-        doc.push_text(s, "p { color: red } * { color: blue !important }");
-        let p = doc.push_element(0, "p", Some("font-size: 20px"));
-        doc.push_element(p, "span", None);
-        let tree = build_rule_tree(&doc);
-
-        let baseline = cascade(&doc, &tree).unwrap();
-        for _ in 0..9 {
-            let run = cascade(&doc, &tree).unwrap();
-            assert_eq!(run.computed.len(), baseline.computed.len());
-            for i in 0..run.computed.len() {
-                assert_eq!(run.computed[i], baseline.computed[i], "differ at node {i}");
-            }
-        }
-    }
-
-    fn deep_chain_doc(depth: usize) -> (TestDoc, usize) {
-        let mut doc = TestDoc::new();
-        let mut parent = 0usize;
-        for _ in 0..depth {
-            parent = doc.push_element(parent, "div", None);
-        }
-        let style = doc.push_element(parent, "style", None);
-        doc.push_text(style, "div { color: red }");
-        (doc, parent)
-    }
-
-    #[test]
-    fn deep_nesting_5000_cascade_no_overflow() {
-        let (doc, deepest) = deep_chain_doc(5000);
-        let tree = build_rule_tree(&doc);
-        let result = cascade(&doc, &tree).expect("cascade Ok");
-        assert_eq!(result.computed.len(), doc.nodes.len());
-        assert_eq!(result.computed[deepest].color, RED);
-    }
-
-    #[test]
-    fn deep_nesting_small_stack_no_overflow() {
-        let handle = std::thread::Builder::new()
-            .stack_size(128 * 1024)
-            .spawn(|| {
-                let (doc, deepest) = deep_chain_doc(500);
-                let tree = build_rule_tree(&doc);
-                let result = cascade(&doc, &tree).expect("cascade Ok");
-                result.computed[deepest].color
-            })
-            .expect("spawn thread");
-        let color = handle
-            .join()
-            .expect("thread must not stack-overflow on deep DOM");
-        assert_eq!(color, RED);
-    }
-
-    #[test]
-    fn cascade_with_ua_deterministic_across_10_runs() {
-        // determinism regression (acceptance criteria for this stage of work)
-        let mut doc = TestDoc::new();
-        let s = doc.push_element(0, "style", None);
-        doc.push_text(s, "p { color: red }");
-        let p = doc.push_element(0, "p", Some("font-size: 20px"));
-        doc.push_element(p, "span", None);
-
-        let mut tree = build_rule_tree(&doc);
-        tree.add_stylesheet(
-            "p { display: block } span { display: inline }",
-            Origin::UserAgent,
-        );
-
-        let baseline = cascade(&doc, &tree).unwrap();
-        for _ in 0..9 {
-            let run = cascade(&doc, &tree).unwrap();
-            assert_eq!(run.computed.len(), baseline.computed.len());
-            for i in 0..run.computed.len() {
-                assert_eq!(run.computed[i], baseline.computed[i], "differ at node {i}");
-            }
-        }
-    }
-}
+mod tests;

@@ -15,7 +15,7 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
-    used_line_height_length,
+    calc_ch_factor, used_line_height_length,
 };
 use crate::rule::{
     expand_background, expand_border, expand_border_color, expand_border_css_wide,
@@ -204,7 +204,15 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // pseudo-elements, of which `::before`/`::after` are a subcase):
         // "They inherit any inheritable properties from their originating
         // element; non-inheritable properties take their initial values as
-        // usual." This is computed inline here, right where `id`'s own real
+        // usual." `::first-line` is not itself tree-abiding (§2.1
+        // <https://drafts.csswg.org/css-pseudo-4/#first-line-pseudo>, see
+        // `PseudoElem` doc), but this crate resolves it with the same
+        // inherit-then-cascade step below since both are single-originating-
+        // element pseudo-elements; §4's `content`-conditioned box-generation
+        // rule two paragraphs down does not apply to it (`::first-line` has
+        // no `content`-driven box-generation model), only the plain
+        // inheritance sentence quoted above. This is computed inline here,
+        // right where `id`'s own real
         // children would be, rather than in a separate pass after this
         // whole walk finishes, for one specific reason: `child_ctx` (the
         // `rem`/`rlh` basis `id`'s real children get) is *not* a
@@ -231,7 +239,12 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // element" — is a downstream (`raikiri-dom`) decision this crate
         // does not make; see `CascadeResult::pseudo`'s doc.
         if is_element {
-            for pseudo in [PseudoElem::Before, PseudoElem::After, PseudoElem::Marker] {
+            for pseudo in [
+                PseudoElem::Before,
+                PseudoElem::After,
+                PseudoElem::Marker,
+                PseudoElem::FirstLine,
+            ] {
                 let candidates = cascaded.pseudo_candidates(id, pseudo);
                 let custom_candidates = cascaded.pseudo_custom_candidates(id, pseudo);
                 if candidates.is_none() && custom_candidates.is_none() {
@@ -246,6 +259,23 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                     pseudo_local_custom_properties.unwrap_or_else(empty_custom_properties);
 
                 let mut pseudo_specified = SpecifiedValues::inherit_from(&computed);
+                // Filter by longhand key before choosing winners, including
+                // deferred var() values and expanded shorthand candidates.
+                let first_line_candidates;
+                let candidates = if pseudo == PseudoElem::FirstLine {
+                    first_line_candidates = candidates.map(|values| {
+                        values
+                            .iter()
+                            .filter(|(value, ..)| {
+                                super::first_line::first_line_property_applies(value.key())
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    });
+                    first_line_candidates.as_deref()
+                } else {
+                    candidates
+                };
                 if let Some(candidates) = candidates {
                     apply_winners(
                         candidates,
@@ -652,8 +682,34 @@ pub(crate) fn apply_winners(
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
                     inherited_border_radius_value(inherited),
                 )),
+                PropertyValue::TextDecorationThicknessInherit => {
+                    Some(PropertyValue::TextDecorationThickness(
+                        inherited_text_decoration_thickness(inherited),
+                    ))
+                }
                 PropertyValue::Deferred(deferred) => {
                     let resolved = resolve_deferred_value(deferred, custom_properties);
+                    let resolved = match resolved {
+                        Some(PropertyValue::Deferred(marker))
+                            if marker.value.trim().eq_ignore_ascii_case("inherit") =>
+                        {
+                            match marker.key {
+                                crate::property::PropertyKey::Color => {
+                                    Some(PropertyValue::Color(inherited.color))
+                                }
+                                crate::property::PropertyKey::BackgroundColor => {
+                                    Some(PropertyValue::BackgroundColor(inherited.background_color))
+                                }
+                                crate::property::PropertyKey::FontSize => {
+                                    Some(PropertyValue::FontSize(Length::Px(inherited.font_size.0)))
+                                }
+                                // cov:ignore: inherit markers are emitted only
+                                // for the three keys handled above by parse_property_value.
+                                _ => None,
+                            }
+                        }
+                        value => value,
+                    };
                     match resolved {
                         None => None,
                         Some(
@@ -678,6 +734,11 @@ pub(crate) fn apply_winners(
                             winner_origin,
                             custom_properties,
                         ),
+                        Some(PropertyValue::TextDecorationThicknessInherit) => {
+                            Some(PropertyValue::TextDecorationThickness(
+                                inherited_text_decoration_thickness(inherited),
+                            ))
+                        }
                         Some(v) => Some(v),
                     }
                 }
@@ -1082,6 +1143,28 @@ fn inherited_border_width(computed: ComputedLength) -> Length {
     Length::Px(computed.0)
 }
 
+/// Lift a parent computed `text-decoration-thickness` into specified form for `inherit`.
+///
+/// CSS Cascading 4 section 7.3 takes the parent computed value even though
+/// CSS Text Decoration 4 marks this longhand non-inherited. The computed
+/// length is already absolute CSS px (see [`crate::resolve::resolve_text_decoration_thickness`]),
+/// so representing it as `Length::Px` is lossless. Keywords pass through unchanged.
+fn inherited_text_decoration_thickness(
+    inherited: &ComputedValues,
+) -> crate::property::TextDecorationThickness {
+    match inherited.text_decoration_thickness {
+        crate::resolve::ComputedTextDecorationThickness::Auto => {
+            crate::property::TextDecorationThickness::Auto
+        }
+        crate::resolve::ComputedTextDecorationThickness::FromFont => {
+            crate::property::TextDecorationThickness::FromFont
+        }
+        crate::resolve::ComputedTextDecorationThickness::Length(px) => {
+            crate::property::TextDecorationThickness::Length(Length::Px(px.0))
+        }
+    }
+}
+
 fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
@@ -1120,6 +1203,9 @@ pub(crate) fn resolve_against_inherited(
             bottom: inherited_margin_length(inherited.margin.bottom),
             left: inherited_margin_length(inherited.margin.left),
         }),
+        PropertyValue::TextDecorationThicknessInherit => {
+            PropertyValue::TextDecorationThickness(inherited_text_decoration_thickness(inherited))
+        }
         PropertyValue::BorderTopWidthCssWide(kw) => {
             PropertyValue::BorderTopWidth(resolve_border_page_longhand(kw, inherited, true, false, false))
         }
@@ -1783,8 +1869,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.text_indent = v.length;
             target.text_indent_ch_factor = match v.length {
                 TextIndentLength::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                TextIndentLength::Calc(calc) => calc_ch_factor(calc),
                 _ => None,
             };
+            target.text_indent_ch_offset = 0.0;
             target.text_indent_ch_font = None;
             target.text_indent_ch_inherited = false;
             target.text_indent_hanging = v.hanging;
@@ -1841,6 +1929,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::BorderRightColorCssWide(_)
         | PropertyValue::BorderBottomColorCssWide(_)
         | PropertyValue::BorderLeftColorCssWide(_) => {}
+        // `text-decoration-thickness: inherit` is resolved in `apply_winners`
+        // before reaching here (it needs the parent computed value).
+        // Keep it panic-free for direct callers that bypass that phase.
+        PropertyValue::TextDecorationThicknessInherit => {}
         PropertyValue::Border(sides) => expand_border(sides, |v| apply_value(v, target)),
         PropertyValue::BorderRight(border) => {
             expand_border_right(border, |v| apply_value(v, target))
@@ -1910,16 +2002,20 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 LetterSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => {
                     Some(factor)
                 }
+                LetterSpacingValue::Calc(calc) => calc_ch_factor(calc),
                 _ => None,
             };
+            target.letter_spacing_ch_offset = 0.0;
             target.letter_spacing_ch_font = None;
         }
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
             target.word_spacing_ch_factor = match ws {
                 WordSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                WordSpacingValue::Calc(calc) => calc_ch_factor(calc),
                 _ => None,
             };
+            target.word_spacing_ch_offset = 0.0;
             target.word_spacing_ch_font = None;
         }
         PropertyValue::TabSize(ts) => target.tab_size = ts,

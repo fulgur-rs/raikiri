@@ -667,6 +667,9 @@ pub struct LengthPercentageCalc {
     pub px: f32,
     /// `em` coefficient resolved against the element's computed font size.
     pub em: f32,
+    /// `ch` coefficient, measured against the declaring font's `0` advance by
+    /// the layout consumer; style computes only a `0.5em` fallback for it.
+    pub ch: f32,
 }
 /// Specified `text-underline-offset` value.
 ///
@@ -1708,6 +1711,12 @@ pub enum FontStyle {
     Oblique,
 }
 
+css_keywords!(FontStyle {
+    Normal => "normal",
+    Italic => "italic",
+    Oblique => "oblique",
+});
+
 /// The value of the `font-variant-caps` property.
 ///
 /// CSS Fonts Module Level 3 §6.6 "Capitalization: the font-variant-caps
@@ -1948,6 +1957,12 @@ pub enum Visibility {
     Collapse,
 }
 
+css_keywords!(Visibility {
+    Visible => "visible",
+    Hidden => "hidden",
+    Collapse => "collapse",
+});
+
 /// The value of the `line-height` property (an author CSS type that lays
 /// the groundwork for inline layout).
 ///
@@ -2056,6 +2071,11 @@ pub enum ListStylePosition {
     /// Marker participates in the first line of the principal block.
     Inside,
 }
+
+css_keywords!(ListStylePosition {
+    Outside => "outside",
+    Inside => "inside",
+});
 
 /// The optional second argument of `string()`:
 /// `[ first | start | last | first-except ]?`.
@@ -2946,6 +2966,19 @@ pub enum ContentAlignmentValue {
     FlexEnd,
 }
 
+css_keywords!(ContentAlignmentValue {
+    Normal => "normal",
+    Stretch => "stretch",
+    SpaceBetween => "space-between",
+    SpaceEvenly => "space-evenly",
+    SpaceAround => "space-around",
+    Center => "center",
+    Start => "start",
+    End => "end",
+    FlexStart => "flex-start",
+    FlexEnd => "flex-end",
+});
+
 /// `align-items` value (a "self-alignment" keyword set based on CSS Box
 /// Alignment 3 §4.1 `<self-position>`).
 ///
@@ -3617,6 +3650,11 @@ pub enum HangingPunctuation {
     First,
 }
 
+css_keywords!(HangingPunctuation {
+    None => "none",
+    First => "first",
+});
+
 /// The value of the `text-align` property.
 ///
 /// CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
@@ -4061,6 +4099,12 @@ pub enum RubyPosition {
     /// Place annotations between vertical glyphs.
     InterCharacter,
 }
+
+css_keywords!(RubyPosition {
+    Over => "over",
+    Under => "under",
+    InterCharacter => "inter-character",
+});
 
 /// `WritingMode`'s renderer-facing fallback normalization ([`WritingMode`] doc's
 /// Non-goal section). This is not the CSS computed keyword: element
@@ -5300,6 +5344,13 @@ pub enum BreakBetween {
     Page,
 }
 
+css_keywords!(BreakBetween {
+    Auto => "auto",
+    Avoid => "avoid",
+    AvoidPage => "avoid-page",
+    Page => "page",
+});
+
 /// The value of the `break-inside` property.
 ///
 /// CSS Fragmentation Module Level 3 §3.2 "Breaks Within Boxes: the
@@ -5356,6 +5407,12 @@ pub enum BreakInside {
     /// `avoid-page` — "Avoid a page break within the box." (§3.2 verbatim)
     AvoidPage,
 }
+
+css_keywords!(BreakInside {
+    Auto => "auto",
+    Avoid => "avoid",
+    AvoidPage => "avoid-page",
+});
 
 /// The value of the `float` property.
 ///
@@ -6160,6 +6217,16 @@ pub enum TextAlignAll {
     MatchParent,
 }
 
+css_keywords!(TextAlignAll {
+    Start => "start",
+    End => "end",
+    Left => "left",
+    Right => "right",
+    Center => "center",
+    Justify => "justify",
+    MatchParent => "match-parent",
+});
+
 /// The value of the `text-align-last` property (CSS Text 3 §6.1 longhand).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6881,6 +6948,11 @@ pub enum HorizontalSide {
     Right,
 }
 
+css_keywords!(HorizontalSide {
+    Left => "left",
+    Right => "right",
+});
+
 /// Keyword for [`SideOrCorner::vertical`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6890,6 +6962,11 @@ pub enum VerticalSide {
     /// `bottom`.
     Bottom,
 }
+
+css_keywords!(VerticalSide {
+    Top => "top",
+    Bottom => "bottom",
+});
 
 /// `radial-gradient()` / `repeating-radial-gradient()` (CSS Images 4 §3.2
 /// "Radial Gradients: the radial-gradient() notation"
@@ -6932,6 +7009,11 @@ pub enum RadialShape {
     Ellipse,
 }
 
+css_keywords!(RadialShape {
+    Circle => "circle",
+    Ellipse => "ellipse",
+});
+
 /// [`RadialGradient::size`] (CSS Images 3 §3.2.1 baseline grammar
 /// `<radial-size> = <radial-extent> | <length [0,∞]> |
 /// <length-percentage [0,∞]>{2}`).
@@ -6970,6 +7052,13 @@ pub enum RadialExtent {
     /// `farthest-corner` — the spec-mandated default for [`RadialSize`].
     FarthestCorner,
 }
+
+css_keywords!(RadialExtent {
+    ClosestSide => "closest-side",
+    ClosestCorner => "closest-corner",
+    FarthestSide => "farthest-side",
+    FarthestCorner => "farthest-corner",
+});
 
 /// `conic-gradient()` / `repeating-conic-gradient()` (CSS Images 4 §3.3
 /// "Conic Gradients: the conic-gradient() notation"
@@ -7079,6 +7168,13 @@ pub enum BackgroundRepeatKeyword {
     /// `no-repeat` — places only one tile.
     NoRepeat,
 }
+
+css_keywords!(BackgroundRepeatKeyword {
+    Repeat => "repeat",
+    Space => "space",
+    Round => "round",
+    NoRepeat => "no-repeat",
+});
 
 /// Specified value of `background-repeat`.
 ///
@@ -7423,6 +7519,16 @@ pub enum GeometryBox {
     ViewBox,
 }
 
+css_keywords!(GeometryBox {
+    BorderBox => "border-box",
+    PaddingBox => "padding-box",
+    ContentBox => "content-box",
+    MarginBox => "margin-box",
+    FillBox => "fill-box",
+    StrokeBox => "stroke-box",
+    ViewBox => "view-box",
+});
+
 /// `fill-rule` for [`BasicShape::Polygon`] / [`BasicShape::Path`].
 ///
 /// CSS Shapes Module Level 1 §3.1 "Supported Shapes"
@@ -7439,6 +7545,11 @@ pub enum FillRule {
     /// `evenodd`.
     EvenOdd,
 }
+
+css_keywords!(FillRule {
+    NonZero => "nonzero",
+    EvenOdd => "evenodd",
+});
 
 /// `<shape-radius>` for [`BasicShape::Circle`] / [`BasicShape::Ellipse`].
 ///

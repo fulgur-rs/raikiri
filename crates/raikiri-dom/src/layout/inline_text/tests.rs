@@ -3248,6 +3248,51 @@ fn preshape_text_applies_computed_word_spacing_ch_to_advance() {
 }
 
 #[test]
+fn preshape_text_adds_calc_ch_absolute_offset_to_measured_spacing() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    fn shaped_width(inline_style: &str, text: &str) -> f32 {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+        let text = doc.append_text(p, text);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        doc.nodes[text]
+            .text_layout()
+            .expect("text should be shaped")
+            .full_width()
+    }
+
+    // `calc(1ch + 5px)` must equal the measured `1ch` plus the 5px offset per
+    // spacing unit (two glyphs for letter-spacing, one space for word-spacing).
+    let letter_ch = shaped_width("letter-spacing: 1ch", "AB");
+    let letter_calc = shaped_width("letter-spacing: calc(1ch + 5px)", "AB");
+    assert!(
+        (letter_calc - letter_ch - 10.0).abs() < 0.01,
+        "letter-spacing: ch={letter_ch}, calc={letter_calc}"
+    );
+    let word_ch = shaped_width("word-spacing: 1ch", "A B");
+    let word_calc = shaped_width("word-spacing: calc(1ch + 5px)", "A B");
+    assert!(
+        (word_calc - word_ch - 5.0).abs() < 0.01,
+        "word-spacing: ch={word_ch}, calc={word_calc}"
+    );
+}
+
+#[test]
 fn preshape_text_measures_inherited_ch_spacing_with_the_declaring_font() {
     use parley::{FontContext, LayoutContext};
     use raikiri_style::{build_rule_tree, cascade};
@@ -4102,4 +4147,401 @@ fn word_space_transform_ideographic_space_shapes_both_separator_kinds() {
     );
     assert!((actual_wbr - expected_wbr).abs() < 0.01);
     assert_eq!(doc.nodes[disabled_wbr].style.size.width, disabled_width);
+}
+
+#[test]
+fn word_space_transform_space_trailing_edge_preserves_inter_node_advance() {
+    // Trailing U+200B at a text-node edge becomes a trailing ASCII space
+    // after phase-1 collapsing, but Parley `width()` excludes trailing
+    // whitespace while `full_width()` includes it. Taffy measures `width()`,
+    // so the inter-node advance would be lost without phase-2 edge spacing.
+    // This pins the wrapping advance box (not an NBSP migration, which would
+    // forbid soft wrap) and asserts layout positions, since `full_width`
+    // alone cannot prove the following sibling is placed after the edge.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:space"),
+    );
+    let first = doc.append_text(block, "a\u{200B}");
+    let second = doc.append_text(block, "b");
+    // Reference single `a` in the same font for the no-edge advance.
+    let reference_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:none"),
+    );
+    let reference = doc.append_text(reference_block, "a");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let first_layout = doc.nodes[first].text_layout().expect("first shaped");
+    let reference_layout = doc.nodes[reference]
+        .text_layout()
+        .expect("reference shaped");
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        first_layout.width() > reference_layout.width() + 0.5,
+        "trailing edge must add a space advance: first={} reference={}",
+        first_layout.width(),
+        reference_layout.width()
+    );
+    // The edge is a wrapping advance box, not an NBSP migration.
+    let mut has_edge_box = false;
+    for line in first_layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item
+                && inline_box.id == (1u64 << 61)
+            {
+                // cov:ignore: panic-message literal only executed on assertion failure.
+                assert!(
+                    matches!(inline_box.kind, parley::InlineBoxKind::InFlow),
+                    "edge box must stay wrappable (InFlow), not suppress soft wrap"
+                );
+                // cov:ignore: panic-message literal only executed on assertion failure.
+                assert!(
+                    inline_box.width > 0.0,
+                    "edge box must carry the trailing space advance"
+                );
+                has_edge_box = true;
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        has_edge_box,
+        "trailing edge must shape as a wrapping advance box"
+    );
+
+    // Layout positions prove the inter-node advance: the following sibling
+    // starts after the edge, not overlapping the trailing space.
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "edge siblings must sit on the same line, got first.y={} second.y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (second_loc.location.x - (first_loc.location.x + first_loc.size.width)).abs() < 1.0,
+        "second must start at first right edge (edge advance preserved), got first.x={} first.w={} second.x={}",
+        first_loc.location.x,
+        first_loc.size.width,
+        second_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        second_loc.location.x > first_loc.location.x + reference_layout.width() + 0.5,
+        "second must sit after the trailing space, not at the no-edge advance: second.x={} first.x={} ref_w={}",
+        second_loc.location.x,
+        first_loc.location.x,
+        reference_layout.width()
+    );
+}
+
+#[test]
+fn word_space_transform_space_trailing_edge_trimmed_at_block_end() {
+    // Phase-2 trimming still drops a trailing separator at a block end: no
+    // following inline content means no inter-node advance to preserve.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:space"),
+    );
+    let trailing = doc.append_text(block, "a\u{200B}");
+    let reference_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:none"),
+    );
+    let reference = doc.append_text(reference_block, "a");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let layout = doc.nodes[trailing].text_layout().expect("shaped");
+    let reference_layout = doc.nodes[reference]
+        .text_layout()
+        .expect("reference shaped");
+    for line in layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item {
+                // cov:ignore: panic-message literal only executed on assertion failure.
+                assert!(
+                    inline_box.id != (1u64 << 61),
+                    "block-end trailing must not keep an edge advance box"
+                );
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (layout.width() - reference_layout.width()).abs() < 0.5,
+        "block-end trailing must trim like plain `a`: got {} reference {}",
+        layout.width(),
+        reference_layout.width()
+    );
+}
+
+#[test]
+fn word_space_transform_ideographic_space_trailing_edge_preserves_advance() {
+    // Same edge rule for `ideographic-space`: trailing U+200B becomes U+3000,
+    // which Parley also excludes from `width()`. Preserve it as a wrapping
+    // box and prove the following sibling is placed after it.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:ideographic-space"),
+    );
+    let first = doc.append_text(block, "\u{3042}\u{200B}");
+    let second = doc.append_text(block, "\u{3044}");
+    let reference_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:none"),
+    );
+    let reference = doc.append_text(reference_block, "\u{3042}");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let first_layout = doc.nodes[first].text_layout().expect("first shaped");
+    let reference_layout = doc.nodes[reference]
+        .text_layout()
+        .expect("reference shaped");
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        first_layout.width() > reference_layout.width() + 0.5,
+        "ideographic trailing edge must add advance: first={} reference={}",
+        first_layout.width(),
+        reference_layout.width()
+    );
+    let mut has_edge_box = false;
+    for line in first_layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item
+                && inline_box.id == (1u64 << 61)
+            {
+                has_edge_box = true;
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        has_edge_box,
+        "ideographic trailing edge must shape as an advance box"
+    );
+
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "edge siblings must share a line, got first.y={} second.y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        second_loc.location.x > first_loc.location.x + reference_layout.width() + 0.5,
+        "second must sit after the ideographic edge: second.x={} first.x={} ref_w={}",
+        second_loc.location.x,
+        first_loc.location.x,
+        reference_layout.width()
+    );
+}
+
+#[test]
+fn word_space_transform_space_trailing_edge_with_negative_word_spacing() {
+    // Negative `word-spacing` flows into the edge advance probe (matching the
+    // Parley builder, which pushes negative lengths). This covers the
+    // `word_spacing` true arm in edge-box measurement and proves the edge
+    // still preserves inter-node advance when spacing is negative.
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:32px;word-space-transform:space;word-spacing:-2px"),
+    );
+    let first = doc.append_text(block, "a\u{200B}");
+    let second = doc.append_text(block, "b");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    let first_layout = doc.nodes[first].text_layout().expect("first shaped");
+    let mut has_edge_box = false;
+    for line in first_layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::InlineBox(inline_box) = item
+                && inline_box.id == (1u64 << 61)
+            {
+                has_edge_box = true;
+            }
+        }
+    }
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        has_edge_box,
+        "negative word-spacing edge must still shape as an advance box"
+    );
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "edge siblings must share a line, got first.y={} second.y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        second_loc.location.x >= first_loc.location.x + first_loc.size.width - 1.0,
+        "second must start at first right edge even with negative spacing, got first.x={} first.w={} second.x={}",
+        first_loc.location.x,
+        first_loc.size.width,
+        second_loc.location.x
+    );
+}
+
+#[test]
+fn nbsp_glue_keeps_image_group_together_on_overflow() {
+    // Overflow regression for NBSP glue in the replaced-child realign pass.
+    // U+00A0 forbids breaks before and after, so an image plus NBSP plus
+    // image run must wrap atomically. A filler image leaves 70 units used
+    // on a 100 unit line, then a 90 unit glued run must move as one unit
+    // to the next line instead of stranding its first image on line one.
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+    let filler = doc.append_element(
+        Some(block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 30px; height: 20px"),
+    );
+    let first = doc.append_element(
+        Some(block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 40px; height: 20px"),
+    );
+    let nbsp = doc.append_text(block, "\u{00A0}");
+    let second = doc.append_element(
+        Some(block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 40px; height: 20px"),
+    );
+    doc.mark_in_document_flags();
+
+    let rules = build_rule_tree(&doc);
+    let cascade_result = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade_result);
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        doc.nodes[block]
+            .flags
+            .contains(crate::node::NodeFlags::IS_INLINE_ROOT),
+        "fixture must qualify as an inline root so the realign pass runs"
+    );
+
+    doc.nodes[block].unrounded_layout.size.width = 100.0;
+    doc.nodes[filler].unrounded_layout.size.width = 30.0;
+    doc.nodes[filler].unrounded_layout.size.height = 20.0;
+    doc.nodes[first].unrounded_layout.size.width = 40.0;
+    doc.nodes[first].unrounded_layout.size.height = 20.0;
+    doc.nodes[nbsp].unrounded_layout.size.width = 10.0;
+    doc.nodes[second].unrounded_layout.size.width = 40.0;
+    doc.nodes[second].unrounded_layout.size.height = 20.0;
+
+    realign_inline_replaced_children(&mut doc, &cascade_result);
+
+    let filler_loc = doc.nodes[filler].unrounded_layout;
+    let first_loc = doc.nodes[first].unrounded_layout;
+    let nbsp_loc = doc.nodes[nbsp].unrounded_layout;
+    let second_loc = doc.nodes[second].unrounded_layout;
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (filler_loc.location.x - 0.0).abs() < 1e-3,
+        "filler stays at line start, got x={}",
+        filler_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.x - 0.0).abs() < 1e-3,
+        "glued run moves as one unit, so first image wraps to x=0, got x={}",
+        first_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (nbsp_loc.location.x - 40.0).abs() < 1e-3,
+        "NBSP stays glued after first image, got x={}",
+        nbsp_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (second_loc.location.x - 50.0).abs() < 1e-3,
+        "second image stays glued after NBSP, got x={}",
+        second_loc.location.x
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        (first_loc.location.y - second_loc.location.y).abs() < 1e-3,
+        "glued images share a line, got first y={} second y={}",
+        first_loc.location.y,
+        second_loc.location.y
+    );
+    // cov:ignore: panic-message literal only executed on assertion failure.
+    assert!(
+        first_loc.location.y > filler_loc.location.y + 1e-3,
+        "glued run wrapped past filler line, got first y={} filler y={}",
+        first_loc.location.y,
+        filler_loc.location.y
+    );
 }

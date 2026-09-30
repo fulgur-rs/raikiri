@@ -1,14 +1,8 @@
-//! Strategy traits — per-render policies that vary between Streaming and Batch.
-//!
-//! raikiri-dom provides default implementations for each trait (BoundedLookahead,
-//! PlaceholderTargetResolver, RegistryTargetResolver, ImmediateEmission,
-//! DeferredEmission, AggressiveCommit). Consumers can combine arbitrary
-//! strategies via `render_with()` (see §4).
+//! Layout lookahead, target resolution, and reflow strategy contracts.
 
 use std::marker::PhantomData;
 
-use crate::page::{PageContext, PageFragment};
-use crate::sink::RenderSink;
+use crate::page::PageContext;
 
 /// Strategy trait controlling the LayoutBuffer lookahead range.
 pub trait LookaheadPolicy {
@@ -32,15 +26,6 @@ pub trait LookaheadPolicy {
 pub trait TargetResolver {
     /// Resolve one target reference.
     fn resolve(&mut self, req: TargetRequest<'_>, ctx: &PageContext) -> ResolvedTarget;
-}
-
-/// When to emit a PageFragment (immediately / deferred).
-pub trait EmissionPolicy {
-    /// Emit one page.
-    fn emit(&mut self, page: PageFragment, sink: &mut dyn RenderSink) -> std::io::Result<()>;
-
-    /// Notify that all pages have been emitted.
-    fn finish(&mut self, sink: &mut dyn RenderSink) -> std::io::Result<()>;
 }
 
 /// Behavior on reaching the probe limit, and room for dirty tracking.

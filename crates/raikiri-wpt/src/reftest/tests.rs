@@ -897,7 +897,7 @@ fn dynamic_reftest_reports_script_errors_and_unreleased_wait() {
     }
     let html = "<!DOCTYPE html><html class='reftest-wait'><body><script>document.documentElement.addEventListener('TestRendered', () => document.documentElement.removeAttribute('class'));</script>";
     let result = dynamic::prepare(html, &dir.path().join("test.html"), "", config).unwrap();
-    assert!(!result.contains("reftest-wait"));
+    assert!(!result.html.contains("reftest-wait"));
 }
 
 #[test]
@@ -915,10 +915,11 @@ fn dynamic_wait_scripts_preserve_document_mode() {
         let source = format!(
             "{doctype}<html class='reftest-wait'><body><script type='TEXT/JAVASCRIPT'>document.body.setAttribute('data-ran', 'yes');document.documentElement.removeAttribute('class');</script>"
         );
-        let html = dynamic::prepare(&source, &dir.path().join("test.html"), "", config).unwrap();
-        assert!(html.contains("data-ran=\"yes\""));
+        let prepared =
+            dynamic::prepare(&source, &dir.path().join("test.html"), "", config).unwrap();
+        assert!(prepared.html.contains("data-ran=\"yes\""));
         let parsed = raikiri_html::parse(
-            html.as_bytes(),
+            prepared.html.as_bytes(),
             &raikiri::ParseOptions {
                 extra_stylesheets: &[],
                 network: None,
@@ -950,4 +951,166 @@ fn reference_query_and_fragment_control_dynamic_rendering_and_keyed_fuzzy() {
         .unwrap();
         assert!(matches!(result.outcome, TestOutcome::Pass));
     }
+}
+
+#[test]
+fn compare_documents_wrapper_reports_identical_pages_as_matched() {
+    let image = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0, 255],
+    };
+    let left = RenderedDocument {
+        pages: vec![image.clone()],
+    };
+    let right = RenderedDocument { pages: vec![image] };
+    let diff = compare_documents(&left, &right, Tolerance::EXACT);
+    assert!(diff.matched);
+    assert_eq!(diff.mismatched_pixels, 0);
+    assert_eq!(diff.left_pages, 1);
+    assert_eq!(diff.right_pages, 1);
+}
+
+#[test]
+fn dynamic_prepare_rejects_relative_path_needing_absolute_file_url() {
+    let html = "<!DOCTYPE html><html class='reftest-wait'><body></body></html>";
+    let relative = std::path::Path::new("relative/test.html");
+    let error = dynamic::prepare(html, relative, "", ReftestConfig::default())
+        .expect_err("dynamic reftest needs an absolute path for its file URL");
+    assert!(
+        format!("{error:?}").contains("absolute path"),
+        "unexpected dynamic path error: {error:?}"
+    );
+}
+
+#[test]
+fn fuzzy_compare_treats_truncated_buffer_as_mismatch() {
+    let pair = ReftestPair {
+        test: PathBuf::from("/virtual/test.html"),
+        reference: PathBuf::from("/virtual/ref.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let fuzzy = fuzzy::metadata("<meta name='fuzzy' content='0;0'>", &pair)
+        .unwrap()
+        .unwrap();
+    let full = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0, 255],
+    };
+    let truncated = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0],
+    };
+    let diff = fuzzy::compare(&full, &truncated, fuzzy);
+    assert!(!diff.matched);
+    assert_eq!(diff.mismatched_pixels, diff.total_pixels);
+}
+
+#[test]
+fn no_wait_scripts_mutate_before_comparison() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("test.html");
+    let reference = dir.path().join("ref.html");
+    std::fs::write(
+        &test,
+        "<!DOCTYPE html><body style='margin:0;background:red'><script>document.body.style.background='green';</script>",
+    )
+    .unwrap();
+    std::fs::write(
+        &reference,
+        "<!DOCTYPE html><body style='margin:0;background:green'>",
+    )
+    .unwrap();
+    let pair = ReftestPair {
+        test,
+        reference,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let config = ReftestConfig {
+        width: 40,
+        height: 40,
+        tolerance: Tolerance::EXACT,
+    };
+    let result = run_pair(&pair, config).unwrap();
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "no-wait script mutation must run before comparison, got {:?}",
+        result.outcome
+    );
+}
+
+#[test]
+fn no_wait_script_errors_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ReftestConfig {
+        width: 40,
+        height: 40,
+        ..Default::default()
+    };
+    let html = "<!DOCTYPE html><body><script>throw new Error('no-wait boom');</script>";
+    assert!(dynamic::prepare(html, &dir.path().join("test.html"), "", config).is_err());
+    let test = dir.path().join("test.html");
+    let reference = dir.path().join("ref.html");
+    std::fs::write(&test, html).unwrap();
+    std::fs::write(&reference, "<!DOCTYPE html><body>").unwrap();
+    let pair = ReftestPair {
+        test,
+        reference,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    assert!(run_pair(&pair, config).is_err());
+}
+
+#[test]
+fn no_wait_canvas_paints_and_compares_pixels() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ReftestConfig {
+        width: 40,
+        height: 40,
+        tolerance: Tolerance::EXACT,
+    };
+    let paint = |color: &str| {
+        format!(
+            "<!DOCTYPE html><body style='margin:0'><canvas width='2' height='2'></canvas><script>var c = document.getElementsByTagName('canvas')[0]; var ctx = c.getContext('2d'); ctx.fillStyle = '{color}'; ctx.fillRect(0, 0, 2, 2);</script>"
+        )
+    };
+    // Same color on both sides passes: bitmaps survive the HTML round-trip.
+    let test_same = dir.path().join("test_same.html");
+    let ref_same = dir.path().join("ref_same.html");
+    std::fs::write(&test_same, paint("red")).unwrap();
+    std::fs::write(&ref_same, paint("red")).unwrap();
+    let pair_same = ReftestPair {
+        test: test_same,
+        reference: ref_same,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let result_same = run_pair(&pair_same, config).unwrap();
+    assert!(
+        matches!(result_same.outcome, TestOutcome::Pass),
+        "identical canvas bitmaps must match, got {:?}",
+        result_same.outcome
+    );
+    // Different colors fail: dropping bitmaps would falsely pass with two blanks.
+    let test_diff = dir.path().join("test_diff.html");
+    let ref_diff = dir.path().join("ref_diff.html");
+    std::fs::write(&test_diff, paint("red")).unwrap();
+    std::fs::write(&ref_diff, paint("blue")).unwrap();
+    let pair_diff = ReftestPair {
+        test: test_diff,
+        reference: ref_diff,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let result_diff = run_pair(&pair_diff, config).unwrap();
+    assert!(
+        matches!(result_diff.outcome, TestOutcome::Fail(_)),
+        "different canvas bitmaps must mismatch, got {:?}",
+        result_diff.outcome
+    );
 }

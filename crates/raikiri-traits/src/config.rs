@@ -293,106 +293,47 @@ impl LookaheadConfigBuilder {
     }
 }
 
-/// Configuration for `plan()` (round 4 review #1, #2).
+/// Configuration for document layout and page production.
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
-pub struct PlanConfig {
-    /// Lookahead settings.
-    pub lookahead: LookaheadConfig,
-    /// Resource and cost limits (round 4 review #1).
-    pub limits: RenderLimits,
-    /// Hint registry for iteration chains (round 4 review #2).
-    pub initial_registry: Option<TargetRegistry>,
-}
-
-impl PlanConfig {
-    /// Shortcut equivalent to `Default`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Return a fluent builder.
-    pub fn builder() -> PlanConfigBuilder {
-        PlanConfigBuilder::default()
-    }
-}
-
-/// Fluent builder for `PlanConfig`.
-#[derive(Debug, Default, Clone)]
-pub struct PlanConfigBuilder {
-    lookahead: Option<LookaheadConfig>,
-    limits: Option<RenderLimits>,
-    initial_registry: Option<Option<TargetRegistry>>,
-}
-
-impl PlanConfigBuilder {
-    /// Set `lookahead`.
-    pub fn lookahead(mut self, v: LookaheadConfig) -> Self {
-        self.lookahead = Some(v);
-        self
-    }
-
-    /// Set `limits`.
-    pub fn limits(mut self, v: RenderLimits) -> Self {
-        self.limits = Some(v);
-        self
-    }
-
-    /// Set `initial_registry`.
-    pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
-        self.initial_registry = Some(v);
-        self
-    }
-
-    /// Build; unset fields use their default values.
-    pub fn build(self) -> PlanConfig {
-        let d = PlanConfig::default();
-        PlanConfig {
-            lookahead: self.lookahead.unwrap_or(d.lookahead),
-            limits: self.limits.unwrap_or(d.limits),
-            initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
-        }
-    }
-}
-
-/// Configuration for `render_streaming()` (round 4 review #1).
-#[non_exhaustive]
-#[derive(Debug, Default, Clone)]
-pub struct StreamingConfig {
+pub struct LayoutConfig {
     /// Lookahead settings.
     pub lookahead: LookaheadConfig,
     /// Resource and cost limits.
     pub limits: RenderLimits,
-    /// Pass the result of `plan` as a hint (round 4 review #2).
+    /// An optional registry hint for target resolution.
     pub initial_registry: Option<TargetRegistry>,
+    /// Media type and viewport used to evaluate layout-time media queries.
+    /// Defaults to print media.
+    pub media_context: raikiri_style::MediaContext,
     /// Optional cooperative cancellation signal checked before layout and
-    /// before each page emission. An aborted render never calls
-    /// `RenderSink::finish_render`.
+    /// during page production.
     pub signal: Option<crate::AbortSignal>,
 }
 
-impl StreamingConfig {
+impl LayoutConfig {
     /// Shortcut equivalent to `Default`.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Return a fluent builder.
-    pub fn builder() -> StreamingConfigBuilder {
-        StreamingConfigBuilder::default()
+    pub fn builder() -> LayoutConfigBuilder {
+        LayoutConfigBuilder::default()
     }
 }
 
-/// Fluent builder for `StreamingConfig`.
+/// Fluent builder for [`LayoutConfig`].
 #[derive(Debug, Default, Clone)]
-pub struct StreamingConfigBuilder {
+pub struct LayoutConfigBuilder {
     lookahead: Option<LookaheadConfig>,
     limits: Option<RenderLimits>,
     initial_registry: Option<Option<TargetRegistry>>,
     signal: Option<Option<crate::AbortSignal>>,
+    media_context: Option<raikiri_style::MediaContext>,
 }
 
-impl StreamingConfigBuilder {
+impl LayoutConfigBuilder {
     /// Set `lookahead`.
     pub fn lookahead(mut self, v: LookaheadConfig) -> Self {
         self.lookahead = Some(v);
@@ -408,6 +349,12 @@ impl StreamingConfigBuilder {
     /// Set `initial_registry`.
     pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
         self.initial_registry = Some(v);
+        self
+    }
+
+    /// Set the media type and viewport for layout-time media queries.
+    pub fn media_context(mut self, v: raikiri_style::MediaContext) -> Self {
+        self.media_context = Some(v);
         self
     }
 
@@ -418,13 +365,14 @@ impl StreamingConfigBuilder {
     }
 
     /// Build; unset fields use their default values.
-    pub fn build(self) -> StreamingConfig {
-        let d = StreamingConfig::default();
-        StreamingConfig {
+    pub fn build(self) -> LayoutConfig {
+        let d = LayoutConfig::default();
+        LayoutConfig {
             lookahead: self.lookahead.unwrap_or(d.lookahead),
             limits: self.limits.unwrap_or(d.limits),
             initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
             signal: self.signal.unwrap_or(d.signal),
+            media_context: self.media_context.unwrap_or(d.media_context),
         }
     }
 }

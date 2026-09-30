@@ -46,10 +46,18 @@ const MIXED_CHAIN_ARTICLES: usize = 300;
 
 /// One node of [`BenchDoc`]: either the document root, a `div`, or a text
 /// child. `tag` is empty for non-elements.
+// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+// never build this bench target, so nothing in this item has coverage
+// instrumentation to attribute to.
 struct BenchNode {
     kind: StyleNodeKind,
     tag: &'static str,
     text: Option<&'static str>,
+    /// `id` attribute value. `None` unless a workload assigns one, so the
+    /// pre-existing workloads keep measuring exactly what they measured before.
+    id: Option<String>,
+    /// `class` attribute tokens. Empty unless a workload assigns classes.
+    classes: Vec<String>,
     children: Vec<usize>,
 }
 
@@ -62,12 +70,15 @@ struct BenchDoc {
 }
 
 impl BenchDoc {
+    // cov:ignore: bench harness — same reason as `BenchNode` above.
     fn new(n_elems: usize) -> Self {
         let mut nodes = Vec::with_capacity(1 + n_elems * 2);
         nodes.push(BenchNode {
             kind: StyleNodeKind::Document,
             tag: "",
             text: None,
+            id: None,
+            classes: Vec::new(),
             children: Vec::with_capacity(n_elems),
         });
         for _ in 0..n_elems {
@@ -76,6 +87,8 @@ impl BenchDoc {
                 kind: StyleNodeKind::Element,
                 tag: "div",
                 text: None,
+                id: None,
+                classes: Vec::new(),
                 children: Vec::with_capacity(1),
             });
             let text = nodes.len();
@@ -83,6 +96,8 @@ impl BenchDoc {
                 kind: StyleNodeKind::Text,
                 tag: "",
                 text: Some("x"),
+                id: None,
+                classes: Vec::new(),
                 children: Vec::new(),
             });
             nodes[div].children.push(text);
@@ -109,6 +124,8 @@ impl BenchDoc {
             kind: StyleNodeKind::Document,
             tag: "",
             text: None,
+            id: None,
+            classes: Vec::new(),
             children: Vec::with_capacity(1),
         });
         let mut parent = 0usize;
@@ -118,6 +135,8 @@ impl BenchDoc {
                 kind: StyleNodeKind::Element,
                 tag: "div",
                 text: None,
+                id: None,
+                classes: Vec::new(),
                 children: Vec::new(),
             });
             nodes[parent].children.push(div);
@@ -155,6 +174,8 @@ impl BenchDoc {
             kind: StyleNodeKind::Document,
             tag: "",
             text: None,
+            id: None,
+            classes: Vec::new(),
             children: Vec::with_capacity(2),
         });
 
@@ -163,6 +184,8 @@ impl BenchDoc {
             kind: StyleNodeKind::Element,
             tag: "section",
             text: None,
+            id: None,
+            classes: Vec::new(),
             children: Vec::with_capacity(1),
         });
         nodes[0].children.push(section);
@@ -175,6 +198,8 @@ impl BenchDoc {
                 kind: StyleNodeKind::Element,
                 tag: "article",
                 text: None,
+                id: None,
+                classes: Vec::new(),
                 children: Vec::with_capacity(1),
             });
             nodes[parent].children.push(article);
@@ -184,6 +209,8 @@ impl BenchDoc {
                 kind: StyleNodeKind::Element,
                 tag: "div",
                 text: None,
+                id: None,
+                classes: Vec::new(),
                 children: Vec::new(),
             });
             nodes[article].children.push(div);
@@ -199,6 +226,8 @@ impl BenchDoc {
             kind: StyleNodeKind::Element,
             tag: "article",
             text: None,
+            id: None,
+            classes: Vec::new(),
             children: Vec::with_capacity(1),
         });
         nodes[0].children.push(neg_article_1);
@@ -207,6 +236,8 @@ impl BenchDoc {
             kind: StyleNodeKind::Element,
             tag: "article",
             text: None,
+            id: None,
+            classes: Vec::new(),
             children: Vec::with_capacity(1),
         });
         nodes[neg_article_1].children.push(neg_article_2);
@@ -215,11 +246,97 @@ impl BenchDoc {
             kind: StyleNodeKind::Element,
             tag: "div",
             text: None,
+            id: None,
+            classes: Vec::new(),
             children: Vec::new(),
         });
         nodes[neg_article_2].children.push(negative_div_id);
 
         (Self { nodes }, positive_div_ids, negative_div_id)
+    }
+
+    /// Build a wide sibling topology: a `section` under the document root
+    /// holding `n_elems` `div`s side by side, each with one text child —
+    /// the shape whose per-element sibling-position scans a
+    /// sibling-position cache would attack. Positions below are 1-indexed
+    /// among the `section`'s element children: the `div` at
+    /// `nodes[1].children[k]` is position `k + 1`.
+    // cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+    // never build this bench target, so nothing in this function has
+    // coverage instrumentation to attribute to.
+    fn wide(n_elems: usize) -> Self {
+        let mut nodes = Vec::with_capacity(2 + n_elems * 2);
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Document,
+            tag: "",
+            text: None,
+            id: None,
+            classes: Vec::new(),
+            children: Vec::with_capacity(1),
+        });
+        nodes.push(BenchNode {
+            kind: StyleNodeKind::Element,
+            tag: "section",
+            text: None,
+            id: None,
+            classes: Vec::new(),
+            children: Vec::with_capacity(n_elems),
+        });
+        nodes[0].children.push(1);
+        for _ in 0..n_elems {
+            let div = nodes.len();
+            nodes.push(BenchNode {
+                kind: StyleNodeKind::Element,
+                tag: "div",
+                text: None,
+                id: None,
+                classes: Vec::new(),
+                children: Vec::with_capacity(1),
+            });
+            let text = nodes.len();
+            nodes.push(BenchNode {
+                kind: StyleNodeKind::Text,
+                tag: "",
+                text: Some("x"),
+                id: None,
+                classes: Vec::new(),
+                children: Vec::new(),
+            });
+            nodes[div].children.push(text);
+            nodes[1].children.push(div);
+        }
+        Self { nodes }
+    }
+
+    /// Give the `div`s of a [`BenchDoc::wide`] document distinct sparse
+    /// classes: the `div` at sibling position `k + 1` (0-indexed `k`) gets
+    /// class `s{k * stride}`, unless it is an unmatched control (every 5th,
+    /// `k % 5 == 4`), which stays classless so the probe can check the
+    /// must-not-match direction too.
+    // cov:ignore: bench harness — same reason as `BenchDoc::wide` above.
+    fn assign_sparse_classes(&mut self, stride: usize) {
+        let divs = self.nodes[1].children.clone();
+        for (k, div) in divs.iter().enumerate() {
+            if k % 5 == 4 {
+                continue;
+            }
+            self.nodes[*div].classes.push(format!("s{}", k * stride));
+        }
+    }
+
+    /// Give the `div`s of a [`BenchDoc::wide`] document distinct sparse ids:
+    /// the `div` at sibling position `k + 1` gets id `nid{k * stride}`,
+    /// with the same every-5th unmatched controls as
+    /// [`BenchDoc::assign_sparse_classes`].
+    // cov:ignore: bench harness — same reason as `BenchDoc::wide` above.
+    fn assign_sparse_ids(&mut self, stride: usize) {
+        let divs = self.nodes[1].children.clone();
+        for (k, div) in divs.iter().enumerate() {
+            if k % 5 == 4 {
+                continue;
+            }
+            self.nodes[*div].id = Some(format!("nid{}", k * stride));
+        }
     }
 }
 
@@ -301,9 +418,53 @@ impl StyleNode for BenchNodeRef<'_> {
     }
 }
 
+// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+// never build this bench target, so nothing in this impl block has coverage
+// instrumentation to attribute to.
 impl StyleElement for BenchElementRef<'_> {
     fn tag_name(&self) -> &str {
         self.node.tag
+    }
+
+    /// Bench-local `id` lookup. Empty values read as absent, mirroring the
+    /// real DOM's empty-is-absent contract; nodes without an assigned id
+    /// (every pre-existing workload) read as `None`.
+    fn id(&self) -> Option<&str> {
+        self.node.id.as_deref().filter(|s| !s.is_empty())
+    }
+
+    /// Bench-local class lookup over the assigned tokens. ASCII-whitespace
+    /// splitting is unnecessary here: workloads push one token per entry,
+    /// so an exact per-token comparison is the same set of matches.
+    fn has_class(&self, class: &str) -> bool {
+        if class.is_empty() {
+            return false;
+        }
+        self.node.classes.iter().any(|c| c == class)
+    }
+
+    /// Bench-local case-insensitive class lookup, same token set as
+    /// [`BenchElementRef::has_class`] — the bench DOM only runs in
+    /// standards mode, but an explicit override keeps both consistent if a
+    /// future workload ever flips the quirks context.
+    fn has_class_ascii_case_insensitive(&self, class: &str) -> bool {
+        if class.is_empty() {
+            return false;
+        }
+        self.node
+            .classes
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(class))
+    }
+
+    /// Bench-local attribute lookup. Only `id` is backed: valued class and
+    /// attribute selectors are not part of any bench workload, and class
+    /// matching goes through [`BenchElementRef::has_class`].
+    fn attr(&self, local: &str) -> Option<&str> {
+        match local {
+            "id" => self.id(),
+            _ => None,
+        }
     }
 }
 
@@ -438,6 +599,95 @@ fn mixed_stylesheet() -> (String, Winners) {
             color,
         },
     )
+}
+
+/// The declaration values shared by every sparse, nth-child, and adjacent
+/// rule below. Identical across rules on purpose: each element matches at
+/// most one of these rules, so there is no order contest to resolve and one
+/// [`Winners`] probes every match. All three values differ from the initial
+/// ones (same vacuous-probe guard as [`workload`]).
+// cov:ignore: bench harness constant — `cargo test`/`cargo llvm-cov
+// --workspace` never build this bench target, so nothing in this file has
+// coverage instrumentation to attribute to.
+const SHARED_WINNER_BOX_PX: f32 = 7.0;
+
+/// Shared winner font size for the sparse / structural workloads.
+// cov:ignore: bench harness constant — same reason as above.
+const SHARED_WINNER_FONT_PX: f32 = 42.0;
+
+/// Build the ten longhand declarations every sparse / structural rule sets.
+// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+// never build this bench target, so nothing in this function has coverage
+// instrumentation to attribute to.
+fn shared_winner_body() -> String {
+    let box_px = SHARED_WINNER_BOX_PX;
+    let font_size = SHARED_WINNER_FONT_PX;
+    format!(
+        "margin-top: {box_px}px; margin-right: {box_px}px; \
+         margin-bottom: {box_px}px; margin-left: {box_px}px; \
+         padding-top: {box_px}px; padding-right: {box_px}px; \
+         padding-bottom: {box_px}px; padding-left: {box_px}px; \
+         font-size: {font_size}px; color: rgb(9, 8, 7)"
+    )
+}
+
+/// The [`Winners`] every sparse / structural rule cascades to.
+// cov:ignore: bench harness — same reason as `shared_winner_body` above.
+fn shared_winners() -> Winners {
+    Winners {
+        font_size: SHARED_WINNER_FONT_PX,
+        box_px: SHARED_WINNER_BOX_PX,
+        color: CssColor {
+            r: 9,
+            g: 8,
+            b: 7,
+            a: 255,
+        },
+    }
+}
+
+/// Build a stylesheet of `n_rules` sparse class rules (`.s0`, `.s1`, …),
+/// each setting [`DECLS_PER_RULE`] longhands to the shared winner values.
+// cov:ignore: bench harness — same reason as `shared_winner_body` above.
+fn sparse_class_stylesheet(n_rules: usize) -> (String, Winners) {
+    let body = shared_winner_body();
+    let mut css = String::new();
+    for i in 0..n_rules {
+        css.push_str(&format!(".s{i} {{ {body} }}\n"));
+    }
+    (css, shared_winners())
+}
+
+/// Build a stylesheet of `n_rules` sparse id rules (`#nid0`, `#nid1`, …),
+/// each setting [`DECLS_PER_RULE`] longhands to the shared winner values.
+// cov:ignore: bench harness — same reason as `shared_winner_body` above.
+fn sparse_id_stylesheet(n_rules: usize) -> (String, Winners) {
+    let body = shared_winner_body();
+    let mut css = String::new();
+    for i in 0..n_rules {
+        css.push_str(&format!("#nid{i} {{ {body} }}\n"));
+    }
+    (css, shared_winners())
+}
+
+/// Build the single-rule `div:nth-child(2n+1)` stylesheet for a
+/// [`BenchDoc::wide`] document: every odd-position `div` matches, every
+/// even-position one must not.
+// cov:ignore: bench harness — same reason as `shared_winner_body` above.
+fn wide_nth_stylesheet() -> (String, Winners) {
+    let body = shared_winner_body();
+    (
+        format!("div:nth-child(2n+1) {{ {body} }}\n"),
+        shared_winners(),
+    )
+}
+
+/// Build the single-rule `div + div` stylesheet for a [`BenchDoc::wide`]
+/// document: every `div` but the first matches.
+// cov:ignore: bench harness — same reason as `shared_winner_body` above.
+fn wide_adjacent_stylesheet() -> (String, Winners) {
+    let body = shared_winner_body();
+    (format!("div + div {{ {body} }}\n"), shared_winners())
 }
 
 /// Assemble one config and prove the workload is the one it claims to be.
@@ -810,6 +1060,314 @@ fn mixed_combinator_workload(n_articles: usize) -> (BenchDoc, RuleTree, u64) {
     (doc, tree, match_attempts)
 }
 
+/// Check one cascaded `div` (and its text child, for the two inherited
+/// longhands) against either the shared winner values or the initial ones.
+/// `div_id` is the arena index; the text child is its single child.
+// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+// never build this bench target, so nothing in this function has coverage
+// instrumentation to attribute to.
+fn check_wide_div(
+    probe: &raikiri_style::CascadeResult,
+    doc: &BenchDoc,
+    initial: &ComputedValues,
+    want: &Winners,
+    div_id: usize,
+    matches: bool,
+    what: &str,
+) {
+    let cv = &probe.computed[div_id];
+    let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
+    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+    if matches {
+        assert_eq!(
+            cv.font_size.px(),
+            want.font_size,
+            "{what} div at node {div_id} should match but does not carry the winning font-size",
+        );
+        assert_eq!(
+            cv.color, want.color,
+            "{what} div at node {div_id} should match but does not carry the winning color",
+        );
+        assert_eq!(
+            cv.margin.top, want_margin,
+            "{what} div at node {div_id}: margin-top does not carry the winning rule's value",
+        );
+        assert_eq!(
+            cv.padding.top, want_padding,
+            "{what} div at node {div_id}: padding-top does not carry the winning rule's value",
+        );
+    } else {
+        assert_eq!(
+            cv.font_size.px(),
+            initial.font_size.px(),
+            "{what} div at node {div_id} must NOT match — a matcher that              returned true unconditionally would wrongly style it",
+        );
+        assert_eq!(
+            cv.color, initial.color,
+            "{what} div at node {div_id} must keep the initial color",
+        );
+    }
+    // The text child inherits `font-size` and `color` from its `div` parent
+    // (and only those two of the ten longhands); `margin`/`padding` are not
+    // inherited and are not checked here.
+    let text_id = doc.nodes[div_id].children[0];
+    let text_cv = &probe.computed[text_id];
+    if matches {
+        assert_eq!(
+            text_cv.font_size.px(),
+            want.font_size,
+            "{what} text under node {div_id} should inherit the winning font-size",
+        );
+        assert_eq!(
+            text_cv.color, want.color,
+            "{what} text under node {div_id} should inherit the winning color",
+        );
+    } else {
+        assert_eq!(
+            text_cv.font_size.px(),
+            initial.font_size.px(),
+            "{what} text under non-matching node {div_id} must keep the initial font-size",
+        );
+        assert_eq!(
+            text_cv.color, initial.color,
+            "{what} text under non-matching node {div_id} must keep the initial color",
+        );
+    }
+}
+
+/// Assemble the sparse-class config: `n_rules` `.s{i}` rules against a
+/// [`BenchDoc::wide`] document whose `div`s carry distinct classes
+/// ([`BenchDoc::assign_sparse_classes`]). With `stride = n_rules / n_elems`,
+/// each classed `div` matches exactly one rule and `n_rules - n_matched`
+/// rules match nothing at all, so per-element time is dominated by rejecting
+/// non-matching rules — the quantity a rule index would attack. Every 5th
+/// `div` is an unmatched control proving the negative direction.
+///
+/// On [`workload`]'s load-bearing-assertions logic: the rule-count and
+/// per-rule declaration-count checks prove the input side, and the
+/// per-`div` winner-vs-initial sweep proves every match ran to completion.
+// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+// never build this bench target, so nothing in this function has coverage
+// instrumentation to attribute to.
+fn sparse_class_workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
+    assert!(
+        n_elems >= 1 && n_rules >= n_elems && n_rules.is_multiple_of(n_elems),
+        "need stride = n_rules / n_elems >= 1 so every classed div names a distinct rule"
+    );
+    let mut tree = RuleTree::empty();
+    let (css, want) = sparse_class_stylesheet(n_rules);
+    tree.add_stylesheet(&css, Origin::Author);
+    assert_eq!(
+        tree.style_rules().len(),
+        n_rules,
+        "sparse-class stylesheet did not parse into the expected rule count"
+    );
+    for rule in tree.style_rules() {
+        assert_eq!(
+            rule.declarations().len(),
+            DECLS_PER_RULE,
+            "sparse-class rule did not parse into the expected declaration count"
+        );
+    }
+
+    let mut doc = BenchDoc::wide(n_elems);
+    doc.assign_sparse_classes(n_rules / n_elems);
+
+    let initial = ComputedValues::initial();
+    assert!(
+        want.font_size != initial.font_size.px()
+            && want.box_px != 0.0
+            && want.color != initial.color,
+        "shared winner values must differ from the initial ones, or the probe below would be vacuous"
+    );
+
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        probe.computed.len(),
+        doc.node_count(),
+        "cascade did not produce one entry per arena node"
+    );
+
+    let divs = doc.nodes[1].children.clone();
+    assert_eq!(
+        divs.len(),
+        n_elems,
+        "wide document does not hold n_elems divs"
+    );
+    for (k, div) in divs.iter().enumerate() {
+        check_wide_div(
+            &probe,
+            &doc,
+            &initial,
+            &want,
+            *div,
+            k % 5 != 4,
+            "sparse-class",
+        );
+    }
+
+    (doc, tree, n_elems as u64)
+}
+
+/// Assemble the sparse-id config: `n_rules` `#nid{i}` rules against a
+/// [`BenchDoc::wide`] document with distinct ids
+/// ([`BenchDoc::assign_sparse_ids`]). Same sparsity contract and probe
+/// shape as [`sparse_class_workload`], exercising the id-lookup path
+/// instead of the class-token path.
+// cov:ignore: bench harness — same reason as `sparse_class_workload` above.
+fn sparse_id_workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
+    assert!(
+        n_elems >= 1 && n_rules >= n_elems && n_rules.is_multiple_of(n_elems),
+        "need stride = n_rules / n_elems >= 1 so every id div names a distinct rule"
+    );
+    let mut tree = RuleTree::empty();
+    let (css, want) = sparse_id_stylesheet(n_rules);
+    tree.add_stylesheet(&css, Origin::Author);
+    assert_eq!(
+        tree.style_rules().len(),
+        n_rules,
+        "sparse-id stylesheet did not parse into the expected rule count"
+    );
+    for rule in tree.style_rules() {
+        assert_eq!(
+            rule.declarations().len(),
+            DECLS_PER_RULE,
+            "sparse-id rule did not parse into the expected declaration count"
+        );
+    }
+
+    let mut doc = BenchDoc::wide(n_elems);
+    doc.assign_sparse_ids(n_rules / n_elems);
+
+    let initial = ComputedValues::initial();
+    assert!(
+        want.font_size != initial.font_size.px()
+            && want.box_px != 0.0
+            && want.color != initial.color,
+        "shared winner values must differ from the initial ones, or the probe below would be vacuous"
+    );
+
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        probe.computed.len(),
+        doc.node_count(),
+        "cascade did not produce one entry per arena node"
+    );
+
+    let divs = doc.nodes[1].children.clone();
+    assert_eq!(
+        divs.len(),
+        n_elems,
+        "wide document does not hold n_elems divs"
+    );
+    for (k, div) in divs.iter().enumerate() {
+        check_wide_div(&probe, &doc, &initial, &want, *div, k % 5 != 4, "sparse-id");
+    }
+
+    (doc, tree, n_elems as u64)
+}
+
+/// Assemble the wide `nth-child` config: one `div:nth-child(2n+1)` rule
+/// ([`wide_nth_stylesheet`]) against a [`BenchDoc::wide`] document. Every
+/// element triggers a sibling-position scan over up to `n_elems` siblings,
+/// so total matching work scales quadratically without a sibling-position
+/// cache — that scaling is the signal, measured at 500/1000/2000/4000.
+/// Odd positions must match, even positions must not.
+// cov:ignore: bench harness — same reason as `sparse_class_workload` above.
+fn wide_nth_workload(n_elems: usize) -> (BenchDoc, RuleTree, u64) {
+    let mut tree = RuleTree::empty();
+    let (css, want) = wide_nth_stylesheet();
+    tree.add_stylesheet(&css, Origin::Author);
+    assert_eq!(
+        tree.style_rules().len(),
+        1,
+        "nth-child stylesheet did not parse into exactly one rule"
+    );
+    assert_eq!(
+        tree.style_rules()[0].declarations().len(),
+        DECLS_PER_RULE,
+        "nth-child rule did not parse into the expected declaration count"
+    );
+
+    let doc = BenchDoc::wide(n_elems);
+    let initial = ComputedValues::initial();
+    assert!(
+        want.font_size != initial.font_size.px()
+            && want.box_px != 0.0
+            && want.color != initial.color,
+        "shared winner values must differ from the initial ones, or the probe below would be vacuous"
+    );
+
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        probe.computed.len(),
+        doc.node_count(),
+        "cascade did not produce one entry per arena node"
+    );
+
+    let divs = doc.nodes[1].children.clone();
+    assert_eq!(
+        divs.len(),
+        n_elems,
+        "wide document does not hold n_elems divs"
+    );
+    for (k, div) in divs.iter().enumerate() {
+        // Sibling position `k + 1` is odd iff `k` is even.
+        check_wide_div(&probe, &doc, &initial, &want, *div, k % 2 == 0, "nth-child");
+    }
+
+    (doc, tree, n_elems as u64)
+}
+
+/// Assemble the wide adjacent-sibling config: one `div + div` rule
+/// ([`wide_adjacent_stylesheet`]) against a [`BenchDoc::wide`] document.
+/// Every `div` but the first must match — the `NextSibling` arm at the same
+/// four widths as [`wide_nth_workload`].
+// cov:ignore: bench harness — same reason as `sparse_class_workload` above.
+fn wide_adjacent_workload(n_elems: usize) -> (BenchDoc, RuleTree, u64) {
+    let mut tree = RuleTree::empty();
+    let (css, want) = wide_adjacent_stylesheet();
+    tree.add_stylesheet(&css, Origin::Author);
+    assert_eq!(
+        tree.style_rules().len(),
+        1,
+        "adjacent-sibling stylesheet did not parse into exactly one rule"
+    );
+    assert_eq!(
+        tree.style_rules()[0].declarations().len(),
+        DECLS_PER_RULE,
+        "adjacent-sibling rule did not parse into the expected declaration count"
+    );
+
+    let doc = BenchDoc::wide(n_elems);
+    let initial = ComputedValues::initial();
+    assert!(
+        want.font_size != initial.font_size.px()
+            && want.box_px != 0.0
+            && want.color != initial.color,
+        "shared winner values must differ from the initial ones, or the probe below would be vacuous"
+    );
+
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        probe.computed.len(),
+        doc.node_count(),
+        "cascade did not produce one entry per arena node"
+    );
+
+    let divs = doc.nodes[1].children.clone();
+    assert_eq!(
+        divs.len(),
+        n_elems,
+        "wide document does not hold n_elems divs"
+    );
+    for (k, div) in divs.iter().enumerate() {
+        check_wide_div(&probe, &doc, &initial, &want, *div, k != 0, "adjacent");
+    }
+
+    (doc, tree, n_elems as u64)
+}
+
 fn bench_cascade(c: &mut Criterion) {
     let mut group = c.benchmark_group("cascade");
 
@@ -921,6 +1479,54 @@ fn bench_cascade(c: &mut Criterion) {
         // `combinator_chain_5000x4` above.
         group.throughput(Throughput::Elements(match_attempts));
         group.bench_function("mixed_combinator_chain_300", |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // Sparse class/id configs — 2000 rules whose selectors each match at
+    // most one of 500 elements. Per-element time is dominated by rejecting
+    // non-matching rules, the quantity a rule index would attack; the dense
+    // configs above cannot show it because every rule matches every element.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    for (name, n_rules, n_elems, is_id) in [
+        ("sparse_class_2000x500", 2000usize, 500usize, false),
+        ("sparse_id_2000x500", 2000usize, 500usize, true),
+    ] {
+        let (doc, tree, elems) = if is_id {
+            sparse_id_workload(n_rules, n_elems)
+        } else {
+            sparse_class_workload(n_rules, n_elems)
+        };
+
+        // Throughput in elements: rule count is fixed per bench name, so
+        // per-element time is directly comparable across names.
+        group.throughput(Throughput::Elements(elems));
+        group.bench_function(name, |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // Wide-sibling configs at 500/1000/2000/4000 elements. `nth-child`
+    // exercises the per-element sibling-position scan (quadratic total
+    // without a sibling-position cache — that scaling across the four
+    // widths is the signal); `div + div` exercises the `NextSibling` arm
+    // over the same widths.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    for n_elems in [500usize, 1000, 2000, 4000] {
+        let (doc, tree, elems) = wide_nth_workload(n_elems);
+        group.throughput(Throughput::Elements(elems));
+        group.bench_function(format!("nth_child_wide_{n_elems}"), |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    for n_elems in [500usize, 1000, 2000, 4000] {
+        let (doc, tree, elems) = wide_adjacent_workload(n_elems);
+        group.throughput(Throughput::Elements(elems));
+        group.bench_function(format!("adjacent_wide_{n_elems}"), |b| {
             b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
         });
     }

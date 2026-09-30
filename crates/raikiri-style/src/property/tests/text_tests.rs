@@ -2555,6 +2555,7 @@ fn text_underline_offset_parses_lengths_percentages_and_auto() {
                 percent: 0.0,
                 px: -8.0,
                 em: 2.0,
+                ch: 0.0,
             },)
         ))
     );
@@ -2565,6 +2566,7 @@ fn text_underline_offset_parses_lengths_percentages_and_auto() {
                 percent: -50.0,
                 px: 0.0,
                 em: 2.0,
+                ch: 0.0,
             },)
         ))
     );
@@ -2575,6 +2577,7 @@ fn text_underline_offset_parses_lengths_percentages_and_auto() {
                 percent: 200.0,
                 px: -8.0,
                 em: 0.0,
+                ch: 0.0,
             },)
         ))
     );
@@ -2585,6 +2588,7 @@ fn text_underline_offset_parses_lengths_percentages_and_auto() {
                 percent: 200.0,
                 px: 0.0,
                 em: -0.5,
+                ch: 0.0,
             },)
         ))
     );
@@ -4081,6 +4085,7 @@ fn letter_spacing_parses_em_calc_for_computed_resolution() {
                 percent: 0.0,
                 px: 10.0,
                 em: -0.5,
+                ch: 0.0,
             }
         )))
     );
@@ -4105,6 +4110,7 @@ fn letter_spacing_parses_parenthesized_mixed_calc() {
                 percent: -15.0,
                 px: 10.0,
                 em: 0.0,
+                ch: 0.0,
             }
         )))
     );
@@ -4129,6 +4135,7 @@ fn word_spacing_preserves_mixed_length_percentage_calcs() {
                 percent: 0.0,
                 px: 10.0,
                 em: -0.5,
+                ch: 0.0,
             }
         )))
     );
@@ -4145,6 +4152,7 @@ fn word_spacing_preserves_mixed_length_percentage_calcs() {
                 percent: -15.0,
                 px: 10.0,
                 em: 0.0,
+                ch: 0.0,
             }
         )))
     );
@@ -4304,6 +4312,7 @@ fn tab_size_parses_additive_length_calc() {
                 percent: 0.0,
                 px: 10.0,
                 em: 0.5,
+                ch: 0.0,
             }
         )))
     );
@@ -4314,6 +4323,7 @@ fn tab_size_parses_additive_length_calc() {
                 percent: 0.0,
                 px: 10.0,
                 em: -0.5,
+                ch: 0.0,
             }
         )))
     );

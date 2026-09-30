@@ -1,5 +1,4 @@
-//! Compile and run an external consumer that chains parse_html → plan (Err) →
-//! render_streaming (Completed) using only `use raikiri::*;`.
+//! External consumers can parse and inspect document layout through umbrella exports.
 
 use raikiri::*;
 
@@ -8,7 +7,6 @@ fn external_consumer_can_reference_all_reexported_types() {
     // Compile-check that every type resolves with only use raikiri::*;.
     // Consume the values with let _ to avoid dead_code warnings.
     let _ = std::marker::PhantomData::<(
-        RenderStatus,
         RenderSummary,
         LimitKind,
         DocumentPlan,
@@ -17,11 +15,8 @@ fn external_consumer_can_reference_all_reexported_types() {
         PageDefaultsBuilder,
         PageBox,
         PageContext,
-        PageFragment,
-        PlanConfig,
-        PlanConfigBuilder,
-        StreamingConfig,
-        StreamingConfigBuilder,
+        LayoutConfig,
+        LayoutConfigBuilder,
         BatchConfig,
         BatchConfigBuilder,
         LookaheadConfig,
@@ -33,60 +28,29 @@ fn external_consumer_can_reference_all_reexported_types() {
     )>;
 }
 
-/// Compile and run an external consumer that chains parse_html → plan (Err) →
-/// render_streaming (Completed) with only `use raikiri::*;`.
-/// (design test #9)
+/// Parse and inspect a completed layout through umbrella exports.
 #[test]
-fn external_consumer_can_call_parse_plan_render_streaming() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
+fn external_consumer_can_call_parse_and_layout() {
+    let doc = parse_html(
+        b"<p>Hi</p>".as_slice(),
+        &ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new(),
+    )
+    .unwrap() else {
+        panic!("expected completed layout")
     };
-    let doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html");
-
-    struct NoopResolver;
-    impl ReplacedResolver for NoopResolver {
-        fn resolve(&self, _req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-            unreachable!()
-        }
-    }
-    struct NoopSink;
-    impl RenderSink for NoopSink {
-        fn accept_page(&mut self, _f: PageFragment) -> Result<(), std::io::Error> {
-            Ok(())
-        }
-        fn finish_render(&mut self, _s: RenderSummary) -> Result<(), std::io::Error> {
-            Ok(())
-        }
-    }
-
-    let plan_err = plan(
-        &doc,
-        PageDefaults::default(),
-        &NoopResolver,
-        PlanConfig::default(),
-    )
-    .expect_err("unimplemented plan API must Err");
-    assert!(matches!(
-        plan_err,
-        RenderError::Unimplemented {
-            feature: "plan",
-            ..
-        }
-    ));
-
-    let mut sink = NoopSink;
-    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    let stream_status = render_streaming(
-        &doc,
-        PageDefaults::default(),
-        StreamingConfig::default(),
-        RenderOptions::new().resources(&resources),
-        &mut sink,
-    )
-    .expect("render_streaming should complete");
-    assert!(matches!(stream_status, RenderStatus::Completed(_)));
+    assert_eq!(result.page_count(), 1);
+    assert!(result.page(0).unwrap().fragments().next().is_some());
 }
 
 /// Check that every `#[non_exhaustive]` struct can be constructed from an
@@ -103,8 +67,8 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
 #[test]
 fn external_consumer_can_construct_all_non_exhaustive_types() {
     // struct via Default — configs
-    let _ = PlanConfig::default();
-    let _ = StreamingConfig::default();
+
+    let _ = LayoutConfig::default();
     let _ = BatchConfig::default();
     let _ = LookaheadConfig::default();
     let _ = RenderLimits::default();
@@ -113,7 +77,7 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
     let _ = PageDefaults::default();
     let _ = PageBox::default();
     let _ = PageContext::default();
-    let _ = PageFragment::default();
+
     let _ = LayoutBuffer::default();
     let _ = TargetRegistry::default();
     let _ = RunningTemplate::default();
@@ -132,8 +96,8 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
 
     // struct via builder
     let _ = PageDefaults::builder().build();
-    let _ = PlanConfig::builder().build();
-    let _ = StreamingConfig::builder().build();
+
+    let _ = LayoutConfig::builder().build();
     let _ = BatchConfig::builder().build();
     let _ = LookaheadConfig::builder().build();
     let _ = RenderLimits::builder().build();
@@ -237,15 +201,15 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
     let _ = PageDefaults::new();
     let _ = PageBox::new();
     let _ = PageContext::new();
-    let _ = PageFragment::new();
+
     let _ = LayoutBuffer::new();
     let _ = TargetRegistry::new();
     let _ = RunningTemplate::new();
     let _ = FormData::new();
 
     // render entry point configs (raikiri-traits::config)
-    let _ = PlanConfig::new();
-    let _ = StreamingConfig::new();
+
+    let _ = LayoutConfig::new();
     let _ = BatchConfig::new();
     let _ = LookaheadConfig::new();
     let _ = RenderLimits::new();
@@ -313,16 +277,12 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
         a: 255,
     });
 
-    // Also pin swapping nested structs from the §4 list. For
-    // `initial_registry`, assign `Some(TargetRegistry::new())` to explicitly
-    // check Option<TargetRegistry>'s inner type. Assigning only None would
-    // not detect a silent change to Option's type parameter.
-    let mut plan_cfg = PlanConfig::default();
-    plan_cfg.lookahead = lookahead.clone();
-    plan_cfg.limits = limits.clone();
-    plan_cfg.initial_registry = Some(TargetRegistry::new());
+    // Nested config (§4 struct list): also pin swapping the inner structs.
+    // For `initial_registry`, assign `Some(TargetRegistry::new())` to check the
+    // inner type of `Option<TargetRegistry>`; assigning only `None` would not
+    // detect a silent change to the Option's type parameter.
 
-    let mut stream_cfg = StreamingConfig::default();
+    let mut stream_cfg = LayoutConfig::default();
     stream_cfg.lookahead = lookahead.clone();
     stream_cfg.limits = limits.clone();
     stream_cfg.initial_registry = Some(TargetRegistry::new());
@@ -335,7 +295,6 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
 
     // Consume the value so the compiler sees a real read, not a dead store.
     let _ = (
-        plan_cfg,
         stream_cfg,
         batch_cfg,
         page_defaults,
@@ -379,19 +338,14 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(limits.max_input_bytes, Some(16 * 1_024 * 1_024));
     assert_eq!(limits.max_parse_warnings, Some(256));
 
-    // Also pin fluent chains inserting LookaheadConfig into PlanConfig,
-    // StreamingConfig, and BatchConfig. Pass `Some(...)` to initial_registry
-    // to check Option<TargetRegistry>'s inner type; None alone cannot detect
-    // a silent change to the type parameter.
-    let _plan = PlanConfig::builder()
-        .lookahead(lookahead.clone())
-        .limits(limits.clone())
-        .initial_registry(Some(TargetRegistry::new()))
-        .build();
-    // Chain all four StreamingConfigBuilder setters: lookahead, limits,
+    // Cross-struct integration: also pin the fluent chains that insert
+    // LookaheadConfig into LayoutConfig / BatchConfig. Pass `Some(...)` to
+    // `initial_registry` to check the inner type of `Option<TargetRegistry>`;
+    // `None` alone cannot detect a silent change to the type parameter.
+    // Chain all four LayoutConfigBuilder setters: lookahead, limits,
     // initial_registry, and signal.
     let abort_controller = AbortController::new();
-    let _stream = StreamingConfig::builder()
+    let _stream = LayoutConfig::builder()
         .lookahead(lookahead.clone())
         .limits(limits.clone())
         .initial_registry(Some(TargetRegistry::new()))

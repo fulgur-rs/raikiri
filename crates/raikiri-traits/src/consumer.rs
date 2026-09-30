@@ -17,8 +17,8 @@ pub enum ConsumerPropertyValue {
 /// One resolved consumer-property declaration in document order.
 ///
 /// The event contains only neutral data.  `node_id` and `parent_id` can be
-/// joined with a later [`crate::PageFragmentEvent`] without exposing the DOM
-/// arena or renderer-specific objects.  `source_order` is the producer's
+/// joined with fragments by source identity without exposing renderer-specific
+/// objects.  `source_order` is the producer's
 /// preorder index among source nodes and is stable for one parsed document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -59,6 +59,13 @@ impl ConsumerPropertyEvent {
 /// Optional receiver for resolved consumer-owned properties.
 ///
 /// The render driver invokes `observe_event` in deterministic document order.
+///
+/// The batch contract is: events are delivered after the page count is fixed
+/// and before the layout call returns. One observer call is not a success
+/// confirmation. When the abort signal fires during delivery, the driver still
+/// delivers the remaining events of the same batch and then reports an aborted
+/// status with no partial result. The consumer keeps a per-call collection and
+/// discards it when the call reports aborted or an error.
 // cov:ignore: observer trait declaration has no executable body
 pub trait ConsumerPropertyObserver: Send {
     /// Receive one resolved property event.

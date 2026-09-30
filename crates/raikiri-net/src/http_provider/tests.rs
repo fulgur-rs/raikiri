@@ -823,9 +823,31 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
     let _ = done_tx.send(());
     server.join().expect("trickling server thread");
 
+    // A reset that arrives at or after the connect deadline still proves
+    // the property under test: the trickle did not hold the handshake open
+    // past the budgeted time. The scripted server above holds the socket
+    // open well past the whole fetch budget, so such a reset cannot come
+    // from the server closing on time — it is a loopback RST racing the
+    // client's own read deadline (for example the kernel resetting a close
+    // issued while unread handshake bytes are still pending). Gating on the
+    // elapsed time keeps this from going vacuous: a reset long before the
+    // deadline (a crashing server) or at/past the global budget (a trickle
+    // that outlasted it, which the old transport produced) still fails.
+    // One second of early slack absorbs socket-timeout granularity; the
+    // lower bound stays an order of magnitude above any fast failure.
+    let earliest_reset = CONNECT_TIMEOUT - std::time::Duration::from_secs(1);
+    let reset_after_deadline = matches!(
+        &err,
+        NetworkError::Io(e) if e.kind() == std::io::ErrorKind::ConnectionReset
+    ) && elapsed >= earliest_reset;
+    let timed_out = matches!(
+        &err,
+        NetworkError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut
+    );
     assert!(
-        matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
-        "expected NetworkError::Io(TimedOut), got {err:?}"
+        timed_out || reset_after_deadline,
+        "expected NetworkError::Io(TimedOut) (or a reset at/after the connect timeout), \
+         got {err:?} after {elapsed:?}"
     );
     assert!(
         elapsed < FETCH_TIMEOUT,

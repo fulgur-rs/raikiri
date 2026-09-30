@@ -929,14 +929,35 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
         let mut y = 0.0_f32;
         let mut line_height_used = line_height;
         let mut baseline_for_line = None;
-        for &child in &doc.nodes[parent_id].children.clone() {
+        // Keep NBSP-connected inline content together. U+00A0 is Glue in
+        // UAX 14 and forbids breaks before and after, so CSS line breaking
+        // must not split an image plus NBSP plus image run across lines.
+        // Group maximal runs of images linked by NBSP-containing whitespace
+        // and wrap each group atomically. Collapsible-only whitespace stays
+        // breakable and keeps the existing drop-at-wrap behavior.
+        let children = doc.nodes[parent_id].children.clone();
+        const KIND_SKIP: u8 = 0;
+        const KIND_IMG: u8 = 1;
+        const KIND_GLUE: u8 = 2;
+        const KIND_BREAKABLE: u8 = 3;
+        const KIND_BR: u8 = 4;
+        let mut kinds: Vec<u8> = Vec::with_capacity(children.len());
+        let mut widths: Vec<f32> = Vec::with_capacity(children.len());
+        let mut heights: Vec<f32> = Vec::with_capacity(children.len());
+        let mut collapsibles: Vec<bool> = Vec::with_capacity(children.len());
+        for &child in &children {
             if !doc.nodes[child].is_in_document() {
+                kinds.push(KIND_SKIP);
+                widths.push(0.0);
+                heights.push(0.0);
+                collapsibles.push(false);
                 continue;
             }
             if doc.nodes[child].tag_name() == Some("br") {
-                x = 0.0;
-                y += line_height_used;
-                line_height_used = line_height;
+                kinds.push(KIND_BR);
+                widths.push(0.0);
+                heights.push(0.0);
+                collapsibles.push(false);
                 continue;
             }
             let is_inline_whitespace = matches!(
@@ -958,37 +979,163 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                     NodeData::Text(text)
                         if text.text_content.chars().all(is_collapsible_ws)
                 );
-            let (width, height) = if is_inline_whitespace {
-                (
+            if is_inline_whitespace {
+                let width =
                     doc.nodes[child].unrounded_layout.size.width.max(
                         style_dimension_length(doc.nodes[child].style.size.width).unwrap_or(0.0),
-                    ),
-                    0.0,
-                )
-            } else if doc.nodes[child].tag_name() == Some("img") {
-                (
-                    doc.nodes[child].unrounded_layout.size.width.max(0.0),
-                    doc.nodes[child].unrounded_layout.size.height.max(0.0),
-                )
-            } else {
-                continue;
-            };
-            if width <= 0.0 || !width.is_finite() {
+                    );
+                if width <= 0.0 || !width.is_finite() {
+                    kinds.push(KIND_SKIP);
+                    widths.push(0.0);
+                    heights.push(0.0);
+                    collapsibles.push(false);
+                    continue;
+                }
+                let has_nbsp = matches!(
+                    &doc.nodes[child].data,
+                    NodeData::Text(text) if text.text_content.contains('\u{00A0}')
+                );
+                if has_nbsp {
+                    kinds.push(KIND_GLUE);
+                } else {
+                    kinds.push(KIND_BREAKABLE);
+                }
+                widths.push(width);
+                heights.push(0.0);
+                collapsibles.push(is_collapsible_whitespace);
                 continue;
             }
-            if x > 0.0 && x + width > parent_width + 0.01 {
+            if doc.nodes[child].tag_name() == Some("img") {
+                let width = doc.nodes[child].unrounded_layout.size.width.max(0.0);
+                let height = doc.nodes[child].unrounded_layout.size.height.max(0.0);
+                if width <= 0.0 || !width.is_finite() {
+                    kinds.push(KIND_SKIP);
+                    widths.push(0.0);
+                    heights.push(0.0);
+                    collapsibles.push(false);
+                    continue;
+                }
+                kinds.push(KIND_IMG);
+                widths.push(width);
+                heights.push(height);
+                collapsibles.push(false);
+                continue;
+            }
+            kinds.push(KIND_SKIP);
+            widths.push(0.0);
+            heights.push(0.0);
+            collapsibles.push(false);
+        }
+        // Partition participating positions into wrap-atomic groups. Images
+        // join the open group only through an adjacent NBSP glue node, so
+        // back-to-back images without NBSP between them stay separable and
+        // keep the existing wrapping behavior. Each collapsible-only or
+        // preserved-space run without NBSP forms its own single-item group.
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut group_for_pos: Vec<Option<usize>> = vec![None; children.len()];
+        let mut current: Vec<usize> = Vec::new();
+        for pos in 0..children.len() {
+            match kinds[pos] {
+                KIND_IMG => {
+                    let glued = current.last().is_some_and(|&last| kinds[last] == KIND_GLUE);
+                    if current.is_empty() || !glued {
+                        if !current.is_empty() {
+                            let gid = groups.len();
+                            for &p in &current {
+                                group_for_pos[p] = Some(gid);
+                            }
+                            groups.push(std::mem::take(&mut current));
+                        }
+                        current.push(pos);
+                    } else {
+                        current.push(pos);
+                    }
+                }
+                KIND_GLUE => {
+                    current.push(pos);
+                }
+                KIND_BREAKABLE => {
+                    if !current.is_empty() {
+                        let gid = groups.len();
+                        for &p in &current {
+                            group_for_pos[p] = Some(gid);
+                        }
+                        groups.push(std::mem::take(&mut current));
+                    }
+                    let gid = groups.len();
+                    groups.push(vec![pos]);
+                    group_for_pos[pos] = Some(gid);
+                }
+                _ => {
+                    if !current.is_empty() {
+                        let gid = groups.len();
+                        for &p in &current {
+                            group_for_pos[p] = Some(gid);
+                        }
+                        groups.push(std::mem::take(&mut current));
+                    }
+                }
+            }
+        }
+        if !current.is_empty() {
+            let gid = groups.len();
+            for &p in &current {
+                group_for_pos[p] = Some(gid);
+            }
+            groups.push(current);
+        }
+        let group_widths: Vec<f32> = groups
+            .iter()
+            .map(|group| group.iter().map(|&p| widths[p]).sum())
+            .collect();
+        for pos in 0..children.len() {
+            let child = children[pos];
+            let kind = kinds[pos];
+            if kind == KIND_SKIP {
+                continue;
+            }
+            if kind == KIND_BR {
                 x = 0.0;
                 y += line_height_used;
                 line_height_used = line_height;
-                baseline_for_line = None;
-                if is_collapsible_whitespace {
+                continue;
+            }
+            let width = widths[pos];
+            let height = heights[pos];
+            let is_collapsible_whitespace = collapsibles[pos];
+            let gid = group_for_pos[pos].expect("participating position has a group");
+            let group = &groups[gid];
+            let is_first_in_group = group.first().is_some_and(|&first| first == pos);
+            let is_glue_group = group.len() > 1;
+            if is_glue_group {
+                // A multi-item group holds at least one NBSP glue node by
+                // construction, so the whole run moves as one unit. Only the
+                // first item tests the group width. Later items skip the wrap
+                // test so the run can overflow the line rather than split.
+                if is_first_in_group {
+                    let group_width = group_widths[gid];
+                    if x > 0.0 && x + group_width > parent_width + 0.01 {
+                        x = 0.0;
+                        y += line_height_used;
+                        line_height_used = line_height;
+                        baseline_for_line = None;
+                    }
+                }
+            } else {
+                if x > 0.0 && x + width > parent_width + 0.01 {
+                    x = 0.0;
+                    y += line_height_used;
+                    line_height_used = line_height;
+                    baseline_for_line = None;
+                    if is_collapsible_whitespace {
+                        continue;
+                    }
+                }
+                if is_collapsible_whitespace && x == 0.0 {
+                    // CSS-collapsible leading whitespace is removed at a new line.
+                    // U+00A0 is not collapsible and keeps its measured advance.
                     continue;
                 }
-            }
-            if is_collapsible_whitespace && x == 0.0 {
-                // CSS-collapsible leading whitespace is removed at a new line.
-                // U+00A0 is not collapsible and keeps its measured advance.
-                continue;
             }
             let taffy_y = doc.nodes[child].unrounded_layout.location.y;
             let relative_offset_y = relative_position_y_offset(
@@ -2395,6 +2542,18 @@ fn remap_boxes_through_tab_rewrite(original: &str, tab_lens: &[usize], boxes: &m
 const LINE_BREAK_NBSP_INLINE_BOX_ID_BASE: u64 = 1 << 62;
 const LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT: u64 = 1 << 63;
 
+/// Advance-only box for a trailing `word-space-transform` separator that faces
+/// inline content (CSS Text 4, issue um59.29).
+///
+/// A trailing U+200B at a text-node edge becomes a trailing ASCII space (or
+/// U+3000) after phase-1 collapsing, but Parley `width()` excludes trailing
+/// whitespace while `full_width()` includes it. Taffy measures `width()`, so
+/// the inter-node advance would be lost. Stripping that trailing run and
+/// re-adding it as an `InFlow` box keeps the advance in `width()` while
+/// preserving the soft-wrap opportunity: Parley always allows a break after
+/// an inline box, unlike an NBSP migration which forbids it.
+const WORD_SPACE_EDGE_INLINE_BOX_ID_BASE: u64 = 1 << 61;
+
 /// Replace U+00A0 in Parley's input with a nonpainting advance box.
 ///
 /// Existing inline-box offsets are based on the source string and must move
@@ -3189,14 +3348,19 @@ fn measured_text_indent_px(
     probes: &mut HashMap<(String, u32, u32, u8), f32>,
 ) -> Option<f32> {
     let factor = cv.text_indent_ch_factor?;
-    Some(measured_ch_length_px(
+    let measured = measured_ch_length_px(
         factor,
         cv.text_indent_ch_font.as_ref(),
         cv,
         fonts,
         layout_cx,
         probes,
-    ))
+    ) + cv.text_indent_ch_offset;
+    Some(if measured.is_nan() {
+        0.0
+    } else {
+        measured.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+    })
 }
 
 pub(crate) fn bounded_text_indent_amount(
@@ -3207,7 +3371,12 @@ pub(crate) fn bounded_text_indent_amount(
     let raw = match value {
         ComputedTextIndent::Px(px) => measured.unwrap_or(px),
         ComputedTextIndent::Percent(percent) => containing_width * percent / 100.0,
-        ComputedTextIndent::Calc(calc) => calc.px + containing_width * calc.percent / 100.0,
+        // A measured `ch` calc already folds its absolute part into `measured`,
+        // so only the percentage term is added on top.
+        ComputedTextIndent::Calc(calc) => match measured {
+            Some(measured) => measured + containing_width * calc.percent / 100.0,
+            None => calc.px + containing_width * calc.percent / 100.0,
+        },
     };
     if raw.is_nan() {
         0.0
@@ -4320,6 +4489,23 @@ pub(crate) fn collapse_text_for_shaping(
     // survivor is indistinguishable from a collapsed space downstream;
     // wide-char pairs across nodes stay space-approximated — symmetric
     // pairs are unaffected either way).
+    // Known limitation for pre-line, intentional for now, see
+    // raikiri-spike-6r1x.12: an edge line feed facing inline content is
+    // degraded to a space even under pre-line, where the spec preserves
+    // segment breaks as forced breaks. Single-node interior breaks stay
+    // preserved, so X newline Y as one node keeps two lines while the
+    // same text split across sibling nodes collapses to one line with a
+    // migrated or NBSP space. Keeping the edge break in place alone does
+    // not restore the break: measured split geometries keep the two-line
+    // block height but misplace the second run to the right of the first
+    // instead of at the next line start, and an interior break plus a
+    // following sibling misplaces that sibling the same way. Correct
+    // rendering needs cross-node forced-break handling at the line-box
+    // level, analogous to the br path with wrap plus a full-width break
+    // item, combined with stripping the edge break from shaping so it is
+    // counted once, not twice. That is beyond a minimal per-node fix, so
+    // the space degradation stays until that line-box work lands. Do not
+    // add a test pinning the collapsed single-line value as correct.
     let mut out = merged;
     if !before {
         out = out.trim_start_matches([' ', '\n']).to_string();
@@ -5233,6 +5419,8 @@ pub(crate) fn preshape_text(
         // Preserve authored `ch` so the shaping font's `0` advance can replace
         // the style-layer fallback before Parley lays out the text.
         letter_spacing_ch_factor: Option<f32>,
+        // Absolute part of a `ch`-bearing calc, added to the measured advance.
+        letter_spacing_ch_offset: f32,
         // Font that declared an inherited `ch` letter-spacing.
         letter_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         // Style-layer fallback in CSS px; replaced with a measured `ch`
@@ -5240,6 +5428,7 @@ pub(crate) fn preshape_text(
         word_spacing_raw: f32,
         // Preserve the authored unit because `ComputedLength` alone loses it.
         word_spacing_ch_factor: Option<f32>,
+        word_spacing_ch_offset: f32,
         word_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
@@ -5261,9 +5450,11 @@ pub(crate) fn preshape_text(
         metrics_style: StyleFontStyle,
         metrics_letter_spacing_raw: f32,
         metrics_letter_spacing_ch_factor: Option<f32>,
+        metrics_letter_spacing_ch_offset: f32,
         metrics_letter_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         metrics_word_spacing_raw: f32,
         metrics_word_spacing_ch_factor: Option<f32>,
+        metrics_word_spacing_ch_offset: f32,
         metrics_word_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         simple_pre_block: bool,
         // Preserve the metric quantization used by a simple pre block when
@@ -5271,6 +5462,13 @@ pub(crate) fn preshape_text(
         // preserved newline is the sole sibling.
         simple_preserved_run: bool,
         tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
+        // Trailing `word-space-transform` separators stripped from `text`
+        // because Parley `width()` excludes them (see
+        // `WORD_SPACE_EDGE_INLINE_BOX_ID_BASE`). Re-added as one wrapping
+        // advance box after `ch`/tab/NBSP resolution so the measured advance
+        // uses the resolved spacing.
+        word_space_edge_spaces: u32,
+        word_space_edge_ideos: u32,
     }
 
     // The in-flow inline `<wbr>` under `word-space-transform: space` or
@@ -5554,6 +5752,48 @@ pub(crate) fn preshape_text(
         if cv.hyphens == Hyphens::None {
             text.retain(|c| c != '\u{00AD}');
         }
+        // Phase-2 edge spacing for `word-space-transform` (issue um59.29):
+        // a trailing U+200B at a text-node edge becomes a trailing ASCII
+        // space (or U+3000) after phase-1 collapsing, but Parley `width()`
+        // excludes trailing whitespace while `full_width()` includes it.
+        // Taffy measures `width()`, so the inter-node advance would be lost.
+        // Strip that trailing run here and re-add it as one wrapping
+        // advance box after `ch`/tab/NBSP resolution. An `InFlow` box keeps
+        // the advance in `width()` and still allows a break after it, unlike
+        // an NBSP migration which forbids soft wrap. Only mid-line trailing
+        // (facing inline content) is preserved; at a block end trimming
+        // correctly drops it, so no box is kept there.
+        let mut word_space_edge_spaces: u32 = 0;
+        let mut word_space_edge_ideos: u32 = 0;
+        if matches!(
+            cv.word_space_transform,
+            WordSpaceTransform::Space | WordSpaceTransform::IdeographicSpace
+        ) && has_inline_adjacent(doc, cascade, &parent_of, idx, 1)
+        {
+            let mut spaces: u32 = 0;
+            let mut ideos: u32 = 0;
+            for c in text.chars().rev() {
+                if c == ' ' {
+                    spaces += 1;
+                } else if c == '\u{3000}' {
+                    ideos += 1;
+                } else {
+                    break;
+                }
+            }
+            if spaces + ideos > 0 {
+                let strip_bytes: usize = text
+                    .chars()
+                    .rev()
+                    .take_while(|&c| c == ' ' || c == '\u{3000}')
+                    .map(|c| c.len_utf8())
+                    .sum();
+                let new_len = text.len().saturating_sub(strip_bytes);
+                text.truncate(new_len);
+                word_space_edge_spaces = spaces;
+                word_space_edge_ideos = ideos;
+            }
+        }
         let family_str: String = family_str_of(cv);
         // Tab-stop metrics use the block-container ancestor's font (CSS Text 3 §4.2).
         // If none exists, use this element's font (a fail-safe matching old behavior).
@@ -5690,9 +5930,11 @@ pub(crate) fn preshape_text(
             line_height_raw: cv.line_height,
             letter_spacing_raw: cv.letter_spacing.px(),
             letter_spacing_ch_factor: cv.letter_spacing_ch_factor,
+            letter_spacing_ch_offset: cv.letter_spacing_ch_offset,
             letter_spacing_ch_font: cv.letter_spacing_ch_font.clone(),
             word_spacing_raw: cv.word_spacing.px(),
             word_spacing_ch_factor: cv.word_spacing_ch_factor,
+            word_spacing_ch_offset: cv.word_spacing_ch_offset,
             word_spacing_ch_font: cv.word_spacing_ch_font.clone(),
             tab_size: cv.tab_size,
             white_space: cv.white_space,
@@ -5715,13 +5957,17 @@ pub(crate) fn preshape_text(
             metrics_style: mcv.font_style,
             metrics_letter_spacing_raw: mcv.letter_spacing.px(),
             metrics_letter_spacing_ch_factor: mcv.letter_spacing_ch_factor,
+            metrics_letter_spacing_ch_offset: mcv.letter_spacing_ch_offset,
             metrics_letter_spacing_ch_font: mcv.letter_spacing_ch_font.clone(),
             metrics_word_spacing_raw: mcv.word_spacing.px(),
             metrics_word_spacing_ch_factor: mcv.word_spacing_ch_factor,
+            metrics_word_spacing_ch_offset: mcv.word_spacing_ch_offset,
             metrics_word_spacing_ch_font: mcv.word_spacing_ch_font.clone(),
             simple_pre_block,
             simple_preserved_run,
             tab_spacing_ranges: Vec::new(),
+            word_space_edge_spaces,
+            word_space_edge_ideos,
         });
     }
 
@@ -5746,7 +5992,8 @@ pub(crate) fn preshape_text(
                     job.font_size_raw,
                     job.font_weight_raw,
                     job.font_style,
-                );
+                )
+                + job.letter_spacing_ch_offset;
         }
         if let Some(factor) = job.word_spacing_ch_factor {
             job.word_spacing_raw = factor
@@ -5759,7 +6006,8 @@ pub(crate) fn preshape_text(
                     job.font_size_raw,
                     job.font_weight_raw,
                     job.font_style,
-                );
+                )
+                + job.word_spacing_ch_offset;
         }
         if let Some(factor) = job.metrics_letter_spacing_ch_factor {
             job.metrics_letter_spacing_raw = factor
@@ -5772,7 +6020,8 @@ pub(crate) fn preshape_text(
                     job.metrics_size,
                     job.metrics_weight,
                     job.metrics_style,
-                );
+                )
+                + job.metrics_letter_spacing_ch_offset;
         }
         if let Some(factor) = job.metrics_word_spacing_ch_factor {
             job.metrics_word_spacing_raw = factor
@@ -5785,7 +6034,8 @@ pub(crate) fn preshape_text(
                     job.metrics_size,
                     job.metrics_weight,
                     job.metrics_style,
-                );
+                )
+                + job.metrics_word_spacing_ch_offset;
         }
         if !matches!(
             job.white_space,
@@ -5916,6 +6166,76 @@ pub(crate) fn preshape_text(
             }
             None => job.line_break_override_enabled = false,
         }
+    }
+
+    // Re-add stripped trailing `word-space-transform` separators as one
+    // wrapping advance box (issue um59.29). The text run keeps its stripped
+    // form so `width()` already includes the edge; the box supplies the exact
+    // trailing advance measured with the resolved spacing. A plain trailing
+    // space would be excluded from `width()` and lost by Taffy, while an NBSP
+    // would forbid the soft-wrap opportunity the CSS Text 4 transform must
+    // keep (013/014 keep-all cases).
+    for job in &mut jobs {
+        if job.word_space_edge_spaces == 0 && job.word_space_edge_ideos == 0 {
+            continue;
+        }
+        // Edge id base (1<<61) is distinct from autospace (u64::MAX-...) and
+        // line-break NBSP (1<<62..1<<63) ranges, so a collision cannot occur.
+        // No guard is needed; the single edge box per layout keeps its fixed id.
+        let word_spacing = if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
+            job.word_spacing_raw
+        } else {
+            0.0
+        };
+        let mut total = 0.0f32;
+        if job.word_space_edge_spaces > 0 {
+            let advance = probe_text_full_width(
+                fonts,
+                layout_cx,
+                " ",
+                TextProbeStyle {
+                    family_str: &job.family_str,
+                    font_size_px: job.font_size_raw,
+                    font_weight: job.font_weight_raw,
+                    font_style: job.font_style,
+                    letter_spacing: job.letter_spacing_raw,
+                    word_spacing,
+                },
+            );
+            if !advance.is_finite() || advance <= 0.0 {
+                continue; // cov:ignore: space advance probing with a valid shaped font always succeeds.
+            }
+            total += advance * job.word_space_edge_spaces as f32;
+        }
+        if job.word_space_edge_ideos > 0 {
+            let advance = probe_text_full_width(
+                fonts,
+                layout_cx,
+                "\u{3000}",
+                TextProbeStyle {
+                    family_str: &job.family_str,
+                    font_size_px: job.font_size_raw,
+                    font_weight: job.font_weight_raw,
+                    font_style: job.font_style,
+                    letter_spacing: job.letter_spacing_raw,
+                    word_spacing,
+                },
+            );
+            if !advance.is_finite() || advance <= 0.0 {
+                continue; // cov:ignore: ideographic advance probing with a valid shaped font always succeeds.
+            }
+            total += advance * job.word_space_edge_ideos as f32;
+        }
+        if !total.is_finite() || total <= 0.0 {
+            continue; // cov:ignore: total sums finite positive advances, so it is always finite and positive here.
+        }
+        job.autospace_boxes.push(InlineBox {
+            id: WORD_SPACE_EDGE_INLINE_BOX_ID_BASE,
+            kind: InlineBoxKind::InFlow,
+            index: job.text.len(),
+            width: total,
+            height: 0.0,
+        });
     }
 
     // Copy original FontContext once; each rayon task clones from this base.
