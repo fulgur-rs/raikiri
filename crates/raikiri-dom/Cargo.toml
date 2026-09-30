@@ -20,6 +20,8 @@ bitflags       = "2"
 # unification with the existing parley consumer is a no-op.
 icu_properties = { version = "2", default-features = false, features = ["compiled_data"] }
 parley         = { workspace = true }
+shodo          = { workspace = true }
+skrifa         = { workspace = true }
 raikiri-style  = { workspace = true }
 raikiri-traits = { workspace = true }
 rayon          = "1.8"
