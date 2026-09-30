@@ -41,10 +41,10 @@ color: notacolor | parse | None
 color: notacolor | serialize | -
 color: notacolor | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
 color: notacolor | page | <absent>
-color: inherit | parse | None
-color: inherit | serialize | -
+color: inherit | parse | Some(Deferred(DeferredValue { property: "color", value: "inherit", key: Color }))
+color: inherit | serialize | None
 color: inherit | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
-color: inherit | page | <absent>
+color: inherit | page | Deferred(DeferredValue { property: "color", value: "inherit", key: Color })
 color: initial | parse | None
 color: initial | serialize | -
 color: initial | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
@@ -102,10 +102,10 @@ background-color: notacolor | parse | None
 background-color: notacolor | serialize | -
 background-color: notacolor | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
 background-color: notacolor | page | <absent>
-background-color: inherit | parse | None
-background-color: inherit | serialize | -
-background-color: inherit | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
-background-color: inherit | page | <absent>
+background-color: inherit | parse | Some(Deferred(DeferredValue { property: "background-color", value: "inherit", key: BackgroundColor }))
+background-color: inherit | serialize | None
+background-color: inherit | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+background-color: inherit | page | Deferred(DeferredValue { property: "background-color", value: "inherit", key: BackgroundColor })
 background-color: initial | parse | None
 background-color: initial | serialize | -
 background-color: initial | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }

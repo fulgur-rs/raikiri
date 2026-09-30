@@ -601,7 +601,7 @@ tab-size: 1rlh | serialize | None
 tab-size: 1rlh | computed | Length(ComputedLength(0.0))
 tab-size: 1rlh | cssom | Some("0px")
 tab-size: 1rlh | page | TabSize(Length(Px(30.0)))
-tab-size: calc(1em + 2px) | parse | Some(TabSize(Calc(LengthPercentageCalc { percent: 0.0, px: 2.0, em: 1.0 })))
+tab-size: calc(1em + 2px) | parse | Some(TabSize(Calc(LengthPercentageCalc { percent: 0.0, px: 2.0, em: 1.0, ch: 0.0 })))
 tab-size: calc(1em + 2px) | serialize | None
 tab-size: calc(1em + 2px) | computed | Length(ComputedLength(12.0))
 tab-size: calc(1em + 2px) | cssom | Some("12px")
@@ -703,10 +703,10 @@ text-decoration-thickness: calc(10% + 1em) | parse | Some(Deferred(DeferredValue
 text-decoration-thickness: calc(10% + 1em) | serialize | None
 text-decoration-thickness: calc(10% + 1em) | computed | Auto
 text-decoration-thickness: calc(10% + 1em) | page | <absent>
-text-decoration-thickness: inherit | parse | None
-text-decoration-thickness: inherit | serialize | -
-text-decoration-thickness: inherit | computed | Auto
-text-decoration-thickness: inherit | page | <absent>
+text-decoration-thickness: inherit | parse | Some(TextDecorationThicknessInherit)
+text-decoration-thickness: inherit | serialize | None
+text-decoration-thickness: inherit | computed | Length(ComputedLength(40.0))
+text-decoration-thickness: inherit | page | TextDecorationThickness(Length(Px(40.0)))
 text-decoration-thickness: initial | parse | None
 text-decoration-thickness: initial | serialize | -
 text-decoration-thickness: initial | computed | Auto
@@ -2498,16 +2498,16 @@ text-underline-offset: 1rlh | serialize | Some("1rlh")
 text-underline-offset: 1rlh | computed | Length(ComputedLength(0.0))
 text-underline-offset: 1rlh | cssom | Some("0px")
 text-underline-offset: 1rlh | page | TextUnderlineOffset(Length(Px(30.0)))
-text-underline-offset: calc(1em + 2px) | parse | Some(TextUnderlineOffset(Calc(LengthPercentageCalc { percent: 0.0, px: 2.0, em: 1.0 })))
+text-underline-offset: calc(1em + 2px) | parse | Some(TextUnderlineOffset(Calc(LengthPercentageCalc { percent: 0.0, px: 2.0, em: 1.0, ch: 0.0 })))
 text-underline-offset: calc(1em + 2px) | serialize | Some("calc(1em + 2px)")
 text-underline-offset: calc(1em + 2px) | computed | Length(ComputedLength(12.0))
 text-underline-offset: calc(1em + 2px) | cssom | Some("12px")
 text-underline-offset: calc(1em + 2px) | page | TextUnderlineOffset(Length(Px(14.0)))
-text-underline-offset: calc(10% + 1em) | parse | Some(TextUnderlineOffset(Calc(LengthPercentageCalc { percent: 10.0, px: 0.0, em: 1.0 })))
+text-underline-offset: calc(10% + 1em) | parse | Some(TextUnderlineOffset(Calc(LengthPercentageCalc { percent: 10.0, px: 0.0, em: 1.0, ch: 0.0 })))
 text-underline-offset: calc(10% + 1em) | serialize | Some("calc(10% + 1em)")
 text-underline-offset: calc(10% + 1em) | computed | Calc(CalcLengthPercentage { percent: 10.0, px: 10.0 })
 text-underline-offset: calc(10% + 1em) | cssom | Some("calc(10% + 10px)")
-text-underline-offset: calc(10% + 1em) | page | TextUnderlineOffset(Calc(LengthPercentageCalc { percent: 10.0, px: 12.0, em: 0.0 }))
+text-underline-offset: calc(10% + 1em) | page | TextUnderlineOffset(Calc(LengthPercentageCalc { percent: 10.0, px: 12.0, em: 0.0, ch: 0.0 }))
 text-underline-offset: inherit | parse | None
 text-underline-offset: inherit | serialize | -
 text-underline-offset: inherit | computed | Length(ComputedLength(40.0))
