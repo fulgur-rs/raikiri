@@ -45,9 +45,11 @@ use crate::test_dom::TestDoc;
 mod box_model;
 mod color;
 mod content;
+mod excluded;
 mod layout;
 mod meta;
 mod text;
+mod visual;
 
 /// Reads one computed field of an element and formats it on one line.
 type ComputedField = fn(&ComputedValues) -> String;
@@ -118,6 +120,7 @@ const DOMAINS: &[(&str, &[Entry])] = &[
     ("content", content::ENTRIES),
     ("layout", layout::ENTRIES),
     ("text", text::ENTRIES),
+    ("visual", visual::ENTRIES),
 ];
 
 /// Length samples substituted into an entry's length template. They cover
@@ -360,4 +363,9 @@ fn layout() {
 #[test]
 fn text() {
     assert_domain_snapshot("text");
+}
+
+#[test]
+fn visual() {
+    assert_domain_snapshot("visual");
 }

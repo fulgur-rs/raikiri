@@ -1,0 +1,910 @@
+---
+source: crates/raikiri-style/src/characterization.rs
+---
+visibility: <parent hidden> | computed | Hidden
+visibility: <undeclared> | computed | Hidden
+visibility: * | cssom | <not a ComputedProperty>
+visibility: visible | parse | Some(Visibility(Visible))
+visibility: visible | serialize | None
+visibility: visible | computed | Visible
+visibility: visible | page | Visibility(Visible)
+visibility: hidden | parse | Some(Visibility(Hidden))
+visibility: hidden | serialize | None
+visibility: hidden | computed | Hidden
+visibility: hidden | page | Visibility(Hidden)
+visibility: collapse | parse | Some(Visibility(Collapse))
+visibility: collapse | serialize | None
+visibility: collapse | computed | Collapse
+visibility: collapse | page | Visibility(Collapse)
+visibility: none | parse | None
+visibility: none | serialize | -
+visibility: none | computed | Hidden
+visibility: none | page | <absent>
+visibility: inherit | parse | None
+visibility: inherit | serialize | -
+visibility: inherit | computed | Hidden
+visibility: inherit | page | <absent>
+visibility: initial | parse | None
+visibility: initial | serialize | -
+visibility: initial | computed | Hidden
+visibility: initial | page | <absent>
+visibility: unset | parse | None
+visibility: unset | serialize | -
+visibility: unset | computed | Hidden
+visibility: unset | page | <absent>
+visibility: var(--v) | parse | Some(Deferred(DeferredValue { property: "visibility", value: "var(--v)", key: Visibility }))
+visibility: var(--v) | serialize | None
+visibility: var(--v) | computed | Hidden
+visibility: var(--v) | page | Visibility(Hidden)
+visibility: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "visibility", value: "var(--undefined)", key: Visibility }))
+visibility: var(--undefined) | serialize | None
+visibility: var(--undefined) | computed | Hidden
+visibility: var(--undefined) | page | <absent>
+
+background-attachment: <parent fixed> | computed | Fixed
+background-attachment: <undeclared> | computed | Scroll
+background-attachment: * | cssom | <not a ComputedProperty>
+background-attachment: scroll | parse | Some(BackgroundAttachment(Scroll))
+background-attachment: scroll | serialize | None
+background-attachment: scroll | computed | Scroll
+background-attachment: scroll | page | BackgroundAttachment(Scroll)
+background-attachment: fixed | parse | Some(BackgroundAttachment(Fixed))
+background-attachment: fixed | serialize | None
+background-attachment: fixed | computed | Fixed
+background-attachment: fixed | page | BackgroundAttachment(Fixed)
+background-attachment: local | parse | Some(BackgroundAttachment(Local))
+background-attachment: local | serialize | None
+background-attachment: local | computed | Local
+background-attachment: local | page | BackgroundAttachment(Local)
+background-attachment: bogus | parse | None
+background-attachment: bogus | serialize | -
+background-attachment: bogus | computed | Scroll
+background-attachment: bogus | page | <absent>
+background-attachment: inherit | parse | None
+background-attachment: inherit | serialize | -
+background-attachment: inherit | computed | Scroll
+background-attachment: inherit | page | <absent>
+background-attachment: initial | parse | None
+background-attachment: initial | serialize | -
+background-attachment: initial | computed | Scroll
+background-attachment: initial | page | <absent>
+background-attachment: unset | parse | None
+background-attachment: unset | serialize | -
+background-attachment: unset | computed | Scroll
+background-attachment: unset | page | <absent>
+background-attachment: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-attachment", value: "var(--v)", key: BackgroundAttachment }))
+background-attachment: var(--v) | serialize | None
+background-attachment: var(--v) | computed | Fixed
+background-attachment: var(--v) | page | BackgroundAttachment(Fixed)
+background-attachment: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-attachment", value: "var(--undefined)", key: BackgroundAttachment }))
+background-attachment: var(--undefined) | serialize | None
+background-attachment: var(--undefined) | computed | Scroll
+background-attachment: var(--undefined) | page | <absent>
+
+mix-blend-mode: <parent multiply> | computed | Multiply
+mix-blend-mode: <undeclared> | computed | Normal
+mix-blend-mode: * | cssom | <not a ComputedProperty>
+mix-blend-mode: normal | parse | Some(MixBlendMode(Normal))
+mix-blend-mode: normal | serialize | None
+mix-blend-mode: normal | computed | Normal
+mix-blend-mode: normal | page | MixBlendMode(Normal)
+mix-blend-mode: multiply | parse | Some(MixBlendMode(Multiply))
+mix-blend-mode: multiply | serialize | None
+mix-blend-mode: multiply | computed | Multiply
+mix-blend-mode: multiply | page | MixBlendMode(Multiply)
+mix-blend-mode: screen | parse | Some(MixBlendMode(Screen))
+mix-blend-mode: screen | serialize | None
+mix-blend-mode: screen | computed | Screen
+mix-blend-mode: screen | page | MixBlendMode(Screen)
+mix-blend-mode: plus-lighter | parse | None
+mix-blend-mode: plus-lighter | serialize | -
+mix-blend-mode: plus-lighter | computed | Normal
+mix-blend-mode: plus-lighter | page | <absent>
+mix-blend-mode: color-dodge | parse | Some(MixBlendMode(ColorDodge))
+mix-blend-mode: color-dodge | serialize | None
+mix-blend-mode: color-dodge | computed | ColorDodge
+mix-blend-mode: color-dodge | page | MixBlendMode(ColorDodge)
+mix-blend-mode: bogus | parse | None
+mix-blend-mode: bogus | serialize | -
+mix-blend-mode: bogus | computed | Normal
+mix-blend-mode: bogus | page | <absent>
+mix-blend-mode: inherit | parse | None
+mix-blend-mode: inherit | serialize | -
+mix-blend-mode: inherit | computed | Normal
+mix-blend-mode: inherit | page | <absent>
+mix-blend-mode: initial | parse | None
+mix-blend-mode: initial | serialize | -
+mix-blend-mode: initial | computed | Normal
+mix-blend-mode: initial | page | <absent>
+mix-blend-mode: unset | parse | None
+mix-blend-mode: unset | serialize | -
+mix-blend-mode: unset | computed | Normal
+mix-blend-mode: unset | page | <absent>
+mix-blend-mode: var(--v) | parse | Some(Deferred(DeferredValue { property: "mix-blend-mode", value: "var(--v)", key: MixBlendMode }))
+mix-blend-mode: var(--v) | serialize | None
+mix-blend-mode: var(--v) | computed | Multiply
+mix-blend-mode: var(--v) | page | MixBlendMode(Multiply)
+mix-blend-mode: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "mix-blend-mode", value: "var(--undefined)", key: MixBlendMode }))
+mix-blend-mode: var(--undefined) | serialize | None
+mix-blend-mode: var(--undefined) | computed | Normal
+mix-blend-mode: var(--undefined) | page | <absent>
+
+background-repeat: <parent no-repeat> | computed | BackgroundRepeat { x: NoRepeat, y: NoRepeat }
+background-repeat: <undeclared> | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: * | cssom | <not a ComputedProperty>
+background-repeat: repeat | parse | Some(BackgroundRepeat(BackgroundRepeat { x: Repeat, y: Repeat }))
+background-repeat: repeat | serialize | None
+background-repeat: repeat | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: repeat | page | BackgroundRepeat(BackgroundRepeat { x: Repeat, y: Repeat })
+background-repeat: repeat-x | parse | Some(BackgroundRepeat(BackgroundRepeat { x: Repeat, y: NoRepeat }))
+background-repeat: repeat-x | serialize | None
+background-repeat: repeat-x | computed | BackgroundRepeat { x: Repeat, y: NoRepeat }
+background-repeat: repeat-x | page | BackgroundRepeat(BackgroundRepeat { x: Repeat, y: NoRepeat })
+background-repeat: repeat-y | parse | Some(BackgroundRepeat(BackgroundRepeat { x: NoRepeat, y: Repeat }))
+background-repeat: repeat-y | serialize | None
+background-repeat: repeat-y | computed | BackgroundRepeat { x: NoRepeat, y: Repeat }
+background-repeat: repeat-y | page | BackgroundRepeat(BackgroundRepeat { x: NoRepeat, y: Repeat })
+background-repeat: space round | parse | Some(BackgroundRepeat(BackgroundRepeat { x: Space, y: Round }))
+background-repeat: space round | serialize | None
+background-repeat: space round | computed | BackgroundRepeat { x: Space, y: Round }
+background-repeat: space round | page | BackgroundRepeat(BackgroundRepeat { x: Space, y: Round })
+background-repeat: no-repeat repeat | parse | Some(BackgroundRepeat(BackgroundRepeat { x: NoRepeat, y: Repeat }))
+background-repeat: no-repeat repeat | serialize | None
+background-repeat: no-repeat repeat | computed | BackgroundRepeat { x: NoRepeat, y: Repeat }
+background-repeat: no-repeat repeat | page | BackgroundRepeat(BackgroundRepeat { x: NoRepeat, y: Repeat })
+background-repeat: round | parse | Some(BackgroundRepeat(BackgroundRepeat { x: Round, y: Round }))
+background-repeat: round | serialize | None
+background-repeat: round | computed | BackgroundRepeat { x: Round, y: Round }
+background-repeat: round | page | BackgroundRepeat(BackgroundRepeat { x: Round, y: Round })
+background-repeat: repeat-x repeat | parse | None (input left after BackgroundRepeat(BackgroundRepeat { x: Repeat, y: NoRepeat }))
+background-repeat: repeat-x repeat | serialize | -
+background-repeat: repeat-x repeat | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: repeat-x repeat | page | <absent>
+background-repeat: bogus | parse | None
+background-repeat: bogus | serialize | -
+background-repeat: bogus | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: bogus | page | <absent>
+background-repeat: inherit | parse | None
+background-repeat: inherit | serialize | -
+background-repeat: inherit | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: inherit | page | <absent>
+background-repeat: initial | parse | None
+background-repeat: initial | serialize | -
+background-repeat: initial | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: initial | page | <absent>
+background-repeat: unset | parse | None
+background-repeat: unset | serialize | -
+background-repeat: unset | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: unset | page | <absent>
+background-repeat: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-repeat", value: "var(--v)", key: BackgroundRepeat }))
+background-repeat: var(--v) | serialize | None
+background-repeat: var(--v) | computed | BackgroundRepeat { x: NoRepeat, y: NoRepeat }
+background-repeat: var(--v) | page | BackgroundRepeat(BackgroundRepeat { x: NoRepeat, y: NoRepeat })
+background-repeat: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-repeat", value: "var(--undefined)", key: BackgroundRepeat }))
+background-repeat: var(--undefined) | serialize | None
+background-repeat: var(--undefined) | computed | BackgroundRepeat { x: Repeat, y: Repeat }
+background-repeat: var(--undefined) | page | <absent>
+
+background-clip: <parent content-box> | computed | ContentBox
+background-clip: <undeclared> | computed | BorderBox
+background-clip: * | cssom | <not a ComputedProperty>
+background-clip: border-box | parse | Some(BackgroundClip(BorderBox))
+background-clip: border-box | serialize | None
+background-clip: border-box | computed | BorderBox
+background-clip: border-box | page | BackgroundClip(BorderBox)
+background-clip: padding-box | parse | Some(BackgroundClip(PaddingBox))
+background-clip: padding-box | serialize | None
+background-clip: padding-box | computed | PaddingBox
+background-clip: padding-box | page | BackgroundClip(PaddingBox)
+background-clip: content-box | parse | Some(BackgroundClip(ContentBox))
+background-clip: content-box | serialize | None
+background-clip: content-box | computed | ContentBox
+background-clip: content-box | page | BackgroundClip(ContentBox)
+background-clip: text | parse | Some(BackgroundClip(Text))
+background-clip: text | serialize | None
+background-clip: text | computed | Text
+background-clip: text | page | BackgroundClip(Text)
+background-clip: margin-box | parse | None
+background-clip: margin-box | serialize | -
+background-clip: margin-box | computed | BorderBox
+background-clip: margin-box | page | <absent>
+background-clip: inherit | parse | None
+background-clip: inherit | serialize | -
+background-clip: inherit | computed | BorderBox
+background-clip: inherit | page | <absent>
+background-clip: initial | parse | None
+background-clip: initial | serialize | -
+background-clip: initial | computed | BorderBox
+background-clip: initial | page | <absent>
+background-clip: unset | parse | None
+background-clip: unset | serialize | -
+background-clip: unset | computed | BorderBox
+background-clip: unset | page | <absent>
+background-clip: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-clip", value: "var(--v)", key: BackgroundClip }))
+background-clip: var(--v) | serialize | None
+background-clip: var(--v) | computed | ContentBox
+background-clip: var(--v) | page | BackgroundClip(ContentBox)
+background-clip: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-clip", value: "var(--undefined)", key: BackgroundClip }))
+background-clip: var(--undefined) | serialize | None
+background-clip: var(--undefined) | computed | BorderBox
+background-clip: var(--undefined) | page | <absent>
+
+background-origin: <parent content-box> | computed | ContentBox
+background-origin: <undeclared> | computed | PaddingBox
+background-origin: * | cssom | <not a ComputedProperty>
+background-origin: border-box | parse | Some(BackgroundOrigin(BorderBox))
+background-origin: border-box | serialize | None
+background-origin: border-box | computed | BorderBox
+background-origin: border-box | page | BackgroundOrigin(BorderBox)
+background-origin: padding-box | parse | Some(BackgroundOrigin(PaddingBox))
+background-origin: padding-box | serialize | None
+background-origin: padding-box | computed | PaddingBox
+background-origin: padding-box | page | BackgroundOrigin(PaddingBox)
+background-origin: content-box | parse | Some(BackgroundOrigin(ContentBox))
+background-origin: content-box | serialize | None
+background-origin: content-box | computed | ContentBox
+background-origin: content-box | page | BackgroundOrigin(ContentBox)
+background-origin: text | parse | Some(BackgroundOrigin(Text))
+background-origin: text | serialize | None
+background-origin: text | computed | Text
+background-origin: text | page | BackgroundOrigin(Text)
+background-origin: inherit | parse | None
+background-origin: inherit | serialize | -
+background-origin: inherit | computed | PaddingBox
+background-origin: inherit | page | <absent>
+background-origin: initial | parse | None
+background-origin: initial | serialize | -
+background-origin: initial | computed | PaddingBox
+background-origin: initial | page | <absent>
+background-origin: unset | parse | None
+background-origin: unset | serialize | -
+background-origin: unset | computed | PaddingBox
+background-origin: unset | page | <absent>
+background-origin: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-origin", value: "var(--v)", key: BackgroundOrigin }))
+background-origin: var(--v) | serialize | None
+background-origin: var(--v) | computed | ContentBox
+background-origin: var(--v) | page | BackgroundOrigin(ContentBox)
+background-origin: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-origin", value: "var(--undefined)", key: BackgroundOrigin }))
+background-origin: var(--undefined) | serialize | None
+background-origin: var(--undefined) | computed | PaddingBox
+background-origin: var(--undefined) | page | <absent>
+
+clip-path: <parent circle(50%)> | computed | BasicShape { shape: Circle(CircleShape { radius: Some(Length(Percent(50.0))), position: None }), geometry_box: None }
+clip-path: <undeclared> | computed | None
+clip-path: * | cssom | <not a ComputedProperty>
+clip-path: none | parse | Some(ClipPath(None))
+clip-path: none | serialize | None
+clip-path: none | computed | None
+clip-path: none | page | ClipPath(None)
+clip-path: inset(10px) | parse | Some(ClipPath(BasicShape { shape: Inset(InsetShape { top: Px(10.0), right: Px(10.0), bottom: Px(10.0), left: Px(10.0), border_radius: None }), geometry_box: None }))
+clip-path: inset(10px) | serialize | None
+clip-path: inset(10px) | computed | BasicShape { shape: Inset(InsetShape { top: Px(10.0), right: Px(10.0), bottom: Px(10.0), left: Px(10.0), border_radius: None }), geometry_box: None }
+clip-path: inset(10px) | page | ClipPath(BasicShape { shape: Inset(InsetShape { top: Px(10.0), right: Px(10.0), bottom: Px(10.0), left: Px(10.0), border_radius: None }), geometry_box: None })
+clip-path: circle(10px at 1em 2em) | parse | Some(ClipPath(BasicShape { shape: Circle(CircleShape { radius: Some(Length(Px(10.0))), position: Some(CssPosition { horizontal: Start(Em(1.0)), vertical: Start(Em(2.0)) }) }), geometry_box: None }))
+clip-path: circle(10px at 1em 2em) | serialize | None
+clip-path: circle(10px at 1em 2em) | computed | BasicShape { shape: Circle(CircleShape { radius: Some(Length(Px(10.0))), position: Some(CssPosition { horizontal: Start(Em(1.0)), vertical: Start(Em(2.0)) }) }), geometry_box: None }
+clip-path: circle(10px at 1em 2em) | page | ClipPath(BasicShape { shape: Circle(CircleShape { radius: Some(Length(Px(10.0))), position: Some(CssPosition { horizontal: Start(Em(1.0)), vertical: Start(Em(2.0)) }) }), geometry_box: None })
+clip-path: ellipse(10px 20px) | parse | Some(ClipPath(BasicShape { shape: Ellipse(EllipseShape { radius_x: Some(Length(Px(10.0))), radius_y: Some(Length(Px(20.0))), position: None }), geometry_box: None }))
+clip-path: ellipse(10px 20px) | serialize | None
+clip-path: ellipse(10px 20px) | computed | BasicShape { shape: Ellipse(EllipseShape { radius_x: Some(Length(Px(10.0))), radius_y: Some(Length(Px(20.0))), position: None }), geometry_box: None }
+clip-path: ellipse(10px 20px) | page | ClipPath(BasicShape { shape: Ellipse(EllipseShape { radius_x: Some(Length(Px(10.0))), radius_y: Some(Length(Px(20.0))), position: None }), geometry_box: None })
+clip-path: polygon(0 0, 10px 0, 0 10px) | parse | Some(ClipPath(BasicShape { shape: Polygon(PolygonShape { fill_rule: NonZero, round: None, points: [(Px(0.0), Px(0.0)), (Px(10.0), Px(0.0)), (Px(0.0), Px(10.0))] }), geometry_box: None }))
+clip-path: polygon(0 0, 10px 0, 0 10px) | serialize | None
+clip-path: polygon(0 0, 10px 0, 0 10px) | computed | BasicShape { shape: Polygon(PolygonShape { fill_rule: NonZero, round: None, points: [(Px(0.0), Px(0.0)), (Px(10.0), Px(0.0)), (Px(0.0), Px(10.0))] }), geometry_box: None }
+clip-path: polygon(0 0, 10px 0, 0 10px) | page | ClipPath(BasicShape { shape: Polygon(PolygonShape { fill_rule: NonZero, round: None, points: [(Px(0.0), Px(0.0)), (Px(10.0), Px(0.0)), (Px(0.0), Px(10.0))] }), geometry_box: None })
+clip-path: url(#c) | parse | Some(ClipPath(Url("#c")))
+clip-path: url(#c) | serialize | None
+clip-path: url(#c) | computed | Url("#c")
+clip-path: url(#c) | page | ClipPath(Url("#c"))
+clip-path: border-box | parse | Some(ClipPath(GeometryBox(BorderBox)))
+clip-path: border-box | serialize | None
+clip-path: border-box | computed | GeometryBox(BorderBox)
+clip-path: border-box | page | ClipPath(GeometryBox(BorderBox))
+clip-path: inset(1em round 2px) padding-box | parse | Some(ClipPath(BasicShape { shape: Inset(InsetShape { top: Em(1.0), right: Em(1.0), bottom: Em(1.0), left: Em(1.0), border_radius: Some(InsetBorderRadius { horizontal: [Px(2.0), Px(2.0), Px(2.0), Px(2.0)], vertical: None }) }), geometry_box: Some(PaddingBox) }))
+clip-path: inset(1em round 2px) padding-box | serialize | None
+clip-path: inset(1em round 2px) padding-box | computed | BasicShape { shape: Inset(InsetShape { top: Em(1.0), right: Em(1.0), bottom: Em(1.0), left: Em(1.0), border_radius: Some(InsetBorderRadius { horizontal: [Px(2.0), Px(2.0), Px(2.0), Px(2.0)], vertical: None }) }), geometry_box: Some(PaddingBox) }
+clip-path: inset(1em round 2px) padding-box | page | ClipPath(BasicShape { shape: Inset(InsetShape { top: Em(1.0), right: Em(1.0), bottom: Em(1.0), left: Em(1.0), border_radius: Some(InsetBorderRadius { horizontal: [Px(2.0), Px(2.0), Px(2.0), Px(2.0)], vertical: None }) }), geometry_box: Some(PaddingBox) })
+clip-path: bogus | parse | None
+clip-path: bogus | serialize | -
+clip-path: bogus | computed | None
+clip-path: bogus | page | <absent>
+clip-path: inherit | parse | None
+clip-path: inherit | serialize | -
+clip-path: inherit | computed | None
+clip-path: inherit | page | <absent>
+clip-path: initial | parse | None
+clip-path: initial | serialize | -
+clip-path: initial | computed | None
+clip-path: initial | page | <absent>
+clip-path: unset | parse | None
+clip-path: unset | serialize | -
+clip-path: unset | computed | None
+clip-path: unset | page | <absent>
+clip-path: var(--v) | parse | Some(Deferred(DeferredValue { property: "clip-path", value: "var(--v)", key: ClipPath }))
+clip-path: var(--v) | serialize | None
+clip-path: var(--v) | computed | BasicShape { shape: Circle(CircleShape { radius: Some(Length(Percent(50.0))), position: None }), geometry_box: None }
+clip-path: var(--v) | page | ClipPath(BasicShape { shape: Circle(CircleShape { radius: Some(Length(Percent(50.0))), position: None }), geometry_box: None })
+clip-path: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "clip-path", value: "var(--undefined)", key: ClipPath }))
+clip-path: var(--undefined) | serialize | None
+clip-path: var(--undefined) | computed | None
+clip-path: var(--undefined) | page | <absent>
+
+filter: <parent blur(2px)> | computed | [Blur(Px(2.0))]
+filter: <undeclared> | computed | []
+filter: * | cssom | <not a ComputedProperty>
+filter: none | parse | Some(Filter([]))
+filter: none | serialize | None
+filter: none | computed | []
+filter: none | page | Filter([])
+filter: blur(1em) | parse | Some(Filter([Blur(Em(1.0))]))
+filter: blur(1em) | serialize | None
+filter: blur(1em) | computed | [Blur(Em(1.0))]
+filter: blur(1em) | page | Filter([Blur(Em(1.0))])
+filter: brightness(50%) | parse | Some(Filter([Brightness(0.5)]))
+filter: brightness(50%) | serialize | None
+filter: brightness(50%) | computed | [Brightness(0.5)]
+filter: brightness(50%) | page | Filter([Brightness(0.5)])
+filter: drop-shadow(1px 2px 3px red) | parse | Some(Filter([DropShadow(TextShadowItem { offset_x: Length(Px(1.0)), offset_y: Length(Px(2.0)), blur_radius: Length(Px(3.0)), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) })]))
+filter: drop-shadow(1px 2px 3px red) | serialize | None
+filter: drop-shadow(1px 2px 3px red) | computed | [DropShadow(TextShadowItem { offset_x: Length(Px(1.0)), offset_y: Length(Px(2.0)), blur_radius: Length(Px(3.0)), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) })]
+filter: drop-shadow(1px 2px 3px red) | page | Filter([DropShadow(TextShadowItem { offset_x: Length(Px(1.0)), offset_y: Length(Px(2.0)), blur_radius: Length(Px(3.0)), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) })])
+filter: grayscale(1) sepia(0.5) | parse | Some(Filter([Grayscale(1.0), Sepia(0.5)]))
+filter: grayscale(1) sepia(0.5) | serialize | None
+filter: grayscale(1) sepia(0.5) | computed | [Grayscale(1.0), Sepia(0.5)]
+filter: grayscale(1) sepia(0.5) | page | Filter([Grayscale(1.0), Sepia(0.5)])
+filter: url(#f) | parse | Some(Filter([Url("#f")]))
+filter: url(#f) | serialize | None
+filter: url(#f) | computed | [Url("#f")]
+filter: url(#f) | page | Filter([Url("#f")])
+filter: hue-rotate(90deg) | parse | Some(Filter([HueRotate(Angle(90.0))]))
+filter: hue-rotate(90deg) | serialize | None
+filter: hue-rotate(90deg) | computed | [HueRotate(Angle(90.0))]
+filter: hue-rotate(90deg) | page | Filter([HueRotate(Angle(90.0))])
+filter: bogus | parse | None
+filter: bogus | serialize | -
+filter: bogus | computed | []
+filter: bogus | page | <absent>
+filter: inherit | parse | None
+filter: inherit | serialize | -
+filter: inherit | computed | []
+filter: inherit | page | <absent>
+filter: initial | parse | None
+filter: initial | serialize | -
+filter: initial | computed | []
+filter: initial | page | <absent>
+filter: unset | parse | None
+filter: unset | serialize | -
+filter: unset | computed | []
+filter: unset | page | <absent>
+filter: var(--v) | parse | Some(Deferred(DeferredValue { property: "filter", value: "var(--v)", key: Filter }))
+filter: var(--v) | serialize | None
+filter: var(--v) | computed | [Blur(Px(2.0))]
+filter: var(--v) | page | Filter([Blur(Px(2.0))])
+filter: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "filter", value: "var(--undefined)", key: Filter }))
+filter: var(--undefined) | serialize | None
+filter: var(--undefined) | computed | []
+filter: var(--undefined) | page | <absent>
+
+background-size: <parent 2em auto> | computed | Explicit { width: Px(40.0), height: Auto }
+background-size: <undeclared> | computed | Explicit { width: Auto, height: Auto }
+background-size: * | cssom | <not a ComputedProperty>
+background-size: auto | parse | Some(BackgroundSize(Explicit { width: Auto, height: Auto }))
+background-size: auto | serialize | None
+background-size: auto | computed | Explicit { width: Auto, height: Auto }
+background-size: auto | page | BackgroundSize(Explicit { width: Auto, height: Auto })
+background-size: cover | parse | Some(BackgroundSize(Cover))
+background-size: cover | serialize | None
+background-size: cover | computed | Cover
+background-size: cover | page | BackgroundSize(Cover)
+background-size: contain | parse | Some(BackgroundSize(Contain))
+background-size: contain | serialize | None
+background-size: contain | computed | Contain
+background-size: contain | page | BackgroundSize(Contain)
+background-size: 10px 20px | parse | Some(BackgroundSize(Explicit { width: Length(Px(10.0)), height: Length(Px(20.0)) }))
+background-size: 10px 20px | serialize | None
+background-size: 10px 20px | computed | Explicit { width: Px(10.0), height: Px(20.0) }
+background-size: 10px 20px | page | BackgroundSize(Explicit { width: Length(Px(10.0)), height: Length(Px(20.0)) })
+background-size: 50% auto | parse | Some(BackgroundSize(Explicit { width: Length(Percent(50.0)), height: Auto }))
+background-size: 50% auto | serialize | None
+background-size: 50% auto | computed | Explicit { width: Percent(50.0), height: Auto }
+background-size: 50% auto | page | BackgroundSize(Explicit { width: Length(Percent(50.0)), height: Auto })
+background-size: -1px | parse | None
+background-size: -1px | serialize | -
+background-size: -1px | computed | Explicit { width: Auto, height: Auto }
+background-size: -1px | page | <absent>
+background-size: auto auto | parse | Some(BackgroundSize(Explicit { width: Auto, height: Auto }))
+background-size: auto auto | serialize | None
+background-size: auto auto | computed | Explicit { width: Auto, height: Auto }
+background-size: auto auto | page | BackgroundSize(Explicit { width: Auto, height: Auto })
+background-size: 1em | parse | Some(BackgroundSize(Explicit { width: Length(Em(1.0)), height: Auto }))
+background-size: 1em | serialize | None
+background-size: 1em | computed | Explicit { width: Px(10.0), height: Auto }
+background-size: 1em | page | BackgroundSize(Explicit { width: Length(Px(12.0)), height: Auto })
+background-size: 1rem | parse | Some(BackgroundSize(Explicit { width: Length(Rem(1.0)), height: Auto }))
+background-size: 1rem | serialize | None
+background-size: 1rem | computed | Explicit { width: Px(16.0), height: Auto }
+background-size: 1rem | page | BackgroundSize(Explicit { width: Length(Px(20.0)), height: Auto })
+background-size: 10% | parse | Some(BackgroundSize(Explicit { width: Length(Percent(10.0)), height: Auto }))
+background-size: 10% | serialize | None
+background-size: 10% | computed | Explicit { width: Percent(10.0), height: Auto }
+background-size: 10% | page | BackgroundSize(Explicit { width: Length(Percent(10.0)), height: Auto })
+background-size: 2ch | parse | Some(BackgroundSize(Explicit { width: Length(Ch(2.0)), height: Auto }))
+background-size: 2ch | serialize | None
+background-size: 2ch | computed | Explicit { width: Px(10.0), height: Auto }
+background-size: 2ch | page | BackgroundSize(Explicit { width: Length(Px(12.0)), height: Auto })
+background-size: 1lh | parse | Some(BackgroundSize(Explicit { width: Length(Lh(1.0)), height: Auto }))
+background-size: 1lh | serialize | None
+background-size: 1lh | computed | Explicit { width: Px(15.0), height: Auto }
+background-size: 1lh | page | BackgroundSize(Explicit { width: Length(Px(18.0)), height: Auto })
+background-size: 1rlh | parse | Some(BackgroundSize(Explicit { width: Length(Rlh(1.0)), height: Auto }))
+background-size: 1rlh | serialize | None
+background-size: 1rlh | computed | Explicit { width: Auto, height: Auto }
+background-size: 1rlh | page | BackgroundSize(Explicit { width: Length(Px(30.0)), height: Auto })
+background-size: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "background-size", value: "calc(1em + 2px)", key: BackgroundSize }))
+background-size: calc(1em + 2px) | serialize | None
+background-size: calc(1em + 2px) | computed | Explicit { width: Auto, height: Auto }
+background-size: calc(1em + 2px) | page | <absent>
+background-size: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "background-size", value: "calc(10% + 1em)", key: BackgroundSize }))
+background-size: calc(10% + 1em) | serialize | None
+background-size: calc(10% + 1em) | computed | Explicit { width: Auto, height: Auto }
+background-size: calc(10% + 1em) | page | <absent>
+background-size: inherit | parse | None
+background-size: inherit | serialize | -
+background-size: inherit | computed | Explicit { width: Auto, height: Auto }
+background-size: inherit | page | <absent>
+background-size: initial | parse | None
+background-size: initial | serialize | -
+background-size: initial | computed | Explicit { width: Auto, height: Auto }
+background-size: initial | page | <absent>
+background-size: unset | parse | None
+background-size: unset | serialize | -
+background-size: unset | computed | Explicit { width: Auto, height: Auto }
+background-size: unset | page | <absent>
+background-size: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-size", value: "var(--v)", key: BackgroundSize }))
+background-size: var(--v) | serialize | None
+background-size: var(--v) | computed | Explicit { width: Px(20.0), height: Auto }
+background-size: var(--v) | page | BackgroundSize(Explicit { width: Length(Px(24.0)), height: Auto })
+background-size: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-size", value: "var(--undefined)", key: BackgroundSize }))
+background-size: var(--undefined) | serialize | None
+background-size: var(--undefined) | computed | Explicit { width: Auto, height: Auto }
+background-size: var(--undefined) | page | <absent>
+
+background-position: <parent 2em 1em> | computed | ComputedCssPosition { horizontal: Start(Px(40.0)), vertical: Start(Px(20.0)) }
+background-position: <undeclared> | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: * | cssom | <not a ComputedProperty>
+background-position: center | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }))
+background-position: center | serialize | None
+background-position: center | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+background-position: center | page | BackgroundPosition(CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) })
+background-position: left top | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }))
+background-position: left top | serialize | None
+background-position: left top | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: left top | page | BackgroundPosition(CssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) })
+background-position: right 10px bottom 20% | parse | Some(BackgroundPosition(CssPosition { horizontal: End(Px(10.0)), vertical: Start(Percent(80.0)) }))
+background-position: right 10px bottom 20% | serialize | None
+background-position: right 10px bottom 20% | computed | ComputedCssPosition { horizontal: End(Px(10.0)), vertical: Start(Percent(80.0)) }
+background-position: right 10px bottom 20% | page | BackgroundPosition(CssPosition { horizontal: End(Px(10.0)), vertical: Start(Percent(80.0)) })
+background-position: 10px 20px | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Px(10.0)), vertical: Start(Px(20.0)) }))
+background-position: 10px 20px | serialize | None
+background-position: 10px 20px | computed | ComputedCssPosition { horizontal: Start(Px(10.0)), vertical: Start(Px(20.0)) }
+background-position: 10px 20px | page | BackgroundPosition(CssPosition { horizontal: Start(Px(10.0)), vertical: Start(Px(20.0)) })
+background-position: bottom | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(100.0)) }))
+background-position: bottom | serialize | None
+background-position: bottom | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(100.0)) }
+background-position: bottom | page | BackgroundPosition(CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(100.0)) })
+background-position: 1px 2px 3px | parse | None (input left after BackgroundPosition(CssPosition { horizontal: Start(Px(1.0)), vertical: Start(Px(2.0)) }))
+background-position: 1px 2px 3px | serialize | -
+background-position: 1px 2px 3px | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: 1px 2px 3px | page | <absent>
+background-position: 1em | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Em(1.0)), vertical: Start(Percent(50.0)) }))
+background-position: 1em | serialize | None
+background-position: 1em | computed | ComputedCssPosition { horizontal: Start(Px(10.0)), vertical: Start(Percent(50.0)) }
+background-position: 1em | page | BackgroundPosition(CssPosition { horizontal: Start(Px(12.0)), vertical: Start(Percent(50.0)) })
+background-position: 1rem | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Rem(1.0)), vertical: Start(Percent(50.0)) }))
+background-position: 1rem | serialize | None
+background-position: 1rem | computed | ComputedCssPosition { horizontal: Start(Px(16.0)), vertical: Start(Percent(50.0)) }
+background-position: 1rem | page | BackgroundPosition(CssPosition { horizontal: Start(Px(20.0)), vertical: Start(Percent(50.0)) })
+background-position: 10% | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Percent(10.0)), vertical: Start(Percent(50.0)) }))
+background-position: 10% | serialize | None
+background-position: 10% | computed | ComputedCssPosition { horizontal: Start(Percent(10.0)), vertical: Start(Percent(50.0)) }
+background-position: 10% | page | BackgroundPosition(CssPosition { horizontal: Start(Percent(10.0)), vertical: Start(Percent(50.0)) })
+background-position: 2ch | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Ch(2.0)), vertical: Start(Percent(50.0)) }))
+background-position: 2ch | serialize | None
+background-position: 2ch | computed | ComputedCssPosition { horizontal: Start(Px(10.0)), vertical: Start(Percent(50.0)) }
+background-position: 2ch | page | BackgroundPosition(CssPosition { horizontal: Start(Px(12.0)), vertical: Start(Percent(50.0)) })
+background-position: 1lh | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Lh(1.0)), vertical: Start(Percent(50.0)) }))
+background-position: 1lh | serialize | None
+background-position: 1lh | computed | ComputedCssPosition { horizontal: Start(Px(15.0)), vertical: Start(Percent(50.0)) }
+background-position: 1lh | page | BackgroundPosition(CssPosition { horizontal: Start(Px(18.0)), vertical: Start(Percent(50.0)) })
+background-position: 1rlh | parse | Some(BackgroundPosition(CssPosition { horizontal: Start(Rlh(1.0)), vertical: Start(Percent(50.0)) }))
+background-position: 1rlh | serialize | None
+background-position: 1rlh | computed | ComputedCssPosition { horizontal: Start(Px(0.0)), vertical: Start(Percent(50.0)) }
+background-position: 1rlh | page | BackgroundPosition(CssPosition { horizontal: Start(Px(30.0)), vertical: Start(Percent(50.0)) })
+background-position: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "background-position", value: "calc(1em + 2px)", key: BackgroundPosition }))
+background-position: calc(1em + 2px) | serialize | None
+background-position: calc(1em + 2px) | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: calc(1em + 2px) | page | <absent>
+background-position: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "background-position", value: "calc(10% + 1em)", key: BackgroundPosition }))
+background-position: calc(10% + 1em) | serialize | None
+background-position: calc(10% + 1em) | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: calc(10% + 1em) | page | <absent>
+background-position: inherit | parse | None
+background-position: inherit | serialize | -
+background-position: inherit | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: inherit | page | <absent>
+background-position: initial | parse | None
+background-position: initial | serialize | -
+background-position: initial | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: initial | page | <absent>
+background-position: unset | parse | None
+background-position: unset | serialize | -
+background-position: unset | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: unset | page | <absent>
+background-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-position", value: "var(--v)", key: BackgroundPosition }))
+background-position: var(--v) | serialize | None
+background-position: var(--v) | computed | ComputedCssPosition { horizontal: Start(Px(20.0)), vertical: Start(Px(10.0)) }
+background-position: var(--v) | page | BackgroundPosition(CssPosition { horizontal: Start(Px(24.0)), vertical: Start(Px(12.0)) })
+background-position: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-position", value: "var(--undefined)", key: BackgroundPosition }))
+background-position: var(--undefined) | serialize | None
+background-position: var(--undefined) | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+background-position: var(--undefined) | page | <absent>
+
+background-image: <parent url(p.png)> | computed | Url("p.png")
+background-image: <undeclared> | computed | None
+background-image: * | cssom | <not a ComputedProperty>
+background-image: none | parse | Some(BackgroundImage(None))
+background-image: none | serialize | None
+background-image: none | computed | None
+background-image: none | page | BackgroundImage(None)
+background-image: url(a.png) | parse | Some(BackgroundImage(Url("a.png")))
+background-image: url(a.png) | serialize | None
+background-image: url(a.png) | computed | Url("a.png")
+background-image: url(a.png) | page | BackgroundImage(Url("a.png"))
+background-image: linear-gradient(red, blue) | parse | Some(BackgroundImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: None, vertical: Some(Bottom) }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] }))))
+background-image: linear-gradient(red, blue) | serialize | None
+background-image: linear-gradient(red, blue) | computed | Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: None, vertical: Some(Bottom) }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] }))
+background-image: linear-gradient(red, blue) | page | BackgroundImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: None, vertical: Some(Bottom) }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] })))
+background-image: linear-gradient(to right, red 1em, blue 10%) | parse | Some(BackgroundImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: Some(Right), vertical: None }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: Some(Em(1.0)) }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: Some(Percent(10.0)) }] }))))
+background-image: linear-gradient(to right, red 1em, blue 10%) | serialize | None
+background-image: linear-gradient(to right, red 1em, blue 10%) | computed | Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: Some(Right), vertical: None }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: Some(Px(10.0)) }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: Some(Percent(10.0)) }] }))
+background-image: linear-gradient(to right, red 1em, blue 10%) | page | BackgroundImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: Some(Right), vertical: None }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: Some(Px(12.0)) }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: Some(Percent(10.0)) }] })))
+background-image: radial-gradient(circle 1em, red, blue) | parse | Some(BackgroundImage(Gradient(Radial(RadialGradient { repeating: false, shape: Circle, size: Circle(Em(1.0)), position: CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }, interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] }))))
+background-image: radial-gradient(circle 1em, red, blue) | serialize | None
+background-image: radial-gradient(circle 1em, red, blue) | computed | Gradient(Radial(RadialGradient { repeating: false, shape: Circle, size: Circle(Px(10.0)), position: CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }, interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] }))
+background-image: radial-gradient(circle 1em, red, blue) | page | BackgroundImage(Gradient(Radial(RadialGradient { repeating: false, shape: Circle, size: Circle(Px(12.0)), position: CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }, interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] })))
+background-image: url(a.png), none | parse | None (input left after BackgroundImage(Url("a.png")))
+background-image: url(a.png), none | serialize | -
+background-image: url(a.png), none | computed | None
+background-image: url(a.png), none | page | <absent>
+background-image: bogus | parse | None
+background-image: bogus | serialize | -
+background-image: bogus | computed | None
+background-image: bogus | page | <absent>
+background-image: inherit | parse | None
+background-image: inherit | serialize | -
+background-image: inherit | computed | None
+background-image: inherit | page | <absent>
+background-image: initial | parse | None
+background-image: initial | serialize | -
+background-image: initial | computed | None
+background-image: initial | page | <absent>
+background-image: unset | parse | None
+background-image: unset | serialize | -
+background-image: unset | computed | None
+background-image: unset | page | <absent>
+background-image: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-image", value: "var(--v)", key: BackgroundImage }))
+background-image: var(--v) | serialize | None
+background-image: var(--v) | computed | Url("p.png")
+background-image: var(--v) | page | BackgroundImage(Url("p.png"))
+background-image: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-image", value: "var(--undefined)", key: BackgroundImage }))
+background-image: var(--undefined) | serialize | None
+background-image: var(--undefined) | computed | None
+background-image: var(--undefined) | page | <absent>
+
+mask-image: <parent url(p.png)> | computed | Url("p.png")
+mask-image: <undeclared> | computed | None
+mask-image: * | cssom | <not a ComputedProperty>
+mask-image: none | parse | Some(MaskImage(None))
+mask-image: none | serialize | None
+mask-image: none | computed | None
+mask-image: none | page | MaskImage(None)
+mask-image: url(a.png) | parse | Some(MaskImage(Url("a.png")))
+mask-image: url(a.png) | serialize | None
+mask-image: url(a.png) | computed | Url("a.png")
+mask-image: url(a.png) | page | MaskImage(Url("a.png"))
+mask-image: linear-gradient(red, blue) | parse | Some(MaskImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: None, vertical: Some(Bottom) }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] }))))
+mask-image: linear-gradient(red, blue) | serialize | None
+mask-image: linear-gradient(red, blue) | computed | Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: None, vertical: Some(Bottom) }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] }))
+mask-image: linear-gradient(red, blue) | page | MaskImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: None, vertical: Some(Bottom) }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: None }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: None }] })))
+mask-image: linear-gradient(to right, red 1em, blue 10%) | parse | Some(MaskImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: Some(Right), vertical: None }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: Some(Em(1.0)) }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: Some(Percent(10.0)) }] }))))
+mask-image: linear-gradient(to right, red 1em, blue 10%) | serialize | None
+mask-image: linear-gradient(to right, red 1em, blue 10%) | computed | Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: Some(Right), vertical: None }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: Some(Px(10.0)) }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: Some(Percent(10.0)) }] }))
+mask-image: linear-gradient(to right, red 1em, blue 10%) | page | MaskImage(Gradient(Linear(LinearGradient { repeating: false, direction: Side(SideOrCorner { horizontal: Some(Right), vertical: None }), interpolation: GradientColorInterpolation { color_space: Oklab, hue_method: Shorter }, stops: [GradientColorStop { color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), position: Some(Px(12.0)) }, GradientColorStop { color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), position: Some(Percent(10.0)) }] })))
+mask-image: bogus | parse | None
+mask-image: bogus | serialize | -
+mask-image: bogus | computed | None
+mask-image: bogus | page | <absent>
+mask-image: inherit | parse | None
+mask-image: inherit | serialize | -
+mask-image: inherit | computed | None
+mask-image: inherit | page | <absent>
+mask-image: initial | parse | None
+mask-image: initial | serialize | -
+mask-image: initial | computed | None
+mask-image: initial | page | <absent>
+mask-image: unset | parse | None
+mask-image: unset | serialize | -
+mask-image: unset | computed | None
+mask-image: unset | page | <absent>
+mask-image: var(--v) | parse | Some(Deferred(DeferredValue { property: "mask-image", value: "var(--v)", key: MaskImage }))
+mask-image: var(--v) | serialize | None
+mask-image: var(--v) | computed | Url("p.png")
+mask-image: var(--v) | page | MaskImage(Url("p.png"))
+mask-image: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "mask-image", value: "var(--undefined)", key: MaskImage }))
+mask-image: var(--undefined) | serialize | None
+mask-image: var(--undefined) | computed | None
+mask-image: var(--undefined) | page | <absent>
+
+transform: <parent translate(2em)> | computed | [Translate(Px(40.0), Px(0.0))]
+transform: <undeclared> | computed | []
+transform: * | cssom | <not a ComputedProperty>
+transform: none | parse | Some(Transform([]))
+transform: none | serialize | None
+transform: none | computed | []
+transform: none | page | Transform([])
+transform: translate(1em, 10%) | parse | Some(Transform([Translate(Em(1.0), Percent(10.0))]))
+transform: translate(1em, 10%) | serialize | None
+transform: translate(1em, 10%) | computed | [Translate(Px(10.0), Percent(10.0))]
+transform: translate(1em, 10%) | page | Transform([Translate(Px(12.0), Percent(10.0))])
+transform: rotate(45deg) | parse | Some(Transform([Rotate(Angle(45.0))]))
+transform: rotate(45deg) | serialize | None
+transform: rotate(45deg) | computed | [Rotate(Angle(45.0))]
+transform: rotate(45deg) | page | Transform([Rotate(Angle(45.0))])
+transform: scale(2) translateX(1rem) | parse | Some(Transform([Scale(2.0, 2.0), TranslateX(Rem(1.0))]))
+transform: scale(2) translateX(1rem) | serialize | None
+transform: scale(2) translateX(1rem) | computed | [Scale(2.0, 2.0), TranslateX(Px(16.0))]
+transform: scale(2) translateX(1rem) | page | Transform([Scale(2.0, 2.0), TranslateX(Px(20.0))])
+transform: matrix(1, 0, 0, 1, 10, 20) | parse | Some(Transform([Matrix([1.0, 0.0, 0.0, 1.0, 10.0, 20.0])]))
+transform: matrix(1, 0, 0, 1, 10, 20) | serialize | None
+transform: matrix(1, 0, 0, 1, 10, 20) | computed | [Matrix([1.0, 0.0, 0.0, 1.0, 10.0, 20.0])]
+transform: matrix(1, 0, 0, 1, 10, 20) | page | Transform([Matrix([1.0, 0.0, 0.0, 1.0, 10.0, 20.0])])
+transform: skew(10deg) | parse | Some(Transform([Skew(Angle(10.0), Angle(0.0))]))
+transform: skew(10deg) | serialize | None
+transform: skew(10deg) | computed | [Skew(Angle(10.0), Angle(0.0))]
+transform: skew(10deg) | page | Transform([Skew(Angle(10.0), Angle(0.0))])
+transform: translate(calc(1em + 2px)) | parse | Some(Deferred(DeferredValue { property: "transform", value: "translate(calc(1em + 2px))", key: Transform }))
+transform: translate(calc(1em + 2px)) | serialize | None
+transform: translate(calc(1em + 2px)) | computed | []
+transform: translate(calc(1em + 2px)) | page | <absent>
+transform: rotate(45) | parse | None
+transform: rotate(45) | serialize | -
+transform: rotate(45) | computed | []
+transform: rotate(45) | page | <absent>
+transform: inherit | parse | None
+transform: inherit | serialize | -
+transform: inherit | computed | []
+transform: inherit | page | <absent>
+transform: initial | parse | None
+transform: initial | serialize | -
+transform: initial | computed | []
+transform: initial | page | <absent>
+transform: unset | parse | None
+transform: unset | serialize | -
+transform: unset | computed | []
+transform: unset | page | <absent>
+transform: var(--v) | parse | Some(Deferred(DeferredValue { property: "transform", value: "var(--v)", key: Transform }))
+transform: var(--v) | serialize | None
+transform: var(--v) | computed | [Translate(Px(20.0), Px(0.0))]
+transform: var(--v) | page | Transform([Translate(Px(24.0), Px(0.0))])
+transform: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "transform", value: "var(--undefined)", key: Transform }))
+transform: var(--undefined) | serialize | None
+transform: var(--undefined) | computed | []
+transform: var(--undefined) | page | <absent>
+
+isolation: <parent isolate> | computed | Isolate
+isolation: <undeclared> | computed | Auto
+isolation: * | cssom | <not a ComputedProperty>
+isolation: auto | parse | Some(Isolation(Auto))
+isolation: auto | serialize | None
+isolation: auto | computed | Auto
+isolation: auto | page | Isolation(Auto)
+isolation: isolate | parse | Some(Isolation(Isolate))
+isolation: isolate | serialize | None
+isolation: isolate | computed | Isolate
+isolation: isolate | page | Isolation(Isolate)
+isolation: none | parse | None
+isolation: none | serialize | -
+isolation: none | computed | Auto
+isolation: none | page | <absent>
+isolation: inherit | parse | None
+isolation: inherit | serialize | -
+isolation: inherit | computed | Auto
+isolation: inherit | page | <absent>
+isolation: initial | parse | None
+isolation: initial | serialize | -
+isolation: initial | computed | Auto
+isolation: initial | page | <absent>
+isolation: unset | parse | None
+isolation: unset | serialize | -
+isolation: unset | computed | Auto
+isolation: unset | page | <absent>
+isolation: var(--v) | parse | Some(Deferred(DeferredValue { property: "isolation", value: "var(--v)", key: Isolation }))
+isolation: var(--v) | serialize | None
+isolation: var(--v) | computed | Isolate
+isolation: var(--v) | page | Isolation(Isolate)
+isolation: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "isolation", value: "var(--undefined)", key: Isolation }))
+isolation: var(--undefined) | serialize | None
+isolation: var(--undefined) | computed | Auto
+isolation: var(--undefined) | page | <absent>
+
+opacity: <parent 0.5> | computed | 0.5
+opacity: <undeclared> | computed | 1.0
+opacity: * | cssom | <not a ComputedProperty>
+opacity: 0 | parse | Some(Opacity(0.0))
+opacity: 0 | serialize | None
+opacity: 0 | computed | 0.0
+opacity: 0 | page | Opacity(0.0)
+opacity: 1 | parse | Some(Opacity(1.0))
+opacity: 1 | serialize | None
+opacity: 1 | computed | 1.0
+opacity: 1 | page | Opacity(1.0)
+opacity: 0.25 | parse | Some(Opacity(0.25))
+opacity: 0.25 | serialize | None
+opacity: 0.25 | computed | 0.25
+opacity: 0.25 | page | Opacity(0.25)
+opacity: 50% | parse | Some(Opacity(0.5))
+opacity: 50% | serialize | None
+opacity: 50% | computed | 0.5
+opacity: 50% | page | Opacity(0.5)
+opacity: 2 | parse | Some(Opacity(2.0))
+opacity: 2 | serialize | None
+opacity: 2 | computed | 1.0
+opacity: 2 | page | Opacity(1.0)
+opacity: -1 | parse | Some(Opacity(-1.0))
+opacity: -1 | serialize | None
+opacity: -1 | computed | 0.0
+opacity: -1 | page | Opacity(0.0)
+opacity: calc(0.5 + 0.1) | parse | Some(Deferred(DeferredValue { property: "opacity", value: "calc(0.5 + 0.1)", key: Opacity }))
+opacity: calc(0.5 + 0.1) | serialize | None
+opacity: calc(0.5 + 0.1) | computed | 0.6
+opacity: calc(0.5 + 0.1) | page | Opacity(0.6)
+opacity: inherit | parse | None
+opacity: inherit | serialize | -
+opacity: inherit | computed | 1.0
+opacity: inherit | page | <absent>
+opacity: initial | parse | None
+opacity: initial | serialize | -
+opacity: initial | computed | 1.0
+opacity: initial | page | <absent>
+opacity: unset | parse | None
+opacity: unset | serialize | -
+opacity: unset | computed | 1.0
+opacity: unset | page | <absent>
+opacity: var(--v) | parse | Some(Deferred(DeferredValue { property: "opacity", value: "var(--v)", key: Opacity }))
+opacity: var(--v) | serialize | None
+opacity: var(--v) | computed | 0.5
+opacity: var(--v) | page | Opacity(0.5)
+opacity: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "opacity", value: "var(--undefined)", key: Opacity }))
+opacity: var(--undefined) | serialize | None
+opacity: var(--undefined) | computed | 1.0
+opacity: var(--undefined) | page | <absent>
+
+object-fit: <parent cover> | computed | Cover
+object-fit: <undeclared> | computed | Fill
+object-fit: * | cssom | <not a ComputedProperty>
+object-fit: fill | parse | Some(ObjectFit(Fill))
+object-fit: fill | serialize | None
+object-fit: fill | computed | Fill
+object-fit: fill | page | ObjectFit(Fill)
+object-fit: contain | parse | Some(ObjectFit(Contain))
+object-fit: contain | serialize | None
+object-fit: contain | computed | Contain
+object-fit: contain | page | ObjectFit(Contain)
+object-fit: cover | parse | Some(ObjectFit(Cover))
+object-fit: cover | serialize | None
+object-fit: cover | computed | Cover
+object-fit: cover | page | ObjectFit(Cover)
+object-fit: none | parse | Some(ObjectFit(None))
+object-fit: none | serialize | None
+object-fit: none | computed | None
+object-fit: none | page | ObjectFit(None)
+object-fit: scale-down | parse | Some(ObjectFit(ScaleDown))
+object-fit: scale-down | serialize | None
+object-fit: scale-down | computed | ScaleDown
+object-fit: scale-down | page | ObjectFit(ScaleDown)
+object-fit: bogus | parse | None
+object-fit: bogus | serialize | -
+object-fit: bogus | computed | Fill
+object-fit: bogus | page | <absent>
+object-fit: inherit | parse | None
+object-fit: inherit | serialize | -
+object-fit: inherit | computed | Fill
+object-fit: inherit | page | <absent>
+object-fit: initial | parse | None
+object-fit: initial | serialize | -
+object-fit: initial | computed | Fill
+object-fit: initial | page | <absent>
+object-fit: unset | parse | None
+object-fit: unset | serialize | -
+object-fit: unset | computed | Fill
+object-fit: unset | page | <absent>
+object-fit: var(--v) | parse | Some(Deferred(DeferredValue { property: "object-fit", value: "var(--v)", key: ObjectFit }))
+object-fit: var(--v) | serialize | None
+object-fit: var(--v) | computed | Cover
+object-fit: var(--v) | page | ObjectFit(Cover)
+object-fit: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "object-fit", value: "var(--undefined)", key: ObjectFit }))
+object-fit: var(--undefined) | serialize | None
+object-fit: var(--undefined) | computed | Fill
+object-fit: var(--undefined) | page | <absent>
+
+object-position: <parent 2em 1em> | computed | ComputedCssPosition { horizontal: Start(Px(40.0)), vertical: Start(Px(20.0)) }
+object-position: <undeclared> | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: * | cssom | <not a ComputedProperty>
+object-position: center | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }))
+object-position: center | serialize | None
+object-position: center | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: center | page | ObjectPosition(CssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) })
+object-position: left top | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }))
+object-position: left top | serialize | None
+object-position: left top | computed | ComputedCssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) }
+object-position: left top | page | ObjectPosition(CssPosition { horizontal: Start(Percent(0.0)), vertical: Start(Percent(0.0)) })
+object-position: right 10px bottom 20% | parse | Some(ObjectPosition(CssPosition { horizontal: End(Px(10.0)), vertical: Start(Percent(80.0)) }))
+object-position: right 10px bottom 20% | serialize | None
+object-position: right 10px bottom 20% | computed | ComputedCssPosition { horizontal: End(Px(10.0)), vertical: Start(Percent(80.0)) }
+object-position: right 10px bottom 20% | page | ObjectPosition(CssPosition { horizontal: End(Px(10.0)), vertical: Start(Percent(80.0)) })
+object-position: 10px 20px | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Px(10.0)), vertical: Start(Px(20.0)) }))
+object-position: 10px 20px | serialize | None
+object-position: 10px 20px | computed | ComputedCssPosition { horizontal: Start(Px(10.0)), vertical: Start(Px(20.0)) }
+object-position: 10px 20px | page | ObjectPosition(CssPosition { horizontal: Start(Px(10.0)), vertical: Start(Px(20.0)) })
+object-position: 1em | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Em(1.0)), vertical: Start(Percent(50.0)) }))
+object-position: 1em | serialize | None
+object-position: 1em | computed | ComputedCssPosition { horizontal: Start(Px(10.0)), vertical: Start(Percent(50.0)) }
+object-position: 1em | page | ObjectPosition(CssPosition { horizontal: Start(Px(12.0)), vertical: Start(Percent(50.0)) })
+object-position: 1rem | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Rem(1.0)), vertical: Start(Percent(50.0)) }))
+object-position: 1rem | serialize | None
+object-position: 1rem | computed | ComputedCssPosition { horizontal: Start(Px(16.0)), vertical: Start(Percent(50.0)) }
+object-position: 1rem | page | ObjectPosition(CssPosition { horizontal: Start(Px(20.0)), vertical: Start(Percent(50.0)) })
+object-position: 10% | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Percent(10.0)), vertical: Start(Percent(50.0)) }))
+object-position: 10% | serialize | None
+object-position: 10% | computed | ComputedCssPosition { horizontal: Start(Percent(10.0)), vertical: Start(Percent(50.0)) }
+object-position: 10% | page | ObjectPosition(CssPosition { horizontal: Start(Percent(10.0)), vertical: Start(Percent(50.0)) })
+object-position: 2ch | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Ch(2.0)), vertical: Start(Percent(50.0)) }))
+object-position: 2ch | serialize | None
+object-position: 2ch | computed | ComputedCssPosition { horizontal: Start(Px(10.0)), vertical: Start(Percent(50.0)) }
+object-position: 2ch | page | ObjectPosition(CssPosition { horizontal: Start(Px(12.0)), vertical: Start(Percent(50.0)) })
+object-position: 1lh | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Lh(1.0)), vertical: Start(Percent(50.0)) }))
+object-position: 1lh | serialize | None
+object-position: 1lh | computed | ComputedCssPosition { horizontal: Start(Px(15.0)), vertical: Start(Percent(50.0)) }
+object-position: 1lh | page | ObjectPosition(CssPosition { horizontal: Start(Px(18.0)), vertical: Start(Percent(50.0)) })
+object-position: 1rlh | parse | Some(ObjectPosition(CssPosition { horizontal: Start(Rlh(1.0)), vertical: Start(Percent(50.0)) }))
+object-position: 1rlh | serialize | None
+object-position: 1rlh | computed | ComputedCssPosition { horizontal: Start(Px(0.0)), vertical: Start(Percent(50.0)) }
+object-position: 1rlh | page | ObjectPosition(CssPosition { horizontal: Start(Px(30.0)), vertical: Start(Percent(50.0)) })
+object-position: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "object-position", value: "calc(1em + 2px)", key: ObjectPosition }))
+object-position: calc(1em + 2px) | serialize | None
+object-position: calc(1em + 2px) | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: calc(1em + 2px) | page | <absent>
+object-position: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "object-position", value: "calc(10% + 1em)", key: ObjectPosition }))
+object-position: calc(10% + 1em) | serialize | None
+object-position: calc(10% + 1em) | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: calc(10% + 1em) | page | <absent>
+object-position: inherit | parse | None
+object-position: inherit | serialize | -
+object-position: inherit | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: inherit | page | <absent>
+object-position: initial | parse | None
+object-position: initial | serialize | -
+object-position: initial | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: initial | page | <absent>
+object-position: unset | parse | None
+object-position: unset | serialize | -
+object-position: unset | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: unset | page | <absent>
+object-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "object-position", value: "var(--v)", key: ObjectPosition }))
+object-position: var(--v) | serialize | None
+object-position: var(--v) | computed | ComputedCssPosition { horizontal: Start(Px(20.0)), vertical: Start(Px(10.0)) }
+object-position: var(--v) | page | ObjectPosition(CssPosition { horizontal: Start(Px(24.0)), vertical: Start(Px(12.0)) })
+object-position: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "object-position", value: "var(--undefined)", key: ObjectPosition }))
+object-position: var(--undefined) | serialize | None
+object-position: var(--undefined) | computed | ComputedCssPosition { horizontal: Start(Percent(50.0)), vertical: Start(Percent(50.0)) }
+object-position: var(--undefined) | page | <absent>
