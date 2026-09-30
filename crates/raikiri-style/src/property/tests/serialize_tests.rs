@@ -667,3 +667,28 @@ fn negative_zero_serializes_without_a_sign() {
     assert_eq!(serialize_length(&Length::Percent(-0.0)), "0%");
     assert_eq!(crate::ComputedLength(-0.0).to_css_string(), "0px");
 }
+
+/// No table-declared longhand has `serialize:` yet, so `serialize_value`
+/// still returns `None` for each of them (callers echo the input), both for
+/// the table samples and for parsed values. An entry that gains
+/// `serialize:` changes this on purpose: update the expectation with it.
+#[test]
+fn serialize_value_is_none_for_table_longhands_without_serialize() {
+    for (name, value) in longhand_samples() {
+        assert_eq!(serialize_value(&value), None, "{name}");
+        assert!(!longhand_serializes(value.key()), "{name}");
+    }
+    for (name, css) in [
+        ("isolation", "ISOLATE"),
+        ("object-fit", "scale-down"),
+        ("empty-cells", "hide"),
+        ("opacity", "50%"),
+        ("opacity", "2"),
+        ("object-position", "left 10px top 2em"),
+    ] {
+        let mut input = cssparser::ParserInput::new(css);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let value = parse_value(name, &mut parser).expect("valid table value");
+        assert_eq!(serialize_value(&value), None, "{name}: {css}");
+    }
+}

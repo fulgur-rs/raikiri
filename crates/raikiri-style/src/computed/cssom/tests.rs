@@ -310,3 +310,52 @@ fn ch_spacing_and_indent_are_measured_through_the_callback() {
         Some("normal".to_owned())
     );
 }
+
+/// Table-declared longhands take part in computed-style reads only through
+/// `serialize:`. None of them has one yet, so `from_name` still reports
+/// each as unsupported, and the `Longhand` path yields `None` for every
+/// table key and for a hand-written key (no panic).
+#[test]
+fn table_longhands_without_serialize_stay_unsupported() {
+    let computed = ComputedValues::initial();
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("no ch lengths here") };
+    for &name in crate::property::LONGHAND_NAMES {
+        assert_eq!(ComputedProperty::from_name(name), None, "{name}");
+        assert_eq!(
+            ComputedProperty::from_name(&name.to_ascii_uppercase()),
+            None,
+            "{name}"
+        );
+        let key = crate::property::longhand_key_for_name(name).expect("table name");
+        assert_eq!(
+            ComputedProperty::Longhand(key).serialize(&computed, &mut ch_advance),
+            None,
+            "{name}"
+        );
+    }
+    assert_eq!(
+        ComputedProperty::Longhand(PropertyKey::Color).serialize(&computed, &mut ch_advance),
+        None
+    );
+}
+
+/// The table counterpart of `every_property_serializes_its_initial_value`:
+/// every table longhand that `from_name` accepts serializes its initial
+/// value, under the name that selects it.
+#[test]
+fn every_serialized_table_longhand_serializes_its_initial_value() {
+    let initial = ComputedValues::initial();
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("initial values have no ch lengths") };
+    for &name in crate::property::LONGHAND_NAMES {
+        if let Some(property) = ComputedProperty::from_name(name) {
+            assert!(
+                matches!(property, ComputedProperty::Longhand(_)),
+                "{name}: {property:?}"
+            );
+            assert!(
+                property.serialize(&initial, &mut ch_advance).is_some(),
+                "{name}"
+            );
+        }
+    }
+}

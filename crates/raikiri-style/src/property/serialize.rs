@@ -4,9 +4,9 @@ use super::calc_serialize::{
     CalcNode, CalcUnitKind, format_css_number, parse_calc_or_plain, serialize_calc_node,
     serialize_calc_node_as_angle,
 };
-use super::longhand_value_pat;
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
+use super::{longhand_serialize, longhand_value_pat};
 
 fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
     if value.spelling_error || value.grammar_error {
@@ -566,10 +566,12 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::HyphenateLimitChars(..)
         | PropertyValue::TextSpacingShorthand(..)
         | PropertyValue::TextEmphasisColor(..)
-        | PropertyValue::TextEmphasis(..)
-        // Table-declared longhands (`properties!` in decl.rs) have no
-        // serializer yet.
-        | longhand_value_pat!() => None,
+        | PropertyValue::TextEmphasis(..) => None,
+
+        // Table-declared longhands (`properties!` in decl.rs) serialize
+        // through their entry's `serialize:`; an entry without one returns
+        // `None`, like the arm above.
+        v @ longhand_value_pat!() => longhand_serialize(v),
     }
 }
 

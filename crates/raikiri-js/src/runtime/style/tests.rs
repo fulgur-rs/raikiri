@@ -909,3 +909,27 @@ fn whitespace_only_value_removes_the_declaration() {
          s.getPropertyValue('--y') === ''",
     );
 }
+
+/// The table-declared longhands of raikiri-style have no serialization
+/// yet, so `setProperty` stores a valid value as written (trimmed), not in
+/// a canonical form. A longhand that gains one changes this on purpose.
+#[test]
+fn table_longhands_store_their_values_as_written() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.body.style;").unwrap();
+    for (property, value) in [
+        ("isolation", "ISOLATE"),
+        ("object-fit", "Scale-Down"),
+        ("empty-cells", "HIDE"),
+        ("opacity", "50%"),
+        ("object-position", "left  10px top 2em"),
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "s.setProperty('{property}', ' {value} '); s.getPropertyValue('{property}') === '{value}'"
+            ),
+        );
+    }
+}

@@ -68,7 +68,13 @@
 //! - its explicit arms in `apply_value` and `resolve_against_inherited`
 //!   (`cascade/inherit.rs`), `expand_shorthand_into` (`rule.rs`),
 //!   `serialize_value` and `absolutize_in_page_context`
-//!   (`page/absolutize.rs`);
+//!   (`page/absolutize.rs`); a `serialize_value` arm that returns a
+//!   serialization becomes the entry's `serialize:` (see
+//!   [Serialization](#serialization));
+//! - its `ComputedProperty` variant, `from_name` arm and `serialize` arm
+//!   (`computed/cssom.rs`), if it has one: a table entry is read by
+//!   `getComputedStyle` through `ComputedProperty::Longhand` once it has
+//!   `serialize:`;
 //! - its arm in the test-only `specified_layer_residue`
 //!   (`page/cascade/tests.rs`), which becomes the entry's `residue:`: `none`
 //!   for a payload without lengths, or a `#[cfg(test)]` residue function
@@ -180,11 +186,31 @@
 //! is test-only code: define it under `#[cfg(test)]`, or it is dead code
 //! in other builds.
 //!
+//! # Serialization
+//!
+//! An entry without `serialize:` has no serialization: `serialize_value`
+//! returns `None` for it, so CSSOM callers store the value as written, and
+//! `ComputedProperty::from_name` does not know its name. With
+//! `serialize: keyword` (a `keywords:` entry: the keyword spelling) or
+//! `serialize: f` (`fn f(&Specified) -> Option<String>`), `serialize_value`
+//! answers through the generated `longhand_serialize`, and
+//! `ComputedProperty::from_name` returns `ComputedProperty::Longhand` for
+//! the name, whose computed value is lifted back to the specified type
+//! (`lift`, the identity without `computed:`) and serialized the same way
+//! through `longhand_serialize_computed`. Adding `serialize:` therefore
+//! changes observable CSSOM output (the stored text of `setProperty`, and
+//! a `getComputedStyle` answer for the name): the tests
+//! `serialize_value_is_none_for_table_longhands_without_serialize`
+//! (`property/tests/serialize_tests.rs`) and
+//! `table_longhands_without_serialize_stay_unsupported`
+//! (`computed/cssom/tests.rs`) name each entry that gains one.
+//!
 //! # Limits of the generated pass-through
 //!
 //! Every table-declared value takes the same arm, [`longhand_value_pat!`],
 //! in the shorthand expansion, the phase-2 `resolve_against_inherited`
-//! step, `serialize_value` (no serialization) and the page-cascade test's
+//! step, `serialize_value` (the entry's `serialize:`; see
+//! [Serialization](#serialization)) and the page-cascade test's
 //! `specified_layer_residue` detector (which calls the entry's `residue:`;
 //! see [Length residue](#length-residue)). That is right for the phase-2
 //! step only for values that do not depend on the parent: a longhand whose
