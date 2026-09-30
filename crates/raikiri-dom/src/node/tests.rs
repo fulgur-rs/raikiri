@@ -260,3 +260,23 @@ fn an_ifc_root_exposes_no_layout_children() {
     // The DOM children are untouched: only the taffy view changes.
     assert_eq!(doc.nodes[root].children.len(), 1);
 }
+
+#[test]
+fn a_laid_out_ifc_root_exposes_its_lines() {
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{
+        ahem_font_context, ahem_paragraph, ifc_ahem_fonts, page_box_800x600,
+    };
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
+    // Off: the block is not an ifc root and holds no lines.
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert!(!doc.nodes[root].is_ifc_root());
+    assert!(doc.nodes[root].ifc_lines().is_none());
+    // On: three 10px lines.
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].ifc_lines().map(<[_]>::len), Some(3));
+}

@@ -663,6 +663,23 @@ impl Node {
         }
     }
 
+    /// Whether this block is laid out by the shodo inline engine.
+    #[doc(hidden)]
+    #[inline]
+    pub fn is_ifc_root(&self) -> bool {
+        self.flags.contains(NodeFlags::IS_IFC_ROOT)
+    }
+
+    /// Lines of the last performed layout of an ifc root, if any.
+    #[doc(hidden)]
+    pub fn ifc_lines(&self) -> Option<&[shodo::Line]> {
+        self.ifc
+            .as_ref()?
+            .lines
+            .as_ref()
+            .map(|lines| lines.lines.as_slice())
+    }
+
     /// Children in this node's layout and paint order.
     ///
     /// Flex and grid containers with non-zero item `order` use a derived stable
