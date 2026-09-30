@@ -63,6 +63,13 @@ pub struct Row {
     pub detail: String,
 }
 
+/// Detail recorded on a PASS that only held with local resources disabled.
+///
+/// The pixel comparison is then between a page and its reference with images
+/// left out, which is a weaker claim than a full comparison; [`diff`] reports a
+/// PASS that lost its clean status as weakened.
+pub const FALLBACK_NOTE: &str = "passes only without local resources";
+
 /// Test ids listed in a baseline file (one per line, `#` starts a comment).
 pub fn parse_baseline_ids(text: &str) -> Vec<String> {
     text.lines()
@@ -133,25 +140,30 @@ pub struct Diff {
     pub fixes: Vec<String>,
     /// Present before, absent after.
     pub missing: Vec<String>,
+    /// PASS both times, but only after falling back to a run without local
+    /// resources (see [`FALLBACK_NOTE`]) where the first report was clean.
+    pub weakened: Vec<String>,
 }
 
 /// Compare `before` with `after`.
 pub fn diff(before: &[Row], after: &[Row]) -> Diff {
-    let after_by_id: BTreeMap<&str, Status> = after
-        .iter()
-        .map(|row| (row.id.as_str(), row.status))
-        .collect();
+    let after_by_id: BTreeMap<&str, &Row> =
+        after.iter().map(|row| (row.id.as_str(), row)).collect();
     let mut result = Diff::default();
     for row in before {
-        match after_by_id.get(row.id.as_str()) {
-            None => result.missing.push(row.id.clone()),
-            Some(&now) if row.status == Status::Pass && now != Status::Pass => {
-                result.regressions.push(row.id.clone());
+        let Some(now) = after_by_id.get(row.id.as_str()) else {
+            result.missing.push(row.id.clone());
+            continue;
+        };
+        match (row.status, now.status) {
+            (Status::Pass, Status::Pass) => {
+                if row.detail != FALLBACK_NOTE && now.detail == FALLBACK_NOTE {
+                    result.weakened.push(row.id.clone());
+                }
             }
-            Some(&now) if row.status != Status::Pass && now == Status::Pass => {
-                result.fixes.push(row.id.clone());
-            }
-            Some(_) => {}
+            (Status::Pass, _) => result.regressions.push(row.id.clone()),
+            (_, Status::Pass) => result.fixes.push(row.id.clone()),
+            _ => {}
         }
     }
     result
@@ -164,6 +176,7 @@ pub fn render_diff(diff: &Diff) -> String {
         ("regressions", &diff.regressions),
         ("fixes", &diff.fixes),
         ("missing", &diff.missing),
+        ("weakened", &diff.weakened),
     ] {
         out.push_str(&format!("{title}: {}\n", ids.len()));
         for id in ids {
@@ -233,7 +246,8 @@ fn outcome_status(result: Result<ReftestResult, ReftestError>) -> (Status, Strin
 }
 
 /// One reference pair passes when it passes with local resources enabled or
-/// without them: the baseline mixes tests pinned under each mode. When neither
+/// without them: the baseline mixes tests pinned under each mode. A pass that
+/// needed the resource-free run is marked with [`FALLBACK_NOTE`]. When neither
 /// passes, the resource-enabled result is reported.
 fn pair_status(pair: &ReftestPair, config: ReftestConfig) -> (Status, String) {
     let with_resources = outcome_status(run_pair_with_images(pair, config));
@@ -242,7 +256,7 @@ fn pair_status(pair: &ReftestPair, config: ReftestConfig) -> (Status, String) {
     }
     let plain = outcome_status(run_pair(pair, config));
     if plain.0 == Status::Pass {
-        plain
+        (Status::Pass, FALLBACK_NOTE.to_owned())
     } else {
         with_resources
     }
@@ -264,7 +278,15 @@ fn combine_pairs(results: Vec<(ReftestKind, Status, String)>) -> (Status, String
     let match_ok = matches.is_empty() || matches.iter().any(|(_, s, _)| *s == Status::Pass);
     let mismatch_ok = mismatches.iter().all(|(_, s, _)| *s == Status::Pass);
     if match_ok && mismatch_ok {
-        return (Status::Pass, String::new());
+        // Prefer a matching alternative that needed no fallback; the note is
+        // kept when the pass rests on a fallback run.
+        let clean_match = matches
+            .iter()
+            .any(|(_, s, detail)| *s == Status::Pass && detail.is_empty());
+        let fell_back = (!matches.is_empty() && !clean_match)
+            || mismatches.iter().any(|(_, _, detail)| !detail.is_empty());
+        let detail = if fell_back { FALLBACK_NOTE } else { "" };
+        return (Status::Pass, detail.to_owned());
     }
     let deciding = if match_ok { &mismatches } else { &matches };
     deciding

@@ -91,10 +91,11 @@ fn diff_renders_counts_then_ids() {
         regressions: strings(&["a", "b"]),
         fixes: Vec::new(),
         missing: strings(&["c"]),
+        weakened: strings(&["d"]),
     };
     assert_eq!(
         render_diff(&result),
-        "regressions: 2\n  a\n  b\nfixes: 0\nmissing: 1\n  c\n"
+        "regressions: 2\n  a\n  b\nfixes: 0\nmissing: 1\n  c\nweakened: 1\n  d\n"
     );
 }
 
@@ -267,4 +268,71 @@ fn a_reftest_that_only_passes_without_local_images_still_reports_pass() {
         "css/css-backgrounds/background-position-three-four-values.html",
     );
     assert_eq!(row.status, Status::Pass, "{}", row.detail);
+}
+
+fn noted(id: &str) -> Row {
+    Row {
+        id: id.to_owned(),
+        status: Status::Pass,
+        detail: FALLBACK_NOTE.to_owned(),
+    }
+}
+
+#[test]
+fn a_pass_that_needed_the_resource_free_fallback_is_marked_weakened_by_diff() {
+    let before = vec![row("was-clean", Status::Pass), noted("was-noted")];
+    let after = vec![noted("was-clean"), noted("was-noted")];
+    let result = diff(&before, &after);
+    assert_eq!(result.weakened, vec!["was-clean"]);
+    assert!(result.regressions.is_empty());
+}
+
+#[test]
+fn a_fallback_pass_that_becomes_clean_is_not_weakened() {
+    let before = vec![noted("a")];
+    let after = vec![row("a", Status::Pass)];
+    assert!(diff(&before, &after).weakened.is_empty());
+}
+
+#[test]
+fn the_fallback_note_survives_a_tsv_round_trip() {
+    let rows = vec![noted("a")];
+    assert_eq!(parse_tsv(&write_tsv(&rows)).expect("parse"), rows);
+}
+
+#[test]
+fn combine_keeps_the_note_only_when_the_deciding_pass_needed_the_fallback() {
+    let only_fallback = vec![pair(ReftestKind::Match, Status::Pass, FALLBACK_NOTE)];
+    assert_eq!(
+        combine_pairs(only_fallback),
+        (Status::Pass, FALLBACK_NOTE.to_owned())
+    );
+    let clean_alternative = vec![
+        pair(ReftestKind::Match, Status::Pass, FALLBACK_NOTE),
+        pair(ReftestKind::Match, Status::Pass, ""),
+    ];
+    assert_eq!(
+        combine_pairs(clean_alternative),
+        (Status::Pass, String::new())
+    );
+    let noted_mismatch = vec![
+        pair(ReftestKind::Match, Status::Pass, ""),
+        pair(ReftestKind::Mismatch, Status::Pass, FALLBACK_NOTE),
+    ];
+    assert_eq!(
+        combine_pairs(noted_mismatch),
+        (Status::Pass, FALLBACK_NOTE.to_owned())
+    );
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn a_reftest_that_only_passes_without_local_images_carries_the_note() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let row = run_id(
+        &root,
+        "css/css-backgrounds/background-position-three-four-values.html",
+    );
+    assert_eq!(row.status, Status::Pass, "{}", row.detail);
+    assert_eq!(row.detail, FALLBACK_NOTE);
 }

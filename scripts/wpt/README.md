@@ -270,5 +270,8 @@ cargo run --locked -p raikiri-wpt --bin run-baseline-report -- \
 Use `--only ID` (repeatable) or `--limit N` for a quick run. `--jobs` was checked to give
 the same report as `--jobs 1` on the first 80 ids; image-heavy tests share a process-wide
 decode budget, so re-check before trusting a large `--jobs` value. `diff` only lists
-PASS-to-not-PASS transitions (regressions), the reverse (fixes), and ids missing from the
-second report.
+PASS-to-not-PASS transitions (regressions), the reverse (fixes), ids missing from the
+second report, and PASS results that became weaker: a test that passed cleanly before but
+now passes only after falling back to a run without local resources (the row detail reads
+`passes only without local resources`). A weakened PASS is still a PASS, so it is reported
+separately rather than as a regression.
