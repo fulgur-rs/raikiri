@@ -129,8 +129,8 @@ pub fn cascade_with_first_line<D: StyleDom>(
 ) -> Result<FirstLineCascade, CascadeError> {
     let mut candidates = CascadedArena::new();
     collect_cascaded_with_media_context(dom, dom.root_id(), rule_tree, &mut candidates, media);
-    let normal =
-        cascade_from_candidates(dom, rule_tree, &PageContextQuery::default(), &candidates)?;
+    let query = PageContextQuery::default();
+    let normal = cascade_from_candidates(dom, rule_tree, &query, &candidates, media)?;
     let error = |id: StyleNodeId| CascadeError::Internal {
         message: format!(
             "unsupported first-line node {} (one block with inline descendants required)",

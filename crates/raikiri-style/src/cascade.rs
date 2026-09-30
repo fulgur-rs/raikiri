@@ -35,7 +35,9 @@ use crate::computed::ComputedValues;
 use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
-use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
+use crate::page::{
+    PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_media_context,
+};
 use crate::property::{PropertyKey, Sides, WritingMode};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
@@ -237,7 +239,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &mut cascaded,
         media_context,
     );
-    cascade_from_candidates(dom, rule_tree, page_query, &cascaded)
+    cascade_from_candidates(dom, rule_tree, page_query, &cascaded, media_context)
 }
 
 fn cascade_from_candidates<D: StyleDom>(
@@ -245,6 +247,7 @@ fn cascade_from_candidates<D: StyleDom>(
     rule_tree: &RuleTree,
     page_query: &PageContextQuery,
     cascaded: &collect::CascadedArena,
+    media_context: &MediaContext,
 ) -> Result<CascadeResult, CascadeError> {
     let opacity_specified = (0..dom.node_count())
         .map(|index| {
@@ -307,10 +310,11 @@ fn cascade_from_candidates<D: StyleDom>(
     let root_computed = root_element_id
         .and_then(|id| computed.get(id.0 as usize))
         .unwrap_or(&computed[dom.root_id().0 as usize]);
-    let page = cascade_page(
+    let page = cascade_page_with_media_context(
         rule_tree,
         page_query,
         PageInheritance::FromRoot(root_computed),
+        media_context,
     );
 
     Ok(CascadeResult {

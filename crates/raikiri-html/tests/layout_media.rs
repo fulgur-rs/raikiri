@@ -176,3 +176,57 @@ fn background_preload_uses_configured_media() {
         assert_eq!(*network.0.lock().unwrap(), expected);
     }
 }
+
+#[test]
+fn media_page_size_changes_page_geometry() {
+    let html = "<style>body{margin:0} p{margin:0;height:10px}         @page{size:280px 180px;margin:10px}         @media print and (min-width:261px){@page{size:300px 200px;margin:20px}}         </style><p></p>";
+    for (width, expected) in [(260, (280.0, 180.0, 10.0)), (261, (300.0, 200.0, 20.0))] {
+        let result = completed(
+            html,
+            MediaContext::with_viewport(MediaType::Print, width, 160),
+        );
+        let page = result.page(0).unwrap();
+        let geometry = page.geometry();
+        assert_eq!(geometry.page_box.width, expected.0);
+        assert_eq!(geometry.page_box.height, expected.1);
+        assert_eq!(geometry.margins.top, expected.2);
+        assert_eq!(geometry.content_box.x, expected.2);
+        assert_eq!(geometry.content_box.y, expected.2);
+    }
+}
+
+#[test]
+fn media_page_background_triggers_provider_only_when_matching() {
+    use raikiri_traits::{FetchOutcome, NetworkError, NetworkProvider, Request};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingPageNetwork(Mutex<Vec<String>>);
+
+    impl NetworkProvider for RecordingPageNetwork {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+            self.0.lock().unwrap().push(request.url.to_string());
+            Err(NetworkError::Aborted)
+        }
+    }
+
+    let html = b"<style>@page{size:300px 200px;margin:20px}         @media print and (min-width:261px){             @page{background-image:url('https://example.test/page.png')}         }</style><p></p>";
+    for (width, expected) in [(260, vec![]), (261, vec!["https://example.test/page.png"])] {
+        let network = RecordingPageNetwork::default();
+        let resources = RenderResources::new().network_provider(&network);
+        let document = parse_html_with_resources(html.as_slice(), &resources).unwrap();
+        assert!(matches!(
+            layout(
+                &document,
+                PageDefaults::default(),
+                LayoutConfig::builder()
+                    .media_context(MediaContext::with_viewport(MediaType::Print, width, 160))
+                    .build(),
+                LayoutOptions::new().resources(&resources),
+            )
+            .unwrap(),
+            LayoutStatus::Completed(_)
+        ));
+        assert_eq!(*network.0.lock().unwrap(), expected);
+    }
+}
