@@ -2,7 +2,7 @@
 use super::*;
 use raikiri_js_wasmtime_host::{EngineError, SandboxOptions, WasmtimePage};
 use raikiri_js_wasmtime_protocol::ReportDto;
-fn engine_error(e: EngineError) -> PageError {
+pub(crate) fn engine_error(e: EngineError) -> PageError {
     if e.aborted {
         PageError::Aborted(e.message)
     } else {
@@ -10,7 +10,7 @@ fn engine_error(e: EngineError) -> PageError {
     }
 }
 
-fn transfer_error(report: &ReportDto, error: EngineError, stage: &str) -> PageError {
+pub(crate) fn transfer_error(report: &ReportDto, error: EngineError, stage: &str) -> PageError {
     if let Some(reason) = report.clone().into_native().aborted {
         // The failed exchange discarded the Store; keep the last native checkpoint.
         eprintln!(
