@@ -357,20 +357,17 @@ fn malformed_values() {
     insta::assert_snapshot!("malformed_values", rendered);
 }
 
+/// Keys that contradict `keywords:`. The rules between `computed:`,
+/// `compute:` and `lift:` are pinned by `computed_key_mistakes`.
 #[test]
 fn conflicting_keys() {
     let (rendered, count) = diagnostics(&module(
         r#"        /// A.
         "a-prop" => AProp { keywords: [X, Y], parse: parse_a, initial: X, inherited: no },
         /// B.
-        "b-prop" => BProp: u8 { keywords: [X, Y], initial: X, inherited: no },
-        /// C.
-        "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p,
-                                 computed: Px, sample: 2.0, residue: none },
-        /// D.
-        "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0, residue: none },"#,
+        "b-prop" => BProp: u8 { keywords: [X, Y], initial: X, inherited: no },"#,
     ));
-    assert_eq!(count, 4);
+    assert_eq!(count, 2);
     insta::assert_snapshot!("conflicting_keys", rendered);
 }
 
