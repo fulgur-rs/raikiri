@@ -317,10 +317,8 @@ fn layout_aborts_when_property_observer_aborts() {
 // result. The consumer discards the per-call collection in that case.
 #[test]
 fn layout_abort_on_first_event_still_delivers_remaining_batch() {
-    let doc = dom(
-        "<h1 style='bookmark-level: 1'>a</h1>\
-         <h2 style='bookmark-level: 2'>b</h2><p style='bookmark-level: 3'>c</p>",
-    );
+    let doc = dom("<h1 style='bookmark-level: 1'>a</h1>\
+         <h2 style='bookmark-level: 2'>b</h2><p style='bookmark-level: 3'>c</p>");
     let registrations = [crate::ConsumerPropertyRegistration::integer(
         "bookmark-level",
     )];
@@ -348,7 +346,11 @@ fn layout_abort_on_first_event_still_delivers_remaining_batch() {
         matches!(status, LayoutStatus::Aborted),
         "abort during delivery reports Aborted"
     );
-    assert_eq!(values, vec![1, 2, 3], "full batch is delivered in document order");
+    assert_eq!(
+        values,
+        vec![1, 2, 3],
+        "full batch is delivered in document order"
+    );
     assert_eq!(orders.len(), 3);
     assert!(
         orders.windows(2).all(|pair| pair[0] < pair[1]),
@@ -359,10 +361,8 @@ fn layout_abort_on_first_event_still_delivers_remaining_batch() {
 // Aborting on a middle event delivers the same full batch, not a prefix.
 #[test]
 fn layout_abort_on_middle_event_delivers_full_batch_without_partial_result() {
-    let doc = dom(
-        "<h1 style='bookmark-level: 1'>a</h1>\
-         <h2 style='bookmark-level: 2'>b</h2><p style='bookmark-level: 3'>c</p>",
-    );
+    let doc = dom("<h1 style='bookmark-level: 1'>a</h1>\
+         <h2 style='bookmark-level: 2'>b</h2><p style='bookmark-level: 3'>c</p>");
     let registrations = [crate::ConsumerPropertyRegistration::integer(
         "bookmark-level",
     )];
