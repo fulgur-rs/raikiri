@@ -451,6 +451,8 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         }
         _ => None,
     };
+    // Whether `computed: Type` stands without its hook (reported above).
+    let hookless_type = computed_ty.is_some() && compute.is_absent();
     let compute = match compute {
         Slot::Present(_, hook) => Compute::Path(hook),
         // A malformed `compute:` has been reported already.
@@ -531,6 +533,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
                 // unknown, so its absence is not reported as well.
                 None if matches!(value, Value::Keywords(_)) => None,
                 _ if value_kind_unknown => None,
+                Some(true) if hookless_type => Some("it names a computed type"),
                 Some(true) => Some("it has a hook"),
                 _ => Some("its value type is not a `keywords:` enum"),
             };

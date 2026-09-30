@@ -469,11 +469,22 @@ fn residue_is_required_for_hooked_and_parsed_entries() {
         "c" => C: L { initial: L::Z, inherited: no, parse: p, sample: L::O },
         /// A parsed entry with a hook.
         "d" => D: f32 { initial: 1.0, inherited: no, parse: p, compute: c, sample: 2.0 },
+        /// A computed type without its hook: two mistakes, two errors.
+        "e" => E: L { initial: L::Z, inherited: no, parse: p, computed: Px, sample: L::O },
         "#,
         &[],
     );
-    assert_eq!(errors.len(), 4, "{errors:?}");
-    for (error, name) in errors.iter().zip(["a", "b", "c", "d"]) {
+    assert_eq!(errors.len(), 6, "{errors:?}");
+    assert!(
+        errors[4].starts_with("`computed: Px` needs `compute: <fn>`"),
+        "{errors:?}"
+    );
+    assert!(errors[5].contains("it names a computed type"), "{errors:?}");
+    for (error, name) in errors
+        .iter()
+        .zip(["a", "b", "c", "d"])
+        .chain([(&errors[5], "e")])
+    {
         assert!(
             error.starts_with(&format!(
                 "the \"{name}\" entry is missing `residue: none | <fn>`"
