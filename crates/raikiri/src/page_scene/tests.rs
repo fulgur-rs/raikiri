@@ -459,3 +459,146 @@ fn body_margin_helpers_cover_html_barrier_fallback() {
     assert!(scene.body_offset_pt.0.is_finite());
     assert!(scene.body_offset_pt.1.is_finite());
 }
+
+/// Paginating a tall document splits nodes across per-page scenes.
+///
+/// A short `<div id=top>` above a 2000px spacer fits on page 0 but lies
+/// fully above page 1's interval, while `<div id=low>` below the spacer
+/// only intersects page 1. This pins the page-intersection gate in
+/// [`build_page_scene_for_page`](super::build_page_scene_for_page) both
+/// ways (include + exclude) and the body-on-every-page contract, plus
+/// fragment-y rebasing by `content_origin_y` and the `page_index` /
+/// `content_origin_y` plumbing that the single-page helper leaves at zero.
+#[test]
+fn build_page_scene_for_page_splits_tall_content_across_pages() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let html = concat!(
+        "<div id=top style='height:10px'></div>",
+        "<div style='height:2000px'></div>",
+        "<div id=low style='height:10px'></div>",
+    );
+    let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
+    let cascade = build_cascaded(&uncascaded);
+    let mut dom = uncascaded.dom;
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout Ok");
+
+    // Derive page 1's origin from the same public page-geometry API the
+    // scene builder uses, so the test tracks geometry changes instead of
+    // hard-coding A4 content height.
+    let margins = raikiri_dom::page_margins(&cascade, PageBox::A4);
+    let insets = raikiri_dom::page_content_insets(&cascade, PageBox::A4);
+    let content_height =
+        (margins.content_height(PageBox::A4) - insets.top - insets.bottom).max(0.0);
+    assert!(
+        18.0 < content_height && content_height < 2000.0,
+        "page 0 must fully contain #top yet end above #low; got {content_height}"
+    );
+
+    let page0 = build_page_scene_for_page(&dom, &cascade, PageBox::A4, 0, 0.0);
+    let page1 = build_page_scene_for_page(&dom, &cascade, PageBox::A4, 1, content_height);
+
+    let top_id = NodeId::new(
+        (0..dom.node_count())
+            .find(|&i| dom.element_attribute(i, "id") == Some("top"))
+            .expect("probe #top resolves") as u64,
+    );
+    let low_id = NodeId::new(
+        (0..dom.node_count())
+            .find(|&i| dom.element_attribute(i, "id") == Some("low"))
+            .expect("probe #low resolves") as u64,
+    );
+
+    assert!(page0.node_ids.contains(&top_id), "#top fits on page 0");
+    assert!(!page0.node_ids.contains(&low_id), "#low is below page 0");
+    assert!(!page1.node_ids.contains(&top_id), "#top is above page 1");
+    assert!(page1.node_ids.contains(&low_id), "#low fits on page 1");
+
+    // The body container is present on every page so its propagated
+    // background stays available; both scenes start their DFS there.
+    let body_id = page0.body_id.expect("shaped doc has <body>");
+    assert_eq!(page0.node_ids.first(), Some(&body_id));
+    assert_eq!(page1.node_ids.first(), Some(&body_id));
+
+    // Fragment y is rebased into page-local space; adding the origin back
+    // recovers document order across the page boundary.
+    let top_y_page0 = page0
+        .fragments
+        .get(&top_id)
+        .and_then(|v| v.first())
+        .expect("#top has a fragment on page 0")
+        .y;
+    let low_y_page1 = page1
+        .fragments
+        .get(&low_id)
+        .and_then(|v| v.first())
+        .expect("#low has a fragment on page 1")
+        .y;
+    assert!(
+        low_y_page1 >= 0.0,
+        "page-local y is non-negative; got {low_y_page1}"
+    );
+    assert!(
+        top_y_page0 + page0.content_origin_y < low_y_page1 + page1.content_origin_y,
+        "document order survives rebasing"
+    );
+    assert_eq!(page0.page_metadata.page_index, 0);
+    assert_eq!(page1.page_metadata.page_index, 1);
+    assert_eq!(page1.content_origin_y, content_height);
+}
+
+/// The named page-scene entry attaches the pagination pass's page name.
+///
+/// A `size: 300px 50px` descriptor also pins landscape orientation through
+/// this entry point (width > height), complementing the portrait A4 scenes
+/// elsewhere. `content_origin_y` stays zero for a first-page extraction.
+#[test]
+fn build_page_scene_for_page_named_attaches_name_and_landscape() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(
+        &b"<html><head><style>@page { size: 300px 50px }</style></head><body>Hi</body></html>"[..],
+        &opts,
+    )
+    .expect("parse Ok");
+    let cascade = build_cascaded(&uncascaded);
+    let mut dom = uncascaded.dom;
+    let page_box = PageBox::from_page_size(cascade.page.size());
+    raikiri_dom::layout_single_page(&mut dom, &cascade, page_box, FontContext::new())
+        .expect("layout Ok");
+    let scene = build_page_scene_for_page_named(
+        &dom,
+        &cascade,
+        page_box,
+        2,
+        0.0,
+        Some("first".to_string()),
+    );
+    assert_eq!(scene.page_metadata.size, (300.0, 50.0));
+    assert_eq!(scene.page_metadata.orientation, Orientation::Landscape);
+    assert_eq!(scene.page_metadata.page_index, 2);
+    assert_eq!(scene.page_metadata.page_name.as_deref(), Some("first"));
+    assert_eq!(scene.content_origin_y, 0.0);
+    assert!(
+        !scene.node_ids.is_empty(),
+        "named scene still extracts the body subtree"
+    );
+}
+
+/// `encode_png` rejects a buffer whose length disagrees with the canvas.
+///
+/// This pins the byte-count invariant message (the only `encode_png`
+/// failure reachable without a broken renderer) instead of leaving the
+/// assert-format lines uncovered.
+#[test]
+#[should_panic(expected = "encode_png: expected")]
+fn encode_png_rejects_mismatched_buffer_length() {
+    super::encode_png(&[0u8; 3], 1, 1);
+}
