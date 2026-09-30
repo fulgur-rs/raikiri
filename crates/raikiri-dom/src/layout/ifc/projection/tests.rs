@@ -442,3 +442,14 @@ fn blocks_that_are_not_placed_yet_stay_unsupported() {
         );
     }
 }
+
+#[test]
+fn an_absolutely_positioned_child_is_still_unsupported() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let child = span(doc, root, "display:block;position:absolute;top:0");
+        doc.append_text(child, "bb");
+    });
+    let error = project(&fixture).expect_err("abspos");
+    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+}

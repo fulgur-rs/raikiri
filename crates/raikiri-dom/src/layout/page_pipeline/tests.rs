@@ -4297,3 +4297,71 @@ fn a_paragraph_that_contains_its_floats_contains_those_of_its_block_children() {
     );
     assert_eq!(lines.height, 60.0);
 }
+
+// ── re-break rules for roots with boxes ──────────────────────
+
+/// `root` (no authored width, so the re-break follows the page width) holds
+/// "aa ", a child of the given element css, then `after`.
+fn unsized_paragraph_with_child(child_css: &str, after: &str) -> (Document, CascadeResult, usize) {
+    let (mut doc, _cascade, root) = ahem_paragraph("aa ", "");
+    doc.append_element(Some(root), "span", taffy::Style::default(), Some(child_css));
+    doc.append_text(root, after);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root)
+}
+
+#[test]
+fn relayout_keeps_the_lines_of_a_paragraph_with_an_atomic() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, root) =
+        unsized_paragraph_with_child("display:inline-block;width:30px;height:10px", " bbbb cccc");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let before: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    let after: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    assert_eq!(
+        after, before,
+        "an atomic's position is tied to the lines it was placed in"
+    );
+}
+
+#[test]
+fn relayout_keeps_the_lines_of_a_paragraph_with_a_block_child() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, root) =
+        unsized_paragraph_with_child("display:block;height:20px", "bbbb cccc");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let before: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    let after: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn relayout_still_follows_the_page_width_for_a_plain_paragraph() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    assert_eq!(stored_lines(&doc, root).lines.len(), 3);
+}
