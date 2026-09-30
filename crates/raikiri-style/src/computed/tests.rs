@@ -917,3 +917,63 @@ fn computed_table_initial_computes_hooked_initials() {
     assert_eq!(initial.object_position, center);
     assert_eq!(ComputedValues::initial().object_position, center);
 }
+
+/// The top-level field names of a value whose `Debug` is derived: with
+/// `{:#?}`, a derived `Debug` prints every field of the struct, each on its
+/// own line at a four-space indent, and indents the contents of nested values
+/// further. Debug-escaped strings contain no raw newlines, so a line at
+/// exactly four spaces that starts with `ident: ` is a top-level field.
+fn top_level_debug_field_names(value: &impl std::fmt::Debug) -> std::collections::BTreeSet<String> {
+    format!("{value:#?}")
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("    ")?;
+            if rest.starts_with(' ') {
+                return None;
+            }
+            let (name, _) = rest.split_once(": ")?;
+            name.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                .then(|| name.to_owned())
+        })
+        .collect()
+}
+
+/// `SpecifiedValues` and `ComputedValues` reach the `properties!` table's
+/// fields through `Deref`, so a hand-written field with the same name as a
+/// table field would silently shadow it: reads would see the hand-written
+/// field and never the cascaded table value. The field names are
+/// enumerated from the derived `Debug` output (see
+/// [`top_level_debug_field_names`]), which lists every field without a
+/// hand-maintained list that could fall out of date.
+#[test]
+fn value_struct_fields_do_not_shadow_table_fields() {
+    use crate::property::SpecifiedTable;
+    use crate::specified::SpecifiedValues;
+
+    let specified_table = top_level_debug_field_names(&SpecifiedTable::initial());
+    let computed_table = top_level_debug_field_names(&ComputedTable::initial());
+    let specified = top_level_debug_field_names(&SpecifiedValues::initial());
+    let computed = top_level_debug_field_names(&ComputedValues::initial());
+
+    // Guard the enumeration itself: both tables list the same fields, and
+    // each value struct's list includes its `longhands` field and a
+    // hand-written field.
+    assert!(!specified_table.is_empty());
+    assert_eq!(specified_table, computed_table);
+    for fields in [&specified, &computed] {
+        assert!(fields.contains("longhands"), "{fields:?}");
+        assert!(fields.contains("color"), "{fields:?}");
+    }
+
+    let shadowed_in_specified: Vec<_> = specified.intersection(&specified_table).collect();
+    assert!(
+        shadowed_in_specified.is_empty(),
+        "SpecifiedValues fields shadow table fields: {shadowed_in_specified:?}"
+    );
+    let shadowed_in_computed: Vec<_> = computed.intersection(&computed_table).collect();
+    assert!(
+        shadowed_in_computed.is_empty(),
+        "ComputedValues fields shadow table fields: {shadowed_in_computed:?}"
+    );
+}
