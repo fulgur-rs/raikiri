@@ -47,6 +47,7 @@ mod color;
 mod content;
 mod layout;
 mod meta;
+mod text;
 
 /// Reads one computed field of an element and formats it on one line.
 type ComputedField = fn(&ComputedValues) -> String;
@@ -116,6 +117,7 @@ const DOMAINS: &[(&str, &[Entry])] = &[
     ("color", color::ENTRIES),
     ("content", content::ENTRIES),
     ("layout", layout::ENTRIES),
+    ("text", text::ENTRIES),
 ];
 
 /// Length samples substituted into an entry's length template. They cover
@@ -353,4 +355,9 @@ fn content() {
 #[test]
 fn layout() {
     assert_domain_snapshot("layout");
+}
+
+#[test]
+fn text() {
+    assert_domain_snapshot("text");
 }
