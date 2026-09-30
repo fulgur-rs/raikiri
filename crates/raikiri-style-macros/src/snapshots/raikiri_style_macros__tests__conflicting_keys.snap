@@ -23,5 +23,5 @@ error: `compute:` and `computed: Type via hook` both name a hook; keep `computed
 error: `lift:` is only used with `computed: Type via hook`; a computed value of the specified type needs no lift
   --> 20:73
    |
-20 |         "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0 },
+20 |         "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0, residue: none },
    |                                                                         ^^^^

@@ -1,7 +1,7 @@
 use quote::ToTokens as _;
 use syn::Ident;
 
-use super::{Entry, Lift, Value, build, is_css_name};
+use super::{Entry, Lift, Residue, Value, build, is_css_name};
 use crate::diag::Errors;
 use crate::parse::parse_block;
 
@@ -68,9 +68,9 @@ fn parsed_entry_defaults() {
     let (entries, errors) = build_str(
         r#"
         /// Docs.
-        "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: ObjectFit::Contain },
+        "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: ObjectFit::Contain, residue: none },
         /// Docs.
-        "opacity" => Opacity: f32 { initial: 1.0, inherited: no, parse: p, compute: clamp, sample: 2.0, field: alpha },
+        "opacity" => Opacity: f32 { initial: 1.0, inherited: no, parse: p, compute: clamp, sample: 2.0, field: alpha, residue: none },
         "#,
         &[],
     );
@@ -98,9 +98,9 @@ fn computed_via_sets_the_type_hook_and_lift() {
     let (entries, errors) = build_str(
         r#"
         /// Docs.
-        "a" => A: L { initial: L::Z, inherited: yes, parse: p, computed: Px via to_px, sample: L::O },
+        "a" => A: L { initial: L::Z, inherited: yes, parse: p, computed: Px via to_px, sample: L::O, residue: l_residue },
         /// Docs.
-        "b" => B: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: from_px, sample: L::O },
+        "b" => B: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: from_px, sample: L::O, residue: none },
         "#,
         &[],
     );
@@ -209,11 +209,11 @@ fn a_malformed_key_is_not_reported_again_by_related_rules() {
     let (entries, errors) = build_str(
         r#"
         /// Docs.
-        "a" => A: L { initial: L::Z, inherited: no, parse: p, computed: Px, lift: l, sample: L::O },
+        "a" => A: L { initial: L::Z, inherited: no, parse: p, computed: Px, lift: l, sample: L::O, residue: none },
         /// Docs.
-        "b" => B: L { initial: L::Z, inherited: no, parse: p, compute: |x| x, computed: Px via to_px, sample: L::O },
+        "b" => B: L { initial: L::Z, inherited: no, parse: p, compute: |x| x, computed: Px via to_px, sample: L::O, residue: none },
         /// Docs.
-        "c" => C: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: |x| x, sample: L::O },
+        "c" => C: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: |x| x, sample: L::O, residue: none },
         "#,
         &[],
     );
@@ -226,13 +226,13 @@ fn reserved_alias_names_are_rejected_as_value_types() {
     let (_, errors) = build_str(
         r#"
         /// Docs.
-        "a" => A: Specified { initial: X, inherited: no, parse: p, sample: Y },
+        "a" => A: Specified { initial: X, inherited: no, parse: p, sample: Y, residue: none },
         /// Docs.
-        "b" => B: f32 { initial: 1.0, inherited: no, parse: p, computed: Computed via c, sample: 2.0 },
+        "b" => B: f32 { initial: 1.0, inherited: no, parse: p, computed: Computed via c, sample: 2.0, residue: none },
         /// Docs.
         "c" => Property { keywords: [X, Y], initial: X, inherited: no },
         /// Docs.
-        "d" => D: crate::Specified { initial: X, inherited: no, parse: p, sample: Y },
+        "d" => D: crate::Specified { initial: X, inherited: no, parse: p, sample: Y, residue: none },
         "#,
         &[],
     );
@@ -323,7 +323,7 @@ fn derive_mistakes_are_reported_once_each() {
         /// Fixed derives and repeats are dropped.
         "a" => A { keywords: [X, Y], derive: [Clone, Hash, core::hash::Hash, std::fmt::Debug], initial: X, inherited: no },
         /// Not a keywords entry.
-        "b" => B: f32 { derive: [Hash], initial: 1.0, inherited: no, parse: p, sample: 2.0 },
+        "b" => B: f32 { derive: [Hash], initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none },
         /// `Default` with an initial that is not a keyword.
         "c" => C { keywords: [X, Y], derive: [Default], initial: C::Q, inherited: no },
         /// An unresolved initial is reported once, by `initial:`.
@@ -364,4 +364,92 @@ fn derive_mistakes_are_reported_once_each() {
         assert!(entry.derives.is_empty());
         assert!(entry.default_keyword.is_none());
     }
+}
+
+fn residue_kind(entry: &Entry) -> String {
+    match &entry.residue {
+        Residue::None => "none".to_owned(),
+        Residue::Path(path) => path.to_token_stream().to_string(),
+        Residue::Broken => "broken".to_owned(),
+    }
+}
+
+#[test]
+fn residue_is_written_or_defaults_to_none_for_plain_keyword_entries() {
+    let (entries, errors) = build_str(
+        r#"
+        /// A keyword entry without a hook: `none` by default.
+        "a" => A { keywords: [X, Y], initial: X, inherited: no },
+        /// Written explicitly on a keyword entry: kept.
+        "b" => B { keywords: [X, Y], initial: X, inherited: no, residue: none },
+        /// A keyword entry with a hook states it.
+        "c" => C { keywords: [X, Y], initial: X, inherited: no, compute: c, residue: none },
+        /// A parsed entry names its function.
+        "d" => D: L { initial: L::Z, inherited: no, parse: p, sample: L::O, residue: crate::l_residue },
+        /// A parsed entry with a hook and `none`.
+        "e" => E: f32 { initial: 1.0, inherited: no, parse: p, compute: c, sample: 2.0, residue: none },
+        "#,
+        &[],
+    );
+    assert_eq!(errors, Vec::<String>::new());
+    let kinds: Vec<_> = entries.iter().map(residue_kind).collect();
+    assert_eq!(
+        kinds,
+        ["none", "none", "none", "crate :: l_residue", "none"]
+    );
+}
+
+#[test]
+fn residue_is_required_for_hooked_and_parsed_entries() {
+    let (entries, errors) = build_str(
+        r#"
+        /// A keyword entry with a `compute:` hook.
+        "a" => A { keywords: [X, Y], initial: X, inherited: no, compute: c },
+        /// A keyword entry with a `computed: .. via` hook.
+        "b" => B { keywords: [X, Y], initial: X, inherited: no, computed: T via c },
+        /// A parsed entry without a hook.
+        "c" => C: L { initial: L::Z, inherited: no, parse: p, sample: L::O },
+        /// A parsed entry with a hook.
+        "d" => D: f32 { initial: 1.0, inherited: no, parse: p, compute: c, sample: 2.0 },
+        "#,
+        &[],
+    );
+    assert_eq!(errors.len(), 4, "{errors:?}");
+    for (error, name) in errors.iter().zip(["a", "b", "c", "d"]) {
+        assert!(
+            error.starts_with(&format!(
+                "the \"{name}\" entry is missing `residue: none | <fn>`"
+            )),
+            "{error}"
+        );
+    }
+    assert!(errors[0].contains("it has a hook"), "{errors:?}");
+    assert!(errors[1].contains("it has a hook"), "{errors:?}");
+    assert!(
+        errors[2].contains("its value type is not a `keywords:` enum"),
+        "{errors:?}"
+    );
+    assert!(errors[3].contains("it has a hook"), "{errors:?}");
+    assert!(entries.iter().all(|e| matches!(e.residue, Residue::Broken)));
+}
+
+#[test]
+fn a_missing_residue_is_not_reported_after_a_related_mistake() {
+    // Neither `keywords:` nor `parse:`, and keyword entries whose hook key is
+    // malformed: whether `residue:` is required is unknown, so the earlier
+    // error is the only one.
+    let (entries, errors) = build_str(
+        r#"
+        /// Docs.
+        "a" => A: L { initial: L::Z, inherited: no, sample: L::O },
+        /// Docs.
+        "b" => B { keywords: [X, Y], initial: X, inherited: no, compute: |x| x },
+        /// Docs.
+        "c" => C { keywords: [X, Y], initial: X, inherited: no, computed: T },
+        "#,
+        &[],
+    );
+    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert!(errors.iter().all(|e| !e.contains("residue")), "{errors:?}");
+    assert!(entries.iter().all(|e| matches!(e.residue, Residue::Broken)));
 }

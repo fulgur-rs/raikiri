@@ -1,0 +1,32 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: pretty(function)
+---
+# [doc = r" The length a declared longhand's specified value still carries"]
+# [doc = r" (a unit or form that computing resolves), named for a test"]
+# [doc = r" failure message; `None` when it carries none. Each entry answers"]
+# [doc = r" through its `residue:` (a function, or `none` for a value that"]
+# [doc = r" never carries a length). `value` must be a variant declared in"]
+# [doc = r" `properties!`."]
+# [cfg (test)]
+pub (crate) fn longhand_specified_residue (value : & PropertyValue ,) -> :: core :: option :: Option < & 'static str > {
+    match value {
+        PropertyValue :: AProp (v) => {
+            let _ = v ;
+            :: core :: option :: Option :: None
+        }
+        PropertyValue :: BProp (v) => {
+            let residue : fn (& b_prop :: Specified) -> :: core :: option :: Option < & 'static str > = l_residue ;
+            residue (v)
+        }
+        PropertyValue :: CProp (v) => {
+            let _ = v ;
+            :: core :: option :: Option :: None
+        }
+        PropertyValue :: DProp (v) => {
+            let _ = & v ;
+            :: core :: unreachable ! ()
+        }
+        other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+    }
+}

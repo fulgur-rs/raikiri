@@ -27,7 +27,7 @@ use syn::{Attribute, Expr, ExprPath, Ident, LitBool, LitStr, Path, Token, Type, 
 use crate::diag::Errors;
 
 /// Every key an entry accepts, in the order the documentation lists them.
-pub(crate) const KEYS: [&str; 10] = [
+pub(crate) const KEYS: [&str; 11] = [
     "keywords",
     "derive",
     "initial",
@@ -38,6 +38,7 @@ pub(crate) const KEYS: [&str; 10] = [
     "lift",
     "field",
     "sample",
+    "residue",
 ];
 
 /// The list of valid keys as a diagnostic fragment: "`keywords`, `initial`, ..".
@@ -108,6 +109,16 @@ pub(crate) enum ComputedSpec {
     },
 }
 
+/// The value of `residue:`.
+#[derive(Debug)]
+pub(crate) enum ResidueSpec {
+    /// `residue: none`: the specified value never carries a length.
+    None,
+    /// `residue: path`: a `fn(&Specified) -> Option<&'static str>` that
+    /// names the length the specified value still carries, if any.
+    Path(ExprPath),
+}
+
 /// One entry as written, before validation.
 #[derive(Debug)]
 pub(crate) struct RawEntry {
@@ -139,6 +150,8 @@ pub(crate) struct RawEntry {
     pub(crate) field: Slot<Ident>,
     /// `sample: <expr>`.
     pub(crate) sample: Slot<Expr>,
+    /// `residue: none | <path>`.
+    pub(crate) residue: Slot<ResidueSpec>,
 }
 
 /// Parses the body of one `properties! { .. }` invocation. Every mistake is
@@ -242,6 +255,7 @@ fn parse_entry(input: ParseStream, errors: &mut Errors) -> syn::Result<RawEntry>
         lift: Slot::Absent,
         field: Slot::Absent,
         sample: Slot::Absent,
+        residue: Slot::Absent,
     };
     parse_keys(&content, &mut entry, errors);
 
@@ -405,6 +419,13 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             content,
             errors,
         ),
+        "residue" => store(
+            &mut entry.residue,
+            k,
+            parse_residue(content),
+            content,
+            errors,
+        ),
         _ => {
             errors.push(syn::Error::new(
                 key.span(),
@@ -558,6 +579,31 @@ fn parse_computed(content: ParseStream) -> syn::Result<ComputedSpec> {
         ty: Box::new(ty),
         hook,
     })
+}
+
+/// `none`, or a path to a function (`object_position_residue`).
+fn parse_residue(content: ParseStream) -> syn::Result<ResidueSpec> {
+    const EXPECTED: &str = "expected `none` or a path to a `fn(&Specified) -> Option<&'static str>`, e.g. `residue: object_position_residue`";
+    if let Some((ident, rest)) = content.cursor().ident() {
+        let ends = rest.eof() || matches!(rest.punct(), Some((comma, _)) if comma.as_char() == ',');
+        if ends && ident == "none" {
+            content.call(Ident::parse_any)?;
+            return Ok(ResidueSpec::None);
+        }
+        if ends && ident == "None" {
+            return Err(syn::Error::new(
+                ident.span(),
+                "write `residue: none` (lowercase) for a value that never carries a length",
+            ));
+        }
+    }
+    let fork = content.fork();
+    match fork.parse::<ExprPath>() {
+        Ok(_) if fork.is_empty() || fork.peek(Token![,]) => {
+            Ok(ResidueSpec::Path(content.parse::<ExprPath>()?))
+        }
+        _ => Err(content.error(EXPECTED)),
+    }
 }
 
 #[cfg(test)]

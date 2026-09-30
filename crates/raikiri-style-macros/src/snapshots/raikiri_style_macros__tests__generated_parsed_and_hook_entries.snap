@@ -281,6 +281,26 @@ mod decl {
             other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
         }
     }
+    # [doc = r" The length a declared longhand's specified value still carries"]
+    # [doc = r" (a unit or form that computing resolves), named for a test"]
+    # [doc = r" failure message; `None` when it carries none. Each entry answers"]
+    # [doc = r" through its `residue:` (a function, or `none` for a value that"]
+    # [doc = r" never carries a length). `value` must be a variant declared in"]
+    # [doc = r" `properties!`."]
+    # [cfg (test)]
+    pub (crate) fn longhand_specified_residue (value : & PropertyValue ,) -> :: core :: option :: Option < & 'static str > {
+        match value {
+            PropertyValue :: ObjectFit (v) => {
+                let _ = v ;
+                :: core :: option :: Option :: None
+            }
+            PropertyValue :: WordSpacing (v) => {
+                let residue : fn (& spacing :: Specified) -> :: core :: option :: Option < & 'static str > = length_residue ;
+                residue (v)
+            }
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
     # [doc = r" Invokes `$cb! { <hand entries> Variant => sample, ... }` with every"]
     # [doc = r" declared longhand's sample value appended after the hand entries."]
     # [cfg (test)]

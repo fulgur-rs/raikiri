@@ -1,0 +1,39 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(&src, &errors)"
+---
+error: write `residue: none` (lowercase) for a value that never carries a length
+  --> 19:83
+   |
+19 |         "d-prop" => DProp { keywords: [X, Y], initial: X, inherited: no, residue: None },
+   |                                                                                   ^^^^
+
+error: expected `none` or a path to a `fn(&Specified) -> Option<&'static str>`, e.g. `residue: object_position_residue`
+  --> 21:95
+   |
+21 |         "e-prop" => EProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O, residue: |v| None },
+   |                                                                                               ^
+
+error: duplicate key `residue` in this entry
+  --> 23:101
+   |
+23 |         "f-prop" => FProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O, residue: none, residue: r },
+   |                                                                                                     ^^^^^^^
+
+error: the "a-prop" entry is missing `residue: none | <fn>`; it has a hook, so say whether its specified value can carry a length that computing resolves: `none`, or a `fn(&Specified) -> Option<&'static str>` that names it
+  --> 13:21
+   |
+13 |         "a-prop" => AProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c, sample: 2.0 },
+   |                     ^^^^^
+
+error: the "b-prop" entry is missing `residue: none | <fn>`; its value type is not a `keywords:` enum, so say whether its specified value can carry a length that computing resolves: `none`, or a `fn(&Specified) -> Option<&'static str>` that names it
+  --> 15:21
+   |
+15 |         "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O },
+   |                     ^^^^^
+
+error: the "c-prop" entry is missing `residue: none | <fn>`; it has a hook, so say whether its specified value can carry a length that computing resolves: `none`, or a `fn(&Specified) -> Option<&'static str>` that names it
+  --> 17:21
+   |
+17 |         "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, computed: T via t },
+   |                     ^^^^^

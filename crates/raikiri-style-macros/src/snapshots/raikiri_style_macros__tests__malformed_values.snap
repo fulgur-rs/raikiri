@@ -11,13 +11,13 @@ error: expected `yes` or `no`; write `yes` instead of `true`
 error: expected a path to a function, e.g. `parse_object_fit`
   --> 15:71
    |
-15 |         "b-prop" => BProp: Length { initial: L, inherited: no, parse: |i| None, sample: L },
+15 |         "b-prop" => BProp: Length { initial: L, inherited: no, parse: |i| None, sample: L, residue: none },
    |                                                                       ^
 
 error: a computed type needs its hook: `computed: Type via hook`, or `computed: as_specified`
   --> 17:84
    |
-17 |         "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: Px, sample: L },
+17 |         "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: Px, sample: L, residue: none },
    |                                                                                    ^^
 
 error: expected a keyword list, e.g. `keywords: [Auto, Isolate]`

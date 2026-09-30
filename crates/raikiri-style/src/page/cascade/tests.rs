@@ -4287,42 +4287,13 @@ fn page_corpus_covers_every_registered_property_value_variant() {
 /// [`Border`] does not fail to compile.
 fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     /// The `<length-percentage>` of a box property (`padding` / `margin` /
-    /// `width` / `height` / `border-*-width`).
-    ///
-    /// CSS Values 4 §5.5.1
-    /// <https://www.w3.org/TR/css-values-4/#combine-percentages> says that
-    /// percentages remain at the computed layer by default ("the computed
-    /// value of a percentage is the specified percentage"). `Pt` is
-    /// residue not because it is non-absolute — CSS Values 4 §6.2
-    /// <https://www.w3.org/TR/css-values-4/#absolute-lengths> counts `pt`
-    /// as absolute — but because "px is their canonical unit." Raikiri's
-    /// invariant normalizes the computed-layer representation to `Px`.
+    /// `width` / `height` / `border-*-width`): percentages stay, and every
+    /// unit other than `px` is residue. The classification (and its CSS
+    /// Values 4 rationale) lives in `length_residue` next to the
+    /// `properties!` table in `property/decl.rs`, which the table entries'
+    /// `residue:` functions share.
     fn length(l: Length) -> Option<&'static str> {
-        match l {
-            Length::Px(_) | Length::Percent(_) => None,
-            Length::Em(_) => Some("Length::Em"),
-            Length::Rem(_) => Some("Length::Rem"),
-            Length::Pt(_) => Some("Length::Pt"),
-            // Additional font-relative and absolute units are residue for
-            // the same reason as `Em` / `Rem` / `Pt`: before absolutization,
-            // these specified-only representations cannot exist in the computed layer.
-            Length::Ex(_) => Some("Length::Ex"),
-            Length::Rex(_) => Some("Length::Rex"),
-            Length::Ch(_) => Some("Length::Ch"),
-            Length::Rch(_) => Some("Length::Rch"),
-            Length::Ic(_) => Some("Length::Ic"),
-            Length::Ric(_) => Some("Length::Ric"),
-            Length::Cm(_) => Some("Length::Cm"),
-            Length::Mm(_) => Some("Length::Mm"),
-            Length::Q(_) => Some("Length::Q"),
-            Length::In(_) => Some("Length::In"),
-            Length::Pc(_) => Some("Length::Pc"),
-            // Same reasoning as the `Em`/`Rem`/`Pt`
-            // arms above: pre-absolutization these units don't exist in
-            // the computed layer.
-            Length::Lh(_) => Some("Length::Lh"),
-            Length::Rlh(_) => Some("Length::Rlh"),
-        }
+        crate::property::length_residue(l)
     }
     /// For positions where `%` **does not remain** at the computed layer:
     /// `font-size` and `line-height`.
@@ -4512,41 +4483,20 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
 
     match value {
             // Table-declared longhands (`properties!` in property/decl.rs)
-            // that carry a length. The first matching arm wins, so each must
-            // precede the blanket `longhand_value_pat!()` arm below, or this
-            // detector goes blind to its residue. `object-position` (CSS
-            // Images Module Level 3 §5.2) stores a `<length-percentage>` per
-            // edge/offset, same shape as `background-position` (both reuse
-            // `CssPosition`).
-            PropertyValue::ObjectPosition(pos) => {
-                fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
-                    match o {
-                        CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
-                    }
-                }
-                offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
+            // answer through each entry's `residue:`: `object-position`
+            // (CSS Images 3 §5.2) checks its offsets' lengths, and the
+            // keyword payloads of `isolation`, `object-fit` and
+            // `empty-cells` and `opacity`'s bare `f32` (CSS Color 4 §3.3)
+            // are `none`. This detector only checks for *length* residue, so
+            // it reports `None` for `opacity` regardless of the value's
+            // range; its `[0,1]` clamp (the entry's `compute:` hook) is real
+            // phase-3 work, same as `OverflowX`/`WritingMode` below — see
+            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
+            // is accounted for. An explicit arm for a table variant is an
+            // unreachable pattern wherever it is placed.
+            crate::property::longhand_value_pat!() => {
+                crate::property::longhand_specified_residue(value)
             }
-            // Every other table-declared longhand carries no `Length` —
-            // always `None`: `isolation`, `object-fit` and `empty-cells`
-            // carry keyword payloads, and `opacity` (CSS Color 4 §3.3) a bare
-            // `f32`. This detector only checks for *length* residue, so it
-            // reports `None` for `opacity` regardless of the value's range;
-            // its `[0,1]` clamp (the entry's `compute:` hook) is real phase-3
-            // work, same as `OverflowX`/`WritingMode` below — see
-            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that is
-            // accounted for.
-            //
-            // The pattern also covers `ObjectPosition`, already taken by the
-            // arm above: rustc reports that alternative as unreachable, which
-            // is intended here, hence the allow on this arm alone. Keep only
-            // length-bearing table arms above it: an explicit arm for another
-            // table variant placed below it is still reported as
-            // unreachable, but one placed above it would be silently
-            // accepted. A generated per-entry residue hook would replace
-            // these explicit arms once more than one table entry carries a
-            // length.
-            #[allow(unreachable_patterns)]
-            crate::property::longhand_value_pat!() => None,
             PropertyValue::FontWeight(fw) => font_weight(*fw),
             PropertyValue::TextAlign(ta) => text_align(*ta),
             PropertyValue::HangingPunctuation(_) => None,
@@ -5782,6 +5732,19 @@ fn specified_layer_residue_detector_is_not_vacuous() {
 /// themselves are pinned by
 /// `phase_3_variant_classification_matches_the_documented_counts`; this
 /// test drives the same rule end-to-end through `cascade_page`.
+/// Table-declared values reach the detector through their entries'
+/// `residue:`: of the table samples, only `object-position`'s (font- and
+/// root-relative offsets) is residue, and every keyword or number payload
+/// is not.
+#[test]
+fn table_declared_samples_report_residue_through_their_entries() {
+    let reported: Vec<_> = crate::property::longhand_samples()
+        .into_iter()
+        .filter_map(|(name, value)| specified_layer_residue(&value).map(|r| (name, r)))
+        .collect();
+    assert_eq!(reported, [("object-position", "Length::Em")]);
+}
+
 #[test]
 fn cascade_page_computed_equivalent_values_pass_phase_3_unchanged() {
     let root = root_with_weight(700.0);

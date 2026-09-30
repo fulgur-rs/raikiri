@@ -23,7 +23,7 @@ error: `Hash` is listed twice in `derive:`
 error: `derive:` only applies to the enum a `keywords:` entry generates; derive on the value type where it is declared
   --> 15:34
    |
-15 |         "b-prop" => BProp: f32 { derive: [Default], initial: 1.0, inherited: no, parse: p, sample: 2.0 },
+15 |         "b-prop" => BProp: f32 { derive: [Default], initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none },
    |                                  ^^^^^^
 
 error: `Default` marks the `initial:` keyword with `#[default]`, but the "c-prop" entry's `initial:` is not one of its keywords

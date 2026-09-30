@@ -12,7 +12,7 @@ use quote::{ToTokens as _, format_ident, quote, quote_spanned};
 use syn::spanned::Spanned as _;
 use syn::{Ident, Variant};
 
-use crate::model::{Entry, FIXED_DERIVES, Lift, Value, is_reserved_type};
+use crate::model::{Entry, FIXED_DERIVES, Lift, Residue, Value, is_reserved_type};
 
 /// A local identifier invisible to user tokens.
 fn local(name: &str) -> Ident {
@@ -288,6 +288,27 @@ fn longhand_impl(entry: &Entry) -> TokenStream {
     }
 }
 
+/// The `longhand_specified_residue` arm of one entry.
+fn residue_arm(entry: &Entry, value: &Ident) -> TokenStream {
+    let variant = &entry.variant;
+    let field = &entry.field;
+    let body = match &entry.residue {
+        Residue::None => quote! {
+            let _ = #value;
+            ::core::option::Option::None
+        },
+        Residue::Path(path) => {
+            let f = local("residue");
+            quote_spanned! {path.span()=>
+                let #f: fn(&#field::Specified) -> ::core::option::Option<&'static str> = #path;
+                #f(#value)
+            }
+        }
+        Residue::Broken => unreachable_body(&[value]),
+    };
+    quote!(PropertyValue::#variant(#value) => { #body })
+}
+
 /// Every generated item of the module, after the (extended) hand-written
 /// enums. `key_arms` are the `key()` arms of the hand-written variants.
 pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream {
@@ -330,6 +351,7 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
     let ctx = local("ctx");
     let v = local("v");
     let other = local("other");
+    let residue_arms: Vec<_> = entries.iter().map(|e| residue_arm(e, &v)).collect();
     let key = local("key");
     let normalized_name = local("normalized_name");
     let input = local("input");
@@ -530,6 +552,24 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
         pub(crate) fn longhand_sample(#key: PropertyKey) -> PropertyValue {
             match #key {
                 #( PropertyKey::#variants => PropertyValue::#variants(#projections::sample()), )*
+                #other => ::core::unreachable!(
+                    "not a longhand declared in `properties!`: {:?}", #other
+                ),
+            }
+        }
+
+        /// The length a declared longhand's specified value still carries
+        /// (a unit or form that computing resolves), named for a test
+        /// failure message; `None` when it carries none. Each entry answers
+        /// through its `residue:` (a function, or `none` for a value that
+        /// never carries a length). `value` must be a variant declared in
+        /// `properties!`.
+        #[cfg(test)]
+        pub(crate) fn longhand_specified_residue(
+            #value: &PropertyValue,
+        ) -> ::core::option::Option<&'static str> {
+            match #value {
+                #( #residue_arms )*
                 #other => ::core::unreachable!(
                     "not a longhand declared in `properties!`: {:?}", #other
                 ),

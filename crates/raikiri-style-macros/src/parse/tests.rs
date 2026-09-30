@@ -1,6 +1,6 @@
 use quote::ToTokens as _;
 
-use super::{ComputedSpec, RawEntry, Slot, parse_block};
+use super::{ComputedSpec, RawEntry, ResidueSpec, Slot, parse_block};
 use crate::diag::Errors;
 
 fn parse(src: &str) -> (Vec<RawEntry>, Vec<String>) {
@@ -225,4 +225,65 @@ fn a_malformed_derive_list_is_one_error() {
     assert_eq!(tokens(&entries[0].initial), "X");
     assert!(matches!(entries[1].derive, Slot::Invalid(_)));
     assert_eq!(tokens(&entries[1].initial), "X");
+}
+
+#[test]
+fn parses_residue_forms() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A { residue: none },
+        "b" => B { residue: object_position_residue, initial: X },
+        "c" => C { residue: crate::residue::<u8>, },
+        "#,
+    );
+    assert_eq!(errors, Vec::<String>::new());
+    assert!(matches!(
+        entries[0].residue.value(),
+        Some(ResidueSpec::None)
+    ));
+    let path = |i: usize| match entries[i].residue.value() {
+        Some(ResidueSpec::Path(path)) => path.to_token_stream().to_string(),
+        other => panic!("expected a path, got {other:?}"),
+    };
+    assert_eq!(path(1), "object_position_residue");
+    assert_eq!(tokens(&entries[1].initial), "X");
+    assert_eq!(path(2), "crate :: residue :: < u8 >");
+}
+
+#[test]
+fn a_malformed_residue_is_one_error() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A { residue: None, initial: X },
+        "b" => B { residue: Some(x), initial: X },
+        "c" => C { residue: |v| None, initial: X },
+        "d" => D { residue: none none, initial: X },
+        "e" => E { residue: , initial: X },
+        "#,
+    );
+    assert_eq!(errors.len(), 5, "{errors:?}");
+    assert!(
+        errors[0].starts_with("write `residue: none` (lowercase)"),
+        "{errors:?}"
+    );
+    for error in &errors[1..] {
+        assert!(
+            error.starts_with("expected `none` or a path to a `fn(&Specified)"),
+            "{errors:?}"
+        );
+    }
+    for entry in &entries {
+        assert!(matches!(entry.residue, Slot::Invalid(_)), "{entry:?}");
+        assert_eq!(tokens(&entry.initial), "X");
+    }
+}
+
+#[test]
+fn a_repeated_residue_is_one_error() {
+    let (entries, errors) = parse(r#""a" => A { residue: none, residue: f }"#);
+    assert_eq!(errors, ["duplicate key `residue` in this entry"]);
+    assert!(matches!(
+        entries[0].residue.value(),
+        Some(ResidueSpec::None)
+    ));
 }

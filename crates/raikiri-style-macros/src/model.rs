@@ -17,7 +17,7 @@ use syn::{Attribute, Expr, ExprPath, Ident, LitStr, Path, Type};
 
 use crate::case::split_camel;
 use crate::diag::Errors;
-use crate::parse::{ComputedSpec, RawEntry, Slot};
+use crate::parse::{ComputedSpec, RawEntry, ResidueSpec, Slot};
 
 /// One keyword of a `keywords` entry, with its spelling resolved.
 pub(crate) struct Keyword {
@@ -50,6 +50,17 @@ pub(crate) enum Lift {
     /// `lift: <path>`.
     Path(ExprPath),
     /// `lift:` was malformed (already reported).
+    Broken,
+}
+
+/// How the test-only residue check inspects an entry's specified value.
+pub(crate) enum Residue {
+    /// `residue: none`, written or defaulted: never a length residue.
+    None,
+    /// `residue: <path>`.
+    Path(ExprPath),
+    /// `residue:` was malformed, or is missing where it is required (both
+    /// already reported).
     Broken,
 }
 
@@ -121,6 +132,8 @@ pub(crate) struct Entry {
     pub(crate) lift: Lift,
     /// The test-only sample value expression; `None` after an error.
     pub(crate) sample: Option<TokenStream>,
+    /// The test-only length-residue check of the specified value.
+    pub(crate) residue: Residue,
     /// Whether the name takes part in name lookup and parse dispatch
     /// (`false` when the name duplicates an earlier entry's).
     pub(crate) name_listed: bool,
@@ -245,6 +258,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         lift,
         field,
         sample,
+        residue,
     } = raw;
     let docs = docs_only(attrs, "a longhand entry", errors);
     if docs.is_empty() {
@@ -269,6 +283,10 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
             format!("the {entry_name} entry is missing `{key}: {hint}`"),
         ));
     };
+
+    // Without either, the entry is reported below, and rules that depend on
+    // the kind of value are not reported again.
+    let value_kind_unknown = keywords.is_absent() && parse.is_absent();
 
     // The specified value: keywords or a parsed type.
     let value = match (&keywords, &parse) {
@@ -398,6 +416,13 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
     };
 
     let computed_invalid = matches!(computed, Slot::Invalid(_));
+    // Whether the entry has a specified-to-computed hook; `None` when a
+    // malformed hook key leaves that unknown.
+    let hooked = match (&compute, &computed) {
+        (Slot::Present(..), _) | (_, Slot::Present(_, ComputedSpec::Via { .. })) => Some(true),
+        (Slot::Invalid(_), _) | (_, Slot::Invalid(_)) => None,
+        _ => Some(false),
+    };
     let (computed_ty, via_hook) = match computed {
         Slot::Present(_, ComputedSpec::Via { ty, hook }) => {
             check_reserved_type(&ty, errors);
@@ -474,6 +499,37 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         },
     };
 
+    let residue = match residue {
+        Slot::Present(_, ResidueSpec::None) => Residue::None,
+        Slot::Present(_, ResidueSpec::Path(path)) => Residue::Path(path),
+        Slot::Invalid(_) => Residue::Broken,
+        // Only a keyword enum without a hook is known to carry no length:
+        // the default.
+        Slot::Absent if hooked == Some(false) && matches!(value, Value::Keywords(_)) => {
+            Residue::None
+        }
+        Slot::Absent => {
+            let reason = match hooked {
+                // A malformed hook key or a missing `keywords:` / `parse:`
+                // has been reported; whether `residue:` is required is then
+                // unknown, so its absence is not reported as well.
+                None if matches!(value, Value::Keywords(_)) => None,
+                _ if value_kind_unknown => None,
+                Some(true) => Some("it has a hook"),
+                _ => Some("its value type is not a `keywords:` enum"),
+            };
+            if let Some(reason) = reason {
+                errors.push(syn::Error::new(
+                    variant.span(),
+                    format!(
+                        "the {entry_name} entry is missing `residue: none | <fn>`; {reason}, so say whether its specified value can carry a length that computing resolves: `none`, or a `fn(&Specified) -> Option<&'static str>` that names it"
+                    ),
+                ));
+            }
+            Residue::Broken
+        }
+    };
+
     Entry {
         docs,
         name,
@@ -489,6 +545,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         computed_ty,
         lift,
         sample: sample_expr,
+        residue,
         name_listed: true,
     }
 }

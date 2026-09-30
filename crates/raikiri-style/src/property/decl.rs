@@ -212,6 +212,61 @@ fn lift_object_position(computed: ComputedCssPosition) -> CssPosition {
     }
 }
 
+// Residue checks named by `residue:` in the table below (test only). They
+// feed the page-cascade test's specified-layer residue detector through the
+// generated `longhand_specified_residue`.
+
+/// The unit a specified `<length-percentage>` still carries when it is not
+/// in computed form, named for a test failure message; `None` for `px` and
+/// percentages.
+///
+/// CSS Values 4 §5.5.1
+/// <https://www.w3.org/TR/css-values-4/#combine-percentages> says that
+/// percentages remain at the computed layer by default ("the computed
+/// value of a percentage is the specified percentage"). `Pt` is residue
+/// not because it is non-absolute (CSS Values 4 §6.2
+/// <https://www.w3.org/TR/css-values-4/#absolute-lengths> counts `pt` as
+/// absolute) but because "px is their canonical unit": this crate
+/// normalizes the computed-layer representation to `Px`. Every other
+/// font-relative or absolute unit is residue for the same reason: before
+/// absolutization, these specified-only representations cannot exist in
+/// the computed layer.
+#[cfg(test)]
+pub(crate) fn length_residue(l: Length) -> Option<&'static str> {
+    match l {
+        Length::Px(_) | Length::Percent(_) => None,
+        Length::Em(_) => Some("Length::Em"),
+        Length::Rem(_) => Some("Length::Rem"),
+        Length::Pt(_) => Some("Length::Pt"),
+        Length::Ex(_) => Some("Length::Ex"),
+        Length::Rex(_) => Some("Length::Rex"),
+        Length::Ch(_) => Some("Length::Ch"),
+        Length::Rch(_) => Some("Length::Rch"),
+        Length::Ic(_) => Some("Length::Ic"),
+        Length::Ric(_) => Some("Length::Ric"),
+        Length::Cm(_) => Some("Length::Cm"),
+        Length::Mm(_) => Some("Length::Mm"),
+        Length::Q(_) => Some("Length::Q"),
+        Length::In(_) => Some("Length::In"),
+        Length::Pc(_) => Some("Length::Pc"),
+        Length::Lh(_) => Some("Length::Lh"),
+        Length::Rlh(_) => Some("Length::Rlh"),
+    }
+}
+
+/// `object-position`'s residue check: each offset's `<length-percentage>`
+/// (CSS Images 3 §5.2; the edge itself carries no length), the same shape
+/// as `background-position`'s, since both reuse [`CssPosition`].
+#[cfg(test)]
+fn object_position_residue(position: &CssPosition) -> Option<&'static str> {
+    fn offset(o: CssPositionOffset) -> Option<&'static str> {
+        match o {
+            CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length_residue(l),
+        }
+    }
+    offset(position.horizontal).or_else(|| offset(position.vertical))
+}
+
 // `#[longhands]` can only read an inline module, hence the nested `decl`.
 #[longhands]
 #[allow(clippy::module_inception)]
@@ -2430,6 +2485,7 @@ mod decl {
             inherited: yes,
             parse: parse_empty_cells,
             sample: Hide,
+            residue: none,
         },
         /// CSS Color 4 §3.3 "Transparency: the opacity property"
         /// <https://www.w3.org/TR/css-color-4/#transparency>. Grammar:
@@ -2482,6 +2538,8 @@ mod decl {
             // whose computed values must differ from the initial ones: an
             // over-range sample would clamp to the initial `1`.
             sample: -0.5,
+            // A bare number: the clamp is phase-3 work, but not a length.
+            residue: none,
         },
         /// CSS Images Module Level 3 §5.2 "Positioning the replaced element:
         /// the object-position property"
@@ -2525,6 +2583,7 @@ mod decl {
                 horizontal: CssPositionOffset::Start(Length::Em(2.0)),
                 vertical: CssPositionOffset::End(Length::Rem(1.0)),
             },
+            residue: object_position_residue,
         },
     }
 }

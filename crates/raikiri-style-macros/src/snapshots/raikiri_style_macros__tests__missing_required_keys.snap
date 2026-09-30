@@ -5,25 +5,25 @@ expression: rendered
 error: the "opacity" entry is missing `initial: <value>`
   --> 13:22
    |
-13 |         "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no },
+13 |         "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no, residue: none },
    |                      ^^^^^^^
 
 error: the "opacity" entry is missing `sample: <non-initial value>`
   --> 13:22
    |
-13 |         "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no },
+13 |         "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no, residue: none },
    |                      ^^^^^^^
 
 error: the "object-fit" entry is missing `inherited: yes | no`
   --> 15:25
    |
-15 |         "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit },
+15 |         "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit, residue: none },
    |                         ^^^^^^^^^
 
 error: the "object-fit" entry is missing `sample: <non-initial value>`
   --> 15:25
    |
-15 |         "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit },
+15 |         "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit, residue: none },
    |                         ^^^^^^^^^
 
 error: the "x-prop" entry needs `keywords: [..]` or `parse: <fn>` to know how its value is parsed

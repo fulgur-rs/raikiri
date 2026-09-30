@@ -197,12 +197,12 @@ fn generates_parsed_and_hook_entries() {
     pub enum PropertyKey {}
     properties! {
         /// CSS Images 3 §5.1
-        "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },
+        "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain, residue: none },
         /// CSS Text 3 §7.2
         "word-spacing" => WordSpacing: Length {
             initial: Length::Px(0.0), inherited: yes, parse: parse_length,
             computed: ComputedLength via absolutize_length, lift: lift_length,
-            field: spacing, sample: Length::Em(2.0),
+            field: spacing, sample: Length::Em(2.0), residue: length_residue,
         },
     }
 }
@@ -282,7 +282,7 @@ fn unknown_key() {
         r#"        /// CSS Compositing 1 §3.4.2
         "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no, animatable: no },
         /// CSS Images 3 §5.1
-        "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },"#,
+        "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain, residue: none },"#,
     );
     let (expanded, errors) = expand(&src);
     assert_eq!(errors.len(), 1);
@@ -300,7 +300,7 @@ fn duplicate_name() {
         r#"        /// CSS Compositing 1 §3.4.2
         "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },
         /// CSS Images 3 §5.1
-        "isolation" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },"#,
+        "isolation" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain, residue: none },"#,
     ));
     assert_eq!(count, 1);
     insta::assert_snapshot!("duplicate_name", rendered);
@@ -326,9 +326,9 @@ fn duplicate_variant_field_and_hand_written_variant() {
 fn missing_required_keys() {
     let (rendered, count) = diagnostics(&module(
         r#"        /// CSS Color 4 §3.3
-        "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no },
+        "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no, residue: none },
         /// CSS Images 3 §5.1
-        "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit },
+        "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit, residue: none },
         /// No parser.
         "x-prop" => XProp { initial: A, inherited: no, sample: B },
         "undocumented" => Undocumented { keywords: [A, B], initial: A, inherited: no },"#,
@@ -343,9 +343,9 @@ fn malformed_values() {
         r#"        /// A.
         "a-prop" => AProp { keywords: [X, Y], initial: X, inherited: true },
         /// B.
-        "b-prop" => BProp: Length { initial: L, inherited: no, parse: |i| None, sample: L },
+        "b-prop" => BProp: Length { initial: L, inherited: no, parse: |i| None, sample: L, residue: none },
         /// C.
-        "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: Px, sample: L },
+        "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: Px, sample: L, residue: none },
         /// D.
         "d-prop" => DProp { keywords: Auto, initial: Auto, inherited: no },
         /// E.
@@ -366,9 +366,9 @@ fn conflicting_keys() {
         "b-prop" => BProp: u8 { keywords: [X, Y], initial: X, inherited: no },
         /// C.
         "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c,
-                                 computed: Px via to_px, sample: 2.0 },
+                                 computed: Px via to_px, sample: 2.0, residue: none },
         /// D.
-        "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0 },"#,
+        "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0, residue: none },"#,
     ));
     assert_eq!(count, 4);
     insta::assert_snapshot!("conflicting_keys", rendered);
@@ -398,7 +398,7 @@ fn derive_mistakes() {
         r#"        /// A.
         "a-prop" => AProp { keywords: [X, Y], derive: [Clone, Hash, Hash], initial: X, inherited: no },
         /// B.
-        "b-prop" => BProp: f32 { derive: [Default], initial: 1.0, inherited: no, parse: p, sample: 2.0 },
+        "b-prop" => BProp: f32 { derive: [Default], initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none },
         /// C.
         "c-prop" => CProp { keywords: [X, Y], derive: [Default], initial: CProp::Q, inherited: no },
         /// D.
@@ -406,6 +406,71 @@ fn derive_mistakes() {
     ));
     assert_eq!(count, 5);
     insta::assert_snapshot!("derive_mistakes", rendered);
+}
+
+/// A hooked or parsed entry without `residue:` is one error on its head; a
+/// malformed or repeated `residue:` is one error on the written tokens.
+#[test]
+fn residue_mistakes() {
+    let src = module(
+        r#"        /// A.
+        "a-prop" => AProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c, sample: 2.0 },
+        /// B.
+        "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O },
+        /// C.
+        "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, computed: T via t },
+        /// D.
+        "d-prop" => DProp { keywords: [X, Y], initial: X, inherited: no, residue: None },
+        /// E.
+        "e-prop" => EProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O, residue: |v| None },
+        /// F.
+        "f-prop" => FProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O, residue: none, residue: r },"#,
+    );
+    let (expanded, errors) = expand(&src);
+    assert_eq!(errors.len(), 6);
+    insta::assert_snapshot!("residue_mistakes", render(&src, &errors));
+    // Every entry is still declared, so its uses keep compiling.
+    assert_eq!(
+        enum_variants(&expanded, "PropertyValue"),
+        [
+            "Color",
+            "CustomProperty",
+            "AProp",
+            "BProp",
+            "CProp",
+            "DProp",
+            "EProp",
+            "FProp"
+        ]
+    );
+}
+
+#[test]
+fn generates_the_residue_check() {
+    let src = module(
+        r#"        /// A keyword entry: `none` by default.
+        "a-prop" => AProp { keywords: [X, Y], initial: X, inherited: no },
+        /// A length entry with its residue function.
+        "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, sample: L::O, residue: l_residue },
+        /// A written `none`.
+        "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c, sample: 2.0, residue: none },
+        /// A malformed `residue:`: the arm is unreachable.
+        "d-prop" => DProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O, residue: 3 },"#,
+    );
+    let (expanded, errors) = expand(&src);
+    assert_eq!(errors.len(), 1, "{}", render(&src, &errors));
+    let module: syn::ItemMod = syn::parse2(expanded).expect("expansion is a module");
+    let (_, items) = module.content.expect("inline module");
+    let function = items
+        .into_iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(f) if f.sig.ident == "longhand_specified_residue" => {
+                Some(quote::ToTokens::into_token_stream(f))
+            }
+            _ => None,
+        })
+        .expect("longhand_specified_residue");
+    insta::assert_snapshot!("generated_residue_check", pretty(function));
 }
 
 #[test]
@@ -586,6 +651,7 @@ fn module_items_survive_when_no_entry_does() {
         "parse_longhand_value",
         "with_longhand_samples",
         "with_longhand_variants",
+        "longhand_specified_residue",
     ] {
         assert!(
             names.iter().any(|n| n == expected),

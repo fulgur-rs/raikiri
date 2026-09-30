@@ -130,6 +130,16 @@ mod property {
         }
     }
 
+    /// The residue check of the length entries: font- and root-relative
+    /// lengths are resolved by computing, `px` is not.
+    pub fn length_residue(length: &Length) -> Option<&'static str> {
+        match length {
+            Length::Px(_) => None,
+            Length::Em(_) => Some("Length::Em"),
+            Length::Rem(_) => Some("Length::Rem"),
+        }
+    }
+
     /// An explicit lift, for the entry that does not use `Into::into`.
     pub fn px_to_length(px: Px) -> Length {
         Length::Px(px.0)
@@ -189,7 +199,9 @@ mod property {
             /// CSS Compositing 1 §3.4.2
             "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },
             /// CSS Images 3 §5.1
-            "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },
+            "object-fit" => ObjectFit {
+                initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain, residue: none,
+            },
         }
 
         properties! {
@@ -198,7 +210,7 @@ mod property {
                 initial: 1.0, inherited: no, parse: parse_number,
                 // Deliberately clamps to the initial value, against the crate
                 // docs' advice, so that `equal_fields` has a clamp to catch.
-                compute: clamp_opacity, sample: 2.0,
+                compute: clamp_opacity, sample: 2.0, residue: none,
             },
             /// An inherited keyword longhand with explicit spellings.
             "text-case" => TextCase {
@@ -216,13 +228,14 @@ mod property {
             /// back through `Into::into`.
             "word-spacing" => WordSpacing: Length {
                 initial: Length::Px(0.0), inherited: yes, parse: parse_length,
-                computed: Px via absolutize_length, sample: Length::Em(2.0)
+                computed: Px via absolutize_length, sample: Length::Em(2.0),
+                residue: length_residue
             },
             /// A non-inherited longhand with an explicit lift and field.
             "tab-width" => TabWidth: Length {
                 initial: Length::Px(8.0), inherited: no, parse: parse_length,
                 computed: Px via absolutize_length, lift: px_to_length,
-                field: tab, sample: Length::Em(1.0),
+                field: tab, sample: Length::Em(1.0), residue: crate::property::length_residue,
             },
             /// A keywords longhand whose initial value is written as a path.
             "break-mode" => BreakMode {
@@ -597,6 +610,43 @@ fn registry_callbacks_append_declared_entries() {
             "BreakMode"
         ]
     );
+}
+
+/// `residue:` answers per entry: `none` (written, or the default of a
+/// `keywords:` entry without a hook) is never a residue, and a residue
+/// function sees the specified payload.
+#[test]
+fn specified_residue_asks_each_entry() {
+    use property::longhand_specified_residue as residue;
+
+    assert_eq!(residue(&PropertyValue::Isolation(Isolation::Isolate)), None);
+    assert_eq!(residue(&PropertyValue::TextCase(TextCase::Upper)), None);
+    assert_eq!(residue(&PropertyValue::ObjectFit(ObjectFit::Cover)), None);
+    assert_eq!(residue(&PropertyValue::Opacity(2.0)), None);
+    assert_eq!(
+        residue(&PropertyValue::WordSpacing(Length::Em(2.0))),
+        Some("Length::Em")
+    );
+    assert_eq!(residue(&PropertyValue::WordSpacing(Length::Px(2.0))), None);
+    assert_eq!(
+        residue(&PropertyValue::TabWidth(Length::Rem(1.0))),
+        Some("Length::Rem")
+    );
+    // Over every sample, only the length entries report a residue.
+    let reported: Vec<_> = property::longhand_samples()
+        .iter()
+        .filter_map(|(name, value)| residue(value).map(|r| (*name, r)))
+        .collect();
+    assert_eq!(
+        reported,
+        [("word-spacing", "Length::Em"), ("tab-width", "Length::Em")]
+    );
+}
+
+#[test]
+#[should_panic(expected = "not a longhand declared in `properties!`")]
+fn specified_residue_rejects_hand_written_variants() {
+    property::longhand_specified_residue(&PropertyValue::Color(0));
 }
 
 /// Table fields are read through `Deref` and written through `longhands`:

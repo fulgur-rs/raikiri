@@ -56,11 +56,11 @@ pub(crate) trait Longhand {
     /// The property name, lowercase.
     // The generated code spells names and inheritance as literals per entry.
     // `NAME` is read only by the generated test-only `longhand_samples()`,
-    // which nothing calls yet, and `INHERITED` by nothing; both stay as part
-    // of the declared longhand's description.
-    #[expect(
-        dead_code,
-        reason = "only the uncalled test-only `longhand_samples()` reads it"
+    // and `INHERITED` by nothing; both stay as part of the declared
+    // longhand's description.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the test-only `longhand_samples()` reads it")
     )]
     const NAME: &'static str;
     /// Whether the property is inherited.
