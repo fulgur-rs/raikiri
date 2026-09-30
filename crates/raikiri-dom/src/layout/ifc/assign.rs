@@ -7,7 +7,10 @@ use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
 use raikiri_style::property::{ColumnCountValue, DisplayValue};
-use raikiri_style::property::{Direction, HangingPunctuation, PositionValue, TextEmphasisStyle};
+use raikiri_style::property::{
+    Direction, HangingPunctuation, PositionValue, TextEmphasisStyle, TextTransform, VisualBox,
+    WordSpaceTransform,
+};
 use raikiri_traits::NodeKind;
 
 fn is_block_container(display: DisplayValue) -> bool {
@@ -73,6 +76,23 @@ fn has_rtl_char(text: &str) -> bool {
     })
 }
 
+/// Whether a `text-transform` value includes `full-width`. shodo's mapping
+/// covers fewer characters than the parley path, so such text is not handed
+/// to the inline engine.
+fn has_full_width_transform(value: TextTransform) -> bool {
+    matches!(
+        value,
+        TextTransform::FullWidth
+            | TextTransform::CapitalizeFullWidth
+            | TextTransform::UppercaseFullWidth
+            | TextTransform::LowercaseFullWidth
+            | TextTransform::FullWidthFullSizeKana
+            | TextTransform::CapitalizeFullWidthFullSizeKana
+            | TextTransform::UppercaseFullWidthFullSizeKana
+            | TextTransform::LowercaseFullWidthFullSizeKana
+    )
+}
+
 /// Whether the painter can draw the text of an element (the root or a
 /// descendant): direction, shadows, emphasis and hanging punctuation are not
 /// drawn.
@@ -82,6 +102,9 @@ fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
         && cv.text_shadow.is_empty()
         && matches!(cv.text_emphasis_style, TextEmphasisStyle::None)
         && cv.hanging_punctuation == HangingPunctuation::None
+        && cv.word_space_transform == WordSpaceTransform::None
+        && cv.background_clip != VisualBox::Text
+        && !has_full_width_transform(cv.text_transform)
 }
 
 /// Descendants are drawn without their own boxes: a relative offset moves the

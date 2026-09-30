@@ -297,3 +297,45 @@ fn the_root_itself_may_have_opacity_and_a_relative_position() {
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
 }
+
+#[test]
+fn word_space_transform_stays_on_the_parley_path() {
+    assert_stays_on_parley("word-space-transform:ideographic-space", text_only("aa bb"));
+}
+
+#[test]
+fn a_full_width_text_transform_stays_on_the_parley_path() {
+    // shodo's full-width mapping covers fewer characters than the parley path.
+    for value in [
+        "full-width",
+        "uppercase full-width",
+        "full-width full-size-kana",
+    ] {
+        assert_stays_on_parley(&format!("text-transform:{value}"), text_only("aa"));
+    }
+}
+
+#[test]
+fn a_case_transform_alone_is_still_a_root() {
+    let mut fixture = block_fixture("text-transform:uppercase", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn background_clip_text_stays_on_the_parley_path() {
+    // The clip needs the shape of the text, which the lines do not provide.
+    assert_stays_on_parley("background-clip:text", text_only("aa"));
+}
+
+#[test]
+fn background_clip_text_on_an_inline_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;background-clip:text");
+        doc.append_text(inner, "bb");
+    });
+}
