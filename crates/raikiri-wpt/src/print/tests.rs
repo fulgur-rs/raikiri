@@ -380,3 +380,30 @@ fn paints_left_and_right_page_background_images_per_page() {
         "second (left) page must render its red background image"
     );
 }
+
+#[test]
+fn paints_margin_box_background_with_origin_and_clip() {
+    let server = TestServer::start(HashMap::from([
+        (
+            "/pages/index.html",
+            TestResponse::ok(
+                "text/html",
+                b"<style>@page{size:64px 64px;margin:16px;@top-left{content:'x';background-image:url('red.png');background-origin:content-box;background-clip:padding-box;border:2px solid black;padding:2px}}</style>"
+                    .to_vec(),
+            ),
+        ),
+        ("/pages/red.png", TestResponse::ok("image/png", red_png())),
+    ]));
+
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("pages/index.html"),
+        64,
+        64,
+    )
+    .expect("render margin box background with origin/clip");
+    let requests = server.finish();
+
+    assert!(requests.iter().any(|path| path == "/pages/red.png"));
+    assert!(contains_red_pixel(&document.pages[0]));
+}

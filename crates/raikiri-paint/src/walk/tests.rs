@@ -3255,3 +3255,72 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
     let (tile, count) = round_axis_tiles(0.0, 20.0, BackgroundRepeatKeyword::Round);
     assert_eq!((tile, count), (20.0, Some(1)));
 }
+
+#[test]
+fn background_canvas_percent_padding_and_empty_painting() {
+    // Percent padding exercises the percent branch of `canvas_used_padding`.
+    let computed = ComputedValues::initial();
+    let (left, _, _, _) = canvas_used_padding(&computed, 200.0);
+    let _ = left;
+    let mut percent_computed = ComputedValues::initial();
+    percent_computed.padding.left = ComputedLengthPercentage::Percent(10.0);
+    let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
+    assert!((pl - 20.0).abs() < 0.001);
+
+    // Empty canvas painting (tiny area with large borders) skips silently.
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                ],
+            }))
+        }
+    }
+    let source = RedPixels;
+    let (document, cascade) = canvas_fixture(
+        Some("@page { margin: 5px; }"),
+        Some(
+            "background-image: url('https://example.test/red.png'); border: 20px solid black; background-clip: padding-box;",
+        ),
+    );
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background_image(
+        &mut scene,
+        &document,
+        &cascade,
+        kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+        Some(&source),
+        &mut warnings,
+    );
+    assert_eq!(background_fill_count(&scene), 0);
+}
+
+#[test]
+fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![255, 0, 0, 255],
+    };
+    let (position, space) = background_repeat_fixture("space", "0px 0px");
+    let mut scene = Scene::new();
+    paint_background_image(
+        &mut scene,
+        &decoded,
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        0.001,
+        0.001,
+        &position,
+        &space,
+    );
+    assert_eq!(background_fill_count(&scene), 1);
+}
