@@ -182,6 +182,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_grid(style, cv, &mut doc.layout_warnings);
     }
     refresh_order_modified_children(doc);
+    crate::layout::ifc::assign::assign_ifc_roots(doc, cascade);
     establish_minimal_line_boxes(doc, cascade);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {

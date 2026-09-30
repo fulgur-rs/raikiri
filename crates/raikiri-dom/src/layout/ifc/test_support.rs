@@ -26,8 +26,10 @@ pub(super) fn block_fixture(
     build: impl FnOnce(&mut Document, usize),
 ) -> Fixture {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    // No UA sheet is applied here, so the ancestors are made block containers
+    // explicitly (the initial `display` is `inline`).
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let style = format!("display:block;font-family:Ahem;font-size:10px;{extra_style}");
     let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
     build(&mut doc, root);
