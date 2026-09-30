@@ -1965,15 +1965,26 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // are no-ops (empty registry early-returns).
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let mut font_ctx = resolve_font_ctx_for(resources.inline_formatting || resources.wpt_fonts);
-    // Documents with @font-face keep the parley path: the alias rewrite of
-    // computed font families does not match the shodo document layer. A
-    // collection that cannot be built is an error, never a silent fallback
+    // A collection that cannot be built is an error, never a silent fallback
     // that would measure the parley path and report no difference.
-    if resources.inline_formatting && font_face_tree.font_faces().is_empty() {
-        let collection = wpt_font_collection_from(&inline_engine_font_candidates())?;
+    if resources.inline_formatting {
+        let shared = wpt_font_collection_from(&inline_engine_font_candidates())?;
+        let faces = font_face_tree.font_faces();
+        let fonts = if faces.is_empty() {
+            shared
+        } else {
+            // The faces are registered in a layer of their own under their
+            // authored family names, so the inline engine needs no rewriting
+            // of computed `font-family` lists.
+            let loader: &dyn raikiri_dom::FontFaceLoader = match resources.font_loader {
+                Some(loader) => loader,
+                None => &NoFaceLoader,
+            };
+            raikiri_dom::build_inline_document_fonts(&shared, faces, loader).0
+        };
         uncascaded
             .dom
-            .enable_inline_formatting(collection, shodo::limits::Limits::default());
+            .enable_inline_formatting(fonts, shodo::limits::Limits::default());
     }
     if let Some(loader) = resources.font_loader {
         raikiri_dom::register_font_face_sources(&mut font_ctx, font_face_tree.font_faces(), loader);
@@ -2442,6 +2453,16 @@ pub(crate) fn wpt_font_collection_from(
         }
     }
     Err("no WPT font directory produced a shodo font collection".to_owned())
+}
+
+/// A loader that fetches nothing: without a resource base, `url()` faces stay
+/// unavailable and only `local()` faces register.
+struct NoFaceLoader;
+
+impl raikiri_dom::FontFaceLoader for NoFaceLoader {
+    fn load(&self, _url: &str) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// Check that the inline engine's font collection can be built here.

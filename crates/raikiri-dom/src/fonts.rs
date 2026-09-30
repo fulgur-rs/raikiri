@@ -1634,6 +1634,25 @@ fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &
     }
 }
 
+/// A document layer over `shared` holding the faces of `faces`, for the
+/// inline engine.
+///
+/// Faces are registered under their authored family name in the layer only:
+/// the shared layer is left untouched, so one document's faces are never
+/// visible to another, and computed `font-family` lists need no rewriting.
+/// `loader` fetches `url()` sources; a `local()` source resolves against
+/// `shared` by full name or PostScript name.
+pub fn build_inline_document_fonts(
+    shared: &shodo::font::FontCollection,
+    faces: &FontFaceRegistry,
+    loader: &dyn FontFaceLoader,
+) -> (shodo::font::FontCollection, FontFaceApplyReport) {
+    use crate::layout::ifc::font::face::{document_layer, register_font_faces};
+    let layer = document_layer(shared, &shodo::limits::Limits::default());
+    let report = register_font_faces(&layer, faces, loader);
+    (layer, report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
