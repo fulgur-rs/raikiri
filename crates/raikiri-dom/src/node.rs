@@ -64,6 +64,13 @@ bitflags::bitflags! {
         const IS_INLINE_SVG_ROOT = 1 << 3;
         /// Node belongs to the source subtree of an inline SVG root.
         const IN_INLINE_SVG_SUBTREE = 1 << 4;
+        /// Block root laid out by the shodo inline engine. Its DOM children
+        /// are hidden from taffy (see [`Node::layout_children`]): the root is
+        /// measured as a leaf from its paragraph.
+        const IS_IFC_ROOT = 1 << 5;
+        /// Descendant of an [`IS_IFC_ROOT`](Self::IS_IFC_ROOT) node. The
+        /// parley text passes skip these nodes.
+        const IN_IFC_SUBTREE = 1 << 6;
     }
 }
 
@@ -371,6 +378,9 @@ pub struct Node {
     pub(crate) parent: Option<usize>,
     /// Per-node Taffy layout cache.
     pub(crate) cache: Cache,
+    /// Shodo paragraph state; set only on nodes flagged [`NodeFlags::IS_IFC_ROOT`].
+    #[allow(dead_code, reason = "read once the taffy dispatch uses the paragraph")]
+    pub(crate) ifc: Option<Box<crate::layout::ifc::root::IfcRoot>>,
     /// Taffy layout result, populated by compute_root_layout.
     ///
     /// # Value range contract: all `f32` fields are finite and clamped to `[-1e7, 1e7]`
@@ -443,6 +453,7 @@ impl Node {
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
+            ifc: None,
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Document,
@@ -478,6 +489,7 @@ impl Node {
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
+            ifc: None,
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Element(Box::new(ElementData {
@@ -516,6 +528,7 @@ impl Node {
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
+            ifc: None,
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Text(TextData {
@@ -560,6 +573,7 @@ impl Node {
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
+            ifc: None,
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Comment(text),
@@ -591,6 +605,7 @@ impl Node {
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
+            ifc: None,
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::ProcessingInstruction { target, data },
@@ -624,6 +639,7 @@ impl Node {
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
+            ifc: None,
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::DocumentFragment,
@@ -655,7 +671,9 @@ impl Node {
     #[doc(hidden)]
     #[inline]
     pub fn layout_children(&self) -> &[usize] {
-        if self.flags.contains(NodeFlags::IS_INLINE_SVG_ROOT) {
+        if self.flags.contains(NodeFlags::IS_INLINE_SVG_ROOT)
+            || self.flags.contains(NodeFlags::IS_IFC_ROOT)
+        {
             return &[];
         }
         if self.order_modified_children.is_empty() {

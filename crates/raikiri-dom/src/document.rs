@@ -283,6 +283,8 @@ pub struct Document {
     /// O(1) cost per mutation plus O(N) per layout batch gives amortized
     /// O(1) invalidation.
     pub(crate) layout_dirty: bool,
+    /// Shodo inline-engine state; `None` keeps the parley-only path.
+    pub(crate) ifc: Option<crate::layout::ifc::root::IfcState>,
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
     pub(crate) layout_cascade_generation: Option<u64>,
@@ -364,6 +366,23 @@ pub struct Document {
 }
 
 impl Document {
+    /// Route eligible paragraphs through the shodo inline engine.
+    ///
+    /// Without this call, layout uses the parley path only.
+    pub fn enable_inline_formatting(
+        &mut self,
+        fonts: shodo::font::FontCollection,
+        limits: shodo::limits::Limits,
+    ) {
+        self.ifc = Some(crate::layout::ifc::root::IfcState::new(fonts, limits));
+        self.layout_dirty = true;
+    }
+
+    /// Whether [`Document::enable_inline_formatting`] was called.
+    pub fn inline_formatting_enabled(&self) -> bool {
+        self.ifc.is_some()
+    }
+
     /// Construct a new Document with a Document node at arena index 0.
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(16);
@@ -373,6 +392,7 @@ impl Document {
             nodes,
             root: 0,
             layout_dirty: false,
+            ifc: None,
             layout_cascade_generation: None,
             // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
             // consistent with an attached root. There are no templates or

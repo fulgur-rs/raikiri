@@ -246,3 +246,17 @@ mod attribute_ns_tests {
         assert_eq!(doc.attribute_ns(XLINK_NS, "href"), None);
     }
 }
+
+#[test]
+fn an_ifc_root_exposes_no_layout_children() {
+    use crate::Document;
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let root = doc.append_element(Some(html), "div", taffy::Style::default(), None::<&str>);
+    doc.append_text(root, "aa");
+    assert_eq!(doc.nodes[root].layout_children().len(), 1);
+    doc.nodes[root].flags.insert(NodeFlags::IS_IFC_ROOT);
+    assert!(doc.nodes[root].layout_children().is_empty());
+    // The DOM children are untouched: only the taffy view changes.
+    assert_eq!(doc.nodes[root].children.len(), 1);
+}

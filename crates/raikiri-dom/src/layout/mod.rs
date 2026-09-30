@@ -69,7 +69,7 @@ mod bridge;
     dead_code,
     reason = "the inline formatting context path is wired into layout in a later step"
 )]
-mod ifc;
+pub(crate) mod ifc;
 mod inline_text;
 mod multicol;
 mod page;

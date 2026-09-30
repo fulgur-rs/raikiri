@@ -4,6 +4,7 @@
 pub(crate) mod error;
 pub(crate) mod font;
 pub(crate) mod projection;
+pub(crate) mod root;
 pub(crate) mod style;
 
 #[cfg(test)]
