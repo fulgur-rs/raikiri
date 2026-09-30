@@ -10,6 +10,8 @@ pub(crate) mod root;
 pub(crate) mod style;
 
 #[cfg(test)]
+mod parity_tests;
+#[cfg(test)]
 pub(crate) mod test_support;
 
 #[cfg(test)]

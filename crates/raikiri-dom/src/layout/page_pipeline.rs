@@ -8,6 +8,11 @@ use super::*;
 /// the page it is about to paint. It is intentionally separate from
 /// [`layout_single_page`] because callers must opt into this narrow
 /// post-pagination operation.
+///
+/// Paragraphs laid out by the shodo inline engine are not refreshed here:
+/// their line breaks follow the box width taffy computed, not `max_advance`.
+/// A named page whose width differs from the first layout therefore keeps
+/// the lines from the last layout pass.
 pub fn relayout_text_for_width(
     document: &mut Document,
     cascade: &CascadeResult,
