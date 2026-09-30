@@ -18,11 +18,12 @@ use crate::resolve::{
 };
 use crate::rule::{
     expand_background, expand_border, expand_border_color, expand_border_css_wide,
-    expand_border_right, expand_border_right_css_wide, expand_border_style, expand_border_width,
-    expand_flex, expand_flex_flow, expand_font, expand_gap, expand_grid_column, expand_grid_row,
-    expand_margin, expand_margin_block, expand_margin_inline, expand_outline, expand_overflow,
-    expand_padding, expand_padding_block, expand_padding_inline, expand_place_content,
-    expand_place_items, expand_place_self, expand_text_decoration,
+    expand_border_left, expand_border_left_css_wide, expand_border_right,
+    expand_border_right_css_wide, expand_border_style, expand_border_width, expand_flex,
+    expand_flex_flow, expand_font, expand_gap, expand_grid_column, expand_grid_row, expand_margin,
+    expand_margin_block, expand_margin_inline, expand_outline, expand_overflow, expand_padding,
+    expand_padding_block, expand_padding_inline, expand_place_content, expand_place_items,
+    expand_place_self, expand_text_decoration,
 };
 use crate::ruletree::Origin;
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
@@ -1247,6 +1248,9 @@ pub(crate) fn resolve_against_inherited(
         PropertyValue::BorderRightCssWide(kw) => {
             PropertyValue::BorderRight(resolve_border_page_side(kw, inherited, false, true, false))
         }
+        PropertyValue::BorderLeftCssWide(kw) => {
+            PropertyValue::BorderLeft(resolve_border_page_side(kw, inherited, false, false, false))
+        }
         // CSS Fonts 4 §2.2.1 "Relative Weights"
         // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: resolve `bolder` /
         // `lighter` against the inherited computed weight. Convert to
@@ -1386,6 +1390,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::Border(_)
         | PropertyValue::BorderRight(_)
+        | PropertyValue::BorderLeft(_)
         // `border-style` / `border-width` / `border-color` shorthands —
         // same "nothing for phase 2 to resolve" shape as `Border` above
         // (non-inherited keywords/lengths; structurally unreachable here
@@ -1951,9 +1956,13 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRight(border) => {
             expand_border_right(border, |v| apply_value(v, target))
         }
+        PropertyValue::BorderLeft(border) => expand_border_left(border, |v| apply_value(v, target)),
         PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, |v| apply_value(v, target)),
         PropertyValue::BorderRightCssWide(kw) => {
             expand_border_right_css_wide(kw, |v| apply_value(v, target))
+        }
+        PropertyValue::BorderLeftCssWide(kw) => {
+            expand_border_left_css_wide(kw, |v| apply_value(v, target))
         }
         PropertyValue::Width(v) => target.width = v,
         PropertyValue::Height(v) => target.height = v,

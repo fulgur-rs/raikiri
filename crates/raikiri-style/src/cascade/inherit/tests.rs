@@ -8572,6 +8572,16 @@ fn apply_value_direct_border_right_and_css_wide_fall_through() {
     apply_value(PropertyValue::BorderRight(border), &mut cv);
     assert_eq!(cv.border.right.width, Length::Px(2.0));
     assert_eq!(cv.border.right.style, BorderStyle::Dotted);
+    apply_value(
+        PropertyValue::BorderLeft(Border {
+            width: Length::Px(3.0),
+            style: BorderStyle::Dashed,
+            color: BorderColor::CurrentColor,
+        }),
+        &mut cv,
+    );
+    assert_eq!(cv.border.left.width, Length::Px(3.0));
+    assert_eq!(cv.border.left.style, BorderStyle::Dashed);
     // Shorthand CssWide expands to longhand CssWide markers, which are no-ops here
     // (resolved in `apply_winners` via the normal cascade); direct calls leave initial.
     let mut cv2 = SpecifiedValues::initial();
@@ -8586,6 +8596,12 @@ fn apply_value_direct_border_right_and_css_wide_fall_through() {
         &mut cv3,
     );
     assert_eq!(cv3.border.right.style, BorderStyle::None);
+    let mut cv_left = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderLeftCssWide(CssWideKeyword::Initial),
+        &mut cv_left,
+    );
+    assert_eq!(cv_left.border.left.style, BorderStyle::None);
     // Longhand markers are no-ops here.
     let mut cv4 = SpecifiedValues::initial();
     apply_value(

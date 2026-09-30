@@ -29,14 +29,17 @@
 
 use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
-use peniko::{Color, Fill, Mix};
+use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
+use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
-    BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle, ColumnCountValue,
-    ContentComponent, CounterStyle, CssColor, DisplayValue, FloatValue, Gradient,
-    GradientStopColor, Length, LengthOrAuto, ListStyleType, ObjectFit, OutlineColor, OutlineStyle,
-    OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign,
-    TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
+    AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
+    ColumnCountValue, ConicGradient, ContentComponent, CounterStyle, CssColor, CssPosition,
+    CssPositionOffset, DisplayValue, FloatValue, Gradient, GradientStopColor,
+    HueInterpolationMethod, Length, LengthOrAuto, ListStyleType, MixColorSpace, ObjectFit,
+    OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue,
+    QuoteKeyword, Sides, TextAlign, TextShadowColor, VerticalAlign, Visibility, VisualBox,
+    WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
@@ -5412,6 +5415,33 @@ fn paint_element_background(
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
+    if let BackgroundImage::Gradient(Gradient::Conic(conic)) = bg_image {
+        if bg.a != 0 {
+            let base = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
+            fill_rounded_background(
+                scene,
+                base,
+                painting.x0,
+                painting.y0,
+                painting.x1,
+                painting.y1,
+                border_radius,
+                radius_inset,
+                radius_reference,
+            );
+        }
+        paint_conic_gradient(
+            scene,
+            conic,
+            positioning,
+            painting,
+            border_radius,
+            radius_inset,
+            radius_reference,
+            current_color,
+        );
+        return;
+    }
     fill_rounded_background(
         scene,
         color,
@@ -6325,6 +6355,7 @@ fn paint_element_border_with_top(
     if width <= 0.0 || height <= 0.0 {
         return;
     }
+
     let x0 = (abs_x as f64).round();
     let y0 = (abs_y as f64).round();
     let x1 = ((abs_x + width) as f64).round();
@@ -6358,11 +6389,13 @@ fn paint_element_border_with_top(
     let c_top = resolve(&border.top);
     let c_right = resolve(&border.right);
     let c_bottom = resolve(&border.bottom);
-    let inner_x0 = (x0 + bl).round();
     let inner_y0 = if paint_top { (y0 + bt).round() } else { y0 };
-    let inner_x1 = (x1 - br).round();
     let inner_y1 = (y1 - bb).round();
-    let inner_valid = inner_x1 > inner_x0 && inner_y1 > inner_y0;
+    // Left and right strips only need a vertical span. When the content
+    // width collapses to zero (a border-only quadrant where left plus right
+    // exactly fill the border box, as in the conic reference files), the
+    // full inner box is empty but both side strips still cover their rects.
+    let inner_height_valid = inner_y1 > inner_y0;
     // One side strip: `solid` (and unhandled styles) fill the whole
     // strip; `double` draws outer + inner thirds per CSS Backgrounds 3
     // §5.6 ("two parallel solid lines"), leaving the middle third
@@ -6417,7 +6450,7 @@ fn paint_element_border_with_top(
         );
     }
     if bl > 0.0
-        && inner_valid
+        && inner_height_valid
         && let Some(col) = c_left
     {
         strip(
@@ -6432,7 +6465,7 @@ fn paint_element_border_with_top(
         );
     }
     if br > 0.0
-        && inner_valid
+        && inner_height_valid
         && let Some(col) = c_right
     {
         strip(
@@ -6516,6 +6549,239 @@ fn resolve_gradient_stop_color(c: GradientStopColor, current_color: CssColor) ->
         GradientStopColor::CurrentColor => current_color,
         // non_exhaustive
         _ => current_color,
+    }
+}
+
+/// Convert a style sRGB byte color to a peniko dynamic color.
+///
+/// Channels scale from 0-255 to 0.0-1.0 in sRGB. Used for conic stop
+/// colors so the sweep interpolates from the authored values.
+fn css_color_to_dynamic(color: CssColor) -> DynamicColor {
+    let to_unit = |byte: u8| f32::from(byte) / 255.0;
+    DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new([
+        to_unit(color.r),
+        to_unit(color.g),
+        to_unit(color.b),
+        to_unit(color.a),
+    ]))
+}
+
+/// Map the style interpolation space to the peniko tag for conic sweeps.
+///
+/// CSS Images 4 defaults to Oklab when no interpolation clause is present.
+/// The hsl and hwb spaces have no gradient parser support here, so they
+/// fall back to sRGB rather than failing the whole background.
+fn conic_interpolation_tag(space: MixColorSpace) -> ColorSpaceTag {
+    match space {
+        MixColorSpace::Srgb => ColorSpaceTag::Srgb,
+        MixColorSpace::SrgbLinear => ColorSpaceTag::LinearSrgb,
+        MixColorSpace::Lab => ColorSpaceTag::Lab,
+        MixColorSpace::Lch => ColorSpaceTag::Lch,
+        MixColorSpace::Oklab => ColorSpaceTag::Oklab,
+        MixColorSpace::Oklch => ColorSpaceTag::Oklch,
+        // cov:ignore: hsl and hwb are rejected by the gradient parser, defensive only
+        _ => ColorSpaceTag::Srgb,
+    }
+}
+
+/// Map the style hue direction to the peniko direction for conic sweeps.
+fn conic_hue_direction(method: HueInterpolationMethod) -> HueDirection {
+    match method {
+        HueInterpolationMethod::Shorter => HueDirection::Shorter,
+        HueInterpolationMethod::Longer => HueDirection::Longer,
+        HueInterpolationMethod::Increasing => HueDirection::Increasing,
+        HueInterpolationMethod::Decreasing => HueDirection::Decreasing,
+        // cov:ignore: defensive fallback for future hue methods
+        _ => HueDirection::Shorter,
+    }
+}
+
+/// Angular stop position as a 0-1 sweep offset.
+///
+/// An angle in degrees divides by 360, a percentage divides by 100.
+/// A missing position stays missing for the fixup pass. Non-finite
+/// authored values fall back to 0 so one bad stop cannot poison the sweep.
+fn angular_stop_offset(position: Option<AnglePercentage>) -> Option<f32> {
+    let value = match position {
+        None => return None,
+        Some(AnglePercentage::Angle(angle)) => angle.0 / 360.0,
+        Some(AnglePercentage::Percent(percent)) => percent / 100.0,
+        // cov:ignore: defensive fallback for future angle-percentage variants
+        _ => return None,
+    };
+    if value.is_finite() {
+        Some(value)
+    } else {
+        // cov:ignore: saturated infinities from parsing are clamped here, rarely painted
+        Some(0.0)
+    }
+}
+
+/// Fill missing conic offsets per the color-stop fixup rule.
+///
+/// CSS Images 3 section 3.4.3: a missing first stop means 0, a missing last
+/// stop means 1, interior runs spread evenly between their defined
+/// neighbors, then every offset clamps up to its predecessor so the sweep
+/// never runs backward. The pinned quadrant cases arrive fully defined, so
+/// this mostly passes offsets through.
+fn fixup_conic_offsets(stops: &[Option<f32>]) -> Vec<f32> {
+    let count = stops.len();
+    let mut offsets: Vec<f32> = stops.iter().map(|slot| slot.unwrap_or(f32::NAN)).collect();
+    if count == 0 {
+        return Vec::new();
+    }
+    if offsets[0].is_nan() {
+        offsets[0] = 0.0;
+    }
+    if offsets[count - 1].is_nan() {
+        offsets[count - 1] = 1.0;
+    }
+    let mut index = 0;
+    while index < count {
+        if !offsets[index].is_nan() {
+            index += 1;
+            continue;
+        }
+        let run_start = index;
+        while index < count && offsets[index].is_nan() {
+            index += 1;
+        }
+        let run_end = index;
+        let before = offsets[run_start - 1];
+        let after = offsets[run_end];
+        let gap = (run_end - run_start + 1) as f32;
+        for (slot, offset) in offsets[run_start..run_end].iter_mut().enumerate() {
+            let step = (slot + 1) as f32;
+            *offset = before + (after - before) * step / gap;
+        }
+    }
+    let mut previous = offsets[0];
+    for offset in offsets.iter_mut().skip(1) {
+        if *offset < previous {
+            *offset = previous;
+        } else {
+            previous = *offset;
+        }
+    }
+    offsets
+}
+
+/// One axis of a conic center inside its positioning area.
+///
+/// Percentages resolve against the area size, lengths offset from the
+/// matching edge. Only pixel and percentage lengths survive style
+/// resolution, so other length kinds fall back to the area middle.
+fn conic_axis_center(offset: &CssPositionOffset, start: f64, end: f64) -> f64 {
+    match offset {
+        CssPositionOffset::Start(Length::Px(px)) => start + f64::from(*px),
+        CssPositionOffset::Start(Length::Percent(percent)) => {
+            start + (end - start) * f64::from(*percent) / 100.0
+        }
+        CssPositionOffset::End(Length::Px(px)) => end - f64::from(*px),
+        CssPositionOffset::End(Length::Percent(percent)) => {
+            end - (end - start) * f64::from(*percent) / 100.0
+        }
+        // cov:ignore: only Px and Percent survive resolution, other lengths are unreachable
+        _ => (start + end) / 2.0,
+    }
+}
+
+/// Center point of a conic gradient within its positioning area.
+///
+/// CSS Images 4 section 3.3: the at position defaults to center and
+/// percentages count from the top-left of the gradient box.
+fn conic_center(position: &CssPosition, positioning: Rect) -> Point {
+    Point::new(
+        conic_axis_center(&position.horizontal, positioning.x0, positioning.x1),
+        conic_axis_center(&position.vertical, positioning.y0, positioning.y1),
+    )
+}
+
+/// Build a peniko sweep gradient for a style conic gradient.
+///
+/// Returns missing when fewer than two stops survive, which cannot happen
+/// for parsed gradients but keeps paint total. The sweep spans one full
+/// turn from the authored from angle. CSS zero degrees points up while
+/// peniko zero points right in a y-down space, hence the minus 90 shift.
+/// Non-repeating sweeps pad beyond their stops, repeating sweeps repeat.
+fn conic_to_peniko(
+    conic: &ConicGradient,
+    center: Point,
+    current_color: CssColor,
+) -> Option<PenikoGradient> {
+    // cov:ignore: parser requires at least two stops, defensive only
+    if conic.stops.len() < 2 {
+        return None;
+    }
+    let raw: Vec<Option<f32>> = conic
+        .stops
+        .iter()
+        .map(|stop| angular_stop_offset(stop.position))
+        .collect();
+    let offsets = fixup_conic_offsets(&raw);
+    let mut peniko_stops: Vec<(f32, DynamicColor)> = Vec::with_capacity(conic.stops.len());
+    for (stop, offset) in conic.stops.iter().zip(offsets.iter()) {
+        let base = resolve_gradient_stop_color(stop.color, current_color);
+        peniko_stops.push((*offset, css_color_to_dynamic(base)));
+    }
+    let from_degrees = if conic.angle.0.is_finite() {
+        conic.angle.0
+    } else {
+        // cov:ignore: saturated angles from parsing are finite except for extreme overflow
+        0.0
+    };
+    let start_angle = (from_degrees - 90.0).to_radians();
+    let end_angle = start_angle + 2.0 * std::f32::consts::PI;
+    // Sweeps are circular, so t wraps past 1 back to 0 even for a
+    // non-repeating gradient that already covers the full turn. Pad would
+    // clamp the wrapped slice to the last stop and paint the starting
+    // quadrant with the wrong color, so always repeat for the wrap.
+    let extend = PenikoExtend::Repeat;
+    let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle)
+        .with_extend(extend)
+        .with_interpolation_cs(conic_interpolation_tag(conic.interpolation.color_space))
+        .with_hue_direction(conic_hue_direction(conic.interpolation.hue_method))
+        .with_stops(peniko_stops.as_slice());
+    Some(gradient)
+}
+
+/// Paint one conic background over its painting area.
+///
+/// The sweep geometry uses the positioning area for its center while the
+/// fill covers the painting area, mirroring the origin and clip split used
+/// for solid and image backgrounds. Rounded boxes reuse the shared rounded
+/// clip so the sweep follows the same curve.
+#[allow(clippy::too_many_arguments)]
+fn paint_conic_gradient(
+    scene: &mut impl PaintScene,
+    conic: &ConicGradient,
+    positioning: Rect,
+    painting: Rect,
+    border_radius: &ComputedBorderRadius,
+    radius_inset: (f64, f64, f64, f64),
+    radius_reference: f64,
+    current_color: CssColor,
+) {
+    if positioning.width() <= 0.0 || positioning.height() <= 0.0 {
+        return;
+    }
+    let center = conic_center(&conic.position, positioning);
+    // cov:ignore: parser guarantees at least two valid stops, so the sweep always builds
+    let Some(gradient) = conic_to_peniko(conic, center, current_color) else {
+        return;
+    };
+    if let Some(rounded) = rounded_background_path(
+        painting.x0,
+        painting.y0,
+        painting.x1,
+        painting.y1,
+        border_radius,
+        radius_inset,
+        radius_reference,
+    ) {
+        scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &rounded);
+    } else {
+        scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &painting);
     }
 }
 

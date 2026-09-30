@@ -1434,12 +1434,25 @@ fn background_image_rejects_linear_gradient_double_position_stop() {
 }
 
 #[test]
-fn background_image_rejects_conic_gradient_double_angle_stop() {
-    // Angular sibling of `..._rejects_linear_gradient_double_position_stop`.
+fn background_image_parses_conic_gradient_double_angle_stop_as_solid_band() {
+    // Double angles form a solid band: one authored stop expands into two
+    // single-position stops sharing the color. Unlike linear double
+    // positions, which stay rejected, conic doubles are required by the
+    // pinned quadrant cases such as red 0 25 percent.
+    let gradient = expect_conic_gradient(parse(
+        "conic-gradient(red 0deg 90deg, blue)",
+        "background-image",
+    ));
+    assert_eq!(gradient.stops.len(), 3);
     assert_eq!(
-        parse("conic-gradient(red 0deg 90deg, blue)", "background-image"),
-        None
+        gradient.stops[0].position,
+        Some(AnglePercentage::Angle(Angle(0.0)))
     );
+    assert_eq!(
+        gradient.stops[1].position,
+        Some(AnglePercentage::Angle(Angle(90.0)))
+    );
+    assert_eq!(gradient.stops[2].position, None);
 }
 
 #[test]

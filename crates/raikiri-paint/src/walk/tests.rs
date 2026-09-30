@@ -3700,3 +3700,354 @@ fn canvas_zero_bitmap_size_paints_nothing() {
     );
     assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
 }
+
+#[test]
+fn conic_css_color_to_dynamic_preserves_srgb_channels() {
+    let dynamic = css_color_to_dynamic(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    let back = dynamic.to_alpha_color::<peniko::color::Srgb>();
+    assert!((back.components[0] - 1.0).abs() < 0.01);
+    assert!(back.components[1].abs() < 0.01);
+    assert!(back.components[2].abs() < 0.01);
+    assert!((back.components[3] - 1.0).abs() < 0.01);
+}
+
+#[test]
+fn conic_interpolation_tag_covers_all_parser_spaces() {
+    use raikiri_style::property::{HueInterpolationMethod, MixColorSpace};
+    assert_eq!(
+        conic_interpolation_tag(MixColorSpace::Srgb),
+        peniko::color::ColorSpaceTag::Srgb
+    );
+    assert_eq!(
+        conic_interpolation_tag(MixColorSpace::SrgbLinear),
+        peniko::color::ColorSpaceTag::LinearSrgb
+    );
+    assert_eq!(
+        conic_interpolation_tag(MixColorSpace::Lab),
+        peniko::color::ColorSpaceTag::Lab
+    );
+    assert_eq!(
+        conic_interpolation_tag(MixColorSpace::Lch),
+        peniko::color::ColorSpaceTag::Lch
+    );
+    assert_eq!(
+        conic_interpolation_tag(MixColorSpace::Oklab),
+        peniko::color::ColorSpaceTag::Oklab
+    );
+    assert_eq!(
+        conic_interpolation_tag(MixColorSpace::Oklch),
+        peniko::color::ColorSpaceTag::Oklch
+    );
+    assert_eq!(
+        conic_hue_direction(HueInterpolationMethod::Shorter),
+        peniko::color::HueDirection::Shorter
+    );
+    assert_eq!(
+        conic_hue_direction(HueInterpolationMethod::Longer),
+        peniko::color::HueDirection::Longer
+    );
+    assert_eq!(
+        conic_hue_direction(HueInterpolationMethod::Increasing),
+        peniko::color::HueDirection::Increasing
+    );
+    assert_eq!(
+        conic_hue_direction(HueInterpolationMethod::Decreasing),
+        peniko::color::HueDirection::Decreasing
+    );
+}
+
+#[test]
+fn conic_angular_offsets_cover_missing_angle_and_percent() {
+    use raikiri_style::property::AnglePercentage;
+    assert_eq!(angular_stop_offset(None), None);
+    assert_eq!(
+        angular_stop_offset(Some(AnglePercentage::Percent(25.0))),
+        Some(0.25)
+    );
+    let mut document = Document::new();
+    let id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("background-image: conic-gradient(red 45deg, blue)"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let conic = match &cascade.computed[id].background_image {
+        raikiri_style::property::BackgroundImage::Gradient(
+            raikiri_style::property::Gradient::Conic(g),
+        ) => g.clone(),
+        other => panic!("expected conic, got {other:?}"),
+    };
+    let first = angular_stop_offset(conic.stops[0].position);
+    assert!(first.is_some_and(|v| (v - 0.125).abs() < 0.001));
+}
+
+#[test]
+fn conic_fixup_covers_empty_first_last_interior_and_clamp() {
+    assert!(fixup_conic_offsets(&[]).is_empty());
+    assert_eq!(fixup_conic_offsets(&[None, None]), vec![0.0, 1.0]);
+    assert_eq!(fixup_conic_offsets(&[Some(0.2), None]), vec![0.2, 1.0]);
+    assert_eq!(fixup_conic_offsets(&[None, Some(0.8)]), vec![0.0, 0.8]);
+    assert_eq!(
+        fixup_conic_offsets(&[Some(0.0), None, None, Some(1.0)]),
+        vec![0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
+    );
+    assert_eq!(fixup_conic_offsets(&[Some(0.8), Some(0.2)]), vec![0.8, 0.8]);
+}
+
+#[test]
+fn conic_axis_center_covers_start_end_px_and_percent() {
+    use raikiri_style::property::{CssPositionOffset, Length};
+    assert_eq!(
+        conic_axis_center(&CssPositionOffset::Start(Length::Px(10.0)), 0.0, 200.0),
+        10.0
+    );
+    assert_eq!(
+        conic_axis_center(&CssPositionOffset::Start(Length::Percent(25.0)), 0.0, 200.0),
+        50.0
+    );
+    assert_eq!(
+        conic_axis_center(&CssPositionOffset::End(Length::Px(10.0)), 0.0, 200.0),
+        190.0
+    );
+    assert_eq!(
+        conic_axis_center(&CssPositionOffset::End(Length::Percent(25.0)), 0.0, 200.0),
+        150.0
+    );
+}
+
+#[test]
+fn conic_center_and_sweep_cover_pinned_quadrants() {
+    let mut document = Document::new();
+    let center_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("background-image: conic-gradient(at 25% 25%, red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
+    );
+    let angle_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("background-image: conic-gradient(from 90deg, red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let center_conic = match &cascade.computed[center_id].background_image {
+        raikiri_style::property::BackgroundImage::Gradient(
+            raikiri_style::property::Gradient::Conic(g),
+        ) => g.clone(),
+        other => panic!("expected conic, got {other:?}"),
+    };
+    assert_eq!(center_conic.stops.len(), 8);
+    let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
+    let center = conic_center(&center_conic.position, positioning);
+    assert!((center.x - 50.0).abs() < 0.01);
+    assert!((center.y - 50.0).abs() < 0.01);
+    let current = CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let gradient = conic_to_peniko(&center_conic, center, current).expect("sweep");
+    assert_eq!(gradient.stops.len(), 8);
+    let angle_conic = match &cascade.computed[angle_id].background_image {
+        raikiri_style::property::BackgroundImage::Gradient(
+            raikiri_style::property::Gradient::Conic(g),
+        ) => g.clone(),
+        other => panic!("expected conic, got {other:?}"),
+    };
+    let default_center = conic_center(&angle_conic.position, positioning);
+    assert!((default_center.x - 100.0).abs() < 0.01);
+    assert!((default_center.y - 100.0).abs() < 0.01);
+    let angle_gradient =
+        conic_to_peniko(&angle_conic, default_center, current).expect("angle sweep");
+    assert_eq!(angle_gradient.stops.len(), 8);
+}
+
+#[test]
+fn conic_paint_covers_empty_square_and_rounded_boxes() {
+    let mut document = Document::new();
+    let square_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
+    );
+    let round_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%); border-radius: 10px"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let square = match &cascade.computed[square_id].background_image {
+        raikiri_style::property::BackgroundImage::Gradient(
+            raikiri_style::property::Gradient::Conic(g),
+        ) => g.clone(),
+        other => panic!("expected conic, got {other:?}"),
+    };
+    let round = match &cascade.computed[round_id].background_image {
+        raikiri_style::property::BackgroundImage::Gradient(
+            raikiri_style::property::Gradient::Conic(g),
+        ) => g.clone(),
+        other => panic!("expected conic, got {other:?}"),
+    };
+    let current = CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let mut scene = Scene::new();
+    let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
+    let painting = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
+    let square_radius = cascade.computed[square_id].border_radius;
+    let round_radius = cascade.computed[round_id].border_radius;
+    paint_conic_gradient(
+        &mut scene,
+        &square,
+        positioning,
+        painting,
+        &square_radius,
+        (0.0, 0.0, 0.0, 0.0),
+        200.0,
+        current,
+    );
+    assert!(!scene.commands.is_empty());
+    let before = scene.commands.len();
+    paint_conic_gradient(
+        &mut scene,
+        &square,
+        kurbo::Rect::new(0.0, 0.0, 0.0, 0.0),
+        painting,
+        &square_radius,
+        (0.0, 0.0, 0.0, 0.0),
+        200.0,
+        current,
+    );
+    assert_eq!(scene.commands.len(), before);
+    paint_conic_gradient(
+        &mut scene,
+        &round,
+        positioning,
+        painting,
+        &round_radius,
+        (0.0, 0.0, 0.0, 0.0),
+        200.0,
+        current,
+    );
+    assert!(scene.commands.len() > before);
+}
+
+#[test]
+fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
+    let mut document = Document::new();
+    let conic_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let bg_image = cascade.computed[conic_id].background_image.clone();
+    let initial = ComputedValues::initial();
+    let border = raikiri_style::property::Sides {
+        top: resolve_border(
+            Border::new(),
+            ComputedLength(16.0),
+            None,
+            &ResolveContext::new(ComputedLength(16.0)),
+        ),
+        right: resolve_border(
+            Border::new(),
+            ComputedLength(16.0),
+            None,
+            &ResolveContext::new(ComputedLength(16.0)),
+        ),
+        bottom: resolve_border(
+            Border::new(),
+            ComputedLength(16.0),
+            None,
+            &ResolveContext::new(ComputedLength(16.0)),
+        ),
+        left: resolve_border(
+            Border::new(),
+            ComputedLength(16.0),
+            None,
+            &ResolveContext::new(ComputedLength(16.0)),
+        ),
+    };
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let current = CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_element_background(
+        &mut scene,
+        200.0,
+        200.0,
+        0.0,
+        0.0,
+        CssColor {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        },
+        &bg_image,
+        current,
+        raikiri_style::property::VisualBox::BorderBox,
+        initial.background_origin,
+        &ComputedBorderRadius::all(ComputedLength(0.0)),
+        &border,
+        &padding,
+        &initial.background_size,
+        &initial.background_position,
+        &initial.background_repeat,
+        None,
+        &mut warnings,
+    );
+    assert!(!scene.commands.is_empty());
+    let mut transparent_scene = Scene::new();
+    let mut transparent_warnings = Vec::new();
+    paint_element_background(
+        &mut transparent_scene,
+        200.0,
+        200.0,
+        0.0,
+        0.0,
+        CssColor::TRANSPARENT,
+        &bg_image,
+        current,
+        raikiri_style::property::VisualBox::BorderBox,
+        initial.background_origin,
+        &ComputedBorderRadius::all(ComputedLength(0.0)),
+        &border,
+        &padding,
+        &initial.background_size,
+        &initial.background_position,
+        &initial.background_repeat,
+        None,
+        &mut transparent_warnings,
+    );
+    assert!(!transparent_scene.commands.is_empty());
+}

@@ -1624,22 +1624,74 @@ fn parse_gradient_color_stop_list<'i>(
     Ok(stops)
 }
 
-/// One-value version of `<angular-color-stop> = <color> <color-stop-angle>?`
+/// Authored `<angular-color-stop> = <color> <color-stop-angle>{1,2}?`
 /// (see [`AngularColorStop`]).
-fn parse_angular_color_stop<'i>(
+///
+/// CSS Images 4 §3.5.1 allows one or two `<angle-percentage>` positions per
+/// stop. Two positions form a solid band of the stop color between them
+/// (for example `red 0 25%` covers 0%..25% in red). The paint layer only
+/// consumes single-position [`AngularColorStop`] entries, so a double
+/// position expands here into two entries sharing the same color.
+struct AngularStopAuthored {
+    color: GradientStopColor,
+    first: Option<AnglePercentage>,
+    second: Option<AnglePercentage>,
+}
+
+/// One comma-separated `<angular-color-stop>` in authored form (see
+/// [`AngularStopAuthored`]). Parse the color, then up to two
+/// `<angle-percentage>` positions. The second is only attempted when the
+/// first matched, so `red` yields `(None, None)` and `red 0` yields
+/// `(Some(0), None)` rather than consuming the next stop.
+fn parse_angular_color_stop_authored<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<AngularColorStop, ParseError<'i, ()>> {
+) -> Result<AngularStopAuthored, ParseError<'i, ()>> {
     let color = parse_gradient_stop_color(input).ok_or_else(|| input.new_custom_error(()))?;
-    let position = input.try_parse(parse_angle_percentage).ok();
-    Ok(AngularColorStop { color, position })
+    let first = input.try_parse(parse_angle_percentage).ok();
+    let second = if first.is_some() {
+        input.try_parse(parse_angle_percentage).ok()
+    } else {
+        None
+    };
+    Ok(AngularStopAuthored {
+        color,
+        first,
+        second,
+    })
 }
 
 /// `<angular-color-stop-list>`: conic version of [`parse_gradient_color_stop_list`]
-/// (with the same scope carving and the same two-stop minimum).
+/// (with the same two-stop minimum). Double positions expand into two
+/// single-position [`AngularColorStop`] entries (see [`AngularStopAuthored`]).
 fn parse_angular_color_stop_list<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Vec<AngularColorStop>, ParseError<'i, ()>> {
-    let stops = input.parse_comma_separated(parse_angular_color_stop)?;
+    let authored = input.parse_comma_separated(parse_angular_color_stop_authored)?;
+    let mut stops = Vec::with_capacity(authored.len() * 2);
+    for stop in authored {
+        match (stop.first, stop.second) {
+            (None, None) => stops.push(AngularColorStop {
+                color: stop.color,
+                position: None,
+            }),
+            (Some(first), None) => stops.push(AngularColorStop {
+                color: stop.color,
+                position: Some(first),
+            }),
+            (Some(first), Some(second)) => {
+                stops.push(AngularColorStop {
+                    color: stop.color,
+                    position: Some(first),
+                });
+                stops.push(AngularColorStop {
+                    color: stop.color,
+                    position: Some(second),
+                });
+            }
+            // cov:ignore: unreachable by construction, second is only parsed when first matched
+            (None, Some(_)) => return Err(input.new_custom_error(())),
+        }
+    }
     if stops.len() < 2 {
         return Err(input.new_custom_error(()));
     }

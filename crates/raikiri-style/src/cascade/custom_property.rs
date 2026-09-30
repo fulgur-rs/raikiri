@@ -309,6 +309,19 @@ pub(crate) fn project_deferred_value(
             _ => return None,
         },
         // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::BorderLeft(border) => match key {
+            crate::property::PropertyKey::BorderLeftWidth => {
+                PropertyValue::BorderLeftWidth(border.width)
+            }
+            crate::property::PropertyKey::BorderLeftStyle => {
+                PropertyValue::BorderLeftStyle(border.style)
+            }
+            crate::property::PropertyKey::BorderLeftColor => {
+                PropertyValue::BorderLeftColor(border.color)
+            }
+            _ => return None,
+        },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::BorderCssWide(kw) => match key {
             crate::property::PropertyKey::BorderTopWidth => {
                 PropertyValue::BorderTopWidthCssWide(kw)
@@ -358,6 +371,19 @@ pub(crate) fn project_deferred_value(
             }
             crate::property::PropertyKey::BorderRightColor => {
                 PropertyValue::BorderRightColorCssWide(kw)
+            }
+            _ => return None,
+        },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::BorderLeftCssWide(kw) => match key {
+            crate::property::PropertyKey::BorderLeftWidth => {
+                PropertyValue::BorderLeftWidthCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftStyle => {
+                PropertyValue::BorderLeftStyleCssWide(kw)
+            }
+            crate::property::PropertyKey::BorderLeftColor => {
+                PropertyValue::BorderLeftColorCssWide(kw)
             }
             _ => return None,
         },

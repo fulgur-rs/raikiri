@@ -1651,6 +1651,58 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
 }
 
 #[test]
+fn width_auto_with_side_borders_uses_border_box_for_taffy() {
+    // Taffy 0.14 treats content-box width auto as content equal to the
+    // containing width, overflowing side borders. CSS requires the border
+    // box to fill for auto, which border-box gives taffy. This pins the
+    // conic reference quadrants (auto width with 150px right border) to
+    // 200 rather than 350. Fixed widths keep content-box.
+    use raikiri_style::{build_rule_tree, cascade};
+    fn box_sizing_for_width_and_borders(width: Option<&str>, borders: &str) -> TaffyBoxSizing {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let style = match width {
+            Some(w) => format!("{w}; {borders}"),
+            None => borders.to_string(),
+        };
+        let body = doc.append_element(Some(html), "body", Style::default(), Some(style.as_str()));
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+        doc.nodes[body].style.box_sizing
+    }
+    assert_eq!(
+        box_sizing_for_width_and_borders(None, "border-right: 150px solid red"),
+        TaffyBoxSizing::BorderBox
+    );
+    assert_eq!(
+        box_sizing_for_width_and_borders(Some("width: 200px"), "border-right: 150px solid red"),
+        TaffyBoxSizing::ContentBox
+    );
+    assert_eq!(
+        box_sizing_for_width_and_borders(None, "border-left: 50px solid black"),
+        TaffyBoxSizing::BorderBox
+    );
+    assert_eq!(
+        box_sizing_for_width_and_borders(None, "border-right: 150px solid red; padding-bottom: 0%"),
+        TaffyBoxSizing::BorderBox
+    );
+    // Exercise the single-side shorthand CSS-wide and deferred paths so
+    // rule expansion for the new left shorthand stays covered.
+    let mut var_doc = Document::new();
+    let var_html = var_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let _ = var_doc.append_element(
+        Some(var_html),
+        "body",
+        Style::default(),
+        Some("border-left: inherit; border-left: var(--missing)"),
+    );
+    let var_rules = build_rule_tree(&var_doc);
+    let var_cr = cascade(&var_doc, &var_rules).expect("cascade Ok");
+    apply_computed_to_style(&mut var_doc, &var_cr);
+}
+
+#[test]
 fn apply_page_content_box_clobbers_body_width_from_bridge() {
     // PageBox compromise:
     // Regression check for `<body style="width: 100px">`:

@@ -219,6 +219,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, push_longhand),
         PropertyValue::BorderRight(sides) => expand_border_right(sides, push_longhand),
         PropertyValue::BorderRightCssWide(kw) => expand_border_right_css_wide(kw, push_longhand),
+        PropertyValue::BorderLeft(sides) => expand_border_left(sides, push_longhand),
+        PropertyValue::BorderLeftCssWide(kw) => expand_border_left_css_wide(kw, push_longhand),
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, push_longhand),
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, push_longhand),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, push_longhand),
@@ -563,6 +565,11 @@ fn expand_deferred(
             PropertyKey::BorderRightStyle,
             PropertyKey::BorderRightColor,
         ],
+        PropertyKey::BorderLeft => &[
+            PropertyKey::BorderLeftWidth,
+            PropertyKey::BorderLeftStyle,
+            PropertyKey::BorderLeftColor,
+        ],
         PropertyKey::BorderStyle => &[
             PropertyKey::BorderTopStyle,
             PropertyKey::BorderRightStyle,
@@ -772,6 +779,21 @@ pub(crate) fn expand_border_right(border: Border, mut push: impl FnMut(PropertyV
     push(PropertyValue::BorderRightColor(border.color));
 }
 
+/// Expand `border-left: <line-width> || <line-style> || <color>` into three
+/// left-side longhands.
+///
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines the single-side shorthand as setting its three sub-properties as if
+/// expanded in place (see [`expand_shorthand_into`]). Order is width, style, color —
+/// the per-side order [`expand_border`] uses — so declaration ordering is preserved
+/// and later longhands in the same block win per CSS Cascading 4 §6.1 order of appearance.
+#[inline(never)]
+pub(crate) fn expand_border_left(border: Border, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderLeftWidth(border.width));
+    push(PropertyValue::BorderLeftStyle(border.style));
+    push(PropertyValue::BorderLeftColor(border.color));
+}
+
 /// Expand `border: <css-wide-keyword>` into twelve longhand CSS-wide markers.
 ///
 /// CSS Cascading 4 §3 requires a shorthand with a CSS-wide keyword to set every
@@ -806,6 +828,18 @@ pub(crate) fn expand_border_right_css_wide(
     push(PropertyValue::BorderRightWidthCssWide(kw));
     push(PropertyValue::BorderRightStyleCssWide(kw));
     push(PropertyValue::BorderRightColorCssWide(kw));
+}
+
+/// Expand `border-left: <css-wide-keyword>` into three left-side longhand CSS-wide
+/// markers (see [`expand_border_left`] for ordering).
+#[inline(never)]
+pub(crate) fn expand_border_left_css_wide(
+    kw: crate::property::CssWideKeyword,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::BorderLeftWidthCssWide(kw));
+    push(PropertyValue::BorderLeftStyleCssWide(kw));
+    push(PropertyValue::BorderLeftColorCssWide(kw));
 }
 
 /// Cold helper expanding `border-style` into four longhands (`border-*-style`);

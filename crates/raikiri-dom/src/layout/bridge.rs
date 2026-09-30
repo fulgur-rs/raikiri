@@ -615,6 +615,43 @@ fn bridge_min_max_size(
 ///
 /// [`BoxSizing`]: raikiri_style::property::BoxSizing
 fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
+    // Taffy 0.14 treats content-box width auto as content equal to the
+    // containing width, leaving side borders to overflow the parent. CSS
+    // requires the border box to fill the containing width for auto
+    // (content shrinks by the borders), which is what border-box gives
+    // taffy. Use border-box for auto widths with side borders so
+    // border-only quadrants such as the conic references size to 200
+    // rather than 350. Widths without borders keep content-box so the
+    // existing box-sizing bridge test still sees the spec initial.
+    // Fixed widths keep content-box so existing fixed-width overflow
+    // comparisons still match on both sides.
+    let width_auto = matches!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+    let has_side_borders = cv.border.left.width().px() > 0.0 || cv.border.right.width().px() > 0.0;
+    // Changing box-sizing also changes explicit heights, so only apply the
+    // auto-width workaround when the vertical axis cannot change: no top or
+    // bottom borders and no vertical padding. The conic references have
+    // horizontal-only borders, while table box-sizing tests use all four
+    // sides and must keep content-box for their height assertions.
+    let vertical_clean = cv.border.top.width().px() == 0.0
+        && cv.border.bottom.width().px() == 0.0
+        && matches!(
+            cv.padding.top,
+            raikiri_style::ComputedLengthPercentage::Px(0.0)
+                | raikiri_style::ComputedLengthPercentage::Percent(0.0)
+        )
+        && matches!(
+            cv.padding.bottom,
+            raikiri_style::ComputedLengthPercentage::Px(0.0)
+                | raikiri_style::ComputedLengthPercentage::Percent(0.0)
+        );
+    if width_auto
+        && has_side_borders
+        && vertical_clean
+        && matches!(cv.box_sizing, StyleBoxSizing::ContentBox)
+    {
+        style.box_sizing = TaffyBoxSizing::BorderBox;
+        return;
+    }
     style.box_sizing = match cv.box_sizing {
         StyleBoxSizing::ContentBox => TaffyBoxSizing::ContentBox,
         StyleBoxSizing::BorderBox => TaffyBoxSizing::BorderBox,

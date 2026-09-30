@@ -3014,7 +3014,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 158;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 159;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3144,6 +3144,11 @@ property_key_samples! {
         color: BorderColor::CurrentColor,
     })),
     BorderRight => PropertyValue::BorderRight(Border {
+        width: Length::Em(1.0),
+        style: BorderStyle::Solid,
+        color: BorderColor::CurrentColor,
+    }),
+    BorderLeft => PropertyValue::BorderLeft(Border {
         width: Length::Em(1.0),
         style: BorderStyle::Solid,
         color: BorderColor::CurrentColor,
@@ -3786,6 +3791,7 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::TextDecorationThicknessInherit,
         PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderLeftCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderBottomWidthCssWide(CssWideKeyword::Inherit),
@@ -3951,8 +3957,10 @@ property_value_variant_registry! {
     BorderLeftColor,
     Border,
     BorderRight,
+    BorderLeft,
     BorderCssWide,
     BorderRightCssWide,
+    BorderLeftCssWide,
     BorderTopWidthCssWide,
     BorderRightWidthCssWide,
     BorderBottomWidthCssWide,
@@ -4529,8 +4537,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
             PropertyValue::BorderRight(b) => length(b.width),
+            PropertyValue::BorderLeft(b) => length(b.width),
             PropertyValue::BorderCssWide(_)
             | PropertyValue::BorderRightCssWide(_)
+            | PropertyValue::BorderLeftCssWide(_)
             | PropertyValue::BorderTopWidthCssWide(_)
             | PropertyValue::BorderRightWidthCssWide(_)
             | PropertyValue::BorderBottomWidthCssWide(_)
