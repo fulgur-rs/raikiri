@@ -9,6 +9,11 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/tests/data/text-autospace/Ahem.ttf"
 ));
 
+const NOTO: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/noto-sans-test/NotoSansTest-Regular.ttf"
+));
+
 struct MapLoader(HashMap<&'static str, Vec<u8>>);
 
 impl FontFaceLoader for MapLoader {
@@ -178,4 +183,43 @@ fn a_local_source_does_not_see_faces_registered_with_a_descriptor() {
         &MapLoader(HashMap::new()),
     );
     assert_eq!(report.skipped, vec!["Face"]);
+}
+
+/// A shared layer with Noto Sans Test installed, whose family name differs
+/// from its full and PostScript names.
+fn shared_with_noto() -> FontCollection {
+    let shared = FontCollection::with_options(
+        &Limits::default(),
+        FontOptions {
+            system_fonts: false,
+            ..FontOptions::default()
+        },
+    );
+    shared.register(NOTO.to_vec()).expect("register noto");
+    shared
+}
+
+fn local_report(name: &str) -> FontFaceApplyReport {
+    let shared = shared_with_noto();
+    let doc = document_layer(&shared, &Limits::default());
+    register_font_faces(
+        &doc,
+        &registry(&format!(
+            "@font-face {{ font-family: Face; src: local(\"{name}\"); }}"
+        )),
+        &MapLoader(HashMap::new()),
+    )
+}
+
+#[test]
+fn a_local_source_does_not_match_a_bare_family_name() {
+    // `local()` resolves full and PostScript names, not families.
+    assert_eq!(local_report("Noto Sans Test").skipped, vec!["Face"]);
+}
+
+#[test]
+fn a_local_source_matches_the_postscript_name() {
+    let report = local_report("NotoSansTest-Regular");
+    assert!(report.skipped.is_empty(), "{report:?}");
+    assert_eq!(report.aliased.len(), 1);
 }

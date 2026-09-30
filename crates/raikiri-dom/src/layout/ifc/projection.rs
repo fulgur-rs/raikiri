@@ -149,7 +149,9 @@ pub(crate) fn project_ifc(
             NodeKind::Comment | NodeKind::ProcessingInstruction => {}
             NodeKind::Element => {
                 let cv = cascade.computed.get(id).ok_or(IfcError::InvalidNode(id))?;
-                if cv.display == DisplayValue::None {
+                // `<style>`, `<script>` and friends render nothing even when
+                // an author rule gives them a display type.
+                if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
                     continue;
                 }
                 let unsupported = |reason: &'static str| IfcError::Unsupported { node: id, reason };

@@ -275,3 +275,24 @@ fn rtl_and_astral_text_do_not_fail() {
     let lines = line_texts(&projected, 100.0);
     assert!(!lines.is_empty());
 }
+
+#[test]
+fn non_rendered_html_elements_contribute_no_text() {
+    // `display:inline` is forced so only the non-rendered-element check can
+    // keep the source text of `<style>` and `<script>` out of the paragraph.
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        for tag in ["style", "script"] {
+            let hidden = doc.append_element(
+                Some(root),
+                tag,
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(hidden, "zz");
+        }
+        doc.append_text(root, "bb");
+    });
+    let projected = project(&fixture).expect("project");
+    assert_eq!(line_texts(&projected, 500.0), ["aabb"]);
+}

@@ -172,3 +172,20 @@ fn word_break_manual_and_every_spacing_trim_value_map() {
         assert_eq!(style.text_spacing_trim, expected, "{css}");
     }
 }
+
+#[test]
+fn inline_edges_reject_vertical_writing_modes() {
+    // The physical-to-logical side mapping is horizontal-tb only.
+    let fixture = block_fixture("writing-mode:vertical-rl;padding-top:3px", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let error =
+        inline_edges(&fixture.cascade.computed[fixture.root], fixture.root).expect_err("vertical");
+    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+}
+
+#[test]
+fn legacy_white_space_with_a_wrap_longhand_is_rejected() {
+    let error = root_style("white-space:pre-wrap;text-wrap-mode:nowrap").expect_err("mix");
+    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+}

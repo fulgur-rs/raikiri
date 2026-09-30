@@ -100,7 +100,8 @@ pub(crate) fn inline_style(cv: &ComputedValues, node: usize) -> Result<InlineSty
         _ => return Err(unsupported("white-space mode is not represented by shodo")),
     };
     if cv.white_space != p::WhiteSpace::Normal
-        && cv.white_space_collapse != p::WhiteSpaceCollapse::Collapse
+        && (cv.white_space_collapse != p::WhiteSpaceCollapse::Collapse
+            || cv.text_wrap != p::TextWrapMode::Wrap)
     {
         return Err(unsupported(
             "legacy white-space and its longhand need winning-declaration provenance",
@@ -444,6 +445,12 @@ pub(crate) fn line_options(
 /// need a containing-block basis or a font measurement and are rejected.
 pub(crate) fn inline_edges(cv: &ComputedValues, node: usize) -> Result<InlineEdges, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
+    // The physical-to-logical side mapping below is horizontal-tb only.
+    if cv.cssom_writing_mode != p::WritingMode::HorizontalTb {
+        return Err(unsupported(
+            "inline edges are mapped for horizontal writing only",
+        ));
+    }
     let ch_edges = [
         &cv.margin_ch.top,
         &cv.margin_ch.right,
