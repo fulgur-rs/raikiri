@@ -3338,3 +3338,40 @@ fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
     );
     assert_eq!(background_fill_count(&scene), 1);
 }
+
+#[test]
+fn overflow_hidden_clip_min_edges_floor_outward() {
+    // A fractional padding-box origin must not antialias-cut pixel-snapped
+    // descendant backgrounds. Min edges floor outward to integer pixels while
+    // max edges keep the exact extent for `overflow:hidden`.
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:10.4px;top:20.6px;width:100px;height:50px;overflow:hidden'><div style='width:10px;height:10px;background:green'></div></div>",
+    );
+    let bounds = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            anyrender::recording::RenderCommand::PushClipLayer(clip) => {
+                Some(kurbo::Shape::bounding_box(&clip.clip))
+            }
+            _ => None,
+        })
+        .find(|bounds| (bounds.x0 - 10.0).abs() < 1e-5)
+        .expect("overflow clip with floored min edge must exist");
+    assert!(
+        (bounds.x0 - 10.0).abs() < 1e-5,
+        "min x floors outward {bounds:?}"
+    );
+    assert!(
+        (bounds.y0 - 20.0).abs() < 1e-5,
+        "min y floors outward {bounds:?}"
+    );
+    assert!(
+        (bounds.x1 - 110.4).abs() < 1e-5,
+        "max x keeps exact extent {bounds:?}"
+    );
+    assert!(
+        (bounds.y1 - 70.6).abs() < 1e-5,
+        "max y keeps exact extent {bounds:?}"
+    );
+}

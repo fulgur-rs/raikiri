@@ -849,6 +849,9 @@ css/css-text/text-indent/text-indent-dynamic-hanging-001.html
 css/css-text/text-indent/text-indent-dynamic-hanging-002.html
 css/css-text/text-indent/text-indent-length-001.html
 css/css-text/text-indent/text-indent-overflow.html
+css/css-text/text-indent/text-indent-percentage-002.html
+css/css-text/text-indent/text-indent-percentage-003.html
+css/css-text/text-indent/text-indent-percentage-004.html
 css/css-text/text-justify/text-justify-001.html
 css/css-text/text-justify/text-justify-none-001.html
 css/css-text/text-transform/text-transform-capitalize-026.html

@@ -655,6 +655,7 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Page inline canvas named-page boundary exact slice (+2).
     // + CSS Page nested named-page propagation exact slice (+2).
     // + CSS Text text-indent exact 800x600 review-approved slice (+3).
+    // + CSS Text text-indent percentage content-box exact slice (+3, 002/003/004 with overflow:hidden clip edge).
     // + CSS Text negative word-spacing exact 800x600 review-approved pair (+1).
     // + CSS Text line-break:anywhere first-stage exact WPT PASS slice (+21).
     // + CSS Inline anonymous inline/baseline PASS slice (+2).
@@ -687,7 +688,7 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text full-width collapsed spaces Ahem exact slice (+1).
     // + CSS Text full-width preserved spaces Ahem exact slice (+1).
     // + CSS Text Unicode full-width mapping exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1358);
+    assert_eq!(set.baseline.entries.len(), 1361);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
