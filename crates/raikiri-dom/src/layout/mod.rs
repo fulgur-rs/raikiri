@@ -75,6 +75,8 @@ mod multicol;
 mod page;
 mod page_pipeline;
 pub(crate) mod sanitize;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use bridge::*;
 use inline_text::*;

@@ -2964,3 +2964,31 @@ fn nested_absolute_auto_width_matches_direct_body_shrink() {
 }
 
 mod page_fragments_tests;
+
+// ── ifc roots stay off the parley passes ─────────────────────
+
+#[test]
+fn ifc_root_text_is_not_shaped_by_parley_and_the_root_is_not_a_flex_line() {
+    use crate::layout::ifc::test_support::ahem_fonts;
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, page_box_800x600};
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
+    doc.enable_inline_formatting(ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    let text = doc.nodes[root].children[0];
+    assert!(doc.nodes[root].flags.contains(NodeFlags::IS_IFC_ROOT));
+    assert!(!doc.nodes[root].flags.contains(NodeFlags::IS_INLINE_ROOT));
+    // Parley cannot satisfy this: the text node was never shaped.
+    assert!(doc.nodes[text].text_layout().is_none());
+}
+
+#[test]
+fn without_the_switch_the_same_paragraph_is_shaped_by_parley() {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, page_box_800x600};
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    let text = doc.nodes[root].children[0];
+    assert!(!doc.nodes[root].flags.contains(NodeFlags::IS_IFC_ROOT));
+    assert!(doc.nodes[text].text_layout().is_some());
+}
