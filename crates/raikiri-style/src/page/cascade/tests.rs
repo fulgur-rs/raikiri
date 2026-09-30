@@ -4285,6 +4285,18 @@ fn page_corpus_covers_every_registered_property_value_variant() {
 /// with `(_)`. Also, `PropertyValue::Border` uses field access (`b.width`)
 /// rather than a struct pattern, so adding a length-bearing field to
 /// [`Border`] does not fail to compile.
+///
+/// # Table-declared longhands
+///
+/// Every variant declared in the `properties!` table (`property/decl.rs`)
+/// takes one arm, `longhand_value_pat!()`, which asks the generated
+/// `longhand_specified_residue`: each entry answers through its `residue:`
+/// key (`none`, or a test-only residue function next to the entry, such as
+/// `object_position_residue`). The macro requires that key on every entry
+/// whose payload could carry a length (any entry with a hook or with a
+/// written value type), so a length-bearing table entry cannot fall into
+/// this arm unchecked, and an explicit arm for a table variant is an
+/// unreachable pattern.
 fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     /// The `<length-percentage>` of a box property (`padding` / `margin` /
     /// `width` / `height` / `border-*-width`): percentages stay, and every

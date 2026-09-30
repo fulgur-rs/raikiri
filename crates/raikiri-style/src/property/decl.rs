@@ -30,7 +30,9 @@
 //!    page-context pass-through, the page-cascade test registries, and the
 //!    field of the exhaustive fixtures `non_initial_parent`
 //!    (`computed/tests.rs`) and `parent_fixture` (`specified/tests.rs`),
-//!    which take every table field from `ComputedTable::sample()`.
+//!    which take every table field from `ComputedTable::sample()`. A
+//!    keyword entry without a hook needs no `residue:` (it defaults to
+//!    `none`; see [Length residue](#length-residue)).
 //! 2. Make sure the entry's `sample:` (by default the first non-initial
 //!    keyword) differs from `initial:` both as specified and once computed;
 //!    `table_samples_differ_from_the_initial_values` in
@@ -65,8 +67,13 @@
 //!   hook, see [Hook properties](#hook-properties));
 //! - its explicit arms in `apply_value` and `resolve_against_inherited`
 //!   (`cascade/inherit.rs`), `expand_shorthand_into` (`rule.rs`),
-//!   `serialize_value`, `absolutize_in_page_context` (`page/absolutize.rs`)
-//!   and the test-only `specified_layer_residue`;
+//!   `serialize_value` and `absolutize_in_page_context`
+//!   (`page/absolutize.rs`);
+//! - its arm in the test-only `specified_layer_residue`
+//!   (`page/cascade/tests.rs`), which becomes the entry's `residue:`: `none`
+//!   for a payload without lengths, or a `#[cfg(test)]` residue function
+//!   next to the entry that keeps the arm's checks (as
+//!   `object_position_residue` does, through `length_residue`);
 //! - its entries in the page-cascade test registries (`property_key_samples!`,
 //!   `property_value_variant_registry!`);
 //! - its `parse_value` and `property_key_for_name` arms and its
@@ -95,7 +102,8 @@
 //! (`"isolation" => Isolation` generates `enum Isolation`). An existing
 //! value type with a different name (such as `EmptyCellsValue` for
 //! `EmptyCells`) must either be renamed at every use, or be kept and
-//! declared with `parse:` and `: ExistingType` instead of `keywords:`.
+//! declared with `parse:` and `: ExistingType` instead of `keywords:`; such
+//! an entry writes `residue:` (`empty-cells` has `residue: none`).
 //!
 //! # Hook properties
 //!
@@ -132,27 +140,49 @@
 //! `overflow-y` pair) or on the parent beyond inheritance still needs
 //! hand-written handling.
 //!
+//! A hooked entry must also write `residue:` (a missing one is a compile
+//! error on the entry): `residue: none` when its specified value never
+//! carries a length (`opacity`), or a `#[cfg(test)]` function of this file
+//! that names the length a specified value still carries (`object-position`:
+//! `object_position_residue`). See [Length residue](#length-residue).
+//!
 //! In the page-cascade bookkeeping (`page/cascade/tests.rs`), a sample the
 //! hook changes is not counted in `PHASE_3_PASS_THROUGH_VARIANTS`; when that
 //! sample also carries no length residue (like `opacity`'s `-0.5`), it
 //! counts in `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`.
+//!
+//! # Length residue
+//!
+//! The page-cascade test's `specified_layer_residue` detector checks that
+//! no page declaration still carries a specified-only length (an `em`
+//! offset, say) after phase 3. For table-declared values it asks each
+//! entry's `residue:`, through the generated `longhand_specified_residue`:
+//!
+//! - a `keywords:` entry without a hook defaults to `residue: none`;
+//! - every other entry writes `residue: none` (a payload without lengths:
+//!   `empty-cells`, `opacity`) or `residue: f` with a `#[cfg(test)] fn
+//!   f(&Specified) -> Option<&'static str>` above the `#[longhands]` module
+//!   that returns the residue it finds (`object_position_residue`, built on
+//!   `length_residue`, the unit classification the detector uses for its
+//!   own lengths).
+//!
+//! Adding a length-bearing property therefore means writing its residue
+//! function; the macro rejects the entry without `residue:`, so a
+//! forgotten check cannot silently report "no residue". A residue function
+//! is test-only code: define it under `#[cfg(test)]`, or it is dead code
+//! in other builds.
 //!
 //! # Limits of the generated pass-through
 //!
 //! Every table-declared value takes the same arm, [`longhand_value_pat!`],
 //! in the shorthand expansion, the phase-2 `resolve_against_inherited`
 //! step, `serialize_value` (no serialization) and the page-cascade test's
-//! `specified_layer_residue` detector (reports no residue). That is right
-//! for payloads without lengths. A longhand whose value depends on the
-//! parent needs its own phase-2 arm. A longhand whose payload carries
-//! lengths needs its own residue arm in that detector, placed before the
-//! blanket arm (the first matching arm wins); `object-position` has one,
-//! and the blanket arm carries `#[allow(unreachable_patterns)]` because its
-//! `ObjectPosition` alternative is shadowed on purpose. Because of that
-//! allow, an explicit arm for any other table variant placed above the
-//! blanket arm is silently accepted rather than reported as unreachable, so
-//! reviewers must check the arm order by hand until a per-entry residue hook
-//! is generated.
+//! `specified_layer_residue` detector (which calls the entry's `residue:`;
+//! see [Length residue](#length-residue)). That is right for the phase-2
+//! step only for values that do not depend on the parent: a longhand whose
+//! value does needs its own phase-2 arm. An explicit arm for a table
+//! variant in any of these matches, wherever it is placed, is an
+//! unreachable pattern (an error under `clippy -D warnings`).
 //!
 //! # Links to table fields
 //!

@@ -27,10 +27,11 @@
 //!         /// CSS Compositing 1 §3.4.2
 //!         "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },
 //!         /// CSS Images 3 §5.1
-//!         "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain },
+//!         "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit,
+//!                                     sample: Contain, residue: none },
 //!         /// CSS Color 4 §3.3
 //!         "opacity" => Opacity: f32 { initial: 1.0, inherited: no, parse: parse_opacity_value,
-//!                                     compute: clamp_opacity, sample: -0.5 },
+//!                                     compute: clamp_opacity, sample: -0.5, residue: none },
 //!     }
 //! }
 //! ```
@@ -83,6 +84,7 @@
 //! | `lift` | path to `fn(Computed) -> Specified` | `Into::into` |
 //! | `field` | identifier | snake case of `Variant` |
 //! | `sample` | expression of the specified type (test only) | first non-initial keyword |
+//! | `residue` | `none`, or path to `fn(&Specified) -> Option<&'static str>` (test only) | `none` for a `keywords` entry without a hook; required otherwise |
 //!
 //! - Exactly one of `keywords` and `parse` is required. `keywords` generates
 //!   a `Copy` enum named `Variant` with one variant per keyword; each
@@ -120,6 +122,19 @@
 //!   computed value differs from the computed initial value as well: a
 //!   hook that maps the sample back to the initial value (a clamp, say)
 //!   would leave the computed fixture at the initial value for that entry.
+//! - `residue` tells the host's tests whether a specified value still
+//!   carries a length that computing resolves (a font-relative unit, say):
+//!   `none` when the value never carries one, or a function that returns
+//!   the residue it finds (a name for the failure message) and `None`
+//!   otherwise. It is compiled only under `cfg(test)`, so the function is
+//!   defined under `#[cfg(test)]` too. A `keywords` entry without a hook
+//!   defaults to `none`, since a generated keyword enum carries no length.
+//!   Every other entry must write it, as a missing `residue` is an error on
+//!   the entry: an entry with a hook (`compute` or `computed: Type via
+//!   hook`) has a computed value that differs from the specified one, and
+//!   the macro cannot tell whether a written value type carries lengths.
+//!   Defaulting either case to `none` would hide a length that computing
+//!   should have resolved.
 //! - Each entry needs at least one doc comment (the specification
 //!   reference). Other attributes are rejected.
 //! - Names are plain identifiers: Rust keywords and raw identifiers are
@@ -130,8 +145,10 @@
 //!   and digits joined by single `-`, optionally after one leading `-`
 //!   (vendor prefixes).
 //!
-//! Hook and parser paths are coerced to the fn-pointer types above, so a
-//! wrong signature is reported at the path in the table.
+//! Hook, parser and residue paths are coerced to the fn-pointer types
+//! above, so a wrong signature is reported at the path in the table (for
+//! `residue`, only in builds with `cfg(test)`, such as `cargo test` or
+//! `clippy --all-targets`).
 //!
 //! # Generated items
 //!
@@ -181,12 +198,18 @@
 //!   context), for fixtures that must hold non-initial values; and
 //!   `equal_fields(&self, other)` on both tables, the CSS names of the
 //!   entries whose fields are equal, for checking such a fixture against
-//!   `initial()`.
+//!   `initial()`; and `longhand_specified_residue(value)`, the length a
+//!   declared value's specified form still carries, if any: a match with
+//!   one arm per entry, each `None` for `residue: none` or a call of the
+//!   entry's residue function (every entry has an answer, written or
+//!   defaulted, so a variant cannot be left out), for a test that checks
+//!   values after computing.
 //!
 //! A host's tests need not use every one of these `cfg(test)` items: rustc
 //! does not report `dead_code` inside another crate's macro expansion, so
-//! an unused one (raikiri-style never calls `longhand_samples()`, for
-//! example) passes `clippy --all-targets -D warnings` without an `allow`.
+//! an unused one passes `clippy --all-targets -D warnings` without an
+//! `allow`. A host function reached only from an unused generated item
+//! (a residue function, say) is reported as dead code, though.
 //!
 //! # Host crate
 //!
@@ -209,8 +232,8 @@
 //!   generated table type;
 //! - the `cssparser` crate as a dependency, and `Debug` on `PropertyValue`
 //!   and `PropertyKey` (the generated `unreachable!` messages of `apply`,
-//!   `longhand_page_absolutize` and `longhand_sample` format them with
-//!   `{:?}`);
+//!   `longhand_page_absolutize`, `longhand_sample` and
+//!   `longhand_specified_residue` format them with `{:?}`);
 //! - `Clone`, `Debug` and `PartialEq` on every specified and computed value
 //!   type (the `Longhand` bounds, and the derives of the generated tables).
 //!
@@ -231,8 +254,9 @@
 //!   `use super::parse::*;`). Inside the annotated module itself,
 //!   `use super::*` is fine.
 //! - **Parser and hook visibility.** `parse:`, `compute:`, `computed: ..
-//!   via` and `lift:` paths are resolved in the annotated module, so each
-//!   function must be visible there. A parser defined in a sibling module
+//!   via`, `lift:` and `residue:` paths are resolved in the annotated
+//!   module, so each function must be visible there. A parser defined in a
+//!   sibling module
 //!   (such as a `parse/` submodule, where parsers are typically
 //!   `pub(super)`) must be widened to the common ancestor, e.g.
 //!   `pub(in crate::property)`; a missing widening is a privacy error at the
