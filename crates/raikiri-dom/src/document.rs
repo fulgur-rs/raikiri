@@ -896,31 +896,56 @@ impl Document {
             return Ok(());
         }
 
-        let element = self.nodes[id]
-            .data
-            .as_element_mut()
-            .expect("set_element_attribute called on non-Element");
-        let mut found = false;
-        element.attributes.retain_mut(|attr| {
-            if attr.namespace.is_none() && attr.local == local {
-                if found {
-                    false
+        // Whether this write resizes a canvas bitmap. Computed before the
+        // exclusive borrow below so the immutable canvas check does not
+        // conflict with it.
+        let is_canvas_size_attr =
+            matches!(local.as_str(), "width" | "height") && self.is_canvas_element(id);
+        {
+            let element = self.nodes[id]
+                .data
+                .as_element_mut()
+                .expect("set_element_attribute called on non-Element");
+            let mut found = false;
+            element.attributes.retain_mut(|attr| {
+                if attr.namespace.is_none() && attr.local == local {
+                    if found {
+                        false
+                    } else {
+                        found = true;
+                        attr.value = value.clone();
+                        true
+                    }
                 } else {
-                    found = true;
-                    attr.value = value.clone();
                     true
                 }
-            } else {
-                true
-            }
-        });
-        if !found {
-            element.attributes.push(Attr {
-                namespace: None,
-                prefix: None,
-                local,
-                value,
             });
+            if !found {
+                element.attributes.push(Attr {
+                    namespace: None,
+                    prefix: None,
+                    local: local.clone(),
+                    value: value.clone(),
+                });
+            }
+        }
+        // A canvas width/height change resizes and clears the bitmap (HTML
+        // Standard §4.12.5 always clears, even when the size is unchanged)
+        // and changes the intrinsic size, so layout caches must be
+        // invalidated the same way image resolution does. Huge bitmaps are
+        // cleared lazily (None) to avoid allocating gigabytes for absurd
+        // content-attribute values; the next paint re-creates them on demand.
+        if is_canvas_size_attr {
+            let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
+            let area = u64::from(width) * u64::from(height);
+            if area <= 10_000_000 {
+                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            } else if let Some(node) = self.nodes.get_mut(id)
+                && let NodeData::Element(element) = &mut node.data
+            {
+                element.canvas_bitmap = None;
+            }
+            self.invalidate_layout_cache();
         }
         Ok(())
     }
@@ -959,14 +984,28 @@ impl Document {
         } else {
             local.to_owned()
         };
-        let element = self.nodes[id]
-            .data
-            .as_element_mut()
-            .expect("remove_element_attribute called on non-Element");
-        if local == "style" {
-            // Remove any legacy/misrouted list entries as well as the actual
-            // inline-style value, so `attr("style")` has one source of truth.
-            let legacy_value = element
+        let is_canvas_size_attr =
+            matches!(local.as_str(), "width" | "height") && self.is_canvas_element(id);
+        let first_value = {
+            let element = self.nodes[id]
+                .data
+                .as_element_mut()
+                .expect("remove_element_attribute called on non-Element");
+            if local == "style" {
+                // Remove any legacy/misrouted list entries as well as the actual
+                // inline-style value, so `attr("style")` has one source of truth.
+                let legacy_value = element
+                    .attributes
+                    .iter()
+                    .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
+                    .map(|attr| attr.value.clone());
+                element
+                    .attributes
+                    .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
+                return Ok(element.inline_style.take().or(legacy_value));
+            }
+
+            let first_value = element
                 .attributes
                 .iter()
                 .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
@@ -974,17 +1013,24 @@ impl Document {
             element
                 .attributes
                 .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
-            return Ok(element.inline_style.take().or(legacy_value));
+            first_value
+        };
+        // Removing a canvas width/height attribute reverts to the default
+        // size (HTML Standard §4.12.5), clearing the bitmap and changing the
+        // intrinsic size. Only when the attribute actually existed: removing
+        // a missing attribute is a no-op. Huge bitmaps clear lazily, as above.
+        if is_canvas_size_attr && first_value.is_some() {
+            let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
+            let area = u64::from(width) * u64::from(height);
+            if area <= 10_000_000 {
+                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            } else if let Some(node) = self.nodes.get_mut(id)
+                && let NodeData::Element(element) = &mut node.data
+            {
+                element.canvas_bitmap = None;
+            }
+            self.invalidate_layout_cache();
         }
-
-        let first_value = element
-            .attributes
-            .iter()
-            .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
-            .map(|attr| attr.value.clone());
-        element
-            .attributes
-            .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
         Ok(first_value)
     }
 
@@ -1687,6 +1733,296 @@ impl Document {
     pub fn element_attribute_ns(&self, id: usize, namespace: &str, local: &str) -> Option<&str> {
         let node = self.nodes.get(id)?;
         node.attribute_ns(namespace, local)
+    }
+
+    /// Whether `id` is an HTML `<canvas>` element (HTML Standard §4.12.5).
+    ///
+    /// Matches the HTML namespace (the parser's `None` default and the
+    /// explicit XHTML URI) with an ASCII case-insensitive tag comparison.
+    /// Foreign-namespace `canvas` elements are not canvases.
+    pub fn is_canvas_element(&self, id: usize) -> bool {
+        let Some(node) = self.nodes.get(id) else {
+            return false;
+        };
+        let NodeData::Element(element) = &node.data else {
+            return false;
+        };
+        if !element.tag_name.eq_ignore_ascii_case("canvas") {
+            return false;
+        }
+        element
+            .namespace
+            .as_deref()
+            .is_none_or(|ns| ns == XHTML_NAMESPACE_URI)
+    }
+
+    /// Parse one canvas width/height content attribute (HTML Standard §4.12.5).
+    ///
+    /// Uses the rules for parsing non-negative integers: surrounding ASCII
+    /// whitespace is ignored, an optional leading `+` is stripped, and the
+    /// remainder must be ASCII digits. Returns `None` when parsing fails so
+    /// the caller falls back to the default (300 for width, 150 for height).
+    fn parse_canvas_dimension(value: &str) -> Option<u32> {
+        let trimmed = value.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r'));
+        let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        // Strip leading zeros to keep `u32` parsing bounded; overlong digit
+        // strings saturate rather than wrap.
+        let digits = digits.trim_start_matches('0');
+        if digits.is_empty() {
+            return Some(0);
+        }
+        if digits.len() > 10 {
+            return Some(u32::MAX);
+        }
+        digits
+            .parse::<u64>()
+            .ok()
+            .map(|v| v.min(u64::from(u32::MAX)) as u32)
+    }
+
+    /// Current width/height of an HTML `<canvas>` element (HTML Standard §4.12.5).
+    ///
+    /// Missing or unparsable attributes fall back to 300×150. Returns `None`
+    /// for non-canvas nodes.
+    pub fn canvas_size(&self, id: usize) -> Option<(u32, u32)> {
+        if !self.is_canvas_element(id) {
+            return None;
+        }
+        let node = self.nodes.get(id)?;
+        let width = node
+            .attribute("width")
+            .and_then(Self::parse_canvas_dimension)
+            .unwrap_or(300);
+        let height = node
+            .attribute("height")
+            .and_then(Self::parse_canvas_dimension)
+            .unwrap_or(150);
+        Some((width, height))
+    }
+
+    /// Borrow a canvas bitmap, if one has been painted.
+    pub fn canvas_bitmap_ref(&self, id: usize) -> Option<&crate::node::CanvasBitmap> {
+        let node = self.nodes.get(id)?;
+        let NodeData::Element(element) = &node.data else {
+            return None;
+        };
+        element.canvas_bitmap.as_ref()
+    }
+
+    /// Clone a canvas bitmap, if one has been painted.
+    pub fn canvas_bitmap(&self, id: usize) -> Option<crate::node::CanvasBitmap> {
+        self.canvas_bitmap_ref(id).cloned()
+    }
+
+    /// Store a canvas bitmap, replacing any previous one.
+    ///
+    /// Bitmap storage never affects layout: the intrinsic size comes from
+    /// the width/height attributes (see [`crate::image_resolve`]), not from
+    /// this bitmap. Callers that changed the size must have updated the
+    /// attributes first (see [`Document::set_element_attribute`], which
+    /// clears the bitmap automatically).
+    pub fn set_canvas_bitmap(&mut self, id: usize, bitmap: crate::node::CanvasBitmap) {
+        if let Some(node) = self.nodes.get_mut(id)
+            && let NodeData::Element(element) = &mut node.data
+        {
+            element.canvas_bitmap = Some(bitmap);
+        }
+    }
+
+    /// Ensure a bitmap matching the current width/height attributes exists,
+    /// creating a transparent-black one when missing or size-mismatched.
+    ///
+    /// Returns the current `(width, height)`, or `None` for non-canvas nodes.
+    pub fn ensure_canvas_bitmap(&mut self, id: usize) -> Option<(u32, u32)> {
+        let (width, height) = self.canvas_size(id)?;
+        let needs_reset = self
+            .canvas_bitmap_ref(id)
+            .is_none_or(|bitmap| bitmap.width != width || bitmap.height != height);
+        if needs_reset {
+            self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+        }
+        Some((width, height))
+    }
+
+    /// Fill `x, y, w, h` (in bitmap px, clipped to the bitmap) with `rgba`.
+    ///
+    /// Opaque fills overwrite; translucent fills composite source-over
+    /// against the existing pixels. Returns `false` for non-canvas nodes.
+    pub fn canvas_fill_rect(
+        &mut self,
+        id: usize,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        rgba: [u8; 4],
+    ) -> bool {
+        if self.ensure_canvas_bitmap(id).is_none() {
+            return false;
+        }
+        let Some(node) = self.nodes.get_mut(id) else {
+            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
+        };
+        let NodeData::Element(element) = &mut node.data else {
+            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
+        };
+        let Some(bitmap) = element.canvas_bitmap.as_mut() else {
+            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
+        };
+        if bitmap.width == 0 || bitmap.height == 0 {
+            return true;
+        }
+        let bw = bitmap.width as i64;
+        let bh = bitmap.height as i64;
+        let x0 = (i64::from(x)).max(0).min(bw) as u32;
+        let y0 = (i64::from(y)).max(0).min(bh) as u32;
+        let x1 = (i64::from(x) + i64::from(w)).max(0).min(bw) as u32;
+        let y1 = (i64::from(y) + i64::from(h)).max(0).min(bh) as u32;
+        if x0 >= x1 || y0 >= y1 {
+            return true;
+        }
+        let (sr, sg, sb, sa) = (
+            u16::from(rgba[0]),
+            u16::from(rgba[1]),
+            u16::from(rgba[2]),
+            u16::from(rgba[3]),
+        );
+        if sa == 255 {
+            for row in y0..y1 {
+                let base = (row * bitmap.width + x0) as usize * 4;
+                let count = (x1 - x0) as usize;
+                for i in 0..count {
+                    let off = base + i * 4;
+                    bitmap.rgba[off] = rgba[0];
+                    bitmap.rgba[off + 1] = rgba[1];
+                    bitmap.rgba[off + 2] = rgba[2];
+                    bitmap.rgba[off + 3] = rgba[3];
+                }
+            }
+            return true;
+        }
+        if sa == 0 {
+            return true;
+        }
+        let inv = 255 - sa;
+        for row in y0..y1 {
+            for col in x0..x1 {
+                let off = ((row * bitmap.width + col) as usize) * 4;
+                let dr = u16::from(bitmap.rgba[off]);
+                let dg = u16::from(bitmap.rgba[off + 1]);
+                let db = u16::from(bitmap.rgba[off + 2]);
+                let da = u16::from(bitmap.rgba[off + 3]);
+                // Source-over with non-premultiplied bytes, rounded.
+                bitmap.rgba[off] = ((sr * sa + dr * inv + 127) / 255).min(255) as u8;
+                bitmap.rgba[off + 1] = ((sg * sa + dg * inv + 127) / 255).min(255) as u8;
+                bitmap.rgba[off + 2] = ((sb * sa + db * inv + 127) / 255).min(255) as u8;
+                bitmap.rgba[off + 3] = ((sa * 255 + da * inv + 127) / 255).min(255) as u8;
+            }
+        }
+        true
+    }
+
+    /// Clear `x, y, w, h` (in bitmap px, clipped) to transparent black.
+    ///
+    /// Unlike [`Document::canvas_fill_rect`] with a transparent color (which
+    /// composites nothing), this overwrites the pixels outright per HTML
+    /// Standard §4.12.5 `clearRect`. Returns `false` for non-canvas nodes.
+    pub fn canvas_clear_rect(&mut self, id: usize, x: i32, y: i32, w: i32, h: i32) -> bool {
+        if self.ensure_canvas_bitmap(id).is_none() {
+            return false;
+        }
+        let Some(node) = self.nodes.get_mut(id) else {
+            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
+        };
+        let NodeData::Element(element) = &mut node.data else {
+            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
+        };
+        let Some(bitmap) = element.canvas_bitmap.as_mut() else {
+            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
+        };
+        if bitmap.width == 0 || bitmap.height == 0 {
+            return true;
+        }
+        let bw = bitmap.width as i64;
+        let bh = bitmap.height as i64;
+        let x0 = (i64::from(x)).max(0).min(bw) as u32;
+        let y0 = (i64::from(y)).max(0).min(bh) as u32;
+        let x1 = (i64::from(x) + i64::from(w)).max(0).min(bw) as u32;
+        let y1 = (i64::from(y) + i64::from(h)).max(0).min(bh) as u32;
+        if x0 >= x1 || y0 >= y1 {
+            return true;
+        }
+        for row in y0..y1 {
+            let base = (row * bitmap.width + x0) as usize * 4;
+            let count = (x1 - x0) as usize;
+            for i in 0..count {
+                let off = base + i * 4;
+                bitmap.rgba[off] = 0;
+                bitmap.rgba[off + 1] = 0;
+                bitmap.rgba[off + 2] = 0;
+                bitmap.rgba[off + 3] = 0;
+            }
+        }
+        true
+    }
+
+    /// Canvas bitmaps in tree order, for harness sidecar transfer.
+    ///
+    /// The live JS document holds bitmaps that HTML serialization drops
+    /// (a canvas bitmap is not part of `innerHTML`). Reftest preparation
+    /// collects them here in tree order and the paint-side injection
+    /// restores them onto the reparsed document in the same order, so the
+    /// Nth live canvas maps to the Nth parsed canvas without polluting
+    /// script-visible attributes.
+    pub fn canvases_in_tree_order(&self) -> Vec<crate::node::CanvasBitmap> {
+        let mut out = Vec::new();
+        let mut stack: Vec<usize> = self
+            .nodes
+            .get(self.root_index())
+            .map(|root| root.children.iter().rev().copied().collect())
+            .unwrap_or_default();
+        while let Some(index) = stack.pop() {
+            let Some(node) = self.nodes.get(index) else {
+                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
+            };
+            if self.is_canvas_element(index) {
+                let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
+                let bitmap = self
+                    .canvas_bitmap(index)
+                    .unwrap_or_else(|| crate::node::CanvasBitmap::cleared(width, height));
+                out.push(bitmap);
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        out
+    }
+
+    /// Restore bitmaps collected by [`Document::canvases_in_tree_order`].
+    ///
+    /// Extra bitmaps are ignored; missing ones leave the parsed canvas
+    /// blank (transparent). Used by the reftest paint path after reparsing.
+    pub fn set_canvases_in_tree_order(&mut self, bitmaps: &[crate::node::CanvasBitmap]) {
+        let mut ids = Vec::new();
+        let mut stack: Vec<usize> = self
+            .nodes
+            .get(self.root_index())
+            .map(|root| root.children.iter().rev().copied().collect())
+            .unwrap_or_default();
+        while let Some(index) = stack.pop() {
+            let Some(node) = self.nodes.get(index) else {
+                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
+            };
+            if self.is_canvas_element(index) {
+                ids.push(index);
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        for (id, bitmap) in ids.iter().zip(bitmaps.iter()) {
+            self.set_canvas_bitmap(*id, bitmap.clone());
+        }
     }
 
     /// Serialize an inline SVG element and its subtree as a standalone XML

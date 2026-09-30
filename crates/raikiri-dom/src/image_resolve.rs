@@ -234,5 +234,86 @@ fn default_svg_object_size(
     }
 }
 
+/// Populate intrinsic sizes for HTML `<canvas>` elements (HTML Standard §4.12.5).
+///
+/// Reads the width/height content attributes with their 300×150 defaults
+/// (see [`Document::canvas_size`]) and stores the result as the element's
+/// `image_intrinsic_size`, the same slot `<img>` resolution uses. Layout's
+/// leaf measurement then sizes an `auto` canvas to its bitmap dimensions,
+/// and the aspect ratio preserves the bitmap shape under `object-fit`.
+/// Unlike `<img>`, no network fetch is involved: the bitmap itself lives in
+/// [`crate::node::CanvasBitmap`] and is painted directly.
+pub(crate) fn resolve_canvas_intrinsic_sizes(document: &mut Document) {
+    let mut changed = false;
+    for node in &mut document.nodes {
+        if !node.is_in_document() {
+            continue;
+        }
+        let NodeData::Element(element) = &mut node.data else {
+            continue;
+        };
+        if !element.tag_name.eq_ignore_ascii_case("canvas") {
+            continue;
+        }
+        let is_html = element
+            .namespace
+            .as_deref()
+            .is_none_or(|ns| ns == "http://www.w3.org/1999/xhtml");
+        if !is_html {
+            continue;
+        }
+        let attr = |name: &str| {
+            element
+                .attributes
+                .iter()
+                .find(|attribute| attribute.namespace.is_none() && attribute.local.as_str() == name)
+                .map(|attribute| attribute.value.as_str())
+        };
+        // Reuse the Document parser so content-attribute handling stays in
+        // one place; inline the non-negative-integer fallback here to avoid
+        // borrowing the document while iterating its nodes mutably.
+        let parse_dim = |value: Option<&str>, default: f32| -> f32 {
+            let Some(value) = value else {
+                return default;
+            };
+            let trimmed =
+                value.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r'));
+            let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return default;
+            }
+            let digits = digits.trim_start_matches('0');
+            if digits.is_empty() {
+                return 0.0;
+            }
+            if digits.len() > 10 {
+                return u32::MAX as f32;
+            }
+            digits
+                .parse::<u64>()
+                .ok()
+                .map(|v| (v.min(u64::from(u32::MAX))) as f32)
+                .unwrap_or(default)
+        };
+        let width = parse_dim(attr("width"), 300.0);
+        let height = parse_dim(attr("height"), 150.0);
+        let ratio = if width > 0.0 && height > 0.0 {
+            let ratio = width / height;
+            (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+        } else {
+            None
+        };
+        let mut intrinsic = raikiri_traits::IntrinsicBox::new(width, height);
+        intrinsic.aspect_ratio = ratio;
+        if element.image_intrinsic_size != Some(intrinsic) {
+            element.image_intrinsic_size = Some(intrinsic);
+            changed = true;
+        }
+    }
+    if changed {
+        document.invalidate_layout_cache();
+    }
+}
+
 #[cfg(test)]
 mod tests;

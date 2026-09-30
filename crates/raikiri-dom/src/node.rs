@@ -208,6 +208,41 @@ pub struct ElementData {
     /// `ReplacedResolver` doc for why `Err` is terminal rather than silently
     /// substituting a size).
     pub(crate) image_intrinsic_size: Option<IntrinsicBox>,
+    /// Live 2d bitmap for an HTML `<canvas>` element, populated by script
+    /// through [`crate::Document::set_canvas_bitmap`] and read by paint.
+    /// `None` means no bitmap has been painted yet (transparent, zero-area
+    /// until width/height attributes give an intrinsic size). Stored here
+    /// rather than as an attribute so `getAttribute` never observes it.
+    pub(crate) canvas_bitmap: Option<CanvasBitmap>,
+}
+
+/// Live bitmap of an HTML `<canvas>` element (HTML Standard §4.12.5).
+///
+/// `rgba` holds premultiplied-free `width * height * 4` bytes in row-major
+/// order, transparent black when newly sized. Paint reads this directly;
+/// layout reads only the width/height attributes for the intrinsic size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanvasBitmap {
+    /// Bitmap width in px (the canvas width attribute value).
+    pub width: u32,
+    /// Bitmap height in px (the canvas height attribute value).
+    pub height: u32,
+    /// Row-major RGBA8 bytes, length `width * height * 4`.
+    pub rgba: Vec<u8>,
+}
+
+impl CanvasBitmap {
+    /// A transparent-black bitmap of the given size.
+    pub fn cleared(width: u32, height: u32) -> Self {
+        let len = (u64::from(width) * u64::from(height) * 4)
+            .try_into()
+            .unwrap_or(0);
+        Self {
+            width,
+            height,
+            rgba: vec![0; len],
+        }
+    }
 }
 
 /// One line-range fragment painted into a multicolumn column.
@@ -453,6 +488,7 @@ impl Node {
                 attributes: Vec::new(),
                 template_contents: None,
                 image_intrinsic_size: None,
+                canvas_bitmap: None,
             })),
         }
     }

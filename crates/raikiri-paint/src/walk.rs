@@ -4165,6 +4165,26 @@ fn paint_document_impl(
                             cv.visibility != Visibility::Hidden,
                             warnings,
                         )
+                    } else if document.is_canvas_element(node_id) {
+                        let bitmap = document.canvas_bitmap(node_id).unwrap_or_else(|| {
+                            let (w, h) = document.canvas_size(node_id).unwrap_or((300, 150));
+                            raikiri_dom::CanvasBitmap::cleared(w, h)
+                        });
+                        paint_canvas(
+                            scene,
+                            &bitmap,
+                            layout.size.width,
+                            layout.size.height,
+                            paint_x,
+                            paint_y,
+                            &cv.border,
+                            &paint_padding,
+                            cv.object_fit,
+                            &cv.object_position,
+                            cv.overflow.x,
+                            cv.overflow.y,
+                            cv.visibility != Visibility::Hidden,
+                        )
                     } else if let Some(source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
                         && let Some(intrinsic) = source.intrinsic_size(&src_url)
@@ -4795,6 +4815,109 @@ fn paint_image(
         &Rect::new(0.0, 0.0, raster_w, raster_h),
     );
     scene.pop_layer();
+    true
+}
+
+/// Draws an HTML `<canvas>` bitmap with `object-fit`/`object-position`.
+///
+/// Mirrors [`paint_image`]'s sizing and positioning, but reads pixels from
+/// the live [`raikiri_dom::CanvasBitmap`] instead of an [`ImagePixelSource`].
+/// A canvas bitmap is always available at its intrinsic size (transparent
+/// black when script never painted), so unlike `paint_image` this never
+/// emits a resource warning: an empty bitmap simply paints nothing.
+///
+/// Clipping respects `overflow`: `visible` on both axes paints the full
+/// positioned bitmap (CSS Overflow 3 §3.1 lets replaced-element overflow
+/// show, which `overflow-canvas.html` pins); any non-visible axis clips to
+/// the content box, the same box `paint_image` always uses.
+#[allow(clippy::too_many_arguments)]
+fn paint_canvas(
+    scene: &mut impl PaintScene,
+    bitmap: &raikiri_dom::CanvasBitmap,
+    border_box_width: f32,
+    border_box_height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &taffy::Rect<f32>,
+    object_fit: ObjectFit,
+    object_position: &ComputedCssPosition,
+    overflow_x: OverflowValue,
+    overflow_y: OverflowValue,
+    visible: bool,
+) -> bool {
+    let bl = border.left.width().px();
+    let bt = border.top.width().px();
+    let br = border.right.width().px();
+    let bb = border.bottom.width().px();
+    let pl = padding.left;
+    let pr = padding.right;
+    let pt = padding.top;
+    let pb = padding.bottom;
+    let content_x = (abs_x + bl + pl) as f64;
+    let content_y = (abs_y + bt + pt) as f64;
+    let content_w = (border_box_width - bl - br - pl - pr).max(0.0) as f64;
+    let content_h = (border_box_height - bt - bb - pt - pb).max(0.0) as f64;
+    if !visible || content_w <= 0.0 || content_h <= 0.0 {
+        return true;
+    }
+    if bitmap.width == 0 || bitmap.height == 0 {
+        return true;
+    }
+    let natural_w = f64::from(bitmap.width);
+    let natural_h = f64::from(bitmap.height);
+    let (image_w, image_h) = match object_fit {
+        ObjectFit::Fill => (content_w, content_h),
+        ObjectFit::Contain => {
+            let scale = (content_w / natural_w).min(content_h / natural_h);
+            (natural_w * scale, natural_h * scale)
+        }
+        ObjectFit::Cover => {
+            let scale = (content_w / natural_w).max(content_h / natural_h);
+            (natural_w * scale, natural_h * scale)
+        }
+        ObjectFit::None => (natural_w, natural_h),
+        ObjectFit::ScaleDown => {
+            let scale = (content_w / natural_w).min(content_h / natural_h).min(1.0);
+            (natural_w * scale, natural_h * scale)
+        }
+        _ => (content_w, content_h), // cov:ignore: defensive fallback for future ObjectFit variants
+    };
+    if !image_w.is_finite() || !image_h.is_finite() || image_w <= 0.0 || image_h <= 0.0 {
+        return true; // cov:ignore: natural and content sizes are already checked finite and positive above, so this cannot fail here
+    }
+    let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
+    let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);
+    let image_data = peniko::ImageData {
+        data: peniko::Blob::from(bitmap.rgba.clone()),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width: bitmap.width,
+        height: bitmap.height,
+    };
+    let brush = peniko::ImageBrush::new(image_data);
+    let clips_overflow = !matches!(overflow_x, OverflowValue::Visible)
+        || !matches!(overflow_y, OverflowValue::Visible);
+    if clips_overflow {
+        let clip = Rect::new(
+            content_x,
+            content_y,
+            content_x + content_w,
+            content_y + content_h,
+        );
+        scene.push_clip_layer(Affine::IDENTITY, &clip);
+    }
+    scene.fill(
+        peniko::Fill::NonZero,
+        Affine::translate((image_x, image_y))
+            * Affine::scale_non_uniform(image_w / natural_w, image_h / natural_h),
+        brush.as_ref(),
+        None,
+        &Rect::new(0.0, 0.0, natural_w, natural_h),
+    );
+    if clips_overflow {
+        scene.pop_layer();
+    }
     true
 }
 
