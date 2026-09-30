@@ -311,51 +311,36 @@ fn ch_spacing_and_indent_are_measured_through_the_callback() {
     );
 }
 
-/// Table-declared longhands take part in computed-style reads only through
-/// `serialize:`. None of them has one yet, so `from_name` still reports
-/// each as unsupported, and the `Longhand` path yields `None` for every
-/// table key and for a hand-written key (no panic).
+/// Table-declared longhands take part in computed-style reads exactly when
+/// they have `serialize:`: `from_name` returns `Longhand(key)` for such an
+/// entry (in either letter case) and nothing otherwise, and the `Longhand`
+/// path serializes the initial value of such an entry and yields `None` for
+/// any other key, including a hand-written one (no panic).
 #[test]
-fn table_longhands_without_serialize_stay_unsupported() {
-    let computed = ComputedValues::initial();
-    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("no ch lengths here") };
+fn table_longhands_are_supported_exactly_when_serialized() {
+    let initial = ComputedValues::initial();
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("initial values have no ch lengths") };
     for &name in crate::property::LONGHAND_NAMES {
-        assert_eq!(ComputedProperty::from_name(name), None, "{name}");
-        assert_eq!(
-            ComputedProperty::from_name(&name.to_ascii_uppercase()),
-            None,
-            "{name}"
-        );
         let key = crate::property::longhand_key_for_name(name).expect("table name");
+        let serializes = crate::property::longhand_serializes(key);
+        for spelled in [name.to_owned(), name.to_ascii_uppercase()] {
+            let expected = serializes.then_some(ComputedProperty::Longhand(key));
+            assert_eq!(
+                ComputedProperty::from_name(&spelled),
+                expected,
+                "{spelled}: supported exactly when it has `serialize:`"
+            );
+        }
         assert_eq!(
-            ComputedProperty::Longhand(key).serialize(&computed, &mut ch_advance),
-            None,
+            ComputedProperty::Longhand(key)
+                .serialize(&initial, &mut ch_advance)
+                .is_some(),
+            serializes,
             "{name}"
         );
     }
     assert_eq!(
-        ComputedProperty::Longhand(PropertyKey::Color).serialize(&computed, &mut ch_advance),
+        ComputedProperty::Longhand(PropertyKey::Color).serialize(&initial, &mut ch_advance),
         None
     );
-}
-
-/// The table counterpart of `every_property_serializes_its_initial_value`:
-/// every table longhand that `from_name` accepts serializes its initial
-/// value, under the name that selects it.
-#[test]
-fn every_serialized_table_longhand_serializes_its_initial_value() {
-    let initial = ComputedValues::initial();
-    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("initial values have no ch lengths") };
-    for &name in crate::property::LONGHAND_NAMES {
-        if let Some(property) = ComputedProperty::from_name(name) {
-            assert!(
-                matches!(property, ComputedProperty::Longhand(_)),
-                "{name}: {property:?}"
-            );
-            assert!(
-                property.serialize(&initial, &mut ch_advance).is_some(),
-                "{name}"
-            );
-        }
-    }
 }
