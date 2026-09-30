@@ -2675,6 +2675,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "cssparser",
+ "insta",
  "precomputed-hash",
  "raikiri-style-macros",
  "rustc-hash",

@@ -1,0 +1,666 @@
+---
+source: crates/raikiri-style/src/characterization.rs
+---
+box-sizing: <parent border-box> | computed | BorderBox
+box-sizing: <undeclared> | computed | ContentBox
+box-sizing: * | cssom | <not a ComputedProperty>
+box-sizing: content-box | parse | Some(BoxSizing(ContentBox))
+box-sizing: content-box | serialize | None
+box-sizing: content-box | computed | ContentBox
+box-sizing: content-box | page | BoxSizing(ContentBox)
+box-sizing: border-box | parse | Some(BoxSizing(BorderBox))
+box-sizing: border-box | serialize | None
+box-sizing: border-box | computed | BorderBox
+box-sizing: border-box | page | BoxSizing(BorderBox)
+box-sizing: padding-box | parse | None
+box-sizing: padding-box | serialize | -
+box-sizing: padding-box | computed | ContentBox
+box-sizing: padding-box | page | <absent>
+box-sizing: inherit | parse | None
+box-sizing: inherit | serialize | -
+box-sizing: inherit | computed | ContentBox
+box-sizing: inherit | page | <absent>
+box-sizing: initial | parse | None
+box-sizing: initial | serialize | -
+box-sizing: initial | computed | ContentBox
+box-sizing: initial | page | <absent>
+box-sizing: unset | parse | None
+box-sizing: unset | serialize | -
+box-sizing: unset | computed | ContentBox
+box-sizing: unset | page | <absent>
+box-sizing: var(--v) | parse | Some(Deferred(DeferredValue { property: "box-sizing", value: "var(--v)", key: BoxSizing }))
+box-sizing: var(--v) | serialize | None
+box-sizing: var(--v) | computed | BorderBox
+box-sizing: var(--v) | page | BoxSizing(BorderBox)
+box-sizing: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "box-sizing", value: "var(--undefined)", key: BoxSizing }))
+box-sizing: var(--undefined) | serialize | None
+box-sizing: var(--undefined) | computed | ContentBox
+box-sizing: var(--undefined) | page | <absent>
+
+z-index: <parent 3> | computed | Integer(3)
+z-index: <undeclared> | computed | Auto
+z-index: * | cssom | <not a ComputedProperty>
+z-index: auto | parse | Some(ZIndex(Auto))
+z-index: auto | serialize | None
+z-index: auto | computed | Auto
+z-index: auto | page | ZIndex(Auto)
+z-index: 0 | parse | Some(ZIndex(Integer(0)))
+z-index: 0 | serialize | None
+z-index: 0 | computed | Integer(0)
+z-index: 0 | page | ZIndex(Integer(0))
+z-index: -5 | parse | Some(ZIndex(Integer(-5)))
+z-index: -5 | serialize | None
+z-index: -5 | computed | Integer(-5)
+z-index: -5 | page | ZIndex(Integer(-5))
+z-index: 2.5 | parse | None
+z-index: 2.5 | serialize | -
+z-index: 2.5 | computed | Auto
+z-index: 2.5 | page | <absent>
+z-index: calc(1 + 2) | parse | Some(Deferred(DeferredValue { property: "z-index", value: "calc(1 + 2)", key: ZIndex }))
+z-index: calc(1 + 2) | serialize | None
+z-index: calc(1 + 2) | computed | Integer(3)
+z-index: calc(1 + 2) | page | ZIndex(Integer(3))
+z-index: inherit | parse | None
+z-index: inherit | serialize | -
+z-index: inherit | computed | Auto
+z-index: inherit | page | <absent>
+z-index: initial | parse | None
+z-index: initial | serialize | -
+z-index: initial | computed | Auto
+z-index: initial | page | <absent>
+z-index: unset | parse | None
+z-index: unset | serialize | -
+z-index: unset | computed | Auto
+z-index: unset | page | <absent>
+z-index: var(--v) | parse | Some(Deferred(DeferredValue { property: "z-index", value: "var(--v)", key: ZIndex }))
+z-index: var(--v) | serialize | None
+z-index: var(--v) | computed | Integer(3)
+z-index: var(--v) | page | ZIndex(Integer(3))
+z-index: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "z-index", value: "var(--undefined)", key: ZIndex }))
+z-index: var(--undefined) | serialize | None
+z-index: var(--undefined) | computed | Auto
+z-index: var(--undefined) | page | <absent>
+
+max-width: <parent 2em> | computed | Px(40.0)
+max-width: <undeclared> | computed | Auto
+max-width: * | cssom | <not a ComputedProperty>
+max-width: none | parse | Some(MaxWidth(Auto))
+max-width: none | serialize | None
+max-width: none | computed | Auto
+max-width: none | page | MaxWidth(Auto)
+max-width: 100px | parse | Some(MaxWidth(Length(Px(100.0))))
+max-width: 100px | serialize | None
+max-width: 100px | computed | Px(100.0)
+max-width: 100px | page | MaxWidth(Length(Px(100.0)))
+max-width: min-content | parse | Some(MaxWidth(Auto))
+max-width: min-content | serialize | None
+max-width: min-content | computed | Auto
+max-width: min-content | page | MaxWidth(Auto)
+max-width: fit-content | parse | Some(MaxWidth(Auto))
+max-width: fit-content | serialize | None
+max-width: fit-content | computed | Auto
+max-width: fit-content | page | MaxWidth(Auto)
+max-width: auto | parse | None
+max-width: auto | serialize | -
+max-width: auto | computed | Auto
+max-width: auto | page | <absent>
+max-width: -1px | parse | None
+max-width: -1px | serialize | -
+max-width: -1px | computed | Auto
+max-width: -1px | page | <absent>
+max-width: 1em | parse | Some(MaxWidth(Length(Em(1.0))))
+max-width: 1em | serialize | None
+max-width: 1em | computed | Px(10.0)
+max-width: 1em | page | MaxWidth(Length(Px(12.0)))
+max-width: 1rem | parse | Some(MaxWidth(Length(Rem(1.0))))
+max-width: 1rem | serialize | None
+max-width: 1rem | computed | Px(16.0)
+max-width: 1rem | page | MaxWidth(Length(Px(20.0)))
+max-width: 10% | parse | Some(MaxWidth(Length(Percent(10.0))))
+max-width: 10% | serialize | None
+max-width: 10% | computed | Percent(10.0)
+max-width: 10% | page | MaxWidth(Length(Percent(10.0)))
+max-width: 2ch | parse | Some(MaxWidth(Length(Ch(2.0))))
+max-width: 2ch | serialize | None
+max-width: 2ch | computed | Px(10.0)
+max-width: 2ch | page | MaxWidth(Length(Px(12.0)))
+max-width: 1lh | parse | Some(MaxWidth(Length(Lh(1.0))))
+max-width: 1lh | serialize | None
+max-width: 1lh | computed | Px(15.0)
+max-width: 1lh | page | MaxWidth(Length(Px(18.0)))
+max-width: 1rlh | parse | Some(MaxWidth(Length(Rlh(1.0))))
+max-width: 1rlh | serialize | None
+max-width: 1rlh | computed | Auto
+max-width: 1rlh | page | MaxWidth(Length(Px(30.0)))
+max-width: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "max-width", value: "calc(1em + 2px)", key: MaxWidth }))
+max-width: calc(1em + 2px) | serialize | None
+max-width: calc(1em + 2px) | computed | Auto
+max-width: calc(1em + 2px) | page | <absent>
+max-width: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "max-width", value: "calc(10% + 1em)", key: MaxWidth }))
+max-width: calc(10% + 1em) | serialize | None
+max-width: calc(10% + 1em) | computed | Auto
+max-width: calc(10% + 1em) | page | <absent>
+max-width: inherit | parse | None
+max-width: inherit | serialize | -
+max-width: inherit | computed | Auto
+max-width: inherit | page | <absent>
+max-width: initial | parse | None
+max-width: initial | serialize | -
+max-width: initial | computed | Auto
+max-width: initial | page | <absent>
+max-width: unset | parse | None
+max-width: unset | serialize | -
+max-width: unset | computed | Auto
+max-width: unset | page | <absent>
+max-width: var(--v) | parse | Some(Deferred(DeferredValue { property: "max-width", value: "var(--v)", key: MaxWidth }))
+max-width: var(--v) | serialize | None
+max-width: var(--v) | computed | Px(20.0)
+max-width: var(--v) | page | MaxWidth(Length(Px(24.0)))
+max-width: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "max-width", value: "var(--undefined)", key: MaxWidth }))
+max-width: var(--undefined) | serialize | None
+max-width: var(--undefined) | computed | Auto
+max-width: var(--undefined) | page | <absent>
+
+max-height: <parent 2em> | computed | Px(40.0)
+max-height: <undeclared> | computed | Auto
+max-height: * | cssom | <not a ComputedProperty>
+max-height: none | parse | Some(MaxHeight(Auto))
+max-height: none | serialize | None
+max-height: none | computed | Auto
+max-height: none | page | MaxHeight(Auto)
+max-height: 100px | parse | Some(MaxHeight(Length(Px(100.0))))
+max-height: 100px | serialize | None
+max-height: 100px | computed | Px(100.0)
+max-height: 100px | page | MaxHeight(Length(Px(100.0)))
+max-height: max-content | parse | Some(MaxHeight(Auto))
+max-height: max-content | serialize | None
+max-height: max-content | computed | Auto
+max-height: max-content | page | MaxHeight(Auto)
+max-height: auto | parse | None
+max-height: auto | serialize | -
+max-height: auto | computed | Auto
+max-height: auto | page | <absent>
+max-height: -1px | parse | None
+max-height: -1px | serialize | -
+max-height: -1px | computed | Auto
+max-height: -1px | page | <absent>
+max-height: 1em | parse | Some(MaxHeight(Length(Em(1.0))))
+max-height: 1em | serialize | None
+max-height: 1em | computed | Px(10.0)
+max-height: 1em | page | MaxHeight(Length(Px(12.0)))
+max-height: 1rem | parse | Some(MaxHeight(Length(Rem(1.0))))
+max-height: 1rem | serialize | None
+max-height: 1rem | computed | Px(16.0)
+max-height: 1rem | page | MaxHeight(Length(Px(20.0)))
+max-height: 10% | parse | Some(MaxHeight(Length(Percent(10.0))))
+max-height: 10% | serialize | None
+max-height: 10% | computed | Percent(10.0)
+max-height: 10% | page | MaxHeight(Length(Percent(10.0)))
+max-height: 2ch | parse | Some(MaxHeight(Length(Ch(2.0))))
+max-height: 2ch | serialize | None
+max-height: 2ch | computed | Px(10.0)
+max-height: 2ch | page | MaxHeight(Length(Px(12.0)))
+max-height: 1lh | parse | Some(MaxHeight(Length(Lh(1.0))))
+max-height: 1lh | serialize | None
+max-height: 1lh | computed | Px(15.0)
+max-height: 1lh | page | MaxHeight(Length(Px(18.0)))
+max-height: 1rlh | parse | Some(MaxHeight(Length(Rlh(1.0))))
+max-height: 1rlh | serialize | None
+max-height: 1rlh | computed | Auto
+max-height: 1rlh | page | MaxHeight(Length(Px(30.0)))
+max-height: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "max-height", value: "calc(1em + 2px)", key: MaxHeight }))
+max-height: calc(1em + 2px) | serialize | None
+max-height: calc(1em + 2px) | computed | Auto
+max-height: calc(1em + 2px) | page | <absent>
+max-height: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "max-height", value: "calc(10% + 1em)", key: MaxHeight }))
+max-height: calc(10% + 1em) | serialize | None
+max-height: calc(10% + 1em) | computed | Auto
+max-height: calc(10% + 1em) | page | <absent>
+max-height: inherit | parse | None
+max-height: inherit | serialize | -
+max-height: inherit | computed | Auto
+max-height: inherit | page | <absent>
+max-height: initial | parse | None
+max-height: initial | serialize | -
+max-height: initial | computed | Auto
+max-height: initial | page | <absent>
+max-height: unset | parse | None
+max-height: unset | serialize | -
+max-height: unset | computed | Auto
+max-height: unset | page | <absent>
+max-height: var(--v) | parse | Some(Deferred(DeferredValue { property: "max-height", value: "var(--v)", key: MaxHeight }))
+max-height: var(--v) | serialize | None
+max-height: var(--v) | computed | Px(20.0)
+max-height: var(--v) | page | MaxHeight(Length(Px(24.0)))
+max-height: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "max-height", value: "var(--undefined)", key: MaxHeight }))
+max-height: var(--undefined) | serialize | None
+max-height: var(--undefined) | computed | Auto
+max-height: var(--undefined) | page | <absent>
+
+box-shadow: <parent 1px 2px 3px red> | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
+box-shadow: <undeclared> | computed | []
+box-shadow: * | cssom | <not a ComputedProperty>
+box-shadow: none | parse | Some(BoxShadow([]))
+box-shadow: none | serialize | None
+box-shadow: none | computed | []
+box-shadow: none | page | BoxShadow([])
+box-shadow: inset 1px 2px red | parse | Some(BoxShadow([BoxShadowItem { offset_x: Px(1.0), offset_y: Px(2.0), blur_radius: Px(0.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: true }]))
+box-shadow: inset 1px 2px red | serialize | None
+box-shadow: inset 1px 2px red | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(0.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: true }]
+box-shadow: inset 1px 2px red | page | BoxShadow([BoxShadowItem { offset_x: Px(1.0), offset_y: Px(2.0), blur_radius: Px(0.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: true }])
+box-shadow: 1px 2px 3px 4px blue, 5px 6px green | parse | Some(BoxShadow([BoxShadowItem { offset_x: Px(1.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(4.0), color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), inset: false }, BoxShadowItem { offset_x: Px(5.0), offset_y: Px(6.0), blur_radius: Px(0.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 0, g: 128, b: 0, a: 255 }), inset: false }]))
+box-shadow: 1px 2px 3px 4px blue, 5px 6px green | serialize | None
+box-shadow: 1px 2px 3px 4px blue, 5px 6px green | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(4.0), color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), inset: false }, ComputedBoxShadowItem { offset_x: ComputedLength(5.0), offset_y: ComputedLength(6.0), blur_radius: ComputedLength(0.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 0, g: 128, b: 0, a: 255 }), inset: false }]
+box-shadow: 1px 2px 3px 4px blue, 5px 6px green | page | BoxShadow([BoxShadowItem { offset_x: Px(1.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(4.0), color: Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 }), inset: false }, BoxShadowItem { offset_x: Px(5.0), offset_y: Px(6.0), blur_radius: Px(0.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 0, g: 128, b: 0, a: 255 }), inset: false }])
+box-shadow: 1px | parse | None
+box-shadow: 1px | serialize | -
+box-shadow: 1px | computed | []
+box-shadow: 1px | page | <absent>
+box-shadow: 1em 2px 3px red | parse | Some(BoxShadow([BoxShadowItem { offset_x: Em(1.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]))
+box-shadow: 1em 2px 3px red | serialize | None
+box-shadow: 1em 2px 3px red | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(10.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
+box-shadow: 1em 2px 3px red | page | BoxShadow([BoxShadowItem { offset_x: Px(12.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }])
+box-shadow: 1rem 2px 3px red | parse | Some(BoxShadow([BoxShadowItem { offset_x: Rem(1.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]))
+box-shadow: 1rem 2px 3px red | serialize | None
+box-shadow: 1rem 2px 3px red | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(16.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
+box-shadow: 1rem 2px 3px red | page | BoxShadow([BoxShadowItem { offset_x: Px(20.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }])
+box-shadow: 10% 2px 3px red | parse | None
+box-shadow: 10% 2px 3px red | serialize | -
+box-shadow: 10% 2px 3px red | computed | []
+box-shadow: 10% 2px 3px red | page | <absent>
+box-shadow: 2ch 2px 3px red | parse | Some(BoxShadow([BoxShadowItem { offset_x: Ch(2.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]))
+box-shadow: 2ch 2px 3px red | serialize | None
+box-shadow: 2ch 2px 3px red | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(10.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
+box-shadow: 2ch 2px 3px red | page | BoxShadow([BoxShadowItem { offset_x: Px(12.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }])
+box-shadow: 1lh 2px 3px red | parse | Some(BoxShadow([BoxShadowItem { offset_x: Lh(1.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]))
+box-shadow: 1lh 2px 3px red | serialize | None
+box-shadow: 1lh 2px 3px red | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(15.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
+box-shadow: 1lh 2px 3px red | page | BoxShadow([BoxShadowItem { offset_x: Px(18.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }])
+box-shadow: 1rlh 2px 3px red | parse | Some(BoxShadow([BoxShadowItem { offset_x: Rlh(1.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]))
+box-shadow: 1rlh 2px 3px red | serialize | None
+box-shadow: 1rlh 2px 3px red | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(0.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
+box-shadow: 1rlh 2px 3px red | page | BoxShadow([BoxShadowItem { offset_x: Px(30.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }])
+box-shadow: calc(1em + 2px) 2px 3px red | parse | Some(Deferred(DeferredValue { property: "box-shadow", value: "calc(1em + 2px) 2px 3px red", key: BoxShadow }))
+box-shadow: calc(1em + 2px) 2px 3px red | serialize | None
+box-shadow: calc(1em + 2px) 2px 3px red | computed | []
+box-shadow: calc(1em + 2px) 2px 3px red | page | <absent>
+box-shadow: calc(10% + 1em) 2px 3px red | parse | None
+box-shadow: calc(10% + 1em) 2px 3px red | serialize | -
+box-shadow: calc(10% + 1em) 2px 3px red | computed | []
+box-shadow: calc(10% + 1em) 2px 3px red | page | <absent>
+box-shadow: inherit | parse | None
+box-shadow: inherit | serialize | -
+box-shadow: inherit | computed | []
+box-shadow: inherit | page | <absent>
+box-shadow: initial | parse | None
+box-shadow: initial | serialize | -
+box-shadow: initial | computed | []
+box-shadow: initial | page | <absent>
+box-shadow: unset | parse | None
+box-shadow: unset | serialize | -
+box-shadow: unset | computed | []
+box-shadow: unset | page | <absent>
+box-shadow: var(--v) | parse | Some(Deferred(DeferredValue { property: "box-shadow", value: "var(--v)", key: BoxShadow }))
+box-shadow: var(--v) | serialize | None
+box-shadow: var(--v) | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
+box-shadow: var(--v) | page | BoxShadow([BoxShadowItem { offset_x: Px(1.0), offset_y: Px(2.0), blur_radius: Px(3.0), spread_radius: Px(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }])
+box-shadow: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "box-shadow", value: "var(--undefined)", key: BoxShadow }))
+box-shadow: var(--undefined) | serialize | None
+box-shadow: var(--undefined) | computed | []
+box-shadow: var(--undefined) | page | <absent>
+
+top: <parent 2em> | computed | Px(40.0)
+top: <undeclared> | computed | Auto
+top: * | cssom | <not a ComputedProperty>
+top: auto | parse | Some(Top(Auto))
+top: auto | serialize | Some("auto")
+top: auto | computed | Auto
+top: auto | page | Top(Auto)
+top: -3px | parse | Some(Top(Length(Px(-3.0))))
+top: -3px | serialize | Some("-3px")
+top: -3px | computed | Px(-3.0)
+top: -3px | page | Top(Length(Px(-3.0)))
+top: 0 | parse | Some(Top(Length(Px(0.0))))
+top: 0 | serialize | Some("0px")
+top: 0 | computed | Px(0.0)
+top: 0 | page | Top(Length(Px(0.0)))
+top: none | parse | None
+top: none | serialize | -
+top: none | computed | Auto
+top: none | page | <absent>
+top: 1em | parse | Some(Top(Length(Em(1.0))))
+top: 1em | serialize | Some("1em")
+top: 1em | computed | Px(10.0)
+top: 1em | page | Top(Length(Px(12.0)))
+top: 1rem | parse | Some(Top(Length(Rem(1.0))))
+top: 1rem | serialize | Some("1rem")
+top: 1rem | computed | Px(16.0)
+top: 1rem | page | Top(Length(Px(20.0)))
+top: 10% | parse | None
+top: 10% | serialize | -
+top: 10% | computed | Auto
+top: 10% | page | <absent>
+top: 2ch | parse | Some(Top(Length(Ch(2.0))))
+top: 2ch | serialize | Some("2ch")
+top: 2ch | computed | Px(10.0)
+top: 2ch | page | Top(Length(Px(12.0)))
+top: 1lh | parse | Some(Top(Length(Lh(1.0))))
+top: 1lh | serialize | Some("1lh")
+top: 1lh | computed | Px(15.0)
+top: 1lh | page | Top(Length(Px(18.0)))
+top: 1rlh | parse | Some(Top(Length(Rlh(1.0))))
+top: 1rlh | serialize | Some("1rlh")
+top: 1rlh | computed | Auto
+top: 1rlh | page | Top(Length(Px(30.0)))
+top: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "top", value: "calc(1em + 2px)", key: Top }))
+top: calc(1em + 2px) | serialize | None
+top: calc(1em + 2px) | computed | Auto
+top: calc(1em + 2px) | page | <absent>
+top: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "top", value: "calc(10% + 1em)", key: Top }))
+top: calc(10% + 1em) | serialize | None
+top: calc(10% + 1em) | computed | Auto
+top: calc(10% + 1em) | page | <absent>
+top: inherit | parse | None
+top: inherit | serialize | -
+top: inherit | computed | Auto
+top: inherit | page | <absent>
+top: initial | parse | None
+top: initial | serialize | -
+top: initial | computed | Auto
+top: initial | page | <absent>
+top: unset | parse | None
+top: unset | serialize | -
+top: unset | computed | Auto
+top: unset | page | <absent>
+top: var(--v) | parse | Some(Deferred(DeferredValue { property: "top", value: "var(--v)", key: Top }))
+top: var(--v) | serialize | None
+top: var(--v) | computed | Px(20.0)
+top: var(--v) | page | Top(Length(Px(24.0)))
+top: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "top", value: "var(--undefined)", key: Top }))
+top: var(--undefined) | serialize | None
+top: var(--undefined) | computed | Auto
+top: var(--undefined) | page | <absent>
+
+right: <parent 2em> | computed | Px(40.0)
+right: <undeclared> | computed | Auto
+right: * | cssom | <not a ComputedProperty>
+right: auto | parse | Some(Right(Auto))
+right: auto | serialize | Some("auto")
+right: auto | computed | Auto
+right: auto | page | Right(Auto)
+right: -3px | parse | Some(Right(Length(Px(-3.0))))
+right: -3px | serialize | Some("-3px")
+right: -3px | computed | Px(-3.0)
+right: -3px | page | Right(Length(Px(-3.0)))
+right: 0 | parse | Some(Right(Length(Px(0.0))))
+right: 0 | serialize | Some("0px")
+right: 0 | computed | Px(0.0)
+right: 0 | page | Right(Length(Px(0.0)))
+right: none | parse | None
+right: none | serialize | -
+right: none | computed | Auto
+right: none | page | <absent>
+right: 1em | parse | Some(Right(Length(Em(1.0))))
+right: 1em | serialize | Some("1em")
+right: 1em | computed | Px(10.0)
+right: 1em | page | Right(Length(Px(12.0)))
+right: 1rem | parse | Some(Right(Length(Rem(1.0))))
+right: 1rem | serialize | Some("1rem")
+right: 1rem | computed | Px(16.0)
+right: 1rem | page | Right(Length(Px(20.0)))
+right: 10% | parse | None
+right: 10% | serialize | -
+right: 10% | computed | Auto
+right: 10% | page | <absent>
+right: 2ch | parse | Some(Right(Length(Ch(2.0))))
+right: 2ch | serialize | Some("2ch")
+right: 2ch | computed | Px(10.0)
+right: 2ch | page | Right(Length(Px(12.0)))
+right: 1lh | parse | Some(Right(Length(Lh(1.0))))
+right: 1lh | serialize | Some("1lh")
+right: 1lh | computed | Px(15.0)
+right: 1lh | page | Right(Length(Px(18.0)))
+right: 1rlh | parse | Some(Right(Length(Rlh(1.0))))
+right: 1rlh | serialize | Some("1rlh")
+right: 1rlh | computed | Auto
+right: 1rlh | page | Right(Length(Px(30.0)))
+right: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "right", value: "calc(1em + 2px)", key: Right }))
+right: calc(1em + 2px) | serialize | None
+right: calc(1em + 2px) | computed | Auto
+right: calc(1em + 2px) | page | <absent>
+right: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "right", value: "calc(10% + 1em)", key: Right }))
+right: calc(10% + 1em) | serialize | None
+right: calc(10% + 1em) | computed | Auto
+right: calc(10% + 1em) | page | <absent>
+right: inherit | parse | None
+right: inherit | serialize | -
+right: inherit | computed | Auto
+right: inherit | page | <absent>
+right: initial | parse | None
+right: initial | serialize | -
+right: initial | computed | Auto
+right: initial | page | <absent>
+right: unset | parse | None
+right: unset | serialize | -
+right: unset | computed | Auto
+right: unset | page | <absent>
+right: var(--v) | parse | Some(Deferred(DeferredValue { property: "right", value: "var(--v)", key: Right }))
+right: var(--v) | serialize | None
+right: var(--v) | computed | Px(20.0)
+right: var(--v) | page | Right(Length(Px(24.0)))
+right: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "right", value: "var(--undefined)", key: Right }))
+right: var(--undefined) | serialize | None
+right: var(--undefined) | computed | Auto
+right: var(--undefined) | page | <absent>
+
+bottom: <parent 2em> | computed | Px(40.0)
+bottom: <undeclared> | computed | Auto
+bottom: * | cssom | <not a ComputedProperty>
+bottom: auto | parse | Some(Bottom(Auto))
+bottom: auto | serialize | Some("auto")
+bottom: auto | computed | Auto
+bottom: auto | page | Bottom(Auto)
+bottom: -3px | parse | Some(Bottom(Length(Px(-3.0))))
+bottom: -3px | serialize | Some("-3px")
+bottom: -3px | computed | Px(-3.0)
+bottom: -3px | page | Bottom(Length(Px(-3.0)))
+bottom: 0 | parse | Some(Bottom(Length(Px(0.0))))
+bottom: 0 | serialize | Some("0px")
+bottom: 0 | computed | Px(0.0)
+bottom: 0 | page | Bottom(Length(Px(0.0)))
+bottom: none | parse | None
+bottom: none | serialize | -
+bottom: none | computed | Auto
+bottom: none | page | <absent>
+bottom: 1em | parse | Some(Bottom(Length(Em(1.0))))
+bottom: 1em | serialize | Some("1em")
+bottom: 1em | computed | Px(10.0)
+bottom: 1em | page | Bottom(Length(Px(12.0)))
+bottom: 1rem | parse | Some(Bottom(Length(Rem(1.0))))
+bottom: 1rem | serialize | Some("1rem")
+bottom: 1rem | computed | Px(16.0)
+bottom: 1rem | page | Bottom(Length(Px(20.0)))
+bottom: 10% | parse | None
+bottom: 10% | serialize | -
+bottom: 10% | computed | Auto
+bottom: 10% | page | <absent>
+bottom: 2ch | parse | Some(Bottom(Length(Ch(2.0))))
+bottom: 2ch | serialize | Some("2ch")
+bottom: 2ch | computed | Px(10.0)
+bottom: 2ch | page | Bottom(Length(Px(12.0)))
+bottom: 1lh | parse | Some(Bottom(Length(Lh(1.0))))
+bottom: 1lh | serialize | Some("1lh")
+bottom: 1lh | computed | Px(15.0)
+bottom: 1lh | page | Bottom(Length(Px(18.0)))
+bottom: 1rlh | parse | Some(Bottom(Length(Rlh(1.0))))
+bottom: 1rlh | serialize | Some("1rlh")
+bottom: 1rlh | computed | Auto
+bottom: 1rlh | page | Bottom(Length(Px(30.0)))
+bottom: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "bottom", value: "calc(1em + 2px)", key: Bottom }))
+bottom: calc(1em + 2px) | serialize | None
+bottom: calc(1em + 2px) | computed | Auto
+bottom: calc(1em + 2px) | page | <absent>
+bottom: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "bottom", value: "calc(10% + 1em)", key: Bottom }))
+bottom: calc(10% + 1em) | serialize | None
+bottom: calc(10% + 1em) | computed | Auto
+bottom: calc(10% + 1em) | page | <absent>
+bottom: inherit | parse | None
+bottom: inherit | serialize | -
+bottom: inherit | computed | Auto
+bottom: inherit | page | <absent>
+bottom: initial | parse | None
+bottom: initial | serialize | -
+bottom: initial | computed | Auto
+bottom: initial | page | <absent>
+bottom: unset | parse | None
+bottom: unset | serialize | -
+bottom: unset | computed | Auto
+bottom: unset | page | <absent>
+bottom: var(--v) | parse | Some(Deferred(DeferredValue { property: "bottom", value: "var(--v)", key: Bottom }))
+bottom: var(--v) | serialize | None
+bottom: var(--v) | computed | Px(20.0)
+bottom: var(--v) | page | Bottom(Length(Px(24.0)))
+bottom: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "bottom", value: "var(--undefined)", key: Bottom }))
+bottom: var(--undefined) | serialize | None
+bottom: var(--undefined) | computed | Auto
+bottom: var(--undefined) | page | <absent>
+
+left: <parent 2em> | computed | Px(40.0)
+left: <undeclared> | computed | Auto
+left: * | cssom | <not a ComputedProperty>
+left: auto | parse | Some(Left(Auto))
+left: auto | serialize | Some("auto")
+left: auto | computed | Auto
+left: auto | page | Left(Auto)
+left: -3px | parse | Some(Left(Length(Px(-3.0))))
+left: -3px | serialize | Some("-3px")
+left: -3px | computed | Px(-3.0)
+left: -3px | page | Left(Length(Px(-3.0)))
+left: 0 | parse | Some(Left(Length(Px(0.0))))
+left: 0 | serialize | Some("0px")
+left: 0 | computed | Px(0.0)
+left: 0 | page | Left(Length(Px(0.0)))
+left: none | parse | None
+left: none | serialize | -
+left: none | computed | Auto
+left: none | page | <absent>
+left: 1em | parse | Some(Left(Length(Em(1.0))))
+left: 1em | serialize | Some("1em")
+left: 1em | computed | Px(10.0)
+left: 1em | page | Left(Length(Px(12.0)))
+left: 1rem | parse | Some(Left(Length(Rem(1.0))))
+left: 1rem | serialize | Some("1rem")
+left: 1rem | computed | Px(16.0)
+left: 1rem | page | Left(Length(Px(20.0)))
+left: 10% | parse | None
+left: 10% | serialize | -
+left: 10% | computed | Auto
+left: 10% | page | <absent>
+left: 2ch | parse | Some(Left(Length(Ch(2.0))))
+left: 2ch | serialize | Some("2ch")
+left: 2ch | computed | Px(10.0)
+left: 2ch | page | Left(Length(Px(12.0)))
+left: 1lh | parse | Some(Left(Length(Lh(1.0))))
+left: 1lh | serialize | Some("1lh")
+left: 1lh | computed | Px(15.0)
+left: 1lh | page | Left(Length(Px(18.0)))
+left: 1rlh | parse | Some(Left(Length(Rlh(1.0))))
+left: 1rlh | serialize | Some("1rlh")
+left: 1rlh | computed | Auto
+left: 1rlh | page | Left(Length(Px(30.0)))
+left: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "left", value: "calc(1em + 2px)", key: Left }))
+left: calc(1em + 2px) | serialize | None
+left: calc(1em + 2px) | computed | Auto
+left: calc(1em + 2px) | page | <absent>
+left: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "left", value: "calc(10% + 1em)", key: Left }))
+left: calc(10% + 1em) | serialize | None
+left: calc(10% + 1em) | computed | Auto
+left: calc(10% + 1em) | page | <absent>
+left: inherit | parse | None
+left: inherit | serialize | -
+left: inherit | computed | Auto
+left: inherit | page | <absent>
+left: initial | parse | None
+left: initial | serialize | -
+left: initial | computed | Auto
+left: initial | page | <absent>
+left: unset | parse | None
+left: unset | serialize | -
+left: unset | computed | Auto
+left: unset | page | <absent>
+left: var(--v) | parse | Some(Deferred(DeferredValue { property: "left", value: "var(--v)", key: Left }))
+left: var(--v) | serialize | None
+left: var(--v) | computed | Px(20.0)
+left: var(--v) | page | Left(Length(Px(24.0)))
+left: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "left", value: "var(--undefined)", key: Left }))
+left: var(--undefined) | serialize | None
+left: var(--undefined) | computed | Auto
+left: var(--undefined) | page | <absent>
+
+outline-offset: <parent 2em> | computed | ComputedLength(40.0)
+outline-offset: <undeclared> | computed | ComputedLength(0.0)
+outline-offset: * | cssom | <not a ComputedProperty>
+outline-offset: 0 | parse | Some(OutlineOffset(Px(0.0)))
+outline-offset: 0 | serialize | Some("0px")
+outline-offset: 0 | computed | ComputedLength(0.0)
+outline-offset: 0 | page | OutlineOffset(Px(0.0))
+outline-offset: -2px | parse | Some(OutlineOffset(Px(-2.0)))
+outline-offset: -2px | serialize | Some("-2px")
+outline-offset: -2px | computed | ComputedLength(-2.0)
+outline-offset: -2px | page | OutlineOffset(Px(-2.0))
+outline-offset: auto | parse | None
+outline-offset: auto | serialize | -
+outline-offset: auto | computed | ComputedLength(0.0)
+outline-offset: auto | page | <absent>
+outline-offset: 1em | parse | Some(OutlineOffset(Em(1.0)))
+outline-offset: 1em | serialize | Some("1em")
+outline-offset: 1em | computed | ComputedLength(10.0)
+outline-offset: 1em | page | OutlineOffset(Px(12.0))
+outline-offset: 1rem | parse | Some(OutlineOffset(Rem(1.0)))
+outline-offset: 1rem | serialize | Some("1rem")
+outline-offset: 1rem | computed | ComputedLength(16.0)
+outline-offset: 1rem | page | OutlineOffset(Px(20.0))
+outline-offset: 10% | parse | None
+outline-offset: 10% | serialize | -
+outline-offset: 10% | computed | ComputedLength(0.0)
+outline-offset: 10% | page | <absent>
+outline-offset: 2ch | parse | Some(OutlineOffset(Ch(2.0)))
+outline-offset: 2ch | serialize | Some("2ch")
+outline-offset: 2ch | computed | ComputedLength(10.0)
+outline-offset: 2ch | page | OutlineOffset(Px(12.0))
+outline-offset: 1lh | parse | Some(OutlineOffset(Lh(1.0)))
+outline-offset: 1lh | serialize | Some("1lh")
+outline-offset: 1lh | computed | ComputedLength(15.0)
+outline-offset: 1lh | page | OutlineOffset(Px(18.0))
+outline-offset: 1rlh | parse | Some(OutlineOffset(Rlh(1.0)))
+outline-offset: 1rlh | serialize | Some("1rlh")
+outline-offset: 1rlh | computed | ComputedLength(0.0)
+outline-offset: 1rlh | page | OutlineOffset(Px(30.0))
+outline-offset: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "outline-offset", value: "calc(1em + 2px)", key: OutlineOffset }))
+outline-offset: calc(1em + 2px) | serialize | None
+outline-offset: calc(1em + 2px) | computed | ComputedLength(0.0)
+outline-offset: calc(1em + 2px) | page | <absent>
+outline-offset: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "outline-offset", value: "calc(10% + 1em)", key: OutlineOffset }))
+outline-offset: calc(10% + 1em) | serialize | None
+outline-offset: calc(10% + 1em) | computed | ComputedLength(0.0)
+outline-offset: calc(10% + 1em) | page | <absent>
+outline-offset: inherit | parse | None
+outline-offset: inherit | serialize | -
+outline-offset: inherit | computed | ComputedLength(0.0)
+outline-offset: inherit | page | <absent>
+outline-offset: initial | parse | None
+outline-offset: initial | serialize | -
+outline-offset: initial | computed | ComputedLength(0.0)
+outline-offset: initial | page | <absent>
+outline-offset: unset | parse | None
+outline-offset: unset | serialize | -
+outline-offset: unset | computed | ComputedLength(0.0)
+outline-offset: unset | page | <absent>
+outline-offset: var(--v) | parse | Some(Deferred(DeferredValue { property: "outline-offset", value: "var(--v)", key: OutlineOffset }))
+outline-offset: var(--v) | serialize | None
+outline-offset: var(--v) | computed | ComputedLength(20.0)
+outline-offset: var(--v) | page | OutlineOffset(Px(24.0))
+outline-offset: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "outline-offset", value: "var(--undefined)", key: OutlineOffset }))
+outline-offset: var(--undefined) | serialize | None
+outline-offset: var(--undefined) | computed | ComputedLength(0.0)
+outline-offset: var(--undefined) | page | <absent>

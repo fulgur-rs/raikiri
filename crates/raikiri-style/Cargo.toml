@@ -43,6 +43,9 @@ raikiri-style-macros = { workspace = true }
 # `Cargo.toml`'s `[workspace.dependencies]` `criterion` entry for the full
 # writeup; nothing about raikiri-style's own bench semantics changed.
 criterion = { workspace = true }
+# Snapshot files of the property characterization corpus
+# (`src/characterization`).
+insta = { workspace = true }
 
 [[bench]]
 name = "cascade"
