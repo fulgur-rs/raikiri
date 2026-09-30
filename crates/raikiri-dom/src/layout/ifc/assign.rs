@@ -97,12 +97,11 @@ fn has_full_width_transform(value: TextTransform) -> bool {
 }
 
 /// Whether the painter can draw the text of an element (the root or a
-/// descendant): direction and shadows are not drawn. Emphasis marks are drawn
-/// by neither path.
+/// descendant): direction is not drawn. Emphasis marks are drawn by neither
+/// path.
 fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
     cv.direction == Direction::Ltr
-        && cv.text_shadow.is_empty()
         && cv.word_space_transform == WordSpaceTransform::None
         && cv.background_clip != VisualBox::Text
         && !has_full_width_transform(cv.text_transform)

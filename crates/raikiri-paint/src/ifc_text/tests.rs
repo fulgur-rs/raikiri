@@ -665,3 +665,64 @@ fn a_relative_block_child_with_no_offset_is_painted_once_like_the_parley_path() 
     };
     assert_eq!(fills(&on), fills(&off));
 }
+
+/// Every glyph run as (glyph id, x·64, y·64, brush), in command order.
+fn runs_in_order(scene: &Scene) -> Vec<(u32, i64, i64, String)> {
+    glyphs(scene)
+        .into_iter()
+        .map(|g| {
+            (
+                g.0,
+                (g.1 * 64.0).round() as i64,
+                (g.2 * 64.0).round() as i64,
+                format!("{:?}", g.3),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn text_shadows_are_painted_before_the_glyphs_in_reverse_order() {
+    let (off, on) = off_and_on(
+        "width:100px;text-shadow:2px 3px red, 4px 1px blue;color:black",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    assert!(runs_in_order(&off).len() >= 6, "two shadows and the text");
+    assert_eq!(runs_in_order(&on), runs_in_order(&off));
+}
+
+#[test]
+fn a_blurred_shadow_is_drawn_inside_a_filter_layer() {
+    let layers = |scene: &Scene| {
+        scene
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::PushLayer(_)))
+            .count()
+    };
+    let (off, on) = off_and_on("width:100px;text-shadow:1px 1px 3px red", |doc, root| {
+        doc.append_text(root, "ab");
+    });
+    assert!(layers(&off) >= 1);
+    assert_eq!(layers(&on), layers(&off));
+    assert_eq!(runs_in_order(&on), runs_in_order(&off));
+}
+
+#[test]
+fn a_shadow_of_an_inline_element_uses_that_elements_color() {
+    let (off, on) = off_and_on("width:100px;text-shadow:1px 1px", |doc, root| {
+        doc.append_text(root, "a");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;color:blue"),
+        );
+        doc.append_text(inner, "b");
+    });
+    // `currentcolor` shadows take the color of the text they belong to.
+    assert_eq!(runs_in_order(&off).len(), 4, "a shadow and a glyph each");
+    assert_eq!(runs_in_order(&on), runs_in_order(&off));
+}

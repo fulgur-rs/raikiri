@@ -680,6 +680,14 @@ impl Node {
             .map(|lines| lines.lines.as_slice())
     }
 
+    /// Content width the lines of an ifc root were broken at, and their total
+    /// height.
+    #[doc(hidden)]
+    pub fn ifc_size(&self) -> Option<(f32, f32)> {
+        let lines = self.ifc.as_ref()?.lines.as_ref()?;
+        Some((lines.width, lines.height))
+    }
+
     /// Children of an ifc root that it lays out as boxes of their own
     /// (floats and atomic inlines), in document order. Empty for any other
     /// node.

@@ -10,13 +10,16 @@ use crate::text::{
     DecorationContext, DecorationGeometry, DecorationPhase, css_color_to_peniko,
     decorations_for_element, draw_decoration_phase, synthetic_embolden,
 };
+use anyrender::filters::{Filter, FilterEffect};
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
-use kurbo::Affine;
-use peniko::Fill;
+use kurbo::{Affine, Rect};
+use peniko::{Fill, Mix};
 use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
+use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Content-box origin of an ifc root in page coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -52,6 +55,8 @@ fn context_for_text(
 /// One glyph run ready to draw, with its decoration context.
 struct RunDraw<'a> {
     run: shodo::GlyphRunView<'a>,
+    /// The text node the run belongs to.
+    owner: usize,
     color: peniko::Color,
     glyphs: Vec<AnyrenderGlyph>,
     /// Horizontal extent of the run in page coordinates.
@@ -81,6 +86,10 @@ pub(crate) fn draw_ifc_lines(
         f64::from(position.x),
         f64::from(position.y + position.shift_y),
     ));
+    let size = document
+        .get_node(root_id)
+        .and_then(|n| n.ifc_size())
+        .unwrap_or((0.0, 0.0));
     let mut contexts: HashMap<usize, DecorationContext> = HashMap::new();
     for line in lines {
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
@@ -131,6 +140,7 @@ pub(crate) fn draw_ifc_lines(
                 .clone();
             runs.push(RunDraw {
                 run,
+                owner,
                 color: css_color_to_peniko(cv.color),
                 glyphs,
                 x0: f64::from(position.x) + first_x,
@@ -159,6 +169,19 @@ pub(crate) fn draw_ifc_lines(
                 .run
                 .skew()
                 .map(|degrees| Affine::skew(f64::from(degrees).to_radians().tan(), 0.0));
+            draw_shadows(
+                scene,
+                &ShadowRun {
+                    draw,
+                    font: &font,
+                    coords: &coords,
+                    glyph_transform,
+                },
+                &cascade.computed[draw.owner],
+                transform,
+                position,
+                size,
+            );
             scene.draw_glyphs(
                 &font,
                 font_size,
@@ -174,6 +197,79 @@ pub(crate) fn draw_ifc_lines(
             );
         }
         draw_decorations(scene, &runs, DecorationPhase::AfterGlyphs);
+    }
+}
+
+/// A glyph run with the font data the scene needs to draw it again.
+struct ShadowRun<'a, 'b> {
+    draw: &'a RunDraw<'b>,
+    font: &'a peniko::FontData,
+    coords: &'a [i16],
+    glyph_transform: Option<Affine>,
+}
+
+/// Draw the text shadows of one run, behind its glyphs.
+///
+/// CSS Text Decoration 3 §4 paints the shadows below the text, the first one
+/// on top, so the list is drawn in reverse. A blurred shadow is drawn inside a
+/// filter layer clipped to the lines grown by three times the blur radius,
+/// which is how the parley path isolates the blur.
+fn draw_shadows(
+    scene: &mut impl PaintScene,
+    run: &ShadowRun<'_, '_>,
+    owner_cv: &raikiri_style::ComputedValues,
+    transform: Affine,
+    position: IfcPosition,
+    (width, height): (f32, f32),
+) {
+    let font_size = run.draw.run.font_size();
+    for shadow in owner_cv.text_shadow.iter().rev() {
+        let color = match shadow.color {
+            TextShadowColor::CurrentColor => owner_cv.color,
+            TextShadowColor::Resolved(color) => color,
+            _ => owner_cv.color,
+        };
+        let (dx, dy) = (
+            f64::from(shadow.offset_x.px()),
+            f64::from(shadow.offset_y.px()),
+        );
+        let shadow_transform = transform * Affine::translate((dx, dy));
+        let blur = shadow.blur_radius.px();
+        let use_blur_layer = blur.is_finite() && blur > 0.0;
+        if use_blur_layer {
+            let extent = f64::from((blur * 3.0).max(1.0));
+            let (x, y) = (f64::from(position.x), f64::from(position.y));
+            let clip = Rect::new(
+                x + dx - extent,
+                y + dy - extent,
+                x + f64::from(width) + dx + extent,
+                y + f64::from(height) + dy + extent,
+            );
+            scene.push_layer(
+                Mix::Normal,
+                1.0,
+                Affine::IDENTITY,
+                &clip,
+                Some(Arc::new(Filter::single(FilterEffect::blur(blur)))),
+                None,
+            );
+        }
+        scene.draw_glyphs(
+            run.font,
+            font_size,
+            true,
+            run.coords,
+            synthetic_embolden(run.draw.run.embolden(), font_size),
+            Fill::NonZero,
+            css_color_to_peniko(color),
+            1.0,
+            shadow_transform,
+            run.glyph_transform,
+            run.draw.glyphs.clone().into_iter(),
+        );
+        if use_blur_layer {
+            scene.pop_layer();
+        }
     }
 }
 

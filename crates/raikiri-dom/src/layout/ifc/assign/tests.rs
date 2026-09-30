@@ -231,8 +231,20 @@ fn an_rtl_character_stays_on_the_parley_path() {
 }
 
 #[test]
-fn text_shadow_stays_on_the_parley_path() {
-    assert_stays_on_parley("text-shadow:1px 1px red", text_only("aa"));
+fn text_shadow_keeps_a_paragraph_an_ifc_root() {
+    for (css, inner_css) in [
+        ("text-shadow:1px 1px red", "display:inline"),
+        ("", "display:inline;text-shadow:1px 1px 2px red"),
+    ] {
+        let mut fixture = block_fixture(css, |doc, root| {
+            doc.append_text(root, "aa ");
+            let inner = span(doc, root, inner_css);
+            doc.append_text(inner, "bb");
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{css} {inner_css}");
+    }
 }
 
 #[test]
