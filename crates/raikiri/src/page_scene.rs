@@ -608,7 +608,7 @@ pub fn build_page_scene_for_page_named(
         let mut stack: Vec<(usize, Pt, Pt)> = vec![(body_idx, 0.0, 0.0)];
         while let Some((idx, parent_abs_x, parent_abs_y)) = stack.pop() {
             let Some(node) = dom.get_node(idx) else {
-                continue;
+                continue; // cov:ignore: DFS stack holds only body-subtree indices, always valid in a well-formed Document
             };
             if !node.is_in_document()
                 || node.is_non_rendered_html_element()
@@ -672,7 +672,7 @@ pub fn build_page_scene_for_page_named(
                         };
                         drawables.paragraphs.insert(node_id, entry);
                     }
-                    _ => {}
+                    _ => {} // cov:ignore: in-document body descendants via parsing are only Element or Text (Comment/PI bits cleared, template fragments detached, DFS starts at body)
                 }
             }
 
@@ -682,7 +682,7 @@ pub fn build_page_scene_for_page_named(
                 }
             }
         }
-    }
+    } // cov:ignore: parse always synthesizes <body>, so the missing-body path is unreachable with a parsed Document
 
     PageScene {
         page_metadata,
@@ -735,7 +735,7 @@ fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
             stack.push(c);
         }
     }
-    None
+    None // cov:ignore: parse always synthesizes <html>/<body>; lookup fails only for hand-built Documents that cannot supply the CascadeResult this API requires
 }
 
 /// Serialize a premultiplied RGBA8 buffer to PNG bytes (via `tiny_skia::Pixmap`).
