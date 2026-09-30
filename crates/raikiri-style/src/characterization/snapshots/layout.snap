@@ -1,6 +1,7 @@
 ---
 source: crates/raikiri-style/src/characterization.rs
 ---
+list-style-type: <undeclared> | page | <absent>
 list-style-type: <parent square> | computed | Named("square")
 list-style-type: <undeclared> | computed | Named("square")
 list-style-type: * | cssom | <not a ComputedProperty>
@@ -48,6 +49,14 @@ list-style-type: unset | parse | None
 list-style-type: unset | serialize | -
 list-style-type: unset | computed | Named("square")
 list-style-type: unset | page | <absent>
+list-style-type: revert | parse | None
+list-style-type: revert | serialize | -
+list-style-type: revert | computed | Named("square")
+list-style-type: revert | page | <absent>
+list-style-type: revert-layer | parse | None
+list-style-type: revert-layer | serialize | -
+list-style-type: revert-layer | computed | Named("square")
+list-style-type: revert-layer | page | <absent>
 list-style-type: var(--v) | parse | Some(Deferred(DeferredValue { property: "list-style-type", value: "var(--v)", key: ListStyleType }))
 list-style-type: var(--v) | serialize | None
 list-style-type: var(--v) | computed | Named("square")
@@ -57,6 +66,7 @@ list-style-type: var(--undefined) | serialize | None
 list-style-type: var(--undefined) | computed | Named("square")
 list-style-type: var(--undefined) | page | <absent>
 
+list-style-position: <undeclared> | page | <absent>
 list-style-position: <parent inside> | computed | Inside
 list-style-position: <undeclared> | computed | Inside
 list-style-position: * | cssom | <not a ComputedProperty>
@@ -84,6 +94,14 @@ list-style-position: unset | parse | None
 list-style-position: unset | serialize | -
 list-style-position: unset | computed | Inside
 list-style-position: unset | page | <absent>
+list-style-position: revert | parse | None
+list-style-position: revert | serialize | -
+list-style-position: revert | computed | Inside
+list-style-position: revert | page | <absent>
+list-style-position: revert-layer | parse | None
+list-style-position: revert-layer | serialize | -
+list-style-position: revert-layer | computed | Inside
+list-style-position: revert-layer | page | <absent>
 list-style-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "list-style-position", value: "var(--v)", key: ListStylePosition }))
 list-style-position: var(--v) | serialize | None
 list-style-position: var(--v) | computed | Inside
@@ -93,6 +111,7 @@ list-style-position: var(--undefined) | serialize | None
 list-style-position: var(--undefined) | computed | Inside
 list-style-position: var(--undefined) | page | <absent>
 
+list-style-image: <undeclared> | page | <absent>
 list-style-image: <parent url(p.png)> | computed | Url("p.png")
 list-style-image: <undeclared> | computed | Url("p.png")
 list-style-image: * | cssom | <not a ComputedProperty>
@@ -128,6 +147,14 @@ list-style-image: unset | parse | None
 list-style-image: unset | serialize | -
 list-style-image: unset | computed | Url("p.png")
 list-style-image: unset | page | <absent>
+list-style-image: revert | parse | None
+list-style-image: revert | serialize | -
+list-style-image: revert | computed | Url("p.png")
+list-style-image: revert | page | <absent>
+list-style-image: revert-layer | parse | None
+list-style-image: revert-layer | serialize | -
+list-style-image: revert-layer | computed | Url("p.png")
+list-style-image: revert-layer | page | <absent>
 list-style-image: var(--v) | parse | Some(Deferred(DeferredValue { property: "list-style-image", value: "var(--v)", key: ListStyleImage }))
 list-style-image: var(--v) | serialize | None
 list-style-image: var(--v) | computed | Url("p.png")
@@ -137,6 +164,7 @@ list-style-image: var(--undefined) | serialize | None
 list-style-image: var(--undefined) | computed | Url("p.png")
 list-style-image: var(--undefined) | page | <absent>
 
+flex-direction: <undeclared> | page | <absent>
 flex-direction: <parent column> | computed | Column
 flex-direction: <undeclared> | computed | Row
 flex-direction: * | cssom | <not a ComputedProperty>
@@ -168,6 +196,14 @@ flex-direction: unset | parse | None
 flex-direction: unset | serialize | -
 flex-direction: unset | computed | Row
 flex-direction: unset | page | <absent>
+flex-direction: revert | parse | None
+flex-direction: revert | serialize | -
+flex-direction: revert | computed | Row
+flex-direction: revert | page | <absent>
+flex-direction: revert-layer | parse | None
+flex-direction: revert-layer | serialize | -
+flex-direction: revert-layer | computed | Row
+flex-direction: revert-layer | page | <absent>
 flex-direction: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-direction", value: "var(--v)", key: FlexDirection }))
 flex-direction: var(--v) | serialize | None
 flex-direction: var(--v) | computed | Column
@@ -177,6 +213,7 @@ flex-direction: var(--undefined) | serialize | None
 flex-direction: var(--undefined) | computed | Row
 flex-direction: var(--undefined) | page | <absent>
 
+flex-wrap: <undeclared> | page | <absent>
 flex-wrap: <parent wrap> | computed | Wrap
 flex-wrap: <undeclared> | computed | NoWrap
 flex-wrap: * | cssom | <not a ComputedProperty>
@@ -204,6 +241,14 @@ flex-wrap: unset | parse | None
 flex-wrap: unset | serialize | -
 flex-wrap: unset | computed | NoWrap
 flex-wrap: unset | page | <absent>
+flex-wrap: revert | parse | None
+flex-wrap: revert | serialize | -
+flex-wrap: revert | computed | NoWrap
+flex-wrap: revert | page | <absent>
+flex-wrap: revert-layer | parse | None
+flex-wrap: revert-layer | serialize | -
+flex-wrap: revert-layer | computed | NoWrap
+flex-wrap: revert-layer | page | <absent>
 flex-wrap: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-wrap", value: "var(--v)", key: FlexWrap }))
 flex-wrap: var(--v) | serialize | None
 flex-wrap: var(--v) | computed | Wrap
@@ -213,6 +258,7 @@ flex-wrap: var(--undefined) | serialize | None
 flex-wrap: var(--undefined) | computed | NoWrap
 flex-wrap: var(--undefined) | page | <absent>
 
+flex-grow: <undeclared> | page | <absent>
 flex-grow: <parent 2> | computed | 2.0
 flex-grow: <undeclared> | computed | 0.0
 flex-grow: * | cssom | <not a ComputedProperty>
@@ -248,6 +294,14 @@ flex-grow: unset | parse | None
 flex-grow: unset | serialize | -
 flex-grow: unset | computed | 0.0
 flex-grow: unset | page | <absent>
+flex-grow: revert | parse | None
+flex-grow: revert | serialize | -
+flex-grow: revert | computed | 0.0
+flex-grow: revert | page | <absent>
+flex-grow: revert-layer | parse | None
+flex-grow: revert-layer | serialize | -
+flex-grow: revert-layer | computed | 0.0
+flex-grow: revert-layer | page | <absent>
 flex-grow: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-grow", value: "var(--v)", key: FlexGrow }))
 flex-grow: var(--v) | serialize | None
 flex-grow: var(--v) | computed | 2.0
@@ -257,6 +311,7 @@ flex-grow: var(--undefined) | serialize | None
 flex-grow: var(--undefined) | computed | 0.0
 flex-grow: var(--undefined) | page | <absent>
 
+flex-shrink: <undeclared> | page | <absent>
 flex-shrink: <parent 2> | computed | 2.0
 flex-shrink: <undeclared> | computed | 1.0
 flex-shrink: * | cssom | <not a ComputedProperty>
@@ -292,6 +347,14 @@ flex-shrink: unset | parse | None
 flex-shrink: unset | serialize | -
 flex-shrink: unset | computed | 1.0
 flex-shrink: unset | page | <absent>
+flex-shrink: revert | parse | None
+flex-shrink: revert | serialize | -
+flex-shrink: revert | computed | 1.0
+flex-shrink: revert | page | <absent>
+flex-shrink: revert-layer | parse | None
+flex-shrink: revert-layer | serialize | -
+flex-shrink: revert-layer | computed | 1.0
+flex-shrink: revert-layer | page | <absent>
 flex-shrink: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-shrink", value: "var(--v)", key: FlexShrink }))
 flex-shrink: var(--v) | serialize | None
 flex-shrink: var(--v) | computed | 2.0
@@ -301,6 +364,7 @@ flex-shrink: var(--undefined) | serialize | None
 flex-shrink: var(--undefined) | computed | 1.0
 flex-shrink: var(--undefined) | page | <absent>
 
+flex-basis: <undeclared> | page | <absent>
 flex-basis: <parent 2em> | computed | Px(40.0)
 flex-basis: <undeclared> | computed | Auto
 flex-basis: * | cssom | <not a ComputedProperty>
@@ -372,6 +436,14 @@ flex-basis: unset | parse | None
 flex-basis: unset | serialize | -
 flex-basis: unset | computed | Auto
 flex-basis: unset | page | <absent>
+flex-basis: revert | parse | None
+flex-basis: revert | serialize | -
+flex-basis: revert | computed | Auto
+flex-basis: revert | page | <absent>
+flex-basis: revert-layer | parse | None
+flex-basis: revert-layer | serialize | -
+flex-basis: revert-layer | computed | Auto
+flex-basis: revert-layer | page | <absent>
 flex-basis: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-basis", value: "var(--v)", key: FlexBasis }))
 flex-basis: var(--v) | serialize | None
 flex-basis: var(--v) | computed | Px(20.0)
@@ -381,6 +453,7 @@ flex-basis: var(--undefined) | serialize | None
 flex-basis: var(--undefined) | computed | Auto
 flex-basis: var(--undefined) | page | <absent>
 
+order: <undeclared> | page | <absent>
 order: <parent 2> | computed | 2
 order: <undeclared> | computed | 0
 order: * | cssom | <not a ComputedProperty>
@@ -412,6 +485,14 @@ order: unset | parse | None
 order: unset | serialize | -
 order: unset | computed | 0
 order: unset | page | <absent>
+order: revert | parse | None
+order: revert | serialize | -
+order: revert | computed | 0
+order: revert | page | <absent>
+order: revert-layer | parse | None
+order: revert-layer | serialize | -
+order: revert-layer | computed | 0
+order: revert-layer | page | <absent>
 order: var(--v) | parse | Some(Deferred(DeferredValue { property: "order", value: "var(--v)", key: Order }))
 order: var(--v) | serialize | None
 order: var(--v) | computed | 2
@@ -421,6 +502,7 @@ order: var(--undefined) | serialize | None
 order: var(--undefined) | computed | 0
 order: var(--undefined) | page | <absent>
 
+justify-content: <undeclared> | page | <absent>
 justify-content: <parent center> | computed | Center
 justify-content: <undeclared> | computed | Normal
 justify-content: * | cssom | <not a ComputedProperty>
@@ -464,6 +546,14 @@ justify-content: unset | parse | None
 justify-content: unset | serialize | -
 justify-content: unset | computed | Normal
 justify-content: unset | page | <absent>
+justify-content: revert | parse | None
+justify-content: revert | serialize | -
+justify-content: revert | computed | Normal
+justify-content: revert | page | <absent>
+justify-content: revert-layer | parse | None
+justify-content: revert-layer | serialize | -
+justify-content: revert-layer | computed | Normal
+justify-content: revert-layer | page | <absent>
 justify-content: var(--v) | parse | Some(Deferred(DeferredValue { property: "justify-content", value: "var(--v)", key: JustifyContent }))
 justify-content: var(--v) | serialize | None
 justify-content: var(--v) | computed | Center
@@ -473,6 +563,7 @@ justify-content: var(--undefined) | serialize | None
 justify-content: var(--undefined) | computed | Normal
 justify-content: var(--undefined) | page | <absent>
 
+align-content: <undeclared> | page | <absent>
 align-content: <parent center> | computed | Center
 align-content: <undeclared> | computed | Normal
 align-content: * | cssom | <not a ComputedProperty>
@@ -512,6 +603,14 @@ align-content: unset | parse | None
 align-content: unset | serialize | -
 align-content: unset | computed | Normal
 align-content: unset | page | <absent>
+align-content: revert | parse | None
+align-content: revert | serialize | -
+align-content: revert | computed | Normal
+align-content: revert | page | <absent>
+align-content: revert-layer | parse | None
+align-content: revert-layer | serialize | -
+align-content: revert-layer | computed | Normal
+align-content: revert-layer | page | <absent>
 align-content: var(--v) | parse | Some(Deferred(DeferredValue { property: "align-content", value: "var(--v)", key: AlignContent }))
 align-content: var(--v) | serialize | None
 align-content: var(--v) | computed | Center
@@ -521,6 +620,7 @@ align-content: var(--undefined) | serialize | None
 align-content: var(--undefined) | computed | Normal
 align-content: var(--undefined) | page | <absent>
 
+align-items: <undeclared> | page | <absent>
 align-items: <parent center> | computed | Center
 align-items: <undeclared> | computed | Normal
 align-items: * | cssom | <not a ComputedProperty>
@@ -568,6 +668,14 @@ align-items: unset | parse | None
 align-items: unset | serialize | -
 align-items: unset | computed | Normal
 align-items: unset | page | <absent>
+align-items: revert | parse | None
+align-items: revert | serialize | -
+align-items: revert | computed | Normal
+align-items: revert | page | <absent>
+align-items: revert-layer | parse | None
+align-items: revert-layer | serialize | -
+align-items: revert-layer | computed | Normal
+align-items: revert-layer | page | <absent>
 align-items: var(--v) | parse | Some(Deferred(DeferredValue { property: "align-items", value: "var(--v)", key: AlignItems }))
 align-items: var(--v) | serialize | None
 align-items: var(--v) | computed | Center
@@ -577,6 +685,7 @@ align-items: var(--undefined) | serialize | None
 align-items: var(--undefined) | computed | Normal
 align-items: var(--undefined) | page | <absent>
 
+justify-items: <undeclared> | page | <absent>
 justify-items: <parent center> | computed | Center
 justify-items: <undeclared> | computed | Normal
 justify-items: * | cssom | <not a ComputedProperty>
@@ -620,6 +729,14 @@ justify-items: unset | parse | None
 justify-items: unset | serialize | -
 justify-items: unset | computed | Normal
 justify-items: unset | page | <absent>
+justify-items: revert | parse | None
+justify-items: revert | serialize | -
+justify-items: revert | computed | Normal
+justify-items: revert | page | <absent>
+justify-items: revert-layer | parse | None
+justify-items: revert-layer | serialize | -
+justify-items: revert-layer | computed | Normal
+justify-items: revert-layer | page | <absent>
 justify-items: var(--v) | parse | Some(Deferred(DeferredValue { property: "justify-items", value: "var(--v)", key: JustifyItems }))
 justify-items: var(--v) | serialize | None
 justify-items: var(--v) | computed | Center
@@ -629,6 +746,7 @@ justify-items: var(--undefined) | serialize | None
 justify-items: var(--undefined) | computed | Normal
 justify-items: var(--undefined) | page | <absent>
 
+align-self: <undeclared> | page | <absent>
 align-self: <parent center> | computed | Value(Center)
 align-self: <undeclared> | computed | Auto
 align-self: * | cssom | <not a ComputedProperty>
@@ -672,6 +790,14 @@ align-self: unset | parse | None
 align-self: unset | serialize | -
 align-self: unset | computed | Auto
 align-self: unset | page | <absent>
+align-self: revert | parse | None
+align-self: revert | serialize | -
+align-self: revert | computed | Auto
+align-self: revert | page | <absent>
+align-self: revert-layer | parse | None
+align-self: revert-layer | serialize | -
+align-self: revert-layer | computed | Auto
+align-self: revert-layer | page | <absent>
 align-self: var(--v) | parse | Some(Deferred(DeferredValue { property: "align-self", value: "var(--v)", key: AlignSelf }))
 align-self: var(--v) | serialize | None
 align-self: var(--v) | computed | Value(Center)
@@ -681,6 +807,7 @@ align-self: var(--undefined) | serialize | None
 align-self: var(--undefined) | computed | Auto
 align-self: var(--undefined) | page | <absent>
 
+justify-self: <undeclared> | page | <absent>
 justify-self: <parent center> | computed | Value(Center)
 justify-self: <undeclared> | computed | Auto
 justify-self: * | cssom | <not a ComputedProperty>
@@ -724,6 +851,14 @@ justify-self: unset | parse | None
 justify-self: unset | serialize | -
 justify-self: unset | computed | Auto
 justify-self: unset | page | <absent>
+justify-self: revert | parse | None
+justify-self: revert | serialize | -
+justify-self: revert | computed | Auto
+justify-self: revert | page | <absent>
+justify-self: revert-layer | parse | None
+justify-self: revert-layer | serialize | -
+justify-self: revert-layer | computed | Auto
+justify-self: revert-layer | page | <absent>
 justify-self: var(--v) | parse | Some(Deferred(DeferredValue { property: "justify-self", value: "var(--v)", key: JustifySelf }))
 justify-self: var(--v) | serialize | None
 justify-self: var(--v) | computed | Value(Center)
@@ -733,6 +868,7 @@ justify-self: var(--undefined) | serialize | None
 justify-self: var(--undefined) | computed | Auto
 justify-self: var(--undefined) | page | <absent>
 
+row-gap: <undeclared> | page | <absent>
 row-gap: <parent 2em> | computed | Px(40.0)
 row-gap: <undeclared> | computed | Normal
 row-gap: * | cssom | <not a ComputedProperty>
@@ -800,6 +936,14 @@ row-gap: unset | parse | None
 row-gap: unset | serialize | -
 row-gap: unset | computed | Normal
 row-gap: unset | page | <absent>
+row-gap: revert | parse | None
+row-gap: revert | serialize | -
+row-gap: revert | computed | Normal
+row-gap: revert | page | <absent>
+row-gap: revert-layer | parse | None
+row-gap: revert-layer | serialize | -
+row-gap: revert-layer | computed | Normal
+row-gap: revert-layer | page | <absent>
 row-gap: var(--v) | parse | Some(Deferred(DeferredValue { property: "row-gap", value: "var(--v)", key: RowGap }))
 row-gap: var(--v) | serialize | None
 row-gap: var(--v) | computed | Px(20.0)
@@ -809,6 +953,7 @@ row-gap: var(--undefined) | serialize | None
 row-gap: var(--undefined) | computed | Normal
 row-gap: var(--undefined) | page | <absent>
 
+column-gap: <undeclared> | page | <absent>
 column-gap: <parent 2em> | computed | Px(40.0)
 column-gap: <undeclared> | computed | Normal
 column-gap: * | cssom | <not a ComputedProperty>
@@ -876,6 +1021,14 @@ column-gap: unset | parse | None
 column-gap: unset | serialize | -
 column-gap: unset | computed | Normal
 column-gap: unset | page | <absent>
+column-gap: revert | parse | None
+column-gap: revert | serialize | -
+column-gap: revert | computed | Normal
+column-gap: revert | page | <absent>
+column-gap: revert-layer | parse | None
+column-gap: revert-layer | serialize | -
+column-gap: revert-layer | computed | Normal
+column-gap: revert-layer | page | <absent>
 column-gap: var(--v) | parse | Some(Deferred(DeferredValue { property: "column-gap", value: "var(--v)", key: ColumnGap }))
 column-gap: var(--v) | serialize | None
 column-gap: var(--v) | computed | Px(20.0)
@@ -885,6 +1038,7 @@ column-gap: var(--undefined) | serialize | None
 column-gap: var(--undefined) | computed | Normal
 column-gap: var(--undefined) | page | <absent>
 
+grid-template-columns: <undeclared> | page | <absent>
 grid-template-columns: <parent 2em 1fr> | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(40.0))), Size(Breadth(Flex(1.0)))] })
 grid-template-columns: <undeclared> | computed | None
 grid-template-columns: * | cssom | <not a ComputedProperty>
@@ -968,6 +1122,14 @@ grid-template-columns: unset | parse | None
 grid-template-columns: unset | serialize | -
 grid-template-columns: unset | computed | None
 grid-template-columns: unset | page | <absent>
+grid-template-columns: revert | parse | None
+grid-template-columns: revert | serialize | -
+grid-template-columns: revert | computed | None
+grid-template-columns: revert | page | <absent>
+grid-template-columns: revert-layer | parse | None
+grid-template-columns: revert-layer | serialize | -
+grid-template-columns: revert-layer | computed | None
+grid-template-columns: revert-layer | page | <absent>
 grid-template-columns: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-template-columns", value: "var(--v)", key: GridTemplateColumns }))
 grid-template-columns: var(--v) | serialize | None
 grid-template-columns: var(--v) | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(20.0))), Size(Breadth(Flex(1.0)))] })
@@ -977,6 +1139,7 @@ grid-template-columns: var(--undefined) | serialize | None
 grid-template-columns: var(--undefined) | computed | None
 grid-template-columns: var(--undefined) | page | <absent>
 
+grid-template-rows: <undeclared> | page | <absent>
 grid-template-rows: <parent 2em> | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(40.0)))] })
 grid-template-rows: <undeclared> | computed | None
 grid-template-rows: * | cssom | <not a ComputedProperty>
@@ -1040,6 +1203,14 @@ grid-template-rows: unset | parse | None
 grid-template-rows: unset | serialize | -
 grid-template-rows: unset | computed | None
 grid-template-rows: unset | page | <absent>
+grid-template-rows: revert | parse | None
+grid-template-rows: revert | serialize | -
+grid-template-rows: revert | computed | None
+grid-template-rows: revert | page | <absent>
+grid-template-rows: revert-layer | parse | None
+grid-template-rows: revert-layer | serialize | -
+grid-template-rows: revert-layer | computed | None
+grid-template-rows: revert-layer | page | <absent>
 grid-template-rows: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-template-rows", value: "var(--v)", key: GridTemplateRows }))
 grid-template-rows: var(--v) | serialize | None
 grid-template-rows: var(--v) | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(20.0)))] })
@@ -1049,6 +1220,7 @@ grid-template-rows: var(--undefined) | serialize | None
 grid-template-rows: var(--undefined) | computed | None
 grid-template-rows: var(--undefined) | page | <absent>
 
+grid-template-areas: <undeclared> | page | <absent>
 grid-template-areas: <parent "a b"> | computed | Areas(GridTemplateAreas { row_strings: ["a b"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "b", row_start: 1, row_end: 2, column_start: 2, column_end: 3 }], row_count: 1, column_count: 2 })
 grid-template-areas: <undeclared> | computed | None
 grid-template-areas: * | cssom | <not a ComputedProperty>
@@ -1084,6 +1256,14 @@ grid-template-areas: unset | parse | None
 grid-template-areas: unset | serialize | -
 grid-template-areas: unset | computed | None
 grid-template-areas: unset | page | <absent>
+grid-template-areas: revert | parse | None
+grid-template-areas: revert | serialize | -
+grid-template-areas: revert | computed | None
+grid-template-areas: revert | page | <absent>
+grid-template-areas: revert-layer | parse | None
+grid-template-areas: revert-layer | serialize | -
+grid-template-areas: revert-layer | computed | None
+grid-template-areas: revert-layer | page | <absent>
 grid-template-areas: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-template-areas", value: "var(--v)", key: GridTemplateAreas }))
 grid-template-areas: var(--v) | serialize | None
 grid-template-areas: var(--v) | computed | Areas(GridTemplateAreas { row_strings: ["a b"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "b", row_start: 1, row_end: 2, column_start: 2, column_end: 3 }], row_count: 1, column_count: 2 })
@@ -1093,6 +1273,7 @@ grid-template-areas: var(--undefined) | serialize | None
 grid-template-areas: var(--undefined) | computed | None
 grid-template-areas: var(--undefined) | page | <absent>
 
+grid-auto-columns: <undeclared> | page | <absent>
 grid-auto-columns: <parent 2em> | computed | [Breadth(Px(40.0))]
 grid-auto-columns: <undeclared> | computed | [Breadth(Auto)]
 grid-auto-columns: * | cssom | <not a ComputedProperty>
@@ -1160,6 +1341,14 @@ grid-auto-columns: unset | parse | None
 grid-auto-columns: unset | serialize | -
 grid-auto-columns: unset | computed | [Breadth(Auto)]
 grid-auto-columns: unset | page | <absent>
+grid-auto-columns: revert | parse | None
+grid-auto-columns: revert | serialize | -
+grid-auto-columns: revert | computed | [Breadth(Auto)]
+grid-auto-columns: revert | page | <absent>
+grid-auto-columns: revert-layer | parse | None
+grid-auto-columns: revert-layer | serialize | -
+grid-auto-columns: revert-layer | computed | [Breadth(Auto)]
+grid-auto-columns: revert-layer | page | <absent>
 grid-auto-columns: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-auto-columns", value: "var(--v)", key: GridAutoColumns }))
 grid-auto-columns: var(--v) | serialize | None
 grid-auto-columns: var(--v) | computed | [Breadth(Px(20.0))]
@@ -1169,6 +1358,7 @@ grid-auto-columns: var(--undefined) | serialize | None
 grid-auto-columns: var(--undefined) | computed | [Breadth(Auto)]
 grid-auto-columns: var(--undefined) | page | <absent>
 
+grid-auto-rows: <undeclared> | page | <absent>
 grid-auto-rows: <parent 2em> | computed | [Breadth(Px(40.0))]
 grid-auto-rows: <undeclared> | computed | [Breadth(Auto)]
 grid-auto-rows: * | cssom | <not a ComputedProperty>
@@ -1236,6 +1426,14 @@ grid-auto-rows: unset | parse | None
 grid-auto-rows: unset | serialize | -
 grid-auto-rows: unset | computed | [Breadth(Auto)]
 grid-auto-rows: unset | page | <absent>
+grid-auto-rows: revert | parse | None
+grid-auto-rows: revert | serialize | -
+grid-auto-rows: revert | computed | [Breadth(Auto)]
+grid-auto-rows: revert | page | <absent>
+grid-auto-rows: revert-layer | parse | None
+grid-auto-rows: revert-layer | serialize | -
+grid-auto-rows: revert-layer | computed | [Breadth(Auto)]
+grid-auto-rows: revert-layer | page | <absent>
 grid-auto-rows: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-auto-rows", value: "var(--v)", key: GridAutoRows }))
 grid-auto-rows: var(--v) | serialize | None
 grid-auto-rows: var(--v) | computed | [Breadth(Px(20.0))]
@@ -1245,6 +1443,7 @@ grid-auto-rows: var(--undefined) | serialize | None
 grid-auto-rows: var(--undefined) | computed | [Breadth(Auto)]
 grid-auto-rows: var(--undefined) | page | <absent>
 
+grid-auto-flow: <undeclared> | page | <absent>
 grid-auto-flow: <parent column> | computed | Column
 grid-auto-flow: <undeclared> | computed | Row
 grid-auto-flow: * | cssom | <not a ComputedProperty>
@@ -1284,6 +1483,14 @@ grid-auto-flow: unset | parse | None
 grid-auto-flow: unset | serialize | -
 grid-auto-flow: unset | computed | Row
 grid-auto-flow: unset | page | <absent>
+grid-auto-flow: revert | parse | None
+grid-auto-flow: revert | serialize | -
+grid-auto-flow: revert | computed | Row
+grid-auto-flow: revert | page | <absent>
+grid-auto-flow: revert-layer | parse | None
+grid-auto-flow: revert-layer | serialize | -
+grid-auto-flow: revert-layer | computed | Row
+grid-auto-flow: revert-layer | page | <absent>
 grid-auto-flow: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-auto-flow", value: "var(--v)", key: GridAutoFlow }))
 grid-auto-flow: var(--v) | serialize | None
 grid-auto-flow: var(--v) | computed | Column
@@ -1293,6 +1500,7 @@ grid-auto-flow: var(--undefined) | serialize | None
 grid-auto-flow: var(--undefined) | computed | Row
 grid-auto-flow: var(--undefined) | page | <absent>
 
+grid-row-start: <undeclared> | page | <absent>
 grid-row-start: <parent 2> | computed | Line(2)
 grid-row-start: <undeclared> | computed | Auto
 grid-row-start: * | cssom | <not a ComputedProperty>
@@ -1344,6 +1552,14 @@ grid-row-start: unset | parse | None
 grid-row-start: unset | serialize | -
 grid-row-start: unset | computed | Auto
 grid-row-start: unset | page | <absent>
+grid-row-start: revert | parse | None
+grid-row-start: revert | serialize | -
+grid-row-start: revert | computed | Auto
+grid-row-start: revert | page | <absent>
+grid-row-start: revert-layer | parse | None
+grid-row-start: revert-layer | serialize | -
+grid-row-start: revert-layer | computed | Auto
+grid-row-start: revert-layer | page | <absent>
 grid-row-start: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-row-start", value: "var(--v)", key: GridRowStart }))
 grid-row-start: var(--v) | serialize | None
 grid-row-start: var(--v) | computed | Line(2)
@@ -1353,6 +1569,7 @@ grid-row-start: var(--undefined) | serialize | None
 grid-row-start: var(--undefined) | computed | Auto
 grid-row-start: var(--undefined) | page | <absent>
 
+grid-row-end: <undeclared> | page | <absent>
 grid-row-end: <parent 2> | computed | Line(2)
 grid-row-end: <undeclared> | computed | Auto
 grid-row-end: * | cssom | <not a ComputedProperty>
@@ -1404,6 +1621,14 @@ grid-row-end: unset | parse | None
 grid-row-end: unset | serialize | -
 grid-row-end: unset | computed | Auto
 grid-row-end: unset | page | <absent>
+grid-row-end: revert | parse | None
+grid-row-end: revert | serialize | -
+grid-row-end: revert | computed | Auto
+grid-row-end: revert | page | <absent>
+grid-row-end: revert-layer | parse | None
+grid-row-end: revert-layer | serialize | -
+grid-row-end: revert-layer | computed | Auto
+grid-row-end: revert-layer | page | <absent>
 grid-row-end: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-row-end", value: "var(--v)", key: GridRowEnd }))
 grid-row-end: var(--v) | serialize | None
 grid-row-end: var(--v) | computed | Line(2)
@@ -1413,6 +1638,7 @@ grid-row-end: var(--undefined) | serialize | None
 grid-row-end: var(--undefined) | computed | Auto
 grid-row-end: var(--undefined) | page | <absent>
 
+grid-column-start: <undeclared> | page | <absent>
 grid-column-start: <parent 2> | computed | Line(2)
 grid-column-start: <undeclared> | computed | Auto
 grid-column-start: * | cssom | <not a ComputedProperty>
@@ -1464,6 +1690,14 @@ grid-column-start: unset | parse | None
 grid-column-start: unset | serialize | -
 grid-column-start: unset | computed | Auto
 grid-column-start: unset | page | <absent>
+grid-column-start: revert | parse | None
+grid-column-start: revert | serialize | -
+grid-column-start: revert | computed | Auto
+grid-column-start: revert | page | <absent>
+grid-column-start: revert-layer | parse | None
+grid-column-start: revert-layer | serialize | -
+grid-column-start: revert-layer | computed | Auto
+grid-column-start: revert-layer | page | <absent>
 grid-column-start: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-column-start", value: "var(--v)", key: GridColumnStart }))
 grid-column-start: var(--v) | serialize | None
 grid-column-start: var(--v) | computed | Line(2)
@@ -1473,6 +1707,7 @@ grid-column-start: var(--undefined) | serialize | None
 grid-column-start: var(--undefined) | computed | Auto
 grid-column-start: var(--undefined) | page | <absent>
 
+grid-column-end: <undeclared> | page | <absent>
 grid-column-end: <parent 2> | computed | Line(2)
 grid-column-end: <undeclared> | computed | Auto
 grid-column-end: * | cssom | <not a ComputedProperty>
@@ -1524,6 +1759,14 @@ grid-column-end: unset | parse | None
 grid-column-end: unset | serialize | -
 grid-column-end: unset | computed | Auto
 grid-column-end: unset | page | <absent>
+grid-column-end: revert | parse | None
+grid-column-end: revert | serialize | -
+grid-column-end: revert | computed | Auto
+grid-column-end: revert | page | <absent>
+grid-column-end: revert-layer | parse | None
+grid-column-end: revert-layer | serialize | -
+grid-column-end: revert-layer | computed | Auto
+grid-column-end: revert-layer | page | <absent>
 grid-column-end: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-column-end", value: "var(--v)", key: GridColumnEnd }))
 grid-column-end: var(--v) | serialize | None
 grid-column-end: var(--v) | computed | Line(2)
@@ -1533,6 +1776,7 @@ grid-column-end: var(--undefined) | serialize | None
 grid-column-end: var(--undefined) | computed | Auto
 grid-column-end: var(--undefined) | page | <absent>
 
+orphans: <undeclared> | page | <absent>
 orphans: <parent 3> | computed | 3
 orphans: <undeclared> | computed | 3
 orphans: * | cssom | <not a ComputedProperty>
@@ -1568,6 +1812,14 @@ orphans: unset | parse | None
 orphans: unset | serialize | -
 orphans: unset | computed | 3
 orphans: unset | page | <absent>
+orphans: revert | parse | None
+orphans: revert | serialize | -
+orphans: revert | computed | 3
+orphans: revert | page | <absent>
+orphans: revert-layer | parse | None
+orphans: revert-layer | serialize | -
+orphans: revert-layer | computed | 3
+orphans: revert-layer | page | <absent>
 orphans: var(--v) | parse | Some(Deferred(DeferredValue { property: "orphans", value: "var(--v)", key: Orphans }))
 orphans: var(--v) | serialize | None
 orphans: var(--v) | computed | 3
@@ -1577,6 +1829,7 @@ orphans: var(--undefined) | serialize | None
 orphans: var(--undefined) | computed | 3
 orphans: var(--undefined) | page | <absent>
 
+widows: <undeclared> | page | <absent>
 widows: <parent 3> | computed | 3
 widows: <undeclared> | computed | 3
 widows: * | cssom | <not a ComputedProperty>
@@ -1612,6 +1865,14 @@ widows: unset | parse | None
 widows: unset | serialize | -
 widows: unset | computed | 3
 widows: unset | page | <absent>
+widows: revert | parse | None
+widows: revert | serialize | -
+widows: revert | computed | 3
+widows: revert | page | <absent>
+widows: revert-layer | parse | None
+widows: revert-layer | serialize | -
+widows: revert-layer | computed | 3
+widows: revert-layer | page | <absent>
 widows: var(--v) | parse | Some(Deferred(DeferredValue { property: "widows", value: "var(--v)", key: Widows }))
 widows: var(--v) | serialize | None
 widows: var(--v) | computed | 3
@@ -1621,6 +1882,7 @@ widows: var(--undefined) | serialize | None
 widows: var(--undefined) | computed | 3
 widows: var(--undefined) | page | <absent>
 
+break-before: <undeclared> | page | <absent>
 break-before: <parent page> | computed | Page
 break-before: <undeclared> | computed | Auto
 break-before: * | cssom | <not a ComputedProperty>
@@ -1684,6 +1946,14 @@ break-before: unset | parse | None
 break-before: unset | serialize | -
 break-before: unset | computed | Auto
 break-before: unset | page | <absent>
+break-before: revert | parse | None
+break-before: revert | serialize | -
+break-before: revert | computed | Auto
+break-before: revert | page | <absent>
+break-before: revert-layer | parse | None
+break-before: revert-layer | serialize | -
+break-before: revert-layer | computed | Auto
+break-before: revert-layer | page | <absent>
 break-before: var(--v) | parse | Some(Deferred(DeferredValue { property: "break-before", value: "var(--v)", key: BreakBefore }))
 break-before: var(--v) | serialize | None
 break-before: var(--v) | computed | Page
@@ -1693,6 +1963,7 @@ break-before: var(--undefined) | serialize | None
 break-before: var(--undefined) | computed | Auto
 break-before: var(--undefined) | page | <absent>
 
+break-after: <undeclared> | page | <absent>
 break-after: <parent page> | computed | Page
 break-after: <undeclared> | computed | Auto
 break-after: * | cssom | <not a ComputedProperty>
@@ -1756,6 +2027,14 @@ break-after: unset | parse | None
 break-after: unset | serialize | -
 break-after: unset | computed | Auto
 break-after: unset | page | <absent>
+break-after: revert | parse | None
+break-after: revert | serialize | -
+break-after: revert | computed | Auto
+break-after: revert | page | <absent>
+break-after: revert-layer | parse | None
+break-after: revert-layer | serialize | -
+break-after: revert-layer | computed | Auto
+break-after: revert-layer | page | <absent>
 break-after: var(--v) | parse | Some(Deferred(DeferredValue { property: "break-after", value: "var(--v)", key: BreakAfter }))
 break-after: var(--v) | serialize | None
 break-after: var(--v) | computed | Page
@@ -1765,6 +2044,7 @@ break-after: var(--undefined) | serialize | None
 break-after: var(--undefined) | computed | Auto
 break-after: var(--undefined) | page | <absent>
 
+break-inside: <undeclared> | page | <absent>
 break-inside: <parent avoid> | computed | Avoid
 break-inside: <undeclared> | computed | Auto
 break-inside: * | cssom | <not a ComputedProperty>
@@ -1800,6 +2080,14 @@ break-inside: unset | parse | None
 break-inside: unset | serialize | -
 break-inside: unset | computed | Auto
 break-inside: unset | page | <absent>
+break-inside: revert | parse | None
+break-inside: revert | serialize | -
+break-inside: revert | computed | Auto
+break-inside: revert | page | <absent>
+break-inside: revert-layer | parse | None
+break-inside: revert-layer | serialize | -
+break-inside: revert-layer | computed | Auto
+break-inside: revert-layer | page | <absent>
 break-inside: var(--v) | parse | Some(Deferred(DeferredValue { property: "break-inside", value: "var(--v)", key: BreakInside }))
 break-inside: var(--v) | serialize | None
 break-inside: var(--v) | computed | Avoid
@@ -1809,6 +2097,7 @@ break-inside: var(--undefined) | serialize | None
 break-inside: var(--undefined) | computed | Auto
 break-inside: var(--undefined) | page | <absent>
 
+float: <undeclared> | page | <absent>
 float: <parent left> | computed | Left
 float: <undeclared> | computed | None
 float: * | cssom | <not a ComputedProperty>
@@ -1844,6 +2133,14 @@ float: unset | parse | None
 float: unset | serialize | -
 float: unset | computed | None
 float: unset | page | <absent>
+float: revert | parse | None
+float: revert | serialize | -
+float: revert | computed | None
+float: revert | page | <absent>
+float: revert-layer | parse | None
+float: revert-layer | serialize | -
+float: revert-layer | computed | None
+float: revert-layer | page | <absent>
 float: var(--v) | parse | Some(Deferred(DeferredValue { property: "float", value: "var(--v)", key: Float }))
 float: var(--v) | serialize | None
 float: var(--v) | computed | Left
@@ -1853,6 +2150,7 @@ float: var(--undefined) | serialize | None
 float: var(--undefined) | computed | None
 float: var(--undefined) | page | <absent>
 
+clear: <undeclared> | page | <absent>
 clear: <parent both> | computed | Both
 clear: <undeclared> | computed | None
 clear: * | cssom | <not a ComputedProperty>
@@ -1892,6 +2190,14 @@ clear: unset | parse | None
 clear: unset | serialize | -
 clear: unset | computed | None
 clear: unset | page | <absent>
+clear: revert | parse | None
+clear: revert | serialize | -
+clear: revert | computed | None
+clear: revert | page | <absent>
+clear: revert-layer | parse | None
+clear: revert-layer | serialize | -
+clear: revert-layer | computed | None
+clear: revert-layer | page | <absent>
 clear: var(--v) | parse | Some(Deferred(DeferredValue { property: "clear", value: "var(--v)", key: Clear }))
 clear: var(--v) | serialize | None
 clear: var(--v) | computed | Both
@@ -1901,6 +2207,7 @@ clear: var(--undefined) | serialize | None
 clear: var(--undefined) | computed | None
 clear: var(--undefined) | page | <absent>
 
+table-layout: <undeclared> | page | <absent>
 table-layout: <parent fixed> | computed | Fixed
 table-layout: <undeclared> | computed | Auto
 table-layout: * | cssom | <not a ComputedProperty>
@@ -1928,6 +2235,14 @@ table-layout: unset | parse | None
 table-layout: unset | serialize | -
 table-layout: unset | computed | Auto
 table-layout: unset | page | <absent>
+table-layout: revert | parse | None
+table-layout: revert | serialize | -
+table-layout: revert | computed | Auto
+table-layout: revert | page | <absent>
+table-layout: revert-layer | parse | None
+table-layout: revert-layer | serialize | -
+table-layout: revert-layer | computed | Auto
+table-layout: revert-layer | page | <absent>
 table-layout: var(--v) | parse | Some(Deferred(DeferredValue { property: "table-layout", value: "var(--v)", key: TableLayout }))
 table-layout: var(--v) | serialize | None
 table-layout: var(--v) | computed | Fixed
@@ -1937,6 +2252,7 @@ table-layout: var(--undefined) | serialize | None
 table-layout: var(--undefined) | computed | Auto
 table-layout: var(--undefined) | page | <absent>
 
+border-collapse: <undeclared> | page | <absent>
 border-collapse: <parent collapse> | computed | Collapse
 border-collapse: <undeclared> | computed | Collapse
 border-collapse: * | cssom | <not a ComputedProperty>
@@ -1964,6 +2280,14 @@ border-collapse: unset | parse | None
 border-collapse: unset | serialize | -
 border-collapse: unset | computed | Collapse
 border-collapse: unset | page | <absent>
+border-collapse: revert | parse | None
+border-collapse: revert | serialize | -
+border-collapse: revert | computed | Collapse
+border-collapse: revert | page | <absent>
+border-collapse: revert-layer | parse | None
+border-collapse: revert-layer | serialize | -
+border-collapse: revert-layer | computed | Collapse
+border-collapse: revert-layer | page | <absent>
 border-collapse: var(--v) | parse | Some(Deferred(DeferredValue { property: "border-collapse", value: "var(--v)", key: BorderCollapse }))
 border-collapse: var(--v) | serialize | None
 border-collapse: var(--v) | computed | Collapse
@@ -1973,6 +2297,7 @@ border-collapse: var(--undefined) | serialize | None
 border-collapse: var(--undefined) | computed | Collapse
 border-collapse: var(--undefined) | page | <absent>
 
+border-spacing: <undeclared> | page | <absent>
 border-spacing: <parent 2em 1em> | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
 border-spacing: <undeclared> | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
 border-spacing: * | cssom | <not a ComputedProperty>
@@ -2040,6 +2365,14 @@ border-spacing: unset | parse | None
 border-spacing: unset | serialize | -
 border-spacing: unset | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
 border-spacing: unset | page | <absent>
+border-spacing: revert | parse | None
+border-spacing: revert | serialize | -
+border-spacing: revert | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: revert | page | <absent>
+border-spacing: revert-layer | parse | None
+border-spacing: revert-layer | serialize | -
+border-spacing: revert-layer | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: revert-layer | page | <absent>
 border-spacing: var(--v) | parse | Some(Deferred(DeferredValue { property: "border-spacing", value: "var(--v)", key: BorderSpacing }))
 border-spacing: var(--v) | serialize | None
 border-spacing: var(--v) | computed | ComputedBorderSpacing { horizontal: ComputedLength(20.0), vertical: ComputedLength(10.0) }
@@ -2049,6 +2382,7 @@ border-spacing: var(--undefined) | serialize | None
 border-spacing: var(--undefined) | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
 border-spacing: var(--undefined) | page | <absent>
 
+caption-side: <undeclared> | page | <absent>
 caption-side: <parent bottom> | computed | Bottom
 caption-side: <undeclared> | computed | Bottom
 caption-side: * | cssom | <not a ComputedProperty>
@@ -2080,6 +2414,14 @@ caption-side: unset | parse | None
 caption-side: unset | serialize | -
 caption-side: unset | computed | Bottom
 caption-side: unset | page | <absent>
+caption-side: revert | parse | None
+caption-side: revert | serialize | -
+caption-side: revert | computed | Bottom
+caption-side: revert | page | <absent>
+caption-side: revert-layer | parse | None
+caption-side: revert-layer | serialize | -
+caption-side: revert-layer | computed | Bottom
+caption-side: revert-layer | page | <absent>
 caption-side: var(--v) | parse | Some(Deferred(DeferredValue { property: "caption-side", value: "var(--v)", key: CaptionSide }))
 caption-side: var(--v) | serialize | None
 caption-side: var(--v) | computed | Bottom
@@ -2089,6 +2431,7 @@ caption-side: var(--undefined) | serialize | None
 caption-side: var(--undefined) | computed | Bottom
 caption-side: var(--undefined) | page | <absent>
 
+column-count: <undeclared> | page | <absent>
 column-count: <parent 3> | computed | Count(3)
 column-count: <undeclared> | computed | Auto
 column-count: * | cssom | <not a ComputedProperty>
@@ -2124,6 +2467,14 @@ column-count: unset | parse | None
 column-count: unset | serialize | -
 column-count: unset | computed | Auto
 column-count: unset | page | <absent>
+column-count: revert | parse | None
+column-count: revert | serialize | -
+column-count: revert | computed | Auto
+column-count: revert | page | <absent>
+column-count: revert-layer | parse | None
+column-count: revert-layer | serialize | -
+column-count: revert-layer | computed | Auto
+column-count: revert-layer | page | <absent>
 column-count: var(--v) | parse | Some(Deferred(DeferredValue { property: "column-count", value: "var(--v)", key: ColumnCount }))
 column-count: var(--v) | serialize | None
 column-count: var(--v) | computed | Count(3)
@@ -2133,6 +2484,7 @@ column-count: var(--undefined) | serialize | None
 column-count: var(--undefined) | computed | Auto
 column-count: var(--undefined) | page | <absent>
 
+column-width: <undeclared> | page | <absent>
 column-width: <parent 2em> | computed | Px(40.0)
 column-width: <undeclared> | computed | Auto
 column-width: * | cssom | <not a ComputedProperty>
@@ -2196,6 +2548,14 @@ column-width: unset | parse | None
 column-width: unset | serialize | -
 column-width: unset | computed | Auto
 column-width: unset | page | <absent>
+column-width: revert | parse | None
+column-width: revert | serialize | -
+column-width: revert | computed | Auto
+column-width: revert | page | <absent>
+column-width: revert-layer | parse | None
+column-width: revert-layer | serialize | -
+column-width: revert-layer | computed | Auto
+column-width: revert-layer | page | <absent>
 column-width: var(--v) | parse | Some(Deferred(DeferredValue { property: "column-width", value: "var(--v)", key: ColumnWidth }))
 column-width: var(--v) | serialize | None
 column-width: var(--v) | computed | Px(20.0)
@@ -2205,6 +2565,7 @@ column-width: var(--undefined) | serialize | None
 column-width: var(--undefined) | computed | Auto
 column-width: var(--undefined) | page | <absent>
 
+empty-cells: <undeclared> | page | <absent>
 empty-cells: <parent hide> | computed | Hide
 empty-cells: <undeclared> | computed | Hide
 empty-cells: * | cssom | <not a ComputedProperty>
@@ -2232,6 +2593,14 @@ empty-cells: unset | parse | None
 empty-cells: unset | serialize | -
 empty-cells: unset | computed | Hide
 empty-cells: unset | page | <absent>
+empty-cells: revert | parse | None
+empty-cells: revert | serialize | -
+empty-cells: revert | computed | Hide
+empty-cells: revert | page | <absent>
+empty-cells: revert-layer | parse | None
+empty-cells: revert-layer | serialize | -
+empty-cells: revert-layer | computed | Hide
+empty-cells: revert-layer | page | <absent>
 empty-cells: var(--v) | parse | Some(Deferred(DeferredValue { property: "empty-cells", value: "var(--v)", key: EmptyCells }))
 empty-cells: var(--v) | serialize | None
 empty-cells: var(--v) | computed | Hide

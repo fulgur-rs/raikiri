@@ -1,6 +1,7 @@
 ---
 source: crates/raikiri-style/src/characterization.rs
 ---
+color: <undeclared> | page | <absent>
 color: <parent blue> | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
 color: <undeclared> | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
 color: * | cssom | <not a ComputedProperty>
@@ -52,6 +53,14 @@ color: unset | parse | None
 color: unset | serialize | -
 color: unset | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
 color: unset | page | <absent>
+color: revert | parse | None
+color: revert | serialize | -
+color: revert | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: revert | page | <absent>
+color: revert-layer | parse | None
+color: revert-layer | serialize | -
+color: revert-layer | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: revert-layer | page | <absent>
 color: var(--v) | parse | Some(Deferred(DeferredValue { property: "color", value: "var(--v)", key: Color }))
 color: var(--v) | serialize | None
 color: var(--v) | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
@@ -61,6 +70,7 @@ color: var(--undefined) | serialize | None
 color: var(--undefined) | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
 color: var(--undefined) | page | <absent>
 
+background-color: <undeclared> | page | <absent>
 background-color: <parent blue> | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
 background-color: <undeclared> | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
 background-color: * | cssom | <not a ComputedProperty>
@@ -104,6 +114,14 @@ background-color: unset | parse | None
 background-color: unset | serialize | -
 background-color: unset | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
 background-color: unset | page | <absent>
+background-color: revert | parse | None
+background-color: revert | serialize | -
+background-color: revert | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: revert | page | <absent>
+background-color: revert-layer | parse | None
+background-color: revert-layer | serialize | -
+background-color: revert-layer | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: revert-layer | page | <absent>
 background-color: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-color", value: "var(--v)", key: BackgroundColor }))
 background-color: var(--v) | serialize | None
 background-color: var(--v) | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }

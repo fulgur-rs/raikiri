@@ -1,6 +1,7 @@
 ---
 source: crates/raikiri-style/src/characterization.rs
 ---
+font-style: <undeclared> | page | <absent>
 font-style: <parent italic> | computed | Italic
 font-style: <undeclared> | computed | Italic
 font-style: * | cssom | <not a ComputedProperty>
@@ -36,6 +37,14 @@ font-style: unset | parse | None
 font-style: unset | serialize | -
 font-style: unset | computed | Italic
 font-style: unset | page | <absent>
+font-style: revert | parse | None
+font-style: revert | serialize | -
+font-style: revert | computed | Italic
+font-style: revert | page | <absent>
+font-style: revert-layer | parse | None
+font-style: revert-layer | serialize | -
+font-style: revert-layer | computed | Italic
+font-style: revert-layer | page | <absent>
 font-style: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-style", value: "var(--v)", key: FontStyle }))
 font-style: var(--v) | serialize | None
 font-style: var(--v) | computed | Italic
@@ -45,6 +54,7 @@ font-style: var(--undefined) | serialize | None
 font-style: var(--undefined) | computed | Italic
 font-style: var(--undefined) | page | <absent>
 
+ruby-position: <undeclared> | page | <absent>
 ruby-position: <parent under> | computed | Under
 ruby-position: <undeclared> | computed | Under
 ruby-position: * | cssom | <not a ComputedProperty>
@@ -80,6 +90,14 @@ ruby-position: unset | parse | None
 ruby-position: unset | serialize | -
 ruby-position: unset | computed | Under
 ruby-position: unset | page | <absent>
+ruby-position: revert | parse | None
+ruby-position: revert | serialize | -
+ruby-position: revert | computed | Under
+ruby-position: revert | page | <absent>
+ruby-position: revert-layer | parse | None
+ruby-position: revert-layer | serialize | -
+ruby-position: revert-layer | computed | Under
+ruby-position: revert-layer | page | <absent>
 ruby-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "ruby-position", value: "var(--v)", key: RubyPosition }))
 ruby-position: var(--v) | serialize | None
 ruby-position: var(--v) | computed | Under
@@ -89,6 +107,7 @@ ruby-position: var(--undefined) | serialize | None
 ruby-position: var(--undefined) | computed | Under
 ruby-position: var(--undefined) | page | <absent>
 
+font-family: <undeclared> | page | <absent>
 font-family: <parent "Open Sans", serif> | computed | [FontFamilyName(Atom("Open Sans"), Named), FontFamilyName(Atom("serif"), Generic)]
 font-family: <undeclared> | computed | [FontFamilyName(Atom("Open Sans"), Named), FontFamilyName(Atom("serif"), Generic)]
 font-family: * | cssom | <not a ComputedProperty>
@@ -132,6 +151,14 @@ font-family: unset | parse | Some(FontFamily([FontFamilyName(Atom("unset"), Name
 font-family: unset | serialize | None
 font-family: unset | computed | [FontFamilyName(Atom("unset"), Named)]
 font-family: unset | page | FontFamily([FontFamilyName(Atom("unset"), Named)])
+font-family: revert | parse | Some(FontFamily([FontFamilyName(Atom("revert"), Named)]))
+font-family: revert | serialize | None
+font-family: revert | computed | [FontFamilyName(Atom("revert"), Named)]
+font-family: revert | page | FontFamily([FontFamilyName(Atom("revert"), Named)])
+font-family: revert-layer | parse | Some(FontFamily([FontFamilyName(Atom("revert-layer"), Named)]))
+font-family: revert-layer | serialize | None
+font-family: revert-layer | computed | [FontFamilyName(Atom("revert-layer"), Named)]
+font-family: revert-layer | page | FontFamily([FontFamilyName(Atom("revert-layer"), Named)])
 font-family: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-family", value: "var(--v)", key: FontFamily }))
 font-family: var(--v) | serialize | None
 font-family: var(--v) | computed | [FontFamilyName(Atom("Open Sans"), Named), FontFamilyName(Atom("serif"), Generic)]
@@ -141,6 +168,7 @@ font-family: var(--undefined) | serialize | None
 font-family: var(--undefined) | computed | [FontFamilyName(Atom("Open Sans"), Named), FontFamilyName(Atom("serif"), Generic)]
 font-family: var(--undefined) | page | <absent>
 
+text-decoration-color: <undeclared> | page | <absent>
 text-decoration-color: <parent blue> | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
 text-decoration-color: <undeclared> | computed | CurrentColor
 text-decoration-color: <undeclared> | cssom | Some("rgb(0, 0, 0)")
@@ -184,6 +212,16 @@ text-decoration-color: unset | serialize | -
 text-decoration-color: unset | computed | CurrentColor
 text-decoration-color: unset | cssom | Some("rgb(0, 0, 0)")
 text-decoration-color: unset | page | <absent>
+text-decoration-color: revert | parse | None
+text-decoration-color: revert | serialize | -
+text-decoration-color: revert | computed | CurrentColor
+text-decoration-color: revert | cssom | Some("rgb(0, 0, 0)")
+text-decoration-color: revert | page | <absent>
+text-decoration-color: revert-layer | parse | None
+text-decoration-color: revert-layer | serialize | -
+text-decoration-color: revert-layer | computed | CurrentColor
+text-decoration-color: revert-layer | cssom | Some("rgb(0, 0, 0)")
+text-decoration-color: revert-layer | page | <absent>
 text-decoration-color: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-decoration-color", value: "var(--v)", key: TextDecorationColor }))
 text-decoration-color: var(--v) | serialize | None
 text-decoration-color: var(--v) | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
@@ -195,6 +233,7 @@ text-decoration-color: var(--undefined) | computed | CurrentColor
 text-decoration-color: var(--undefined) | cssom | Some("rgb(0, 0, 0)")
 text-decoration-color: var(--undefined) | page | <absent>
 
+hyphenate-character: <undeclared> | page | <absent>
 hyphenate-character: <parent "="> | computed | String("=")
 hyphenate-character: <undeclared> | computed | String("=")
 hyphenate-character: <undeclared> | cssom | Some("\"=\"")
@@ -238,6 +277,16 @@ hyphenate-character: unset | serialize | -
 hyphenate-character: unset | computed | String("=")
 hyphenate-character: unset | cssom | Some("\"=\"")
 hyphenate-character: unset | page | <absent>
+hyphenate-character: revert | parse | None
+hyphenate-character: revert | serialize | -
+hyphenate-character: revert | computed | String("=")
+hyphenate-character: revert | cssom | Some("\"=\"")
+hyphenate-character: revert | page | <absent>
+hyphenate-character: revert-layer | parse | None
+hyphenate-character: revert-layer | serialize | -
+hyphenate-character: revert-layer | computed | String("=")
+hyphenate-character: revert-layer | cssom | Some("\"=\"")
+hyphenate-character: revert-layer | page | <absent>
 hyphenate-character: var(--v) | parse | Some(Deferred(DeferredValue { property: "hyphenate-character", value: "var(--v)", key: HyphenateCharacter }))
 hyphenate-character: var(--v) | serialize | None
 hyphenate-character: var(--v) | computed | String("=")
@@ -249,6 +298,7 @@ hyphenate-character: var(--undefined) | computed | String("=")
 hyphenate-character: var(--undefined) | cssom | Some("\"=\"")
 hyphenate-character: var(--undefined) | page | <absent>
 
+hyphenate-limit-chars: <undeclared> | page | <absent>
 hyphenate-limit-chars: <parent 5 2 2> | computed | HyphenateLimitChars { total: Integer(5), before: Integer(2), after: Integer(2) }
 hyphenate-limit-chars: <undeclared> | computed | HyphenateLimitChars { total: Integer(5), before: Integer(2), after: Integer(2) }
 hyphenate-limit-chars: <undeclared> | cssom | Some("5 2")
@@ -312,6 +362,16 @@ hyphenate-limit-chars: unset | serialize | -
 hyphenate-limit-chars: unset | computed | HyphenateLimitChars { total: Integer(5), before: Integer(2), after: Integer(2) }
 hyphenate-limit-chars: unset | cssom | Some("5 2")
 hyphenate-limit-chars: unset | page | <absent>
+hyphenate-limit-chars: revert | parse | None
+hyphenate-limit-chars: revert | serialize | -
+hyphenate-limit-chars: revert | computed | HyphenateLimitChars { total: Integer(5), before: Integer(2), after: Integer(2) }
+hyphenate-limit-chars: revert | cssom | Some("5 2")
+hyphenate-limit-chars: revert | page | <absent>
+hyphenate-limit-chars: revert-layer | parse | None
+hyphenate-limit-chars: revert-layer | serialize | -
+hyphenate-limit-chars: revert-layer | computed | HyphenateLimitChars { total: Integer(5), before: Integer(2), after: Integer(2) }
+hyphenate-limit-chars: revert-layer | cssom | Some("5 2")
+hyphenate-limit-chars: revert-layer | page | <absent>
 hyphenate-limit-chars: var(--v) | parse | Some(Deferred(DeferredValue { property: "hyphenate-limit-chars", value: "var(--v)", key: HyphenateLimitChars }))
 hyphenate-limit-chars: var(--v) | serialize | None
 hyphenate-limit-chars: var(--v) | computed | HyphenateLimitChars { total: Integer(5), before: Integer(2), after: Integer(2) }
@@ -323,6 +383,7 @@ hyphenate-limit-chars: var(--undefined) | computed | HyphenateLimitChars { total
 hyphenate-limit-chars: var(--undefined) | cssom | Some("5 2")
 hyphenate-limit-chars: var(--undefined) | page | <absent>
 
+text-emphasis-color: <undeclared> | page | <absent>
 text-emphasis-color: <parent blue> | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
 text-emphasis-color: <undeclared> | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
 text-emphasis-color: * | cssom | <not a ComputedProperty>
@@ -354,6 +415,14 @@ text-emphasis-color: unset | parse | None
 text-emphasis-color: unset | serialize | -
 text-emphasis-color: unset | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
 text-emphasis-color: unset | page | <absent>
+text-emphasis-color: revert | parse | None
+text-emphasis-color: revert | serialize | -
+text-emphasis-color: revert | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
+text-emphasis-color: revert | page | <absent>
+text-emphasis-color: revert-layer | parse | None
+text-emphasis-color: revert-layer | serialize | -
+text-emphasis-color: revert-layer | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
+text-emphasis-color: revert-layer | page | <absent>
 text-emphasis-color: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-emphasis-color", value: "var(--v)", key: TextEmphasisColor }))
 text-emphasis-color: var(--v) | serialize | None
 text-emphasis-color: var(--v) | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
@@ -363,6 +432,7 @@ text-emphasis-color: var(--undefined) | serialize | None
 text-emphasis-color: var(--undefined) | computed | Resolved(CssColor { r: 0, g: 0, b: 255, a: 255 })
 text-emphasis-color: var(--undefined) | page | <absent>
 
+vertical-align: <undeclared> | page | <absent>
 vertical-align: <parent 2em> | computed | Length(Px(40.0))
 vertical-align: <undeclared> | computed | Baseline
 vertical-align: * | cssom | <not a ComputedProperty>
@@ -450,6 +520,14 @@ vertical-align: unset | parse | None
 vertical-align: unset | serialize | -
 vertical-align: unset | computed | Baseline
 vertical-align: unset | page | <absent>
+vertical-align: revert | parse | None
+vertical-align: revert | serialize | -
+vertical-align: revert | computed | Baseline
+vertical-align: revert | page | <absent>
+vertical-align: revert-layer | parse | None
+vertical-align: revert-layer | serialize | -
+vertical-align: revert-layer | computed | Baseline
+vertical-align: revert-layer | page | <absent>
 vertical-align: var(--v) | parse | Some(Deferred(DeferredValue { property: "vertical-align", value: "var(--v)", key: VerticalAlign }))
 vertical-align: var(--v) | serialize | None
 vertical-align: var(--v) | computed | Length(Px(20.0))
@@ -459,6 +537,7 @@ vertical-align: var(--undefined) | serialize | None
 vertical-align: var(--undefined) | computed | Baseline
 vertical-align: var(--undefined) | page | <absent>
 
+tab-size: <undeclared> | page | <absent>
 tab-size: <parent 2em> | computed | Length(ComputedLength(40.0))
 tab-size: <undeclared> | computed | Length(ComputedLength(40.0))
 tab-size: <undeclared> | cssom | Some("40px")
@@ -547,6 +626,16 @@ tab-size: unset | serialize | -
 tab-size: unset | computed | Length(ComputedLength(40.0))
 tab-size: unset | cssom | Some("40px")
 tab-size: unset | page | <absent>
+tab-size: revert | parse | None
+tab-size: revert | serialize | -
+tab-size: revert | computed | Length(ComputedLength(40.0))
+tab-size: revert | cssom | Some("40px")
+tab-size: revert | page | <absent>
+tab-size: revert-layer | parse | None
+tab-size: revert-layer | serialize | -
+tab-size: revert-layer | computed | Length(ComputedLength(40.0))
+tab-size: revert-layer | cssom | Some("40px")
+tab-size: revert-layer | page | <absent>
 tab-size: var(--v) | parse | Some(Deferred(DeferredValue { property: "tab-size", value: "var(--v)", key: TabSize }))
 tab-size: var(--v) | serialize | None
 tab-size: var(--v) | computed | Length(ComputedLength(20.0))
@@ -558,6 +647,7 @@ tab-size: var(--undefined) | computed | Length(ComputedLength(40.0))
 tab-size: var(--undefined) | cssom | Some("40px")
 tab-size: var(--undefined) | page | <absent>
 
+text-decoration-thickness: <undeclared> | page | <absent>
 text-decoration-thickness: <parent 2em> | computed | Length(ComputedLength(40.0))
 text-decoration-thickness: <undeclared> | computed | Auto
 text-decoration-thickness: * | cssom | <not a ComputedProperty>
@@ -625,6 +715,14 @@ text-decoration-thickness: unset | parse | None
 text-decoration-thickness: unset | serialize | -
 text-decoration-thickness: unset | computed | Auto
 text-decoration-thickness: unset | page | <absent>
+text-decoration-thickness: revert | parse | None
+text-decoration-thickness: revert | serialize | -
+text-decoration-thickness: revert | computed | Auto
+text-decoration-thickness: revert | page | <absent>
+text-decoration-thickness: revert-layer | parse | None
+text-decoration-thickness: revert-layer | serialize | -
+text-decoration-thickness: revert-layer | computed | Auto
+text-decoration-thickness: revert-layer | page | <absent>
 text-decoration-thickness: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-decoration-thickness", value: "var(--v)", key: TextDecorationThickness }))
 text-decoration-thickness: var(--v) | serialize | None
 text-decoration-thickness: var(--v) | computed | Length(ComputedLength(20.0))
@@ -634,6 +732,7 @@ text-decoration-thickness: var(--undefined) | serialize | None
 text-decoration-thickness: var(--undefined) | computed | Auto
 text-decoration-thickness: var(--undefined) | page | <absent>
 
+text-shadow: <undeclared> | page | <absent>
 text-shadow: <parent 1px 2px 3px red> | computed | [ComputedTextShadow { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) }]
 text-shadow: <undeclared> | computed | [ComputedTextShadow { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) }]
 text-shadow: <undeclared> | cssom | Some("rgb(255, 0, 0) 1px 2px 3px")
@@ -727,6 +826,16 @@ text-shadow: unset | serialize | -
 text-shadow: unset | computed | [ComputedTextShadow { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) }]
 text-shadow: unset | cssom | Some("rgb(255, 0, 0) 1px 2px 3px")
 text-shadow: unset | page | <absent>
+text-shadow: revert | parse | None
+text-shadow: revert | serialize | -
+text-shadow: revert | computed | [ComputedTextShadow { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) }]
+text-shadow: revert | cssom | Some("rgb(255, 0, 0) 1px 2px 3px")
+text-shadow: revert | page | <absent>
+text-shadow: revert-layer | parse | None
+text-shadow: revert-layer | serialize | -
+text-shadow: revert-layer | computed | [ComputedTextShadow { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) }]
+text-shadow: revert-layer | cssom | Some("rgb(255, 0, 0) 1px 2px 3px")
+text-shadow: revert-layer | page | <absent>
 text-shadow: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-shadow", value: "var(--v)", key: TextShadow }))
 text-shadow: var(--v) | serialize | None
 text-shadow: var(--v) | computed | [ComputedTextShadow { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }) }]
@@ -738,6 +847,7 @@ text-shadow: var(--undefined) | computed | [ComputedTextShadow { offset_x: Compu
 text-shadow: var(--undefined) | cssom | Some("rgb(255, 0, 0) 1px 2px 3px")
 text-shadow: var(--undefined) | page | <absent>
 
+hanging-punctuation: <undeclared> | page | <absent>
 hanging-punctuation: <parent first> | computed | First
 hanging-punctuation: <undeclared> | computed | First
 hanging-punctuation: * | cssom | <not a ComputedProperty>
@@ -777,6 +887,14 @@ hanging-punctuation: unset | parse | None
 hanging-punctuation: unset | serialize | -
 hanging-punctuation: unset | computed | First
 hanging-punctuation: unset | page | <absent>
+hanging-punctuation: revert | parse | None
+hanging-punctuation: revert | serialize | -
+hanging-punctuation: revert | computed | First
+hanging-punctuation: revert | page | <absent>
+hanging-punctuation: revert-layer | parse | None
+hanging-punctuation: revert-layer | serialize | -
+hanging-punctuation: revert-layer | computed | First
+hanging-punctuation: revert-layer | page | <absent>
 hanging-punctuation: var(--v) | parse | Some(Deferred(DeferredValue { property: "hanging-punctuation", value: "var(--v)", key: HangingPunctuation }))
 hanging-punctuation: var(--v) | serialize | None
 hanging-punctuation: var(--v) | computed | First
@@ -786,6 +904,7 @@ hanging-punctuation: var(--undefined) | serialize | None
 hanging-punctuation: var(--undefined) | computed | First
 hanging-punctuation: var(--undefined) | page | <absent>
 
+direction: <undeclared> | page | <absent>
 direction: <parent rtl> | computed | Rtl
 direction: <undeclared> | computed | Rtl
 direction: <undeclared> | cssom | Some("rtl")
@@ -819,6 +938,16 @@ direction: unset | serialize | -
 direction: unset | computed | Rtl
 direction: unset | cssom | Some("rtl")
 direction: unset | page | <absent>
+direction: revert | parse | None
+direction: revert | serialize | -
+direction: revert | computed | Rtl
+direction: revert | cssom | Some("rtl")
+direction: revert | page | <absent>
+direction: revert-layer | parse | None
+direction: revert-layer | serialize | -
+direction: revert-layer | computed | Rtl
+direction: revert-layer | cssom | Some("rtl")
+direction: revert-layer | page | <absent>
 direction: var(--v) | parse | Some(Deferred(DeferredValue { property: "direction", value: "var(--v)", key: Direction }))
 direction: var(--v) | serialize | None
 direction: var(--v) | computed | Rtl
@@ -830,6 +959,7 @@ direction: var(--undefined) | computed | Rtl
 direction: var(--undefined) | cssom | Some("rtl")
 direction: var(--undefined) | page | <absent>
 
+text-decoration-line: <undeclared> | page | <absent>
 text-decoration-line: <parent underline> | computed | TextDecorationLine { underline: true, overline: false, line_through: false, blink: false, spelling_error: false, grammar_error: false }
 text-decoration-line: <undeclared> | computed | TextDecorationLine { underline: false, overline: false, line_through: false, blink: false, spelling_error: false, grammar_error: false }
 text-decoration-line: <undeclared> | cssom | Some("none")
@@ -888,6 +1018,16 @@ text-decoration-line: unset | serialize | -
 text-decoration-line: unset | computed | TextDecorationLine { underline: false, overline: false, line_through: false, blink: false, spelling_error: false, grammar_error: false }
 text-decoration-line: unset | cssom | Some("none")
 text-decoration-line: unset | page | <absent>
+text-decoration-line: revert | parse | None
+text-decoration-line: revert | serialize | -
+text-decoration-line: revert | computed | TextDecorationLine { underline: false, overline: false, line_through: false, blink: false, spelling_error: false, grammar_error: false }
+text-decoration-line: revert | cssom | Some("none")
+text-decoration-line: revert | page | <absent>
+text-decoration-line: revert-layer | parse | None
+text-decoration-line: revert-layer | serialize | -
+text-decoration-line: revert-layer | computed | TextDecorationLine { underline: false, overline: false, line_through: false, blink: false, spelling_error: false, grammar_error: false }
+text-decoration-line: revert-layer | cssom | Some("none")
+text-decoration-line: revert-layer | page | <absent>
 text-decoration-line: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-decoration-line", value: "var(--v)", key: TextDecorationLine }))
 text-decoration-line: var(--v) | serialize | None
 text-decoration-line: var(--v) | computed | TextDecorationLine { underline: true, overline: false, line_through: false, blink: false, spelling_error: false, grammar_error: false }
@@ -899,6 +1039,7 @@ text-decoration-line: var(--undefined) | computed | TextDecorationLine { underli
 text-decoration-line: var(--undefined) | cssom | Some("none")
 text-decoration-line: var(--undefined) | page | <absent>
 
+text-decoration-style: <undeclared> | page | <absent>
 text-decoration-style: <parent dashed> | computed | Dashed
 text-decoration-style: <undeclared> | computed | Solid
 text-decoration-style: <undeclared> | cssom | Some("solid")
@@ -942,6 +1083,16 @@ text-decoration-style: unset | serialize | -
 text-decoration-style: unset | computed | Solid
 text-decoration-style: unset | cssom | Some("solid")
 text-decoration-style: unset | page | <absent>
+text-decoration-style: revert | parse | None
+text-decoration-style: revert | serialize | -
+text-decoration-style: revert | computed | Solid
+text-decoration-style: revert | cssom | Some("solid")
+text-decoration-style: revert | page | <absent>
+text-decoration-style: revert-layer | parse | None
+text-decoration-style: revert-layer | serialize | -
+text-decoration-style: revert-layer | computed | Solid
+text-decoration-style: revert-layer | cssom | Some("solid")
+text-decoration-style: revert-layer | page | <absent>
 text-decoration-style: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-decoration-style", value: "var(--v)", key: TextDecorationStyle }))
 text-decoration-style: var(--v) | serialize | None
 text-decoration-style: var(--v) | computed | Dashed
@@ -953,6 +1104,7 @@ text-decoration-style: var(--undefined) | computed | Solid
 text-decoration-style: var(--undefined) | cssom | Some("solid")
 text-decoration-style: var(--undefined) | page | <absent>
 
+text-transform: <undeclared> | page | <absent>
 text-transform: <parent uppercase> | computed | Uppercase
 text-transform: <undeclared> | computed | Uppercase
 text-transform: <undeclared> | cssom | Some("uppercase")
@@ -1011,6 +1163,16 @@ text-transform: unset | serialize | -
 text-transform: unset | computed | Uppercase
 text-transform: unset | cssom | Some("uppercase")
 text-transform: unset | page | <absent>
+text-transform: revert | parse | None
+text-transform: revert | serialize | -
+text-transform: revert | computed | Uppercase
+text-transform: revert | cssom | Some("uppercase")
+text-transform: revert | page | <absent>
+text-transform: revert-layer | parse | None
+text-transform: revert-layer | serialize | -
+text-transform: revert-layer | computed | Uppercase
+text-transform: revert-layer | cssom | Some("uppercase")
+text-transform: revert-layer | page | <absent>
 text-transform: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-transform", value: "var(--v)", key: TextTransform }))
 text-transform: var(--v) | serialize | None
 text-transform: var(--v) | computed | Uppercase
@@ -1022,6 +1184,7 @@ text-transform: var(--undefined) | computed | Uppercase
 text-transform: var(--undefined) | cssom | Some("uppercase")
 text-transform: var(--undefined) | page | <absent>
 
+word-break: <undeclared> | page | <absent>
 word-break: <parent break-all> | computed | BreakAll
 word-break: <undeclared> | computed | BreakAll
 word-break: <undeclared> | cssom | Some("break-all")
@@ -1065,6 +1228,16 @@ word-break: unset | serialize | -
 word-break: unset | computed | BreakAll
 word-break: unset | cssom | Some("break-all")
 word-break: unset | page | <absent>
+word-break: revert | parse | None
+word-break: revert | serialize | -
+word-break: revert | computed | BreakAll
+word-break: revert | cssom | Some("break-all")
+word-break: revert | page | <absent>
+word-break: revert-layer | parse | None
+word-break: revert-layer | serialize | -
+word-break: revert-layer | computed | BreakAll
+word-break: revert-layer | cssom | Some("break-all")
+word-break: revert-layer | page | <absent>
 word-break: var(--v) | parse | Some(Deferred(DeferredValue { property: "word-break", value: "var(--v)", key: WordBreak }))
 word-break: var(--v) | serialize | None
 word-break: var(--v) | computed | BreakAll
@@ -1076,6 +1249,7 @@ word-break: var(--undefined) | computed | BreakAll
 word-break: var(--undefined) | cssom | Some("break-all")
 word-break: var(--undefined) | page | <absent>
 
+overflow-wrap: <undeclared> | page | <absent>
 overflow-wrap: <parent anywhere> | computed | Anywhere
 overflow-wrap: <undeclared> | computed | Anywhere
 overflow-wrap: <undeclared> | cssom | Some("anywhere")
@@ -1114,6 +1288,16 @@ overflow-wrap: unset | serialize | -
 overflow-wrap: unset | computed | Anywhere
 overflow-wrap: unset | cssom | Some("anywhere")
 overflow-wrap: unset | page | <absent>
+overflow-wrap: revert | parse | None
+overflow-wrap: revert | serialize | -
+overflow-wrap: revert | computed | Anywhere
+overflow-wrap: revert | cssom | Some("anywhere")
+overflow-wrap: revert | page | <absent>
+overflow-wrap: revert-layer | parse | None
+overflow-wrap: revert-layer | serialize | -
+overflow-wrap: revert-layer | computed | Anywhere
+overflow-wrap: revert-layer | cssom | Some("anywhere")
+overflow-wrap: revert-layer | page | <absent>
 overflow-wrap: var(--v) | parse | Some(Deferred(DeferredValue { property: "overflow-wrap", value: "var(--v)", key: OverflowWrap }))
 overflow-wrap: var(--v) | serialize | None
 overflow-wrap: var(--v) | computed | Anywhere
@@ -1125,6 +1309,7 @@ overflow-wrap: var(--undefined) | computed | Anywhere
 overflow-wrap: var(--undefined) | cssom | Some("anywhere")
 overflow-wrap: var(--undefined) | page | <absent>
 
+white-space: <undeclared> | page | <absent>
 white-space: <parent pre> | computed | Pre
 white-space: <undeclared> | computed | Pre
 white-space: <undeclared> | cssom | Some("pre")
@@ -1183,6 +1368,16 @@ white-space: unset | serialize | -
 white-space: unset | computed | Pre
 white-space: unset | cssom | Some("pre")
 white-space: unset | page | <absent>
+white-space: revert | parse | None
+white-space: revert | serialize | -
+white-space: revert | computed | Pre
+white-space: revert | cssom | Some("pre")
+white-space: revert | page | <absent>
+white-space: revert-layer | parse | None
+white-space: revert-layer | serialize | -
+white-space: revert-layer | computed | Pre
+white-space: revert-layer | cssom | Some("pre")
+white-space: revert-layer | page | <absent>
 white-space: var(--v) | parse | Some(Deferred(DeferredValue { property: "white-space", value: "var(--v)", key: WhiteSpace }))
 white-space: var(--v) | serialize | None
 white-space: var(--v) | computed | Pre
@@ -1194,6 +1389,7 @@ white-space: var(--undefined) | computed | Pre
 white-space: var(--undefined) | cssom | Some("pre")
 white-space: var(--undefined) | page | <absent>
 
+white-space-collapse: <undeclared> | page | <absent>
 white-space-collapse: <parent preserve> | computed | Preserve
 white-space-collapse: <undeclared> | computed | Preserve
 white-space-collapse: <undeclared> | cssom | Some("preserve")
@@ -1242,6 +1438,16 @@ white-space-collapse: unset | serialize | -
 white-space-collapse: unset | computed | Preserve
 white-space-collapse: unset | cssom | Some("preserve")
 white-space-collapse: unset | page | <absent>
+white-space-collapse: revert | parse | None
+white-space-collapse: revert | serialize | -
+white-space-collapse: revert | computed | Preserve
+white-space-collapse: revert | cssom | Some("preserve")
+white-space-collapse: revert | page | <absent>
+white-space-collapse: revert-layer | parse | None
+white-space-collapse: revert-layer | serialize | -
+white-space-collapse: revert-layer | computed | Preserve
+white-space-collapse: revert-layer | cssom | Some("preserve")
+white-space-collapse: revert-layer | page | <absent>
 white-space-collapse: var(--v) | parse | Some(Deferred(DeferredValue { property: "white-space-collapse", value: "var(--v)", key: WhiteSpaceCollapse }))
 white-space-collapse: var(--v) | serialize | None
 white-space-collapse: var(--v) | computed | Preserve
@@ -1253,6 +1459,7 @@ white-space-collapse: var(--undefined) | computed | Preserve
 white-space-collapse: var(--undefined) | cssom | Some("preserve")
 white-space-collapse: var(--undefined) | page | <absent>
 
+text-wrap-mode: <undeclared> | page | <absent>
 text-wrap-mode: <parent nowrap> | computed | Nowrap
 text-wrap-mode: <undeclared> | computed | Nowrap
 text-wrap-mode: <undeclared> | cssom | Some("nowrap")
@@ -1286,6 +1493,16 @@ text-wrap-mode: unset | serialize | -
 text-wrap-mode: unset | computed | Nowrap
 text-wrap-mode: unset | cssom | Some("nowrap")
 text-wrap-mode: unset | page | <absent>
+text-wrap-mode: revert | parse | None
+text-wrap-mode: revert | serialize | -
+text-wrap-mode: revert | computed | Nowrap
+text-wrap-mode: revert | cssom | Some("nowrap")
+text-wrap-mode: revert | page | <absent>
+text-wrap-mode: revert-layer | parse | None
+text-wrap-mode: revert-layer | serialize | -
+text-wrap-mode: revert-layer | computed | Nowrap
+text-wrap-mode: revert-layer | cssom | Some("nowrap")
+text-wrap-mode: revert-layer | page | <absent>
 text-wrap-mode: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-wrap-mode", value: "var(--v)", key: TextWrap }))
 text-wrap-mode: var(--v) | serialize | None
 text-wrap-mode: var(--v) | computed | Nowrap
@@ -1297,6 +1514,7 @@ text-wrap-mode: var(--undefined) | computed | Nowrap
 text-wrap-mode: var(--undefined) | cssom | Some("nowrap")
 text-wrap-mode: var(--undefined) | page | <absent>
 
+text-wrap-style: <undeclared> | page | <absent>
 text-wrap-style: <parent balance> | computed | Balance
 text-wrap-style: <undeclared> | computed | Balance
 text-wrap-style: <undeclared> | cssom | Some("balance")
@@ -1345,6 +1563,16 @@ text-wrap-style: unset | serialize | -
 text-wrap-style: unset | computed | Balance
 text-wrap-style: unset | cssom | Some("balance")
 text-wrap-style: unset | page | <absent>
+text-wrap-style: revert | parse | None
+text-wrap-style: revert | serialize | -
+text-wrap-style: revert | computed | Balance
+text-wrap-style: revert | cssom | Some("balance")
+text-wrap-style: revert | page | <absent>
+text-wrap-style: revert-layer | parse | None
+text-wrap-style: revert-layer | serialize | -
+text-wrap-style: revert-layer | computed | Balance
+text-wrap-style: revert-layer | cssom | Some("balance")
+text-wrap-style: revert-layer | page | <absent>
 text-wrap-style: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-wrap-style", value: "var(--v)", key: TextWrapStyle }))
 text-wrap-style: var(--v) | serialize | None
 text-wrap-style: var(--v) | computed | Balance
@@ -1356,6 +1584,7 @@ text-wrap-style: var(--undefined) | computed | Balance
 text-wrap-style: var(--undefined) | cssom | Some("balance")
 text-wrap-style: var(--undefined) | page | <absent>
 
+hyphens: <undeclared> | page | <absent>
 hyphens: <parent auto> | computed | Auto
 hyphens: <undeclared> | computed | Auto
 hyphens: <undeclared> | cssom | Some("auto")
@@ -1394,6 +1623,16 @@ hyphens: unset | serialize | -
 hyphens: unset | computed | Auto
 hyphens: unset | cssom | Some("auto")
 hyphens: unset | page | <absent>
+hyphens: revert | parse | None
+hyphens: revert | serialize | -
+hyphens: revert | computed | Auto
+hyphens: revert | cssom | Some("auto")
+hyphens: revert | page | <absent>
+hyphens: revert-layer | parse | None
+hyphens: revert-layer | serialize | -
+hyphens: revert-layer | computed | Auto
+hyphens: revert-layer | cssom | Some("auto")
+hyphens: revert-layer | page | <absent>
 hyphens: var(--v) | parse | Some(Deferred(DeferredValue { property: "hyphens", value: "var(--v)", key: Hyphens }))
 hyphens: var(--v) | serialize | None
 hyphens: var(--v) | computed | Auto
@@ -1405,6 +1644,7 @@ hyphens: var(--undefined) | computed | Auto
 hyphens: var(--undefined) | cssom | Some("auto")
 hyphens: var(--undefined) | page | <absent>
 
+line-break: <undeclared> | page | <absent>
 line-break: <parent strict> | computed | Strict
 line-break: <undeclared> | computed | Strict
 line-break: <undeclared> | cssom | Some("strict")
@@ -1453,6 +1693,16 @@ line-break: unset | serialize | -
 line-break: unset | computed | Strict
 line-break: unset | cssom | Some("strict")
 line-break: unset | page | <absent>
+line-break: revert | parse | None
+line-break: revert | serialize | -
+line-break: revert | computed | Strict
+line-break: revert | cssom | Some("strict")
+line-break: revert | page | <absent>
+line-break: revert-layer | parse | None
+line-break: revert-layer | serialize | -
+line-break: revert-layer | computed | Strict
+line-break: revert-layer | cssom | Some("strict")
+line-break: revert-layer | page | <absent>
 line-break: var(--v) | parse | Some(Deferred(DeferredValue { property: "line-break", value: "var(--v)", key: LineBreak }))
 line-break: var(--v) | serialize | None
 line-break: var(--v) | computed | Strict
@@ -1464,6 +1714,7 @@ line-break: var(--undefined) | computed | Strict
 line-break: var(--undefined) | cssom | Some("strict")
 line-break: var(--undefined) | page | <absent>
 
+text-justify: <undeclared> | page | <absent>
 text-justify: <parent inter-word> | computed | InterWord
 text-justify: <undeclared> | computed | InterWord
 text-justify: <undeclared> | cssom | Some("inter-word")
@@ -1512,6 +1763,16 @@ text-justify: unset | serialize | -
 text-justify: unset | computed | InterWord
 text-justify: unset | cssom | Some("inter-word")
 text-justify: unset | page | <absent>
+text-justify: revert | parse | None
+text-justify: revert | serialize | -
+text-justify: revert | computed | InterWord
+text-justify: revert | cssom | Some("inter-word")
+text-justify: revert | page | <absent>
+text-justify: revert-layer | parse | None
+text-justify: revert-layer | serialize | -
+text-justify: revert-layer | computed | InterWord
+text-justify: revert-layer | cssom | Some("inter-word")
+text-justify: revert-layer | page | <absent>
 text-justify: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-justify", value: "var(--v)", key: TextJustify }))
 text-justify: var(--v) | serialize | None
 text-justify: var(--v) | computed | InterWord
@@ -1523,6 +1784,7 @@ text-justify: var(--undefined) | computed | InterWord
 text-justify: var(--undefined) | cssom | Some("inter-word")
 text-justify: var(--undefined) | page | <absent>
 
+text-align-last: <undeclared> | page | <absent>
 text-align-last: <parent center> | computed | Center
 text-align-last: <undeclared> | computed | Center
 text-align-last: <undeclared> | cssom | Some("center")
@@ -1586,6 +1848,16 @@ text-align-last: unset | serialize | -
 text-align-last: unset | computed | Center
 text-align-last: unset | cssom | Some("center")
 text-align-last: unset | page | <absent>
+text-align-last: revert | parse | None
+text-align-last: revert | serialize | -
+text-align-last: revert | computed | Center
+text-align-last: revert | cssom | Some("center")
+text-align-last: revert | page | <absent>
+text-align-last: revert-layer | parse | None
+text-align-last: revert-layer | serialize | -
+text-align-last: revert-layer | computed | Center
+text-align-last: revert-layer | cssom | Some("center")
+text-align-last: revert-layer | page | <absent>
 text-align-last: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-align-last", value: "var(--v)", key: TextAlignLast }))
 text-align-last: var(--v) | serialize | None
 text-align-last: var(--v) | computed | Center
@@ -1597,6 +1869,7 @@ text-align-last: var(--undefined) | computed | Center
 text-align-last: var(--undefined) | cssom | Some("center")
 text-align-last: var(--undefined) | page | <absent>
 
+text-combine-upright: <undeclared> | page | <absent>
 text-combine-upright: <parent all> | computed | All
 text-combine-upright: <undeclared> | computed | All
 text-combine-upright: <undeclared> | cssom | Some("all")
@@ -1640,6 +1913,16 @@ text-combine-upright: unset | serialize | -
 text-combine-upright: unset | computed | All
 text-combine-upright: unset | cssom | Some("all")
 text-combine-upright: unset | page | <absent>
+text-combine-upright: revert | parse | None
+text-combine-upright: revert | serialize | -
+text-combine-upright: revert | computed | All
+text-combine-upright: revert | cssom | Some("all")
+text-combine-upright: revert | page | <absent>
+text-combine-upright: revert-layer | parse | None
+text-combine-upright: revert-layer | serialize | -
+text-combine-upright: revert-layer | computed | All
+text-combine-upright: revert-layer | cssom | Some("all")
+text-combine-upright: revert-layer | page | <absent>
 text-combine-upright: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-combine-upright", value: "var(--v)", key: TextCombineUpright }))
 text-combine-upright: var(--v) | serialize | None
 text-combine-upright: var(--v) | computed | All
@@ -1651,6 +1934,7 @@ text-combine-upright: var(--undefined) | computed | All
 text-combine-upright: var(--undefined) | cssom | Some("all")
 text-combine-upright: var(--undefined) | page | <absent>
 
+text-orientation: <undeclared> | page | <absent>
 text-orientation: <parent upright> | computed | Upright
 text-orientation: <undeclared> | computed | Upright
 text-orientation: <undeclared> | cssom | Some("upright")
@@ -1694,6 +1978,16 @@ text-orientation: unset | serialize | -
 text-orientation: unset | computed | Upright
 text-orientation: unset | cssom | Some("upright")
 text-orientation: unset | page | <absent>
+text-orientation: revert | parse | None
+text-orientation: revert | serialize | -
+text-orientation: revert | computed | Upright
+text-orientation: revert | cssom | Some("upright")
+text-orientation: revert | page | <absent>
+text-orientation: revert-layer | parse | None
+text-orientation: revert-layer | serialize | -
+text-orientation: revert-layer | computed | Upright
+text-orientation: revert-layer | cssom | Some("upright")
+text-orientation: revert-layer | page | <absent>
 text-orientation: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-orientation", value: "var(--v)", key: TextOrientation }))
 text-orientation: var(--v) | serialize | None
 text-orientation: var(--v) | computed | Upright
@@ -1705,6 +1999,7 @@ text-orientation: var(--undefined) | computed | Upright
 text-orientation: var(--undefined) | cssom | Some("upright")
 text-orientation: var(--undefined) | page | <absent>
 
+unicode-bidi: <undeclared> | page | <absent>
 unicode-bidi: <parent isolate> | computed | Isolate
 unicode-bidi: <undeclared> | computed | Normal
 unicode-bidi: <undeclared> | cssom | Some("normal")
@@ -1758,6 +2053,16 @@ unicode-bidi: unset | serialize | -
 unicode-bidi: unset | computed | Normal
 unicode-bidi: unset | cssom | Some("normal")
 unicode-bidi: unset | page | <absent>
+unicode-bidi: revert | parse | None
+unicode-bidi: revert | serialize | -
+unicode-bidi: revert | computed | Normal
+unicode-bidi: revert | cssom | Some("normal")
+unicode-bidi: revert | page | <absent>
+unicode-bidi: revert-layer | parse | None
+unicode-bidi: revert-layer | serialize | -
+unicode-bidi: revert-layer | computed | Normal
+unicode-bidi: revert-layer | cssom | Some("normal")
+unicode-bidi: revert-layer | page | <absent>
 unicode-bidi: var(--v) | parse | Some(Deferred(DeferredValue { property: "unicode-bidi", value: "var(--v)", key: UnicodeBidi }))
 unicode-bidi: var(--v) | serialize | None
 unicode-bidi: var(--v) | computed | Isolate
@@ -1769,6 +2074,7 @@ unicode-bidi: var(--undefined) | computed | Normal
 unicode-bidi: var(--undefined) | cssom | Some("normal")
 unicode-bidi: var(--undefined) | page | <absent>
 
+font-variant-caps: <undeclared> | page | <absent>
 font-variant-caps: <parent small-caps> | computed | SmallCaps
 font-variant-caps: <undeclared> | computed | SmallCaps
 font-variant-caps: <undeclared> | cssom | Some("small-caps")
@@ -1827,6 +2133,16 @@ font-variant-caps: unset | serialize | -
 font-variant-caps: unset | computed | SmallCaps
 font-variant-caps: unset | cssom | Some("small-caps")
 font-variant-caps: unset | page | <absent>
+font-variant-caps: revert | parse | None
+font-variant-caps: revert | serialize | -
+font-variant-caps: revert | computed | SmallCaps
+font-variant-caps: revert | cssom | Some("small-caps")
+font-variant-caps: revert | page | <absent>
+font-variant-caps: revert-layer | parse | None
+font-variant-caps: revert-layer | serialize | -
+font-variant-caps: revert-layer | computed | SmallCaps
+font-variant-caps: revert-layer | cssom | Some("small-caps")
+font-variant-caps: revert-layer | page | <absent>
 font-variant-caps: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-variant-caps", value: "var(--v)", key: FontVariantCaps }))
 font-variant-caps: var(--v) | serialize | None
 font-variant-caps: var(--v) | computed | SmallCaps
@@ -1838,6 +2154,7 @@ font-variant-caps: var(--undefined) | computed | SmallCaps
 font-variant-caps: var(--undefined) | cssom | Some("small-caps")
 font-variant-caps: var(--undefined) | page | <absent>
 
+text-decoration-skip-ink: <undeclared> | page | <absent>
 text-decoration-skip-ink: <parent none> | computed | None
 text-decoration-skip-ink: <undeclared> | computed | None
 text-decoration-skip-ink: <undeclared> | cssom | Some("none")
@@ -1876,6 +2193,16 @@ text-decoration-skip-ink: unset | serialize | -
 text-decoration-skip-ink: unset | computed | None
 text-decoration-skip-ink: unset | cssom | Some("none")
 text-decoration-skip-ink: unset | page | <absent>
+text-decoration-skip-ink: revert | parse | None
+text-decoration-skip-ink: revert | serialize | -
+text-decoration-skip-ink: revert | computed | None
+text-decoration-skip-ink: revert | cssom | Some("none")
+text-decoration-skip-ink: revert | page | <absent>
+text-decoration-skip-ink: revert-layer | parse | None
+text-decoration-skip-ink: revert-layer | serialize | -
+text-decoration-skip-ink: revert-layer | computed | None
+text-decoration-skip-ink: revert-layer | cssom | Some("none")
+text-decoration-skip-ink: revert-layer | page | <absent>
 text-decoration-skip-ink: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-decoration-skip-ink", value: "var(--v)", key: TextDecorationSkipInk }))
 text-decoration-skip-ink: var(--v) | serialize | None
 text-decoration-skip-ink: var(--v) | computed | None
@@ -1887,6 +2214,7 @@ text-decoration-skip-ink: var(--undefined) | computed | None
 text-decoration-skip-ink: var(--undefined) | cssom | Some("none")
 text-decoration-skip-ink: var(--undefined) | page | <absent>
 
+text-decoration-skip-spaces: <undeclared> | page | <absent>
 text-decoration-skip-spaces: <parent none> | computed | None
 text-decoration-skip-spaces: <undeclared> | computed | None
 text-decoration-skip-spaces: <undeclared> | cssom | Some("none")
@@ -1940,6 +2268,16 @@ text-decoration-skip-spaces: unset | serialize | -
 text-decoration-skip-spaces: unset | computed | None
 text-decoration-skip-spaces: unset | cssom | Some("none")
 text-decoration-skip-spaces: unset | page | <absent>
+text-decoration-skip-spaces: revert | parse | None
+text-decoration-skip-spaces: revert | serialize | -
+text-decoration-skip-spaces: revert | computed | None
+text-decoration-skip-spaces: revert | cssom | Some("none")
+text-decoration-skip-spaces: revert | page | <absent>
+text-decoration-skip-spaces: revert-layer | parse | None
+text-decoration-skip-spaces: revert-layer | serialize | -
+text-decoration-skip-spaces: revert-layer | computed | None
+text-decoration-skip-spaces: revert-layer | cssom | Some("none")
+text-decoration-skip-spaces: revert-layer | page | <absent>
 text-decoration-skip-spaces: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-decoration-skip-spaces", value: "var(--v)", key: TextDecorationSkipSpaces }))
 text-decoration-skip-spaces: var(--v) | serialize | None
 text-decoration-skip-spaces: var(--v) | computed | None
@@ -1951,6 +2289,7 @@ text-decoration-skip-spaces: var(--undefined) | computed | None
 text-decoration-skip-spaces: var(--undefined) | cssom | Some("none")
 text-decoration-skip-spaces: var(--undefined) | page | <absent>
 
+text-emphasis-position: <undeclared> | page | <absent>
 text-emphasis-position: <parent under left> | computed | Position { vertical: Under, horizontal: Some(Left) }
 text-emphasis-position: <undeclared> | computed | Position { vertical: Under, horizontal: Some(Left) }
 text-emphasis-position: <undeclared> | cssom | Some("under left")
@@ -2004,6 +2343,16 @@ text-emphasis-position: unset | serialize | -
 text-emphasis-position: unset | computed | Position { vertical: Under, horizontal: Some(Left) }
 text-emphasis-position: unset | cssom | Some("under left")
 text-emphasis-position: unset | page | <absent>
+text-emphasis-position: revert | parse | None
+text-emphasis-position: revert | serialize | -
+text-emphasis-position: revert | computed | Position { vertical: Under, horizontal: Some(Left) }
+text-emphasis-position: revert | cssom | Some("under left")
+text-emphasis-position: revert | page | <absent>
+text-emphasis-position: revert-layer | parse | None
+text-emphasis-position: revert-layer | serialize | -
+text-emphasis-position: revert-layer | computed | Position { vertical: Under, horizontal: Some(Left) }
+text-emphasis-position: revert-layer | cssom | Some("under left")
+text-emphasis-position: revert-layer | page | <absent>
 text-emphasis-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-emphasis-position", value: "var(--v)", key: TextEmphasisPosition }))
 text-emphasis-position: var(--v) | serialize | None
 text-emphasis-position: var(--v) | computed | Position { vertical: Under, horizontal: Some(Left) }
@@ -2015,6 +2364,7 @@ text-emphasis-position: var(--undefined) | computed | Position { vertical: Under
 text-emphasis-position: var(--undefined) | cssom | Some("under left")
 text-emphasis-position: var(--undefined) | page | <absent>
 
+text-underline-position: <undeclared> | page | <absent>
 text-underline-position: <parent under> | computed | TextUnderlinePosition { from_font: false, under: true, left: false, right: false }
 text-underline-position: <undeclared> | computed | TextUnderlinePosition { from_font: false, under: true, left: false, right: false }
 text-underline-position: <undeclared> | cssom | Some("under")
@@ -2073,6 +2423,16 @@ text-underline-position: unset | serialize | -
 text-underline-position: unset | computed | TextUnderlinePosition { from_font: false, under: true, left: false, right: false }
 text-underline-position: unset | cssom | Some("under")
 text-underline-position: unset | page | <absent>
+text-underline-position: revert | parse | None
+text-underline-position: revert | serialize | -
+text-underline-position: revert | computed | TextUnderlinePosition { from_font: false, under: true, left: false, right: false }
+text-underline-position: revert | cssom | Some("under")
+text-underline-position: revert | page | <absent>
+text-underline-position: revert-layer | parse | None
+text-underline-position: revert-layer | serialize | -
+text-underline-position: revert-layer | computed | TextUnderlinePosition { from_font: false, under: true, left: false, right: false }
+text-underline-position: revert-layer | cssom | Some("under")
+text-underline-position: revert-layer | page | <absent>
 text-underline-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-underline-position", value: "var(--v)", key: TextUnderlinePosition }))
 text-underline-position: var(--v) | serialize | None
 text-underline-position: var(--v) | computed | TextUnderlinePosition { from_font: false, under: true, left: false, right: false }
@@ -2084,6 +2444,7 @@ text-underline-position: var(--undefined) | computed | TextUnderlinePosition { f
 text-underline-position: var(--undefined) | cssom | Some("under")
 text-underline-position: var(--undefined) | page | <absent>
 
+text-underline-offset: <undeclared> | page | <absent>
 text-underline-offset: <parent 2em> | computed | Length(ComputedLength(40.0))
 text-underline-offset: <undeclared> | computed | Length(ComputedLength(40.0))
 text-underline-offset: <undeclared> | cssom | Some("40px")
@@ -2162,6 +2523,16 @@ text-underline-offset: unset | serialize | -
 text-underline-offset: unset | computed | Length(ComputedLength(40.0))
 text-underline-offset: unset | cssom | Some("40px")
 text-underline-offset: unset | page | <absent>
+text-underline-offset: revert | parse | None
+text-underline-offset: revert | serialize | -
+text-underline-offset: revert | computed | Length(ComputedLength(40.0))
+text-underline-offset: revert | cssom | Some("40px")
+text-underline-offset: revert | page | <absent>
+text-underline-offset: revert-layer | parse | None
+text-underline-offset: revert-layer | serialize | -
+text-underline-offset: revert-layer | computed | Length(ComputedLength(40.0))
+text-underline-offset: revert-layer | cssom | Some("40px")
+text-underline-offset: revert-layer | page | <absent>
 text-underline-offset: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-underline-offset", value: "var(--v)", key: TextUnderlineOffset }))
 text-underline-offset: var(--v) | serialize | None
 text-underline-offset: var(--v) | computed | Length(ComputedLength(20.0))
@@ -2173,6 +2544,7 @@ text-underline-offset: var(--undefined) | computed | Length(ComputedLength(40.0)
 text-underline-offset: var(--undefined) | cssom | Some("40px")
 text-underline-offset: var(--undefined) | page | <absent>
 
+text-autospace: <undeclared> | page | <absent>
 text-autospace: <parent no-autospace> | computed | NoAutospace
 text-autospace: <undeclared> | computed | NoAutospace
 text-autospace: <undeclared> | cssom | Some("no-autospace")
@@ -2236,6 +2608,16 @@ text-autospace: unset | serialize | -
 text-autospace: unset | computed | NoAutospace
 text-autospace: unset | cssom | Some("no-autospace")
 text-autospace: unset | page | <absent>
+text-autospace: revert | parse | None
+text-autospace: revert | serialize | -
+text-autospace: revert | computed | NoAutospace
+text-autospace: revert | cssom | Some("no-autospace")
+text-autospace: revert | page | <absent>
+text-autospace: revert-layer | parse | None
+text-autospace: revert-layer | serialize | -
+text-autospace: revert-layer | computed | NoAutospace
+text-autospace: revert-layer | cssom | Some("no-autospace")
+text-autospace: revert-layer | page | <absent>
 text-autospace: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-autospace", value: "var(--v)", key: TextAutospace }))
 text-autospace: var(--v) | serialize | None
 text-autospace: var(--v) | computed | NoAutospace
@@ -2247,6 +2629,7 @@ text-autospace: var(--undefined) | computed | NoAutospace
 text-autospace: var(--undefined) | cssom | Some("no-autospace")
 text-autospace: var(--undefined) | page | <absent>
 
+word-space-transform: <undeclared> | page | <absent>
 word-space-transform: <parent space> | computed | Space
 word-space-transform: <undeclared> | computed | Space
 word-space-transform: <undeclared> | cssom | Some("space")
@@ -2300,6 +2683,16 @@ word-space-transform: unset | serialize | -
 word-space-transform: unset | computed | Space
 word-space-transform: unset | cssom | Some("space")
 word-space-transform: unset | page | <absent>
+word-space-transform: revert | parse | None
+word-space-transform: revert | serialize | -
+word-space-transform: revert | computed | Space
+word-space-transform: revert | cssom | Some("space")
+word-space-transform: revert | page | <absent>
+word-space-transform: revert-layer | parse | None
+word-space-transform: revert-layer | serialize | -
+word-space-transform: revert-layer | computed | Space
+word-space-transform: revert-layer | cssom | Some("space")
+word-space-transform: revert-layer | page | <absent>
 word-space-transform: var(--v) | parse | Some(Deferred(DeferredValue { property: "word-space-transform", value: "var(--v)", key: WordSpaceTransform }))
 word-space-transform: var(--v) | serialize | None
 word-space-transform: var(--v) | computed | Space
@@ -2311,6 +2704,7 @@ word-space-transform: var(--undefined) | computed | Space
 word-space-transform: var(--undefined) | cssom | Some("space")
 word-space-transform: var(--undefined) | page | <absent>
 
+text-spacing-trim: <undeclared> | page | <absent>
 text-spacing-trim: <parent trim-start> | computed | TrimStart
 text-spacing-trim: <undeclared> | computed | TrimStart
 text-spacing-trim: <undeclared> | cssom | Some("trim-start")
@@ -2369,6 +2763,16 @@ text-spacing-trim: unset | serialize | -
 text-spacing-trim: unset | computed | TrimStart
 text-spacing-trim: unset | cssom | Some("trim-start")
 text-spacing-trim: unset | page | <absent>
+text-spacing-trim: revert | parse | None
+text-spacing-trim: revert | serialize | -
+text-spacing-trim: revert | computed | TrimStart
+text-spacing-trim: revert | cssom | Some("trim-start")
+text-spacing-trim: revert | page | <absent>
+text-spacing-trim: revert-layer | parse | None
+text-spacing-trim: revert-layer | serialize | -
+text-spacing-trim: revert-layer | computed | TrimStart
+text-spacing-trim: revert-layer | cssom | Some("trim-start")
+text-spacing-trim: revert-layer | page | <absent>
 text-spacing-trim: var(--v) | parse | Some(Deferred(DeferredValue { property: "text-spacing-trim", value: "var(--v)", key: TextSpacingTrim }))
 text-spacing-trim: var(--v) | serialize | None
 text-spacing-trim: var(--v) | computed | TrimStart
@@ -2380,6 +2784,7 @@ text-spacing-trim: var(--undefined) | computed | TrimStart
 text-spacing-trim: var(--undefined) | cssom | Some("trim-start")
 text-spacing-trim: var(--undefined) | page | <absent>
 
+font-kerning: <undeclared> | page | <absent>
 font-kerning: <parent none> | computed | None
 font-kerning: <undeclared> | computed | None
 font-kerning: <undeclared> | cssom | Some("none")
@@ -2418,6 +2823,16 @@ font-kerning: unset | serialize | -
 font-kerning: unset | computed | None
 font-kerning: unset | cssom | Some("none")
 font-kerning: unset | page | <absent>
+font-kerning: revert | parse | None
+font-kerning: revert | serialize | -
+font-kerning: revert | computed | None
+font-kerning: revert | cssom | Some("none")
+font-kerning: revert | page | <absent>
+font-kerning: revert-layer | parse | None
+font-kerning: revert-layer | serialize | -
+font-kerning: revert-layer | computed | None
+font-kerning: revert-layer | cssom | Some("none")
+font-kerning: revert-layer | page | <absent>
 font-kerning: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-kerning", value: "var(--v)", key: FontKerning }))
 font-kerning: var(--v) | serialize | None
 font-kerning: var(--v) | computed | None
@@ -2429,6 +2844,7 @@ font-kerning: var(--undefined) | computed | None
 font-kerning: var(--undefined) | cssom | Some("none")
 font-kerning: var(--undefined) | page | <absent>
 
+font-optical-sizing: <undeclared> | page | <absent>
 font-optical-sizing: <parent none> | computed | None
 font-optical-sizing: <undeclared> | computed | None
 font-optical-sizing: <undeclared> | cssom | Some("none")
@@ -2462,6 +2878,16 @@ font-optical-sizing: unset | serialize | -
 font-optical-sizing: unset | computed | None
 font-optical-sizing: unset | cssom | Some("none")
 font-optical-sizing: unset | page | <absent>
+font-optical-sizing: revert | parse | None
+font-optical-sizing: revert | serialize | -
+font-optical-sizing: revert | computed | None
+font-optical-sizing: revert | cssom | Some("none")
+font-optical-sizing: revert | page | <absent>
+font-optical-sizing: revert-layer | parse | None
+font-optical-sizing: revert-layer | serialize | -
+font-optical-sizing: revert-layer | computed | None
+font-optical-sizing: revert-layer | cssom | Some("none")
+font-optical-sizing: revert-layer | page | <absent>
 font-optical-sizing: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-optical-sizing", value: "var(--v)", key: FontOpticalSizing }))
 font-optical-sizing: var(--v) | serialize | None
 font-optical-sizing: var(--v) | computed | None
@@ -2473,6 +2899,7 @@ font-optical-sizing: var(--undefined) | computed | None
 font-optical-sizing: var(--undefined) | cssom | Some("none")
 font-optical-sizing: var(--undefined) | page | <absent>
 
+font-variant-emoji: <undeclared> | page | <absent>
 font-variant-emoji: <parent emoji> | computed | Emoji
 font-variant-emoji: <undeclared> | computed | Emoji
 font-variant-emoji: <undeclared> | cssom | Some("emoji")
@@ -2516,6 +2943,16 @@ font-variant-emoji: unset | serialize | -
 font-variant-emoji: unset | computed | Emoji
 font-variant-emoji: unset | cssom | Some("emoji")
 font-variant-emoji: unset | page | <absent>
+font-variant-emoji: revert | parse | None
+font-variant-emoji: revert | serialize | -
+font-variant-emoji: revert | computed | Emoji
+font-variant-emoji: revert | cssom | Some("emoji")
+font-variant-emoji: revert | page | <absent>
+font-variant-emoji: revert-layer | parse | None
+font-variant-emoji: revert-layer | serialize | -
+font-variant-emoji: revert-layer | computed | Emoji
+font-variant-emoji: revert-layer | cssom | Some("emoji")
+font-variant-emoji: revert-layer | page | <absent>
 font-variant-emoji: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-variant-emoji", value: "var(--v)", key: FontVariantEmoji }))
 font-variant-emoji: var(--v) | serialize | None
 font-variant-emoji: var(--v) | computed | Emoji
@@ -2527,6 +2964,7 @@ font-variant-emoji: var(--undefined) | computed | Emoji
 font-variant-emoji: var(--undefined) | cssom | Some("emoji")
 font-variant-emoji: var(--undefined) | page | <absent>
 
+font-variant-ligatures: <undeclared> | page | <absent>
 font-variant-ligatures: <parent none> | computed | None
 font-variant-ligatures: <undeclared> | computed | None
 font-variant-ligatures: <undeclared> | cssom | Some("none")
@@ -2575,6 +3013,16 @@ font-variant-ligatures: unset | serialize | -
 font-variant-ligatures: unset | computed | None
 font-variant-ligatures: unset | cssom | Some("none")
 font-variant-ligatures: unset | page | <absent>
+font-variant-ligatures: revert | parse | None
+font-variant-ligatures: revert | serialize | -
+font-variant-ligatures: revert | computed | None
+font-variant-ligatures: revert | cssom | Some("none")
+font-variant-ligatures: revert | page | <absent>
+font-variant-ligatures: revert-layer | parse | None
+font-variant-ligatures: revert-layer | serialize | -
+font-variant-ligatures: revert-layer | computed | None
+font-variant-ligatures: revert-layer | cssom | Some("none")
+font-variant-ligatures: revert-layer | page | <absent>
 font-variant-ligatures: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-variant-ligatures", value: "var(--v)", key: FontVariantLigatures }))
 font-variant-ligatures: var(--v) | serialize | None
 font-variant-ligatures: var(--v) | computed | None
@@ -2586,6 +3034,7 @@ font-variant-ligatures: var(--undefined) | computed | None
 font-variant-ligatures: var(--undefined) | cssom | Some("none")
 font-variant-ligatures: var(--undefined) | page | <absent>
 
+font-variant-position: <undeclared> | page | <absent>
 font-variant-position: <parent sub> | computed | Sub
 font-variant-position: <undeclared> | computed | Sub
 font-variant-position: <undeclared> | cssom | Some("sub")
@@ -2624,6 +3073,16 @@ font-variant-position: unset | serialize | -
 font-variant-position: unset | computed | Sub
 font-variant-position: unset | cssom | Some("sub")
 font-variant-position: unset | page | <absent>
+font-variant-position: revert | parse | None
+font-variant-position: revert | serialize | -
+font-variant-position: revert | computed | Sub
+font-variant-position: revert | cssom | Some("sub")
+font-variant-position: revert | page | <absent>
+font-variant-position: revert-layer | parse | None
+font-variant-position: revert-layer | serialize | -
+font-variant-position: revert-layer | computed | Sub
+font-variant-position: revert-layer | cssom | Some("sub")
+font-variant-position: revert-layer | page | <absent>
 font-variant-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-variant-position", value: "var(--v)", key: FontVariantPosition }))
 font-variant-position: var(--v) | serialize | None
 font-variant-position: var(--v) | computed | Sub
@@ -2635,6 +3094,7 @@ font-variant-position: var(--undefined) | computed | Sub
 font-variant-position: var(--undefined) | cssom | Some("sub")
 font-variant-position: var(--undefined) | page | <absent>
 
+font-language-override: <undeclared> | page | <absent>
 font-language-override: <parent "TRK"> | computed | String("TRK")
 font-language-override: <undeclared> | computed | String("TRK")
 font-language-override: <undeclared> | cssom | Some("\"TRK\"")
@@ -2673,6 +3133,16 @@ font-language-override: unset | serialize | -
 font-language-override: unset | computed | String("TRK")
 font-language-override: unset | cssom | Some("\"TRK\"")
 font-language-override: unset | page | <absent>
+font-language-override: revert | parse | None
+font-language-override: revert | serialize | -
+font-language-override: revert | computed | String("TRK")
+font-language-override: revert | cssom | Some("\"TRK\"")
+font-language-override: revert | page | <absent>
+font-language-override: revert-layer | parse | None
+font-language-override: revert-layer | serialize | -
+font-language-override: revert-layer | computed | String("TRK")
+font-language-override: revert-layer | cssom | Some("\"TRK\"")
+font-language-override: revert-layer | page | <absent>
 font-language-override: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-language-override", value: "var(--v)", key: FontLanguageOverride }))
 font-language-override: var(--v) | serialize | None
 font-language-override: var(--v) | computed | String("TRK")
@@ -2684,6 +3154,7 @@ font-language-override: var(--undefined) | computed | String("TRK")
 font-language-override: var(--undefined) | cssom | Some("\"TRK\"")
 font-language-override: var(--undefined) | page | <absent>
 
+font-synthesis: <undeclared> | page | <absent>
 font-synthesis: <parent none> | computed | FontSynthesisValue { weight: false, style: None, small_caps: false, position: false }
 font-synthesis: <undeclared> | computed | FontSynthesisValue { weight: false, style: None, small_caps: false, position: false }
 font-synthesis: <undeclared> | cssom | Some("none")
@@ -2737,6 +3208,16 @@ font-synthesis: unset | serialize | -
 font-synthesis: unset | computed | FontSynthesisValue { weight: false, style: None, small_caps: false, position: false }
 font-synthesis: unset | cssom | Some("none")
 font-synthesis: unset | page | <absent>
+font-synthesis: revert | parse | None
+font-synthesis: revert | serialize | -
+font-synthesis: revert | computed | FontSynthesisValue { weight: false, style: None, small_caps: false, position: false }
+font-synthesis: revert | cssom | Some("none")
+font-synthesis: revert | page | <absent>
+font-synthesis: revert-layer | parse | None
+font-synthesis: revert-layer | serialize | -
+font-synthesis: revert-layer | computed | FontSynthesisValue { weight: false, style: None, small_caps: false, position: false }
+font-synthesis: revert-layer | cssom | Some("none")
+font-synthesis: revert-layer | page | <absent>
 font-synthesis: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-synthesis", value: "var(--v)", key: FontSynthesis }))
 font-synthesis: var(--v) | serialize | None
 font-synthesis: var(--v) | computed | FontSynthesisValue { weight: false, style: None, small_caps: false, position: false }
@@ -2748,6 +3229,7 @@ font-synthesis: var(--undefined) | computed | FontSynthesisValue { weight: false
 font-synthesis: var(--undefined) | cssom | Some("none")
 font-synthesis: var(--undefined) | page | <absent>
 
+font-palette: <undeclared> | page | <absent>
 font-palette: <parent dark> | computed | Dark
 font-palette: <undeclared> | computed | Dark
 font-palette: <undeclared> | cssom | Some("dark")
@@ -2796,6 +3278,16 @@ font-palette: unset | serialize | -
 font-palette: unset | computed | Dark
 font-palette: unset | cssom | Some("dark")
 font-palette: unset | page | <absent>
+font-palette: revert | parse | None
+font-palette: revert | serialize | -
+font-palette: revert | computed | Dark
+font-palette: revert | cssom | Some("dark")
+font-palette: revert | page | <absent>
+font-palette: revert-layer | parse | None
+font-palette: revert-layer | serialize | -
+font-palette: revert-layer | computed | Dark
+font-palette: revert-layer | cssom | Some("dark")
+font-palette: revert-layer | page | <absent>
 font-palette: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-palette", value: "var(--v)", key: FontPalette }))
 font-palette: var(--v) | serialize | None
 font-palette: var(--v) | computed | Dark
@@ -2807,6 +3299,7 @@ font-palette: var(--undefined) | computed | Dark
 font-palette: var(--undefined) | cssom | Some("dark")
 font-palette: var(--undefined) | page | <absent>
 
+font-variant-numeric: <undeclared> | page | <absent>
 font-variant-numeric: <parent tabular-nums> | computed | FontVariantNumeric { lining_nums: false, oldstyle_nums: false, proportional_nums: false, tabular_nums: true, diagonal_fractions: false, stacked_fractions: false, ordinal: false, slashed_zero: false }
 font-variant-numeric: <undeclared> | computed | FontVariantNumeric { lining_nums: false, oldstyle_nums: false, proportional_nums: false, tabular_nums: true, diagonal_fractions: false, stacked_fractions: false, ordinal: false, slashed_zero: false }
 font-variant-numeric: <undeclared> | cssom | Some("tabular-nums")
@@ -2855,6 +3348,16 @@ font-variant-numeric: unset | serialize | -
 font-variant-numeric: unset | computed | FontVariantNumeric { lining_nums: false, oldstyle_nums: false, proportional_nums: false, tabular_nums: true, diagonal_fractions: false, stacked_fractions: false, ordinal: false, slashed_zero: false }
 font-variant-numeric: unset | cssom | Some("tabular-nums")
 font-variant-numeric: unset | page | <absent>
+font-variant-numeric: revert | parse | None
+font-variant-numeric: revert | serialize | -
+font-variant-numeric: revert | computed | FontVariantNumeric { lining_nums: false, oldstyle_nums: false, proportional_nums: false, tabular_nums: true, diagonal_fractions: false, stacked_fractions: false, ordinal: false, slashed_zero: false }
+font-variant-numeric: revert | cssom | Some("tabular-nums")
+font-variant-numeric: revert | page | <absent>
+font-variant-numeric: revert-layer | parse | None
+font-variant-numeric: revert-layer | serialize | -
+font-variant-numeric: revert-layer | computed | FontVariantNumeric { lining_nums: false, oldstyle_nums: false, proportional_nums: false, tabular_nums: true, diagonal_fractions: false, stacked_fractions: false, ordinal: false, slashed_zero: false }
+font-variant-numeric: revert-layer | cssom | Some("tabular-nums")
+font-variant-numeric: revert-layer | page | <absent>
 font-variant-numeric: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-variant-numeric", value: "var(--v)", key: FontVariantNumeric }))
 font-variant-numeric: var(--v) | serialize | None
 font-variant-numeric: var(--v) | computed | FontVariantNumeric { lining_nums: false, oldstyle_nums: false, proportional_nums: false, tabular_nums: true, diagonal_fractions: false, stacked_fractions: false, ordinal: false, slashed_zero: false }
@@ -2866,6 +3369,7 @@ font-variant-numeric: var(--undefined) | computed | FontVariantNumeric { lining_
 font-variant-numeric: var(--undefined) | cssom | Some("tabular-nums")
 font-variant-numeric: var(--undefined) | page | <absent>
 
+font-variant-east-asian: <undeclared> | page | <absent>
 font-variant-east-asian: <parent jis78> | computed | FontVariantEastAsian { variant: Some(Jis78), width: None, ruby: false }
 font-variant-east-asian: <undeclared> | computed | FontVariantEastAsian { variant: Some(Jis78), width: None, ruby: false }
 font-variant-east-asian: <undeclared> | cssom | Some("jis78")
@@ -2914,6 +3418,16 @@ font-variant-east-asian: unset | serialize | -
 font-variant-east-asian: unset | computed | FontVariantEastAsian { variant: Some(Jis78), width: None, ruby: false }
 font-variant-east-asian: unset | cssom | Some("jis78")
 font-variant-east-asian: unset | page | <absent>
+font-variant-east-asian: revert | parse | None
+font-variant-east-asian: revert | serialize | -
+font-variant-east-asian: revert | computed | FontVariantEastAsian { variant: Some(Jis78), width: None, ruby: false }
+font-variant-east-asian: revert | cssom | Some("jis78")
+font-variant-east-asian: revert | page | <absent>
+font-variant-east-asian: revert-layer | parse | None
+font-variant-east-asian: revert-layer | serialize | -
+font-variant-east-asian: revert-layer | computed | FontVariantEastAsian { variant: Some(Jis78), width: None, ruby: false }
+font-variant-east-asian: revert-layer | cssom | Some("jis78")
+font-variant-east-asian: revert-layer | page | <absent>
 font-variant-east-asian: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-variant-east-asian", value: "var(--v)", key: FontVariantEastAsian }))
 font-variant-east-asian: var(--v) | serialize | None
 font-variant-east-asian: var(--v) | computed | FontVariantEastAsian { variant: Some(Jis78), width: None, ruby: false }
@@ -2925,6 +3439,7 @@ font-variant-east-asian: var(--undefined) | computed | FontVariantEastAsian { va
 font-variant-east-asian: var(--undefined) | cssom | Some("jis78")
 font-variant-east-asian: var(--undefined) | page | <absent>
 
+font-variation-settings: <undeclared> | page | <absent>
 font-variation-settings: <parent "wght" 700> | computed | Settings([FontVariationSetting { tag: "wght", value: 700.0 }])
 font-variation-settings: <undeclared> | computed | Settings([FontVariationSetting { tag: "wght", value: 700.0 }])
 font-variation-settings: <undeclared> | cssom | Some("\"wght\" 700")
@@ -2973,6 +3488,16 @@ font-variation-settings: unset | serialize | -
 font-variation-settings: unset | computed | Settings([FontVariationSetting { tag: "wght", value: 700.0 }])
 font-variation-settings: unset | cssom | Some("\"wght\" 700")
 font-variation-settings: unset | page | <absent>
+font-variation-settings: revert | parse | None
+font-variation-settings: revert | serialize | -
+font-variation-settings: revert | computed | Settings([FontVariationSetting { tag: "wght", value: 700.0 }])
+font-variation-settings: revert | cssom | Some("\"wght\" 700")
+font-variation-settings: revert | page | <absent>
+font-variation-settings: revert-layer | parse | None
+font-variation-settings: revert-layer | serialize | -
+font-variation-settings: revert-layer | computed | Settings([FontVariationSetting { tag: "wght", value: 700.0 }])
+font-variation-settings: revert-layer | cssom | Some("\"wght\" 700")
+font-variation-settings: revert-layer | page | <absent>
 font-variation-settings: var(--v) | parse | Some(Deferred(DeferredValue { property: "font-variation-settings", value: "var(--v)", key: FontVariationSettings }))
 font-variation-settings: var(--v) | serialize | None
 font-variation-settings: var(--v) | computed | Settings([FontVariationSetting { tag: "wght", value: 700.0 }])

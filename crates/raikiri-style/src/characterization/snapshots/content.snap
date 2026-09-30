@@ -1,6 +1,7 @@
 ---
 source: crates/raikiri-style/src/characterization.rs
 ---
+counter-increment: <undeclared> | page | <absent>
 counter-increment: <parent a 2> | computed | [("a", 2)]
 counter-increment: <undeclared> | computed | []
 counter-increment: * | cssom | <not a ComputedProperty>
@@ -40,6 +41,14 @@ counter-increment: unset | parse | None
 counter-increment: unset | serialize | -
 counter-increment: unset | computed | []
 counter-increment: unset | page | <absent>
+counter-increment: revert | parse | None
+counter-increment: revert | serialize | -
+counter-increment: revert | computed | []
+counter-increment: revert | page | <absent>
+counter-increment: revert-layer | parse | None
+counter-increment: revert-layer | serialize | -
+counter-increment: revert-layer | computed | []
+counter-increment: revert-layer | page | <absent>
 counter-increment: var(--v) | parse | Some(Deferred(DeferredValue { property: "counter-increment", value: "var(--v)", key: CounterIncrement }))
 counter-increment: var(--v) | serialize | None
 counter-increment: var(--v) | computed | [("a", 2)]
@@ -49,6 +58,7 @@ counter-increment: var(--undefined) | serialize | None
 counter-increment: var(--undefined) | computed | []
 counter-increment: var(--undefined) | page | <absent>
 
+counter-set: <undeclared> | page | <absent>
 counter-set: <parent a 2> | computed | [("a", 2)]
 counter-set: <undeclared> | computed | []
 counter-set: * | cssom | <not a ComputedProperty>
@@ -84,6 +94,14 @@ counter-set: unset | parse | None
 counter-set: unset | serialize | -
 counter-set: unset | computed | []
 counter-set: unset | page | <absent>
+counter-set: revert | parse | None
+counter-set: revert | serialize | -
+counter-set: revert | computed | []
+counter-set: revert | page | <absent>
+counter-set: revert-layer | parse | None
+counter-set: revert-layer | serialize | -
+counter-set: revert-layer | computed | []
+counter-set: revert-layer | page | <absent>
 counter-set: var(--v) | parse | Some(Deferred(DeferredValue { property: "counter-set", value: "var(--v)", key: CounterSet }))
 counter-set: var(--v) | serialize | None
 counter-set: var(--v) | computed | [("a", 2)]
@@ -93,6 +111,7 @@ counter-set: var(--undefined) | serialize | None
 counter-set: var(--undefined) | computed | []
 counter-set: var(--undefined) | page | <absent>
 
+content: <undeclared> | page | <absent>
 content: <parent "p"> | computed | [Literal("p")]
 content: <undeclared> | computed | []
 content: * | cssom | <not a ComputedProperty>
@@ -148,6 +167,14 @@ content: unset | parse | None
 content: unset | serialize | -
 content: unset | computed | []
 content: unset | page | <absent>
+content: revert | parse | None
+content: revert | serialize | -
+content: revert | computed | []
+content: revert | page | <absent>
+content: revert-layer | parse | None
+content: revert-layer | serialize | -
+content: revert-layer | computed | []
+content: revert-layer | page | <absent>
 content: var(--v) | parse | Some(Deferred(DeferredValue { property: "content", value: "var(--v)", key: Content }))
 content: var(--v) | serialize | None
 content: var(--v) | computed | [Literal("p")]
@@ -157,6 +184,7 @@ content: var(--undefined) | serialize | None
 content: var(--undefined) | computed | []
 content: var(--undefined) | page | <absent>
 
+string-set: <undeclared> | page | <absent>
 string-set: <parent title "p"> | computed | [("title", [Literal("p")])]
 string-set: <undeclared> | computed | []
 string-set: * | cssom | <not a ComputedProperty>
@@ -192,6 +220,14 @@ string-set: unset | parse | None
 string-set: unset | serialize | -
 string-set: unset | computed | []
 string-set: unset | page | <absent>
+string-set: revert | parse | None
+string-set: revert | serialize | -
+string-set: revert | computed | []
+string-set: revert | page | <absent>
+string-set: revert-layer | parse | None
+string-set: revert-layer | serialize | -
+string-set: revert-layer | computed | []
+string-set: revert-layer | page | <absent>
 string-set: var(--v) | parse | Some(Deferred(DeferredValue { property: "string-set", value: "var(--v)", key: StringSet }))
 string-set: var(--v) | serialize | None
 string-set: var(--v) | computed | [("title", [Literal("p")])]
@@ -201,6 +237,7 @@ string-set: var(--undefined) | serialize | None
 string-set: var(--undefined) | computed | []
 string-set: var(--undefined) | page | <absent>
 
+page: <undeclared> | page | <absent>
 page: * | computed | <no computed field>
 page: * | cssom | <not a ComputedProperty>
 page: auto | parse | Some(Page(Auto))
@@ -224,6 +261,12 @@ page: initial | page | <absent>
 page: unset | parse | None
 page: unset | serialize | -
 page: unset | page | <absent>
+page: revert | parse | None
+page: revert | serialize | -
+page: revert | page | <absent>
+page: revert-layer | parse | None
+page: revert-layer | serialize | -
+page: revert-layer | page | <absent>
 page: var(--v) | parse | Some(Deferred(DeferredValue { property: "page", value: "var(--v)", key: Page }))
 page: var(--v) | serialize | None
 page: var(--v) | page | Page(Named(Atom("wide")))

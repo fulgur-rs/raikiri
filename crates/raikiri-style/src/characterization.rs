@@ -25,9 +25,22 @@
 //! - `page`: the value `cascade_page` stores for the property when an
 //!   `@page` rule declares the sample.
 //!
-//! Stages that do not apply to a property (no computed field, no CSSOM
-//! support, no `PropertyKey`) are recorded once as a marker line instead of
-//! being omitted.
+//! Each property also records the parent's computed value and, for an
+//! element and for a page context that do not declare the property, the
+//! computed value, CSSOM string and page value they end up with (inheritance
+//! or initial value). Stages that do not apply to a property (no computed
+//! field, no CSSOM support, no `PropertyKey`) are recorded once as a marker
+//! line instead of being omitted.
+//!
+//! Known limits of what the lines prove:
+//!
+//! - Many keyword and length properties have no [`serialize_value`] arm
+//!   today (their `serialize` lines read `None`), and some have no
+//!   [`ComputedProperty`] either. For them those stages are vacuous: adding a
+//!   serializer or CSSOM support later is expected to show up as a snapshot
+//!   diff, which is then the intended change, not a regression.
+//! - `!important` is not sampled: the parse stage stops at the value and does
+//!   not run `parse_important`.
 
 use std::fmt::Write as _;
 
@@ -138,7 +151,7 @@ const LENGTHS: &[&str] = &[
 ];
 
 /// CSS-wide keywords every entry is sampled with.
-const CSS_WIDE: &[&str] = &["inherit", "initial", "unset"];
+const CSS_WIDE: &[&str] = &["inherit", "initial", "unset", "revert", "revert-layer"];
 
 /// `var()` samples: `--v` is bound to the entry's parent value on the parent
 /// element and in the `@page` rule; `--undefined` is never bound.
@@ -224,12 +237,22 @@ fn parse(name: &str, text: &str) -> Result<PropertyValue, String> {
 }
 
 /// The value `cascade_page` stores for `key` when an `@page` rule declares
-/// `sample`, inheriting from `root`.
-fn page_value(entry: &Entry, key: PropertyKey, sample: &str, root: &ComputedValues) -> String {
+/// `sample` (or does not declare the property, for `None`), inheriting from
+/// `root`.
+fn page_value(
+    entry: &Entry,
+    key: PropertyKey,
+    sample: Option<&str>,
+    root: &ComputedValues,
+) -> String {
     let mut tree = RuleTree::empty();
+    let declaration = match sample {
+        Some(sample) => format!("; {}: {sample}", entry.name),
+        None => String::new(),
+    };
     let css = format!(
-        "@page {{ {PAGE_FONT}; --v: {}; {}: {sample} }}",
-        entry.parent, entry.name
+        "@page {{ {PAGE_FONT}; --v: {}{declaration} }}",
+        entry.parent
     );
     tree.add_stylesheet(&css, Origin::Author);
     let result = cascade_page(
@@ -263,8 +286,13 @@ fn record_entry(entry: &Entry, out: &mut String) {
     // Per-property lines: the stages that do not apply, and the values of the
     // parent and of a child that does not declare the property.
     let baseline = element_fixture(entry, None);
-    if key.is_none() {
-        line("*", "page", "<no PropertyKey>");
+    match key {
+        Some(key) => line(
+            "<undeclared>",
+            "page",
+            &page_value(entry, key, None, &baseline.parent),
+        ),
+        None => line("*", "page", "<no PropertyKey>"),
     }
     match entry.computed {
         Some(field) => {
@@ -306,7 +334,7 @@ fn record_entry(entry: &Entry, out: &mut String) {
             line(
                 &sample,
                 "page",
-                &page_value(entry, key, &sample, &baseline.parent),
+                &page_value(entry, key, Some(&sample), &baseline.parent),
             );
         }
     }

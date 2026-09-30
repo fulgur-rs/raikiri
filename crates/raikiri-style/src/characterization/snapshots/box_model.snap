@@ -1,6 +1,7 @@
 ---
 source: crates/raikiri-style/src/characterization.rs
 ---
+box-sizing: <undeclared> | page | <absent>
 box-sizing: <parent border-box> | computed | BorderBox
 box-sizing: <undeclared> | computed | ContentBox
 box-sizing: * | cssom | <not a ComputedProperty>
@@ -28,6 +29,14 @@ box-sizing: unset | parse | None
 box-sizing: unset | serialize | -
 box-sizing: unset | computed | ContentBox
 box-sizing: unset | page | <absent>
+box-sizing: revert | parse | None
+box-sizing: revert | serialize | -
+box-sizing: revert | computed | ContentBox
+box-sizing: revert | page | <absent>
+box-sizing: revert-layer | parse | None
+box-sizing: revert-layer | serialize | -
+box-sizing: revert-layer | computed | ContentBox
+box-sizing: revert-layer | page | <absent>
 box-sizing: var(--v) | parse | Some(Deferred(DeferredValue { property: "box-sizing", value: "var(--v)", key: BoxSizing }))
 box-sizing: var(--v) | serialize | None
 box-sizing: var(--v) | computed | BorderBox
@@ -37,6 +46,7 @@ box-sizing: var(--undefined) | serialize | None
 box-sizing: var(--undefined) | computed | ContentBox
 box-sizing: var(--undefined) | page | <absent>
 
+z-index: <undeclared> | page | <absent>
 z-index: <parent 3> | computed | Integer(3)
 z-index: <undeclared> | computed | Auto
 z-index: * | cssom | <not a ComputedProperty>
@@ -72,6 +82,14 @@ z-index: unset | parse | None
 z-index: unset | serialize | -
 z-index: unset | computed | Auto
 z-index: unset | page | <absent>
+z-index: revert | parse | None
+z-index: revert | serialize | -
+z-index: revert | computed | Auto
+z-index: revert | page | <absent>
+z-index: revert-layer | parse | None
+z-index: revert-layer | serialize | -
+z-index: revert-layer | computed | Auto
+z-index: revert-layer | page | <absent>
 z-index: var(--v) | parse | Some(Deferred(DeferredValue { property: "z-index", value: "var(--v)", key: ZIndex }))
 z-index: var(--v) | serialize | None
 z-index: var(--v) | computed | Integer(3)
@@ -81,6 +99,7 @@ z-index: var(--undefined) | serialize | None
 z-index: var(--undefined) | computed | Auto
 z-index: var(--undefined) | page | <absent>
 
+max-width: <undeclared> | page | <absent>
 max-width: <parent 2em> | computed | Px(40.0)
 max-width: <undeclared> | computed | Auto
 max-width: * | cssom | <not a ComputedProperty>
@@ -152,6 +171,14 @@ max-width: unset | parse | None
 max-width: unset | serialize | -
 max-width: unset | computed | Auto
 max-width: unset | page | <absent>
+max-width: revert | parse | None
+max-width: revert | serialize | -
+max-width: revert | computed | Auto
+max-width: revert | page | <absent>
+max-width: revert-layer | parse | None
+max-width: revert-layer | serialize | -
+max-width: revert-layer | computed | Auto
+max-width: revert-layer | page | <absent>
 max-width: var(--v) | parse | Some(Deferred(DeferredValue { property: "max-width", value: "var(--v)", key: MaxWidth }))
 max-width: var(--v) | serialize | None
 max-width: var(--v) | computed | Px(20.0)
@@ -161,6 +188,7 @@ max-width: var(--undefined) | serialize | None
 max-width: var(--undefined) | computed | Auto
 max-width: var(--undefined) | page | <absent>
 
+max-height: <undeclared> | page | <absent>
 max-height: <parent 2em> | computed | Px(40.0)
 max-height: <undeclared> | computed | Auto
 max-height: * | cssom | <not a ComputedProperty>
@@ -228,6 +256,14 @@ max-height: unset | parse | None
 max-height: unset | serialize | -
 max-height: unset | computed | Auto
 max-height: unset | page | <absent>
+max-height: revert | parse | None
+max-height: revert | serialize | -
+max-height: revert | computed | Auto
+max-height: revert | page | <absent>
+max-height: revert-layer | parse | None
+max-height: revert-layer | serialize | -
+max-height: revert-layer | computed | Auto
+max-height: revert-layer | page | <absent>
 max-height: var(--v) | parse | Some(Deferred(DeferredValue { property: "max-height", value: "var(--v)", key: MaxHeight }))
 max-height: var(--v) | serialize | None
 max-height: var(--v) | computed | Px(20.0)
@@ -237,6 +273,7 @@ max-height: var(--undefined) | serialize | None
 max-height: var(--undefined) | computed | Auto
 max-height: var(--undefined) | page | <absent>
 
+box-shadow: <undeclared> | page | <absent>
 box-shadow: <parent 1px 2px 3px red> | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
 box-shadow: <undeclared> | computed | []
 box-shadow: * | cssom | <not a ComputedProperty>
@@ -300,6 +337,14 @@ box-shadow: unset | parse | None
 box-shadow: unset | serialize | -
 box-shadow: unset | computed | []
 box-shadow: unset | page | <absent>
+box-shadow: revert | parse | None
+box-shadow: revert | serialize | -
+box-shadow: revert | computed | []
+box-shadow: revert | page | <absent>
+box-shadow: revert-layer | parse | None
+box-shadow: revert-layer | serialize | -
+box-shadow: revert-layer | computed | []
+box-shadow: revert-layer | page | <absent>
 box-shadow: var(--v) | parse | Some(Deferred(DeferredValue { property: "box-shadow", value: "var(--v)", key: BoxShadow }))
 box-shadow: var(--v) | serialize | None
 box-shadow: var(--v) | computed | [ComputedBoxShadowItem { offset_x: ComputedLength(1.0), offset_y: ComputedLength(2.0), blur_radius: ComputedLength(3.0), spread_radius: ComputedLength(0.0), color: Resolved(CssColor { r: 255, g: 0, b: 0, a: 255 }), inset: false }]
@@ -309,6 +354,7 @@ box-shadow: var(--undefined) | serialize | None
 box-shadow: var(--undefined) | computed | []
 box-shadow: var(--undefined) | page | <absent>
 
+top: <undeclared> | page | <absent>
 top: <parent 2em> | computed | Px(40.0)
 top: <undeclared> | computed | Auto
 top: * | cssom | <not a ComputedProperty>
@@ -372,6 +418,14 @@ top: unset | parse | None
 top: unset | serialize | -
 top: unset | computed | Auto
 top: unset | page | <absent>
+top: revert | parse | None
+top: revert | serialize | -
+top: revert | computed | Auto
+top: revert | page | <absent>
+top: revert-layer | parse | None
+top: revert-layer | serialize | -
+top: revert-layer | computed | Auto
+top: revert-layer | page | <absent>
 top: var(--v) | parse | Some(Deferred(DeferredValue { property: "top", value: "var(--v)", key: Top }))
 top: var(--v) | serialize | None
 top: var(--v) | computed | Px(20.0)
@@ -381,6 +435,7 @@ top: var(--undefined) | serialize | None
 top: var(--undefined) | computed | Auto
 top: var(--undefined) | page | <absent>
 
+right: <undeclared> | page | <absent>
 right: <parent 2em> | computed | Px(40.0)
 right: <undeclared> | computed | Auto
 right: * | cssom | <not a ComputedProperty>
@@ -444,6 +499,14 @@ right: unset | parse | None
 right: unset | serialize | -
 right: unset | computed | Auto
 right: unset | page | <absent>
+right: revert | parse | None
+right: revert | serialize | -
+right: revert | computed | Auto
+right: revert | page | <absent>
+right: revert-layer | parse | None
+right: revert-layer | serialize | -
+right: revert-layer | computed | Auto
+right: revert-layer | page | <absent>
 right: var(--v) | parse | Some(Deferred(DeferredValue { property: "right", value: "var(--v)", key: Right }))
 right: var(--v) | serialize | None
 right: var(--v) | computed | Px(20.0)
@@ -453,6 +516,7 @@ right: var(--undefined) | serialize | None
 right: var(--undefined) | computed | Auto
 right: var(--undefined) | page | <absent>
 
+bottom: <undeclared> | page | <absent>
 bottom: <parent 2em> | computed | Px(40.0)
 bottom: <undeclared> | computed | Auto
 bottom: * | cssom | <not a ComputedProperty>
@@ -516,6 +580,14 @@ bottom: unset | parse | None
 bottom: unset | serialize | -
 bottom: unset | computed | Auto
 bottom: unset | page | <absent>
+bottom: revert | parse | None
+bottom: revert | serialize | -
+bottom: revert | computed | Auto
+bottom: revert | page | <absent>
+bottom: revert-layer | parse | None
+bottom: revert-layer | serialize | -
+bottom: revert-layer | computed | Auto
+bottom: revert-layer | page | <absent>
 bottom: var(--v) | parse | Some(Deferred(DeferredValue { property: "bottom", value: "var(--v)", key: Bottom }))
 bottom: var(--v) | serialize | None
 bottom: var(--v) | computed | Px(20.0)
@@ -525,6 +597,7 @@ bottom: var(--undefined) | serialize | None
 bottom: var(--undefined) | computed | Auto
 bottom: var(--undefined) | page | <absent>
 
+left: <undeclared> | page | <absent>
 left: <parent 2em> | computed | Px(40.0)
 left: <undeclared> | computed | Auto
 left: * | cssom | <not a ComputedProperty>
@@ -588,6 +661,14 @@ left: unset | parse | None
 left: unset | serialize | -
 left: unset | computed | Auto
 left: unset | page | <absent>
+left: revert | parse | None
+left: revert | serialize | -
+left: revert | computed | Auto
+left: revert | page | <absent>
+left: revert-layer | parse | None
+left: revert-layer | serialize | -
+left: revert-layer | computed | Auto
+left: revert-layer | page | <absent>
 left: var(--v) | parse | Some(Deferred(DeferredValue { property: "left", value: "var(--v)", key: Left }))
 left: var(--v) | serialize | None
 left: var(--v) | computed | Px(20.0)
@@ -597,6 +678,7 @@ left: var(--undefined) | serialize | None
 left: var(--undefined) | computed | Auto
 left: var(--undefined) | page | <absent>
 
+outline-offset: <undeclared> | page | <absent>
 outline-offset: <parent 2em> | computed | ComputedLength(40.0)
 outline-offset: <undeclared> | computed | ComputedLength(0.0)
 outline-offset: * | cssom | <not a ComputedProperty>
@@ -656,6 +738,14 @@ outline-offset: unset | parse | None
 outline-offset: unset | serialize | -
 outline-offset: unset | computed | ComputedLength(0.0)
 outline-offset: unset | page | <absent>
+outline-offset: revert | parse | None
+outline-offset: revert | serialize | -
+outline-offset: revert | computed | ComputedLength(0.0)
+outline-offset: revert | page | <absent>
+outline-offset: revert-layer | parse | None
+outline-offset: revert-layer | serialize | -
+outline-offset: revert-layer | computed | ComputedLength(0.0)
+outline-offset: revert-layer | page | <absent>
 outline-offset: var(--v) | parse | Some(Deferred(DeferredValue { property: "outline-offset", value: "var(--v)", key: OutlineOffset }))
 outline-offset: var(--v) | serialize | None
 outline-offset: var(--v) | computed | ComputedLength(20.0)
