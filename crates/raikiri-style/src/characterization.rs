@@ -43,6 +43,8 @@ use crate::ruletree::{Origin, RuleTree, build_rule_tree};
 use crate::test_dom::TestDoc;
 
 mod box_model;
+mod color;
+mod content;
 mod meta;
 
 /// Reads one computed field of an element and formats it on one line.
@@ -67,8 +69,23 @@ struct Entry {
 }
 
 /// Declares an [`Entry`] whose computed field is `ComputedValues::$field`
-/// (fields of the `properties!` table are reached through `Deref`).
+/// (fields of the `properties!` table are reached through `Deref`), or which
+/// has no computed field when `$field` is `_`.
 macro_rules! entry {
+    (
+        $name:literal, _,
+        parent: $parent:literal,
+        $(lengths: $lengths:literal,)?
+        samples: [$($sample:literal),* $(,)?] $(,)?
+    ) => {
+        $crate::characterization::Entry {
+            name: $name,
+            parent: $parent,
+            lengths: entry!(@lengths $($lengths)?),
+            samples: &[$($sample),*],
+            computed: None,
+        }
+    };
     (
         $name:literal, $field:ident,
         parent: $parent:literal,
@@ -93,7 +110,11 @@ macro_rules! entry {
 use entry;
 
 /// Every domain of the corpus with its entries, in snapshot order.
-const DOMAINS: &[(&str, &[Entry])] = &[("box_model", box_model::ENTRIES)];
+const DOMAINS: &[(&str, &[Entry])] = &[
+    ("box_model", box_model::ENTRIES),
+    ("color", color::ENTRIES),
+    ("content", content::ENTRIES),
+];
 
 /// Length samples substituted into an entry's length template. They cover
 /// the font-relative units against distinct bases (see [`element_fixture`]),
@@ -315,4 +336,14 @@ fn assert_domain_snapshot(domain: &str) {
 #[test]
 fn box_model() {
     assert_domain_snapshot("box_model");
+}
+
+#[test]
+fn color() {
+    assert_domain_snapshot("color");
+}
+
+#[test]
+fn content() {
+    assert_domain_snapshot("content");
 }

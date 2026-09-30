@@ -1,0 +1,114 @@
+---
+source: crates/raikiri-style/src/characterization.rs
+---
+color: <parent blue> | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: <undeclared> | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: * | cssom | <not a ComputedProperty>
+color: red | parse | Some(Color(CssColor { r: 255, g: 0, b: 0, a: 255 }))
+color: red | serialize | None
+color: red | computed | CssColor { r: 255, g: 0, b: 0, a: 255 }
+color: red | page | Color(CssColor { r: 255, g: 0, b: 0, a: 255 })
+color: #00ff0080 | parse | Some(Color(CssColor { r: 0, g: 255, b: 0, a: 128 }))
+color: #00ff0080 | serialize | None
+color: #00ff0080 | computed | CssColor { r: 0, g: 255, b: 0, a: 128 }
+color: #00ff0080 | page | Color(CssColor { r: 0, g: 255, b: 0, a: 128 })
+color: rgb(1 2 3 / 50%) | parse | Some(Color(CssColor { r: 1, g: 2, b: 3, a: 128 }))
+color: rgb(1 2 3 / 50%) | serialize | None
+color: rgb(1 2 3 / 50%) | computed | CssColor { r: 1, g: 2, b: 3, a: 128 }
+color: rgb(1 2 3 / 50%) | page | Color(CssColor { r: 1, g: 2, b: 3, a: 128 })
+color: hsl(120 100% 50%) | parse | Some(Color(CssColor { r: 0, g: 255, b: 0, a: 255 }))
+color: hsl(120 100% 50%) | serialize | None
+color: hsl(120 100% 50%) | computed | CssColor { r: 0, g: 255, b: 0, a: 255 }
+color: hsl(120 100% 50%) | page | Color(CssColor { r: 0, g: 255, b: 0, a: 255 })
+color: currentcolor | parse | Some(Color(CssColor { r: 0, g: 0, b: 0, a: 255 }))
+color: currentcolor | serialize | None
+color: currentcolor | computed | CssColor { r: 0, g: 0, b: 0, a: 255 }
+color: currentcolor | page | Color(CssColor { r: 0, g: 0, b: 0, a: 255 })
+color: transparent | parse | Some(Color(CssColor { r: 0, g: 0, b: 0, a: 0 }))
+color: transparent | serialize | None
+color: transparent | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+color: transparent | page | Color(CssColor { r: 0, g: 0, b: 0, a: 0 })
+color: color-mix(in srgb, red, blue) | parse | Some(Color(CssColor { r: 128, g: 0, b: 128, a: 255 }))
+color: color-mix(in srgb, red, blue) | serialize | None
+color: color-mix(in srgb, red, blue) | computed | CssColor { r: 128, g: 0, b: 128, a: 255 }
+color: color-mix(in srgb, red, blue) | page | Color(CssColor { r: 128, g: 0, b: 128, a: 255 })
+color: rgb(from red r g b) | parse | Some(Color(CssColor { r: 255, g: 0, b: 0, a: 255 }))
+color: rgb(from red r g b) | serialize | None
+color: rgb(from red r g b) | computed | CssColor { r: 255, g: 0, b: 0, a: 255 }
+color: rgb(from red r g b) | page | Color(CssColor { r: 255, g: 0, b: 0, a: 255 })
+color: notacolor | parse | None
+color: notacolor | serialize | -
+color: notacolor | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: notacolor | page | <absent>
+color: inherit | parse | None
+color: inherit | serialize | -
+color: inherit | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: inherit | page | <absent>
+color: initial | parse | None
+color: initial | serialize | -
+color: initial | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: initial | page | <absent>
+color: unset | parse | None
+color: unset | serialize | -
+color: unset | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: unset | page | <absent>
+color: var(--v) | parse | Some(Deferred(DeferredValue { property: "color", value: "var(--v)", key: Color }))
+color: var(--v) | serialize | None
+color: var(--v) | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: var(--v) | page | Color(CssColor { r: 0, g: 0, b: 255, a: 255 })
+color: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "color", value: "var(--undefined)", key: Color }))
+color: var(--undefined) | serialize | None
+color: var(--undefined) | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+color: var(--undefined) | page | <absent>
+
+background-color: <parent blue> | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+background-color: <undeclared> | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: * | cssom | <not a ComputedProperty>
+background-color: red | parse | Some(BackgroundColor(CssColor { r: 255, g: 0, b: 0, a: 255 }))
+background-color: red | serialize | None
+background-color: red | computed | CssColor { r: 255, g: 0, b: 0, a: 255 }
+background-color: red | page | BackgroundColor(CssColor { r: 255, g: 0, b: 0, a: 255 })
+background-color: #00ff0080 | parse | Some(BackgroundColor(CssColor { r: 0, g: 255, b: 0, a: 128 }))
+background-color: #00ff0080 | serialize | None
+background-color: #00ff0080 | computed | CssColor { r: 0, g: 255, b: 0, a: 128 }
+background-color: #00ff0080 | page | BackgroundColor(CssColor { r: 0, g: 255, b: 0, a: 128 })
+background-color: rgb(1 2 3 / 50%) | parse | Some(BackgroundColor(CssColor { r: 1, g: 2, b: 3, a: 128 }))
+background-color: rgb(1 2 3 / 50%) | serialize | None
+background-color: rgb(1 2 3 / 50%) | computed | CssColor { r: 1, g: 2, b: 3, a: 128 }
+background-color: rgb(1 2 3 / 50%) | page | BackgroundColor(CssColor { r: 1, g: 2, b: 3, a: 128 })
+background-color: currentcolor | parse | Some(BackgroundColor(CssColor { r: 0, g: 0, b: 0, a: 255 }))
+background-color: currentcolor | serialize | None
+background-color: currentcolor | computed | CssColor { r: 0, g: 0, b: 0, a: 255 }
+background-color: currentcolor | page | BackgroundColor(CssColor { r: 0, g: 0, b: 0, a: 255 })
+background-color: transparent | parse | Some(BackgroundColor(CssColor { r: 0, g: 0, b: 0, a: 0 }))
+background-color: transparent | serialize | None
+background-color: transparent | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: transparent | page | BackgroundColor(CssColor { r: 0, g: 0, b: 0, a: 0 })
+background-color: color-mix(in srgb, red, blue) | parse | Some(BackgroundColor(CssColor { r: 128, g: 0, b: 128, a: 255 }))
+background-color: color-mix(in srgb, red, blue) | serialize | None
+background-color: color-mix(in srgb, red, blue) | computed | CssColor { r: 128, g: 0, b: 128, a: 255 }
+background-color: color-mix(in srgb, red, blue) | page | BackgroundColor(CssColor { r: 128, g: 0, b: 128, a: 255 })
+background-color: notacolor | parse | None
+background-color: notacolor | serialize | -
+background-color: notacolor | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: notacolor | page | <absent>
+background-color: inherit | parse | None
+background-color: inherit | serialize | -
+background-color: inherit | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: inherit | page | <absent>
+background-color: initial | parse | None
+background-color: initial | serialize | -
+background-color: initial | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: initial | page | <absent>
+background-color: unset | parse | None
+background-color: unset | serialize | -
+background-color: unset | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: unset | page | <absent>
+background-color: var(--v) | parse | Some(Deferred(DeferredValue { property: "background-color", value: "var(--v)", key: BackgroundColor }))
+background-color: var(--v) | serialize | None
+background-color: var(--v) | computed | CssColor { r: 0, g: 0, b: 255, a: 255 }
+background-color: var(--v) | page | BackgroundColor(CssColor { r: 0, g: 0, b: 255, a: 255 })
+background-color: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "background-color", value: "var(--undefined)", key: BackgroundColor }))
+background-color: var(--undefined) | serialize | None
+background-color: var(--undefined) | computed | CssColor { r: 0, g: 0, b: 0, a: 0 }
+background-color: var(--undefined) | page | <absent>
