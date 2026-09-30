@@ -2,6 +2,7 @@
 //! paragraphs out.
 
 pub(crate) mod error;
+pub(crate) mod font;
 
 #[cfg(test)]
 mod tests;

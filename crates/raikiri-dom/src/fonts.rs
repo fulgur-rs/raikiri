@@ -77,7 +77,7 @@ use std::path::{Path, PathBuf};
 ///   stats the already-opened fd, so a path-swap TOCTOU cannot bypass it.
 ///
 /// TODO: wire this up to `RenderLimits` in the future.
-const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
+pub(crate) const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
 /// Reason `read_bounded_font_file` rejected a candidate font path.
 ///
@@ -90,7 +90,7 @@ const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 /// `Display` wording and the walker-vs-read warn taxonomy stay specific to
 /// the fonts directory.
 #[derive(Debug)]
-enum FontReadReject {
+pub(crate) enum FontReadReject {
     /// `symlink_metadata().file_type().is_symlink()` returned true, **or**
     /// the open returned an errno consistent with `O_NOFOLLOW` refusing to
     /// follow a symlink (POSIX `ELOOP`; a fallback `symlink_metadata` recheck
@@ -245,7 +245,7 @@ fn map_reject_reason(reason: raikiri_traits::io::RejectReason) -> FontReadReject
 /// the pre-canonicalized walker root; the containment checks reject an
 /// intermediate directory swapped into a symlink pointing outside it
 /// between the walk and the read.
-fn read_bounded_font_file(
+pub(crate) fn read_bounded_font_file(
     path: &Path,
     canonical_root: &Path,
     size_cap: u64,
@@ -486,7 +486,7 @@ impl<'a> std::fmt::Display for FontWarn<'a> {
 /// reference.  Threaded by mutable reference (`&mut FontWarnObserver<'_>`)
 /// through the walker so recursion can auto-reborrow rather than moving the
 /// `Option` at each site.
-type FontWarnObserver<'o> = Option<&'o mut dyn FnMut(&FontWarn<'_>)>;
+pub(crate) type FontWarnObserver<'o> = Option<&'o mut dyn FnMut(&FontWarn<'_>)>;
 
 /// Emit a warn event: call the observer if `Some`, otherwise write the
 /// default `eprintln!` line so CLI use continues to see the same output.
@@ -498,7 +498,7 @@ type FontWarnObserver<'o> = Option<&'o mut dyn FnMut(&FontWarn<'_>)>;
 /// a macro rather than a generic `Observer<W>` type — `FontWarn`'s observer
 /// is higher-ranked over `FontWarn`'s own borrowed lifetime, which a
 /// monomorphic generic parameter cannot express.
-fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
+pub(crate) fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
     crate::diag::emit_warn_via!(observer, "[raikiri-dom::fonts]", event);
 }
 
@@ -517,7 +517,7 @@ fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
 /// `ReadRejectedNotRegularFile` (least-surprising residual); the debug
 /// assert exists to catch a future refactor that routes `Io` through here
 /// by mistake.
-fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWarn<'a> {
+pub(crate) fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWarn<'a> {
     match reject {
         FontReadReject::Symlink => FontWarn::ReadRejectedSymlink { path },
         FontReadReject::NotRegularFile => FontWarn::ReadRejectedNotRegularFile { path },
@@ -892,7 +892,7 @@ impl std::error::Error for FontError {
 /// Currently only Ahem (the fulgur check found Lato-Regular absent). Append
 /// to the array in the future if a real-text primary such as Lato-Medium
 /// needs to be added.
-const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
+pub(crate) const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 
 /// Recursively walks `dir`, collecting + sorting `.ttf`/`.otf` files and
 /// moving PREFERRED_FIRST to the head. `file_name` matching is
@@ -902,7 +902,10 @@ const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 /// the shared `observer` so `_with_observer` consumers get walker-level
 /// events too, not only read-time TOCTOU events.  When `observer` is `None`
 /// the eprintln! fallback lives in [`emit_warn`].
-fn walk_fonts(dir: &Path, observer: &mut FontWarnObserver<'_>) -> Result<Vec<PathBuf>, FontError> {
+pub(crate) fn walk_fonts(
+    dir: &Path,
+    observer: &mut FontWarnObserver<'_>,
+) -> Result<Vec<PathBuf>, FontError> {
     let mut collected: Vec<PathBuf> = Vec::new();
     collect_recursive(dir, &mut collected, observer)?;
     // 1. path sort (for determinism)
@@ -1196,7 +1199,7 @@ fn woff2_within_cap(bytes: &[u8]) -> bool {
 /// passed through even when a WOFF/WOFF2 hint is present (as required by CSS
 /// Fonts format-specifier tests). A matching WOFF signature is validated before
 /// decompression; malformed, oversized, or unsupported containers fail closed.
-fn decode_web_font(bytes: Vec<u8>) -> Option<Vec<u8>> {
+pub(crate) fn decode_web_font(bytes: Vec<u8>) -> Option<Vec<u8>> {
     let kind = if bytes.starts_with(b"wOFF") {
         Some("woff")
     } else if bytes.starts_with(b"wOF2") {
