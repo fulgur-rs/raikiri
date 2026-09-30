@@ -102,6 +102,8 @@ pub(crate) struct PrintRenderResources<'a> {
     pub(crate) prepare_cascade_images: Option<&'a dyn Fn(&mut raikiri_style::CascadeResult)>,
     /// Route eligible paragraphs through the shodo inline engine.
     pub(crate) inline_formatting: bool,
+    /// Use the engine's font directories for the parley path.
+    pub(crate) wpt_fonts: bool,
     /// Live canvas bitmaps in tree order, from [`crate::reftest::dynamic`]'s
     /// sidecar transfer. Restored onto the reparsed document before layout so
     /// `innerHTML` round-tripping does not drop script-painted pixels.
@@ -227,6 +229,10 @@ pub struct ReftestConfig {
     /// Documents with `@font-face` rules keep the parley path. Text laid out
     /// this way is not painted yet, so results differ from the default path.
     pub inline_formatting: bool,
+    /// Give the parley path the WPT font directories the inline engine uses,
+    /// without switching the engine on. A baseline taken this way separates
+    /// the effect of the font set from the effect of the engine.
+    pub wpt_fonts: bool,
 }
 
 impl Default for ReftestConfig {
@@ -236,6 +242,7 @@ impl Default for ReftestConfig {
             height: DEFAULT_REFTTEST_HEIGHT,
             tolerance: Tolerance::EXACT,
             inline_formatting: false,
+            wpt_fonts: false,
         }
     }
 }
@@ -1846,10 +1853,12 @@ fn render_raikiri_pages_inner(
         resource_base,
         font_base,
         false,
+        false,
         None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_raikiri_pages_inner_with_canvases(
     html: &str,
     width: u32,
@@ -1857,6 +1866,7 @@ fn render_raikiri_pages_inner_with_canvases(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
     inline_formatting: bool,
+    wpt_fonts: bool,
     canvas_bitmaps: Option<&[raikiri_dom::CanvasBitmap]>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     // URL construction requires an absolute directory. Normalize caller
@@ -1898,6 +1908,7 @@ fn render_raikiri_pages_inner_with_canvases(
                 .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
             prepare_cascade_images: None,
             inline_formatting,
+            wpt_fonts,
             canvas_bitmaps,
         },
     )
@@ -1953,7 +1964,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // into every cascade built below. Without @font-face rules both calls
     // are no-ops (empty registry early-returns).
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let mut font_ctx = resolve_font_ctx_for(resources.inline_formatting);
+    let mut font_ctx = resolve_font_ctx_for(resources.inline_formatting || resources.wpt_fonts);
     // Documents with @font-face keep the parley path: the alias rewrite of
     // computed font families does not match the shodo document layer. A
     // collection that cannot be built is an error, never a silent fallback
@@ -2445,7 +2456,12 @@ pub fn check_inline_formatting_fonts() -> Result<(), String> {
 /// a run with the inline engine switched on searches the engine's list for the
 /// parley path too, so both paths draw from one font set.
 fn font_candidates(inline_formatting: bool) -> Vec<PathBuf> {
-    if inline_formatting {
+    font_candidates_for(inline_formatting, false)
+}
+
+/// [`font_candidates`] with the font set also selectable on its own.
+fn font_candidates_for(inline_formatting: bool, wpt_fonts: bool) -> Vec<PathBuf> {
+    if inline_formatting || wpt_fonts {
         inline_engine_font_candidates()
     } else {
         wpt_font_candidates().to_vec()
@@ -2750,6 +2766,7 @@ where
         },
         pair.test.parent(),
         config.inline_formatting,
+        config.wpt_fonts,
         Some(&test_prepared.canvases),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
@@ -2764,6 +2781,7 @@ where
         },
         pair.reference.parent(),
         config.inline_formatting,
+        config.wpt_fonts,
         Some(&ref_prepared.canvases),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;

@@ -6,10 +6,11 @@ use crate::Document;
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
-use raikiri_style::property::{ColumnCountValue, DisplayValue};
+use raikiri_style::ComputedLengthPercentageOrAuto;
+use raikiri_style::property::{ColumnCountValue, DisplayValue, FloatValue};
 use raikiri_style::property::{
-    Direction, HangingPunctuation, PositionValue, TextEmphasisStyle, TextTransform, VisualBox,
-    WordSpaceTransform,
+    Direction, HangingPunctuation, PositionValue, TextDecorationLine, TextEmphasisStyle,
+    TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
 };
 use raikiri_traits::NodeKind;
 
@@ -150,6 +151,71 @@ fn paragraph_is_paintable(doc: &Document, cascade: &CascadeResult, idx: usize) -
     true
 }
 
+/// Whether a float next to the paragraph, or next to any of its ancestors,
+/// can intrude into its lines. The inline engine does not wrap text around
+/// floats yet, while the parley path starts the lines beside them.
+fn has_float_beside(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let mut node = idx;
+    while let Some(parent) = doc.parent_of(node) {
+        let floats_beside = doc.nodes[parent].children.iter().any(|&sibling| {
+            sibling != node
+                && doc.nodes[sibling].is_in_document()
+                && doc.nodes[sibling].kind() == NodeKind::Element
+                && cascade.computed[sibling].float != FloatValue::None
+        });
+        if floats_beside {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
+/// Whether the paragraph sits inside a fixed box without an authored width.
+/// taffy sizes such a box against its nearest positioned ancestor, which can
+/// be zero wide, and the paragraph would wrap at that width.
+fn inside_unsized_fixed_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let mut current = doc.parent_of(idx);
+    while let Some(id) = current {
+        let cv = &cascade.computed[id];
+        if cv.position == PositionValue::Fixed
+            && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+        {
+            return true;
+        }
+        current = doc.parent_of(id);
+    }
+    false
+}
+
+/// Whether a decoration line meets a raised or lowered inline in the paragraph.
+///
+/// A decoration that starts above a shifted inline belongs at the parent's
+/// baseline, but the painter places a line at the baseline of each run, which
+/// follows the shift. Such paragraphs stay on the parley path.
+fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let decorated =
+        |id: usize| cascade.computed[id].text_decoration_line != TextDecorationLine::NONE;
+    let mut any_decoration = false;
+    let mut current = Some(idx);
+    while let Some(id) = current {
+        any_decoration |= decorated(id);
+        current = doc.parent_of(id);
+    }
+    let mut shifted = false;
+    let mut stack = doc.nodes[idx].children.clone();
+    while let Some(id) = stack.pop() {
+        let node = &doc.nodes[id];
+        if !node.is_in_document() || node.kind() != NodeKind::Element {
+            continue;
+        }
+        any_decoration |= decorated(id);
+        shifted |= cascade.computed[id].vertical_align != VerticalAlign::Baseline;
+        stack.extend(node.children.iter().copied());
+    }
+    any_decoration && shifted
+}
+
 fn has_visible_text(doc: &Document, idx: usize) -> bool {
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
@@ -218,7 +284,13 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
             }
             ancestor = doc.parent_of(id);
         }
-        if blocked || !has_visible_text(doc, idx) || !paragraph_is_paintable(doc, cascade, idx) {
+        if blocked
+            || !has_visible_text(doc, idx)
+            || !paragraph_is_paintable(doc, cascade, idx)
+            || has_float_beside(doc, cascade, idx)
+            || inside_unsized_fixed_box(doc, cascade, idx)
+            || decoration_meets_a_shifted_inline(doc, cascade, idx)
+        {
             continue;
         }
         let Ok(projected) = project_ifc(

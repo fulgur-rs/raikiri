@@ -17,7 +17,7 @@ use raikiri_wpt::baseline_report::{
     write_tsv,
 };
 
-const USAGE: &str = "usage:\n  run-baseline-report [--wpt-root DIR] [--baseline FILE] [--output FILE] [--jobs N] [--only ID]... [--limit N] [--ifc]\n  run-baseline-report diff BEFORE.tsv AFTER.tsv";
+const USAGE: &str = "usage:\n  run-baseline-report [--wpt-root DIR] [--baseline FILE] [--output FILE] [--jobs N] [--only ID]... [--limit N] [--ifc] [--wpt-fonts]\n  run-baseline-report diff BEFORE.tsv AFTER.tsv";
 
 fn main() {
     if let Err(error) = run() {
@@ -61,6 +61,7 @@ fn run_report(args: &[String]) -> Result<(), String> {
         &ids,
         options.jobs,
         options.inline_formatting,
+        options.wpt_fonts,
         &|row: &Row| {
             if row.status != Status::Pass {
                 eprintln!("{}\t{}\t{}", row.status.as_str(), row.id, row.detail);

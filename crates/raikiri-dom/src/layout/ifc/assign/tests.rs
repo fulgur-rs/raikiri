@@ -357,3 +357,131 @@ fn an_absolutely_positioned_root_is_still_a_root() {
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
 }
+
+#[test]
+fn a_paragraph_beside_a_float_stays_on_the_parley_path() {
+    // The inline engine does not yet wrap text around floats; the parley path
+    // starts the lines beside the float.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        add_sibling(doc, root, "block;float:left;width:30px");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_float_beside_an_ancestor_keeps_the_paragraph_on_the_parley_path() {
+    // The float sits next to the wrapper, above the paragraph, and still
+    // intrudes into its lines.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    let wrapper = fixture.doc.parent_of(fixture.root).expect("body");
+    let outer = fixture.doc.parent_of(wrapper).expect("html");
+    let float = fixture.doc.append_element(
+        Some(outer),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;float:left;width:30px"),
+    );
+    fixture.doc.append_text(float, "x");
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_paragraph_inside_a_fixed_box_without_a_width_stays_on_the_parley_path() {
+    // taffy sizes the fixed box against its nearest positioned ancestor, which
+    // can be zero wide, and the paragraph inside would wrap at that width.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa bb cc");
+    });
+    let body = fixture.doc.parent_of(fixture.root).expect("body");
+    fixture
+        .doc
+        .set_element_inline_style(body, Some("display:block;position:fixed;top:0".into()));
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_paragraph_inside_a_fixed_box_with_a_width_is_still_a_root() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa bb cc");
+    });
+    let body = fixture.doc.parent_of(fixture.root).expect("body");
+    fixture.doc.set_element_inline_style(
+        body,
+        Some("display:block;position:fixed;top:0;width:100px".into()),
+    );
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_raised_inline_under_a_decoration_stays_on_the_parley_path() {
+    // A decoration that starts above a raised inline belongs at the parent's
+    // baseline, but the painter places it at the baseline of each run.
+    assert_stays_on_parley("text-decoration:underline", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;vertical-align:super");
+        doc.append_text(inner, "bb");
+    });
+}
+
+#[test]
+fn a_raised_inline_under_an_ancestor_decoration_stays_on_the_parley_path() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;vertical-align:sub");
+        doc.append_text(inner, "bb");
+    });
+    let body = fixture.doc.parent_of(fixture.root).expect("body");
+    fixture
+        .doc
+        .set_element_inline_style(body, Some("display:block;text-decoration:underline".into()));
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_raised_inline_without_a_decoration_is_still_a_root() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;vertical-align:super");
+        doc.append_text(inner, "bb");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_decoration_with_baseline_aligned_inlines_is_still_a_root() {
+    let mut fixture = block_fixture("text-decoration:underline", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline");
+        doc.append_text(inner, "bb");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
