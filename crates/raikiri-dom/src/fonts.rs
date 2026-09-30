@@ -575,6 +575,19 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     build_wpt_font_ctx_with_observer(fonts_dir, None)
 }
 
+/// Build the shodo shared layer from a verified WPT font directory.
+///
+/// The counterpart of [`build_wpt_font_ctx`] for the shodo inline engine:
+/// the same directory rules apply and system fonts are disabled.
+///
+/// # Errors
+/// The same [`FontError`] cases as [`build_wpt_font_ctx`].
+pub fn build_wpt_font_collection(
+    fonts_dir: &Path,
+) -> Result<shodo::font::FontCollection, FontError> {
+    crate::layout::ifc::font::wpt_collection(fonts_dir, &shodo::limits::Limits::default(), None)
+}
+
 /// Builds a `FontContext` from the WPT bundled fonts dir. The system font
 /// resolver is fully disabled, and generic families (`serif`/`sans-serif`/
 /// ...) resolve to the head of the registered family list (Ahem).
@@ -4106,5 +4119,22 @@ mod tests {
         );
         assert!(computed[0].width_ch.is_none());
         assert!(computed[0].height_ch.is_none());
+    }
+
+    #[test]
+    fn wpt_font_collection_resolves_ahem() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/text-autospace");
+        let collection = build_wpt_font_collection(&dir).expect("collection");
+        let query = shodo::font::FontQuery {
+            families: vec![shodo::style::FontFamily::Named("Ahem".to_owned())],
+            ..Default::default()
+        };
+        assert!(collection.match_cluster(&query, "a").is_some());
+    }
+
+    #[test]
+    fn wpt_font_collection_reports_a_missing_directory() {
+        let error = build_wpt_font_collection(Path::new("/nonexistent-fonts")).unwrap_err();
+        assert!(matches!(error, FontError::DirNotFound(_)));
     }
 }

@@ -275,3 +275,8 @@ second report, and PASS results that became weaker: a test that passed cleanly b
 now passes only after falling back to a run without local resources (the row detail reads
 `passes only without local resources`). A weakened PASS is still a PASS, so it is reported
 separately rather than as a regression.
+
+`--ifc` lays out eligible paragraphs with the shodo inline engine. It is a temporary switch:
+text laid out that way is not painted yet, and documents with `@font-face` keep the parley
+path, so the report differs from a default run. The run refuses to start when the WPT font
+collection cannot be built, instead of silently measuring the parley path.

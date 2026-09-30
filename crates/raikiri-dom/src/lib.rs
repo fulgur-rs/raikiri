@@ -61,8 +61,9 @@ pub mod taffy_impl;
 pub use document::{Document, DomMutationError};
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{
-    FontError, FontFaceApplyReport, FontFaceLoader, FontWarn, apply_font_faces, build_wpt_font_ctx,
-    build_wpt_font_ctx_with_observer, expand_font_face_aliases, register_font_face_sources,
+    FontError, FontFaceApplyReport, FontFaceLoader, FontWarn, apply_font_faces,
+    build_wpt_font_collection, build_wpt_font_ctx, build_wpt_font_ctx_with_observer,
+    expand_font_face_aliases, register_font_face_sources,
 };
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,

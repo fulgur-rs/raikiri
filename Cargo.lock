@@ -2760,6 +2760,7 @@ dependencies = [
  "raikiri-traits",
  "serde",
  "serde_json",
+ "shodo",
  "tempfile",
  "time",
  "tiny-skia",

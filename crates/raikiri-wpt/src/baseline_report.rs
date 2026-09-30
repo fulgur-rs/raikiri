@@ -210,7 +210,7 @@ fn catch_row(id: &str, body: impl FnOnce() -> (Status, String)) -> Row {
     }
 }
 
-fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
+fn reftest_status(wpt_root: &Path, id: &str, inline_formatting: bool) -> (Status, String) {
     let test = wpt_root.join(id);
     let pairs = match discover_pairs_for_file_with_wpt_root(&test, Some(wpt_root)) {
         Ok(pairs) => pairs,
@@ -219,7 +219,10 @@ fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
     if pairs.is_empty() {
         return (Status::Error, "no reference pair".to_owned());
     }
-    let config = ReftestConfig::default();
+    let config = ReftestConfig {
+        inline_formatting,
+        ..ReftestConfig::default()
+    };
     let results = pairs
         .iter()
         .map(|pair| {
@@ -318,13 +321,18 @@ fn parsing_status(wpt_root: &Path, id: &str) -> (Status, String) {
 /// known-issues prefix filter is deliberately not applied: it overlaps the
 /// baseline.
 pub fn run_id(wpt_root: &Path, id: &str) -> Row {
+    run_id_with_options(wpt_root, id, false)
+}
+
+/// [`run_id`] with the shodo inline engine switched on or off.
+pub fn run_id_with_options(wpt_root: &Path, id: &str, inline_formatting: bool) -> Row {
     // Reference lookup and dynamic reftests need an absolute root.
     let wpt_root = std::fs::canonicalize(wpt_root).unwrap_or_else(|_| wpt_root.to_path_buf());
     let wpt_root = wpt_root.as_path();
     if is_parsing_id(id) {
         catch_row(id, || parsing_status(wpt_root, id))
     } else {
-        catch_row(id, || reftest_status(wpt_root, id))
+        catch_row(id, || reftest_status(wpt_root, id, inline_formatting))
     }
 }
 
@@ -378,9 +386,15 @@ pub fn run_ids(
     wpt_root: &Path,
     ids: &[String],
     jobs: usize,
+    inline_formatting: bool,
     on_row: &(dyn Fn(&Row) + Sync),
 ) -> Vec<Row> {
-    run_ids_with(ids, jobs, |id| run_id(wpt_root, id), on_row)
+    run_ids_with(
+        ids,
+        jobs,
+        |id| run_id_with_options(wpt_root, id, inline_formatting),
+        on_row,
+    )
 }
 
 /// Options of `run-baseline-report`'s report mode.
@@ -398,6 +412,8 @@ pub struct ReportOptions {
     pub only: Vec<String>,
     /// Stop after this many ids.
     pub limit: Option<usize>,
+    /// Lay out with the shodo inline engine (a temporary switch).
+    pub inline_formatting: bool,
 }
 
 impl Default for ReportOptions {
@@ -409,6 +425,7 @@ impl Default for ReportOptions {
             jobs: 1,
             only: Vec::new(),
             limit: None,
+            inline_formatting: false,
         }
     }
 }
@@ -430,6 +447,10 @@ pub fn parse_report_args(args: &[String]) -> Result<ReportOptions, String> {
             "--wpt-root" => options.wpt_root = PathBuf::from(flag_value(args, index, flag)?),
             "--baseline" => options.baseline = PathBuf::from(flag_value(args, index, flag)?),
             "--output" => options.output = Some(PathBuf::from(flag_value(args, index, flag)?)),
+            "--ifc" => {
+                options.inline_formatting = true;
+                index -= 1;
+            }
             "--only" => options.only.push(flag_value(args, index, flag)?.to_owned()),
             "--jobs" => {
                 let jobs: usize = flag_value(args, index, flag)?

@@ -498,6 +498,7 @@ fn run_pair_css_page_background_matches_body_background_reference() {
             width: 200,
             height: 100,
             tolerance: Tolerance::EXACT,
+            ..ReftestConfig::default()
         },
     )
     .unwrap();
@@ -527,6 +528,7 @@ fn run_pair_match_identical_html_passes() {
             width: 200,
             height: 100,
             tolerance: Tolerance::EXACT,
+            ..ReftestConfig::default()
         },
     )
     .unwrap();
@@ -556,6 +558,7 @@ fn run_pair_mismatch_different_html_passes() {
             width: 200,
             height: 100,
             tolerance: Tolerance::EXACT,
+            ..ReftestConfig::default()
         },
     )
     .unwrap();
@@ -714,6 +717,7 @@ fn run_pair_respects_authored_fuzzy_ranges_and_reports_raw_differences() {
         width: 1,
         height: 1,
         tolerance: Tolerance::EXACT,
+        ..ReftestConfig::default()
     };
     let reference = "<body style='margin:0;background:rgb(0,0,0)'>";
     for (fuzzy, want) in [
@@ -768,6 +772,7 @@ fn dynamic_reftest_wait_runs_nested_animation_frames_before_comparison() {
         width: 40,
         height: 40,
         tolerance: Tolerance::EXACT,
+        ..ReftestConfig::default()
     };
     let result = run_pair(&pair, config).unwrap();
     assert!(
@@ -946,6 +951,7 @@ fn reference_query_and_fragment_control_dynamic_rendering_and_keyed_fuzzy() {
                 width: 40,
                 height: 40,
                 tolerance: Tolerance::EXACT,
+                ..ReftestConfig::default()
             },
         )
         .unwrap();
@@ -1010,6 +1016,20 @@ fn fuzzy_compare_treats_truncated_buffer_as_mismatch() {
 }
 
 #[test]
+fn an_unbuildable_font_collection_is_an_error_not_a_silent_fallback() {
+    let error = wpt_font_collection_from(&[PathBuf::from("/nonexistent-wpt-fonts")])
+        .expect_err("no candidate directory exists");
+    assert!(error.contains("shodo font collection"), "{error}");
+}
+
+#[test]
+fn a_candidate_directory_with_ahem_builds_a_collection() {
+    let dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../raikiri-dom/tests/data/text-autospace");
+    assert!(wpt_font_collection_from(&[PathBuf::from("/nonexistent-wpt-fonts"), dir]).is_ok());
+}
+
+#[test]
 fn no_wait_scripts_mutate_before_comparison() {
     let dir = tempfile::tempdir().unwrap();
     let test = dir.path().join("test.html");
@@ -1034,6 +1054,7 @@ fn no_wait_scripts_mutate_before_comparison() {
         width: 40,
         height: 40,
         tolerance: Tolerance::EXACT,
+        inline_formatting: false,
     };
     let result = run_pair(&pair, config).unwrap();
     assert!(
@@ -1073,6 +1094,7 @@ fn no_wait_canvas_paints_and_compares_pixels() {
         width: 40,
         height: 40,
         tolerance: Tolerance::EXACT,
+        inline_formatting: false,
     };
     let paint = |color: &str| {
         format!(
