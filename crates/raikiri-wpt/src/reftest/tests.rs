@@ -1136,3 +1136,19 @@ fn no_wait_canvas_paints_and_compares_pixels() {
         result_diff.outcome
     );
 }
+
+#[test]
+fn the_default_run_searches_the_same_font_directories_as_before() {
+    let off = font_candidates(false);
+    assert_eq!(off, wpt_font_candidates().to_vec());
+    assert!(off.iter().all(|p| !p.ends_with("target/wpt/fonts")));
+}
+
+#[test]
+fn the_inline_engine_run_gives_the_parley_path_the_same_fonts() {
+    // Both paths must draw from one font set, or a pair whose sides take
+    // different paths differs for reasons that have nothing to do with layout.
+    let on = font_candidates(true);
+    assert_eq!(on, inline_engine_font_candidates());
+    assert!(on.iter().any(|p| p.ends_with("target/wpt/fonts")));
+}

@@ -117,6 +117,12 @@ fn is_paintable_descendant(cascade: &CascadeResult, id: usize) -> bool {
 
 /// Every element and text of the paragraph rooted at `idx` can be drawn.
 fn paragraph_is_paintable(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    // A fixed box is sized against its nearest positioned ancestor by taffy,
+    // which can be zero wide; breaking lines at that width wraps every word.
+    // The parley path shapes at the page width beforehand and hides the error.
+    if cascade.computed[idx].position == PositionValue::Fixed {
+        return false;
+    }
     if !is_paintable_element(cascade, idx) {
         return false;
     }

@@ -339,3 +339,21 @@ fn background_clip_text_on_an_inline_keeps_the_paragraph_on_the_parley_path() {
         doc.append_text(inner, "bb");
     });
 }
+
+#[test]
+fn a_fixed_position_root_stays_on_the_parley_path() {
+    // taffy sizes a fixed box against its nearest positioned ancestor, which
+    // can be zero wide, and breaking at that width wraps every word. The
+    // parley path shapes at the page width in advance and hides the error.
+    assert_stays_on_parley("position:fixed;top:0", text_only("aa bb cc"));
+}
+
+#[test]
+fn an_absolutely_positioned_root_is_still_a_root() {
+    let mut fixture = block_fixture("position:absolute;top:0", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}

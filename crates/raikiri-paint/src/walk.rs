@@ -4523,8 +4523,17 @@ fn paint_document_impl(
                 // fixed root repeats on every page and its text is not clipped
                 // like flowed text.
                 let ifc_inside_fixed = inside_fixed || fixed_in_viewport;
+                // The page a text node belongs to is looked up on the text node
+                // itself; the block's own page value can differ (an absolutely
+                // positioned box named for a page), so ask as the first text
+                // child would.
+                let ifc_page_probe = if node.is_ifc_root() {
+                    first_text_descendant(document, node_id).unwrap_or(node_id)
+                } else {
+                    node_id
+                };
                 if node.is_ifc_root()
-                    && named_page_matches(node_id)
+                    && named_page_matches(ifc_page_probe)
                     && (ifc_inside_fixed
                         || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
                 {
@@ -4702,6 +4711,29 @@ fn paint_document_impl(
             }
         }
     }
+}
+
+/// The first in-document text node below `root`, in document order.
+fn first_text_descendant(document: &Document, root: usize) -> Option<usize> {
+    let mut stack: Vec<usize> = document
+        .get_node(root)?
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = stack.pop() {
+        let node = document.get_node(id)?;
+        if !node.is_in_document() {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => return Some(id),
+            NodeKind::Element => stack.extend(node.children.iter().rev().copied()),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Reads the `src` attribute of `node_id` as an absolute URL, if the node

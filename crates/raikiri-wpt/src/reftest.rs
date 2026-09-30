@@ -1953,7 +1953,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // into every cascade built below. Without @font-face rules both calls
     // are no-ops (empty registry early-returns).
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let mut font_ctx = resolve_font_ctx();
+    let mut font_ctx = resolve_font_ctx_for(resources.inline_formatting);
     // Documents with @font-face keep the parley path: the alias rewrite of
     // computed font families does not match the shodo document layer. A
     // collection that cannot be built is an error, never a silent fallback
@@ -2441,10 +2441,25 @@ pub fn check_inline_formatting_fonts() -> Result<(), String> {
     wpt_font_collection_from(&inline_engine_font_candidates()).map(|_| ())
 }
 
+/// Font directories for one run. The default run keeps the historical list;
+/// a run with the inline engine switched on searches the engine's list for the
+/// parley path too, so both paths draw from one font set.
+fn font_candidates(inline_formatting: bool) -> Vec<PathBuf> {
+    if inline_formatting {
+        inline_engine_font_candidates()
+    } else {
+        wpt_font_candidates().to_vec()
+    }
+}
+
 pub(crate) fn resolve_font_ctx() -> raikiri::FontContext {
+    resolve_font_ctx_for(false)
+}
+
+fn resolve_font_ctx_for(inline_formatting: bool) -> raikiri::FontContext {
     // Try WPT bundled fonts: `<workspace>/wpt/fonts` or `<workspace>/../wpt/fonts`
     // Fallback to system fonts.
-    let candidates = wpt_font_candidates();
+    let candidates = font_candidates(inline_formatting);
     for cand in candidates {
         if cand.is_dir()
             && let Ok(ctx) = raikiri_dom::build_wpt_font_ctx(&cand)
