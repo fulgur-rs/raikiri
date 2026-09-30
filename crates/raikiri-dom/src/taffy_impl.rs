@@ -526,41 +526,46 @@ fn measure_ifc_root(
     stretched: bool,
     width_bounds: (f32, f32),
 ) -> (Size<f32>, Option<f32>) {
-    use crate::layout::ifc::flow;
-    let Some(mut state) = tree.ifc.take() else {
+    use crate::layout::ifc::{flow, root::with_state};
+    let Some(root) = tree.nodes[idx].ifc.as_ref() else {
         return (Size::ZERO, None);
     };
-    let (size, baseline) = {
-        let root = tree.nodes[idx]
-            .ifc
-            .as_mut()
-            .expect("ifc root has a paragraph");
-        let (min_content, max_content) = flow::intrinsic_widths(root, &mut state.layout_cx);
-        let width = match available.width {
-            AvailableSpace::Definite(width) if stretched => width,
-            AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
-            AvailableSpace::MinContent => min_content,
-            AvailableSpace::MaxContent => max_content,
-        };
-        // A stretched or fixed box already carries its clamped width; a
-        // shrink-to-fit box is clamped by its own min/max after measurement.
-        let width = if stretched {
-            width
-        } else {
-            width.min(width_bounds.1).max(width_bounds.0)
-        };
-        let lines = flow::break_lines(root, &mut state.layout_cx, width);
-        let size = Size {
-            width,
-            height: known_height.unwrap_or(lines.height),
-        };
-        let baseline = flow::first_baseline(&lines);
-        if run_mode == RunMode::PerformLayout {
-            root.lines = Some(lines);
-        }
-        (size, baseline)
+    // Take the engine state only around the calls into the engine: laying
+    // out another node in between may need the state for that node.
+    let probe = root.without_lines();
+    let Some((min_content, max_content)) = with_state(tree, |state| {
+        flow::intrinsic_widths(&probe, &mut state.layout_cx)
+    }) else {
+        return (Size::ZERO, None);
     };
-    tree.ifc = Some(state);
+    let width = match available.width {
+        AvailableSpace::Definite(width) if stretched => width,
+        AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
+        AvailableSpace::MinContent => min_content,
+        AvailableSpace::MaxContent => max_content,
+    };
+    // A stretched or fixed box already carries its clamped width; a
+    // shrink-to-fit box is clamped by its own min/max after measurement.
+    let width = if stretched {
+        width
+    } else {
+        width.min(width_bounds.1).max(width_bounds.0)
+    };
+    let Some(lines) = with_state(tree, |state| {
+        flow::break_lines(&probe, &mut state.layout_cx, width)
+    }) else {
+        return (Size::ZERO, None);
+    };
+    let size = Size {
+        width,
+        height: known_height.unwrap_or(lines.height),
+    };
+    let baseline = flow::first_baseline(&lines);
+    if run_mode == RunMode::PerformLayout
+        && let Some(root) = tree.nodes[idx].ifc.as_mut()
+    {
+        root.lines = Some(lines);
+    }
     (size, baseline)
 }
 

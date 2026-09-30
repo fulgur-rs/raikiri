@@ -82,3 +82,78 @@ fn last_baseline_adds_the_offset_of_the_last_line() {
     // 10px below the first.
     assert_eq!(last_baseline(&lines), Some(18.0));
 }
+
+/// Text, size and block offset of every line.
+fn shape_of(lines: &[shodo::Line]) -> Vec<(String, f32, f32, f32)> {
+    lines
+        .iter()
+        .map(|line| {
+            (
+                line.text()[line.text_range()].trim_end().to_owned(),
+                line.inline_size(),
+                line.block_size(),
+                line.block_offset(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn place_lines_matches_break_all_without_floats() {
+    for (text, width) in [
+        ("aaaa bbbb cccc", 50.0_f32),
+        ("aaaa bbbb cccc", 100.0),
+        ("aaaa bbbb cccc", 500.0),
+        ("aa bb cc dd ee ff", 35.0),
+    ] {
+        let (root, mut cx) = root_of("", text);
+        let mut options = root.options;
+        options.text_indent.length = resolve_indent(root.indent, width);
+        let expected = root
+            .paragraph
+            .break_all(&mut cx, &options, width, &AtomicSizes::EMPTY);
+        let placed = place_lines(
+            &root.paragraph,
+            &options,
+            &mut cx,
+            &AtomicSizes::EMPTY,
+            |_, _| LineSpace { start: 0.0, width },
+        );
+        assert_eq!(
+            shape_of(&placed.lines),
+            shape_of(&expected),
+            "{text} @ {width}"
+        );
+        assert_eq!(placed.width, width);
+        assert_eq!(
+            placed.height,
+            expected.iter().map(|l| l.block_size()).sum::<f32>()
+        );
+    }
+}
+
+#[test]
+fn place_lines_asks_for_the_space_at_each_line_offset() {
+    let (root, mut cx) = root_of("", "aaaa bbbb cccc");
+    let mut asked = Vec::new();
+    let placed = place_lines(
+        &root.paragraph,
+        &root.options,
+        &mut cx,
+        &AtomicSizes::EMPTY,
+        |y, height| {
+            asked.push(y);
+            let _ = height;
+            LineSpace {
+                start: 0.0,
+                width: 50.0,
+            }
+        },
+    );
+    assert_eq!(placed.lines.len(), 3);
+    // Every line is laid out at its own block offset (0, 10, 20), and the
+    // space is asked again for the height the line turned out to have.
+    for offset in [0.0, 10.0, 20.0] {
+        assert!(asked.contains(&offset), "{asked:?}");
+    }
+}

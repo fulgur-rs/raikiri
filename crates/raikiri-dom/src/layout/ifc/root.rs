@@ -28,6 +28,9 @@ pub(crate) struct IfcLines {
     pub(crate) lines: Vec<Line>,
     /// Sum of the line advances.
     pub(crate) height: f32,
+    /// True when some line was laid out beside a float (its space was
+    /// narrower than the content box or did not start at the content start).
+    pub(crate) beside_floats: bool,
 }
 
 impl IfcRoot {
@@ -39,6 +42,32 @@ impl IfcRoot {
             lines: None,
         }
     }
+
+    /// A copy without the stored lines, for measuring: the paragraph is a
+    /// cheap clone, the lines are not.
+    pub(crate) fn without_lines(&self) -> Self {
+        Self {
+            paragraph: self.paragraph.clone(),
+            options: self.options,
+            indent: self.indent,
+            lines: None,
+        }
+    }
+}
+
+/// Run `f` with the engine state taken out of the document, then put it back.
+///
+/// Never hold the state across a call that lays out another node: that node
+/// may be an ifc root that needs the state itself. Returns `None` when the
+/// document did not opt in.
+pub(crate) fn with_state<R>(
+    doc: &mut crate::Document,
+    f: impl FnOnce(&mut IfcState) -> R,
+) -> Option<R> {
+    let mut state = doc.ifc.take()?;
+    let result = f(&mut state);
+    doc.ifc = Some(state);
+    Some(result)
 }
 
 /// Document-level engine handles, present only when the switch is on.
@@ -75,6 +104,7 @@ impl fmt::Debug for IfcLines {
             .field("width", &self.width)
             .field("lines", &self.lines.len())
             .field("height", &self.height)
+            .field("beside_floats", &self.beside_floats)
             .finish()
     }
 }

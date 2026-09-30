@@ -5,7 +5,20 @@ use crate::Document;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
-use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext};
+use shodo::style::LineOptions;
+use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
+
+/// Horizontal space of one line, in content-box coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LineSpace {
+    /// Offset of the line's start from the content-box start.
+    pub(crate) start: f32,
+    pub(crate) width: f32,
+}
+
+/// How many times a line is laid out again because the space turned out to
+/// differ for the height it took.
+const MAX_SPACE_RETRIES: usize = 4;
 
 pub(crate) fn resolve_indent(indent: ComputedTextIndent, width: f32) -> f32 {
     match indent {
@@ -31,14 +44,71 @@ pub(crate) fn intrinsic_widths(root: &IfcRoot, cx: &mut LayoutContext) -> (f32, 
 pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) -> IfcLines {
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
-    let lines = root
-        .paragraph
-        .break_all(cx, &options, width, &AtomicSizes::EMPTY);
-    let height = lines.iter().map(|line| line.block_size()).sum();
+    let mut placed = place_lines(
+        &root.paragraph,
+        &options,
+        cx,
+        &AtomicSizes::EMPTY,
+        |_, _| LineSpace { start: 0.0, width },
+    );
+    placed.width = width;
+    placed
+}
+
+/// Lay the paragraph out line by line. `space(y, height)` gives the space
+/// available to a line that starts at block offset `y` and is `height` tall.
+pub(crate) fn place_lines(
+    paragraph: &Paragraph,
+    options: &LineOptions,
+    cx: &mut LayoutContext,
+    atomics: &AtomicSizes,
+    mut space: impl FnMut(f32, f32) -> LineSpace,
+) -> IfcLines {
+    let mut lines: Vec<shodo::Line> = Vec::new();
+    let mut token = paragraph.start_token();
+    let mut y = 0.0_f32;
+    let mut first_width = None;
+    loop {
+        let mut assumed_height = 0.0_f32;
+        let mut retries = 0;
+        let line = loop {
+            let available = space(y, assumed_height);
+            first_width.get_or_insert(available.width);
+            let mut constraint = LineConstraint::new(available.width);
+            constraint.inline_start_offset = available.start;
+            constraint.block_offset = y;
+            match paragraph.next_line(cx, token, options, &constraint, atomics) {
+                LineResult::Line(line) => {
+                    let height = line.block_size();
+                    // The line may span more of a float than the height it
+                    // was assumed to have; lay it out again if the space for
+                    // its real height differs.
+                    if retries < MAX_SPACE_RETRIES && space(y, height) != available {
+                        assumed_height = height;
+                        retries += 1;
+                        continue;
+                    }
+                    break Some(line);
+                }
+                LineResult::Done => break None,
+                other => {
+                    // Floats and blocks inside the paragraph are not
+                    // projected here, so no other result is expected.
+                    debug_assert!(false, "unexpected line result: {other:?}");
+                    break None;
+                }
+            }
+        };
+        let Some(line) = line else { break };
+        y += line.block_size();
+        token = line.break_token();
+        lines.push(line);
+    }
     IfcLines {
-        width,
+        width: first_width.unwrap_or(0.0),
+        height: lines.iter().map(|line| line.block_size()).sum(),
         lines,
-        height,
+        beside_floats: false,
     }
 }
 
