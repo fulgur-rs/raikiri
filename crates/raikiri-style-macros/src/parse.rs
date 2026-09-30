@@ -95,16 +95,6 @@ pub(crate) struct Keyword {
     pub(crate) css: Option<LitStr>,
 }
 
-/// The value of `computed:`.
-#[derive(Debug)]
-pub(crate) enum ComputedSpec {
-    /// `computed: as_specified`.
-    AsSpecified,
-    /// `computed: Type`: the computed value type, produced by the entry's
-    /// `compute:` hook.
-    Type(Box<Type>),
-}
-
 /// The value of `residue:`.
 #[derive(Debug)]
 pub(crate) enum ResidueSpec {
@@ -138,8 +128,9 @@ pub(crate) struct RawEntry {
     pub(crate) parse: Slot<ExprPath>,
     /// `compute: <path>`.
     pub(crate) compute: Slot<ExprPath>,
-    /// `computed: as_specified | Type`.
-    pub(crate) computed: Slot<ComputedSpec>,
+    /// `computed: Type`: the computed value type, produced by the entry's
+    /// `compute:` hook.
+    pub(crate) computed: Slot<Box<Type>>,
     /// `lift: <path>`.
     pub(crate) lift: Slot<ExprPath>,
     /// `field: <ident>`.
@@ -568,26 +559,25 @@ fn parse_fn_path(content: ParseStream) -> syn::Result<ExprPath> {
     }
 }
 
-fn parse_computed(content: ParseStream) -> syn::Result<ComputedSpec> {
-    if content.peek(Ident) {
-        let fork = content.fork();
-        let ident = fork.call(Ident::parse_any)?;
-        if ident == "as_specified" && (fork.is_empty() || fork.peek(Token![,])) {
-            content.call(Ident::parse_any)?;
-            return Ok(ComputedSpec::AsSpecified);
-        }
+fn parse_computed(content: ParseStream) -> syn::Result<Box<Type>> {
+    if let Some((ident, rest)) = content.cursor().ident()
+        && ident == "as_specified"
+        && (rest.eof() || matches!(rest.punct(), Some((comma, _)) if comma.as_char() == ','))
+    {
+        return Err(syn::Error::new(
+            ident.span(),
+            "omit `computed:`; the computed type defaults to the specified type",
+        ));
     }
     let ty: Type = content.parse().map_err(|_| {
-        content.error(
-            "expected `as_specified` or the computed value type, e.g. `computed: ComputedLength`",
-        )
+        content.error("expected the computed value type, e.g. `computed: ComputedLength`")
     })?;
     if let Some((via, _)) = content.cursor().ident()
         && via == "via"
     {
         return Err(via_error(content, &ty, &via));
     }
-    Ok(ComputedSpec::Type(Box::new(ty)))
+    Ok(Box::new(ty))
 }
 
 /// The error for `computed: Type via hook`: the hook has its own key. The

@@ -80,7 +80,7 @@
 //! | `initial` | expression of the specified type | required |
 //! | `inherited` | `yes` or `no` | required |
 //! | `compute` | path to `fn(Specified, &AbsolutizeCx) -> Computed` | identity |
-//! | `computed` | the computed value type (needs `compute`), or `as_specified` | `as_specified` |
+//! | `computed` | the computed value type (needs `compute`) | the specified type |
 //! | `lift` | path to `fn(Computed) -> Specified` (needs `computed: Type`) | `Into::into` |
 //! | `field` | identifier | snake case of `Variant` |
 //! | `sample` | expression of the specified type (test only) | first non-initial keyword |
@@ -115,10 +115,10 @@
 //!   the identity does not type-check. `lift` turns a computed value back
 //!   into a specified one, for inheritance and page-context
 //!   absolutization; it only applies with `computed: Type`, and defaults to
-//!   `Into::into` there. `computed: as_specified` spells out the default.
-//!   The three keys are separate: the hook is never written inside
-//!   `computed:` (`computed: Type via hook` is an error that names the two
-//!   keys to write instead).
+//!   `Into::into` there. For the default, omit `computed` (`computed:
+//!   as_specified` is an error). The three keys are separate: the hook is
+//!   never written inside `computed:` (`computed: Type via hook` is an
+//!   error that names the two keys to write instead).
 //! - `sample` is the non-initial worst-case value of the page-cascade test
 //!   corpus, compiled only under `cfg(test)`. Every entry without
 //!   `keywords` must supply one. It also fills the test fixtures

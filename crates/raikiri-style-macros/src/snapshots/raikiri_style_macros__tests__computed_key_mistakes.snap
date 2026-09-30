@@ -26,6 +26,12 @@ error: `via` is not a key; name the hook with `compute: <fn>`, and a computed ty
 25 |         "g-prop" => GProp: L { initial: L::Z, inherited: no, parse: p, via: to_px, compute: to_px, computed: Px, sample: L::O, residue: none },
    |                                                                        ^^^
 
+error: omit `computed:`; the computed type defaults to the specified type
+  --> 27:83
+   |
+27 |         "h-prop" => HProp: f32 { initial: 1.0, inherited: no, parse: p, computed: as_specified, lift: l, sample: 2.0, residue: none },
+   |                                                                                   ^^^^^^^^^^^^
+
 error: `computed: Px` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> Px` hook that produces it
   --> 15:72
    |

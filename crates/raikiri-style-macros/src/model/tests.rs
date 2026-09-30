@@ -111,8 +111,6 @@ fn computed_compute_and_lift_set_the_type_hook_and_lift() {
         "b" => B: L { initial: L::Z, inherited: no, parse: p, lift: from_px, compute: to_px, computed: Px, sample: L::O, residue: none },
         /// A same-type hook: `compute:` alone.
         "c" => C: f32 { initial: 1.0, inherited: no, parse: p, compute: clamp, sample: 2.0, residue: none },
-        /// `as_specified` spells out the default.
-        "d" => D: f32 { initial: 1.0, inherited: no, parse: p, computed: as_specified, compute: clamp, sample: 2.0, residue: none },
         "#,
         &[],
     );
@@ -144,7 +142,7 @@ fn computed_needs_compute_and_lift_needs_computed() {
         "b" => B: L { initial: L::Z, inherited: no, parse: p, computed: crate::Px<'static>, lift: l, sample: L::O, residue: none },
         /// Docs.
         "c" => C: f32 { initial: 1.0, inherited: no, parse: p, compute: c, lift: l, sample: 2.0, residue: none },
-        /// Docs.
+        /// A rejected `computed: as_specified` next to `lift:`: one error.
         "d" => D: f32 { initial: 1.0, inherited: no, parse: p, computed: as_specified, lift: l, sample: 2.0, residue: none },
         "#,
         &[],
@@ -152,9 +150,10 @@ fn computed_needs_compute_and_lift_needs_computed() {
     assert_eq!(
         errors,
         [
+            // Parse errors come first.
+            "omit `computed:`; the computed type defaults to the specified type",
             "`computed: Px` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> Px` hook that produces it",
             "`computed: crate::Px<'static>` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> crate::Px<'static>` hook that produces it",
-            "`lift:` is only used with `computed: Type`; a computed value of the specified type needs no lift",
             "`lift:` is only used with `computed: Type`; a computed value of the specified type needs no lift",
         ]
     );

@@ -17,7 +17,7 @@ use syn::{Attribute, Expr, ExprPath, Ident, LitStr, Path, Type};
 
 use crate::case::split_camel;
 use crate::diag::{Errors, display};
-use crate::parse::{ComputedSpec, RawEntry, ResidueSpec, Slot};
+use crate::parse::{RawEntry, ResidueSpec, Slot};
 
 /// One keyword of a `keywords` entry, with its spelling resolved.
 pub(crate) struct Keyword {
@@ -431,12 +431,12 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
     // its own implies one); `None` when a malformed hook key leaves that
     // unknown.
     let hooked = match (&compute, &computed) {
-        (Slot::Present(..), _) | (_, Slot::Present(_, ComputedSpec::Type(_))) => Some(true),
+        (Slot::Present(..), _) | (_, Slot::Present(..)) => Some(true),
         (Slot::Invalid(_), _) | (_, Slot::Invalid(_)) => None,
         _ => Some(false),
     };
     let computed_ty = match computed {
-        Slot::Present(key, ComputedSpec::Type(ty)) => {
+        Slot::Present(key, ty) => {
             check_reserved_type(&ty, errors);
             if compute.is_absent() {
                 errors.push(syn::Error::new(

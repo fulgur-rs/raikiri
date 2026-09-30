@@ -1,6 +1,6 @@
 use quote::ToTokens as _;
 
-use super::{ComputedSpec, RawEntry, ResidueSpec, Slot, parse_block};
+use super::{RawEntry, ResidueSpec, Slot, parse_block};
 use crate::diag::Errors;
 
 fn parse(src: &str) -> (Vec<RawEntry>, Vec<String>) {
@@ -93,17 +93,14 @@ fn keywords_keep_their_doc_comments() {
 fn parses_computed_forms() {
     let (entries, errors) = parse(
         r#"
-        "a" => A: Length { computed: as_specified, field: a_field, lift: f },
+        "a" => A: Length { computed: Px, field: a_field, lift: f },
         "b" => B: Length { computed: ComputedLength<'static, u8>, compute: absolutize, lift: crate::lift_b },
         "#,
     );
     assert_eq!(errors, Vec::<String>::new());
-    assert!(matches!(
-        entries[0].computed.value(),
-        Some(ComputedSpec::AsSpecified)
-    ));
+    assert_eq!(tokens(&entries[0].computed), "Px");
     assert_eq!(tokens(&entries[0].field), "a_field");
-    let Some(ComputedSpec::Type(ty)) = entries[1].computed.value() else {
+    let Some(ty) = entries[1].computed.value() else {
         panic!("expected a computed type");
     };
     assert_eq!(
@@ -112,6 +109,30 @@ fn parses_computed_forms() {
     );
     assert_eq!(tokens(&entries[1].compute), "absolutize");
     assert_eq!(tokens(&entries[1].lift), "crate :: lift_b");
+}
+
+/// `computed: as_specified` is one error on the word, which marks the key
+/// malformed; a type named like it in a longer path is still a type.
+#[test]
+fn computed_as_specified_is_one_error() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A: L { computed: as_specified, lift: l },
+        "b" => B: L { computed: as_specified },
+        "c" => C: L { computed: crate::as_specified, compute: c },
+        "#,
+    );
+    assert_eq!(
+        errors,
+        [
+            "omit `computed:`; the computed type defaults to the specified type",
+            "omit `computed:`; the computed type defaults to the specified type",
+        ]
+    );
+    assert!(matches!(entries[0].computed, Slot::Invalid(_)));
+    assert_eq!(tokens(&entries[0].lift), "l");
+    assert!(matches!(entries[1].computed, Slot::Invalid(_)));
+    assert_eq!(tokens(&entries[2].computed), "crate :: as_specified");
 }
 
 /// `computed: Type via hook` is one error on `via` that spells out the two
