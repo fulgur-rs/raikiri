@@ -242,3 +242,33 @@ python3 scripts/wpt/apply-meta-assert-review.py \
 The first command is report-only. Only the second command changes the
 baseline. The manifest records the WPT SHA, viewport, renderer, and font
 source so the agent's decision is reproducible.
+
+## Baseline report
+
+`run-baseline-report` runs every id in `expectations/raikiri-baseline.txt` through the
+in-process harness and writes one `id<TAB>STATUS<TAB>detail` line per id. It is
+report-only.
+
+- A reftest is PASS when one `rel=match` reference matches exactly at 800x600 (several
+  `rel=match` references are alternatives, as in WPT) and every `rel=mismatch` reference
+  differs. Each reference is tried with local resources enabled and without them, because
+  the baseline mixes tests pinned under either mode.
+- A `css/**/parsing/*` page is PASS when every assertion passes.
+- Some baseline ids do not pass on a given commit (drift, or a different harness produced
+  the pin), so compare two reports with `diff`; do not read the absolute count as a gate.
+
+```bash
+cargo run --locked -p raikiri-wpt --bin run-baseline-report -- \
+  --jobs 4 --output ~/.cache/raikiri/baseline-reports/before.tsv
+# ... change something, then:
+cargo run --locked -p raikiri-wpt --bin run-baseline-report -- \
+  --jobs 4 --output ~/.cache/raikiri/baseline-reports/after.tsv
+cargo run --locked -p raikiri-wpt --bin run-baseline-report -- \
+  diff ~/.cache/raikiri/baseline-reports/before.tsv ~/.cache/raikiri/baseline-reports/after.tsv
+```
+
+Use `--only ID` (repeatable) or `--limit N` for a quick run. `--jobs` was checked to give
+the same report as `--jobs 1` on the first 80 ids; image-heavy tests share a process-wide
+decode budget, so re-check before trusting a large `--jobs` value. `diff` only lists
+PASS-to-not-PASS transitions (regressions), the reverse (fixes), and ids missing from the
+second report.

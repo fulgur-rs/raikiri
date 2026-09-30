@@ -59,6 +59,10 @@ name = "prepare-meta-assert-review"
 path = "src/bin/prepare-meta-assert-review.rs"
 
 [[bin]]
+name = "run-baseline-report"
+path = "src/bin/run-baseline-report.rs"
+
+[[bin]]
 name = "run-parsing-invalid"
 path = "src/bin/run-parsing-invalid.rs"
 
