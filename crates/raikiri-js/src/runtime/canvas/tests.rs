@@ -273,6 +273,13 @@ fn fill_style_accepts_every_supported_color_shape() {
          ctx.fillStyle = 'blue'; ctx.fillStyle = '#12'; ctx.fillStyle === 'blue' && \
          (ctx.fillStyle = 'rgb(bogus)', ctx.fillStyle === 'blue')",
     );
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'rgb(inf%, 0%, 0%)'; ctx.fillStyle === 'blue' && \
+         (ctx.fillStyle = 'rgb(inf, 0, 0)', ctx.fillStyle === 'blue') && \
+         (ctx.fillStyle = 'rgba(255, 0, 0)', ctx.fillStyle === 'blue')",
+    );
 }
 
 #[test]

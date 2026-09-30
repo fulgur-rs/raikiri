@@ -176,3 +176,17 @@ fn canvas_bitmap_ref_returns_none_for_non_elements() {
     let text = doc.create_detached_text("hi");
     assert_eq!(doc.canvas_bitmap(text), None);
 }
+
+#[test]
+fn canvas_huge_remove_clears_lazily_without_allocating() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "123456789012")
+        .unwrap();
+    doc.set_element_attribute(canvas, "height", "123456789012")
+        .unwrap();
+    assert_eq!(doc.canvas_size(canvas), Some((u32::MAX, u32::MAX)));
+    assert!(doc.canvas_bitmap(canvas).is_none());
+    doc.remove_element_attribute(canvas, "width").unwrap();
+    assert_eq!(doc.canvas_size(canvas), Some((300, u32::MAX)));
+    assert!(doc.canvas_bitmap(canvas).is_none());
+}
