@@ -1,4 +1,5 @@
-//! `window.location`, `window.navigator`, `window.console`, and the
+//! `window.location`, `window.navigator`, `window.console`, viewport
+//! scrolling (`scrollX`/`scrollY`, `scroll`/`scrollTo`/`scrollBy`), and the
 //! frame-identity members `parent`/`top`/`frames`/`opener` (`self`/`window`
 //! are installed by [`super::interfaces::install`] already, onto the same
 //! global object).
@@ -10,13 +11,20 @@
 //! Console Standard defines it as a WebIDL *namespace*, not an interface.
 //! Exactly one instance of each singleton exists, reachable only through
 //! `window`.
+//!
+//! Viewport scrolling (CSSOM View window scroll) keeps the window's own
+//! scroll offset in shared state (see `super::State`'s viewport fields).
+//! Print rendering has no viewport scrolling and ignores that offset: each
+//! print page paints from its own content origin, so a scrolled live
+//! document and its unserialized print rendering stay coherent by both
+//! ignoring scroll equally (the live viewport scrolls, print does not).
 
 pub(super) mod named;
 
 use boa_engine::native_function::NativeFunctionPointer;
 use boa_engine::object::{JsObject, ObjectInitializer};
 use boa_engine::property::{Attribute, PropertyDescriptor};
-use boa_engine::{Context, JsResult, JsValue, NativeFunction, js_string};
+use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue, NativeFunction, js_string};
 
 use super::interfaces::{Members, closure_function, function};
 use super::node::js_str;
@@ -367,6 +375,180 @@ fn console_object(context: &mut Context) -> JsResult<JsObject> {
     Ok(object)
 }
 
+// ---- viewport scrolling --------------------------------------------------
+
+// Viewport scroll offset (CSSOM View window scroll) lives in shared state,
+// not in layout: the live host lays out a single screen page at the
+// configured viewport size, and this offset is the window's scroll position
+// over it. Print rendering ignores it (each print page paints from its own
+// content origin), which keeps test and reference coherent: both scroll the
+// live viewport the same way and both ignore scroll in print equally.
+
+/// Clamp an absolute viewport offset: non-finite becomes zero, negatives
+/// become zero, everything else is kept as-is. Positive overflow beyond the
+/// scrollable size is kept here; max clamping needs layout and happens in
+/// the host where that size is known, not in this shared-state store.
+fn clamp_viewport_offset(value: f64) -> f64 {
+    if !value.is_finite() {
+        0.0
+    } else {
+        value.max(0.0)
+    }
+}
+
+/// `window.scrollX` / `window.pageXOffset` (CSSOM View): the horizontal
+/// viewport offset.
+fn get_scroll_x(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let x = with_state(context, |s| s.viewport_scroll_x)?;
+    Ok(JsValue::from(x))
+}
+
+/// `window.scrollY` / `window.pageYOffset` (CSSOM View): the vertical
+/// viewport offset.
+fn get_scroll_y(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let y = with_state(context, |s| s.viewport_scroll_y)?;
+    Ok(JsValue::from(y))
+}
+
+/// A `ScrollBehavior` member: missing or `undefined` means instant; any other
+/// value must be one of the three enum strings, otherwise this throws
+/// `TypeError` instead of silently accepting an unknown behavior. Every
+/// accepted behavior scrolls instantly: this runtime has no smooth-scroll
+/// animation clock, so `smooth` does not interpolate.
+fn scroll_behavior(options: &JsObject, context: &mut Context) -> JsResult<()> {
+    let value = options.get(JsString::from("behavior"), context)?;
+    if value.is_undefined() {
+        return Ok(());
+    }
+    let behavior = value.to_string(context)?.to_std_string_escaped();
+    if matches!(behavior.as_str(), "auto" | "instant" | "smooth") {
+        Ok(())
+    } else {
+        Err(JsNativeError::typ()
+            .with_message("behavior is not a valid ScrollBehavior")
+            .into())
+    }
+}
+
+/// An optional `unrestricted double` dictionary member: missing or
+/// `undefined` means `default`; anything else runs `ToNumber` (which can
+/// produce `NaN`, exactly as `unrestricted` allows) and the caller clamps.
+fn dict_double(
+    options: &JsObject,
+    name: &str,
+    default: Option<f64>,
+    context: &mut Context,
+) -> JsResult<Option<f64>> {
+    let value = options.get(JsString::from(name), context)?;
+    if value.is_undefined() {
+        return Ok(default);
+    }
+    Ok(Some(value.to_number(context)?))
+}
+
+/// Whether `value` looks like a `ScrollToOptions` dictionary: a non-null
+/// object. `null`/`undefined`/primitives take the numeric-argument path
+/// (`Number(null)` is `0`, matching the numeric overload).
+fn is_scroll_options(value: &JsValue) -> bool {
+    value.as_object().is_some()
+}
+
+/// A numeric scroll argument: missing or `undefined` takes `default`
+/// directly; anything else runs `ToNumber`, which can produce `NaN`.
+fn num_arg(args: &[JsValue], i: usize, default: f64, context: &mut Context) -> JsResult<f64> {
+    match args.get(i) {
+        None => Ok(default),
+        Some(v) if v.is_undefined() => Ok(default),
+        Some(v) => v.to_number(context),
+    }
+}
+
+/// `window.scrollTo` / `window.scroll` (CSSOM View): absolute viewport
+/// scroll. Two numbers mean `(x, y)` with missing values defaulting to zero;
+/// a single dictionary means `ScrollToOptions` (`left`/`top` default to the
+/// current offset, so `scrollTo({top: 100})` keeps `x`). `behavior` is
+/// validated but always scrolls instantly (see `scroll_behavior`).
+fn scroll_to(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    if let Some(options) = args
+        .first()
+        .filter(|v| is_scroll_options(v))
+        .and_then(|v| v.as_object())
+    {
+        scroll_behavior(&options, context)?;
+        let (current_x, current_y) =
+            with_state(context, |s| (s.viewport_scroll_x, s.viewport_scroll_y))?;
+        let x = match dict_double(&options, "left", None, context)? {
+            Some(v) => clamp_viewport_offset(v),
+            None => current_x,
+        };
+        let y = match dict_double(&options, "top", None, context)? {
+            Some(v) => clamp_viewport_offset(v),
+            None => current_y,
+        };
+        // `x`/`y` aliases (`scrollTo({x: 1, y: 2})`) are not part of
+        // `ScrollToOptions`: only `left`/`top` are read, so they stay
+        // ignored here rather than becoming a second way to scroll.
+        with_state(context, |s| {
+            s.viewport_scroll_x = x;
+            s.viewport_scroll_y = y;
+        })?;
+        return Ok(JsValue::undefined());
+    }
+    let x = clamp_viewport_offset(num_arg(args, 0, 0.0, context)?);
+    let y = clamp_viewport_offset(num_arg(args, 1, 0.0, context)?);
+    with_state(context, |s| {
+        s.viewport_scroll_x = x;
+        s.viewport_scroll_y = y;
+    })?;
+    Ok(JsValue::undefined())
+}
+
+/// `window.scrollBy` (CSSOM View): relative viewport scroll. Two numbers are
+/// `(dx, dy)` deltas defaulting to zero; a dictionary holds `left`/`top`
+/// deltas the same way. A non-finite delta means no movement on that axis
+/// (adding it would poison the offset to `NaN`), unlike absolute scroll
+/// where non-finite means zero.
+fn scroll_by(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    if let Some(options) = args
+        .first()
+        .filter(|v| is_scroll_options(v))
+        .and_then(|v| v.as_object())
+    {
+        scroll_behavior(&options, context)?;
+        let dx = dict_double(&options, "left", Some(0.0), context)?.unwrap_or(0.0);
+        let dy = dict_double(&options, "top", Some(0.0), context)?.unwrap_or(0.0);
+        let dx = if dx.is_finite() { dx } else { 0.0 };
+        let dy = if dy.is_finite() { dy } else { 0.0 };
+        with_state(context, |s| {
+            s.viewport_scroll_x = clamp_viewport_offset(s.viewport_scroll_x + dx);
+            s.viewport_scroll_y = clamp_viewport_offset(s.viewport_scroll_y + dy);
+        })?;
+        return Ok(JsValue::undefined());
+    }
+    let dx = num_arg(args, 0, 0.0, context)?;
+    let dy = num_arg(args, 1, 0.0, context)?;
+    let dx = if dx.is_finite() { dx } else { 0.0 };
+    let dy = if dy.is_finite() { dy } else { 0.0 };
+    with_state(context, |s| {
+        s.viewport_scroll_x = clamp_viewport_offset(s.viewport_scroll_x + dx);
+        s.viewport_scroll_y = clamp_viewport_offset(s.viewport_scroll_y + dy);
+    })?;
+    Ok(JsValue::undefined())
+}
+
+const VIEWPORT_SCROLL_GETTERS: &[(&str, NativeFunctionPointer)] = &[
+    ("scrollX", get_scroll_x),
+    ("scrollY", get_scroll_y),
+    ("pageXOffset", get_scroll_x),
+    ("pageYOffset", get_scroll_y),
+];
+
+const VIEWPORT_SCROLL_METHODS: &[(&str, usize, NativeFunctionPointer)] = &[
+    ("scroll", 0, scroll_to),
+    ("scrollTo", 0, scroll_to),
+    ("scrollBy", 0, scroll_by),
+];
+
 // ---- install ---------------------------------------------------------
 
 /// Build a `NativeFunction` that ignores its call arguments and always
@@ -384,10 +566,11 @@ fn constant_getter(captures: JsObject) -> NativeFunction {
     )
 }
 
-/// Define `window.location`/`navigator`/`console`, and the frame-identity
-/// members `parent`/`top`/`frames`/`opener`. `location_proto`/
-/// `navigator_proto` are `Location`/`Navigator`'s prototypes, built by
-/// `interfaces::install` the same way as every other interface.
+/// Define `window.location`/`navigator`/`console`, viewport scrolling, and
+/// the frame-identity members `parent`/`top`/`frames`/`opener`.
+/// `location_proto`/`navigator_proto` are `Location`/`Navigator`'s
+/// prototypes, built by `interfaces::install` the same way as every other
+/// interface.
 pub(crate) fn install(
     context: &mut Context,
     location_proto: &JsObject,
@@ -438,6 +621,42 @@ pub(crate) fn install(
     // `opener`: a plain writable `any` attribute (not `[Replaceable]`,
     // just an ordinary read/write property), default `null`.
     context.register_global_property(js_string!("opener"), JsValue::null(), replaceable_attr)?;
+    // Viewport scrolling (CSSOM View): `scrollX`/`scrollY` and their
+    // `pageXOffset`/`pageYOffset` aliases are read-only attributes backed by
+    // shared viewport state; `scroll`/`scrollTo`/`scrollBy` are operations.
+    // Attributes are enumerable and configurable with only a getter, so a
+    // non-strict write is ignored and a strict write throws, matching a
+    // read-only WebIDL attribute. Operations are writable, enumerable, and
+    // configurable, the same as the global timer operations.
+    for (name, getter) in VIEWPORT_SCROLL_GETTERS {
+        let get = function(context, &format!("get {name}"), 0, *getter)?;
+        let descriptor = PropertyDescriptor::builder()
+            .get(get)
+            .enumerable(true)
+            .configurable(true)
+            .build();
+        let scroll_attr_result = context.global_object().define_property_or_throw(
+            JsString::from(*name),
+            descriptor,
+            context,
+        );
+        scroll_attr_result?;
+    }
+    for (name, length, func) in VIEWPORT_SCROLL_METHODS {
+        let operation = function(context, name, *length, *func)?;
+        let descriptor = PropertyDescriptor::builder()
+            .value(operation)
+            .writable(true)
+            .enumerable(true)
+            .configurable(true)
+            .build();
+        let scroll_op_result = context.global_object().define_property_or_throw(
+            JsString::from(*name),
+            descriptor,
+            context,
+        );
+        scroll_op_result?;
+    }
     named::install(context)?;
     Ok(())
 }

@@ -316,10 +316,11 @@ pub(crate) fn ensure_flushed(context: &mut Context) -> JsResult<()> {
     result.map_err(|error| host_failure(context, error))
 }
 
-/// `Element.getBoundingClientRect` (CSSOM View §5): the border box, in the
-/// coordinate space this runtime uses (relative to the initial containing
-/// block; there is no scroll or transform to account for yet), as a real
-/// `DOMRect`.
+/// `Element.getBoundingClientRect` (CSSOM View §5): the border box relative
+/// to the viewport, as a real `DOMRect`. The host reports boxes relative to
+/// the initial containing block, so the viewport offset is subtracted here,
+/// except for fixed-position boxes which are already viewport-relative and
+/// stay put. There is still no transform to account for.
 pub(crate) fn get_bounding_client_rect(
     this: &JsValue,
     _: &[JsValue],
@@ -327,7 +328,18 @@ pub(crate) fn get_bounding_client_rect(
 ) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let geometry = super::geometry::box_geometry(context, index)?;
-    let r = geometry.map(|g| g.border_box).unwrap_or_default();
+    let Some(g) = geometry else {
+        return Ok(super::geometry::new_dom_rect(context, Default::default())?.into());
+    };
+    let mut r = g.border_box;
+    if g.position != super::host::PositionKind::Fixed {
+        let (scroll_x, scroll_y) =
+            with_state(context, |s| (s.viewport_scroll_x, s.viewport_scroll_y))?;
+        r.left -= scroll_x;
+        r.right -= scroll_x;
+        r.top -= scroll_y;
+        r.bottom -= scroll_y;
+    }
     Ok(super::geometry::new_dom_rect(context, r)?.into())
 }
 

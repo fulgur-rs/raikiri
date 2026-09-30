@@ -909,3 +909,56 @@ fn whitespace_only_value_removes_the_declaration() {
          s.getPropertyValue('--y') === ''",
     );
 }
+
+#[test]
+fn get_bounding_client_rect_subtracts_viewport_except_for_fixed() {
+    use crate::runtime::PositionKind;
+    use crate::runtime::test_host::StubHost;
+    let (mut host, html, _, body) = StubHost::page();
+    let d = StubHost::dom_rect;
+    // Body at (1, 2) static; a fixed child at (5, 6).
+    host.geometry.insert(
+        body,
+        StubHost::boxed(
+            d(1.0, 2.0, 10.0, 10.0),
+            d(1.0, 2.0, 10.0, 10.0),
+            PositionKind::Static,
+        ),
+    );
+    let fixed = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, fixed).unwrap();
+    host.geometry.insert(
+        fixed,
+        StubHost::boxed(
+            d(5.0, 6.0, 7.0, 8.0),
+            d(5.0, 6.0, 7.0, 8.0),
+            PositionKind::Fixed,
+        ),
+    );
+    // Root needs a box so document-element scroll linkage works; its own
+    // rect is not asserted here.
+    host.geometry.insert(
+        html,
+        StubHost::boxed(
+            d(0.0, 0.0, 100.0, 100.0),
+            d(0.0, 0.0, 100.0, 100.0),
+            PositionKind::Static,
+        ),
+    );
+    let mut rt = crate::runtime::DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.body.getBoundingClientRect().left === 1 && document.body.getBoundingClientRect().top === 2",
+    );
+    rt.evaluate("window.scrollBy(1, 2);").unwrap();
+    ok(
+        &mut rt,
+        "document.body.getBoundingClientRect().left === 0 && document.body.getBoundingClientRect().top === 0 \
+         && document.body.getBoundingClientRect().width === 10",
+    );
+    ok(
+        &mut rt,
+        "var kids = document.body.children; kids.length === 1 \
+         && kids[0].getBoundingClientRect().left === 5 && kids[0].getBoundingClientRect().top === 6",
+    );
+}

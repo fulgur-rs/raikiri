@@ -769,3 +769,73 @@ fn parsed_body_onload_and_inner_html_onclick_wire_handlers() {
         .to_boolean()
     );
 }
+
+#[test]
+fn fetch_script_serves_embedded_reftest_wait_when_common_is_missing() {
+    let (_dir, root) = script_root();
+    let mut host = host_at(&root.join("css/page"), &root);
+    let source = host.fetch_script("file:///common/reftest-wait.js").unwrap();
+    for expected in [
+        "function takeScreenshot()",
+        "function takeScreenshotDelayed(timeout)",
+        "function failIfNot(condition, msg)",
+        "classList.remove(\"reftest-wait\")",
+    ] {
+        assert!(
+            source.contains(expected),
+            "embedded reftest-wait.js should contain {expected:?}"
+        );
+    }
+    // The disk copy wins when it exists: a future `/common` checkout change
+    // takes effect without code churn.
+    std::fs::create_dir_all(root.join("common")).unwrap();
+    std::fs::write(root.join("common/reftest-wait.js"), "var custom = 1;").unwrap();
+    assert_eq!(
+        host.fetch_script("file:///common/reftest-wait.js").unwrap(),
+        "var custom = 1;"
+    );
+}
+
+#[test]
+fn fetch_script_still_fails_closed_for_other_missing_common_files() {
+    let (_dir, root) = script_root();
+    let mut host = host_at(&root.join("css/page"), &root);
+    let error = host
+        .fetch_script("file:///common/no-such-helper.js")
+        .unwrap_err();
+    assert!(
+        error.0.contains("no such file inside the WPT root"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn reftest_wait_helper_removes_wait_and_reports_no_fetch_error() {
+    // Genuine helper availability: the embedded script runs and clears the
+    // class, so a live `reftest-wait` document does not fail closed on a
+    // fetch error. Other missing files still report fetch errors (see the
+    // test above), so this never suppresses a real failure.
+    let html = "<html class=reftest-wait><head></head><body></body></html>";
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        html,
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut rt = DomRuntime::new(WptDocumentHost::new(setup, dir.path())).unwrap();
+    let report = rt.run_document();
+    assert!(
+        report.fetch_errors.is_empty(),
+        "no fetch errors without external scripts: {report:?}"
+    );
+    rt.evaluate(super::REFTEST_WAIT_JS).unwrap();
+    rt.evaluate("takeScreenshot();").unwrap();
+    let waiting = rt
+        .evaluate("document.documentElement.classList.contains('reftest-wait')")
+        .unwrap()
+        .as_boolean();
+    assert_eq!(waiting, Some(false));
+}

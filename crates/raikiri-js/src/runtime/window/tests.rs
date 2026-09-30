@@ -461,3 +461,123 @@ fn named_install_reports_when_global_is_non_extensible() {
         "unexpected install error: {err:?}"
     );
 }
+
+#[test]
+fn viewport_scroll_starts_at_origin_with_aliases() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "scrollX === 0 && scrollY === 0 && pageXOffset === 0 && pageYOffset === 0 \
+         && typeof scrollX === 'number' && typeof scrollY === 'number'",
+    );
+    ok(
+        &mut rt,
+        "typeof scroll === 'function' && typeof scrollTo === 'function' \
+         && typeof scrollBy === 'function' && typeof window.scrollBy === 'function'",
+    );
+}
+
+#[test]
+fn scroll_to_with_numbers_sets_and_clamps() {
+    let mut rt = rt();
+    rt.evaluate("scrollTo(10, 20);").unwrap();
+    ok(
+        &mut rt,
+        "scrollX === 10 && scrollY === 20 && pageXOffset === 10",
+    );
+    rt.evaluate("scrollTo(-5, -7);").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 0");
+    rt.evaluate("scrollTo(NaN, Infinity);").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 0");
+    rt.evaluate("scrollTo();").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 0");
+    rt.evaluate("scrollTo(3);").unwrap();
+    ok(&mut rt, "scrollX === 3 && scrollY === 0");
+}
+
+#[test]
+fn scroll_by_accumulates_and_ignores_non_finite_deltas() {
+    let mut rt = rt();
+    rt.evaluate("scrollBy(5, 7);").unwrap();
+    ok(&mut rt, "scrollX === 5 && scrollY === 7");
+    rt.evaluate("scrollBy(2, 3);").unwrap();
+    ok(&mut rt, "scrollX === 7 && scrollY === 10");
+    rt.evaluate("scrollBy(-20, -4);").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 6");
+    rt.evaluate("scrollBy(NaN, Infinity);").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 6");
+    rt.evaluate("scrollBy();").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 6");
+}
+
+#[test]
+fn scroll_to_with_options_keeps_missing_axes() {
+    let mut rt = rt();
+    rt.evaluate("scrollTo(10, 20);").unwrap();
+    rt.evaluate("scrollTo({top: 100});").unwrap();
+    ok(&mut rt, "scrollX === 10 && scrollY === 100");
+    rt.evaluate("scrollTo({left: 30});").unwrap();
+    ok(&mut rt, "scrollX === 30 && scrollY === 100");
+    rt.evaluate("scrollTo({});").unwrap();
+    ok(&mut rt, "scrollX === 30 && scrollY === 100");
+    rt.evaluate("scrollTo({left: -5, top: NaN});").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 0");
+    rt.evaluate("scrollTo({behavior: 'smooth', left: 4, top: 5});")
+        .unwrap();
+    ok(&mut rt, "scrollX === 4 && scrollY === 5");
+}
+
+#[test]
+fn scroll_by_with_options_uses_deltas() {
+    let mut rt = rt();
+    rt.evaluate("scrollBy({left: 5, top: 7});").unwrap();
+    ok(&mut rt, "scrollX === 5 && scrollY === 7");
+    rt.evaluate("scrollBy({left: 2});").unwrap();
+    ok(&mut rt, "scrollX === 7 && scrollY === 7");
+    rt.evaluate("scrollBy({});").unwrap();
+    ok(&mut rt, "scrollX === 7 && scrollY === 7");
+    rt.evaluate("scrollBy({left: NaN, top: Infinity});")
+        .unwrap();
+    ok(&mut rt, "scrollX === 7 && scrollY === 7");
+}
+
+#[test]
+fn scroll_behavior_validates_enum() {
+    let mut rt = rt();
+    for behavior in ["auto", "instant", "smooth"] {
+        let src = format!("scrollTo({{behavior: '{behavior}'}}); true");
+        ok(&mut rt, &src);
+    }
+    let err = rt
+        .evaluate("scrollTo({behavior: 'bogus'});")
+        .expect_err("unknown behavior should throw");
+    assert!(
+        format!("{err:?}").contains("behavior is not a valid ScrollBehavior"),
+        "unexpected error: {err:?}"
+    );
+    let err = rt
+        .evaluate("scrollBy({behavior: 'bogus'});")
+        .expect_err("unknown behavior should throw");
+    assert!(
+        format!("{err:?}").contains("behavior is not a valid ScrollBehavior"),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn scroll_is_an_alias_for_scroll_to() {
+    let mut rt = rt();
+    rt.evaluate("scroll(11, 22);").unwrap();
+    ok(&mut rt, "scrollX === 11 && scrollY === 22");
+    rt.evaluate("scroll({left: 1, top: 2});").unwrap();
+    ok(&mut rt, "scrollX === 1 && scrollY === 2");
+}
+
+#[test]
+fn viewport_scroll_attributes_are_read_only() {
+    let mut rt = rt();
+    rt.evaluate("scrollTo(9, 8);").unwrap();
+    // A non-strict write to a getter-only accessor is ignored, not stored.
+    rt.evaluate("scrollX = 100; scrollY = 100;").unwrap();
+    ok(&mut rt, "scrollX === 9 && scrollY === 8");
+}
