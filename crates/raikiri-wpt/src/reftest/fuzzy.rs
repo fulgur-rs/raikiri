@@ -35,7 +35,7 @@ pub(super) fn metadata(html: &str, pair: &ReftestPair) -> Result<Option<Fuzzy>, 
     let mut contents = Vec::new();
     while let Some(id) = stack.pop() {
         let Some(node) = parsed.dom.get_node(id) else {
-            continue;
+            continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
         };
         stack.extend(node.children.iter().rev().copied());
         let html_namespace =

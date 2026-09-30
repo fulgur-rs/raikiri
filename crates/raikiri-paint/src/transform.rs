@@ -126,3 +126,6 @@ impl<S: PaintScene> PaintScene for TransformScene<'_, S> {
             .draw_box_shadow(self.transform * transform, rect, brush, radius, std_dev);
     }
 }
+
+#[cfg(test)]
+mod tests;
