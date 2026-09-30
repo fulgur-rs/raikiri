@@ -3,6 +3,10 @@
 
 pub(crate) mod error;
 pub(crate) mod font;
+pub(crate) mod style;
+
+#[cfg(test)]
+mod test_support;
 
 #[cfg(test)]
 mod tests;
