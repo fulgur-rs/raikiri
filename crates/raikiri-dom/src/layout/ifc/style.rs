@@ -65,6 +65,22 @@ pub(crate) fn map_text_combine_upright(
     }
 }
 
+/// A `position: relative` box whose offsets are all `auto` or `0` and that
+/// makes no stacking context: it moves nothing and paints in place.
+pub(crate) fn is_inert_relative(cv: &ComputedValues) -> bool {
+    let zero = |value: LengthOrAuto| match value {
+        LengthOrAuto::Auto => true,
+        LengthOrAuto::Px(px) => px == 0.0,
+        _ => false,
+    };
+    cv.position == p::PositionValue::Relative
+        && zero(cv.top)
+        && zero(cv.right)
+        && zero(cv.bottom)
+        && zero(cv.left)
+        && cv.z_index == p::ZIndexValue::Auto
+}
+
 /// The key of this element's own font, which measures a `ch` value declared
 /// on it.
 fn own_ch_font(cv: &ComputedValues) -> ChFontKey {
@@ -321,10 +337,17 @@ pub(crate) fn inline_style(
     };
     let line_break =
         same_enum!(LineBreak, cv.line_break, node; Auto, Loose, Normal, Strict, Anywhere)?;
-    let word_break =
-        same_enum!(WordBreak, cv.word_break, node; Normal, BreakAll, KeepAll, Manual, AutoPhrase)?;
-    let overflow_wrap =
-        same_enum!(OverflowWrap, cv.overflow_wrap, node; Normal, BreakWord, Anywhere)?;
+    let (word_break, overflow_wrap) = match cv.word_break {
+        // The deprecated keyword: normal breaking plus `overflow-wrap:
+        // break-word`, whatever the authored `overflow-wrap` is. The parley
+        // path maps it the same way, so min-content sizing agrees too (CSS
+        // Text 3 §5.2 would give it the `anywhere` sizing instead).
+        p::WordBreak::BreakWord => (s::WordBreak::Normal, s::OverflowWrap::BreakWord),
+        word_break => (
+            same_enum!(WordBreak, word_break, node; Normal, BreakAll, KeepAll, Manual, AutoPhrase)?,
+            same_enum!(OverflowWrap, cv.overflow_wrap, node; Normal, BreakWord, Anywhere)?,
+        ),
+    };
     let hyphens = same_enum!(Hyphens, cv.hyphens, node; None, Manual, Auto)?;
     let hyphenate_character = match &cv.hyphenate_character {
         p::HyphenateCharacter::Auto => None,
@@ -462,6 +485,18 @@ pub(crate) fn line_options(
             text_align_last,
             text_justify,
             text_wrap_style,
+            hanging_punctuation: match cv.hanging_punctuation {
+                p::HangingPunctuation::None => s::HangingPunctuation::default(),
+                p::HangingPunctuation::First => s::HangingPunctuation {
+                    first: true,
+                    ..s::HangingPunctuation::default()
+                },
+                _ => {
+                    return Err(unsupported(
+                        "hanging-punctuation is not represented by shodo",
+                    ));
+                }
+            },
             text_indent: s::TextIndent {
                 length: 0.0,
                 hanging: cv.text_indent_hanging,

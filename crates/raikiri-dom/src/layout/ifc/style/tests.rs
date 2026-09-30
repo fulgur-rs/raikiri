@@ -327,3 +327,54 @@ fn the_wrap_longhand_after_a_legacy_keyword_changes_only_the_wrap() {
     assert_eq!(style.white_space_collapse, WhiteSpaceCollapse::Preserve);
     assert_eq!(style.text_wrap_mode, TextWrapMode::NoWrap);
 }
+
+#[test]
+fn word_break_break_word_is_normal_with_break_word_wrapping() {
+    // The parley path turns `word-break: break-word` into normal breaking plus
+    // `overflow-wrap: break-word` whatever `overflow-wrap` says
+    // (`parley_overflow_wrap` in `inline_text.rs`), so that is what is mapped:
+    // off and on then break and size the same way.
+    for extra in ["", ";overflow-wrap:anywhere"] {
+        let css = format!("word-break:break-word;overflow-wrap:normal{extra}");
+        let style = root_style(&css).expect("map");
+        assert_eq!(style.word_break, s::WordBreak::Normal, "{css}");
+        assert_eq!(style.overflow_wrap, s::OverflowWrap::BreakWord, "{css}");
+    }
+}
+
+#[test]
+fn hanging_punctuation_first_maps_to_the_first_flag() {
+    let fixture = block_fixture("hanging-punctuation:first", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let (options, _) = line_options(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("options");
+    assert_eq!(
+        options.hanging_punctuation,
+        s::HangingPunctuation {
+            first: true,
+            ..s::HangingPunctuation::default()
+        }
+    );
+}
+
+#[test]
+fn no_hanging_punctuation_leaves_the_flags_clear() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let (options, _) = line_options(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("options");
+    assert_eq!(
+        options.hanging_punctuation,
+        s::HangingPunctuation::default()
+    );
+}

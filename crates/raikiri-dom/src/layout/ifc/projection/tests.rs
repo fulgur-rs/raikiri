@@ -415,7 +415,12 @@ fn blocks_that_are_not_placed_yet_stay_unsupported() {
         ("bottom margin", "display:block;margin-bottom:5px", false),
         ("percentage margin", "display:block;margin-top:10%", false),
         ("auto side margin", "display:block;margin-left:auto", false),
-        ("positioned", "display:block;position:relative", false),
+        (
+            "positioned",
+            "display:block;position:relative;top:3px",
+            false,
+        ),
+        ("absolute", "display:block;position:absolute", false),
         ("inside an inline element", "display:block", true),
         // A block that has to avoid floats or clear them is placed by the
         // parent's item loop in taffy, which this path replaces.
@@ -470,6 +475,40 @@ fn a_block_level_image_or_svg_is_not_a_block_child() {
         assert!(
             matches!(error, IfcError::Unsupported { .. }),
             "{tag}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_relative_block_child_with_no_offset_is_accepted() {
+    // `position: relative` without an offset moves nothing.
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        let b = span(doc, root, "display:block;position:relative;left:0");
+        doc.append_text(b, "bb");
+    });
+    let projected = project(&fixture).expect("a relative block with no offset");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block);
+}
+
+#[test]
+fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_rejected() {
+    for css in [
+        "display:block;position:relative;top:3px",
+        "display:block;position:relative;right:1px",
+        "display:block;position:relative;bottom:-2px",
+        "display:block;position:relative;left:calc(10% + 1px)",
+        "display:block;position:relative;z-index:2",
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let b = span(doc, root, css);
+            doc.append_text(b, "bb");
+        });
+        assert!(
+            matches!(project(&fixture), Err(IfcError::Unsupported { .. })),
+            "{css}"
         );
     }
 }

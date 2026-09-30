@@ -556,3 +556,112 @@ fn an_inherited_ch_spacing_places_glyphs_like_the_parley_path() {
     // `cd` sits after `ab` and two 10px spacings: 40px, not 60px.
     assert_eq!(x_of(&on)[2].1, 40 * 64);
 }
+
+#[test]
+fn break_word_breaks_a_long_word_like_the_parley_path() {
+    let (off, on) = off_and_on("width:50px;word-break:break-word", |doc, root| {
+        doc.append_text(root, "abcdefghij");
+    });
+    assert!(!ink(&off).is_empty());
+    // Two lines of five letters each.
+    assert!(ink(&off).iter().any(|glyph| glyph.2 > 10 * 64));
+    assert_eq!(ink(&on), ink(&off));
+}
+
+#[test]
+fn text_emphasis_paints_nothing_extra() {
+    let (off, on) = off_and_on("width:100px;text-emphasis-style:dot", |doc, root| {
+        doc.append_text(root, "abc");
+    });
+    assert!(!ink(&off).is_empty());
+    assert_eq!(ink(&on), ink(&off));
+    assert_eq!(on.commands.len(), off.commands.len());
+}
+
+#[test]
+fn tabs_and_spaces_place_glyphs_on_the_same_positions() {
+    // tab-size 8 and Ahem's 10px space: a tab after `a` reaches the stop at
+    // 80px, which seven spaces reach too. The positions must be identical,
+    // without the snapping the parley path needs for this case.
+    let place = |text: &'static str| {
+        let (mut doc, cascade, _) = paragraph("white-space:pre;width:400px", |doc, root| {
+            doc.append_text(root, text);
+        });
+        lay_out(&mut doc, &cascade, true);
+        ink(&painted(&doc, &cascade))
+    };
+    let b_of = |ink: &Vec<(u32, i64, i64)>| ink.iter().map(|g| g.1).max().unwrap_or(0);
+    assert_eq!(b_of(&place("a\tb")), 80 * 64);
+    assert_eq!(b_of(&place("a       b")), 80 * 64);
+}
+
+#[test]
+fn a_hanging_opening_bracket_sits_before_the_line_start() {
+    // `(` is an opening mark at the start of the first line, so it hangs: one
+    // em (10px) to the left of the content start, and `a` starts the line.
+    let (mut doc, cascade, root) =
+        paragraph("width:100px;hanging-punctuation:first", |doc, root| {
+            doc.append_text(root, "(ab");
+        });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    // The paragraph's content box starts at x 0 (no UA margins here).
+    let mut xs: Vec<i64> = ink(&painted(&doc, &cascade))
+        .iter()
+        .map(|g| g.1 / 64)
+        .collect();
+    xs.sort_unstable();
+    assert_eq!(xs, vec![-10, 0, 10]);
+}
+
+#[test]
+fn a_relative_inline_with_no_offset_paints_like_the_parley_path() {
+    // No space at the text boundary: the parley path shapes a space that ends
+    // a text node with another glyph, which is unrelated to the position.
+    let (off, on) = off_and_on("width:100px", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;position:relative;color:blue"),
+        );
+        doc.append_text(inner, "bb");
+    });
+    assert!(!glyphs(&off).is_empty());
+    assert_eq!(ink(&on), ink(&off));
+    let brushes = |scene: &Scene| {
+        let mut out: Vec<String> = glyphs(scene)
+            .into_iter()
+            .map(|glyph| format!("{:?}", glyph.3))
+            .collect();
+        out.sort();
+        out
+    };
+    assert_eq!(brushes(&on), brushes(&off));
+}
+
+#[test]
+fn a_relative_block_child_with_no_offset_is_painted_once_like_the_parley_path() {
+    let (off, on) = off_and_on("width:100px", |doc, root| {
+        doc.append_text(root, "aa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;background-color:green"),
+        );
+        doc.append_text(block, "bb");
+        doc.append_text(root, "cc");
+    });
+    assert_eq!(ink(&off).len(), 6);
+    assert_eq!(ink(&on), ink(&off));
+    let fills = |scene: &Scene| {
+        scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_)))
+            .count()
+    };
+    assert_eq!(fills(&on), fills(&off));
+}

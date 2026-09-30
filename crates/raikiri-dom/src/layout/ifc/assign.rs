@@ -3,6 +3,7 @@
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::projection::{box_kind, project_ifc};
 use super::root::IfcRoot;
+use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
@@ -10,8 +11,8 @@ use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
 use raikiri_style::property::{ColumnCountValue, DisplayValue, FloatValue};
 use raikiri_style::property::{
-    Direction, HangingPunctuation, PositionValue, TextDecorationLine, TextEmphasisStyle,
-    TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
+    Direction, PositionValue, TextDecorationLine, TextTransform, VerticalAlign, VisualBox,
+    WordSpaceTransform,
 };
 use raikiri_traits::NodeKind;
 
@@ -96,14 +97,12 @@ fn has_full_width_transform(value: TextTransform) -> bool {
 }
 
 /// Whether the painter can draw the text of an element (the root or a
-/// descendant): direction, shadows, emphasis and hanging punctuation are not
-/// drawn.
+/// descendant): direction and shadows are not drawn. Emphasis marks are drawn
+/// by neither path.
 fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
     cv.direction == Direction::Ltr
         && cv.text_shadow.is_empty()
-        && matches!(cv.text_emphasis_style, TextEmphasisStyle::None)
-        && cv.hanging_punctuation == HangingPunctuation::None
         && cv.word_space_transform == WordSpaceTransform::None
         && cv.background_clip != VisualBox::Text
         && !has_full_width_transform(cv.text_transform)
@@ -111,10 +110,14 @@ fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
 
 /// Descendants are drawn without their own boxes: a relative offset moves the
 /// element on the parley path (taffy applies it) and an opacity group wraps it
-/// (the walk pushes a layer per element), neither of which the lines carry.
+/// (the walk pushes a layer per element), neither of which the lines carry. A
+/// relative box that moves nothing and makes no stacking context is drawn in
+/// place.
 fn is_paintable_descendant(cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
-    is_paintable_element(cascade, id) && cv.position != PositionValue::Relative && cv.opacity >= 1.0
+    is_paintable_element(cascade, id)
+        && (cv.position != PositionValue::Relative || style::is_inert_relative(cv))
+        && cv.opacity >= 1.0
 }
 
 /// Every element and text of the paragraph rooted at `idx` can be drawn.

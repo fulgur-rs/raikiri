@@ -236,13 +236,25 @@ fn text_shadow_stays_on_the_parley_path() {
 }
 
 #[test]
-fn text_emphasis_stays_on_the_parley_path() {
-    assert_stays_on_parley("text-emphasis-style:dot", text_only("aa"));
+fn hanging_punctuation_first_keeps_a_paragraph_an_ifc_root() {
+    let mut fixture = block_fixture("hanging-punctuation:first", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn hanging_punctuation_stays_on_the_parley_path() {
-    assert_stays_on_parley("hanging-punctuation:first", text_only("aa"));
+fn text_emphasis_keeps_a_paragraph_an_ifc_root() {
+    // Neither path draws emphasis marks, so the paragraph lays out and paints
+    // the same as on the parley path.
+    let mut fixture = block_fixture("text-emphasis-style:dot", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -255,12 +267,44 @@ fn an_rtl_descendant_keeps_the_paragraph_on_the_parley_path() {
 }
 
 #[test]
-fn a_relatively_positioned_inline_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
-        doc.append_text(root, "aa ");
-        let inner = span(doc, root, "display:inline;position:relative;top:2px");
-        doc.append_text(inner, "bb");
-    });
+fn a_relative_inline_with_no_offset_keeps_a_paragraph_an_ifc_root() {
+    for css in [
+        "display:inline;position:relative",
+        "display:inline;position:relative;top:0;left:0px",
+        "display:inline;position:relative;top:auto;right:0;bottom:0",
+    ] {
+        let mut fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            let inner = span(doc, root, css);
+            doc.append_text(inner, "bb");
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{css}");
+    }
+}
+
+#[test]
+fn a_relative_inline_with_an_offset_or_a_stacking_context_stays_on_the_parley_path() {
+    for css in [
+        "display:inline;position:relative;top:2px",
+        "display:inline;position:relative;right:-1px",
+        // A plain percentage offset is dropped by the parser (both paths see
+        // `auto`), so a mixed calc() stands in for the non-px forms.
+        "display:inline;position:relative;bottom:calc(1% + 1px)",
+        "display:inline;position:relative;left:1em",
+        "display:inline;position:relative;z-index:1",
+        "display:inline;position:relative;z-index:0",
+    ] {
+        let mut fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            let inner = span(doc, root, css);
+            doc.append_text(inner, "bb");
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(!is_root(&fixture, fixture.root), "{css}");
+    }
 }
 
 #[test]

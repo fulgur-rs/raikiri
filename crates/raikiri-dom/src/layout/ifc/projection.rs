@@ -159,7 +159,7 @@ fn supported_atomic(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
 /// container and not cleared.
 fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    if cv.position != PositionValue::Static {
+    if cv.position != PositionValue::Static && !style::is_inert_relative(cv) {
         return Err(unsupported("positioned blocks are not placed yet"));
     }
     let zero = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if px == 0.0);
