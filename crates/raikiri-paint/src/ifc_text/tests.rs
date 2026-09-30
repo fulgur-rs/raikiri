@@ -489,3 +489,70 @@ fn an_atomic_inline_is_painted_at_its_position_once() {
     assert_eq!(boxes.len(), 1, "{boxes:?}");
     assert_eq!((boxes[0].x0, boxes[0].y0), (30.0, 0.0));
 }
+
+#[test]
+fn ch_lengths_place_glyphs_like_the_parley_path() {
+    // Ahem at 10px: one ch is 10px, so the lengths below are whole pixels.
+    let cases = [
+        ("width:200px;letter-spacing:1ch", "abc"),
+        ("width:200px;word-spacing:2ch", "a b c"),
+        // The parley path indents a run only when it re-breaks it to a
+        // narrower width, as in the px indent case above.
+        (
+            "width:50px;word-break:break-all;text-indent:2ch",
+            "abcdefghijklmno",
+        ),
+        (
+            "width:50px;word-break:break-all;text-indent:calc(1ch + 20%)",
+            "abcdefghijklmno",
+        ),
+        ("width:200px;letter-spacing:calc(1ch - 2px)", "abc"),
+    ];
+    // Ahem's space glyph has no outline. The two engines put the spacing on
+    // different sides of it, so only the glyphs that draw are compared.
+    let drawn = |scene: &Scene| {
+        ink(scene)
+            .into_iter()
+            .filter(|glyph| glyph.0 != AHEM_SPACE_GLYPH)
+            .collect::<Vec<_>>()
+    };
+    for (css, text) in cases {
+        let (off, on) = off_and_on(css, |doc, root| {
+            doc.append_text(root, text);
+        });
+        assert!(!drawn(&off).is_empty(), "{css}");
+        assert_eq!(drawn(&on), drawn(&off), "{css}");
+    }
+}
+
+/// The glyph id of U+0020 in Ahem.
+const AHEM_SPACE_GLYPH: u32 = 3;
+
+#[test]
+fn an_inherited_ch_spacing_places_glyphs_like_the_parley_path() {
+    // The span inherits `1ch` measured with the paragraph's 10px font, not
+    // with its own 20px font.
+    let (off, on) = off_and_on("width:300px;letter-spacing:1ch", |doc, root| {
+        doc.append_text(root, "ab");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;font-size:20px"),
+        );
+        doc.append_text(inner, "cd");
+    });
+    // Only the inline positions are compared: the parley path lays the 10px
+    // text on its own baseline instead of the line's shared one, which is
+    // unrelated to `ch`.
+    let x_of = |scene: &Scene| {
+        ink(scene)
+            .into_iter()
+            .map(|glyph| (glyph.0, glyph.1))
+            .collect::<Vec<_>>()
+    };
+    assert!(!x_of(&off).is_empty());
+    assert_eq!(x_of(&on), x_of(&off));
+    // `cd` sits after `ab` and two 10px spacings: 40px, not 60px.
+    assert_eq!(x_of(&on)[2].1, 40 * 64);
+}

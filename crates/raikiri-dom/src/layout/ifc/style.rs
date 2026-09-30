@@ -5,12 +5,15 @@
 //! the box tree or to painting (size, position, color, background) are not
 //! text input and are ignored here.
 
+use super::ch::ch_advance;
 use super::error::IfcError;
-use raikiri_style::property::{self as p, FontFamilyKind};
+use raikiri_style::property::{self as p, FontFamilyKind, FontFamilyName};
+use raikiri_style::{ChFontKey, ChLengthProvenance};
 use raikiri_style::{
     ComputedLengthPercentage as Length, ComputedLengthPercentageOrAuto as LengthOrAuto,
     ComputedLetterSpacing, ComputedLineHeight, ComputedTabSize, ComputedTextIndent, ComputedValues,
 };
+use shodo::font::FontCollection;
 use shodo::geometry::WritingMode;
 use shodo::node::{InlineEdges, Sides};
 use shodo::style::{
@@ -62,24 +65,74 @@ pub(crate) fn map_text_combine_upright(
     }
 }
 
+/// The key of this element's own font, which measures a `ch` value declared
+/// on it.
+fn own_ch_font(cv: &ComputedValues) -> ChFontKey {
+    ChFontKey {
+        family: cv.font_family.clone(),
+        size: cv.font_size,
+        weight: cv.font_weight,
+        style: cv.font_style,
+    }
+}
+
+/// The `font-family` list as shodo families. A generic family shodo does not
+/// name is an error.
+pub(crate) fn map_font_families(names: &[FontFamilyName]) -> Result<Vec<FontFamily>, &'static str> {
+    names
+        .iter()
+        .map(|family| {
+            if family.1 == FontFamilyKind::Named {
+                Ok(FontFamily::Named(family.as_str().into()))
+            } else {
+                let generic = match family.as_str().to_ascii_lowercase().as_str() {
+                    "serif" => s::GenericFamily::Serif,
+                    "sans-serif" => s::GenericFamily::SansSerif,
+                    "monospace" => s::GenericFamily::Monospace,
+                    "cursive" => s::GenericFamily::Cursive,
+                    "fantasy" => s::GenericFamily::Fantasy,
+                    "system-ui" => s::GenericFamily::SystemUi,
+                    _ => return Err("generic family is not represented by shodo"),
+                };
+                Ok(FontFamily::Generic(generic))
+            }
+        })
+        .collect()
+}
+
 /// Text style of one element (or of the paragraph root).
 ///
 /// `lang` is left unset; the caller fills it from the document.
-pub(crate) fn inline_style(cv: &ComputedValues, node: usize) -> Result<InlineStyle, IfcError> {
+pub(crate) fn inline_style(
+    cv: &ComputedValues,
+    node: usize,
+    fonts: &FontCollection,
+) -> Result<InlineStyle, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    if cv.letter_spacing_ch_factor.is_some() || cv.word_spacing_ch_factor.is_some() {
-        return Err(unsupported(
-            "font-relative ch spacing needs selected-font measurement",
-        ));
-    }
     let absolute_spacing = |value: &ComputedLetterSpacing| match value {
         ComputedLetterSpacing::Px(value) => Ok(*value),
         _ => Err(unsupported(
             "percentage or calc spacing needs used-value resolution",
         )),
     };
-    let letter_spacing = absolute_spacing(&cv.letter_spacing_computed)?;
-    let word_spacing = absolute_spacing(&cv.word_spacing_computed)?;
+    // A `ch` value is measured with the font of the element that declared it;
+    // an inherited one carries that font's key, one declared here has none.
+    let ch_length = |factor: f32, font: &Option<ChFontKey>, offset: f32| {
+        let key = font.clone().unwrap_or_else(|| own_ch_font(cv));
+        factor * ch_advance(fonts, &key) + offset
+    };
+    let letter_spacing = match cv.letter_spacing_ch_factor {
+        Some(factor) => ch_length(
+            factor,
+            &cv.letter_spacing_ch_font,
+            cv.letter_spacing_ch_offset,
+        ),
+        None => absolute_spacing(&cv.letter_spacing_computed)?,
+    };
+    let word_spacing = match cv.word_spacing_ch_factor {
+        Some(factor) => ch_length(factor, &cv.word_spacing_ch_font, cv.word_spacing_ch_offset),
+        None => absolute_spacing(&cv.word_spacing_computed)?,
+    };
     let line_height = match cv.line_height {
         ComputedLineHeight::Normal => LineHeight::Normal,
         ComputedLineHeight::Number(value) => LineHeight::Number(value),
@@ -295,26 +348,7 @@ pub(crate) fn inline_style(cv: &ComputedValues, node: usize) -> Result<InlineSty
     let text_combine_upright =
         map_text_combine_upright(cv.text_combine_upright).map_err(unsupported)?;
 
-    let font_families = cv
-        .font_family
-        .iter()
-        .map(|family| {
-            if family.1 == FontFamilyKind::Named {
-                Ok(FontFamily::Named(family.as_str().into()))
-            } else {
-                let generic = match family.as_str().to_ascii_lowercase().as_str() {
-                    "serif" => s::GenericFamily::Serif,
-                    "sans-serif" => s::GenericFamily::SansSerif,
-                    "monospace" => s::GenericFamily::Monospace,
-                    "cursive" => s::GenericFamily::Cursive,
-                    "fantasy" => s::GenericFamily::Fantasy,
-                    "system-ui" => s::GenericFamily::SystemUi,
-                    _ => return Err(unsupported("generic family is not represented by shodo")),
-                };
-                Ok(FontFamily::Generic(generic))
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let font_families = map_font_families(&cv.font_family).map_err(unsupported)?;
 
     Ok(InlineStyle {
         font_families,
@@ -380,13 +414,30 @@ pub(crate) fn paragraph_style(
 pub(crate) fn line_options(
     cv: &ComputedValues,
     node: usize,
+    fonts: &FontCollection,
 ) -> Result<(LineOptions, ComputedTextIndent), IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    if cv.text_indent_ch_factor.is_some() {
-        return Err(unsupported(
-            "text-indent in ch needs declaring-font measurement",
-        ));
-    }
+    let indent = match cv.text_indent_ch_factor {
+        None => cv.text_indent,
+        Some(factor) => {
+            let key = cv
+                .text_indent_ch_font
+                .clone()
+                .unwrap_or_else(|| own_ch_font(cv));
+            let measured = factor * ch_advance(fonts, &key) + cv.text_indent_ch_offset;
+            match cv.text_indent {
+                // A `ch` value with a percentage keeps the percentage term and
+                // takes the measured length as its absolute term.
+                ComputedTextIndent::Calc(calc) => {
+                    ComputedTextIndent::Calc(p::CalcLengthPercentage {
+                        percent: calc.percent,
+                        px: measured,
+                    })
+                }
+                _ => ComputedTextIndent::Px(measured),
+            }
+        }
+    };
     let text_align = match cv.text_align {
         p::TextAlign::Start => s::TextAlign::Start,
         p::TextAlign::End => s::TextAlign::End,
@@ -418,13 +469,17 @@ pub(crate) fn line_options(
             },
             ..Default::default()
         },
-        cv.text_indent,
+        indent,
     ))
 }
 
 /// Absolute inline-box edges as logical sides. Percentages, calc, and ch edges
 /// need a containing-block basis or a font measurement and are rejected.
-pub(crate) fn inline_edges(cv: &ComputedValues, node: usize) -> Result<InlineEdges, IfcError> {
+pub(crate) fn inline_edges(
+    cv: &ComputedValues,
+    node: usize,
+    fonts: &FontCollection,
+) -> Result<InlineEdges, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
     // The physical-to-logical side mapping below is horizontal-tb only.
     if cv.cssom_writing_mode != p::WritingMode::HorizontalTb {
@@ -432,30 +487,23 @@ pub(crate) fn inline_edges(cv: &ComputedValues, node: usize) -> Result<InlineEdg
             "inline edges are mapped for horizontal writing only",
         ));
     }
-    let ch_edges = [
-        &cv.margin_ch.top,
-        &cv.margin_ch.right,
-        &cv.margin_ch.bottom,
-        &cv.margin_ch.left,
-        &cv.padding_ch.top,
-        &cv.padding_ch.right,
-        &cv.padding_ch.bottom,
-        &cv.padding_ch.left,
-    ];
-    if ch_edges.iter().any(|value| value.is_some()) {
-        return Err(unsupported(
-            "inline ch edges need declaring-font measurement",
-        ));
-    }
-    let padding = |value: Length| match value {
-        Length::Px(value) => Ok(value),
+    // An edge in `ch` records the font of the element that declared it.
+    let ch_px = |provenance: &Option<ChLengthProvenance>| {
+        provenance
+            .as_ref()
+            .map(|value| value.factor * ch_advance(fonts, &value.font))
+    };
+    let padding = |value: Length, ch: &Option<ChLengthProvenance>| match (ch_px(ch), value) {
+        (Some(px), _) => Ok(px),
+        (None, Length::Px(value)) => Ok(value),
         _ => Err(unsupported(
             "inline percentage or calc padding needs a basis",
         )),
     };
-    let margin = |value: LengthOrAuto| match value {
-        LengthOrAuto::Px(value) => Ok(value),
-        LengthOrAuto::Auto => Ok(0.0),
+    let margin = |value: LengthOrAuto, ch: &Option<ChLengthProvenance>| match (ch_px(ch), value) {
+        (Some(px), _) => Ok(px),
+        (None, LengthOrAuto::Px(value)) => Ok(value),
+        (None, LengthOrAuto::Auto) => Ok(0.0),
         _ => Err(unsupported(
             "inline percentage or calc margin needs a basis",
         )),
@@ -477,16 +525,16 @@ pub(crate) fn inline_edges(cv: &ComputedValues, node: usize) -> Result<InlineEdg
     };
     Ok(InlineEdges {
         margin: logical(
-            margin(cv.margin.top)?,
-            margin(cv.margin.right)?,
-            margin(cv.margin.bottom)?,
-            margin(cv.margin.left)?,
+            margin(cv.margin.top, &cv.margin_ch.top)?,
+            margin(cv.margin.right, &cv.margin_ch.right)?,
+            margin(cv.margin.bottom, &cv.margin_ch.bottom)?,
+            margin(cv.margin.left, &cv.margin_ch.left)?,
         )?,
         padding: logical(
-            padding(cv.padding.top)?,
-            padding(cv.padding.right)?,
-            padding(cv.padding.bottom)?,
-            padding(cv.padding.left)?,
+            padding(cv.padding.top, &cv.padding_ch.top)?,
+            padding(cv.padding.right, &cv.padding_ch.right)?,
+            padding(cv.padding.bottom, &cv.padding_ch.bottom)?,
+            padding(cv.padding.left, &cv.padding_ch.left)?,
         )?,
         border: logical(
             cv.border.top.width().0,

@@ -222,8 +222,8 @@ pub(crate) fn project_ifc(
 
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
-    let (options, indent) = style::line_options(root_cv, root)?;
-    let mut root_style = style::inline_style(root_cv, root)?;
+    let (options, indent) = style::line_options(root_cv, root, fonts)?;
+    let mut root_style = style::inline_style(root_cv, root, fonts)?;
     root_style.lang = language_of(doc, root);
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
@@ -285,7 +285,7 @@ pub(crate) fn project_ifc(
                 }
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
                     supported_atomic(cv, id)?;
-                    let mut atomic_style = style::inline_style(cv, id)?;
+                    let mut atomic_style = style::inline_style(cv, id, fonts)?;
                     atomic_style.lang = language_of(doc, id);
                     // shodo sizes an atomic from `AtomicSize` alone, margins
                     // included; the edges are not read for atomics.
@@ -323,9 +323,9 @@ pub(crate) fn project_ifc(
                     return Err(unsupported("only inline-level boxes are projected"));
                 }
                 reject_generated_content(cascade, id)?;
-                let mut inline_style = style::inline_style(cv, id)?;
+                let mut inline_style = style::inline_style(cv, id, fonts)?;
                 inline_style.lang = language_of(doc, id);
-                let edges = style::inline_edges(cv, id)?;
+                let edges = style::inline_edges(cv, id, fonts)?;
                 builder.open_inline(NodeId(id as u64), &inline_style, edges);
                 if tag == "br" {
                     builder.push_forced_break(NodeId(id as u64));

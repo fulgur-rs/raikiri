@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout::ifc::test_support::block_fixture;
+use crate::layout::ifc::test_support::{block_fixture, span};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::{
     FontFamily, GenericFamily, LineHeight, TextAlign, TextAlignLast, TextCombineUpright,
@@ -10,7 +10,15 @@ fn root_style(extra: &str) -> Result<InlineStyle, IfcError> {
     let fixture = block_fixture(extra, |doc, root| {
         doc.append_text(root, "x");
     });
-    inline_style(&fixture.cascade.computed[fixture.root], fixture.root)
+    inline_style(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+}
+
+fn fonts() -> shodo::font::FontCollection {
+    crate::layout::ifc::test_support::ahem_fonts()
 }
 
 #[test]
@@ -47,9 +55,111 @@ fn line_height_maps_number_and_length() {
 }
 
 #[test]
-fn ch_spacing_is_rejected_until_it_can_be_measured() {
-    let error = root_style("letter-spacing:1ch").expect_err("ch");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+fn ch_spacing_is_measured_with_the_declaring_font() {
+    // Ahem at 10px: one ch is 10px.
+    let style = root_style("letter-spacing:2ch;word-spacing:1ch").expect("map");
+    assert_eq!(style.letter_spacing, 20.0);
+    assert_eq!(style.word_spacing, 10.0);
+}
+
+#[test]
+fn an_inherited_ch_value_keeps_the_declaring_font() {
+    // The root declares `2ch` at 10px; the span inherits the computed length
+    // and must not re-measure it with its own 20px font.
+    let fixture = block_fixture("letter-spacing:2ch;word-spacing:1ch", |doc, root| {
+        doc.append_text(root, "x");
+        let inner = span(doc, root, "display:inline;font-size:20px");
+        doc.append_text(inner, "y");
+    });
+    let inner = fixture.doc.nodes[fixture.root].children[1];
+    let style = inline_style(&fixture.cascade.computed[inner], inner, &fonts()).expect("map");
+    assert_eq!(style.letter_spacing, 20.0);
+    assert_eq!(style.word_spacing, 10.0);
+}
+
+#[test]
+fn a_ch_calc_adds_its_length_term() {
+    let style =
+        root_style("letter-spacing:calc(1ch + 3px);word-spacing:calc(2ch - 1px)").expect("map");
+    assert_eq!(style.letter_spacing, 13.0);
+    assert_eq!(style.word_spacing, 19.0);
+}
+
+#[test]
+fn text_indent_in_ch_is_measured() {
+    let fixture = block_fixture("text-indent:3ch", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let (_, indent) = line_options(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("options");
+    assert_eq!(indent, ComputedTextIndent::Px(30.0));
+}
+
+#[test]
+fn an_inherited_ch_text_indent_keeps_the_declaring_font() {
+    let fixture = block_fixture("text-indent:calc(3ch + 1px)", |doc, root| {
+        let inner = span(doc, root, "display:block;font-size:20px");
+        doc.append_text(inner, "y");
+    });
+    let inner = fixture.doc.nodes[fixture.root].children[0];
+    let (_, indent) =
+        line_options(&fixture.cascade.computed[inner], inner, &fonts()).expect("options");
+    assert_eq!(indent, ComputedTextIndent::Px(31.0));
+}
+
+#[test]
+fn a_ch_text_indent_keeps_its_percentage_term() {
+    let fixture = block_fixture("text-indent:calc(2ch + 10%)", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let (_, indent) = line_options(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("options");
+    match indent {
+        ComputedTextIndent::Calc(calc) => {
+            assert_eq!(calc.px, 20.0);
+            assert_eq!(calc.percent, 10.0);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn inline_edges_in_ch_are_measured() {
+    let fixture = block_fixture("padding-left:2ch;margin-right:1ch", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let edges = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("edges");
+    assert_eq!(edges.padding.inline_start, 20.0);
+    assert_eq!(edges.margin.inline_end, 10.0);
+}
+
+#[test]
+fn inline_edges_in_ch_use_the_declaring_element_font() {
+    let fixture = block_fixture("", |doc, root| {
+        let inner = span(
+            doc,
+            root,
+            "display:inline;font-size:20px;padding-right:1ch;margin-left:2ch",
+        );
+        doc.append_text(inner, "y");
+    });
+    let inner = fixture.doc.nodes[fixture.root].children[0];
+    let edges = inline_edges(&fixture.cascade.computed[inner], inner, &fonts()).expect("edges");
+    assert_eq!(edges.padding.inline_end, 20.0);
+    assert_eq!(edges.margin.inline_start, 40.0);
 }
 
 #[test]
@@ -84,8 +194,12 @@ fn text_align_and_last_map() {
     let fixture = block_fixture("text-align:center;text-align-last:justify", |doc, root| {
         doc.append_text(root, "x");
     });
-    let (options, _) =
-        line_options(&fixture.cascade.computed[fixture.root], fixture.root).expect("options");
+    let (options, _) = line_options(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("options");
     assert_eq!(options.text_align, TextAlign::Center);
     assert_eq!(options.text_align_last, TextAlignLast::Justify);
 }
@@ -96,7 +210,7 @@ fn rtl_and_plaintext_bidi_set_the_paragraph_style() {
         doc.append_text(root, "x");
     });
     let cv = &fixture.cascade.computed[fixture.root];
-    let root = inline_style(cv, fixture.root).expect("root style");
+    let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
     let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph");
     assert_eq!(paragraph.direction, Direction::Rtl);
     assert!(paragraph.unicode_bidi_plaintext);
@@ -108,7 +222,7 @@ fn vertical_writing_mode_is_read_from_the_cssom_value() {
         doc.append_text(root, "x");
     });
     let cv = &fixture.cascade.computed[fixture.root];
-    let root = inline_style(cv, fixture.root).expect("root style");
+    let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
     let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph");
     assert_eq!(paragraph.writing_mode, WritingMode::VerticalRl);
 }
@@ -135,7 +249,12 @@ fn inline_edges_swap_sides_for_rtl() {
                 doc.append_text(root, "x");
             },
         );
-        inline_edges(&fixture.cascade.computed[fixture.root], fixture.root).expect("edges")
+        inline_edges(
+            &fixture.cascade.computed[fixture.root],
+            fixture.root,
+            &fonts(),
+        )
+        .expect("edges")
     };
     let ltr = edges("ltr");
     assert_eq!((ltr.margin.inline_start, ltr.margin.inline_end), (1.0, 2.0));
@@ -193,8 +312,12 @@ fn inline_edges_reject_vertical_writing_modes() {
     let fixture = block_fixture("writing-mode:vertical-rl;padding-top:3px", |doc, root| {
         doc.append_text(root, "x");
     });
-    let error =
-        inline_edges(&fixture.cascade.computed[fixture.root], fixture.root).expect_err("vertical");
+    let error = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect_err("vertical");
     assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
 }
 
