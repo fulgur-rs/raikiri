@@ -44,7 +44,7 @@ fn preloads_an_absolute_svg_background_once_and_rasterizes_on_demand() {
     let mut seen = std::collections::HashSet::new();
     let mut attempts = 0;
 
-    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts);
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
 
     let url = Url::parse("https://images.test/two-color.svg").unwrap();
     let intrinsic = resources
@@ -103,7 +103,7 @@ fn data_svg_background_is_available_from_the_combined_source_without_network() {
     let mut seen = std::collections::HashSet::new();
     let mut attempts = 0;
 
-    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts);
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
     let url = Url::parse(data_url).expect("data URL parses");
     let image = source
         .get_decoded_at_size(
@@ -254,4 +254,1179 @@ fn image_pixel_source_builder_and_font_context_ref() {
     let debug = format!("{resources:?}");
     assert!(debug.contains("has_image_pixel_source: true"), "{debug}");
     let _ = resources.font_context_ref();
+}
+
+use std::sync::Barrier;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use raikiri_traits::{AbortController, DecodedImage};
+
+fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+    let image = image::DynamicImage::new_rgba8(width, height);
+    let mut out = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut out);
+    image
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .expect("PNG encodes");
+    out
+}
+
+struct CountingPngProvider {
+    calls: AtomicUsize,
+    delay: Duration,
+    bytes: Vec<u8>,
+    seen_signals: Mutex<Vec<bool>>,
+}
+
+impl CountingPngProvider {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            delay: Duration::from_millis(0),
+            bytes,
+            seen_signals: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn with_delay(bytes: Vec<u8>, delay: Duration) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            delay,
+            bytes,
+            seen_signals: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl NetworkProvider for CountingPngProvider {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.seen_signals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(request.signal.is_some());
+        if request
+            .signal
+            .as_ref()
+            .is_some_and(|signal| signal.is_aborted())
+        {
+            return Err(NetworkError::Aborted);
+        }
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
+        }
+        if request
+            .signal
+            .as_ref()
+            .is_some_and(|signal| signal.is_aborted())
+        {
+            return Err(NetworkError::Aborted);
+        }
+        let final_url = request.url.clone();
+        Ok(FetchOutcome::Body(FetchedResource {
+            bytes: self.bytes.clone().into(),
+            content_type: Some("image/png".into()),
+            final_url,
+            encoding: None,
+        }))
+    }
+}
+
+struct ZeroDecodeTimeoutPolicy;
+
+impl raikiri_traits::ResourcePolicy for ZeroDecodeTimeoutPolicy {
+    fn is_scheme_allowed(&self, _scheme: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn is_host_allowed(&self, _host: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn allow_redirect(&self, _from: &Url, _to: &Url, _hop: u32) -> bool {
+        true
+    }
+    fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+        10
+    }
+    fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn max_decoded_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn fetch_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(10)
+    }
+    fn decode_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(0)
+    }
+    fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+        Vec::new()
+    }
+    fn max_import_depth(&self) -> u32 {
+        10
+    }
+    fn max_svg_recursion_depth(&self) -> u32 {
+        10
+    }
+}
+
+struct TinyDecodedPolicy {
+    limit: u64,
+}
+
+impl raikiri_traits::ResourcePolicy for TinyDecodedPolicy {
+    fn is_scheme_allowed(&self, _scheme: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn is_host_allowed(&self, _host: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn allow_redirect(&self, _from: &Url, _to: &Url, _hop: u32) -> bool {
+        true
+    }
+    fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+        10
+    }
+    fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn max_decoded_bytes(&self, kind: ResourceKind) -> Option<u64> {
+        if kind == ResourceKind::Image {
+            Some(self.limit)
+        } else {
+            None
+        }
+    }
+    fn fetch_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(10)
+    }
+    fn decode_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(10)
+    }
+    fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+        Vec::new()
+    }
+    fn max_import_depth(&self) -> u32 {
+        10
+    }
+    fn max_svg_recursion_depth(&self) -> u32 {
+        10
+    }
+}
+
+#[test]
+fn process_budget_try_acquire_bounds_concurrency() {
+    let budget = Arc::new(ProcessImageBudget::new(1024, 2));
+    assert_eq!(budget.max_retained(), 1024);
+    assert_eq!(budget.retained(), 0);
+    let first = budget.try_acquire().expect("first permit available");
+    let second = budget.try_acquire().expect("second permit available");
+    assert!(
+        budget.try_acquire().is_none(),
+        "third blocks when both held"
+    );
+    drop(first);
+    assert!(budget.try_acquire().is_some(), "release frees one slot");
+    drop(second);
+}
+
+#[test]
+fn process_budget_blocking_acquire_waits_for_release() {
+    let budget = Arc::new(ProcessImageBudget::new(1024, 1));
+    let held = budget.try_acquire().expect("single slot available");
+    let waiting = Arc::clone(&budget);
+    let done = Arc::new(AtomicUsize::new(0));
+    let done_clone = Arc::clone(&done);
+    let handle = std::thread::spawn(move || {
+        let _permit = waiting.acquire();
+        done_clone.fetch_add(1, Ordering::SeqCst);
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(done.load(Ordering::SeqCst), 0, "blocked while slot held");
+    drop(held);
+    handle.join().expect("waiter proceeds after release");
+    assert_eq!(done.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn same_url_concurrent_fetches_share_one_provider_request() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::with_delay(bytes, Duration::from_millis(150));
+    let resources = RenderResources::new().network_provider(&provider);
+    let url = Url::parse("https://images.test/shared.png").unwrap();
+    let barrier = Arc::new(Barrier::new(4));
+    let resources_ref = &resources;
+    let warning_counts = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let barrier = Arc::clone(&barrier);
+            let url = url.clone();
+            handles.push(scope.spawn(move || {
+                barrier.wait();
+                let warnings = Arc::new(Mutex::new(Vec::new()));
+                resources_ref.fetch_background_image(url, &warnings, None);
+                warnings
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len()
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("fetch thread joins"))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1,
+        "concurrent same-URL renders share one provider request"
+    );
+    assert!(
+        warning_counts.iter().all(|count| *count == 0),
+        "shared success reports no warnings, got {warning_counts:?}"
+    );
+    assert!(
+        resources
+            .cached_background_image(&image_url_without_fragment(&url))
+            .is_some(),
+        "shared URL is cached once"
+    );
+}
+
+#[test]
+fn unrelated_urls_proceed_without_global_serialization() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::new(bytes);
+    let resources = RenderResources::new().network_provider(&provider);
+    let held: Vec<_> = (0..3)
+        .map(|_| resources.process_budget.try_acquire().expect("slot free"))
+        .collect();
+    let url_a = Url::parse("https://images.test/a.png").unwrap();
+    let url_b = Url::parse("https://images.test/b.png").unwrap();
+    let warnings_a = Arc::new(Mutex::new(Vec::new()));
+    let warnings_b = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url_a.clone(), &warnings_a, None);
+    resources.fetch_background_image(url_b.clone(), &warnings_b, None);
+    drop(held);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(
+        warnings_a
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    );
+    assert!(
+        warnings_b
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    );
+    assert!(resources.cached_background_image(&url_a).is_some());
+    assert!(resources.cached_background_image(&url_b).is_some());
+}
+
+#[test]
+fn process_retained_bound_spans_independent_contexts() {
+    let small = png_bytes(1, 1);
+    let large = png_bytes(32, 32);
+    let provider_small = CountingPngProvider::new(small);
+    let provider_large = CountingPngProvider::new(large);
+    let shared = Arc::new(ProcessImageBudget::new(200, 4));
+    let first = RenderResources::new()
+        .network_provider(&provider_small)
+        .with_test_process_budget(Arc::clone(&shared));
+    let second = RenderResources::new()
+        .network_provider(&provider_large)
+        .with_test_process_budget(Arc::clone(&shared));
+    let first_url = Url::parse("https://images.test/first.png").unwrap();
+    let second_url = Url::parse("https://images.test/second.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    first.fetch_background_image(first_url.clone(), &warnings, None);
+    assert!(first.cached_background_image(&first_url).is_some());
+    let retained_after_first = shared.retained();
+    assert!(
+        retained_after_first > 0,
+        "first insert retains process bytes"
+    );
+    let warnings_second = Arc::new(Mutex::new(Vec::new()));
+    second.fetch_background_image(second_url.clone(), &warnings_second, None);
+    assert!(
+        second.cached_background_image(&second_url).is_none(),
+        "process cap rejects the second independent context"
+    );
+    let denied = warnings_second
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        denied.iter().any(|warning| matches!(
+            warning.kind,
+            WarningKind::ResourceLimitExceeded {
+                kind: ResourceKind::Image,
+                ..
+            }
+        )),
+        "process-wide denial surfaces as a limit warning, got {denied:?}"
+    );
+    assert_eq!(shared.retained(), retained_after_first);
+}
+
+#[test]
+fn cache_insert_paths_cover_per_context_and_replace_branches() {
+    let budget = Arc::new(ProcessImageBudget::new(1024 * 1024, 4));
+    let mut cache = DecodedImageCache::new(Arc::clone(&budget));
+    let url = Url::parse("https://images.test/cache.png").unwrap();
+    assert_eq!(cache.prior_bytes(&url), 0);
+    assert_eq!(cache.remaining_for(&url), 128 * 1024 * 1024);
+    let small = Arc::new(DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0, 0],
+    });
+    cache
+        .insert_raster(
+            url.clone(),
+            CachedBackgroundSource::Raster(Arc::clone(&small)),
+            ImageRasterSize {
+                width: 1.0,
+                height: 1.0,
+            },
+            Arc::clone(&small),
+        )
+        .expect("small insert fits");
+    assert_eq!(cache.prior_bytes(&url), 4);
+    assert_eq!(budget.retained(), 4);
+    let tiny = Arc::new(DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![1, 2, 3, 4],
+    });
+    cache
+        .insert_raster(
+            url.clone(),
+            CachedBackgroundSource::Raster(Arc::clone(&tiny)),
+            ImageRasterSize {
+                width: 1.0,
+                height: 1.0,
+            },
+            Arc::clone(&tiny),
+        )
+        .expect("same-size replace succeeds");
+    assert_eq!(budget.retained(), 4);
+    cache.insert_source(
+        url.clone(),
+        CachedBackgroundSource::Svg(Arc::new(
+            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+        )),
+    );
+    assert_eq!(cache.prior_bytes(&url), 0);
+    assert_eq!(budget.retained(), 0);
+    cache.insert_source(
+        Url::parse("https://images.test/fresh.svg").unwrap(),
+        CachedBackgroundSource::Svg(Arc::new(
+            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+        )),
+    );
+    assert_eq!(budget.retained(), 0);
+    let mut tight = DecodedImageCache {
+        entries: HashMap::new(),
+        decoded_bytes: 0,
+        max_bytes: 10,
+        process_budget: Arc::new(ProcessImageBudget::new(1024 * 1024, 4)),
+    };
+    let big = Arc::new(DecodedImage {
+        width: 4,
+        height: 4,
+        rgba: vec![0; 64],
+    });
+    assert!(
+        tight
+            .insert_raster(
+                url,
+                CachedBackgroundSource::Raster(Arc::clone(&big)),
+                ImageRasterSize {
+                    width: 4.0,
+                    height: 4.0,
+                },
+                big,
+            )
+            .is_err(),
+        "per-context cap rejects an oversized raster"
+    );
+}
+
+#[test]
+fn reconfigured_clones_keep_cache_and_policy_isolation() {
+    let bytes = png_bytes(1, 1);
+    let provider_a = CountingPngProvider::new(bytes.clone());
+    let provider_b = CountingPngProvider::new(bytes);
+    let base = RenderResources::new().network_provider(&provider_a);
+    let url = Url::parse("https://images.test/isolated.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    base.fetch_background_image(url.clone(), &warnings, None);
+    assert_eq!(provider_a.calls.load(Ordering::SeqCst), 1);
+    let reconfigured = base.clone().network_provider(&provider_b);
+    let warnings_b = Arc::new(Mutex::new(Vec::new()));
+    reconfigured.fetch_background_image(url.clone(), &warnings_b, None);
+    assert_eq!(
+        provider_b.calls.load(Ordering::SeqCst),
+        1,
+        "reconfigured clone does not reuse the prior cache"
+    );
+    assert_eq!(provider_a.calls.load(Ordering::SeqCst), 1);
+    assert!(base.cached_background_image(&url).is_some());
+    assert!(reconfigured.cached_background_image(&url).is_some());
+    struct DenyPolicy;
+    impl raikiri_traits::ResourcePolicy for DenyPolicy {
+        fn is_scheme_allowed(&self, _scheme: &str, _kind: ResourceKind) -> bool {
+            false
+        }
+        fn is_host_allowed(&self, _host: &str, _kind: ResourceKind) -> bool {
+            true
+        }
+        fn allow_redirect(&self, _from: &Url, _to: &Url, _hop: u32) -> bool {
+            true
+        }
+        fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+            10
+        }
+        fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+            None
+        }
+        fn max_decoded_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+            None
+        }
+        fn fetch_timeout(&self, _kind: ResourceKind) -> Duration {
+            Duration::from_secs(10)
+        }
+        fn decode_timeout(&self, _kind: ResourceKind) -> Duration {
+            Duration::from_secs(10)
+        }
+        fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+            Vec::new()
+        }
+        fn max_import_depth(&self) -> u32 {
+            10
+        }
+        fn max_svg_recursion_depth(&self) -> u32 {
+            10
+        }
+    }
+    let deny = DenyPolicy;
+    let denied = base.clone().network_policy(&deny);
+    let denied_url = Url::parse("https://images.test/policy.png").unwrap();
+    let denied_warnings = Arc::new(Mutex::new(Vec::new()));
+    denied.fetch_background_image(denied_url.clone(), &denied_warnings, None);
+    assert!(denied.cached_background_image(&denied_url).is_none());
+    assert!(
+        denied_warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|warning| matches!(warning.kind, WarningKind::PolicyWarning { .. }))
+    );
+}
+
+#[test]
+fn decode_timeout_zero_discards_and_reports_policy_timeout() {
+    let bytes = png_bytes(2, 2);
+    let provider = CountingPngProvider::new(bytes);
+    let policy = ZeroDecodeTimeoutPolicy;
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let url = Url::parse("https://images.test/timeout.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            &warning.kind,
+            WarningKind::PolicyWarning { violation }
+                if matches!(violation.violation_type, ViolationType::Timeout)
+        )),
+        "zero decode timeout surfaces as a Timeout policy warning, got {seen:?}"
+    );
+    assert!(
+        resources.process_budget.try_acquire().is_some(),
+        "timed-out work releases its decoder slot"
+    );
+}
+
+#[test]
+fn tiny_decoded_policy_reports_decoded_too_large() {
+    let bytes = png_bytes(8, 8);
+    let provider = CountingPngProvider::new(bytes);
+    let policy = TinyDecodedPolicy { limit: 10 };
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let url = Url::parse("https://images.test/too-large.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            warning.kind,
+            WarningKind::ResourceLimitExceeded {
+                kind: ResourceKind::Image,
+                ..
+            }
+        )),
+        "policy decoded cap surfaces as a limit warning, got {seen:?}"
+    );
+}
+
+#[test]
+fn invalid_raster_bytes_report_fallback_without_timeout() {
+    let provider = CountingPngProvider::new(b"not an image".to_vec());
+    let resources = RenderResources::new().network_provider(&provider);
+    let url = Url::parse("https://images.test/broken.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            warning.kind,
+            WarningKind::ResourceFallback {
+                kind: ResourceKind::Image,
+                ..
+            }
+        )),
+        "undecodable bytes surface as a fallback, got {seen:?}"
+    );
+}
+
+#[test]
+fn svg_input_limit_and_parse_failure_report_warnings() {
+    let oversized = vec![b'a'; 33 * 1024 * 1024];
+    let provider = CountingPngProvider::new(oversized);
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .resource_limits(
+            ResourceLimits::new()
+                .max_resource_bytes(None)
+                .max_aggregate_resource_bytes(None),
+        );
+    let big_url = Url::parse("https://images.test/big.svg").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(big_url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&big_url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            warning.kind,
+            WarningKind::ResourceLimitExceeded {
+                kind: ResourceKind::Image,
+                ..
+            }
+        )),
+        "oversized SVG input surfaces as a limit, got {seen:?}"
+    );
+    let broken_provider = CountingPngProvider::new(b"not svg".to_vec());
+    let broken_resources = RenderResources::new().network_provider(&broken_provider);
+    let broken_url = Url::parse("https://images.test/broken.svg").unwrap();
+    let broken_warnings = Arc::new(Mutex::new(Vec::new()));
+    broken_resources.fetch_background_image(broken_url.clone(), &broken_warnings, None);
+    assert!(
+        broken_resources
+            .cached_background_image(&broken_url)
+            .is_none()
+    );
+    let broken_seen = broken_warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        broken_seen.iter().any(|warning| matches!(
+            warning.kind,
+            WarningKind::ResourceFallback {
+                kind: ResourceKind::Image,
+                ..
+            }
+        )),
+        "unparsable SVG surfaces as a fallback, got {broken_seen:?}"
+    );
+}
+
+#[test]
+fn svg_zero_timeout_reports_timeout_after_parse() {
+    let provider = SvgNetworkProvider::default();
+    let policy = ZeroDecodeTimeoutPolicy;
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let url = Url::parse("https://images.test/timeout.svg").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            &warning.kind,
+            WarningKind::PolicyWarning { violation }
+                if matches!(violation.violation_type, ViolationType::Timeout)
+        )),
+        "SVG parse exceeding zero timeout reports Timeout, got {seen:?}"
+    );
+}
+
+#[test]
+fn aborted_signal_skips_provider_and_reports_fallback() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::new(bytes);
+    let resources = RenderResources::new().network_provider(&provider);
+    let controller = AbortController::new();
+    controller.abort();
+    let url = Url::parse("https://images.test/aborted.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, Some(&controller.signal));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            warning.kind,
+            WarningKind::ResourceFallback {
+                kind: ResourceKind::Image,
+                ..
+            }
+        )),
+        "aborted fetch surfaces as a fallback, got {seen:?}"
+    );
+}
+
+#[test]
+fn abort_during_fetch_reports_abort_without_caching() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::with_delay(bytes, Duration::from_millis(200));
+    let resources = RenderResources::new().network_provider(&provider);
+    let controller = AbortController::new();
+    let url = Url::parse("https://images.test/abort-mid.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    std::thread::scope(|scope| {
+        let handle = scope.spawn(|| {
+            resources.fetch_background_image(url.clone(), &warnings, Some(&controller.signal));
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        controller.abort();
+        handle.join().expect("aborted fetch joins");
+    });
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        !seen.is_empty(),
+        "mid-fetch abort still records a warning, got {seen:?}"
+    );
+}
+
+#[test]
+fn abort_during_decode_wait_reports_abort() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::with_delay(bytes, Duration::from_millis(50));
+    let resources = RenderResources::new().network_provider(&provider);
+    let held = resources.process_budget.try_acquire().expect("slot free");
+    let held2 = resources.process_budget.try_acquire().expect("slot free");
+    let held3 = resources.process_budget.try_acquire().expect("slot free");
+    let held4 = resources.process_budget.try_acquire().expect("slot free");
+    let controller = AbortController::new();
+    let signal = controller.signal.clone();
+    let url = Url::parse("https://images.test/abort-wait.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            resources.fetch_background_image(url.clone(), &warnings, Some(&signal));
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        controller.abort();
+        drop(held);
+        drop(held2);
+        drop(held3);
+        drop(held4);
+    });
+    assert!(resources.cached_background_image(&url).is_none());
+}
+
+#[test]
+fn signal_is_forwarded_to_provider() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::new(bytes);
+    let resources = RenderResources::new().network_provider(&provider);
+    let controller = AbortController::new();
+    let url = Url::parse("https://images.test/signal.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, Some(&controller.signal));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    let seen = provider
+        .seen_signals
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(
+        seen,
+        vec![true],
+        "background requests carry the abort signal"
+    );
+    assert!(resources.cached_background_image(&url).is_some());
+}
+
+#[test]
+fn svg_raster_timeout_returns_none_without_caching_raster() {
+    let provider = SvgNetworkProvider::default();
+    let policy = ZeroDecodeTimeoutPolicy;
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let url = Url::parse("https://images.test/raster-timeout.svg").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let options = crate::types::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let html = br#"<!doctype html><style>div { background-image: url("https://images.test/raster-timeout.svg"); }</style><body><div></div></body>"#;
+    let uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
+    let cascade = crate::build_cascaded(&uncascaded);
+    let mut seen = std::collections::HashSet::new();
+    let mut attempts = 0;
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let direct_provider = SvgNetworkProvider::default();
+    let direct = RenderResources::new().network_provider(&direct_provider);
+    let direct_warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut direct_seen = std::collections::HashSet::new();
+    let mut direct_attempts = 0;
+    direct.preload_background_images(
+        &cascade,
+        &direct_warnings,
+        &mut direct_seen,
+        &mut direct_attempts,
+        None,
+    );
+    let raster = direct.get_decoded_at_size(
+        &url,
+        ImageRasterSize {
+            width: 4.0,
+            height: 2.0,
+        },
+        None,
+    );
+    assert!(raster.is_some(), "without a zero timeout SVG rasterizes");
+    let timed = resources.get_decoded_at_size(
+        &url,
+        ImageRasterSize {
+            width: 4.0,
+            height: 2.0,
+        },
+        None,
+    );
+    assert!(
+        timed.is_none(),
+        "zero decode timeout refuses the paint-time raster"
+    );
+}
+
+#[test]
+fn preload_abort_breaks_without_provider_calls() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::new(bytes);
+    let resources = RenderResources::new().network_provider(&provider);
+    let options = crate::types::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let html = br#"<!doctype html><style>div { background-image: url("https://images.test/preload-abort.png"); }</style><body><div></div></body>"#;
+    let uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
+    let cascade = crate::build_cascaded(&uncascaded);
+    let controller = AbortController::new();
+    controller.abort();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = std::collections::HashSet::new();
+    let mut attempts = 0;
+    resources.preload_background_images(
+        &cascade,
+        &warnings,
+        &mut seen,
+        &mut attempts,
+        Some(&controller.signal),
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn missing_provider_reports_network_fallback() {
+    let resources = RenderResources::new();
+    let url = Url::parse("https://images.test/no-provider.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter()
+            .any(|warning| matches!(warning.kind, WarningKind::NetworkFallback { .. })),
+        "missing provider surfaces as NetworkFallback, got {seen:?}"
+    );
+}
+
+#[test]
+fn fetch_policy_denial_replicates_to_waiters() {
+    struct DenyFetchPolicy;
+    impl raikiri_traits::ResourcePolicy for DenyFetchPolicy {
+        fn is_scheme_allowed(&self, _scheme: &str, _kind: ResourceKind) -> bool {
+            true
+        }
+        fn is_host_allowed(&self, _host: &str, _kind: ResourceKind) -> bool {
+            true
+        }
+        fn allow_redirect(&self, _from: &Url, _to: &Url, _hop: u32) -> bool {
+            false
+        }
+        fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+            0
+        }
+        fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+            Some(1)
+        }
+        fn max_decoded_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+            None
+        }
+        fn fetch_timeout(&self, _kind: ResourceKind) -> Duration {
+            Duration::from_secs(10)
+        }
+        fn decode_timeout(&self, _kind: ResourceKind) -> Duration {
+            Duration::from_secs(10)
+        }
+        fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+            Vec::new()
+        }
+        fn max_import_depth(&self) -> u32 {
+            10
+        }
+        fn max_svg_recursion_depth(&self) -> u32 {
+            10
+        }
+    }
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::with_delay(bytes, Duration::from_millis(100));
+    let policy = DenyFetchPolicy;
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let url = Url::parse("https://images.test/denied.png").unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+    let resources_ref = &resources;
+    let all = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let barrier = Arc::clone(&barrier);
+            let url = url.clone();
+            handles.push(scope.spawn(move || {
+                barrier.wait();
+                let warnings = Arc::new(Mutex::new(Vec::new()));
+                resources_ref.fetch_background_image(url, &warnings, None);
+                warnings
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("denied fetch joins"))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    for warnings in &all {
+        assert!(
+            warnings.iter().any(|warning| matches!(
+                warning.kind,
+                WarningKind::ResourceLimitExceeded {
+                    kind: ResourceKind::Image,
+                    ..
+                }
+            )),
+            "both owner and waiter report the limit, got {warnings:?}"
+        );
+    }
+}
+
+struct FailingProvider;
+
+impl NetworkProvider for FailingProvider {
+    fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
+        Err(NetworkError::Other("boom".to_owned()))
+    }
+}
+
+#[test]
+fn failing_provider_reports_network_fallback() {
+    let provider = FailingProvider;
+    let resources = RenderResources::new().network_provider(&provider);
+    let url = Url::parse("https://images.test/failing.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter()
+            .any(|warning| matches!(warning.kind, WarningKind::NetworkFallback { .. })),
+        "failing provider surfaces as NetworkFallback, got {seen:?}"
+    );
+}
+
+#[test]
+fn sequential_second_fetch_hits_fast_path_without_provider_call() {
+    let bytes = png_bytes(1, 1);
+    let provider = CountingPngProvider::new(bytes);
+    let resources = RenderResources::new().network_provider(&provider);
+    let url = Url::parse("https://images.test/sequential.png").unwrap();
+    let first_warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &first_warnings, None);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    let second_warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &second_warnings, None);
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1,
+        "cached second fetch issues no provider request"
+    );
+    assert!(
+        second_warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    );
+}
+
+#[test]
+fn data_abort_before_decode_reports_fallback() {
+    let resources = RenderResources::new();
+    let controller = AbortController::new();
+    controller.abort();
+    let data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let url = Url::parse(data_url).expect("data URL parses");
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, Some(&controller.signal));
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            warning.kind,
+            WarningKind::ResourceFallback {
+                kind: ResourceKind::Image,
+                ..
+            }
+        )),
+        "aborted data decode surfaces as a fallback, got {seen:?}"
+    );
+}
+
+#[test]
+fn cache_smaller_replace_releases_process_bytes() {
+    let budget = Arc::new(ProcessImageBudget::new(1024 * 1024, 4));
+    let mut cache = DecodedImageCache::new(Arc::clone(&budget));
+    let url = Url::parse("https://images.test/shrink.png").unwrap();
+    let big = Arc::new(DecodedImage {
+        width: 4,
+        height: 4,
+        rgba: vec![0; 64],
+    });
+    cache
+        .insert_raster(
+            url.clone(),
+            CachedBackgroundSource::Raster(Arc::clone(&big)),
+            ImageRasterSize {
+                width: 4.0,
+                height: 4.0,
+            },
+            Arc::clone(&big),
+        )
+        .expect("big insert fits");
+    assert_eq!(budget.retained(), 64);
+    let small = Arc::new(DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0; 4],
+    });
+    cache
+        .insert_raster(
+            url.clone(),
+            CachedBackgroundSource::Raster(Arc::clone(&small)),
+            ImageRasterSize {
+                width: 1.0,
+                height: 1.0,
+            },
+            small,
+        )
+        .expect("smaller replace fits");
+    assert_eq!(budget.retained(), 4);
+    assert_eq!(cache.prior_bytes(&url), 4);
+}
+
+#[test]
+fn concurrent_inserts_bound_process_retained_at_insert() {
+    let shared = Arc::new(ProcessImageBudget::new(100, 4));
+    let first_bytes = png_bytes(4, 4);
+    let second_bytes = png_bytes(4, 4);
+    let first_provider = CountingPngProvider::with_delay(first_bytes, Duration::from_millis(80));
+    let second_provider = CountingPngProvider::with_delay(second_bytes, Duration::from_millis(80));
+    let first = RenderResources::new()
+        .network_provider(&first_provider)
+        .with_test_process_budget(Arc::clone(&shared));
+    let second = RenderResources::new()
+        .network_provider(&second_provider)
+        .with_test_process_budget(Arc::clone(&shared));
+    let first_url = Url::parse("https://images.test/concurrent-a.png").unwrap();
+    let second_url = Url::parse("https://images.test/concurrent-b.png").unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+    let first_ref = &first;
+    let second_ref = &second;
+    std::thread::scope(|scope| {
+        let barrier_a = Arc::clone(&barrier);
+        let handle_a = scope.spawn(move || {
+            barrier_a.wait();
+            let warnings = Arc::new(Mutex::new(Vec::new()));
+            first_ref.fetch_background_image(first_url, &warnings, None);
+            warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        });
+        let barrier_b = Arc::clone(&barrier);
+        let handle_b = scope.spawn(move || {
+            barrier_b.wait();
+            let warnings = Arc::new(Mutex::new(Vec::new()));
+            second_ref.fetch_background_image(second_url, &warnings, None);
+            warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        });
+        let first_warnings = handle_a.join().expect("first concurrent joins");
+        let second_warnings = handle_b.join().expect("second concurrent joins");
+        let total_cached = usize::from(
+            first
+                .cached_background_image(
+                    &Url::parse("https://images.test/concurrent-a.png").unwrap(),
+                )
+                .is_some(),
+        ) + usize::from(
+            second
+                .cached_background_image(
+                    &Url::parse("https://images.test/concurrent-b.png").unwrap(),
+                )
+                .is_some(),
+        );
+        assert!(
+            total_cached >= 1,
+            "at least one concurrent insert retains, got {total_cached}"
+        );
+        let _ = (first_warnings, second_warnings);
+    });
+    assert!(
+        shared.retained() <= 100,
+        "process retained never exceeds the cap, got {}",
+        shared.retained()
+    );
+}
+
+#[test]
+fn invalid_bytes_with_zero_timeout_reports_timeout() {
+    let provider = CountingPngProvider::new(b"not an image".to_vec());
+    let policy = ZeroDecodeTimeoutPolicy;
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let url = Url::parse("https://images.test/timeout-decode.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen.iter().any(|warning| matches!(
+            &warning.kind,
+            WarningKind::PolicyWarning { violation }
+                if matches!(violation.violation_type, ViolationType::Timeout)
+        )),
+        "decode failure under zero timeout reports Timeout, got {seen:?}"
+    );
+}
+
+#[test]
+fn svg_raster_zero_timeout_via_direct_cache_returns_none() {
+    let policy = ZeroDecodeTimeoutPolicy;
+    let resources = RenderResources::new().network_policy(&policy);
+    let url = Url::parse("https://images.test/direct-timeout.svg").unwrap();
+    resources.cache_image_source(
+        url.clone(),
+        CachedBackgroundSource::Svg(Arc::new(
+            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+        )),
+    );
+    let raster = resources.get_decoded_at_size(
+        &url,
+        ImageRasterSize {
+            width: 4.0,
+            height: 2.0,
+        },
+        None,
+    );
+    assert!(
+        raster.is_none(),
+        "zero timeout refuses the paint-time SVG raster"
+    );
+    let allow = AllowAllPolicy;
+    let allowed = RenderResources::new().network_policy(&allow);
+    allowed.cache_image_source(
+        url.clone(),
+        CachedBackgroundSource::Svg(Arc::new(
+            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+        )),
+    );
+    let ok = allowed.get_decoded_at_size(
+        &url,
+        ImageRasterSize {
+            width: 4.0,
+            height: 2.0,
+        },
+        None,
+    );
+    assert!(ok.is_some(), "without a zero timeout SVG rasterizes");
 }

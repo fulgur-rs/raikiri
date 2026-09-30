@@ -40,9 +40,9 @@ struct RenderExecutionResources<'a> {
 }
 
 struct FallbackRecordingResolver<'a> {
-    inner: &'a dyn ReplacedResolver,
+    inner: &'a (dyn ReplacedResolver + Send + Sync),
     policy: Option<&'a dyn ResourcePolicy>,
-    image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
+    image_pixel_source: Option<&'a (dyn raikiri_traits::ImagePixelSource + Send + Sync)>,
     warnings: SharedRenderWarnings,
     seen: Mutex<HashSet<(url::Url, String)>>,
 }
@@ -510,6 +510,7 @@ fn preload_page_background_images(
     resources: &RenderResources<'_>,
     warnings: &SharedRenderWarnings,
     media_context: &MediaContext,
+    signal: Option<&raikiri_traits::AbortSignal>,
 ) {
     let mut seen = HashSet::new();
     let mut attempts = 0usize;
@@ -521,7 +522,7 @@ fn preload_page_background_images(
             &query,
             consumer_properties,
         );
-        resources.preload_background_images(&cascade, warnings, &mut seen, &mut attempts);
+        resources.preload_background_images(&cascade, warnings, &mut seen, &mut attempts, signal);
     }
 }
 
@@ -800,6 +801,7 @@ pub(crate) fn run_pipeline(
             resources,
             &runtime.warnings,
             media_context,
+            signal.as_ref(),
         );
     }
 
