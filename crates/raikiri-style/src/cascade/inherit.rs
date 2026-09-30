@@ -258,6 +258,23 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                     pseudo_local_custom_properties.unwrap_or_else(empty_custom_properties);
 
                 let mut pseudo_specified = SpecifiedValues::inherit_from(&computed);
+                // Filter by longhand key before choosing winners, including
+                // deferred var() values and expanded shorthand candidates.
+                let first_line_candidates;
+                let candidates = if pseudo == PseudoElem::FirstLine {
+                    first_line_candidates = candidates.map(|values| {
+                        values
+                            .iter()
+                            .filter(|(value, ..)| {
+                                super::first_line::first_line_property_applies(value.key())
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    });
+                    first_line_candidates.as_deref()
+                } else {
+                    candidates
+                };
                 if let Some(candidates) = candidates {
                     apply_winners(
                         candidates,
