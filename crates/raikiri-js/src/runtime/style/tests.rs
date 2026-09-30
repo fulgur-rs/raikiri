@@ -962,3 +962,36 @@ fn get_bounding_client_rect_subtracts_viewport_except_for_fixed() {
          && kids[0].getBoundingClientRect().left === 5 && kids[0].getBoundingClientRect().top === 6",
     );
 }
+
+/// `setProperty` on the table-declared longhands of raikiri-style: a
+/// longhand without a serialization stores a valid value as written
+/// (trimmed); one with a serialization stores its canonical form. A
+/// longhand that gains a serialization moves its rows from the first list
+/// to the second.
+#[test]
+fn table_longhands_store_their_values_as_written_or_canonicalized() {
+    const STORED_AS_WRITTEN: &[(&str, &str)] = &[
+        ("isolation", "ISOLATE"),
+        ("object-fit", "Scale-Down"),
+        ("empty-cells", "HIDE"),
+        ("opacity", "50%"),
+        ("object-position", "left  10px top 2em"),
+    ];
+    const CANONICALIZED: &[(&str, &str, &str)] = &[];
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.body.style;").unwrap();
+    let stored = STORED_AS_WRITTEN
+        .iter()
+        .map(|&(property, value)| (property, value, value))
+        .chain(CANONICALIZED.iter().copied());
+    for (property, value, expected) in stored {
+        ok(
+            &mut rt,
+            &format!(
+                "s.setProperty('{property}', ' {value} '); s.getPropertyValue('{property}') === '{expected}'"
+            ),
+        );
+    }
+}

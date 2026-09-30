@@ -16,23 +16,22 @@ use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
+    ComputedTable, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
     FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
     FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
     FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
     FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue,
-    TextAlign, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
-    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify,
-    TextOrientation, TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode,
-    TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    HyphenateLimitChars, Hyphens, LineBreak, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign,
+    TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
+    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation,
+    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
+    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -1537,77 +1536,20 @@ pub struct ComputedValues {
     /// own dimensions (paint/used-value layer, see
     /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
-    /// `object-fit`. **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
-    /// Images Module Level 3 §5.1 "Sizing the replaced element: the
-    /// object-fit property"
-    /// <https://www.w3.org/TR/css-images-3/#the-object-fit>, "Value: `fill |
-    /// contain | cover | none | scale-down`", "Inherited: no"). Computed
-    /// value = specified keyword.
-    pub object_fit: ObjectFit,
-    /// `object-position`. **non-inherited**, initial: `50% 50%` (CSS Images
-    /// Module Level 3 §5.2 "Positioning the replaced element: the
-    /// object-position property"
-    /// <https://www.w3.org/TR/css-images-3/#the-object-position>, "Value:
-    /// `<position>`", "Inherited: no"). Computed value = "as for
-    /// background-position" per that same propdef table — this crate reuses
-    /// [`crate::property::CssPosition`]/[`ComputedCssPosition`] verbatim
-    /// ([`crate::property::CssPosition`] doc's reuse note). Percentages
-    /// resolve against the replaced element's own content box at used-value
-    /// time (a layout-time input this crate's cascade/computed layer does
-    /// not have), so — same as [`Self::background_position`] — the
-    /// `<length-percentage>` payload is absolutized against font-size/
-    /// line-height only, not against a box size.
-    pub object_position: ComputedCssPosition,
-    /// `opacity`. **non-inherited**, initial: `1` (CSS Color 4 §3.3
-    /// "Transparency: the opacity property"
-    /// <https://www.w3.org/TR/css-color-4/#transparency>, "Value:
-    /// `<opacity-value>`", "Inherited: no"). Grammar: `<opacity-value> =
-    /// <number> | <percentage>`.
-    ///
-    /// # Specified preserves, computed clamps
-    ///
-    /// Same §, verbatim: "Opacity values outside the range \[0, 1\] are not
-    /// invalid, and are preserved in specified values, but are clamped to
-    /// the range \[0, 1\] in computed values." A value produced by the
-    /// ordinary parse -> cascade pipeline through this field always lands
-    /// in `[0.0, 1.0]`: this crate's `property` module numeric-token
-    /// acquisition (`expect_number_stable`/`expect_percentage_stable`)
-    /// corrects the one cssparser tokenizer artifact that could otherwise
-    /// produce a NaN parse (a huge-exponent, zero-mantissa literal like
-    /// `opacity: 0e999`), and `parse_opacity_value`'s `!is_nan()` guard
-    /// remains on top as defense-in-depth; the `[0, 1]` clamp for every
-    /// other out-of-range value (including `+Inf`/`-Inf`) happens in
-    /// [`crate::specified::SpecifiedValues::absolutize_with`] (phase 3) and
-    /// its page-context sibling in [`crate::page`]; the corresponding
-    /// specified-layer field
-    /// ([`crate::specified::SpecifiedValues::opacity`]) is the one that
-    /// preserves an out-of-range parse (still NaN-free), per
-    /// [`crate::property::PropertyValue::Opacity`]'s doc.
-    ///
-    /// This is **not** a type-level invariant this public field enforces
-    /// against direct construction — [`Self`] has no private state guarding
-    /// it, so code in this crate (or, via a future non-`#[non_exhaustive]`
-    /// bump, outside it) that builds a `ComputedValues` by struct literal
-    /// and assigns this field directly (bypassing `finalize`/
-    /// `absolutize_in_page_context`) can still put a NaN or out-of-range
-    /// `f32` here; it only describes what the pipeline itself guarantees.
-    ///
-    /// The actual alpha-blend application of this value against a node's
-    /// paint output is out of this crate's scope — `raikiri-paint`
-    /// consumes it as plain data.
-    pub opacity: f32,
-    /// `isolation`. **non-inherited**, initial: [`Isolation::Auto`] (CSS
-    /// Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
-    /// property" <https://www.w3.org/TR/compositing-1/#isolation>). Always
-    /// a keyword — no phase-3 transform, identity pass-through from
-    /// [`crate::specified::SpecifiedValues::isolation`] (same shape as
-    /// [`Self::object_fit`]).
-    pub isolation: Isolation,
+    /// Computed values of the longhands declared in the `properties!` table
+    /// of `property/decl.rs` (such as `isolation`). Each can also be read as
+    /// a field of `ComputedValues` itself through `Deref` (for example
+    /// `values.isolation`); writes go through this field
+    /// (`values.longhands.isolation = ..`), since no `DerefMut` is provided.
+    /// See [`ComputedTable`] for the fields.
+    pub longhands: ComputedTable,
     /// `mix-blend-mode`. **non-inherited**, initial:
     /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1
     /// §3.4.1 "Mix Blend Mode: the mix-blend-mode property"
-    /// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>). Same shape
-    /// as [`Self::isolation`] above — actual blending compositing is
+    /// <https://www.w3.org/TR/compositing-1/#mix-blend-mode>). Always a
+    /// keyword — no phase-3 transform, identity pass-through from
+    /// [`crate::specified::SpecifiedValues::mix_blend_mode`] (same shape as
+    /// [`ComputedTable::object_fit`]) — actual blending compositing is
     /// `raikiri-paint`'s responsibility, this field is plain data.
     pub mix_blend_mode: MixBlendMode,
     /// `mask-image`. **non-inherited**, initial: [`MaskImage::None`] (CSS
@@ -1703,19 +1645,6 @@ pub struct ComputedValues {
     /// is layout-time behavior (raikiri-dom scope) — [`Self::table_layout`]
     /// doc's split applies here as well.
     pub caption_side: CaptionSideValue,
-    /// `empty-cells`. **inherited**, initial:
-    /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8 "Empty Cells"
-    /// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>,
-    /// "Initial: show" / "Inherited: yes"). Computed value = specified
-    /// keyword ([`EmptyCellsValue`] doc — no length payload).
-    ///
-    /// # Scope carving
-    ///
-    /// This field carries the cascaded value only. Empty-cell border /
-    /// background painting is layout/paint-time behavior (raikiri-dom /
-    /// raikiri-paint scope) — [`Self::table_layout`] doc's split applies
-    /// here as well.
-    pub empty_cells: EmptyCellsValue,
     /// `column-count` — non-inherited multicol container setting.
     pub column_count: ColumnCountValue,
     /// Computed `column-width` — non-inherited multicol container setting.
@@ -2054,21 +1983,8 @@ impl ComputedValues {
             // CSS Backgrounds and Borders 3 §2.3: initial background-image
             // is `none`.
             background_image: BackgroundImage::None,
-            // CSS Images 3 §5.1: initial object-fit is `fill`.
-            object_fit: ObjectFit::Fill,
-            // CSS Images 3 §5.2: initial object-position is `50% 50%`,
-            // unlike the `0% 0%` initial background-position.
-            object_position: ComputedCssPosition {
-                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
-                    50.0,
-                )),
-                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
-            },
-            // CSS Color 4 §3.3: initial opacity is `1`.
-            opacity: 1.0,
-            // CSS Compositing and Blending 1 §3.4.2: initial isolation
-            // is `auto`.
-            isolation: Isolation::Auto,
+            // Each table-declared longhand at its initial value.
+            longhands: ComputedTable::initial(),
             // CSS Compositing and Blending 1 §3.4.1: initial
             // mix-blend-mode is `normal`.
             mix_blend_mode: MixBlendMode::Normal,
@@ -2103,9 +2019,6 @@ impl ComputedValues {
             // CSS Tables 3 §7: initial caption-side is `top`
             // (inherited; used to seed the root).
             caption_side: CaptionSideValue::Top,
-            // CSS Tables 3 §8: initial empty-cells is `show`
-            // (inherited; used to seed the root).
-            empty_cells: EmptyCellsValue::Show,
             // CSS Multi-column Layout 1: both longhands initially `auto`.
             column_count: ColumnCountValue::Auto,
             column_width: ComputedColumnWidth::Auto,
@@ -2121,13 +2034,15 @@ impl ComputedValues {
     /// - Keep **non-inherited** properties at their `initial()` values.
     ///
     /// The field documentation on [`Self`] is the canonical source for each
-    /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
+    /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side;
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout).
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout; and the longhands declared in `properties!`, according to their `inherited:` key).
     ///
     /// The inherited/non-inherited classification is defined by each field's
-    /// documentation. Inherited fields are copied from the parent's computed
-    /// values; non-inherited fields retain their initial values.
+    /// documentation; for the table-declared longhands held in
+    /// [`Self::longhands`], it is the `inherited:` key of the property's
+    /// `properties!` entry. Inherited fields are copied from the parent's
+    /// computed values; non-inherited fields retain their initial values.
     ///
     pub fn inherit_from(parent: &Self) -> Self {
         let mut child = crate::specified::SpecifiedValues::inherit_from(parent).finalize(

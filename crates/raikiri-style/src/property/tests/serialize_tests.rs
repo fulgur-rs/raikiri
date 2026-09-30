@@ -667,3 +667,62 @@ fn negative_zero_serializes_without_a_sign() {
     assert_eq!(serialize_length(&Length::Percent(-0.0)), "0%");
     assert_eq!(crate::ComputedLength(-0.0).to_css_string(), "0px");
 }
+
+/// Table-declared longhands with `serialize:`: `(css name, input,
+/// expected serialize_value)`. Giving an entry `serialize:` means moving its
+/// rows here from [`UNSERIALIZED_TABLE_INPUTS`] (and adding at least one);
+/// `table_longhand_serialization_matches_the_rows` names an entry that is
+/// in the wrong table.
+const SERIALIZED_TABLE_VALUES: &[(&str, &str, Option<&str>)] = &[];
+
+/// Inputs of table-declared longhands without `serialize:`, for which
+/// `serialize_value` is `None` (callers echo the input).
+const UNSERIALIZED_TABLE_INPUTS: &[(&str, &str)] = &[
+    ("isolation", "ISOLATE"),
+    ("object-fit", "scale-down"),
+    ("empty-cells", "hide"),
+    ("opacity", "50%"),
+    ("opacity", "2"),
+    ("object-position", "left 10px top 2em"),
+];
+
+fn parse_table_value(name: &str, css: &str) -> PropertyValue {
+    let mut input = cssparser::ParserInput::new(css);
+    let mut parser = cssparser::Parser::new(&mut input);
+    parse_value(name, &mut parser).unwrap_or_else(|| panic!("{name}: {css} is valid"))
+}
+
+/// Every table-declared longhand is serialized exactly when it has a row in
+/// [`SERIALIZED_TABLE_VALUES`]; the others serialize their sample and every
+/// listed input to `None`.
+#[test]
+fn table_longhand_serialization_matches_the_rows() {
+    let has_row = |name: &str| SERIALIZED_TABLE_VALUES.iter().any(|(n, ..)| *n == name);
+    for (name, value) in longhand_samples() {
+        let serializes = longhand_serializes(value.key());
+        assert_eq!(
+            serializes,
+            has_row(name),
+            "{name}: `serialize:` and a SERIALIZED_TABLE_VALUES row go together"
+        );
+        if !serializes {
+            assert_eq!(serialize_value(&value), None, "{name}");
+        }
+    }
+    for &(name, css, expected) in SERIALIZED_TABLE_VALUES {
+        let value = parse_table_value(name, css);
+        assert_eq!(
+            serialize_value(&value).as_deref(),
+            expected,
+            "{name}: {css}"
+        );
+    }
+    for &(name, css) in UNSERIALIZED_TABLE_INPUTS {
+        let value = parse_table_value(name, css);
+        assert!(
+            !longhand_serializes(value.key()),
+            "{name} has `serialize:`: move its UNSERIALIZED_TABLE_INPUTS rows to SERIALIZED_TABLE_VALUES"
+        );
+        assert_eq!(serialize_value(&value), None, "{name}: {css}");
+    }
+}

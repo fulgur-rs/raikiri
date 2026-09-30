@@ -5,6 +5,7 @@ use crate::PseudoElem;
 use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
+use crate::property::longhand_value_pat;
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
@@ -1684,28 +1685,10 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Font(_)
-        // object-fit (CSS Images Module Level 3 §5.1) — non-inherited,
-        // keyword-only, same "nothing for phase 2 to resolve" shape as
-        // `BackgroundRepeat` above.
-        | PropertyValue::ObjectFit(_)
-        // object-position (CSS Images Module Level 3 §5.2) — non-inherited,
-        // reuses `CssPosition` (`background-position`'s type); its
-        // `<length-percentage>` absolutization is phase 3's job, same as
-        // `BackgroundPosition` above.
-        | PropertyValue::ObjectPosition(_)
-        // opacity (CSS Color 4 §3.3) — non-inherited, carries a bare
-        // `<number>`/`<percentage>`-derived `f32`, not a length, and does
-        // not depend on the inheritance parent — nothing for phase 2 to
-        // resolve here. The `[0,1]` clamp (CSS Color 4 §3.3's "computed
-        // value: … clamped" rule) is phase 3's job
-        // (`crate::specified::SpecifiedValues::absolutize_with`), same
-        // split `FlexGrow`/`ZIndex` use for their own phase-3-only work.
-        | PropertyValue::Opacity(_)
-        // isolation (CSS Compositing and Blending Level 1 §3.4.2) /
-        // mix-blend-mode (§3.4.1) — both non-inherited, bare keyword
-        // payloads with no phase-2 dependency, same shape as `ObjectFit`
+        // mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) —
+        // non-inherited, bare keyword payload with no phase-2 dependency,
+        // same "nothing for phase 2 to resolve" shape as `BackgroundRepeat`
         // above.
-        | PropertyValue::Isolation(_)
         | PropertyValue::MixBlendMode(_)
         // mask-image (CSS Masking Level 1 §7.1) / clip-path (§5.1) —
         // non-inherited, `<url>`/`<gradient>`/`<geometry-box>` payloads
@@ -1729,11 +1712,10 @@ pub(crate) fn resolve_against_inherited(
         // `border-spacing` (CSS Tables 3 §6.1): absolutizing `<length>{1,2}`
         // needs the declaring node's own font-size, so it belongs in phase 3
         // (like the "nothing for phase 2" `Padding`/`Margin` arms).
-        // `caption-side` (§7) / `empty-cells` (§8) hold bare keywords and have
-        // no phase-2 dependency (like `BorderCollapse`).
+        // `caption-side` (§7) holds a bare keyword and has no phase-2
+        // dependency (like `BorderCollapse`).
         | PropertyValue::BorderSpacing(_)
         | PropertyValue::CaptionSide(_)
-        | PropertyValue::EmptyCells(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::Grid(_)
@@ -1748,7 +1730,11 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Page(_)
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
-        | PropertyValue::Columns(_)) => v,
+        | PropertyValue::Columns(_)
+        // Table-declared longhands (`properties!` in property/decl.rs) have
+        // no phase-2 dependency: a parent-dependent value would need its own
+        // arm here.
+        | longhand_value_pat!()) => v,
     })
 }
 
@@ -2138,10 +2124,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, |v| apply_value(v, target)),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),
         PropertyValue::Font(shorthand) => expand_font(&shorthand, |v| apply_value(v, target)),
-        PropertyValue::ObjectFit(v) => target.object_fit = v,
-        PropertyValue::ObjectPosition(v) => target.object_position = v,
-        PropertyValue::Opacity(v) => target.opacity = v,
-        PropertyValue::Isolation(v) => target.isolation = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
@@ -2155,7 +2137,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
         PropertyValue::BorderSpacing(v) => target.border_spacing = v,
         PropertyValue::CaptionSide(v) => target.caption_side = v,
-        PropertyValue::EmptyCells(v) => target.empty_cells = v,
         // Parsed but not yet staged for elements.
         PropertyValue::TextAlignAll(_) => {}
         PropertyValue::Page(value) => target.page = value,
@@ -2168,6 +2149,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         // Resolved before ordinary winners reach this function.
         PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_) => {}
+        v @ longhand_value_pat!() => target.longhands.apply(v),
     }
 }
 

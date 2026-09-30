@@ -1,0 +1,390 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: pretty(expanded)
+---
+mod decl {
+    pub enum PropertyValue {
+        Deferred (DeferredValue) ,
+        # [doc = " The `object-fit` longhand."]
+        # [doc = ""]
+        # [doc = " CSS Images 3 §5.1"]
+        ObjectFit (object_fit :: Specified) ,
+        # [doc = " The `word-spacing` longhand."]
+        # [doc = ""]
+        # [doc = " CSS Text 3 §7.2"]
+        WordSpacing (spacing :: Specified)
+    }
+    pub enum PropertyKey {
+        # [doc = " Key of the `object-fit` longhand."]
+        ObjectFit ,
+        # [doc = " Key of the `word-spacing` longhand."]
+        WordSpacing
+    }
+    # [doc = " Value types of the `object-fit` longhand."]
+    # [doc = ""]
+    # [doc = " CSS Images 3 §5.1"]
+    pub mod object_fit {
+        # [allow (unused_imports)]
+        use super :: * ;
+        # [doc = " Specified value of `object-fit`."]
+        pub type Specified = ObjectFit ;
+        # [doc = " Computed value of `object-fit`."]
+        pub type Computed = ObjectFit ;
+        # [doc = " The `object-fit` longhand, as a type implementing the crate's `Longhand` trait."]
+        pub (crate) enum Property {
+        }
+    }
+    impl crate :: property :: Longhand for object_fit :: Property {
+        const NAME : & 'static str = "object-fit" ;
+        const INHERITED : bool = false ;
+        type Specified = object_fit :: Specified ;
+        type Computed = object_fit :: Computed ;
+        fn initial () -> Self :: Specified {
+            < ObjectFit > :: Fill
+        }
+        fn parse (input : & mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > {
+            let parse : fn (& mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > = parse_object_fit ;
+            parse (input)
+        }
+        fn compute (specified : Self :: Specified , cx : & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed {
+            let _ = cx ;
+            specified
+        }
+        fn lift (computed : Self :: Computed) -> Self :: Specified {
+            computed
+        }
+        # [cfg (test)]
+        fn sample () -> Self :: Specified {
+            < ObjectFit > :: Contain
+        }
+    }
+    # [doc = " Value types of the `word-spacing` longhand."]
+    # [doc = ""]
+    # [doc = " CSS Text 3 §7.2"]
+    pub mod spacing {
+        # [allow (unused_imports)]
+        use super :: * ;
+        # [doc = " Specified value of `word-spacing`."]
+        pub type Specified = Length ;
+        # [doc = " Computed value of `word-spacing`."]
+        pub type Computed = ComputedLength ;
+        # [doc = " The `word-spacing` longhand, as a type implementing the crate's `Longhand` trait."]
+        pub (crate) enum Property {
+        }
+    }
+    impl crate :: property :: Longhand for spacing :: Property {
+        const NAME : & 'static str = "word-spacing" ;
+        const INHERITED : bool = true ;
+        type Specified = spacing :: Specified ;
+        type Computed = spacing :: Computed ;
+        fn initial () -> Self :: Specified {
+            Length :: Px (0.0)
+        }
+        fn parse (input : & mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > {
+            let parse : fn (& mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > = parse_length ;
+            parse (input)
+        }
+        fn compute (specified : Self :: Specified , cx : & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed {
+            let compute : fn (Self :: Specified , & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed = absolutize_length ;
+            compute (specified , cx)
+        }
+        fn lift (computed : Self :: Computed) -> Self :: Specified {
+            let lift : fn (Self :: Computed) -> Self :: Specified = lift_length ;
+            lift (computed)
+        }
+        # [cfg (test)]
+        fn sample () -> Self :: Specified {
+            Length :: Em (2.0)
+        }
+    }
+    impl PropertyValue {
+        # [doc = r" Returns the property key for this value."]
+        # [doc = r""]
+        # [doc = r" Used as the discriminant for selecting one winner per property in the"]
+        # [doc = r" cascade, and as the key in the `@page` cascade result map."]
+        pub fn key (& self) -> PropertyKey {
+            match self {
+                PropertyValue :: Deferred (payload) => {
+                    let key_of : fn (& DeferredValue) -> PropertyKey = | value | value . key ;
+                    key_of (payload)
+                }
+                PropertyValue :: ObjectFit (_) => PropertyKey :: ObjectFit ,
+                PropertyValue :: WordSpacing (_) => PropertyKey :: WordSpacing ,
+            }
+        }
+    }
+    # [doc = r" Specified values of the longhands declared in `properties!`,"]
+    # [doc = r" embedded as `SpecifiedValues::longhands`; its fields are readable"]
+    # [doc = r" directly on `SpecifiedValues` through `Deref` and written through"]
+    # [doc = r" `longhands`."]
+    # [derive (Clone , Debug , PartialEq)]
+    # [non_exhaustive]
+    pub struct SpecifiedTable {
+        # [doc = " Specified `object-fit`."]
+        # [doc = ""]
+        # [doc = " CSS Images 3 §5.1"]
+        pub object_fit : object_fit :: Specified ,
+        # [doc = " Specified `word-spacing`."]
+        # [doc = ""]
+        # [doc = " CSS Text 3 §7.2"]
+        pub spacing : spacing :: Specified ,
+    }
+    # [doc = r" Computed values of the longhands declared in `properties!`,"]
+    # [doc = r" embedded as `ComputedValues::longhands`; its fields are readable"]
+    # [doc = r" directly on `ComputedValues` through `Deref` and written through"]
+    # [doc = r" `longhands`."]
+    # [derive (Clone , Debug , PartialEq)]
+    # [non_exhaustive]
+    pub struct ComputedTable {
+        # [doc = " Computed `object-fit`."]
+        # [doc = ""]
+        # [doc = " CSS Images 3 §5.1"]
+        pub object_fit : object_fit :: Computed ,
+        # [doc = " Computed `word-spacing`."]
+        # [doc = ""]
+        # [doc = " CSS Text 3 §7.2"]
+        pub spacing : spacing :: Computed ,
+    }
+    # [allow (clippy :: clone_on_copy , unused_variables)]
+    impl SpecifiedTable {
+        # [doc = r" Every field at its initial value."]
+        pub (crate) fn initial () -> Self {
+            Self {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: initial () ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: initial () ,
+            }
+        }
+        # [doc = r" The specified state of a child: inherited fields copy the"]
+        # [doc = r" parent's computed value (lifted back to specified form), the"]
+        # [doc = r" others start at their initial value."]
+        pub (crate) fn inherit_from (parent : & ComputedTable) -> Self {
+            Self {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: initial () ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: lift (:: core :: clone :: Clone :: clone (& parent . spacing)) ,
+            }
+        }
+        # [doc = r" Specified to computed, through each longhand's `compute`."]
+        pub (crate) fn absolutize (self , cx : & crate :: property :: AbsolutizeCx < '_ >) -> ComputedTable {
+            ComputedTable {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: compute (self . object_fit , cx) ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: compute (self . spacing , cx) ,
+            }
+        }
+        # [doc = r" Stores a cascade winner in its field. `value` must be a"]
+        # [doc = r" variant declared in `properties!`."]
+        pub (crate) fn apply (& mut self , value : PropertyValue) {
+            match value {
+                PropertyValue :: ObjectFit (v) => self . object_fit = v ,
+                PropertyValue :: WordSpacing (v) => self . spacing = v ,
+                other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+            }
+        }
+        # [doc = r" Every field at its entry's `sample` value: a non-initial"]
+        # [doc = r" value for test fixtures."]
+        # [cfg (test)]
+        pub (crate) fn sample () -> Self {
+            Self {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: sample () ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: sample () ,
+            }
+        }
+        # [doc = r" The CSS names of the entries whose fields are equal in `self`"]
+        # [doc = r" and `other`, in declaration order (test only; for checking that"]
+        # [doc = r" a fixture differs from the initial values in every entry)."]
+        # [cfg (test)]
+        pub (crate) fn equal_fields (& self , other : & Self) -> :: std :: vec :: Vec < & 'static str > {
+            let pairs : & [(& 'static str , bool)] = & [("object-fit" , self . object_fit == other . object_fit) , ("word-spacing" , self . spacing == other . spacing) ,] ;
+            pairs . iter () . filter (| (_ , equal) | * equal) . map (| (name , _) | * name) . collect ()
+        }
+    }
+    # [allow (unused_variables)]
+    impl ComputedTable {
+        # [doc = r" Every field at its initial value, computed in the initial"]
+        # [doc = r" context."]
+        pub (crate) fn initial () -> Self {
+            let ctx = crate :: resolve :: ResolveContext :: initial () ;
+            let cx = & crate :: property :: AbsolutizeCx :: initial (& ctx) ;
+            Self {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: compute (< object_fit :: Property as crate :: property :: Longhand > :: initial () , cx) ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: compute (< spacing :: Property as crate :: property :: Longhand > :: initial () , cx) ,
+            }
+        }
+        # [doc = r" Every field at its entry's `sample` value, computed in the"]
+        # [doc = r" initial context: a non-initial value for test fixtures, as"]
+        # [doc = r" long as no entry's `compute` maps its sample to the computed"]
+        # [doc = r" initial value (check with [`Self::equal_fields`])."]
+        # [cfg (test)]
+        pub (crate) fn sample () -> Self {
+            let ctx = crate :: resolve :: ResolveContext :: initial () ;
+            let cx = & crate :: property :: AbsolutizeCx :: initial (& ctx) ;
+            Self {
+                object_fit : < object_fit :: Property as crate :: property :: Longhand > :: compute (< object_fit :: Property as crate :: property :: Longhand > :: sample () , cx) ,
+                spacing : < spacing :: Property as crate :: property :: Longhand > :: compute (< spacing :: Property as crate :: property :: Longhand > :: sample () , cx) ,
+            }
+        }
+        # [doc = r" The CSS names of the entries whose fields are equal in `self`"]
+        # [doc = r" and `other`, in declaration order (test only; for checking that"]
+        # [doc = r" a fixture differs from the initial values in every entry)."]
+        # [cfg (test)]
+        pub (crate) fn equal_fields (& self , other : & Self) -> :: std :: vec :: Vec < & 'static str > {
+            let pairs : & [(& 'static str , bool)] = & [("object-fit" , self . object_fit == other . object_fit) , ("word-spacing" , self . spacing == other . spacing) ,] ;
+            pairs . iter () . filter (| (_ , equal) | * equal) . map (| (name , _) | * name) . collect ()
+        }
+    }
+    # [doc = r" Page-context absolutization of one declared longhand value."]
+    # [doc = r" `PropertyValue` keeps its specified payload type, so the value is"]
+    # [doc = r" computed and lifted back. `value` must be a variant declared in"]
+    # [doc = r" `properties!`."]
+    pub (crate) fn longhand_page_absolutize (value : PropertyValue , cx : & crate :: property :: AbsolutizeCx < '_ > ,) -> PropertyValue {
+        match value {
+            PropertyValue :: ObjectFit (v) => PropertyValue :: ObjectFit (< object_fit :: Property as crate :: property :: Longhand > :: lift (< object_fit :: Property as crate :: property :: Longhand > :: compute (v , cx)) ,) ,
+            PropertyValue :: WordSpacing (v) => PropertyValue :: WordSpacing (< spacing :: Property as crate :: property :: Longhand > :: lift (< spacing :: Property as crate :: property :: Longhand > :: compute (v , cx)) ,) ,
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    impl :: core :: ops :: Deref for crate :: specified :: SpecifiedValues {
+        type Target = SpecifiedTable ;
+        fn deref (& self) -> & SpecifiedTable {
+            & self . longhands
+        }
+    }
+    impl :: core :: ops :: Deref for crate :: computed :: ComputedValues {
+        type Target = ComputedTable ;
+        fn deref (& self) -> & ComputedTable {
+            & self . longhands
+        }
+    }
+    # [doc = r" Every longhand name declared in `properties!`, lowercase, in"]
+    # [doc = r" declaration order."]
+    pub (crate) const LONGHAND_NAMES : & [& str] = & ["object-fit" , "word-spacing"] ;
+    # [doc = r" Pattern matching every `PropertyValue` variant declared in"]
+    # [doc = r" `properties!`, for the exhaustive matches whose declared"]
+    # [doc = r" longhands all take the same pass-through arm."]
+    macro_rules ! longhand_value_pat {
+        () => {
+            crate :: property :: PropertyValue :: ObjectFit (..) | crate :: property :: PropertyValue :: WordSpacing (..)
+        }
+        ;
+    }
+    pub (crate) use longhand_value_pat ;
+    # [doc = r" Every declared longhand's CSS name paired with its sample value."]
+    # [cfg (test)]
+    pub (crate) fn longhand_samples () -> :: std :: vec :: Vec < (& 'static str , PropertyValue) > {
+        :: std :: vec ! [(< object_fit :: Property as crate :: property :: Longhand > :: NAME , longhand_sample (PropertyKey :: ObjectFit)) , (< spacing :: Property as crate :: property :: Longhand > :: NAME , longhand_sample (PropertyKey :: WordSpacing)) ,]
+    }
+    # [doc = r" The sample value of the declared longhand `key`."]
+    # [cfg (test)]
+    pub (crate) fn longhand_sample (key : PropertyKey) -> PropertyValue {
+        match key {
+            PropertyKey :: ObjectFit => PropertyValue :: ObjectFit (< object_fit :: Property as crate :: property :: Longhand > :: sample ()) ,
+            PropertyKey :: WordSpacing => PropertyValue :: WordSpacing (< spacing :: Property as crate :: property :: Longhand > :: sample ()) ,
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" The length a declared longhand's specified value still carries"]
+    # [doc = r" (a unit or form that computing resolves), named for a test"]
+    # [doc = r" failure message; `None` when it carries none. Each entry answers"]
+    # [doc = r" through its `residue:` (a function, or `none` for a value that"]
+    # [doc = r" never carries a length). `value` must be a variant declared in"]
+    # [doc = r" `properties!`."]
+    # [cfg (test)]
+    pub (crate) fn longhand_specified_residue (value : & PropertyValue ,) -> :: core :: option :: Option < & 'static str > {
+        match value {
+            PropertyValue :: ObjectFit (v) => {
+                let _ = v ;
+                :: core :: option :: Option :: None
+            }
+            PropertyValue :: WordSpacing (v) => {
+                let residue : fn (& spacing :: Specified) -> :: core :: option :: Option < & 'static str > = length_residue ;
+                residue (v)
+            }
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" Invokes `$cb! { <hand entries> Variant => sample, ... }` with every"]
+    # [doc = r" declared longhand's sample value appended after the hand entries."]
+    # [cfg (test)]
+    macro_rules ! with_longhand_samples {
+        ($ cb : ident { $ ($ hand : tt) * }) => {
+            $ cb ! {
+                $ ($ hand) * ObjectFit => crate :: property :: longhand_sample (crate :: property :: PropertyKey :: ObjectFit) ,
+                WordSpacing => crate :: property :: longhand_sample (crate :: property :: PropertyKey :: WordSpacing) ,
+            }
+        }
+        ;
+    }
+    # [cfg (test)]
+    pub (crate) use with_longhand_samples ;
+    # [doc = r" Invokes `$cb! { <hand names> Variant, ... }` with every declared"]
+    # [doc = r" variant name appended after the hand names."]
+    # [cfg (test)]
+    macro_rules ! with_longhand_variants {
+        ($ cb : ident { $ ($ hand : tt) * }) => {
+            $ cb ! {
+                $ ($ hand) * ObjectFit ,
+                WordSpacing ,
+            }
+        }
+        ;
+    }
+    # [cfg (test)]
+    pub (crate) use with_longhand_variants ;
+    # [doc = r" Name lookup for the longhands declared in `properties!`;"]
+    # [doc = r" `normalized_name` must already be ASCII-lowercase."]
+    pub (crate) fn longhand_key_for_name (normalized_name : & str ,) -> :: core :: option :: Option < PropertyKey > {
+        match normalized_name {
+            "object-fit" => :: core :: option :: Option :: Some (PropertyKey :: ObjectFit) ,
+            "word-spacing" => :: core :: option :: Option :: Some (PropertyKey :: WordSpacing) ,
+            _ => :: core :: option :: Option :: None ,
+        }
+    }
+    # [doc = r" Value parsing for the longhands declared in `properties!`;"]
+    # [doc = r" `normalized_name` must already be ASCII-lowercase. `None` covers"]
+    # [doc = r" both an unknown name and an invalid value."]
+    pub (crate) fn parse_longhand_value (normalized_name : & str , input : & mut :: cssparser :: Parser < '_ , '_ > ,) -> :: core :: option :: Option < PropertyValue > {
+        match normalized_name {
+            "object-fit" => < object_fit :: Property as crate :: property :: Longhand > :: parse (input) . map (PropertyValue :: ObjectFit) ,
+            "word-spacing" => < spacing :: Property as crate :: property :: Longhand > :: parse (input) . map (PropertyValue :: WordSpacing) ,
+            _ => {
+                let _ = input ;
+                :: core :: option :: Option :: None
+            }
+        }
+    }
+    # [doc = r" Serializes a declared longhand's specified value to CSS text"]
+    # [doc = r" through its entry's `serialize:` (the keyword spelling, or the"]
+    # [doc = r" named function); `None` for an entry without `serialize:`, whose"]
+    # [doc = r" callers echo the input instead. `value` must be a variant"]
+    # [doc = r" declared in `properties!`."]
+    pub (crate) fn longhand_serialize (value : & PropertyValue ,) -> :: core :: option :: Option < :: std :: string :: String > {
+        match value {
+            PropertyValue :: ObjectFit (v) => {
+                let _ = v ;
+                :: core :: option :: Option :: None
+            }
+            PropertyValue :: WordSpacing (v) => {
+                let _ = v ;
+                :: core :: option :: Option :: None
+            }
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" Serializes the computed value of the declared longhand `key`"]
+    # [doc = r" from `computed`, for CSSOM computed-style reads: the field is"]
+    # [doc = r" lifted back to its specified type (the identity when the entry"]
+    # [doc = r" has no computed type of its own) and serialized as"]
+    # [doc = r" `longhand_serialize` does. `None` for an entry without"]
+    # [doc = r" `serialize:` and for a key not declared in `properties!`."]
+    pub (crate) fn longhand_serialize_computed (key : PropertyKey , computed : & ComputedTable ,) -> :: core :: option :: Option < :: std :: string :: String > {
+        let _ = computed ;
+        match key {
+            _ => :: core :: option :: Option :: None ,
+        }
+    }
+    # [doc = r" Whether the declared longhand `key` has a serialization"]
+    # [doc = r" (`serialize:`); `false` for a key not declared in `properties!`."]
+    pub (crate) fn longhand_serializes (key : PropertyKey) -> bool {
+        let _ = key ;
+        false
+    }
+}

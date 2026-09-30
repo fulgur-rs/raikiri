@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use cssparser::{ParseError, Parser, ParserInput, Token};
 
+use super::parse_longhand_value;
 use super::types::*;
 
 mod box_model;
@@ -940,11 +941,6 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (initial `top`, inherited). Uses the same matching rules
         // as the `table-layout` arm above.
         "caption-side" => parse_caption_side(input).map(PropertyValue::CaptionSide),
-        // CSS Tables 3 §8 empty-cells. grammar: `show | hide`
-        // <https://www.w3.org/TR/css-tables-3/#empty-cells-property>
-        // (initial `show`, inherited). Uses the same matching rules
-        // as the `table-layout` arm above.
-        "empty-cells" => parse_empty_cells(input).map(PropertyValue::EmptyCells),
         // CSS Fonts 4 §2.1 font shorthand — 15 longhands (6 grammar components plus
         // 9 modeled reset-only subproperties) are expanded by
         // `crate::rule::expand_shorthand_into` (see its doc).
@@ -1114,28 +1110,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `||` fan-out of the 8 longhands above, single layer only
         // (`BackgroundShorthand` doc's Non-goal section).
         "background" => parse_background_shorthand(input).map(PropertyValue::Background),
-        // CSS Images Module Level 3 §5.1
-        // <https://www.w3.org/TR/css-images-3/#the-object-fit>.
-        "object-fit" => parse_object_fit(input).map(PropertyValue::ObjectFit),
-        // CSS Images Module Level 3 §5.2
-        // <https://www.w3.org/TR/css-images-3/#the-object-position>. Value:
-        // `<position>` (CSS Values 4 §8.3), not `<bg-position>` —
-        // `parse_position_strict` rejects the 3-value edge-offset form
-        // `background-position`'s `parse_bg_position` accepts
-        // (`parse_position_branch3_strict` doc's "Why" section).
-        "object-position" => parse_position_strict(input).map(PropertyValue::ObjectPosition),
         "transform-origin" => parse_transform_origin(input),
-        // CSS Color 4 §3.3
-        // <https://www.w3.org/TR/css-color-4/#transparency>. Value:
-        // `<opacity-value> = <number> | <percentage>`. The parsed number is
-        // stored verbatim, out-of-range included — see
-        // `PropertyValue::Opacity` doc's "specified preserves, computed
-        // clamps" note and `parse_opacity_value` doc.
-        "opacity" => parse_opacity_value(input).map(PropertyValue::Opacity),
-        // CSS Compositing and Blending Level 1 §3.4.2
-        // <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
-        // `auto | isolate`.
-        "isolation" => parse_isolation(input).map(PropertyValue::Isolation),
         // CSS Compositing and Blending Level 1 §3.4.1
         // <https://www.w3.org/TR/compositing-1/#mix-blend-mode>. Grammar:
         // `<blend-mode>` — see `MixBlendMode` doc for the 16-keyword list.
@@ -1166,7 +1141,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::Filter(Arc::new(v))
             }
         }),
-        _ => None,
+        // Longhands declared in a `properties!` table (decl.rs).
+        _ => parse_longhand_value(normalized_name.as_str(), input),
     }
 }
 

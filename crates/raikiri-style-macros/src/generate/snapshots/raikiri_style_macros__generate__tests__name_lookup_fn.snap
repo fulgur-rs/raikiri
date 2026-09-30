@@ -1,0 +1,14 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(name_lookup_fn)
+---
+# [doc = r" Name lookup for the longhands declared in `properties!`;"]
+# [doc = r" `normalized_name` must already be ASCII-lowercase."]
+pub (crate) fn longhand_key_for_name (normalized_name : & str ,) -> :: core :: option :: Option < PropertyKey > {
+    match normalized_name {
+        "isolation" => :: core :: option :: Option :: Some (PropertyKey :: Isolation) ,
+        "object-fit" => :: core :: option :: Option :: Some (PropertyKey :: ObjectFit) ,
+        "word-spacing" => :: core :: option :: Option :: Some (PropertyKey :: WordSpacing) ,
+        _ => :: core :: option :: Option :: None ,
+    }
+}

@@ -6,6 +6,7 @@ use super::calc_serialize::{
 };
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
+use super::{longhand_serialize, longhand_value_pat};
 
 fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
     if value.spelling_error || value.grammar_error {
@@ -544,11 +545,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BackgroundPosition(..)
         | PropertyValue::BackgroundImage(..)
         | PropertyValue::Background(..)
-        | PropertyValue::ObjectFit(..)
-        | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)
-        | PropertyValue::Opacity(..)
-        | PropertyValue::Isolation(..)
         | PropertyValue::MixBlendMode(..)
         | PropertyValue::MaskImage(..)
         | PropertyValue::ClipPath(..)
@@ -558,7 +555,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderCollapse(..)
         | PropertyValue::BorderSpacing(..)
         | PropertyValue::CaptionSide(..)
-        | PropertyValue::EmptyCells(..)
         | PropertyValue::Font(..)
         | PropertyValue::TextDecorationThickness(..)
         | PropertyValue::TextDecorationThicknessInherit
@@ -572,6 +568,11 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TextSpacingShorthand(..)
         | PropertyValue::TextEmphasisColor(..)
         | PropertyValue::TextEmphasis(..) => None,
+
+        // Table-declared longhands (`properties!` in decl.rs) serialize
+        // through their entry's `serialize:`; an entry without one returns
+        // `None`, like the arm above.
+        v @ longhand_value_pat!() => longhand_serialize(v),
     }
 }
 

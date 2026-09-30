@@ -126,6 +126,9 @@ pub use cascade::{
 #[cfg(test)]
 pub(crate) mod test_dom;
 
+#[cfg(test)]
+mod characterization;
+
 use std::fmt;
 
 use cssparser::{CowRcStr, Parser as CssParser, ParserInput, SourceLocation, ToCss};

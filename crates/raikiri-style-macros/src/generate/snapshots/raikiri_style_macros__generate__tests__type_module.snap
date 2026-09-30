@@ -1,0 +1,51 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: per_entry(type_module)
+---
+--- isolation ---
+# [doc = " Value types of the `isolation` longhand."]
+# [doc = ""]
+# [doc = " CSS Compositing 1 §3.4.2"]
+pub mod isolation {
+    # [allow (unused_imports)]
+    use super :: * ;
+    # [doc = " Specified value of `isolation`."]
+    pub type Specified = Isolation ;
+    # [doc = " Computed value of `isolation`."]
+    pub type Computed = Isolation ;
+    # [doc = " The `isolation` longhand, as a type implementing the crate's `Longhand` trait."]
+    pub (crate) enum Property {
+    }
+}
+
+--- object-fit ---
+# [doc = " Value types of the `object-fit` longhand."]
+# [doc = ""]
+# [doc = " CSS Images 3 §5.1"]
+pub mod object_fit {
+    # [allow (unused_imports)]
+    use super :: * ;
+    # [doc = " Specified value of `object-fit`."]
+    pub type Specified = ObjectFit ;
+    # [doc = " Computed value of `object-fit`."]
+    pub type Computed = ObjectFit ;
+    # [doc = " The `object-fit` longhand, as a type implementing the crate's `Longhand` trait."]
+    pub (crate) enum Property {
+    }
+}
+
+--- word-spacing ---
+# [doc = " Value types of the `word-spacing` longhand."]
+# [doc = ""]
+# [doc = " CSS Text 3 §7.2"]
+pub mod spacing {
+    # [allow (unused_imports)]
+    use super :: * ;
+    # [doc = " Specified value of `word-spacing`."]
+    pub type Specified = Length ;
+    # [doc = " Computed value of `word-spacing`."]
+    pub type Computed = ComputedLength ;
+    # [doc = " The `word-spacing` longhand, as a type implementing the crate's `Longhand` trait."]
+    pub (crate) enum Property {
+    }
+}

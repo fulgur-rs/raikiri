@@ -1,0 +1,51 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: `keywords:` needs at least one keyword
+  --> 13:29
+   |
+13 |         "a-prop" => AProp { keywords: [], initial: X, inherited: no },
+   |                             ^^^^^^^^
+
+error: keyword `X` is listed twice
+  --> 15:43
+   |
+15 |         "b-prop" => BProp { keywords: [X, X, Y = "x", Z = "Zed"], initial: X, inherited: no },
+   |                                           ^
+
+error: keyword `Y` is spelled "x" like `X`; give it another spelling with `Y = ".."`
+  --> 15:50
+   |
+15 |         "b-prop" => BProp { keywords: [X, X, Y = "x", Z = "Zed"], initial: X, inherited: no },
+   |                                                  ^^^
+
+error: a keyword spelling is lowercase ASCII letters, digits and `-`, e.g. "scale-down"
+  --> 15:59
+   |
+15 |         "b-prop" => BProp { keywords: [X, X, Y = "x", Z = "Zed"], initial: X, inherited: no },
+   |                                                           ^^^^^
+
+error: `initial: Q` is not one of this entry's keywords: `X`, `Y`
+  --> 17:56
+   |
+17 |         "c-prop" => CProp { keywords: [X, Y], initial: Q, inherited: no, sample: Y },
+   |                                                        ^
+
+error: the "d-prop" entry has no keyword other than its initial value; add `sample: <value>`
+  --> 19:21
+   |
+19 |         "d-prop" => DProp { keywords: [X], initial: X, inherited: no },
+   |                     ^^^^^
+
+error: a longhand name is lowercase ASCII letters, digits and `-`, e.g. "object-fit"
+  --> 21:9
+   |
+21 |         "Bad_Name" => EProp { keywords: [X, #[cfg(test)] Y], initial: X, inherited: no },
+   |         ^^^^^^^^^^
+
+error: only doc comments are allowed on a keyword
+  --> 21:45
+   |
+21 |         "Bad_Name" => EProp { keywords: [X, #[cfg(test)] Y], initial: X, inherited: no },
+   |                                             ^^^^^^^^^^^^

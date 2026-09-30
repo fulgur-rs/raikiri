@@ -310,3 +310,37 @@ fn ch_spacing_and_indent_are_measured_through_the_callback() {
         Some("normal".to_owned())
     );
 }
+
+/// Table-declared longhands take part in computed-style reads exactly when
+/// they have `serialize:`: `from_name` returns `Longhand(key)` for such an
+/// entry (in either letter case) and nothing otherwise, and the `Longhand`
+/// path serializes the initial value of such an entry and yields `None` for
+/// any other key, including a hand-written one (no panic).
+#[test]
+fn table_longhands_are_supported_exactly_when_serialized() {
+    let initial = ComputedValues::initial();
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("initial values have no ch lengths") };
+    for &name in crate::property::LONGHAND_NAMES {
+        let key = crate::property::longhand_key_for_name(name).expect("table name");
+        let serializes = crate::property::longhand_serializes(key);
+        for spelled in [name.to_owned(), name.to_ascii_uppercase()] {
+            let expected = serializes.then_some(ComputedProperty::Longhand(key));
+            assert_eq!(
+                ComputedProperty::from_name(&spelled),
+                expected,
+                "{spelled}: supported exactly when it has `serialize:`"
+            );
+        }
+        assert_eq!(
+            ComputedProperty::Longhand(key)
+                .serialize(&initial, &mut ch_advance)
+                .is_some(),
+            serializes,
+            "{name}"
+        );
+    }
+    assert_eq!(
+        ComputedProperty::Longhand(PropertyKey::Color).serialize(&initial, &mut ch_advance),
+        None
+    );
+}

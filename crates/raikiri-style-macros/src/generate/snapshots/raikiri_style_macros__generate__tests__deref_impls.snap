@@ -1,0 +1,16 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: pretty(deref_impls())
+---
+impl :: core :: ops :: Deref for crate :: specified :: SpecifiedValues {
+    type Target = SpecifiedTable ;
+    fn deref (& self) -> & SpecifiedTable {
+        & self . longhands
+    }
+}
+impl :: core :: ops :: Deref for crate :: computed :: ComputedValues {
+    type Target = ComputedTable ;
+    fn deref (& self) -> & ComputedTable {
+        & self . longhands
+    }
+}

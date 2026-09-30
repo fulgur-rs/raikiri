@@ -2305,7 +2305,8 @@ fn isolation_rejects_unknown_keyword() {
 
 #[test]
 fn isolation_rejects_trailing_garbage() {
-    // `parse_isolation` itself only consumes one ident token — a second
+    // The table-generated `isolation` parser (`Longhand::parse`, one
+    // `from_css_ident` keyword) itself only consumes one ident token — a second
     // keyword is leftover input the property parser doesn't reject on
     // its own (this crate's convention: the declaration-level
     // `expect_exhausted` check, exercised here via `parse_entire`,
@@ -2325,6 +2326,18 @@ fn isolation_rejects_css_wide_keyword() {
 fn isolation_key_maps_to_isolation_property_key() {
     let v = PropertyValue::Isolation(Isolation::Isolate);
     assert_eq!(v.key(), PropertyKey::Isolation);
+}
+
+#[test]
+fn isolation_var_defers_under_the_isolation_key() {
+    // `isolation` has no hand-written name arm: the deferred value's key
+    // comes from the name lookup's fall-through into the declared longhands.
+    let value = parse("var(--x)", "isolation");
+    assert!(
+        matches!(value, Some(PropertyValue::Deferred(_))),
+        "{value:?}"
+    );
+    assert_eq!(value.unwrap().key(), PropertyKey::Isolation);
 }
 
 // ── mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) ────

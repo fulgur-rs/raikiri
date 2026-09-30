@@ -1,0 +1,6 @@
+# Commits that only move or re-indent code. `git blame` skips them after
+# `git config blame.ignoreRevsFile .git-blame-ignore-revs`. A move into
+# another file also needs copy detection: `git blame -w -C -C`.
+
+# refactor(style): move PropertyValue and PropertyKey into property/decl.rs
+9823123ace984bc3508efb6233a207066ad2686d

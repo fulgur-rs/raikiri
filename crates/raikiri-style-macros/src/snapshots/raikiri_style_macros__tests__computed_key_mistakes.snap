@@ -1,0 +1,45 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(&src, &errors)"
+---
+error: `computed:` takes only the computed type; name the hook with its own key: `computed: Px, compute: to_px`
+  --> 13:85
+   |
+13 |         "a-prop" => AProp: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: l, sample: L::O, residue: none },
+   |                                                                                     ^^^
+
+error: `via` is not a key; name the hook with `compute: <fn>`, and a computed type that differs from the specified one with `computed: Type`
+  --> 19:72
+   |
+19 |         "d-prop" => DProp: L { initial: L::Z, inherited: no, parse: p, via: to_px, sample: L::O, residue: none },
+   |                                                                        ^^^
+
+error: `via` is not a key; name the hook with `compute: <fn>`, and a computed type that differs from the specified one with `computed: Type`
+  --> 23:86
+   |
+23 |         "f-prop" => FProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, via: to_px, sample: L::O, residue: none },
+   |                                                                                      ^^^
+
+error: `via` is not a key; name the hook with `compute: <fn>`, and a computed type that differs from the specified one with `computed: Type`
+  --> 25:72
+   |
+25 |         "g-prop" => GProp: L { initial: L::Z, inherited: no, parse: p, via: to_px, compute: to_px, computed: Px, sample: L::O, residue: none },
+   |                                                                        ^^^
+
+error: omit `computed:`; the computed type defaults to the specified type
+  --> 27:83
+   |
+27 |         "h-prop" => HProp: f32 { initial: 1.0, inherited: no, parse: p, computed: as_specified, lift: l, sample: 2.0, residue: none },
+   |                                                                                   ^^^^^^^^^^^^
+
+error: `computed: Px` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> Px` hook that produces it
+  --> 15:72
+   |
+15 |         "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, lift: l, sample: L::O, residue: none },
+   |                                                                        ^^^^^^^^
+
+error: `lift:` is only used with `computed: Type`; a computed value of the specified type needs no lift
+  --> 17:85
+   |
+17 |         "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c, lift: l, sample: 2.0, residue: none },
+   |                                                                                     ^^^^

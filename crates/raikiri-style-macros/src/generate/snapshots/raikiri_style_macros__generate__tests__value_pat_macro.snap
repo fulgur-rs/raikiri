@@ -1,0 +1,14 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(value_pat_macro)
+---
+# [doc = r" Pattern matching every `PropertyValue` variant declared in"]
+# [doc = r" `properties!`, for the exhaustive matches whose declared"]
+# [doc = r" longhands all take the same pass-through arm."]
+macro_rules ! longhand_value_pat {
+    () => {
+        crate :: property :: PropertyValue :: Isolation (..) | crate :: property :: PropertyValue :: ObjectFit (..) | crate :: property :: PropertyValue :: WordSpacing (..)
+    }
+    ;
+}
+pub (crate) use longhand_value_pat ;

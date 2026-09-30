@@ -26,30 +26,30 @@ use crate::property::{
     BorderColor, BorderRadius, BorderSpacingValue, BoxShadowItem, BoxSizing, BreakBetween,
     BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue, ContentComponent, CssColor,
-    CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand, FlexWrapValue,
-    FloatValue, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
-    FontShorthand, FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps,
-    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-    FontVariantPosition, FontVariationSetting, FontVariationSettings, FontWeightValue,
-    GapShorthand, GeometryBox, GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth,
-    GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
-    GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue, FilterFunction,
+    FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand, FlexWrapValue, FloatValue,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand,
+    FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
+    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
+    FontVariationSetting, FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox,
+    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
+    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
-    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand,
-    PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition,
-    SelfAlignmentValue, StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll,
-    TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
-    TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationStyle, TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle,
-    TextEmphasisVEdge, TextIndentLength, TextIndentValue, TextJustify, TextOrientation,
-    TextShadowColor, TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform,
-    TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Length, LengthOrAuto, LengthOrNormal,
+    LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
+    ListStyleType, MaskImage, MixBlendMode, Outline, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
+    StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll, TextAlignLast, TextAutospace,
+    TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
+    TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
+    TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition,
+    TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle, TextEmphasisVEdge,
+    TextIndentLength, TextIndentValue, TextJustify, TextOrientation, TextShadowColor,
+    TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform, TextUnderlineOffset,
+    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
     WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
@@ -2834,9 +2834,11 @@ fn absolutize_in_page_context_covers_text_shadow_arm() {
     );
 }
 
-/// CSS Color 4 §3.3 clamps computed opacity to `[0, 1]`.
+/// CSS Color 4 §3.3 clamps computed opacity to `[0, 1]`. The page context
+/// applies the clamp through the generated `longhand_page_absolutize`
+/// (the `opacity` table entry's `compute:` hook, lifted back unchanged).
 #[test]
-fn absolutize_in_page_context_covers_opacity_arm_clamp() {
+fn absolutize_in_page_context_covers_opacity_clamp_through_the_generated_page_function() {
     let fs = ComputedLength(20.0);
     let ctx = ResolveContext::new(ComputedLength(16.0));
     let styles = Sides::all(BorderStyle::None);
@@ -2888,6 +2890,136 @@ fn absolutize_in_page_context_covers_opacity_arm_clamp() {
         ),
         PropertyValue::Opacity(0.5),
         "opacity: 0.5 is already in range",
+    );
+}
+
+/// The page-context result of `object-position` for the corpus of
+/// `object_position_element_characterization` (cascade/inherit/tests.rs), in
+/// the same basis: the root has `font-size: 10px; line-height: 12px` (`rem`
+/// = 10px, `rlh` = 12px) and the page context declares `font-size: 20px;
+/// line-height: 30px` (`em` = 20px, `ex`/`ch` = 10px, `lh` = 30px). The page
+/// result keeps the specified-value type `CssPosition`, with lengths
+/// absolutized to `px` and percentages kept.
+#[test]
+fn object_position_page_context_characterization() {
+    use CssPositionOffset as O;
+    let root = ComputedValues {
+        font_size: ComputedLength(10.0),
+        line_height: ComputedLineHeight::Length(ComputedLength(12.0)),
+        ..ComputedValues::initial()
+    };
+    let cases: &[(&str, O, O)] = &[
+        (
+            "10px 20px",
+            O::Start(Length::Px(10.0)),
+            O::Start(Length::Px(20.0)),
+        ),
+        (
+            "2em 3em",
+            O::Start(Length::Px(40.0)),
+            O::Start(Length::Px(60.0)),
+        ),
+        (
+            "1rem 2rem",
+            O::Start(Length::Px(10.0)),
+            O::Start(Length::Px(20.0)),
+        ),
+        (
+            "25% 75%",
+            O::Start(Length::Percent(25.0)),
+            O::Start(Length::Percent(75.0)),
+        ),
+        (
+            "12pt 1in",
+            O::Start(Length::Px(16.0)),
+            O::Start(Length::Px(96.0)),
+        ),
+        (
+            "2ex 4ch",
+            O::Start(Length::Px(20.0)),
+            O::Start(Length::Px(40.0)),
+        ),
+        (
+            "1lh 2rlh",
+            O::Start(Length::Px(30.0)),
+            O::Start(Length::Px(24.0)),
+        ),
+        (
+            "right 1em bottom 2rem",
+            O::End(Length::Px(20.0)),
+            O::End(Length::Px(20.0)),
+        ),
+        // The parser folds a percentage offset from the end edge into the
+        // start edge (`right 10%` is `90%`).
+        (
+            "right 10% bottom 3px",
+            O::Start(Length::Percent(90.0)),
+            O::End(Length::Px(3.0)),
+        ),
+        (
+            "left 1em top 25%",
+            O::Start(Length::Px(20.0)),
+            O::Start(Length::Percent(25.0)),
+        ),
+        (
+            "left top",
+            O::Start(Length::Percent(0.0)),
+            O::Start(Length::Percent(0.0)),
+        ),
+        (
+            "center",
+            O::Start(Length::Percent(50.0)),
+            O::Start(Length::Percent(50.0)),
+        ),
+        (
+            "right bottom",
+            O::Start(Length::Percent(100.0)),
+            O::Start(Length::Percent(100.0)),
+        ),
+    ];
+    for (source, horizontal, vertical) in cases {
+        let css =
+            format!("@page {{ font-size: 20px; line-height: 30px; object-position: {source} }}");
+        let result = page(&css, &root);
+        assert_eq!(
+            result.declarations().get(&PropertyKey::ObjectPosition),
+            Some(&PropertyValue::ObjectPosition(CssPosition {
+                horizontal: *horizontal,
+                vertical: *vertical,
+            })),
+            "object-position: {source}",
+        );
+    }
+
+    // Direct phase-3 input: without an own line height, `lh` falls back to 0.
+    let ctx = ResolveContext::new(ComputedLength(10.0));
+    let absolutize = |own_line_height| {
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: O::End(Length::Lh(1.0)),
+                vertical: O::Start(Length::Em(2.0)),
+            })),
+            ComputedLength(20.0),
+            own_line_height,
+            &ctx,
+            Sides::all(BorderStyle::None),
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        )
+    };
+    assert_eq!(
+        absolutize(None),
+        PropertyValue::ObjectPosition(CssPosition {
+            horizontal: O::End(Length::Px(0.0)),
+            vertical: O::Start(Length::Px(40.0)),
+        }),
+    );
+    assert_eq!(
+        absolutize(Some(ComputedLength(30.0))),
+        PropertyValue::ObjectPosition(CssPosition {
+            horizontal: O::End(Length::Px(30.0)),
+            vertical: O::Start(Length::Px(40.0)),
+        }),
     );
 }
 
@@ -3025,6 +3157,11 @@ fn phase_3_transformed_variants() -> usize {
 /// accounting for phase-2 resolution and keyword-only phase-3 transforms.
 /// The count is used to check that page declarations expose computed
 /// values rather than unresolved specified values.
+///
+/// The five: `overflow-x`, `overflow-y` and `overflow` (cross-axis
+/// coupling), `writing-mode` (collapse to `horizontal-tb`) and `opacity`
+/// (the `[0, 1]` clamp of its table entry's `compute:` hook). A new table
+/// entry whose hook transforms a sample without length residue belongs here.
 const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
 fn raw_corpus_residue_variants() -> usize {
@@ -3067,7 +3204,9 @@ macro_rules! property_key_samples {
         };
     }
 
-property_key_samples! {
+// Table-declared longhands (`properties!` in property/decl.rs) are appended
+// after these hand-written entries, from each entry's `sample:` value.
+crate::property::with_longhand_samples!(property_key_samples {
     Color => PropertyValue::Color(RED),
     BackgroundColor => PropertyValue::BackgroundColor(BLUE),
     FontFamily => PropertyValue::FontFamily(Arc::new(vec![crate::property::FontFamilyName::generic("serif")])),
@@ -3592,40 +3731,17 @@ property_key_samples! {
         clip: VisualBox::PaddingBox,
         origin: VisualBox::ContentBox,
     }),
-    // CSS Images Module Level 3 §5.1 — keyword-only, carries no length.
-    // `Contain` is the non-initial worst case (`fill` is the spec
-    // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
-    // sample above).
-    ObjectFit => PropertyValue::ObjectFit(ObjectFit::Contain),
-    // CSS Images Module Level 3 §5.2 — `Em`/`Rem` worst-case payload on
-    // both `Start` and `End` (distinct edges), same convention as
-    // `BackgroundPosition` above; type itself (`CssPosition`) is
-    // reused verbatim.
+    // CSS Transforms Level 1 `transform-origin` — `Em`/`Rem` worst-case
+    // payload on the position (same convention as `BackgroundPosition`
+    // above; the type itself, `CssPosition`, is reused verbatim) and an
+    // `Em` z offset.
     TransformOrigin => PropertyValue::TransformOrigin(CssPosition {
         horizontal: CssPositionOffset::Start(Length::Em(2.0)),
         vertical: CssPositionOffset::Start(Length::Rem(1.0)),
     }, Length::Em(1.0)),
-    ObjectPosition => PropertyValue::ObjectPosition(CssPosition {
-        horizontal: CssPositionOffset::Start(Length::Em(2.0)),
-        vertical: CssPositionOffset::End(Length::Rem(1.0)),
-    }),
-    // CSS Color 4 §3.3 — worst case is an out-of-range value (`2.0`,
-    // not just non-initial), so this sample actually exercises the
-    // `Opacity` arm's `[0, 1]` clamp in
-    // `phase_3_variant_classification_matches_the_documented_counts`
-    // (that test counts corpus entries where `absolutize_in_page_context`
-    // is a no-op; `2.0` clamps to `1.0` and is therefore correctly
-    // *not* counted as pass-through — an in-range sample like `0.5`
-    // would clamp to itself and wrongly inflate
-    // `PHASE_3_PASS_THROUGH_VARIANTS`, same load-bearing-fixture
-    // convention as that test's own `Solid`/`Hidden` choices).
-    Opacity => PropertyValue::Opacity(2.0),
-    // CSS Compositing and Blending Level 1 §3.4.2 — non-initial
-    // (`isolate`, not `auto`) so a would-be pass-through regression
-    // (accidentally routing this arm through a transform) is visible.
-    Isolation => PropertyValue::Isolation(Isolation::Isolate),
     // CSS Compositing and Blending Level 1 §3.4.1 — non-initial
-    // (`multiply`, not `normal`), same rationale as `Isolation` above.
+    // (`multiply`, not `normal`) so a would-be pass-through regression
+    // (accidentally routing this arm through a transform) is visible.
     MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
     // CSS Masking Level 1 §7.1 — non-initial (`Url`, not `None`).
     MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".to_string())),
@@ -3650,7 +3766,7 @@ property_key_samples! {
     Left => PropertyValue::Left(LengthOrAuto::Auto),
     // CSS Tables 3 §4 table-layout — non-initial (`fixed`, not `auto`)
     // so a would-be pass-through regression (accidentally routing this
-    // arm through a transform) is visible (`Isolation` sibling comment
+    // arm through a transform) is visible (`MixBlendMode` sibling comment
     // above uses the same rationale).
     TableLayout => PropertyValue::TableLayout(TableLayoutValue::Fixed),
     // CSS Tables 3 §6 border-collapse — non-initial (`collapse`, not
@@ -3668,9 +3784,6 @@ property_key_samples! {
     // CSS Tables 3 §7 caption-side — non-initial (`bottom`, not `top`),
     // same rationale as `TableLayout` above.
     CaptionSide => PropertyValue::CaptionSide(CaptionSideValue::Bottom),
-    // CSS Tables 3 §8 empty-cells — non-initial (`hide`, not `show`),
-    // same rationale as `TableLayout` above.
-    EmptyCells => PropertyValue::EmptyCells(EmptyCellsValue::Hide),
     // CSS Fonts 4 §2.1 — shorthand fall-through (`Background` above
     // uses the same "sample a shorthand with a length-bearing
     // component" shape). `size`/`line-height` carry the lengths; the
@@ -3759,7 +3872,7 @@ property_key_samples! {
     FontVariationSettings => {
         PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
     },
-}
+});
 
 /// `PropertyValue` variants **not covered** by `sample_for`'s 1:1
 /// `PropertyKey -> PropertyValue` mapping: variants sharing a key (for example,
@@ -3899,7 +4012,8 @@ macro_rules! property_value_variant_registry {
 // List variants in `PropertyValue` declaration order in `property.rs`.
 // This is a convenience for mechanical updates, not a semantic requirement,
 // just as with the `property_key_samples!` invocation.
-property_value_variant_registry! {
+// Table-declared variants are appended after these hand-written names.
+crate::property::with_longhand_variants!(property_value_variant_registry {
     CustomProperty,
     Deferred,
     Color,
@@ -4071,10 +4185,6 @@ property_value_variant_registry! {
     BackgroundPosition,
     BackgroundImage,
     Background,
-    ObjectFit,
-    ObjectPosition,
-    Opacity,
-    Isolation,
     MixBlendMode,
     MaskImage,
     ClipPath,
@@ -4084,7 +4194,6 @@ property_value_variant_registry! {
     BorderCollapse,
     BorderSpacing,
     CaptionSide,
-    EmptyCells,
     Top,
     Right,
     Bottom,
@@ -4119,7 +4228,7 @@ property_value_variant_registry! {
     FontVariantNumeric,
     FontVariantEastAsian,
     FontVariationSettings,
-}
+});
 
 /// Confirm that `page_corpus()` covers **every** `PropertyValue` variant
 /// registered in `property_value_variant_registry!`, closing the previously
@@ -4180,44 +4289,27 @@ fn page_corpus_covers_every_registered_property_value_variant() {
 /// with `(_)`. Also, `PropertyValue::Border` uses field access (`b.width`)
 /// rather than a struct pattern, so adding a length-bearing field to
 /// [`Border`] does not fail to compile.
+///
+/// # Table-declared longhands
+///
+/// Every variant declared in the `properties!` table (`property/decl.rs`)
+/// takes one arm, `longhand_value_pat!()`, which asks the generated
+/// `longhand_specified_residue`: each entry answers through its `residue:`
+/// key (`none`, or a test-only residue function next to the entry, such as
+/// `object_position_residue`). The macro requires that key on every entry
+/// it cannot prove length-free (any entry with a written value type), plus
+/// every hooked entry for uniformity, so a length-bearing table entry
+/// cannot fall into this arm unchecked, and an explicit arm for a table
+/// variant is an unreachable pattern.
 fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     /// The `<length-percentage>` of a box property (`padding` / `margin` /
-    /// `width` / `height` / `border-*-width`).
-    ///
-    /// CSS Values 4 §5.5.1
-    /// <https://www.w3.org/TR/css-values-4/#combine-percentages> says that
-    /// percentages remain at the computed layer by default ("the computed
-    /// value of a percentage is the specified percentage"). `Pt` is
-    /// residue not because it is non-absolute — CSS Values 4 §6.2
-    /// <https://www.w3.org/TR/css-values-4/#absolute-lengths> counts `pt`
-    /// as absolute — but because "px is their canonical unit." Raikiri's
-    /// invariant normalizes the computed-layer representation to `Px`.
+    /// `width` / `height` / `border-*-width`): percentages stay, and every
+    /// unit other than `px` is residue. The classification (and its CSS
+    /// Values 4 rationale) lives in `length_residue` next to the
+    /// `properties!` table in `property/decl.rs`, which the table entries'
+    /// `residue:` functions share.
     fn length(l: Length) -> Option<&'static str> {
-        match l {
-            Length::Px(_) | Length::Percent(_) => None,
-            Length::Em(_) => Some("Length::Em"),
-            Length::Rem(_) => Some("Length::Rem"),
-            Length::Pt(_) => Some("Length::Pt"),
-            // Additional font-relative and absolute units are residue for
-            // the same reason as `Em` / `Rem` / `Pt`: before absolutization,
-            // these specified-only representations cannot exist in the computed layer.
-            Length::Ex(_) => Some("Length::Ex"),
-            Length::Rex(_) => Some("Length::Rex"),
-            Length::Ch(_) => Some("Length::Ch"),
-            Length::Rch(_) => Some("Length::Rch"),
-            Length::Ic(_) => Some("Length::Ic"),
-            Length::Ric(_) => Some("Length::Ric"),
-            Length::Cm(_) => Some("Length::Cm"),
-            Length::Mm(_) => Some("Length::Mm"),
-            Length::Q(_) => Some("Length::Q"),
-            Length::In(_) => Some("Length::In"),
-            Length::Pc(_) => Some("Length::Pc"),
-            // Same reasoning as the `Em`/`Rem`/`Pt`
-            // arms above: pre-absolutization these units don't exist in
-            // the computed layer.
-            Length::Lh(_) => Some("Length::Lh"),
-            Length::Rlh(_) => Some("Length::Rlh"),
-        }
+        crate::property::length_residue(l)
     }
     /// For positions where `%` **does not remain** at the computed layer:
     /// `font-size` and `line-height`.
@@ -4406,6 +4498,21 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
 
     match value {
+            // Table-declared longhands (`properties!` in property/decl.rs)
+            // answer through each entry's `residue:`: `object-position`
+            // (CSS Images 3 §5.2) checks its offsets' lengths, and the
+            // keyword payloads of `isolation`, `object-fit`, `empty-cells`
+            // and `opacity`'s bare `f32` (CSS Color 4 §3.3)
+            // are `none`. This detector only checks for *length* residue, so
+            // it reports `None` for `opacity` regardless of the value's
+            // range; its `[0,1]` clamp (the entry's `compute:` hook) is real
+            // phase-3 work, same as `OverflowX`/`WritingMode` below — see
+            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
+            // is accounted for. An explicit arm for a table variant is an
+            // unreachable pattern wherever it is placed.
+            crate::property::longhand_value_pat!() => {
+                crate::property::longhand_specified_residue(value)
+            }
             PropertyValue::FontWeight(fw) => font_weight(*fw),
             PropertyValue::TextAlign(ta) => text_align(*ta),
             PropertyValue::HangingPunctuation(_) => None,
@@ -4740,25 +4847,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::BackgroundClip(_)
             | PropertyValue::BackgroundOrigin(_)
 
-            // `object-fit` (CSS Images Module Level 3 §5.1) carries no
-            // length either — keyword-only payload, same shape as
-            // `BackgroundRepeat` above. `object-position` (§5.2) does carry
-            // `<length-percentage>` (reuses `CssPosition`) and gets its own
-            // arm below, next to `BackgroundPosition`.
-            | PropertyValue::ObjectFit(_)
-            // `opacity` (CSS Color 4 §3.3) carries a bare `f32`, not a
-            // `Length` — this detector only checks for *length* residue, so
-            // it reports `None` unconditionally regardless of the value's
-            // range. The `[0,1]` clamp is real phase-3 work
-            // (`absolutize_in_page_context`'s `Opacity` arm), same as
-            // `OverflowX`/`WritingMode` above — see
-            // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
-            // is accounted for.
-            | PropertyValue::Opacity(_)
-            // `isolation` / `mix-blend-mode` (CSS Compositing and Blending
-            // Level 1 §3.4.2/§3.4.1) carry bare keyword payloads (no
-            // `Length` at all, unlike `Opacity`'s `f32`) — always `None`.
-            | PropertyValue::Isolation(_)
+            // `mix-blend-mode` (CSS Compositing and Blending Level 1
+            // §3.4.1) carries a bare keyword payload (no `Length` at all,
+            // unlike `opacity`'s `f32`) — always `None`.
             | PropertyValue::MixBlendMode(_)
 
             // `clip-path` (§5.1) — no embedded length at all (no
@@ -4779,14 +4870,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             }),
             | PropertyValue::Filter(_) => None,
             // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS
-            // Tables 3 §6) / `caption-side` (§7) / `empty-cells` (§8) carry
-            // bare keyword payloads (no `Length` at all, unlike `Opacity`'s
-            // `f32`) — always `None` (`Isolation`/`MixBlendMode` sibling arms
-            // above use the same reasoning).
+            // Tables 3 §6) / `caption-side` (§7) carry bare keyword payloads
+            // (no `Length` at all, unlike `opacity`'s `f32`) — always `None`
+            // (the `MixBlendMode` sibling arm above uses the same reasoning).
             | PropertyValue::TableLayout(_)
             | PropertyValue::BorderCollapse(_)
-            | PropertyValue::CaptionSide(_)
-            | PropertyValue::EmptyCells(_) => None,
+            | PropertyValue::CaptionSide(_) => None,
             // `border-spacing` (CSS Tables 3 §6.1) carries two `<length>`
             // payloads — report the first specified-layer residue found
             // (`Gap`'s row-then-column arm above uses the same shape, with
@@ -5000,22 +5089,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
                 }
             }
-            // `object-position` stores a `<length-percentage>` per
-            // edge/offset — same shape as `background-position` above (both
-            // reuse `CssPosition`).
+            // `transform-origin` stores a `<length-percentage>` per
+            // edge/offset (same shape as `background-position` above; both
+            // reuse `CssPosition`) plus a `<length>` z offset.
             PropertyValue::TransformOrigin(pos, z) => {
                 let offset = |o| match o {
                     CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                 };
                 offset(pos.horizontal).or_else(|| offset(pos.vertical)).or_else(|| length(*z))
-            }
-            PropertyValue::ObjectPosition(pos) => {
-                fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
-                    match o {
-                        CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
-                    }
-                }
-                offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
             }
         }
 }
@@ -5658,6 +5739,19 @@ fn specified_layer_residue_detector_is_not_vacuous() {
         "corpus の worst-case payload が specified 層残滓として検出されない \
              — 検出器か corpus のどちらかが骨抜きになっている",
     );
+}
+
+/// Table-declared values reach the detector through their entries'
+/// `residue:`: of the table samples, only `object-position`'s (font- and
+/// root-relative offsets) is residue, and every keyword or number payload
+/// is not.
+#[test]
+fn table_declared_samples_report_residue_through_their_entries() {
+    let reported: Vec<_> = crate::property::longhand_samples()
+        .into_iter()
+        .filter_map(|(name, value)| specified_layer_residue(&value).map(|r| (name, r)))
+        .collect();
+    assert_eq!(reported, [("object-position", "Length::Em")]);
 }
 
 /// Phase 3 must leave every computed-equivalent value untouched — the

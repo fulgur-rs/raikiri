@@ -1,0 +1,15 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: `parse:` cannot be combined with `keywords:`; the generated keyword enum parses itself
+  --> 13:47
+   |
+13 |         "a-prop" => AProp { keywords: [X, Y], parse: parse_a, initial: X, inherited: no },
+   |                                               ^^^^^
+
+error: a `keywords` entry's value type is the generated enum `BProp`; remove `: u8`
+  --> 15:28
+   |
+15 |         "b-prop" => BProp: u8 { keywords: [X, Y], initial: X, inherited: no },
+   |                            ^^

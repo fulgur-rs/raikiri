@@ -25,6 +25,10 @@ rustc-hash = { workspace = true }
 # promote to `[workspace.dependencies]` then.
 precomputed-hash = "0.1"
 
+# `#[longhands]` declares the table-driven CSS longhands in
+# `src/property/decl.rs`.
+raikiri-style-macros = { workspace = true }
+
 [dev-dependencies]
 # `criterion` backs `benches/cascade.rs` — the regression detector for the
 # *per-declaration constant* of the cascade hot loop (a +22% regression
@@ -39,6 +43,9 @@ precomputed-hash = "0.1"
 # `Cargo.toml`'s `[workspace.dependencies]` `criterion` entry for the full
 # writeup; nothing about raikiri-style's own bench semantics changed.
 criterion = { workspace = true }
+# Snapshot files of the property characterization corpus
+# (`src/characterization`).
+insta = { workspace = true }
 
 [[bench]]
 name = "cascade"

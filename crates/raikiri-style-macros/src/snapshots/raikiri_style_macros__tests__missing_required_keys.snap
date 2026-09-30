@@ -1,0 +1,39 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: the "opacity" entry is missing `initial: <value>`
+  --> 13:22
+   |
+13 |         "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no, residue: none },
+   |                      ^^^^^^^
+
+error: the "opacity" entry is missing `sample: <non-initial value>`
+  --> 13:22
+   |
+13 |         "opacity" => Opacity: f32 { parse: parse_opacity_value, inherited: no, residue: none },
+   |                      ^^^^^^^
+
+error: the "object-fit" entry is missing `inherited: yes | no`
+  --> 15:25
+   |
+15 |         "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit, residue: none },
+   |                         ^^^^^^^^^
+
+error: the "object-fit" entry is missing `sample: <non-initial value>`
+  --> 15:25
+   |
+15 |         "object-fit" => ObjectFit { initial: Fill, parse: parse_object_fit, residue: none },
+   |                         ^^^^^^^^^
+
+error: the "x-prop" entry needs `keywords: [..]` or `parse: <fn>` to know how its value is parsed
+  --> 17:21
+   |
+17 |         "x-prop" => XProp { initial: A, inherited: no, sample: B },
+   |                     ^^^^^
+
+error: the "undocumented" entry needs a `///` doc comment citing its specification, e.g. `/// CSS Images 3 §5.1`
+  --> 18:9
+   |
+18 |         "undocumented" => Undocumented { keywords: [A, B], initial: A, inherited: no },
+   |         ^^^^^^^^^^^^^^

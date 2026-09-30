@@ -2660,10 +2660,23 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "cssparser",
+ "insta",
  "precomputed-hash",
+ "raikiri-style-macros",
  "rustc-hash",
  "selectors",
  "smol_str",
+]
+
+[[package]]
+name = "raikiri-style-macros"
+version = "0.1.0"
+dependencies = [
+ "cssparser",
+ "insta",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

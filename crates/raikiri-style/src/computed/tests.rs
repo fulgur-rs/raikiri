@@ -1,6 +1,6 @@
 use super::*;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    ComputedTable, FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
     FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
     HyphenateLimitCharsValue, Length, TextShadowColor,
 };
@@ -586,21 +586,14 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
         // different from the initial `None` (as required for non_initial_parent).
         background_image: BackgroundImage::Url("fixture.png".into()),
-        // CSS Images Module Level 3 §5.1/§5.2: all are non-inherited,
-        // so give them values different from the initial `fill` / `50% 50%`
-        // (as required for non_initial_parent).
-        object_fit: ObjectFit::Cover,
-        object_position: ComputedCssPosition {
-            horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
-            vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
-        },
-        // CSS Color 4 §3.3: non-inherited, so use a value different
-        // from the initial `1` (as required for non_initial_parent).
-        opacity: 0.75,
-        // CSS Compositing and Blending Level 1 §3.4.2/§3.4.1: both are
-        // non-inherited, so use values different from the initial `auto`/`normal`
-        // (as required for non_initial_parent).
-        isolation: Isolation::Isolate,
+        // Table-declared longhands, inherited or not: every entry's `sample:`
+        // computed in the initial context, which differs from the computed
+        // initial value in every entry (as required for non_initial_parent;
+        // `table_samples_differ_from_the_initial_values` in
+        // `specified/tests.rs` checks it).
+        longhands: ComputedTable::sample(),
+        // CSS Compositing and Blending Level 1 §3.4.1: non-inherited, so use
+        // a value different from the initial `normal` (as above).
         mix_blend_mode: MixBlendMode::Multiply,
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited,
         // so use values different from the initial `none`
@@ -632,9 +625,6 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Tables 3 §7: caption-side is inherited, so use a value
         // different from the initial `top` (as above).
         caption_side: CaptionSideValue::Bottom,
-        // CSS Tables 3 §8: empty-cells is inherited, so use a value
-        // different from the initial `show` (as above).
-        empty_cells: EmptyCellsValue::Hide,
         // CSS Multi-column Layout 1: non-inherited fields use non-initial
         // values so `inherit_from` assertions exercise the reset.
         column_count: ColumnCountValue::Count(3),
@@ -906,5 +896,84 @@ fn inherit_from_initial_parent_yields_initial() {
     assert_eq!(
         ComputedValues::inherit_from(&ComputedValues::initial()),
         ComputedValues::initial(),
+    );
+}
+
+/// `ComputedTable::initial()` computes each hooked entry's initial value
+/// through its `compute` step in the initial context; the result must be
+/// the property's computed initial value.
+#[test]
+fn computed_table_initial_computes_hooked_initials() {
+    let initial = ComputedTable::initial();
+    // CSS Color 4 §3.3: initial `1` (already inside the clamp range).
+    assert_eq!(initial.opacity, 1.0);
+    assert_eq!(ComputedValues::initial().opacity, 1.0);
+    // CSS Images Module Level 3 §5.2: initial `50% 50%`, percentages kept
+    // at the computed layer.
+    let center = ComputedCssPosition {
+        horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+        vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+    };
+    assert_eq!(initial.object_position, center);
+    assert_eq!(ComputedValues::initial().object_position, center);
+}
+
+/// The top-level field names of a value whose `Debug` is derived: with
+/// `{:#?}`, a derived `Debug` prints every field of the struct, each on its
+/// own line at a four-space indent, and indents the contents of nested values
+/// further. Debug-escaped strings contain no raw newlines, so a line at
+/// exactly four spaces that starts with `ident: ` is a top-level field.
+fn top_level_debug_field_names(value: &impl std::fmt::Debug) -> std::collections::BTreeSet<String> {
+    format!("{value:#?}")
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("    ")?;
+            if rest.starts_with(' ') {
+                return None;
+            }
+            let (name, _) = rest.split_once(": ")?;
+            name.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                .then(|| name.to_owned())
+        })
+        .collect()
+}
+
+/// `SpecifiedValues` and `ComputedValues` reach the `properties!` table's
+/// fields through `Deref`, so a hand-written field with the same name as a
+/// table field would silently shadow it: reads would see the hand-written
+/// field and never the cascaded table value. The field names are
+/// enumerated from the derived `Debug` output (see
+/// [`top_level_debug_field_names`]), which lists every field without a
+/// hand-maintained list that could fall out of date.
+#[test]
+fn value_struct_fields_do_not_shadow_table_fields() {
+    use crate::property::SpecifiedTable;
+    use crate::specified::SpecifiedValues;
+
+    let specified_table = top_level_debug_field_names(&SpecifiedTable::initial());
+    let computed_table = top_level_debug_field_names(&ComputedTable::initial());
+    let specified = top_level_debug_field_names(&SpecifiedValues::initial());
+    let computed = top_level_debug_field_names(&ComputedValues::initial());
+
+    // Guard the enumeration itself: both tables list the same fields, and
+    // each value struct's list includes its `longhands` field and a
+    // hand-written field.
+    assert!(!specified_table.is_empty());
+    assert_eq!(specified_table, computed_table);
+    for fields in [&specified, &computed] {
+        assert!(fields.contains("longhands"), "{fields:?}");
+        assert!(fields.contains("color"), "{fields:?}");
+    }
+
+    let shadowed_in_specified: Vec<_> = specified.intersection(&specified_table).collect();
+    assert!(
+        shadowed_in_specified.is_empty(),
+        "SpecifiedValues fields shadow table fields: {shadowed_in_specified:?}"
+    );
+    let shadowed_in_computed: Vec<_> = computed.intersection(&computed_table).collect();
+    assert!(
+        shadowed_in_computed.is_empty(),
+        "ComputedValues fields shadow table fields: {shadowed_in_computed:?}"
     );
 }

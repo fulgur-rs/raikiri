@@ -1,0 +1,18 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(parse_dispatch_fn)
+---
+# [doc = r" Value parsing for the longhands declared in `properties!`;"]
+# [doc = r" `normalized_name` must already be ASCII-lowercase. `None` covers"]
+# [doc = r" both an unknown name and an invalid value."]
+pub (crate) fn parse_longhand_value (normalized_name : & str , input : & mut :: cssparser :: Parser < '_ , '_ > ,) -> :: core :: option :: Option < PropertyValue > {
+    match normalized_name {
+        "isolation" => < isolation :: Property as crate :: property :: Longhand > :: parse (input) . map (PropertyValue :: Isolation) ,
+        "object-fit" => < object_fit :: Property as crate :: property :: Longhand > :: parse (input) . map (PropertyValue :: ObjectFit) ,
+        "word-spacing" => < spacing :: Property as crate :: property :: Longhand > :: parse (input) . map (PropertyValue :: WordSpacing) ,
+        _ => {
+            let _ = input ;
+            :: core :: option :: Option :: None
+        }
+    }
+}

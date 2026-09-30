@@ -1,0 +1,354 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: pretty(expanded)
+---
+mod decl {
+    pub enum PropertyValue {
+        Color (u32) ,
+        CustomProperty (String) ,
+        # [doc = " The `isolation` longhand."]
+        # [doc = ""]
+        # [doc = " CSS Compositing 1 §3.4.2"]
+        Isolation (isolation :: Specified)
+    }
+    pub enum PropertyKey {
+        Color ,
+        Custom ,
+        # [doc = " Key of the `isolation` longhand."]
+        Isolation
+    }
+    # [doc = " Specified value of `isolation`; see [`PropertyValue::Isolation`]."]
+    # [doc = ""]
+    # [doc = " CSS Compositing 1 §3.4.2"]
+    # [non_exhaustive]
+    # [derive (Clone , Copy , Debug , PartialEq , Eq)]
+    pub enum Isolation {
+        # [doc = " `auto`"]
+        Auto ,
+        # [doc = " `isolate`"]
+        Isolate ,
+    }
+    impl Isolation {
+        # [doc = r" Every keyword, in declaration order."]
+        # [cfg (test)]
+        pub (crate) const ALL : & 'static [Self] = & [Self :: Auto , Self :: Isolate] ;
+        # [doc = r" This keyword's CSS spelling."]
+        pub const fn as_css_str (self) -> & 'static str {
+            let this = self ;
+            match this {
+                Self :: Auto => "auto" ,
+                Self :: Isolate => "isolate" ,
+            }
+        }
+        # [doc = r" Parses one keyword, ASCII case-insensitively."]
+        pub (crate) fn from_css_ident (ident : & str) -> :: core :: option :: Option < Self > {
+            :: cssparser :: match_ignore_ascii_case ! {
+                ident ,
+                "auto" => :: core :: option :: Option :: Some (Self :: Auto) ,
+                "isolate" => :: core :: option :: Option :: Some (Self :: Isolate) ,
+                _ => :: core :: option :: Option :: None ,
+            }
+        }
+    }
+    # [doc = " Value types of the `isolation` longhand."]
+    # [doc = ""]
+    # [doc = " CSS Compositing 1 §3.4.2"]
+    pub mod isolation {
+        # [allow (unused_imports)]
+        use super :: * ;
+        # [doc = " Specified value of `isolation`."]
+        pub type Specified = Isolation ;
+        # [doc = " Computed value of `isolation`."]
+        pub type Computed = Isolation ;
+        # [doc = " The `isolation` longhand, as a type implementing the crate's `Longhand` trait."]
+        pub (crate) enum Property {
+        }
+    }
+    impl crate :: property :: Longhand for isolation :: Property {
+        const NAME : & 'static str = "isolation" ;
+        const INHERITED : bool = false ;
+        type Specified = isolation :: Specified ;
+        type Computed = isolation :: Computed ;
+        fn initial () -> Self :: Specified {
+            Isolation :: Auto
+        }
+        fn parse (input : & mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > {
+            input . expect_ident () . ok () . and_then (| ident | Isolation :: from_css_ident (ident))
+        }
+        fn compute (specified : Self :: Specified , cx : & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed {
+            let _ = cx ;
+            specified
+        }
+        fn lift (computed : Self :: Computed) -> Self :: Specified {
+            computed
+        }
+        # [cfg (test)]
+        fn sample () -> Self :: Specified {
+            Isolation :: Isolate
+        }
+    }
+    impl PropertyValue {
+        # [doc = r" Returns the property key for this value."]
+        # [doc = r""]
+        # [doc = r" Used as the discriminant for selecting one winner per property in the"]
+        # [doc = r" cascade, and as the key in the `@page` cascade result map."]
+        pub fn key (& self) -> PropertyKey {
+            match self {
+                PropertyValue :: Color {
+                    ..
+                }
+                => PropertyKey :: Color ,
+                PropertyValue :: CustomProperty {
+                    ..
+                }
+                => PropertyKey :: Custom ,
+                PropertyValue :: Isolation (_) => PropertyKey :: Isolation ,
+            }
+        }
+    }
+    # [doc = r" Specified values of the longhands declared in `properties!`,"]
+    # [doc = r" embedded as `SpecifiedValues::longhands`; its fields are readable"]
+    # [doc = r" directly on `SpecifiedValues` through `Deref` and written through"]
+    # [doc = r" `longhands`."]
+    # [derive (Clone , Debug , PartialEq)]
+    # [non_exhaustive]
+    pub struct SpecifiedTable {
+        # [doc = " Specified `isolation`."]
+        # [doc = ""]
+        # [doc = " CSS Compositing 1 §3.4.2"]
+        pub isolation : isolation :: Specified ,
+    }
+    # [doc = r" Computed values of the longhands declared in `properties!`,"]
+    # [doc = r" embedded as `ComputedValues::longhands`; its fields are readable"]
+    # [doc = r" directly on `ComputedValues` through `Deref` and written through"]
+    # [doc = r" `longhands`."]
+    # [derive (Clone , Debug , PartialEq)]
+    # [non_exhaustive]
+    pub struct ComputedTable {
+        # [doc = " Computed `isolation`."]
+        # [doc = ""]
+        # [doc = " CSS Compositing 1 §3.4.2"]
+        pub isolation : isolation :: Computed ,
+    }
+    # [allow (clippy :: clone_on_copy , unused_variables)]
+    impl SpecifiedTable {
+        # [doc = r" Every field at its initial value."]
+        pub (crate) fn initial () -> Self {
+            Self {
+                isolation : < isolation :: Property as crate :: property :: Longhand > :: initial () ,
+            }
+        }
+        # [doc = r" The specified state of a child: inherited fields copy the"]
+        # [doc = r" parent's computed value (lifted back to specified form), the"]
+        # [doc = r" others start at their initial value."]
+        pub (crate) fn inherit_from (parent : & ComputedTable) -> Self {
+            Self {
+                isolation : < isolation :: Property as crate :: property :: Longhand > :: initial () ,
+            }
+        }
+        # [doc = r" Specified to computed, through each longhand's `compute`."]
+        pub (crate) fn absolutize (self , cx : & crate :: property :: AbsolutizeCx < '_ >) -> ComputedTable {
+            ComputedTable {
+                isolation : < isolation :: Property as crate :: property :: Longhand > :: compute (self . isolation , cx) ,
+            }
+        }
+        # [doc = r" Stores a cascade winner in its field. `value` must be a"]
+        # [doc = r" variant declared in `properties!`."]
+        pub (crate) fn apply (& mut self , value : PropertyValue) {
+            match value {
+                PropertyValue :: Isolation (v) => self . isolation = v ,
+                other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+            }
+        }
+        # [doc = r" Every field at its entry's `sample` value: a non-initial"]
+        # [doc = r" value for test fixtures."]
+        # [cfg (test)]
+        pub (crate) fn sample () -> Self {
+            Self {
+                isolation : < isolation :: Property as crate :: property :: Longhand > :: sample () ,
+            }
+        }
+        # [doc = r" The CSS names of the entries whose fields are equal in `self`"]
+        # [doc = r" and `other`, in declaration order (test only; for checking that"]
+        # [doc = r" a fixture differs from the initial values in every entry)."]
+        # [cfg (test)]
+        pub (crate) fn equal_fields (& self , other : & Self) -> :: std :: vec :: Vec < & 'static str > {
+            let pairs : & [(& 'static str , bool)] = & [("isolation" , self . isolation == other . isolation) ,] ;
+            pairs . iter () . filter (| (_ , equal) | * equal) . map (| (name , _) | * name) . collect ()
+        }
+    }
+    # [allow (unused_variables)]
+    impl ComputedTable {
+        # [doc = r" Every field at its initial value, computed in the initial"]
+        # [doc = r" context."]
+        pub (crate) fn initial () -> Self {
+            let ctx = crate :: resolve :: ResolveContext :: initial () ;
+            let cx = & crate :: property :: AbsolutizeCx :: initial (& ctx) ;
+            Self {
+                isolation : < isolation :: Property as crate :: property :: Longhand > :: compute (< isolation :: Property as crate :: property :: Longhand > :: initial () , cx) ,
+            }
+        }
+        # [doc = r" Every field at its entry's `sample` value, computed in the"]
+        # [doc = r" initial context: a non-initial value for test fixtures, as"]
+        # [doc = r" long as no entry's `compute` maps its sample to the computed"]
+        # [doc = r" initial value (check with [`Self::equal_fields`])."]
+        # [cfg (test)]
+        pub (crate) fn sample () -> Self {
+            let ctx = crate :: resolve :: ResolveContext :: initial () ;
+            let cx = & crate :: property :: AbsolutizeCx :: initial (& ctx) ;
+            Self {
+                isolation : < isolation :: Property as crate :: property :: Longhand > :: compute (< isolation :: Property as crate :: property :: Longhand > :: sample () , cx) ,
+            }
+        }
+        # [doc = r" The CSS names of the entries whose fields are equal in `self`"]
+        # [doc = r" and `other`, in declaration order (test only; for checking that"]
+        # [doc = r" a fixture differs from the initial values in every entry)."]
+        # [cfg (test)]
+        pub (crate) fn equal_fields (& self , other : & Self) -> :: std :: vec :: Vec < & 'static str > {
+            let pairs : & [(& 'static str , bool)] = & [("isolation" , self . isolation == other . isolation) ,] ;
+            pairs . iter () . filter (| (_ , equal) | * equal) . map (| (name , _) | * name) . collect ()
+        }
+    }
+    # [doc = r" Page-context absolutization of one declared longhand value."]
+    # [doc = r" `PropertyValue` keeps its specified payload type, so the value is"]
+    # [doc = r" computed and lifted back. `value` must be a variant declared in"]
+    # [doc = r" `properties!`."]
+    pub (crate) fn longhand_page_absolutize (value : PropertyValue , cx : & crate :: property :: AbsolutizeCx < '_ > ,) -> PropertyValue {
+        match value {
+            PropertyValue :: Isolation (v) => PropertyValue :: Isolation (< isolation :: Property as crate :: property :: Longhand > :: lift (< isolation :: Property as crate :: property :: Longhand > :: compute (v , cx)) ,) ,
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    impl :: core :: ops :: Deref for crate :: specified :: SpecifiedValues {
+        type Target = SpecifiedTable ;
+        fn deref (& self) -> & SpecifiedTable {
+            & self . longhands
+        }
+    }
+    impl :: core :: ops :: Deref for crate :: computed :: ComputedValues {
+        type Target = ComputedTable ;
+        fn deref (& self) -> & ComputedTable {
+            & self . longhands
+        }
+    }
+    # [doc = r" Every longhand name declared in `properties!`, lowercase, in"]
+    # [doc = r" declaration order."]
+    pub (crate) const LONGHAND_NAMES : & [& str] = & ["isolation"] ;
+    # [doc = r" Pattern matching every `PropertyValue` variant declared in"]
+    # [doc = r" `properties!`, for the exhaustive matches whose declared"]
+    # [doc = r" longhands all take the same pass-through arm."]
+    macro_rules ! longhand_value_pat {
+        () => {
+            crate :: property :: PropertyValue :: Isolation (..)
+        }
+        ;
+    }
+    pub (crate) use longhand_value_pat ;
+    # [doc = r" Every declared longhand's CSS name paired with its sample value."]
+    # [cfg (test)]
+    pub (crate) fn longhand_samples () -> :: std :: vec :: Vec < (& 'static str , PropertyValue) > {
+        :: std :: vec ! [(< isolation :: Property as crate :: property :: Longhand > :: NAME , longhand_sample (PropertyKey :: Isolation)) ,]
+    }
+    # [doc = r" The sample value of the declared longhand `key`."]
+    # [cfg (test)]
+    pub (crate) fn longhand_sample (key : PropertyKey) -> PropertyValue {
+        match key {
+            PropertyKey :: Isolation => PropertyValue :: Isolation (< isolation :: Property as crate :: property :: Longhand > :: sample ()) ,
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" The length a declared longhand's specified value still carries"]
+    # [doc = r" (a unit or form that computing resolves), named for a test"]
+    # [doc = r" failure message; `None` when it carries none. Each entry answers"]
+    # [doc = r" through its `residue:` (a function, or `none` for a value that"]
+    # [doc = r" never carries a length). `value` must be a variant declared in"]
+    # [doc = r" `properties!`."]
+    # [cfg (test)]
+    pub (crate) fn longhand_specified_residue (value : & PropertyValue ,) -> :: core :: option :: Option < & 'static str > {
+        match value {
+            PropertyValue :: Isolation (v) => {
+                let _ = v ;
+                :: core :: option :: Option :: None
+            }
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" Invokes `$cb! { <hand entries> Variant => sample, ... }` with every"]
+    # [doc = r" declared longhand's sample value appended after the hand entries."]
+    # [cfg (test)]
+    macro_rules ! with_longhand_samples {
+        ($ cb : ident { $ ($ hand : tt) * }) => {
+            $ cb ! {
+                $ ($ hand) * Isolation => crate :: property :: longhand_sample (crate :: property :: PropertyKey :: Isolation) ,
+            }
+        }
+        ;
+    }
+    # [cfg (test)]
+    pub (crate) use with_longhand_samples ;
+    # [doc = r" Invokes `$cb! { <hand names> Variant, ... }` with every declared"]
+    # [doc = r" variant name appended after the hand names."]
+    # [cfg (test)]
+    macro_rules ! with_longhand_variants {
+        ($ cb : ident { $ ($ hand : tt) * }) => {
+            $ cb ! {
+                $ ($ hand) * Isolation ,
+            }
+        }
+        ;
+    }
+    # [cfg (test)]
+    pub (crate) use with_longhand_variants ;
+    # [doc = r" Name lookup for the longhands declared in `properties!`;"]
+    # [doc = r" `normalized_name` must already be ASCII-lowercase."]
+    pub (crate) fn longhand_key_for_name (normalized_name : & str ,) -> :: core :: option :: Option < PropertyKey > {
+        match normalized_name {
+            "isolation" => :: core :: option :: Option :: Some (PropertyKey :: Isolation) ,
+            _ => :: core :: option :: Option :: None ,
+        }
+    }
+    # [doc = r" Value parsing for the longhands declared in `properties!`;"]
+    # [doc = r" `normalized_name` must already be ASCII-lowercase. `None` covers"]
+    # [doc = r" both an unknown name and an invalid value."]
+    pub (crate) fn parse_longhand_value (normalized_name : & str , input : & mut :: cssparser :: Parser < '_ , '_ > ,) -> :: core :: option :: Option < PropertyValue > {
+        match normalized_name {
+            "isolation" => < isolation :: Property as crate :: property :: Longhand > :: parse (input) . map (PropertyValue :: Isolation) ,
+            _ => {
+                let _ = input ;
+                :: core :: option :: Option :: None
+            }
+        }
+    }
+    # [doc = r" Serializes a declared longhand's specified value to CSS text"]
+    # [doc = r" through its entry's `serialize:` (the keyword spelling, or the"]
+    # [doc = r" named function); `None` for an entry without `serialize:`, whose"]
+    # [doc = r" callers echo the input instead. `value` must be a variant"]
+    # [doc = r" declared in `properties!`."]
+    pub (crate) fn longhand_serialize (value : & PropertyValue ,) -> :: core :: option :: Option < :: std :: string :: String > {
+        match value {
+            PropertyValue :: Isolation (v) => {
+                let _ = v ;
+                :: core :: option :: Option :: None
+            }
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" Serializes the computed value of the declared longhand `key`"]
+    # [doc = r" from `computed`, for CSSOM computed-style reads: the field is"]
+    # [doc = r" lifted back to its specified type (the identity when the entry"]
+    # [doc = r" has no computed type of its own) and serialized as"]
+    # [doc = r" `longhand_serialize` does. `None` for an entry without"]
+    # [doc = r" `serialize:` and for a key not declared in `properties!`."]
+    pub (crate) fn longhand_serialize_computed (key : PropertyKey , computed : & ComputedTable ,) -> :: core :: option :: Option < :: std :: string :: String > {
+        let _ = computed ;
+        match key {
+            _ => :: core :: option :: Option :: None ,
+        }
+    }
+    # [doc = r" Whether the declared longhand `key` has a serialization"]
+    # [doc = r" (`serialize:`); `false` for a key not declared in `properties!`."]
+    pub (crate) fn longhand_serializes (key : PropertyKey) -> bool {
+        let _ = key ;
+        false
+    }
+}

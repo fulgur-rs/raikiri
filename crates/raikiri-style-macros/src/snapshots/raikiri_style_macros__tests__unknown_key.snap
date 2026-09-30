@@ -1,0 +1,9 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(&src, &errors)"
+---
+error: unknown key `animatable`; expected one of `keywords`, `derive`, `initial`, `inherited`, `parse`, `compute`, `computed`, `lift`, `serialize`, `field`, `sample`, `residue`
+  --> 13:93
+   |
+13 |         "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no, animatable: no },
+   |                                                                                             ^^^^^^^^^^

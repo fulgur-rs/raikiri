@@ -1,0 +1,9 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(serializes_fn)
+---
+# [doc = r" Whether the declared longhand `key` has a serialization"]
+# [doc = r" (`serialize:`); `false` for a key not declared in `properties!`."]
+pub (crate) fn longhand_serializes (key : PropertyKey) -> bool {
+    :: core :: matches ! (key , PropertyKey :: Isolation | PropertyKey :: WordSpacing)
+}

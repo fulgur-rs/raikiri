@@ -2816,6 +2816,34 @@ fn empty_cells_inherits_from_parent_element() {
     );
 }
 
+/// `empty-cells` (CSS Tables 3 §8, inherited) and `isolation` (CSS Compositing
+/// and Blending Level 1 §3.4.2, non-inherited) share the generated longhand
+/// table: a child with no declaration inherits the first and resets the
+/// second, and a child's own `empty-cells: show` wins over the parent's `hide`.
+#[test]
+fn empty_cells_inherits_through_the_table_while_isolation_resets() {
+    use crate::property::{EmptyCellsValue, Isolation};
+    let mut doc = TestDoc::new();
+    let table = doc.push_element(0, "table", Some("empty-cells: hide; isolation: isolate"));
+    let inheriting = doc.push_element(table, "td", None);
+    let overriding = doc.push_element(table, "td", Some("empty-cells: show"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(r.computed[table].empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(r.computed[table].isolation, Isolation::Isolate);
+
+    assert_eq!(r.computed[inheriting].empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(
+        r.computed[inheriting].isolation,
+        Isolation::Auto,
+        "isolation is not inherited (CSS Compositing and Blending Level 1 §3.4.2)"
+    );
+
+    assert_eq!(r.computed[overriding].empty_cells, EmptyCellsValue::Show);
+    assert_eq!(r.computed[overriding].isolation, Isolation::Auto);
+}
+
 #[test]
 fn word_break_wired_through_cascade_from_inline_style() {
     use crate::property::WordBreak;
@@ -4280,6 +4308,102 @@ fn object_position_3_value_edge_offset_form_dropped_through_real_cascade() {
     assert_eq!(
         cv.object_position,
         ComputedValues::initial().object_position
+    );
+}
+
+/// The element-path computed value of `object-position` for a corpus of
+/// positions: every length unit class (absolute, font-relative, root-relative,
+/// line-height-relative), percentages, both edges and keyword-derived
+/// offsets. The page-context sibling is
+/// `object_position_page_context_characterization` (page/cascade/tests.rs);
+/// both pin the same numbers in the same basis.
+///
+/// Basis: the root has `font-size: 10px; line-height: 12px` (`rem` = 10px,
+/// `rlh` = 12px); the `img` has `font-size: 20px; line-height: 30px` (`em` =
+/// 20px, `ex`/`ch` = 10px, `lh` = 30px).
+#[test]
+fn object_position_element_characterization() {
+    use crate::resolve::{
+        ComputedCssPosition, ComputedCssPositionOffset as O, ComputedLengthPercentage as L,
+    };
+    let cases: &[(&str, O, O)] = &[
+        ("10px 20px", O::Start(L::Px(10.0)), O::Start(L::Px(20.0))),
+        ("2em 3em", O::Start(L::Px(40.0)), O::Start(L::Px(60.0))),
+        ("1rem 2rem", O::Start(L::Px(10.0)), O::Start(L::Px(20.0))),
+        (
+            "25% 75%",
+            O::Start(L::Percent(25.0)),
+            O::Start(L::Percent(75.0)),
+        ),
+        ("12pt 1in", O::Start(L::Px(16.0)), O::Start(L::Px(96.0))),
+        ("2ex 4ch", O::Start(L::Px(20.0)), O::Start(L::Px(40.0))),
+        ("1lh 2rlh", O::Start(L::Px(30.0)), O::Start(L::Px(24.0))),
+        (
+            "right 1em bottom 2rem",
+            O::End(L::Px(20.0)),
+            O::End(L::Px(20.0)),
+        ),
+        // The parser folds a percentage offset from the end edge into the
+        // start edge (`right 10%` is `90%`).
+        (
+            "right 10% bottom 3px",
+            O::Start(L::Percent(90.0)),
+            O::End(L::Px(3.0)),
+        ),
+        (
+            "left 1em top 25%",
+            O::Start(L::Px(20.0)),
+            O::Start(L::Percent(25.0)),
+        ),
+        (
+            "left top",
+            O::Start(L::Percent(0.0)),
+            O::Start(L::Percent(0.0)),
+        ),
+        (
+            "center",
+            O::Start(L::Percent(50.0)),
+            O::Start(L::Percent(50.0)),
+        ),
+        (
+            "right bottom",
+            O::Start(L::Percent(100.0)),
+            O::Start(L::Percent(100.0)),
+        ),
+    ];
+    for (source, horizontal, vertical) in cases {
+        let mut doc = TestDoc::new();
+        let root = doc.push_element(0, "html", Some("font-size: 10px; line-height: 12px"));
+        let style = format!("font-size: 20px; line-height: 30px; object-position: {source}");
+        let img = doc.push_element(root, "img", Some(&style));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[img].object_position,
+            ComputedCssPosition {
+                horizontal: *horizontal,
+                vertical: *vertical,
+            },
+            "object-position: {source}",
+        );
+    }
+
+    // `line-height: normal` leaves `lh` without a basis: it falls back to 0.
+    let mut doc = TestDoc::new();
+    let root = doc.push_element(0, "html", Some("font-size: 10px; line-height: 12px"));
+    let img = doc.push_element(
+        root,
+        "img",
+        Some("font-size: 20px; line-height: normal; object-position: 1lh 2em"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[img].object_position,
+        ComputedCssPosition {
+            horizontal: O::Start(L::Px(0.0)),
+            vertical: O::Start(L::Px(40.0)),
+        },
     );
 }
 

@@ -5,7 +5,8 @@ use cssparser::ToCss as _;
 use crate::ChFontKey;
 use crate::computed::ComputedValues;
 use crate::property::{
-    CalcLengthPercentage, CssColor, PropertyValue, serialize_calc_length_percentage,
+    CalcLengthPercentage, CssColor, PropertyKey, PropertyValue, longhand_key_for_name,
+    longhand_serialize_computed, longhand_serializes, serialize_calc_length_percentage,
     serialize_css_color, serialize_dimension, serialize_number, serialize_percentage,
     serialize_value,
 };
@@ -73,10 +74,19 @@ pub enum ComputedProperty {
     TabSize,
     LetterSpacing,
     WordSpacing,
+    /// A longhand declared in the `properties!` table whose entry has
+    /// `serialize:`; [`from_name`](Self::from_name) returns it only for such
+    /// an entry. Its computed value is lifted back to the specified type and
+    /// serialized by the entry's serializer. For any other key,
+    /// [`serialize`](Self::serialize) returns `None`. Only this crate
+    /// constructs it; other crates obtain it from `from_name`.
+    #[non_exhaustive]
+    Longhand(PropertyKey),
 }
 
 impl ComputedProperty {
-    /// Every property, in declaration order.
+    /// Every hand-written property, in declaration order. Table-declared
+    /// longhands ([`Self::Longhand`]) are not listed.
     #[cfg(test)]
     pub(crate) const ALL: &'static [Self] = &[
         Self::WhiteSpace,
@@ -197,8 +207,17 @@ impl ComputedProperty {
             "tab-size" => Self::TabSize,
             "letter-spacing" => Self::LetterSpacing,
             "word-spacing" => Self::WordSpacing,
-            _ => return None,
+            _ => return Self::longhand_from_name(name),
         })
+    }
+
+    /// A table-declared longhand with a serialization (`serialize:` in its
+    /// `properties!` entry). Entries without one stay unsupported here, as
+    /// they have no computed CSSOM form.
+    fn longhand_from_name(name: &str) -> Option<Self> {
+        longhand_key_for_name(&name.to_ascii_lowercase())
+            .filter(|&key| longhand_serializes(key))
+            .map(Self::Longhand)
     }
 
     /// Serializes this property's computed value from `computed`, or `None`
@@ -216,6 +235,9 @@ impl ComputedProperty {
         let value = match self {
             ComputedProperty::Direction => computed.direction.as_css_str(),
             ComputedProperty::Font => return serialize_font_shorthand(computed),
+            ComputedProperty::Longhand(key) => {
+                return longhand_serialize_computed(key, &computed.longhands);
+            }
             ComputedProperty::FontKerning => computed.font_kerning.as_css_str(),
             ComputedProperty::FontVariantCaps => computed.font_variant_caps.as_css_str(),
             ComputedProperty::FontOpticalSizing => computed.font_optical_sizing.as_css_str(),

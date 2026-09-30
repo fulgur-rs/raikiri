@@ -1,0 +1,39 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: rendered
+---
+error: expected `yes` or `no`; write `yes` instead of `true`
+  --> 13:70
+   |
+13 |         "a-prop" => AProp { keywords: [X, Y], initial: X, inherited: true },
+   |                                                                      ^^^^
+
+error: expected a path to a function, e.g. `parse_object_fit`
+  --> 15:71
+   |
+15 |         "b-prop" => BProp: Length { initial: L, inherited: no, parse: |i| None, sample: L, residue: none },
+   |                                                                       ^
+
+error: expected the computed value type, e.g. `computed: ComputedLength`
+  --> 17:84
+   |
+17 |         "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: 3, sample: L, residue: none },
+   |                                                                                    ^
+
+error: expected a keyword list, e.g. `keywords: [Auto, Isolate]`
+  --> 19:39
+   |
+19 |         "d-prop" => DProp { keywords: Auto, initial: Auto, inherited: no },
+   |                                       ^^^^
+
+error: duplicate key `initial` in this entry
+  --> 21:74
+   |
+21 |         "e-prop" => EProp { keywords: [X, Y], initial: X, inherited: no, initial: Y },
+   |                                                                          ^^^^^^^
+
+error: unexpected token after the value of `initial`; separate keys with `,`
+  --> 23:58
+   |
+23 |         "f-prop" => FProp { keywords: [X, Y], initial: X inherited: no },
+   |                                                          ^^^^^^^^^

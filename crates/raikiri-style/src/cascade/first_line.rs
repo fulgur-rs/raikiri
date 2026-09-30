@@ -243,7 +243,7 @@ fn first_line_parent(normal: &ComputedValues, first: &ComputedValues) -> Compute
     parent.border_spacing = first.border_spacing;
     parent.caption_side = first.caption_side;
     parent.color = first.color;
-    parent.empty_cells = first.empty_cells;
+    parent.longhands.empty_cells = first.empty_cells;
     parent.font_family = first.font_family.clone();
     parent.font_kerning = first.font_kerning;
     parent.font_language_override = first.font_language_override.clone();

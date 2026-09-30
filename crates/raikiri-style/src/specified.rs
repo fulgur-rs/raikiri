@@ -27,23 +27,24 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate};
+use crate::property::AbsolutizeCx;
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
-    CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    CssPositionOffset, Direction, DisplayValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, FontFamilyName, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
+    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
+    FontVariantPosition, FontVariationSettings, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, Length, LengthOrAuto, LengthOrNormal,
+    LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
+    PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides, SpecifiedTable, TabSize,
+    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
     TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
@@ -88,9 +89,14 @@ use crate::resolve::{
 ///
 /// | Layer | Fields |
 /// | --- | --- |
-/// | **Still specified** (awaiting phase 2 or phase 3 absolutization) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `text_decoration_inset` / `text_decoration_thickness` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` / `border_spacing` |
-/// | **Already computed-equivalent** (no lengths to absolutize) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `text_underline_position` / `text_emphasis_position` / `text_emphasis_style` / `text_emphasis_color` / `font_style` / `font_kerning` / `font_optical_sizing` / `font_variant_emoji` / `font_language_override` / `font_variant_ligatures` / `font_synthesis` / `font_variant_position` / `font_palette` / `font_variant_numeric` / `font_variant_east_asian` / `font_variant_caps` / `text_transform` / `text_combine_upright` / `text_orientation` / `unicode_bidi` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `white_space_collapse` / `hyphens` / `hyphenate_character` / `hyphenate_limit_chars` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
+/// | **Still specified** (awaiting phase 2 or phase 3 absolutization) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `text_decoration_inset` / `text_decoration_thickness` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `border_spacing` |
+/// | **Already computed-equivalent** (no lengths to absolutize) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `text_underline_position` / `text_emphasis_position` / `text_emphasis_style` / `text_emphasis_color` / `font_style` / `font_kerning` / `font_optical_sizing` / `font_variant_emoji` / `font_language_override` / `font_variant_ligatures` / `font_synthesis` / `font_variant_position` / `font_palette` / `font_variant_numeric` / `font_variant_east_asian` / `font_variant_caps` / `text_transform` / `text_combine_upright` / `text_orientation` / `unicode_bidi` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `white_space_collapse` / `hyphens` / `hyphenate_character` / `hyphenate_limit_chars` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `table_layout` / `border_collapse` / `caption_side` |
 /// | **Variant-dependent layer** (the type is the same in both layers, but some variants require absolutization) | `vertical_align` — see [`Self::vertical_align`] |
+///
+/// The table lists hand-written fields only. The longhands declared in the
+/// `properties!` table (the fields of [`SpecifiedTable`]) document their
+/// computed step on their table entry: a specified value equal to its
+/// computed value, or a `compute` hook.
 ///
 /// \* For `background_image`, the `None` and `Url(String)` variants fit the
 /// computed-equivalent classification. The `Gradient(..)` variant (CSS Images 4
@@ -583,20 +589,15 @@ pub struct SpecifiedValues {
     /// Percentages pass through because they need the gradient box dimensions at paint /
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
-    /// Staging value for [`ComputedValues::object_fit`]; computed-equivalent because `ObjectFit`
-    /// carries no lengths.
-    pub object_fit: ObjectFit,
-    /// **Specified** `object-position`; phase 3 absolutizes `<length-percentage>` in each offset,
-    /// as for `background_position`, reusing the [`CssPosition`] type.
-    pub object_position: CssPosition,
-    /// **Specified** `opacity`; retains even out-of-range values without clamping (see "specified
-    /// preserves, computed clamps" in the [`ComputedValues::opacity`] docs). Phase 3
-    /// ([`Self::absolutize_with`]) clamps it.
-    pub opacity: f32,
-    /// **Specified** `isolation`; always a keyword. It passes through without absolutization, as
-    /// with `object_fit`.
-    pub isolation: Isolation,
-    /// **Specified** `mix-blend-mode`; same pass-through shape as `isolation`.
+    /// Specified values of the longhands declared in the `properties!` table of
+    /// `property/decl.rs` (such as `isolation`). Each can also be read as a field of
+    /// `SpecifiedValues` itself through `Deref` (for example `values.isolation`); writes go
+    /// through this field (`values.longhands.isolation = ..`, or
+    /// `values.longhands.apply(..)` for a cascade winner), since no `DerefMut` is provided.
+    /// See [`SpecifiedTable`] for the fields.
+    pub longhands: SpecifiedTable,
+    /// **Specified** `mix-blend-mode`; always a keyword. It passes through without
+    /// absolutization, as with `background_repeat`.
     pub mix_blend_mode: MixBlendMode,
     /// **Specified** `mask-image`; `None` / `Url(String)` are computed-equivalent. As for
     /// `background_image`, phase 3 absolutizes font-relative parts of `<length-percentage>` in
@@ -651,13 +652,6 @@ pub struct SpecifiedValues {
     /// `Self::inherit_from` seeds it by directly copying the parent's computed value, with no
     /// lift needed for a keyword, as for [`Self::visibility`].
     pub caption_side: CaptionSideValue,
-    /// **Specified** `empty-cells`; **inherited**, initially [`EmptyCellsValue::Show`] (CSS
-    /// Tables 3 §8 <https://www.w3.org/TR/css-tables-3/#empty-cells-property>). The computed
-    /// value is the specified keyword, so staging for
-    /// [`crate::computed::ComputedValues::empty_cells`] passes through unchanged.
-    /// `Self::inherit_from` seeds it by directly copying the parent's computed value, with no
-    /// lift needed for a keyword, as for [`Self::visibility`].
-    pub empty_cells: EmptyCellsValue,
     /// `column-count` specified value; non-inherited.
     pub column_count: ColumnCountValue,
     /// `column-width` specified value; non-inherited.
@@ -933,18 +927,8 @@ impl SpecifiedValues {
             },
             // CSS Backgrounds and Borders 3 §2.3: background-image is initially `none`.
             background_image: BackgroundImage::None,
-            // CSS Images Module Level 3 §5.1: object-fit is initially `fill`.
-            object_fit: ObjectFit::Fill,
-            // CSS Images Module Level 3 §5.2: object-position is initially `50% 50%`, unlike
-            // background-position (`0% 0%`).
-            object_position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-            },
-            // CSS Color 4 §3.3: opacity is initially `1`.
-            opacity: 1.0,
-            // CSS Compositing and Blending Level 1 §3.4.2: isolation is initially `auto`.
-            isolation: Isolation::Auto,
+            // Each table-declared longhand at its initial value.
+            longhands: SpecifiedTable::initial(),
             // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode is initially `normal`.
             mix_blend_mode: MixBlendMode::Normal,
             // CSS Masking Level 1 §7.1: mask-image is initially `none`.
@@ -974,9 +958,6 @@ impl SpecifiedValues {
             // CSS Tables 3 §7: caption-side is initially `top`. For nodes with a parent,
             // `Self::inherit_from` replaces it with the inherited value.
             caption_side: CaptionSideValue::Top,
-            // CSS Tables 3 §8: empty-cells is initially `show`. For nodes with a parent,
-            // `Self::inherit_from` replaces it with the inherited value.
-            empty_cells: EmptyCellsValue::Show,
             column_count: ColumnCountValue::Auto,
             column_width: ColumnWidthValue::Auto,
         }
@@ -1132,9 +1113,6 @@ impl SpecifiedValues {
             // CSS Tables 3 §7: caption-side is an inherited keyword; copy it directly without a
             // lift, as for visibility.
             caption_side: parent.caption_side,
-            // CSS Tables 3 §8: empty-cells is an inherited keyword; copy it directly without a
-            // lift, as for visibility.
-            empty_cells: parent.empty_cells,
             // CSS Multi-column Layout 1: both longhands are non-inherited.
             column_count: ColumnCountValue::Auto,
             column_width: ColumnWidthValue::Auto,
@@ -1310,19 +1288,9 @@ impl SpecifiedValues {
                 vertical: CssPositionOffset::Start(Length::Percent(0.0)),
             },
             background_image: BackgroundImage::None,
-            // non-inherited (CSS Images Module Level 3 §5.1/§5.2, both
-            // "Inherited: no") — child starts from spec initial, same as
-            // `background_repeat` above.
-            object_fit: ObjectFit::Fill,
-            object_position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-            },
-            // non-inherited (CSS Color 4 §3.3 "Inherited: no").
-            opacity: 1.0,
-            // non-inherited (CSS Compositing and Blending Level 1 §3.4.2
-            // "Inherited: no").
-            isolation: Isolation::Auto,
+            // Table-declared longhands: each entry's `inherited:` key decides
+            // between the parent's computed value and the initial value.
+            longhands: SpecifiedTable::inherit_from(&parent.longhands),
             // non-inherited (CSS Compositing and Blending Level 1 §3.4.1
             // "Inherited: no").
             mix_blend_mode: MixBlendMode::Normal,
@@ -1835,9 +1803,6 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            // CSS Images Module Level 3 §5.1: the computed value is the specified keyword with no
-            // lengths, like background_repeat.
-            object_fit: self.object_fit,
             transform_origin: resolve_css_position(
                 self.transform_origin,
                 font_size,
@@ -1846,14 +1811,6 @@ impl SpecifiedValues {
             ),
             transform_origin_z: crate::resolve::resolve_length(
                 self.transform_origin_z,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
-            // CSS Images Module Level 3 §5.2: this contains `<length-percentage>`, so absolutize
-            // it like background_position using the same resolve_css_position function.
-            object_position: resolve_css_position(
-                self.object_position,
                 font_size,
                 own_line_height,
                 ctx,
@@ -2119,38 +2076,14 @@ impl SpecifiedValues {
             // winner or inherited value.
             orphans: self.orphans,
             widows: self.widows,
-            // CSS Color 4 §3.3: "Opacity values outside the range `[0, 1]`
-            // are not invalid, and are preserved in specified values, but
-            // are clamped to the range `[0, 1]` in computed values." — the
-            // one place this crate performs that clamp (`ComputedValues::opacity`
-            // doc's "specified preserves, computed clamps" note). `f32::clamp`
-            // correctly maps the `+Inf`/`-Inf` a huge literal (`opacity:
-            // 1e40`/`opacity: -1e40`) can produce to `1.0`/`0.0` without
-            // panicking (only NaN bounds panic, and neither bound here is
-            // NaN). When `self` was built through the ordinary parse ->
-            // cascade pipeline, `self.opacity` also never carries NaN by
-            // the time it reaches here: `property.rs`'s numeric-token
-            // acquisition already corrects the one cssparser artifact that
-            // could otherwise produce it (a huge-*exponent* literal like
-            // `opacity: 0e999`, `property.rs` module doc's "Numeric-token
-            // NaN stabilization" section), and `parse_opacity_value`'s
-            // `!is_nan()` guard — narrower than `is_finite()` specifically
-            // so `+Inf`/`-Inf` still reach this clamp — remains as
-            // defense-in-depth on top of that (`parse_opacity_value` doc's
-            // "`!is_nan()` guard" section is canonical). But
-            // `self.opacity` is a public field on a `pub fn` — a caller
-            // that builds a `SpecifiedValues` directly and assigns `NaN`
-            // here bypasses that parse-time guard entirely, and
-            // `f32::clamp` passes a NaN `self` through unchanged (only a
-            // NaN *bound* panics); this arm does not protect against that
-            // direct-construction case, only against the pipeline's own
-            // out-of-range values.
-            opacity: self.opacity.clamp(0.0, 1.0),
-            // CSS Compositing and Blending Level 1 §3.4.2: always a keyword; pass through without
-            // a phase 3 transform, as for object_fit.
-            isolation: self.isolation,
-            // CSS Compositing and Blending Level 1 §3.4.1: same shape as
-            // `isolation` above.
+            // Table-declared longhands: each goes through its own `Longhand::compute`.
+            longhands: self.longhands.absolutize(&AbsolutizeCx::new(
+                font_size,
+                own_line_height,
+                ctx,
+            )),
+            // CSS Compositing and Blending Level 1 §3.4.1: always a keyword; pass through without
+            // a phase 3 transform, as for background_repeat.
             mix_blend_mode: self.mix_blend_mode,
             // CSS Masking Level 1 §7.1: `None` and `Url(String)` are computed-equivalent. As for
             // background_image, phase 3 absolutizes font-relative parts of `<length-percentage>`
@@ -2201,9 +2134,6 @@ impl SpecifiedValues {
             // The computed value is the specified keyword (see CaptionSideValue docs); no lengths
             // need resolution. Pass through this node's winner or inherited parent value.
             caption_side: self.caption_side,
-            // The computed value is the specified keyword (see EmptyCellsValue docs); likewise,
-            // pass through this node's winner or inherited parent value.
-            empty_cells: self.empty_cells,
             // CSS Multi-column Layout 1: non-inherited count passes through;
             // width is absolutized against the element's own font metrics.
             column_count: self.column_count,

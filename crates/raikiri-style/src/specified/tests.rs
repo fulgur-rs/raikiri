@@ -3,8 +3,8 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox,
+    ComputedTable, EmptyCellsValue, FontSynthesisStyle, FontVariantEastAsianVariant,
+    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox, Isolation,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -99,19 +99,15 @@ fn initial_border_width_is_gated_to_zero_at_computed_layer() {
 /// also check this end-to-end through the real cascade.
 #[test]
 fn opacity_out_of_range_specified_clamps_at_finalize() {
-    let over = SpecifiedValues {
-        opacity: 2.0,
-        ..SpecifiedValues::initial()
-    };
+    let mut over = SpecifiedValues::initial();
+    over.longhands.opacity = 2.0;
     assert_eq!(
         over.finalize(&ComputedValues::initial(), &ResolveContext::initial())
             .opacity,
         1.0
     );
-    let under = SpecifiedValues {
-        opacity: -0.5,
-        ..SpecifiedValues::initial()
-    };
+    let mut under = SpecifiedValues::initial();
+    under.longhands.opacity = -0.5;
     assert_eq!(
         under
             .finalize(&ComputedValues::initial(), &ResolveContext::initial())
@@ -124,11 +120,11 @@ fn opacity_out_of_range_specified_clamps_at_finalize() {
 /// `finalize` unchanged; neither needs range clamping like `opacity`.
 #[test]
 fn isolation_and_mix_blend_mode_pass_through_finalize_unchanged() {
-    let specified = SpecifiedValues {
-        isolation: Isolation::Isolate,
+    let mut specified = SpecifiedValues {
         mix_blend_mode: MixBlendMode::Multiply,
         ..SpecifiedValues::initial()
     };
+    specified.longhands.isolation = Isolation::Isolate;
     let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
     assert_eq!(computed.isolation, Isolation::Isolate);
     assert_eq!(computed.mix_blend_mode, MixBlendMode::Multiply);
@@ -467,22 +463,10 @@ fn parent_fixture() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".to_string()),
-        // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited; set values other than the
-        // initial `fill` / `50% 50%`.
-        object_fit: ObjectFit::Cover,
-        object_position: crate::resolve::ComputedCssPosition {
-            horizontal: crate::resolve::ComputedCssPositionOffset::Start(
-                ComputedLengthPercentage::Px(3.0),
-            ),
-            vertical: crate::resolve::ComputedCssPositionOffset::End(
-                ComputedLengthPercentage::Percent(10.0),
-            ),
-        },
-        // CSS Color 4 §3.3: non-inherited; set a value other than the initial `1`.
-        opacity: 0.25,
-        // CSS Compositing and Blending Level 1 §3.4.2: non-inherited; set a value other than the
-        // initial `auto`.
-        isolation: Isolation::Isolate,
+        // Table-declared longhands, inherited or not: every entry's `sample:` computed in the
+        // initial context, which differs from the computed initial value in every entry
+        // (`table_samples_differ_from_the_initial_values` below checks it).
+        longhands: ComputedTable::sample(),
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.
         mix_blend_mode: MixBlendMode::Multiply,
@@ -510,8 +494,6 @@ fn parent_fixture() -> ComputedValues {
         },
         // CSS Tables 3 §7: caption-side is inherited; set a value other than the initial `top`.
         caption_side: CaptionSideValue::Bottom,
-        // CSS Tables 3 §8: empty-cells is inherited; set a value other than the initial `show`.
-        empty_cells: EmptyCellsValue::Hide,
         column_count: ColumnCountValue::Count(3),
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
         custom_properties: crate::computed::empty_custom_properties(),
@@ -730,6 +712,55 @@ fn inherit_from_copies_inherited_fields() {
     assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
 }
 
+/// The generated table's `inherit_from` follows each entry's `inherited:` key:
+/// the inherited `empty-cells` (CSS Tables 3 §8) takes the parent's value, and
+/// the non-inherited `isolation` (CSS Compositing and Blending Level 1 §3.4.2)
+/// in the same table resets to its initial value. Checked on the table itself
+/// and through `SpecifiedValues::inherit_from` / `ComputedValues::inherit_from`.
+#[test]
+fn table_inherit_from_copies_inherited_entries_and_resets_the_others() {
+    let mut parent = ComputedValues::initial();
+    parent.longhands.empty_cells = EmptyCellsValue::Hide;
+    parent.longhands.isolation = Isolation::Isolate;
+
+    let table = SpecifiedTable::inherit_from(&parent.longhands);
+    assert_eq!(table.empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(table.isolation, Isolation::Auto);
+
+    let specified = SpecifiedValues::inherit_from(&parent);
+    assert_eq!(specified.empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(specified.isolation, Isolation::Auto);
+
+    let computed = ComputedValues::inherit_from(&parent);
+    assert_eq!(computed.empty_cells, EmptyCellsValue::Hide);
+    assert_eq!(computed.isolation, Isolation::Auto);
+}
+
+/// Every table entry's `sample:` differs from its initial value, both as
+/// specified and once computed in the initial context, so the exhaustive
+/// fixtures built from `ComputedTable::sample()` (`parent_fixture` here and
+/// `non_initial_parent` in `computed/tests.rs`) hold a non-initial value in
+/// every table field. A failure names the entries whose `sample:` needs
+/// another value.
+#[test]
+fn table_samples_differ_from_the_initial_values() {
+    assert_eq!(
+        SpecifiedTable::sample().equal_fields(&SpecifiedTable::initial()),
+        Vec::<&str>::new(),
+        "specified sample equals the initial value"
+    );
+    assert_eq!(
+        ComputedTable::sample().equal_fields(&ComputedTable::initial()),
+        Vec::<&str>::new(),
+        "computed sample equals the computed initial value"
+    );
+    // The check itself is not vacuous: a table equals itself in every entry.
+    assert_eq!(
+        ComputedTable::initial().equal_fields(&ComputedTable::initial()),
+        crate::property::LONGHAND_NAMES
+    );
+}
+
 #[test]
 fn inherit_from_preserves_word_spacing_percent_and_mixed_calc() {
     let cases = [
@@ -941,7 +972,7 @@ fn finalize_resolves_border_spacing_against_own_font_size() {
 fn finalize_passes_caption_side_and_empty_cells_through_unchanged() {
     let mut sv = SpecifiedValues::initial();
     sv.caption_side = CaptionSideValue::Bottom;
-    sv.empty_cells = EmptyCellsValue::Hide;
+    sv.longhands.empty_cells = EmptyCellsValue::Hide;
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.caption_side, CaptionSideValue::Bottom);
     assert_eq!(cv.empty_cells, EmptyCellsValue::Hide);

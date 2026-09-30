@@ -1,0 +1,16 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(page_absolutize_fn)
+---
+# [doc = r" Page-context absolutization of one declared longhand value."]
+# [doc = r" `PropertyValue` keeps its specified payload type, so the value is"]
+# [doc = r" computed and lifted back. `value` must be a variant declared in"]
+# [doc = r" `properties!`."]
+pub (crate) fn longhand_page_absolutize (value : PropertyValue , cx : & crate :: property :: AbsolutizeCx < '_ > ,) -> PropertyValue {
+    match value {
+        PropertyValue :: Isolation (v) => PropertyValue :: Isolation (< isolation :: Property as crate :: property :: Longhand > :: lift (< isolation :: Property as crate :: property :: Longhand > :: compute (v , cx)) ,) ,
+        PropertyValue :: ObjectFit (v) => PropertyValue :: ObjectFit (< object_fit :: Property as crate :: property :: Longhand > :: lift (< object_fit :: Property as crate :: property :: Longhand > :: compute (v , cx)) ,) ,
+        PropertyValue :: WordSpacing (v) => PropertyValue :: WordSpacing (< spacing :: Property as crate :: property :: Longhand > :: lift (< spacing :: Property as crate :: property :: Longhand > :: compute (v , cx)) ,) ,
+        other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+    }
+}

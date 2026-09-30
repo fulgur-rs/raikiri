@@ -1,0 +1,34 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(registry_macros)
+---
+# [doc = r" Invokes `$cb! { <hand entries> Variant => sample, ... }` with every"]
+# [doc = r" declared longhand's sample value appended after the hand entries."]
+# [cfg (test)]
+macro_rules ! with_longhand_samples {
+    ($ cb : ident { $ ($ hand : tt) * }) => {
+        $ cb ! {
+            $ ($ hand) * Isolation => crate :: property :: longhand_sample (crate :: property :: PropertyKey :: Isolation) ,
+            ObjectFit => crate :: property :: longhand_sample (crate :: property :: PropertyKey :: ObjectFit) ,
+            WordSpacing => crate :: property :: longhand_sample (crate :: property :: PropertyKey :: WordSpacing) ,
+        }
+    }
+    ;
+}
+# [cfg (test)]
+pub (crate) use with_longhand_samples ;
+# [doc = r" Invokes `$cb! { <hand names> Variant, ... }` with every declared"]
+# [doc = r" variant name appended after the hand names."]
+# [cfg (test)]
+macro_rules ! with_longhand_variants {
+    ($ cb : ident { $ ($ hand : tt) * }) => {
+        $ cb ! {
+            $ ($ hand) * Isolation ,
+            ObjectFit ,
+            WordSpacing ,
+        }
+    }
+    ;
+}
+# [cfg (test)]
+pub (crate) use with_longhand_variants ;
