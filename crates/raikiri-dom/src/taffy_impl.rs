@@ -61,7 +61,7 @@ fn ifc_top_inset(style: &Style, parent_width: Option<f32>) -> f32 {
     let basis = parent_width.unwrap_or(0.0);
     let resolve = |value: taffy::LengthPercentage| {
         let raw = value.into_raw();
-        if raw.tag() == taffy::CompactLength::CALC_TAG {
+        if raw.is_calc() {
             resolve_calc(raw.calc_value(), basis)
         } else {
             crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
@@ -363,6 +363,7 @@ impl Document {
                 // A known width on the input means the parent stretched or
                 // fixed the box; otherwise the box shrinks to fit.
                 let stretched = inputs.known_dimensions.width.is_some();
+                let width_bounds = ifc_content_width_bounds(&style, inputs.parent_size.width);
                 let mut content_baseline = None;
                 let mut output =
                     compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
@@ -373,6 +374,7 @@ impl Document {
                             available,
                             inputs.run_mode,
                             stretched,
+                            width_bounds,
                         );
                         content_baseline = baseline;
                         size
@@ -460,6 +462,53 @@ impl Document {
     }
 }
 
+/// The node's own `min-width` and `max-width`, as content-box widths.
+///
+/// A shrink-to-fit box is clamped by these after it is measured, so the lines
+/// have to be broken at the clamped width to match the box taffy returns.
+/// `auto` gives `0.0` and `f32::INFINITY`.
+fn ifc_content_width_bounds(style: &Style, parent_width: Option<f32>) -> (f32, f32) {
+    let basis = parent_width.unwrap_or(0.0);
+    let resolve_lp = |value: taffy::LengthPercentage| {
+        let raw = value.into_raw();
+        if raw.is_calc() {
+            resolve_calc(raw.calc_value(), basis)
+        } else {
+            crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
+        }
+    };
+    let insets = if style.box_sizing == taffy::BoxSizing::BorderBox {
+        resolve_lp(style.padding.left)
+            + resolve_lp(style.padding.right)
+            + resolve_lp(style.border.left)
+            + resolve_lp(style.border.right)
+    } else {
+        0.0
+    };
+    let resolve_dim = |value: taffy::LengthPercentageAuto, auto: f32| {
+        let raw = value.into_raw();
+        // Calc pointers carry address bits in `tag()`, so test them first.
+        let resolved = if raw.is_calc() {
+            resolve_calc(raw.calc_value(), basis)
+        } else {
+            match raw.tag() {
+                taffy::CompactLength::LENGTH_TAG => raw.value(),
+                taffy::CompactLength::PERCENT_TAG => raw.value() * basis,
+                _ => return auto,
+            }
+        };
+        if resolved.is_finite() {
+            (resolved - insets).max(0.0)
+        } else {
+            auto
+        }
+    };
+    (
+        resolve_dim(style.min_size.width, 0.0),
+        resolve_dim(style.max_size.width, f32::INFINITY),
+    )
+}
+
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
 ///
 /// The width comes from `available.width`, which taffy has already reduced to
@@ -475,6 +524,7 @@ fn measure_ifc_root(
     available: Size<AvailableSpace>,
     run_mode: RunMode,
     stretched: bool,
+    width_bounds: (f32, f32),
 ) -> (Size<f32>, Option<f32>) {
     use crate::layout::ifc::flow;
     let Some(mut state) = tree.ifc.take() else {
@@ -491,6 +541,13 @@ fn measure_ifc_root(
             AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
             AvailableSpace::MinContent => min_content,
             AvailableSpace::MaxContent => max_content,
+        };
+        // A stretched or fixed box already carries its clamped width; a
+        // shrink-to-fit box is clamped by its own min/max after measurement.
+        let width = if stretched {
+            width
+        } else {
+            width.min(width_bounds.1).max(width_bounds.0)
         };
         let lines = flow::break_lines(root, &mut state.layout_cx, width);
         let size = Size {

@@ -3147,6 +3147,20 @@ fn calc_min_width_is_resolved_on_an_ifc_root() {
     lay_out_with_switch(&mut doc, &cascade);
     // 20% of the 800px page plus 10px.
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 170.0);
+    // The stored lines must be broken at the final content width too.
+    assert_eq!(stored_lines(&doc, root).width, 170.0);
+}
+
+#[test]
+fn a_floated_root_with_a_narrow_max_width_breaks_at_that_width() {
+    // max-width is below the longest word, so the box shrinks to 40px and the
+    // lines must be broken there: three lines, not the two that min-content
+    // (60px) would give.
+    let (mut doc, cascade, root) = ahem_paragraph("aaaaaa bb cc", "float:left;max-width:40px");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 40.0);
+    assert_eq!(stored_lines(&doc, root).width, 40.0);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
 }
 
 #[test]

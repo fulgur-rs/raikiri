@@ -33,3 +33,30 @@ fn simple_paragraphs_have_the_same_box_geometry_with_and_without_the_switch() {
         );
     }
 }
+
+/// Shapes where the parley path is the one that disagrees with CSS. The
+/// shodo path gives the CSS-expected height; these are pinned so a change on
+/// either side is noticed instead of being read as an unpainted-text
+/// difference.
+#[test]
+fn known_divergences_where_the_parley_path_is_wrong() {
+    // Two consecutive <br> make an empty middle line: three 10px lines. The
+    // parley path drops that line.
+    let text = "aaaa\n\nbbbb";
+    let css = "width:200px;line-height:10px";
+    assert_eq!(size(text, css, false), (200.0, 20.0));
+    assert_eq!(size(text, css, true), (200.0, 30.0));
+
+    // A float shrinks to its max-width (30px), which forces the second word
+    // onto its own line. The parley path does not re-break at that width.
+    let text = "aaaa bbbb";
+    let css = "float:left;max-width:30px;line-height:10px";
+    assert_eq!(size(text, css, false).1, 10.0);
+    assert_eq!(size(text, css, true).1, 20.0);
+}
+
+#[test]
+fn normal_line_height_matches_for_ahem() {
+    let (text, css) = ("aaaa bbbb cccc", "width:50px;line-height:normal");
+    assert_eq!(size(text, css, false), size(text, css, true));
+}
