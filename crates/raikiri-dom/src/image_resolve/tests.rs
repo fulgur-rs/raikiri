@@ -295,3 +295,43 @@ fn intrinsic_size_changes_dirty_layout_caches_without_dirtying_unchanged_sizes()
     assert!(doc.layout_dirty);
     assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
 }
+
+#[test]
+fn canvas_intrinsic_uses_width_height_with_defaults_and_ratio() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let canvas = doc.append_element(Some(root), "canvas", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    resolve_canvas_intrinsic_sizes(&mut doc);
+    assert_eq!(
+        doc.nodes[canvas].image_intrinsic_size(),
+        Some((300.0, 150.0))
+    );
+    doc.set_element_attributes(
+        canvas,
+        vec![
+            ("width".into(), "50".into()),
+            ("height".into(), "100".into()),
+        ],
+    );
+    resolve_canvas_intrinsic_sizes(&mut doc);
+    assert_eq!(
+        doc.nodes[canvas].image_intrinsic_size(),
+        Some((50.0, 100.0))
+    );
+    let intrinsic = doc.nodes[canvas]
+        .image_intrinsic_box()
+        .expect("intrinsic box");
+    assert!((intrinsic.aspect_ratio.expect("ratio") - 0.5).abs() < 0.001);
+}
+
+#[test]
+fn canvas_intrinsic_skips_non_canvas_and_inert_subtrees() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let div = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    doc.set_element_attributes(div, vec![("width".into(), "50".into())]);
+    doc.mark_in_document_flags();
+    resolve_canvas_intrinsic_sizes(&mut doc);
+    assert_eq!(doc.nodes[div].image_intrinsic_size(), None);
+}

@@ -12,6 +12,7 @@ use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsString, JsSymbol, JsValue, NativeFunction, Source,
 };
 
+pub(crate) mod canvas;
 pub(crate) mod collections;
 pub(crate) mod dispatch;
 pub(crate) mod document;
@@ -112,6 +113,11 @@ pub(crate) struct State {
     pub current_script: Option<usize>,
     /// `console.*` calls recorded during evaluation, in call order.
     pub console: Vec<window::ConsoleMessage>,
+    /// Per-canvas 2d contexts so `canvas.getContext('2d') === canvas.getContext('2d')`.
+    pub canvas_contexts: HashMap<usize, JsObject>,
+    /// Current `fillStyle` per canvas, `(serialized, rgba)`. Defaults to
+    /// opaque black (`"#000000"`) per HTML Standard §4.12.5.
+    pub canvas_fill_styles: HashMap<usize, (String, [u8; 4])>,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -294,6 +300,8 @@ impl DomRuntime {
             ready_state: document::ReadyState::default(),
             current_script: None,
             console: Vec::new(),
+            canvas_contexts: HashMap::new(),
+            canvas_fill_styles: HashMap::new(),
         };
         let executor = Rc::new(event_loop::RaikiriJobExecutor);
         let built = Context::builder().job_executor(executor).build();

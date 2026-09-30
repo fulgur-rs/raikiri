@@ -40,6 +40,8 @@ pub(crate) struct Protos {
     pub node: JsObject,
     pub element: JsObject,
     pub html_element: JsObject,
+    pub html_canvas_element: JsObject,
+    pub canvas_rendering_context_2d: JsObject,
     pub character_data: JsObject,
     pub text: JsObject,
     pub comment: JsObject,
@@ -299,6 +301,7 @@ fn derived(
 
 /// Register every interface, then `window` / `self` / `document`.
 pub(crate) fn install(context: &mut Context) -> JsResult<()> {
+    use super::canvas;
     use super::dispatch;
     use super::node;
     use super::query;
@@ -359,6 +362,20 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
     ];
     let html_element = derived(context, "HTMLElement", &element, &html_element_members)?;
+    let canvas_members = [&canvas::HTML_CANVAS_ELEMENT_MEMBERS];
+    let html_canvas_element =
+        derived(context, "HTMLCanvasElement", &html_element, &canvas_members)?;
+    let canvas_2d_members = [&canvas::CANVAS_RENDERING_CONTEXT_2D_MEMBERS];
+    let canvas_2d_result = interface(
+        context,
+        "CanvasRenderingContext2D",
+        None,
+        None,
+        &canvas_2d_members,
+        illegal_constructor,
+        0,
+    );
+    let canvas_2d = canvas_2d_result?;
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
     let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
     let pi_members = [&tree::PROCESSING_INSTRUCTION_MEMBERS];
@@ -500,6 +517,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         node: node_i.prototype,
         element: element.prototype,
         html_element: html_element.prototype,
+        html_canvas_element: html_canvas_element.prototype,
+        canvas_rendering_context_2d: canvas_2d.prototype,
         character_data: character_data.prototype,
         text: text.prototype,
         comment: comment.prototype,
@@ -560,14 +579,16 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
 
 /// The interface prototype matching the node at `index`.
 fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    let (kind, html) = with_state(context, |s| {
+    let (kind, html, canvas) = with_state(context, |s| {
         let doc = s.host.document();
         let kind = doc.get_node(index).map(|n| n.kind());
         let html = doc.element_namespace_uri(index) == Some(HTML_NS);
-        (kind, html)
+        let canvas = doc.is_canvas_element(index);
+        (kind, html, canvas)
     })?;
     let p = protos(context);
     Ok(match kind {
+        Some(NodeKind::Element) if canvas => p.html_canvas_element.clone(),
         Some(NodeKind::Element) if html => p.html_element.clone(),
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),

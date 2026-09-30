@@ -3375,3 +3375,129 @@ fn overflow_hidden_clip_min_edges_floor_outward() {
         "max y keeps exact extent {bounds:?}"
     );
 }
+
+#[test]
+fn canvas_bitmap_paints_with_object_fit_fill() {
+    let mut parsed = raikiri_html::parse(
+        "<body style='margin:0'><canvas width='2' height='2' style='width:2px;height:2px'></canvas>".as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    // Paint a red 2x2 bitmap.
+    let canvas = {
+        let mut stack = vec![parsed.dom.root_index()];
+        let mut found = None;
+        while let Some(id) = stack.pop() {
+            if parsed.dom.is_canvas_element(id) {
+                found = Some(id);
+                break;
+            }
+            if let Some(node) = parsed.dom.get_node(id) {
+                stack.extend(node.children.iter().rev().copied());
+            }
+        }
+        found.expect("canvas element exists")
+    };
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    let image = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)) => {
+                Some(fill)
+            }
+            _ => None,
+        })
+        .expect("canvas paints an image fill");
+    // 2 source pixels map to 2 CSS pixels at the origin.
+    assert_eq!(&image.transform.as_coeffs()[..4], &[1.0, 0.0, 0.0, 1.0]);
+}
+
+#[test]
+fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
+    // Mirrors overflow-canvas.html: 50x100 bitmap in a 25x50 content box with
+    // object-fit none and overflow visible must show the full bitmap.
+    let mut parsed = raikiri_html::parse(
+        "<body style='margin:0'><canvas width='50' height='100' style='width:25px;height:50px;object-fit:none;object-position:0% 0%;overflow:visible'></canvas>".as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let canvas = {
+        let mut stack = vec![parsed.dom.root_index()];
+        let mut found = None;
+        while let Some(id) = stack.pop() {
+            if parsed.dom.is_canvas_element(id) {
+                found = Some(id);
+                break;
+            }
+            if let Some(node) = parsed.dom.get_node(id) {
+                stack.extend(node.children.iter().rev().copied());
+            }
+        }
+        found.expect("canvas element exists")
+    };
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 0, 25, 50, [0, 0, 255, 255]);
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 25, 0, 25, 50, [0, 128, 0, 255]);
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 50, 25, 50, [255, 0, 0, 255]);
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 25, 50, 25, 50, [255, 255, 0, 255]);
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        150,
+    );
+    let px = |x: usize, y: usize| {
+        let off = (y * 100 + x) * 4;
+        [rgba[off], rgba[off + 1], rgba[off + 2], rgba[off + 3]]
+    };
+    // Body has zero margin, so the canvas origin is the viewport origin.
+    assert_eq!(px(0, 0), [0, 0, 255, 255], "blue quadrant at origin");
+    assert_eq!(
+        px(25, 0),
+        [0, 128, 0, 255],
+        "green overflow beyond 25px content width"
+    );
+    assert_eq!(
+        px(0, 50),
+        [255, 0, 0, 255],
+        "red overflow beyond 50px content height"
+    );
+    assert_eq!(px(30, 60), [255, 255, 0, 255], "yellow overflow corner");
+}
