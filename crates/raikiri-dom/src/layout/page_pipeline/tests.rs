@@ -2992,3 +2992,194 @@ fn without_the_switch_the_same_paragraph_is_shaped_by_parley() {
     assert!(!doc.nodes[root].flags.contains(NodeFlags::IS_IFC_ROOT));
     assert!(doc.nodes[text].text_layout().is_some());
 }
+
+// ── ifc roots in taffy ───────────────────────────────────────
+
+use crate::layout::test_support::{
+    ahem_font_context, ahem_paragraph, ahem_paragraph_in_block_wrapper, ifc_ahem_fonts,
+    page_box_800x600,
+};
+
+fn lay_out_with_switch(doc: &mut Document, cascade: &CascadeResult) {
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(doc, cascade, page_box_800x600(), ahem_font_context()).expect("layout");
+}
+
+fn stored_lines(doc: &Document, root: usize) -> &crate::layout::ifc::root::IfcLines {
+    doc.nodes[root]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("the root holds performed lines")
+}
+
+#[test]
+fn ifc_root_height_is_lines_times_line_height() {
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[root].unrounded_layout;
+    assert_eq!(layout.size.width, 50.0);
+    // Three 10px lines, and the text node was never shaped by parley.
+    assert_eq!(layout.size.height, 30.0);
+    assert!(
+        doc.nodes[doc.nodes[root].children[0]]
+            .text_layout()
+            .is_none()
+    );
+    assert_eq!(stored_lines(&doc, root).lines.len(), 3);
+}
+
+#[test]
+fn padding_and_border_shrink_the_line_width() {
+    let (mut doc, cascade, root) = ahem_paragraph(
+        "aaaa bbbb",
+        "box-sizing:border-box;width:70px;padding:0 10px;border:0 solid red;border-width:0 5px",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    // Content box: 70 - 2*10 - 2*5 = 40px, so "aaaa" and "bbbb" stack.
+    let lines = stored_lines(&doc, root);
+    assert_eq!(lines.width, 40.0);
+    assert_eq!(lines.lines.len(), 2);
+}
+
+#[test]
+fn an_explicit_width_root_breaks_at_the_box_width() {
+    // The width is stretched or explicit, so it must not be clamped to the
+    // max-content width of the text (90px).
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "width:200px");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(stored_lines(&doc, root).width, 200.0);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 200.0);
+}
+
+#[test]
+fn a_floated_root_shrinks_to_its_max_content() {
+    // A `width:auto` float is laid out with no known width and a definite
+    // available width: the shrink-to-fit branch.
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "float:left");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 90.0);
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+}
+
+#[test]
+fn an_inline_block_shrinks_to_the_max_content_of_its_ifc_root() {
+    // inline-block -> block wrapper -> root: the inline-block is measured at
+    // max-content, which reaches the root as `AvailableSpace::MaxContent`.
+    let (mut doc, cascade, wrapper, root) =
+        ahem_paragraph_in_block_wrapper("aaaa bbbb", "display:inline-block");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.width, 90.0);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 90.0);
+}
+
+#[test]
+fn the_last_performed_layout_decides_the_stored_lines() {
+    // The inline-block probes its content at several widths before the final
+    // pass; whichever pass ran last must be the one the root keeps.
+    let (mut doc, cascade, _wrapper, root) =
+        ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;max-width:50px");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(
+        stored_lines(&doc, root).width,
+        doc.nodes[root].unrounded_layout.size.width
+    );
+}
+
+#[test]
+fn lines_survive_a_second_layout_pass() {
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
+    lay_out_with_switch(&mut doc, &cascade);
+    // Same cascade: no generation change, so only the switch's own cache drop
+    // keeps the measure callback running.
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("second layout");
+    assert_eq!(stored_lines(&doc, root).lines.len(), 3);
+}
+
+#[test]
+fn first_baseline_includes_the_top_padding_and_border() {
+    use taffy::{
+        AvailableSpace, LayoutInput, LayoutPartialTree, Line, NodeId, RequestedAxis, RunMode, Size,
+        SizingMode,
+    };
+    let (mut doc, cascade, root) = ahem_paragraph(
+        "aa",
+        "width:100px;padding-top:6px;border-top-width:3px;border-top-style:solid",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    // Ask the root for its layout output again: the baselines are part of it.
+    let output = doc.compute_child_layout(
+        NodeId::from(root),
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: None,
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            parent_size: Size {
+                width: Some(800.0),
+                height: Some(600.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        },
+    );
+    // Ahem ascent 8px + 6px padding + 3px border, from the border-box top.
+    assert_eq!(output.baselines.first, Some(17.0));
+}
+
+#[test]
+fn calc_min_width_is_resolved_on_an_ifc_root() {
+    // The bridge passes `calc()` through for sizes and min/max sizes, not for
+    // padding. A floated root shrinks to 90px, so the calc minimum decides.
+    let (mut doc, cascade, root) =
+        ahem_paragraph("aaaa bbbb", "float:left;min-width:calc(20% + 10px)");
+    lay_out_with_switch(&mut doc, &cascade);
+    // 20% of the 800px page plus 10px.
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 170.0);
+}
+
+#[test]
+fn an_inline_block_baseline_follows_the_last_ifc_line() {
+    use taffy::{
+        AvailableSpace, LayoutInput, LayoutPartialTree, Line, NodeId, RequestedAxis, RunMode, Size,
+        SizingMode,
+    };
+    let (mut doc, cascade, wrapper, _root) =
+        ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;width:50px");
+    lay_out_with_switch(&mut doc, &cascade);
+    let output = doc.compute_child_layout(
+        NodeId::from(wrapper),
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            parent_size: Size {
+                width: Some(800.0),
+                height: Some(600.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        },
+    );
+    // Three 10px lines: the last baseline is 20px + the 8px Ahem ascent.
+    assert_eq!(output.baselines.first, Some(28.0));
+}

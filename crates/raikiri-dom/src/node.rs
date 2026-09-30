@@ -379,7 +379,6 @@ pub struct Node {
     /// Per-node Taffy layout cache.
     pub(crate) cache: Cache,
     /// Shodo paragraph state; set only on nodes flagged [`NodeFlags::IS_IFC_ROOT`].
-    #[allow(dead_code, reason = "read once the taffy dispatch uses the paragraph")]
     pub(crate) ifc: Option<Box<crate::layout::ifc::root::IfcRoot>>,
     /// Taffy layout result, populated by compute_root_layout.
     ///

@@ -81,6 +81,7 @@ pub(crate) mod test_support;
 use bridge::*;
 use inline_text::*;
 use multicol::*;
+pub(crate) use page::used_style_length_percentage;
 use page::*;
 use page_pipeline::*;
 use sanitize::*;
