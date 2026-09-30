@@ -1,0 +1,61 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(specified_table_impl)
+---
+# [allow (clippy :: clone_on_copy , unused_variables)]
+impl SpecifiedTable {
+    # [doc = r" Every field at its initial value."]
+    pub (crate) fn initial () -> Self {
+        Self {
+            isolation : < isolation :: Property as crate :: property :: Longhand > :: initial () ,
+            object_fit : < object_fit :: Property as crate :: property :: Longhand > :: initial () ,
+            spacing : < spacing :: Property as crate :: property :: Longhand > :: initial () ,
+        }
+    }
+    # [doc = r" The specified state of a child: inherited fields copy the"]
+    # [doc = r" parent's computed value (lifted back to specified form), the"]
+    # [doc = r" others start at their initial value."]
+    pub (crate) fn inherit_from (parent : & ComputedTable) -> Self {
+        Self {
+            isolation : < isolation :: Property as crate :: property :: Longhand > :: initial () ,
+            object_fit : < object_fit :: Property as crate :: property :: Longhand > :: initial () ,
+            spacing : < spacing :: Property as crate :: property :: Longhand > :: lift (:: core :: clone :: Clone :: clone (& parent . spacing)) ,
+        }
+    }
+    # [doc = r" Specified to computed, through each longhand's `compute`."]
+    pub (crate) fn absolutize (self , cx : & crate :: property :: AbsolutizeCx < '_ >) -> ComputedTable {
+        ComputedTable {
+            isolation : < isolation :: Property as crate :: property :: Longhand > :: compute (self . isolation , cx) ,
+            object_fit : < object_fit :: Property as crate :: property :: Longhand > :: compute (self . object_fit , cx) ,
+            spacing : < spacing :: Property as crate :: property :: Longhand > :: compute (self . spacing , cx) ,
+        }
+    }
+    # [doc = r" Stores a cascade winner in its field. `value` must be a"]
+    # [doc = r" variant declared in `properties!`."]
+    pub (crate) fn apply (& mut self , value : PropertyValue) {
+        match value {
+            PropertyValue :: Isolation (v) => self . isolation = v ,
+            PropertyValue :: ObjectFit (v) => self . object_fit = v ,
+            PropertyValue :: WordSpacing (v) => self . spacing = v ,
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" Every field at its entry's `sample` value: a non-initial"]
+    # [doc = r" value for test fixtures."]
+    # [cfg (test)]
+    pub (crate) fn sample () -> Self {
+        Self {
+            isolation : < isolation :: Property as crate :: property :: Longhand > :: sample () ,
+            object_fit : < object_fit :: Property as crate :: property :: Longhand > :: sample () ,
+            spacing : < spacing :: Property as crate :: property :: Longhand > :: sample () ,
+        }
+    }
+    # [doc = r" The CSS names of the entries whose fields are equal in `self`"]
+    # [doc = r" and `other`, in declaration order (test only; for checking that"]
+    # [doc = r" a fixture differs from the initial values in every entry)."]
+    # [cfg (test)]
+    pub (crate) fn equal_fields (& self , other : & Self) -> :: std :: vec :: Vec < & 'static str > {
+        let pairs : & [(& 'static str , bool)] = & [("isolation" , self . isolation == other . isolation) , ("object-fit" , self . object_fit == other . object_fit) , ("word-spacing" , self . spacing == other . spacing) ,] ;
+        pairs . iter () . filter (| (_ , equal) | * equal) . map (| (name , _) | * name) . collect ()
+    }
+}

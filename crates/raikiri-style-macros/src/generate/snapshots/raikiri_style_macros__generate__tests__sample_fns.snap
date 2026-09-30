@@ -1,0 +1,19 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(sample_fns)
+---
+# [doc = r" Every declared longhand's CSS name paired with its sample value."]
+# [cfg (test)]
+pub (crate) fn longhand_samples () -> :: std :: vec :: Vec < (& 'static str , PropertyValue) > {
+    :: std :: vec ! [(< isolation :: Property as crate :: property :: Longhand > :: NAME , longhand_sample (PropertyKey :: Isolation)) , (< object_fit :: Property as crate :: property :: Longhand > :: NAME , longhand_sample (PropertyKey :: ObjectFit)) , (< spacing :: Property as crate :: property :: Longhand > :: NAME , longhand_sample (PropertyKey :: WordSpacing)) ,]
+}
+# [doc = r" The sample value of the declared longhand `key`."]
+# [cfg (test)]
+pub (crate) fn longhand_sample (key : PropertyKey) -> PropertyValue {
+    match key {
+        PropertyKey :: Isolation => PropertyValue :: Isolation (< isolation :: Property as crate :: property :: Longhand > :: sample ()) ,
+        PropertyKey :: ObjectFit => PropertyValue :: ObjectFit (< object_fit :: Property as crate :: property :: Longhand > :: sample ()) ,
+        PropertyKey :: WordSpacing => PropertyValue :: WordSpacing (< spacing :: Property as crate :: property :: Longhand > :: sample ()) ,
+        other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+    }
+}

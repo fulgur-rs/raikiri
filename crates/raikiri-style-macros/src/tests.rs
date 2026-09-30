@@ -84,7 +84,7 @@ fn diagnostics(src: &str) -> (String, usize) {
 
 /// A readable layout of generated tokens for snapshots: one statement,
 /// field, match arm or attribute per line, braces indented.
-fn pretty(tokens: TokenStream) -> String {
+pub(crate) fn pretty(tokens: TokenStream) -> String {
     struct Printer {
         out: String,
         indent: usize,

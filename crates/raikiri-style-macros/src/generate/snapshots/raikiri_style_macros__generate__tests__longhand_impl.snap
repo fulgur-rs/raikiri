@@ -1,0 +1,81 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: per_entry(longhand_impl)
+---
+--- isolation ---
+impl crate :: property :: Longhand for isolation :: Property {
+    const NAME : & 'static str = "isolation" ;
+    const INHERITED : bool = false ;
+    type Specified = isolation :: Specified ;
+    type Computed = isolation :: Computed ;
+    fn initial () -> Self :: Specified {
+        Isolation :: Auto
+    }
+    fn parse (input : & mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > {
+        input . expect_ident () . ok () . and_then (| ident | Isolation :: from_css_ident (ident))
+    }
+    fn compute (specified : Self :: Specified , cx : & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed {
+        let _ = cx ;
+        specified
+    }
+    fn lift (computed : Self :: Computed) -> Self :: Specified {
+        computed
+    }
+    # [cfg (test)]
+    fn sample () -> Self :: Specified {
+        Isolation :: Isolate
+    }
+}
+
+--- object-fit ---
+impl crate :: property :: Longhand for object_fit :: Property {
+    const NAME : & 'static str = "object-fit" ;
+    const INHERITED : bool = false ;
+    type Specified = object_fit :: Specified ;
+    type Computed = object_fit :: Computed ;
+    fn initial () -> Self :: Specified {
+        < ObjectFit > :: Fill
+    }
+    fn parse (input : & mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > {
+        let parse : fn (& mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > = parse_object_fit ;
+        parse (input)
+    }
+    fn compute (specified : Self :: Specified , cx : & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed {
+        let _ = cx ;
+        specified
+    }
+    fn lift (computed : Self :: Computed) -> Self :: Specified {
+        computed
+    }
+    # [cfg (test)]
+    fn sample () -> Self :: Specified {
+        < ObjectFit > :: Contain
+    }
+}
+
+--- word-spacing ---
+impl crate :: property :: Longhand for spacing :: Property {
+    const NAME : & 'static str = "word-spacing" ;
+    const INHERITED : bool = true ;
+    type Specified = spacing :: Specified ;
+    type Computed = spacing :: Computed ;
+    fn initial () -> Self :: Specified {
+        Length :: Px (0.0)
+    }
+    fn parse (input : & mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > {
+        let parse : fn (& mut :: cssparser :: Parser < '_ , '_ >) -> :: core :: option :: Option < Self :: Specified > = parse_length ;
+        parse (input)
+    }
+    fn compute (specified : Self :: Specified , cx : & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed {
+        let compute : fn (Self :: Specified , & crate :: property :: AbsolutizeCx < '_ >) -> Self :: Computed = absolutize_length ;
+        compute (specified , cx)
+    }
+    fn lift (computed : Self :: Computed) -> Self :: Specified {
+        let lift : fn (Self :: Computed) -> Self :: Specified = lift_length ;
+        lift (computed)
+    }
+    # [cfg (test)]
+    fn sample () -> Self :: Specified {
+        Length :: Em (2.0)
+    }
+}

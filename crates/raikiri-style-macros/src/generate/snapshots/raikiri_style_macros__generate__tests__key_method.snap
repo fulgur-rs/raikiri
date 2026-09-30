@@ -1,0 +1,21 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: "pretty(key_method(&fixture(), &[hand_written]))"
+---
+impl PropertyValue {
+    # [doc = r" Returns the property key for this value."]
+    # [doc = r""]
+    # [doc = r" Used as the discriminant for selecting one winner per property in the"]
+    # [doc = r" cascade, and as the key in the `@page` cascade result map."]
+    pub fn key (& self) -> PropertyKey {
+        match self {
+            PropertyValue :: Color {
+                ..
+            }
+            => PropertyKey :: Color ,
+            PropertyValue :: Isolation (_) => PropertyKey :: Isolation ,
+            PropertyValue :: ObjectFit (_) => PropertyKey :: ObjectFit ,
+            PropertyValue :: WordSpacing (_) => PropertyKey :: WordSpacing ,
+        }
+    }
+}

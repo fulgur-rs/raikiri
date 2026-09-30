@@ -1,0 +1,7 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(longhand_names_const)
+---
+# [doc = r" Every longhand name declared in `properties!`, lowercase, in"]
+# [doc = r" declaration order."]
+pub (crate) const LONGHAND_NAMES : & [& str] = & ["isolation" , "object-fit" , "word-spacing"] ;

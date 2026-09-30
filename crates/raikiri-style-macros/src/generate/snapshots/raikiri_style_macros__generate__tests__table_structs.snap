@@ -1,0 +1,44 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(table_structs)
+---
+# [doc = r" Specified values of the longhands declared in `properties!`,"]
+# [doc = r" embedded as `SpecifiedValues::longhands`; its fields are readable"]
+# [doc = r" directly on `SpecifiedValues` through `Deref` and written through"]
+# [doc = r" `longhands`."]
+# [derive (Clone , Debug , PartialEq)]
+# [non_exhaustive]
+pub struct SpecifiedTable {
+    # [doc = " Specified `isolation`."]
+    # [doc = ""]
+    # [doc = " CSS Compositing 1 §3.4.2"]
+    pub isolation : isolation :: Specified ,
+    # [doc = " Specified `object-fit`."]
+    # [doc = ""]
+    # [doc = " CSS Images 3 §5.1"]
+    pub object_fit : object_fit :: Specified ,
+    # [doc = " Specified `word-spacing`."]
+    # [doc = ""]
+    # [doc = " CSS Text 3 §7.2"]
+    pub spacing : spacing :: Specified ,
+}
+# [doc = r" Computed values of the longhands declared in `properties!`,"]
+# [doc = r" embedded as `ComputedValues::longhands`; its fields are readable"]
+# [doc = r" directly on `ComputedValues` through `Deref` and written through"]
+# [doc = r" `longhands`."]
+# [derive (Clone , Debug , PartialEq)]
+# [non_exhaustive]
+pub struct ComputedTable {
+    # [doc = " Computed `isolation`."]
+    # [doc = ""]
+    # [doc = " CSS Compositing 1 §3.4.2"]
+    pub isolation : isolation :: Computed ,
+    # [doc = " Computed `object-fit`."]
+    # [doc = ""]
+    # [doc = " CSS Images 3 §5.1"]
+    pub object_fit : object_fit :: Computed ,
+    # [doc = " Computed `word-spacing`."]
+    # [doc = ""]
+    # [doc = " CSS Text 3 §7.2"]
+    pub spacing : spacing :: Computed ,
+}
