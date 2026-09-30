@@ -3406,11 +3406,14 @@ fn paint_document_impl(
         body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
     };
     let body_has_direct_text = document.get_node(body_id).is_some_and(|body| {
-        body.children.iter().any(|&child_id| {
-            document.get_node(child_id).is_some_and(|child| {
-                child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
+        // An ifc body root hides its text children from layout, so their
+        // heights stay 0; the root's own box stands in for them.
+        (body.is_ifc_root() && body.unrounded_layout.size.height > 0.0)
+            || body.children.iter().any(|&child_id| {
+                document.get_node(child_id).is_some_and(|child| {
+                    child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
+                })
             })
-        })
     });
     let body_has_non_ua_margin = cascade
         .non_ua_margin_sides
@@ -3603,6 +3606,24 @@ fn paint_document_impl(
         inside_fixed_containing_block: false,
         decorations: root_decorations,
     }];
+    // Flowed text is clipped to the page content box when the page is at
+    // least twice as wide as its content; fixed boxes repeat on every page
+    // and are not clipped.
+    let text_page_clip = |inside_fixed: bool| -> Option<Rect> {
+        (!inside_fixed
+            && content_width.is_finite()
+            && content_width > 0.0
+            && page_box.width >= content_width * 2.0
+            && cascade.page.margin_boxes().is_empty())
+        .then(|| {
+            Rect::new(
+                page_offset_x as f64,
+                (margins.top + insets.top) as f64,
+                (page_box.width - margins.right - insets.right) as f64,
+                (margins.top + insets.top + content_height) as f64,
+            )
+        })
+    };
     while let Some(frame) = stack.pop() {
         let (
             node_id,
@@ -4378,7 +4399,7 @@ fn paint_document_impl(
                 // This is intentionally local to the current parent; full
                 // nested stacking-context isolation remains outside this
                 // minimal painter.
-                let mut children = if node.is_inline_svg_root() {
+                let mut children = if node.is_inline_svg_root() || node.is_ifc_root() {
                     Vec::new()
                 } else {
                     node.children.clone()
@@ -4497,6 +4518,59 @@ fn paint_document_impl(
                 // other supported relative boxes retain the paint-side offset.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
+                // Text children read `inside_fixed || fixed_in_viewport` (the
+                // value pushed on their frame), so the lines use it too: a
+                // fixed root repeats on every page and its text is not clipped
+                // like flowed text.
+                let ifc_inside_fixed = inside_fixed || fixed_in_viewport;
+                if node.is_ifc_root()
+                    && named_page_matches(node_id)
+                    && (ifc_inside_fixed
+                        || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
+                {
+                    // The block's own background and border were painted
+                    // above; its lines are drawn at the content-box origin,
+                    // where a child text node would have been placed. That
+                    // origin comes from the taffy layout's border and padding
+                    // (the text child's `location`), not from
+                    // `used_padding_for_paint`, which places the element's own
+                    // generated content. `<body>` shifts its direct text by the
+                    // body's left margin, so a body root shifts its lines too.
+                    let body_shift = if node_id == body_id {
+                        body_margin_left
+                    } else {
+                        0.0
+                    };
+                    let content_x = child_parent_x
+                        + page_offset_x
+                        + child_transform_x
+                        + body_shift
+                        + layout.border.left
+                        + layout.padding.left;
+                    let content_y = child_parent_y
+                        + page_offset_y
+                        + child_transform_y
+                        + layout.border.top
+                        + layout.padding.top;
+                    let text_clip = text_page_clip(ifc_inside_fixed);
+                    if let Some(clip) = &text_clip {
+                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    }
+                    crate::ifc_text::draw_ifc_lines(
+                        scene,
+                        document,
+                        cascade,
+                        node_id,
+                        crate::ifc_text::IfcPosition {
+                            x: content_x,
+                            y: content_y,
+                            shift_y: child_shift_y,
+                        },
+                    );
+                    if text_clip.is_some() {
+                        scene.pop_layer();
+                    }
+                }
                 let own_multicol_clip_height = match cv.column_count {
                     ColumnCountValue::Count(count) if count > 1 && layout.size.height > 0.0 => {
                         Some(layout.size.height)
@@ -4589,19 +4663,9 @@ fn paint_document_impl(
                     && (inside_fixed
                         || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
                 {
-                    let clip_text_to_page_content = !inside_fixed
-                        && content_width.is_finite()
-                        && content_width > 0.0
-                        && page_box.width >= content_width * 2.0
-                        && cascade.page.margin_boxes().is_empty();
-                    if clip_text_to_page_content {
-                        let clip = Rect::new(
-                            page_offset_x as f64,
-                            (margins.top + insets.top) as f64,
-                            (page_box.width - margins.right - insets.right) as f64,
-                            (margins.top + insets.top + content_height) as f64,
-                        );
-                        scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    let text_clip = text_page_clip(inside_fixed);
+                    if let Some(clip) = &text_clip {
+                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                     }
                     text::draw_text_node(
                         scene,
@@ -4615,7 +4679,7 @@ fn paint_document_impl(
                         },
                         &decorations,
                     );
-                    if clip_text_to_page_content {
+                    if text_clip.is_some() {
                         scene.pop_layer();
                     }
                 }

@@ -122,3 +122,158 @@ fn each_run_takes_the_color_of_its_text_node() {
         "{brushes:?}"
     );
 }
+
+fn painted(doc: &Document, cascade: &raikiri_style::CascadeResult) -> Scene {
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, doc, cascade, PageBox::A4);
+    scene
+}
+
+/// Ink glyphs only, in a canonical order, with positions rounded to 1/64px.
+fn ink(scene: &Scene) -> Vec<(u32, i64, i64)> {
+    let mut out: Vec<_> = glyphs(scene)
+        .into_iter()
+        .map(|g| {
+            (
+                g.0,
+                (g.1 * 64.0).round() as i64,
+                (g.2 * 64.0).round() as i64,
+            )
+        })
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// Paint the same paragraph with the switch off and on.
+fn off_and_on(css: &str, build: impl Fn(&mut Document, usize)) -> (Scene, Scene) {
+    let (mut off_doc, cascade, _) = paragraph(css, &build);
+    lay_out(&mut off_doc, &cascade, false);
+    let off = painted(&off_doc, &cascade);
+
+    let (mut on_doc, cascade, root) = paragraph(css, &build);
+    lay_out(&mut on_doc, &cascade, true);
+    assert!(
+        on_doc.get_node(root).is_some_and(|n| n.is_ifc_root()),
+        "{css}: the paragraph did not become an ifc root"
+    );
+    let on = painted(&on_doc, &cascade);
+    (off, on)
+}
+
+#[test]
+fn ifc_glyph_positions_match_the_parley_path() {
+    // `word-break: break-all` wraps a run of distinct letters without spaces,
+    // so both engines emit the same ink glyphs and no trailing-space glyphs.
+    // The alignment and indent cases pin that shodo's glyph positions already
+    // include the line's offset.
+    let cases = [
+        ("width:50px;word-break:break-all", "abcdefghijklmno"),
+        (
+            "width:50px;word-break:break-all;text-align:center",
+            "abcdefghijklmn",
+        ),
+        (
+            "width:50px;word-break:break-all;text-align:right",
+            "abcdefghijklmn",
+        ),
+        (
+            "width:50px;word-break:break-all;text-indent:20px",
+            "abcdefghijklmno",
+        ),
+    ];
+    for (css, text) in cases {
+        let (off, on) = off_and_on(css, |doc, root| {
+            doc.append_text(root, text);
+        });
+        assert!(
+            !ink(&off).is_empty(),
+            "{css}: the parley path painted nothing"
+        );
+        assert_eq!(ink(&on), ink(&off), "{css}");
+    }
+}
+
+/// Like [`ink`], with y rounded to whole pixels: the renderer rounds the y of
+/// a hinted glyph itself.
+fn ink_whole_pixel_y(scene: &Scene) -> Vec<(u32, i64, i64)> {
+    let mut out: Vec<_> = glyphs(scene)
+        .into_iter()
+        .map(|g| (g.0, (g.1 * 64.0).round() as i64, g.2.round() as i64))
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+#[test]
+fn ifc_glyph_positions_at_the_default_size_match_to_the_pixel() {
+    // At 16px with `line-height: normal` parley rounds the ascent and descent
+    // (baseline 13.0) while shodo keeps 1/64px metrics (baseline 12.796875), so
+    // the recorded y differs by 0.2px. The renderer rounds a hinted glyph's y
+    // to whole pixels, which hides it; compare y the same way and do not round
+    // in the painter.
+    let css = "width:80px;word-break:break-all;font-size:16px;line-height:normal";
+    let (off, on) = off_and_on(css, |doc, root| {
+        doc.append_text(root, "abcdefghijklmno");
+    });
+    assert!(!ink(&off).is_empty());
+    assert_eq!(ink_whole_pixel_y(&on), ink_whole_pixel_y(&off));
+}
+
+#[test]
+fn a_body_root_takes_the_body_left_margin_like_its_text() {
+    // `<body>` itself is the paragraph root: the walk shifts a body's direct
+    // text by the body's left margin, so the lines must be shifted too.
+    let build = |inline_formatting: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin-left:30px;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        doc.append_text(body, "abcde");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, inline_formatting);
+        if inline_formatting {
+            assert!(doc.get_node(body).is_some_and(|n| n.is_ifc_root()));
+        }
+        painted(&doc, &cascade)
+    };
+    let (off, on) = (build(false), build(true));
+    assert!(!ink(&off).is_empty());
+    assert_eq!(ink(&on), ink(&off));
+}
+
+#[test]
+fn a_fixed_position_root_is_painted_like_fixed_text() {
+    // A fixed box repeats on every page, so its text is drawn even where its
+    // laid-out box does not meet the page. The A4 page is about 1122px tall;
+    // the root sits below it. verify in code: choose a `top` where the parley
+    // path still draws the text; the assertion below requires that.
+    let css = "position:fixed;top:1200px;left:0;width:100px;word-break:break-all";
+    let (off, on) = off_and_on(css, |doc, root| {
+        doc.append_text(root, "abcde");
+    });
+    assert!(!ink(&off).is_empty(), "the parley path draws fixed text");
+    assert_eq!(ink(&on), ink(&off));
+}
+
+#[test]
+fn ifc_text_is_painted_once() {
+    let (mut doc, cascade, _) = paragraph("width:50px", |doc, root| {
+        doc.append_text(root, "abcde");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let scene = painted(&doc, &cascade);
+    let runs = scene
+        .commands
+        .iter()
+        .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+        .count();
+    assert_eq!(runs, 1);
+    assert_eq!(glyphs(&scene).len(), 5);
+}
