@@ -306,6 +306,8 @@ fn first_line_parent(normal: &ComputedValues, first: &ComputedValues) -> Compute
     parent.visibility = first.visibility;
     parent.white_space = first.white_space;
     parent.white_space_collapse = first.white_space_collapse;
+    parent.effective_white_space_collapse = first.effective_white_space_collapse;
+    parent.effective_text_wrap_mode = first.effective_text_wrap_mode;
     parent.widows = first.widows;
     parent.word_break = first.word_break;
     parent.word_space_transform = first.word_space_transform;

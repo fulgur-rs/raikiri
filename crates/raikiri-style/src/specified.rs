@@ -467,6 +467,14 @@ pub struct SpecifiedValues {
     pub text_wrap: TextWrapMode,
     /// `text-wrap-style` staging. Inherited, initial `auto`.
     pub text_wrap_style: TextWrapStyle,
+    /// `white-space-collapse` after the legacy `white-space` keyword and the
+    /// longhand are settled by cascade order. Inherited. The CSSOM does not
+    /// read it; it serializes the declared fields above.
+    pub effective_white_space_collapse: WhiteSpaceCollapse,
+    /// `text-wrap-mode` after the legacy `white-space` keyword and the
+    /// longhands are settled by cascade order. Inherited. The CSSOM does not
+    /// read it.
+    pub effective_text_wrap_mode: TextWrapMode,
     /// Staging value for [`ComputedValues::hyphens`]; computed-equivalent because `Hyphens`
     /// carries no lengths.
     pub hyphens: Hyphens,
@@ -847,6 +855,8 @@ impl SpecifiedValues {
             white_space_collapse: WhiteSpaceCollapse::Collapse,
             text_wrap: TextWrapMode::Wrap,
             text_wrap_style: TextWrapStyle::Auto,
+            effective_white_space_collapse: WhiteSpaceCollapse::Collapse,
+            effective_text_wrap_mode: TextWrapMode::Wrap,
             // CSS Text 3 §5.3: hyphens is initially `manual`.
             hyphens: Hyphens::Manual,
             // CSS Text 4: hyphenate-character initial is `auto`.
@@ -1123,6 +1133,10 @@ impl SpecifiedValues {
             white_space_collapse: parent.white_space_collapse,
             text_wrap: parent.text_wrap,
             text_wrap_style: parent.text_wrap_style,
+            // Both effective halves are inherited; a declaration on this
+            // element overrides them in `apply_winners`.
+            effective_white_space_collapse: parent.effective_white_space_collapse,
+            effective_text_wrap_mode: parent.effective_text_wrap_mode,
             // CSS Tables 3 §6: border-collapse is an inherited keyword; copy it directly without
             // a lift, as for visibility.
             border_collapse: parent.border_collapse,
@@ -2007,6 +2021,8 @@ impl SpecifiedValues {
             white_space_collapse: self.white_space_collapse,
             text_wrap: self.text_wrap,
             text_wrap_style: self.text_wrap_style,
+            effective_white_space_collapse: self.effective_white_space_collapse,
+            effective_text_wrap_mode: self.effective_text_wrap_mode,
             // The computed value is the specified keyword (see Hyphens docs); with no lengths, no
             // relative resolution is needed. Pass through this node's winner.
             hyphens: self.hyphens,

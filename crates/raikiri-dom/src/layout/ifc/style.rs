@@ -86,29 +86,10 @@ pub(crate) fn inline_style(cv: &ComputedValues, node: usize) -> Result<InlineSty
         ComputedLineHeight::Length(value) => LineHeight::Px(value.0),
     };
 
-    // `white-space` is a legacy value; the collapse and wrap longhands are
-    // separate computed fields whose declaration order is not kept, so a
-    // non-initial legacy value combined with a non-initial longhand is
-    // ambiguous and rejected.
-    let (legacy_collapse, legacy_wrap) = match cv.white_space {
-        p::WhiteSpace::Normal => (WhiteSpaceCollapse::Collapse, TextWrapMode::Wrap),
-        p::WhiteSpace::Pre => (WhiteSpaceCollapse::Preserve, TextWrapMode::NoWrap),
-        p::WhiteSpace::Nowrap => (WhiteSpaceCollapse::Collapse, TextWrapMode::NoWrap),
-        p::WhiteSpace::PreWrap => (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap),
-        p::WhiteSpace::PreLine => (WhiteSpaceCollapse::PreserveBreaks, TextWrapMode::Wrap),
-        p::WhiteSpace::BreakSpaces => (WhiteSpaceCollapse::BreakSpaces, TextWrapMode::Wrap),
-        _ => return Err(unsupported("white-space mode is not represented by shodo")),
-    };
-    if cv.white_space != p::WhiteSpace::Normal
-        && (cv.white_space_collapse != p::WhiteSpaceCollapse::Collapse
-            || cv.text_wrap != p::TextWrapMode::Wrap)
-    {
-        return Err(unsupported(
-            "legacy white-space and its longhand need winning-declaration provenance",
-        ));
-    }
-    let white_space_collapse = match cv.white_space_collapse {
-        p::WhiteSpaceCollapse::Collapse => legacy_collapse,
+    // The effective values already follow the winning declaration, whether it
+    // was the legacy `white-space` keyword or a longhand.
+    let white_space_collapse = match cv.effective_white_space_collapse {
+        p::WhiteSpaceCollapse::Collapse => WhiteSpaceCollapse::Collapse,
         p::WhiteSpaceCollapse::Preserve => WhiteSpaceCollapse::Preserve,
         p::WhiteSpaceCollapse::PreserveBreaks => WhiteSpaceCollapse::PreserveBreaks,
         p::WhiteSpaceCollapse::PreserveSpaces => WhiteSpaceCollapse::PreserveSpaces,
@@ -119,8 +100,8 @@ pub(crate) fn inline_style(cv: &ComputedValues, node: usize) -> Result<InlineSty
             ));
         }
     };
-    let text_wrap_mode = match cv.text_wrap {
-        p::TextWrapMode::Wrap => legacy_wrap,
+    let text_wrap_mode = match cv.effective_text_wrap_mode {
+        p::TextWrapMode::Wrap => TextWrapMode::Wrap,
         p::TextWrapMode::Nowrap => TextWrapMode::NoWrap,
         _ => return Err(unsupported("text-wrap-mode is not represented by shodo")),
     };

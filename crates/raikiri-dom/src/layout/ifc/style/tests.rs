@@ -60,8 +60,22 @@ fn white_space_pre_maps_to_preserve_and_no_wrap() {
 }
 
 #[test]
-fn legacy_white_space_with_a_conflicting_longhand_is_rejected() {
-    let error = root_style("white-space:nowrap;white-space-collapse:preserve").expect_err("mix");
+fn a_later_longhand_wins_over_the_legacy_white_space_keyword() {
+    let style = root_style("white-space:pre;white-space-collapse:collapse").expect("map");
+    assert_eq!(style.white_space_collapse, WhiteSpaceCollapse::Collapse);
+    assert_eq!(style.text_wrap_mode, TextWrapMode::NoWrap);
+}
+
+#[test]
+fn a_later_legacy_keyword_wins_over_an_earlier_longhand() {
+    let style = root_style("white-space-collapse:preserve;white-space:nowrap").expect("map");
+    assert_eq!(style.white_space_collapse, WhiteSpaceCollapse::Collapse);
+    assert_eq!(style.text_wrap_mode, TextWrapMode::NoWrap);
+}
+
+#[test]
+fn white_space_collapse_discard_is_still_unsupported() {
+    let error = root_style("white-space-collapse:discard").expect_err("discard");
     assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
 }
 
@@ -185,7 +199,8 @@ fn inline_edges_reject_vertical_writing_modes() {
 }
 
 #[test]
-fn legacy_white_space_with_a_wrap_longhand_is_rejected() {
-    let error = root_style("white-space:pre-wrap;text-wrap-mode:nowrap").expect_err("mix");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+fn the_wrap_longhand_after_a_legacy_keyword_changes_only_the_wrap() {
+    let style = root_style("white-space:pre-wrap;text-wrap-mode:nowrap").expect("map");
+    assert_eq!(style.white_space_collapse, WhiteSpaceCollapse::Preserve);
+    assert_eq!(style.text_wrap_mode, TextWrapMode::NoWrap);
 }

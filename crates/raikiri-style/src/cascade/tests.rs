@@ -219,3 +219,195 @@ fn cascade_with_ua_deterministic_across_10_runs() {
         }
     }
 }
+
+use crate::property::{TextWrapMode, WhiteSpace, WhiteSpaceCollapse};
+
+fn effective(css: &str, inline: Option<&str>) -> (WhiteSpaceCollapse, TextWrapMode) {
+    let cv = cascade_doc(css, "div", inline);
+    (
+        cv.effective_white_space_collapse,
+        cv.effective_text_wrap_mode,
+    )
+}
+
+#[test]
+fn a_later_white_space_longhand_overrides_the_legacy_keyword() {
+    assert_eq!(
+        effective("", Some("white-space:pre;white-space-collapse:collapse")),
+        (WhiteSpaceCollapse::Collapse, TextWrapMode::Nowrap)
+    );
+    assert_eq!(
+        effective("", Some("white-space:nowrap;white-space-collapse:preserve")),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+}
+
+#[test]
+fn a_later_legacy_keyword_overrides_an_earlier_longhand() {
+    // Drained in `PropertyKey` order, the legacy keyword would be applied
+    // first; the written order decides instead.
+    assert_eq!(
+        effective("", Some("white-space-collapse:preserve;white-space:nowrap")),
+        (WhiteSpaceCollapse::Collapse, TextWrapMode::Nowrap)
+    );
+}
+
+#[test]
+fn a_wrap_longhand_changes_only_the_wrap_half_in_either_order() {
+    assert_eq!(
+        effective("", Some("white-space:pre-wrap;text-wrap-mode:nowrap")),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+    // The legacy keyword written later wins the wrap half too.
+    assert_eq!(
+        effective("", Some("text-wrap-mode:nowrap;white-space:pre-wrap")),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+}
+
+#[test]
+fn a_legacy_keyword_alone_sets_both_halves() {
+    assert_eq!(
+        effective("", Some("white-space:pre")),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+}
+
+#[test]
+fn a_more_specific_longhand_beats_a_later_legacy_keyword() {
+    // The longhand is decided by cascade rank, not by where it was written:
+    // `div` is more specific than `*`, so its longhand wins in either order.
+    let expected = (WhiteSpaceCollapse::Collapse, TextWrapMode::Nowrap);
+    assert_eq!(
+        effective(
+            "* { white-space: pre } div { white-space-collapse: collapse }",
+            None
+        ),
+        expected
+    );
+    assert_eq!(
+        effective(
+            "div { white-space-collapse: collapse } * { white-space: pre }",
+            None
+        ),
+        expected
+    );
+}
+
+#[test]
+fn a_more_specific_legacy_keyword_beats_a_longhand_written_later() {
+    assert_eq!(
+        effective(
+            "div { white-space: pre } * { white-space-collapse: collapse }",
+            None
+        ),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+}
+
+#[test]
+fn a_legacy_keyword_from_a_custom_property_sets_the_effective_values() {
+    // The winner arrives as a deferred `var()` value; the effective values
+    // follow what it resolves to, like the legacy field does.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--ws:pre;white-space-collapse:preserve-breaks;white-space:var(--ws)"),
+    );
+    assert_eq!(cv.white_space, WhiteSpace::Pre);
+    assert_eq!(
+        (
+            cv.effective_white_space_collapse,
+            cv.effective_text_wrap_mode
+        ),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+}
+
+#[test]
+fn a_text_wrap_shorthand_sets_the_wrap_half_like_its_longhand() {
+    assert_eq!(
+        effective("", Some("white-space:pre;text-wrap:wrap")),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+    assert_eq!(
+        effective(
+            "",
+            Some("--w:nowrap;white-space:pre-wrap;text-wrap:var(--w)")
+        ),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+}
+
+#[test]
+fn the_effective_values_are_inherited() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("white-space:pre-wrap"));
+    let child = doc.push_element(parent, "span", None);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        result.computed[child].effective_white_space_collapse,
+        WhiteSpaceCollapse::Preserve
+    );
+    assert_eq!(
+        result.computed[child].effective_text_wrap_mode,
+        TextWrapMode::Wrap
+    );
+}
+
+#[test]
+fn an_undeclared_half_keeps_the_inherited_effective_value() {
+    // The parent's longhand wins over its legacy keyword; the child declares
+    // only the wrap longhand, so its collapse half is the parent's effective
+    // one, not the one its inherited legacy keyword stands for.
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("white-space:pre;white-space-collapse:collapse"),
+    );
+    let child = doc.push_element(parent, "span", Some("text-wrap-mode:wrap"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(result.computed[child].white_space, WhiteSpace::Pre);
+    assert_eq!(
+        (
+            result.computed[child].effective_white_space_collapse,
+            result.computed[child].effective_text_wrap_mode
+        ),
+        (WhiteSpaceCollapse::Collapse, TextWrapMode::Wrap)
+    );
+}
+
+#[test]
+fn the_legacy_white_space_value_is_unchanged_by_a_longhand() {
+    // The computed `white-space` is what the CSSOM serializes; the effective
+    // fields are additive and must not rewrite it.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("white-space:pre;white-space-collapse:collapse"),
+    );
+    assert_eq!(cv.white_space, WhiteSpace::Pre);
+    assert_eq!(cv.white_space_collapse, WhiteSpaceCollapse::Collapse);
+}
+
+#[test]
+fn every_legacy_keyword_maps_to_a_collapse_and_wrap_pair() {
+    use TextWrapMode as W;
+    use WhiteSpace::*;
+    use WhiteSpaceCollapse as C;
+    assert_eq!(Normal.collapse_and_wrap(), Some((C::Collapse, W::Wrap)));
+    assert_eq!(Pre.collapse_and_wrap(), Some((C::Preserve, W::Nowrap)));
+    assert_eq!(Nowrap.collapse_and_wrap(), Some((C::Collapse, W::Nowrap)));
+    assert_eq!(PreWrap.collapse_and_wrap(), Some((C::Preserve, W::Wrap)));
+    assert_eq!(
+        PreLine.collapse_and_wrap(),
+        Some((C::PreserveBreaks, W::Wrap))
+    );
+    assert_eq!(
+        BreakSpaces.collapse_and_wrap(),
+        Some((C::BreakSpaces, W::Wrap))
+    );
+}

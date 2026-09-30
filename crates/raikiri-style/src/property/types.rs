@@ -5811,6 +5811,22 @@ css_keywords!(WhiteSpace {
     BreakSpaces => "break-spaces",
 });
 
+impl WhiteSpace {
+    /// The `white-space-collapse` and `text-wrap-mode` values this legacy
+    /// keyword stands for (CSS Text 4 §3, the `white-space` shorthand
+    /// mapping table), or `None` for a keyword added later.
+    pub fn collapse_and_wrap(self) -> Option<(WhiteSpaceCollapse, TextWrapMode)> {
+        match self {
+            WhiteSpace::Normal => Some((WhiteSpaceCollapse::Collapse, TextWrapMode::Wrap)),
+            WhiteSpace::Pre => Some((WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)),
+            WhiteSpace::Nowrap => Some((WhiteSpaceCollapse::Collapse, TextWrapMode::Nowrap)),
+            WhiteSpace::PreWrap => Some((WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)),
+            WhiteSpace::PreLine => Some((WhiteSpaceCollapse::PreserveBreaks, TextWrapMode::Wrap)),
+            WhiteSpace::BreakSpaces => Some((WhiteSpaceCollapse::BreakSpaces, TextWrapMode::Wrap)),
+        }
+    }
+}
+
 /// `white-space-collapse` property value.
 ///
 /// CSS Text Module Level 4 property definition:
