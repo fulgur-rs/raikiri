@@ -128,6 +128,13 @@
 //!   callers echo the input as written. The computed serializer lifts the
 //!   computed value back to the specified type first (see `lift`), so one
 //!   function serves both the specified and the computed value.
+//!   That fits a property whose computed CSSOM text is exactly the
+//!   specified type's text for the lifted value (keywords, plain absolute
+//!   lengths and numbers). It does not fit values that need font metrics,
+//!   resolve `currentColor` against another property, or have computed-only
+//!   spellings; the host keeps hand-written computed serialization for
+//!   those (a `serialize_computed:` key taking the computed value and a
+//!   serialization context would cover them).
 //! - `sample` is the non-initial worst-case value of the page-cascade test
 //!   corpus, compiled only under `cfg(test)`. Every entry without
 //!   `keywords` must supply one. It also fills the test fixtures

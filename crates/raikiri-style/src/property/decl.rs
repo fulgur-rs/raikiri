@@ -197,13 +197,43 @@
 //! `ComputedProperty::from_name` returns `ComputedProperty::Longhand` for
 //! the name, whose computed value is lifted back to the specified type
 //! (`lift`, the identity without `computed:`) and serialized the same way
-//! through `longhand_serialize_computed`. Adding `serialize:` therefore
-//! changes observable CSSOM output (the stored text of `setProperty`, and
-//! a `getComputedStyle` answer for the name): the tests
-//! `serialize_value_is_none_for_table_longhands_without_serialize`
-//! (`property/tests/serialize_tests.rs`) and
-//! `table_longhands_without_serialize_stay_unsupported`
-//! (`computed/cssom/tests.rs`) name each entry that gains one.
+//! through `longhand_serialize_computed`.
+//!
+//! Adding `serialize:` therefore changes observable CSSOM output (the
+//! stored text of `setProperty`, and a `getComputedStyle` answer for the
+//! name), and the tests say which rows to move:
+//! `table_longhand_serialization_matches_the_rows`
+//! (`property/tests/serialize_tests.rs`) names an entry whose `serialize:`
+//! and `SERIALIZED_TABLE_VALUES` row disagree (move its
+//! `UNSERIALIZED_TABLE_INPUTS` rows there, with their expected text), and
+//! raikiri-js's `table_longhands_store_their_values_as_written_or_canonicalized`
+//! moves the entry from its "stored as written" list to its
+//! "canonicalized" one. `table_longhands_are_supported_exactly_when_serialized`
+//! (`computed/cssom/tests.rs`) checks the `from_name` side for every entry.
+//!
+//! ## What `serialize:` covers
+//!
+//! The computed serializer writes `serialize(lift(computed))`: the
+//! specified type's text for the computed value. That fits a property whose
+//! `getComputedStyle` text is exactly that: keywords, plain absolute
+//! lengths and numbers, `em` lengths resolved to `px`. It does not fit, and
+//! these keep their hand-written `ComputedProperty` arms (legal, because
+//! the hand-written `from_name` names take precedence over the table):
+//!
+//! - values that depend on font metrics through `ch_advance` (`word-spacing`,
+//!   `letter-spacing`, `text-indent`, `text-decoration-inset`);
+//! - values that resolve `currentColor` against `computed.color`
+//!   (`text-decoration-color`, `text-shadow`, `text-emphasis`);
+//! - computed-only spellings (`letter-spacing` reads `Px(0.0)` back as
+//!   `normal`).
+//!
+//! A future `serialize_computed: fn(&Computed, &SerializeCx) -> Option<String>`
+//! key would cover them. When a migrated property has a hand-written
+//! `ComputedProperty` variant, the variant, its `from_name` arm and its
+//! `serialize` arm are removed in the same commit that adds `serialize:`;
+//! no alias variant is kept. An alias name (such as `word-wrap` for
+//! `overflow-wrap`) needs a hand-kept `from_name` arm mapping it to
+//! `ComputedProperty::Longhand(key)` until the macro supports aliases.
 //!
 //! # Limits of the generated pass-through
 //!
