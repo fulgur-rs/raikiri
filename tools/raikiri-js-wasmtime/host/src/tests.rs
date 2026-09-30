@@ -216,3 +216,184 @@ fn hostile_regex_call_tree_parser_and_report_getter_are_contained() {
             .unwrap();
     }
 }
+
+struct FailHost {
+    doc: Document,
+}
+impl DocumentHost for FailHost {
+    fn document(&self) -> &Document {
+        &self.doc
+    }
+    fn document_mut(&mut self) -> &mut Document {
+        &mut self.doc
+    }
+    fn flush(&mut self) -> Result<(), HostError> {
+        Err(HostError("flush failed".into()))
+    }
+    fn box_geometry(&mut self, _: usize) -> Result<Option<BoxGeometry>, HostError> {
+        Err(HostError("geometry failed".into()))
+    }
+    fn computed_value(&mut self, _: usize, _: &str) -> Result<Option<String>, HostError> {
+        Err(HostError("computed failed".into()))
+    }
+    fn parse_fragment(&mut self, _: &str, _: &str, _: &str) -> Result<Document, HostError> {
+        Err(HostError("fragment failed".into()))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+fn bridge() -> Bridge {
+    Bridge::new(
+        Box::new(TestHost {
+            doc: Document::new(),
+            flushes: Rc::new(Cell::new(0)),
+        }),
+        100,
+    )
+}
+
+fn roundtrip_response(bridge: &mut Bridge, op: HostOperation) -> Result<HostValue, String> {
+    let bytes = encode(&Request {
+        version: VERSION,
+        operation: op,
+    })
+    .unwrap();
+    let len = bridge.request(&bytes).unwrap();
+    let mut out = vec![0; len];
+    bridge.copy_response(&mut out).unwrap();
+    let response: Response = decode(&out).unwrap();
+    response.result
+}
+
+#[test]
+fn hostile_request_rejects_bad_version_and_corrupt_bytes() {
+    let mut b = bridge();
+    assert!(b.request(b"not json").is_err());
+    let bad_version = encode(&Request {
+        version: VERSION + 1,
+        operation: HostOperation::Fetch("x".into()),
+    })
+    .unwrap();
+    assert!(b.request(&bad_version).is_err());
+
+    // Unconsumed response blocks the next request.
+    let mut b = bridge();
+    let bytes = encode(&Request {
+        version: VERSION,
+        operation: HostOperation::Fetch("x".into()),
+    })
+    .unwrap();
+    b.request(&bytes).unwrap();
+    assert!(b.request(&bytes).is_err());
+}
+
+#[test]
+fn hostile_flush_rejects_invalid_snapshot() {
+    let mut b = bridge();
+    let empty = raikiri_dom::snapshot::LogicalSnapshot {
+        root: 0,
+        nodes: Vec::new(),
+        quirks: 0,
+        stylesheets: Vec::new(),
+    };
+    assert!(roundtrip_response(&mut b, HostOperation::Flush(empty)).is_err());
+}
+
+#[test]
+fn hostile_geometry_and_computed_enforce_bounds() {
+    let mut b = bridge();
+    // Document has one node, so index 99 is out of bounds.
+    assert!(roundtrip_response(&mut b, HostOperation::Geometry(99)).is_err());
+    assert!(roundtrip_response(&mut b, HostOperation::Computed(99, "color".into())).is_err());
+    // In-bounds indices succeed through the test host.
+    assert!(roundtrip_response(&mut b, HostOperation::Geometry(0)).is_ok());
+    assert!(roundtrip_response(&mut b, HostOperation::Computed(0, "color".into())).is_ok());
+}
+
+#[test]
+fn hostile_fragment_and_fetch_propagate_host_errors() {
+    // Default test host fails fetches (unsupported) but succeeds fragments.
+    let mut b = bridge();
+    assert!(roundtrip_response(&mut b, HostOperation::Fetch("http://x/".into())).is_err());
+    assert!(
+        roundtrip_response(
+            &mut b,
+            HostOperation::Fragment {
+                tag: "div".into(),
+                namespace: "".into(),
+                markup: "hi".into(),
+            },
+        )
+        .is_ok()
+    );
+
+    // Failing host propagates flush/geometry/computed/fragment errors.
+    let mut failing = Bridge::new(
+        Box::new(FailHost {
+            doc: Document::new(),
+        }),
+        100,
+    );
+    let valid = Document::new().logical_snapshot();
+    assert!(roundtrip_response(&mut failing, HostOperation::Flush(valid)).is_err());
+    assert!(roundtrip_response(&mut failing, HostOperation::Geometry(0)).is_err());
+    assert!(roundtrip_response(&mut failing, HostOperation::Computed(0, "color".into())).is_err());
+    assert!(
+        roundtrip_response(
+            &mut failing,
+            HostOperation::Fragment {
+                tag: "div".into(),
+                namespace: "".into(),
+                markup: "hi".into(),
+            },
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn hostile_response_capacity_rules() {
+    let mut b = bridge();
+    assert!(b.take_response(16).is_err());
+    let bytes = encode(&Request {
+        version: VERSION,
+        operation: HostOperation::Fetch("x".into()),
+    })
+    .unwrap();
+    let len = b.request(&bytes).unwrap();
+    assert!(b.take_response(len - 1).is_err());
+    assert!(b.take_response(MAX_MESSAGE + 1).is_err());
+    let taken = b.take_response(len).unwrap();
+    assert_eq!(taken.len(), len);
+    assert!(b.take_response(len).is_err());
+}
+
+#[test]
+fn hostile_code_publisher_rejects_out_of_bounds_ranges() {
+    use wasmtime::CustomCodeMemory;
+    let publisher = super::loader::Publisher;
+    assert_eq!(publisher.required_alignment(), 4096);
+    let base = super::loader::artifact().as_ptr();
+    // Zero-length publish inside the artifact succeeds without changing protections.
+    assert!(publisher.publish_executable(base, 0).is_ok());
+    assert!(publisher.unpublish_executable(base, 0).is_ok());
+    // Unaligned address and length are rejected before any syscall.
+    assert!(
+        publisher
+            .publish_executable(unsafe { base.add(1) }, 4096)
+            .is_err()
+    );
+    assert!(publisher.publish_executable(base, 100).is_err());
+    // Ranges outside the embedded artifact are rejected.
+    assert!(publisher.publish_executable(base, usize::MAX).is_err());
+    let outside = usize::MAX as *const u8;
+    assert!(publisher.publish_executable(outside, 4096).is_err());
+}

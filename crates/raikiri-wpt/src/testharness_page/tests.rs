@@ -681,3 +681,60 @@ fn native_flush_snapshot_preserves_template_and_namespaced_metadata() {
     host.flush().unwrap();
     assert_eq!(host.document().logical_snapshot(), before);
 }
+
+#[cfg(feature = "js-wasmtime")]
+#[test]
+fn wasmtime_engine_and_transfer_errors_preserve_abort() {
+    use super::backend::{engine_error, transfer_error};
+    use raikiri_js_wasmtime_host::EngineError;
+    use raikiri_js_wasmtime_protocol::{AbortDto, ReportDto};
+
+    let aborted = EngineError {
+        message: "fuel exhausted".to_owned(),
+        aborted: true,
+    };
+    assert_eq!(
+        engine_error(aborted),
+        PageError::Aborted("fuel exhausted".into())
+    );
+    let host_failure = EngineError {
+        message: "missing memory".to_owned(),
+        aborted: false,
+    };
+    assert_eq!(
+        engine_error(host_failure),
+        PageError::Host("missing memory".into())
+    );
+
+    let clean = ReportDto {
+        scripts_run: 1,
+        uncaught_errors: Vec::new(),
+        fetch_errors: Vec::new(),
+        aborted: None,
+        host_failures: Vec::new(),
+        console: Vec::new(),
+    };
+    let transfer_failed = EngineError {
+        message: "result transfer failed".to_owned(),
+        aborted: false,
+    };
+    assert_eq!(
+        transfer_error(&clean, transfer_failed, "result transfer"),
+        PageError::Host("result transfer failed".into())
+    );
+
+    // A prior abort outranks a later transfer failure: the Store was
+    // discarded, so only the last native checkpoint remains.
+    let prior_abort = ReportDto {
+        aborted: Some(AbortDto::VirtualTime),
+        ..clean
+    };
+    let late_failure = EngineError {
+        message: "final DOM sync failed".to_owned(),
+        aborted: false,
+    };
+    assert!(matches!(
+        transfer_error(&prior_abort, late_failure, "final DOM synchronization"),
+        PageError::Aborted(_)
+    ));
+}
