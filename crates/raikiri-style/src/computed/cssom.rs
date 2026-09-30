@@ -78,7 +78,9 @@ pub enum ComputedProperty {
     /// `serialize:`; [`from_name`](Self::from_name) returns it only for such
     /// an entry. Its computed value is lifted back to the specified type and
     /// serialized by the entry's serializer. For any other key,
-    /// [`serialize`](Self::serialize) returns `None`.
+    /// [`serialize`](Self::serialize) returns `None`. Only this crate
+    /// constructs it; other crates obtain it from `from_name`.
+    #[non_exhaustive]
     Longhand(PropertyKey),
 }
 
