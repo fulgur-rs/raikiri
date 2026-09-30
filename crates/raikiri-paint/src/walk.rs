@@ -4297,19 +4297,20 @@ fn paint_document_impl(
                     stack.push(PaintFrame::PopClip);
                 }
                 // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
-                // the padding box. The current WPT coverage uses `overflow:hidden`
-                // with no padding or border, so the border-box geometry is the
-                // correct clip edge for this path as well. The clip is pushed only
-                // after painting the element itself, then popped after its complete
-                // subtree via the explicit stack frame.
+                // the padding box. Min edges are floored outward so a fractional
+                // padding-box origin does not antialias-cut pixel-snapped descendant
+                // backgrounds (which round to integers); this mirrors the multicol
+                // clip origin flooring. The clip is pushed only after painting the
+                // element itself, then popped after its complete subtree via the
+                // explicit stack frame.
                 let clips_overflow = !matches!(cv.overflow.x, OverflowValue::Visible)
                     || !matches!(cv.overflow.y, OverflowValue::Visible);
                 if clips_overflow {
                     let clip_right = paint_x + layout.size.width - layout.padding.right;
                     let clip_bottom = paint_y + paint_height - layout.padding.bottom;
                     let clip = Rect::new(
-                        (paint_x + layout.padding.left) as f64,
-                        (paint_y + layout.padding.top) as f64,
+                        (paint_x + layout.padding.left).floor() as f64,
+                        (paint_y + layout.padding.top).floor() as f64,
                         if matches!(cv.overflow.x, OverflowValue::Clip) {
                             clip_right.floor() as f64
                         } else {
