@@ -1,6 +1,6 @@
 //! Choose the blocks laid out by the shodo inline engine.
 
-use super::projection::project_ifc;
+use super::projection::{box_kind, project_ifc};
 use super::root::IfcRoot;
 use crate::Document;
 use crate::node::NodeFlags;
@@ -140,6 +140,11 @@ fn paragraph_is_paintable(doc: &Document, cascade: &CascadeResult, idx: usize) -
                 }
             }
             NodeKind::Element => {
+                // A box is painted on its own, so its content does not reach
+                // the paragraph painter.
+                if box_kind(cascade, doc, id).is_some() {
+                    continue;
+                }
                 if !is_paintable_descendant(cascade, id) {
                     return false;
                 }
@@ -186,7 +191,10 @@ fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, id
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
-        if !node.is_in_document() || node.kind() != NodeKind::Element {
+        if !node.is_in_document()
+            || node.kind() != NodeKind::Element
+            || box_kind(cascade, doc, id).is_some()
+        {
             continue;
         }
         any_decoration |= decorated(id);
@@ -196,7 +204,9 @@ fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, id
     any_decoration && shifted
 }
 
-fn has_visible_text(doc: &Document, idx: usize) -> bool {
+/// Whether the paragraph itself holds text other than white space; text inside
+/// its boxes (floats) does not count.
+fn has_visible_text(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
@@ -212,7 +222,11 @@ fn has_visible_text(doc: &Document, idx: usize) -> bool {
                     return true;
                 }
             }
-            NodeKind::Element => stack.extend(node.children.iter().copied()),
+            NodeKind::Element => {
+                if box_kind(cascade, doc, id).is_none() {
+                    stack.extend(node.children.iter().copied());
+                }
+            }
             _ => {}
         }
     }
@@ -254,18 +268,20 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
             continue;
         }
         // The root itself counts: a multicol container is laid out by its own
-        // dispatch, which would find no children once they are hidden.
+        // dispatch, which would find no children once they are hidden. A
+        // paragraph's own content is caught by `taken` above; the inside of
+        // its boxes is not taken and may hold paragraphs of its own.
         let mut ancestor = Some(idx);
         let mut blocked = false;
         while let Some(id) = ancestor {
-            if is_multicol(cascade, id) || taken[id] {
+            if is_multicol(cascade, id) {
                 blocked = true;
                 break;
             }
             ancestor = doc.parent_of(id);
         }
         if blocked
-            || !has_visible_text(doc, idx)
+            || !has_visible_text(doc, cascade, idx)
             || !paragraph_is_paintable(doc, cascade, idx)
             || inside_unsized_fixed_box(doc, cascade, idx)
             || decoration_meets_a_shifted_inline(doc, cascade, idx)
@@ -282,10 +298,16 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
         ) else {
             continue;
         };
+        // Boxes are laid out and painted as nodes of their own, so neither
+        // they nor their content belong to the paragraph's subtree.
+        let boxes: Vec<usize> = projected.boxes.iter().map(|b| b.node).collect();
         doc.nodes[idx].flags.insert(NodeFlags::IS_IFC_ROOT);
         doc.nodes[idx].ifc = Some(Box::new(IfcRoot::new(projected)));
         let mut stack = doc.nodes[idx].children.clone();
         while let Some(id) = stack.pop() {
+            if boxes.contains(&id) {
+                continue;
+            }
             doc.nodes[id].flags.insert(NodeFlags::IN_IFC_SUBTREE);
             taken[id] = true;
             stack.extend(doc.nodes[id].children.iter().copied());

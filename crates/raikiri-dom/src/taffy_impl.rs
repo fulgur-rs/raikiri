@@ -45,7 +45,7 @@ fn leaf_intrinsic_size(
 /// The handle does not depend on the document, so leaf measure callbacks that
 /// cannot borrow the tree call this directly.
 #[allow(unsafe_code)]
-fn resolve_calc(val: *const (), basis: f32) -> f32 {
+pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
     // `layout::apply_computed_to_style` owns the boxed payload for the
     // duration of this layout pass, so the Taffy handle is valid here.
     let value = unsafe { &*(val as *const raikiri_style::property::CalcLengthPercentage) };
@@ -566,8 +566,22 @@ fn measure_ifc_root(
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
     let probe = root.without_lines();
+    let has_boxes = !probe.boxes.is_empty();
+    // The boxes are measured as nodes of their own, outside the state scope,
+    // and only when the intrinsic widths decide the width.
+    let needs_intrinsics =
+        !(measure.stretched && matches!(available.width, AvailableSpace::Definite(_)));
+    let box_intrinsics = if has_boxes && needs_intrinsics {
+        let basis = match available.width {
+            AvailableSpace::Definite(width) => width,
+            _ => 0.0,
+        };
+        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis)
+    } else {
+        shodo::AtomicIntrinsics::EMPTY
+    };
     let Some((min_content, max_content)) = with_state(tree, |state| {
-        flow::intrinsic_widths(&probe, &mut state.layout_cx)
+        flow::intrinsic_widths_with(&probe, &mut state.layout_cx, &box_intrinsics)
     }) else {
         return (Size::ZERO, None);
     };
@@ -591,10 +605,16 @@ fn measure_ifc_root(
         edges: measure.edges,
         top_edge: measure.top_inset,
     };
-    let Some(lines) = with_state(tree, |state| {
-        flow::layout_flow(&probe, &mut state.layout_cx, geometry, block_ctx)
-    }) else {
-        return (Size::ZERO, None);
+    let lines = if has_boxes {
+        let perform = measure.run_mode == RunMode::PerformLayout;
+        crate::layout::ifc::boxes::layout_with_boxes(tree, idx, geometry, block_ctx, perform)
+    } else {
+        let Some(lines) = with_state(tree, |state| {
+            flow::layout_flow(&probe, &mut state.layout_cx, geometry, block_ctx)
+        }) else {
+            return (Size::ZERO, None);
+        };
+        lines
     };
     let size = Size {
         width,

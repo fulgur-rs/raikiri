@@ -48,12 +48,7 @@ fn without_the_switch_no_root_is_assigned() {
 #[test]
 fn ineligible_shapes_stay_on_the_parley_path() {
     type Build = fn(&mut crate::Document, usize);
-    let cases: [(&str, Build); 4] = [
-        ("float child", |doc, root| {
-            doc.append_text(root, "aa");
-            let f = span(doc, root, "float:left");
-            doc.append_text(f, "bb");
-        }),
+    let cases: [(&str, Build); 3] = [
         ("block child", |doc, root| {
             doc.append_text(root, "aa");
             let b = span(doc, root, "display:block");
@@ -81,8 +76,8 @@ fn reassignment_clears_stale_marks() {
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
-    // The switch stays on but the root no longer projects: add a float.
-    let f = span(&mut fixture.doc, fixture.root, "float:left");
+    // The switch stays on but the root no longer projects: add a block child.
+    let f = span(&mut fixture.doc, fixture.root, "display:block");
     fixture.doc.append_text(f, "x");
     fixture.doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&fixture.doc);
@@ -478,6 +473,71 @@ fn a_decoration_with_baseline_aligned_inlines_is_still_a_root() {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline");
         doc.append_text(inner, "bb");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_float_child_does_not_make_its_subtree_part_of_the_paragraph() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let float = span(doc, root, "display:block;float:left;width:30px;height:20px");
+        doc.append_text(float, "ff");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    let float = fixture.doc.nodes[fixture.root].children[1];
+    assert!(
+        !fixture.doc.nodes[float]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
+    );
+    let text = fixture.doc.nodes[float].children[0];
+    assert!(
+        !fixture.doc.nodes[text]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
+    );
+    assert_eq!(fixture.doc.nodes[fixture.root].ifc_boxes(), vec![float]);
+}
+
+#[test]
+fn a_paragraph_whose_only_text_is_inside_a_float_is_not_a_root() {
+    let mut fixture = block_fixture("", |doc, root| {
+        let float = span(doc, root, "display:block;float:left;width:30px");
+        doc.append_text(float, "ff");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn rtl_text_inside_a_float_does_not_keep_the_paragraph_on_the_parley_path() {
+    // The float is painted as a box of its own, so what is inside it does not
+    // matter to the paragraph painter.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let float = span(doc, root, "display:block;float:left;width:30px");
+        doc.append_text(float, "\u{05d0}\u{05d1}");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_shifted_inline_inside_a_float_does_not_keep_a_decorated_paragraph_off() {
+    // The decoration of the paragraph never reaches the float's content, so
+    // a raised inline inside the float does not matter to the painter.
+    let mut fixture = block_fixture("text-decoration-line:underline", |doc, root| {
+        doc.append_text(root, "aa ");
+        let float = span(doc, root, "display:block;float:left;width:30px");
+        let raised = span(doc, float, "display:inline;vertical-align:super");
+        doc.append_text(raised, "ff");
     });
     enable(&mut fixture);
     assign(&mut fixture);

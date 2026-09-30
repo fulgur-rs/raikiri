@@ -1,6 +1,7 @@
 //! Per-root state of the shodo inline engine: the built paragraph, the lines of
 //! the last performed layout, and the document-level engine handles.
 
+use super::boxes::IfcBox;
 use super::projection::ProjectedIfc;
 use raikiri_style::ComputedTextIndent;
 use shodo::font::FontCollection;
@@ -18,6 +19,8 @@ pub(crate) struct IfcRoot {
     pub(crate) indent: ComputedTextIndent,
     /// Lines of the last performed layout, if any.
     pub(crate) lines: Option<IfcLines>,
+    /// Children laid out as boxes of their own (floats), in document order.
+    pub(crate) boxes: Vec<IfcBox>,
 }
 
 /// Lines broken for one content-box width.
@@ -40,6 +43,7 @@ impl IfcRoot {
             options: projected.options,
             indent: projected.indent,
             lines: None,
+            boxes: projected.boxes,
         }
     }
 
@@ -51,6 +55,7 @@ impl IfcRoot {
             options: self.options,
             indent: self.indent,
             lines: None,
+            boxes: self.boxes.clone(),
         }
     }
 }
@@ -94,6 +99,7 @@ impl fmt::Debug for IfcRoot {
             .field("options", &self.options)
             .field("indent", &self.indent)
             .field("lines", &self.lines)
+            .field("boxes", &self.boxes)
             .finish_non_exhaustive()
     }
 }

@@ -84,8 +84,7 @@ fn display_none_children_are_skipped() {
 
 #[test]
 fn constructs_the_inline_path_cannot_place_yet_are_rejected() {
-    let cases: [(&str, &str); 5] = [
-        ("float", "display:block;float:left"),
+    let cases: [(&str, &str); 4] = [
         ("inline-block", "display:inline-block"),
         ("block child", "display:block"),
         ("absolute", "display:inline;position:absolute"),
@@ -300,4 +299,41 @@ fn non_rendered_html_elements_contribute_no_text() {
     });
     let projected = project(&fixture).expect("project");
     assert_eq!(line_texts(&projected, 500.0), ["aabb"]);
+}
+
+#[test]
+fn a_float_child_is_recorded_as_a_box_and_anchored() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let float = span(doc, root, "display:block;float:left;width:30px;height:20px");
+        doc.append_text(float, "ff");
+        doc.append_text(root, " bb");
+    });
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Float);
+    // The float's own text is not part of the paragraph. The float anchor is
+    // transparent to white-space collapsing, so the two spaces around it
+    // collapse into one (and `line_texts` drops the U+FFFC placeholder).
+    assert_eq!(line_texts(&projected, 500.0), ["aa bb"]);
+}
+
+#[test]
+fn unsupported_floats_stay_unsupported() {
+    for css in [
+        "display:block;float:inline-start",
+        "display:block;float:left;clear:inline-start",
+        "display:block;float:left;position:relative",
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            let float = span(doc, root, css);
+            doc.append_text(float, "ff");
+        });
+        let error = project(&fixture).expect_err(css);
+        assert!(
+            matches!(error, IfcError::Unsupported { .. }),
+            "{css}: {error}"
+        );
+    }
 }

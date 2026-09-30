@@ -680,6 +680,16 @@ impl Node {
             .map(|lines| lines.lines.as_slice())
     }
 
+    /// Children of an ifc root that it lays out as boxes of their own
+    /// (floats), in document order. Empty for any other node.
+    #[doc(hidden)]
+    pub fn ifc_boxes(&self) -> Vec<usize> {
+        self.ifc
+            .as_ref()
+            .map(|root| root.boxes.iter().map(|b| b.node).collect())
+            .unwrap_or_default()
+    }
+
     /// Children in this node's layout and paint order.
     ///
     /// Flex and grid containers with non-zero item `order` use a derived stable

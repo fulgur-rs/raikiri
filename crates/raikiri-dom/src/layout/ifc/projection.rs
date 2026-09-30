@@ -1,19 +1,23 @@
 //! Project one in-flow block's inline content into a shodo paragraph.
 //!
-//! The first slice handles text, ordinary inline elements, and `<br>`.
-//! Anything the inline path cannot place yet (floats, positioned boxes,
-//! block children, inline-blocks, replaced elements, generated content) is
-//! rejected with [`IfcError::Unsupported`] rather than approximated.
+//! Text, ordinary inline elements, `<br>` and left or right floats are
+//! projected; a float becomes an anchor in the text and a box laid out on its
+//! own. Anything the inline path cannot place yet (positioned boxes, block
+//! children, inline-blocks, replaced elements, generated content) is rejected
+//! with [`IfcError::Unsupported`] rather than approximated.
 
+use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::style;
 use crate::Document;
-use raikiri_style::property::{ContentComponent, DisplayValue, FloatValue, PositionValue};
-use raikiri_style::{CascadeResult, ComputedTextIndent, PseudoElem, StyleNodeId};
+use raikiri_style::property::{
+    ClearValue, ContentComponent, DisplayValue, FloatValue, PositionValue,
+};
+use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
-use shodo::node::{NodeId, TextSource};
+use shodo::node::{NodeId, OutOfFlowKind, TextSource};
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Paragraph, ParagraphBuilder};
 
@@ -34,6 +38,8 @@ pub(crate) struct ProjectedIfc {
     pub(crate) indent: ComputedTextIndent,
     /// Node id of the block root.
     pub(crate) root: usize,
+    /// Children laid out as boxes of their own, in document order.
+    pub(crate) boxes: Vec<IfcBox>,
 }
 
 /// The effective `lang` of `node`: the nearest ancestor-or-self `lang`
@@ -70,6 +76,35 @@ fn reject_generated_content(cascade: &CascadeResult, node: usize) -> Result<(), 
                 reason: "generated content is painted as an overlay",
             });
         }
+    }
+    Ok(())
+}
+
+/// The box kind of a child of an ifc root, from its computed style; `None` for
+/// content that belongs to the paragraph.
+pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Option<IfcBoxKind> {
+    let cv = cascade.computed.get(id)?;
+    if doc.get_node(id)?.kind() == NodeKind::Element && cv.float != FloatValue::None {
+        return Some(IfcBoxKind::Float);
+    }
+    None
+}
+
+/// A float the inline engine can place: left or right, cleared by physical
+/// sides only, in normal position.
+fn supported_float(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
+    let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
+    if !matches!(cv.float, FloatValue::Left | FloatValue::Right) {
+        return Err(unsupported("logical float sides are not placed yet"));
+    }
+    if !matches!(
+        cv.clear,
+        ClearValue::None | ClearValue::Left | ClearValue::Right | ClearValue::Both
+    ) {
+        return Err(unsupported("logical clear sides are not placed yet"));
+    }
+    if cv.position != PositionValue::Static {
+        return Err(unsupported("positioned floats are not placed yet"));
     }
     Ok(())
 }
@@ -116,6 +151,7 @@ pub(crate) fn project_ifc(
     root_style.lang = language_of(doc, root);
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
+    let mut boxes = Vec::new();
 
     let mut stack: Vec<Step> = root_node
         .children
@@ -156,7 +192,16 @@ pub(crate) fn project_ifc(
                 }
                 let unsupported = |reason: &'static str| IfcError::Unsupported { node: id, reason };
                 if cv.float != FloatValue::None {
-                    return Err(unsupported("floats are not placed by the inline path yet"));
+                    supported_float(cv, id)?;
+                    builder.push_out_of_flow(NodeId(id as u64), OutOfFlowKind::Float);
+                    boxes.push(IfcBox {
+                        node: id,
+                        kind: IfcBoxKind::Float,
+                    });
+                    if let Some(error) = builder.error() {
+                        return Err(IfcError::Limit(error));
+                    }
+                    continue;
                 }
                 if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
                     return Err(unsupported("positioned inline boxes are not supported yet"));
@@ -198,6 +243,7 @@ pub(crate) fn project_ifc(
         options,
         indent,
         root,
+        boxes,
     })
 }
 

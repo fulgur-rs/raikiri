@@ -2997,7 +2997,8 @@ fn without_the_switch_the_same_paragraph_is_shaped_by_parley() {
 
 use crate::layout::test_support::{
     ahem_font_context, ahem_paragraph, ahem_paragraph_beside_float, ahem_paragraph_beside_floats,
-    ahem_paragraph_in_block_wrapper, ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
+    ahem_paragraph_in_block_wrapper, ahem_paragraph_with_float, ifc_ahem_fonts, line_start_x,
+    line_text, page_box_800x600,
 };
 
 fn lay_out_with_switch(doc: &mut Document, cascade: &CascadeResult) {
@@ -3397,4 +3398,268 @@ fn a_paragraph_with_top_padding_asks_for_space_below_its_border_top() {
         lines.iter().map(line_start_x).collect::<Vec<_>>(),
         [Some(30.0), Some(0.0)]
     );
+}
+
+// ── floats inside ifc roots ──────────────────────────────────
+
+#[test]
+fn a_float_inside_the_paragraph_shortens_the_line_it_is_anchored_in() {
+    let (mut doc, cascade, float, root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px",
+        " bbbb cccc dddd",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(
+        doc.nodes[root].is_ifc_root(),
+        "a paragraph with a float child is an ifc root"
+    );
+    let lines = &stored_lines(&doc, root).lines;
+    // Line 1 holds "aa" and the anchor and is 70px wide beside the float:
+    // "aa bbbb" (70px) fits exactly. Line 2 is still beside the float.
+    // Line 3 (y=20) is below it.
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa bbbb", "cccc", "dddd"]
+    );
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(30.0), Some(30.0), Some(0.0)]
+    );
+    // The float sits at the top left of the content box.
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
+    assert_eq!((layout.size.width, layout.size.height), (30.0, 20.0));
+}
+
+#[test]
+fn a_right_float_inside_the_paragraph_sits_at_the_right_edge() {
+    let (mut doc, cascade, float, root) = ahem_paragraph_with_float(
+        "aa",
+        "float:right;width:30px;height:20px",
+        " bbbb cccc dddd",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (70.0, 0.0));
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(0.0); 3]
+    );
+}
+
+#[test]
+fn a_float_that_would_shorten_its_own_line_moves_to_the_next_line() {
+    // "aaaa bbbb" is 90px. The float (60px) is anchored right after "bbbb":
+    // placing it would leave 40px and push "bbbb" (and with it the anchor) to
+    // the next line, so the float is withdrawn and placed on the next line.
+    let (mut doc, cascade, float, root) = ahem_paragraph_with_float(
+        "aaaa bbbb",
+        "float:left;width:60px;height:10px",
+        " cccc",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(line_text(&lines[0]), "aaaa bbbb");
+    assert_eq!(line_start_x(&lines[0]), Some(0.0));
+    // The float is placed at the top of the second line.
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
+    assert_eq!(line_text(&lines[1]), "cccc");
+    assert_eq!(line_start_x(&lines[1]), Some(60.0));
+}
+
+#[test]
+fn an_intrinsic_width_includes_the_float() {
+    // A shrink-to-fit root is measured for its content before the final pass.
+    // The float (30px) sits on the first line with "aa bbbb" (70px), so the
+    // max-content width is 100px; if the float's width is left out of the
+    // intrinsic sizes the root is only 70px wide.
+    let (mut doc, cascade, float, root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px",
+        " bbbb",
+        "float:left;width:auto",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(line_start_x(&lines[0]), Some(30.0));
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 100.0);
+}
+
+#[test]
+fn a_float_inside_a_padded_paragraph_is_placed_inside_its_content_box() {
+    // `apply_content_box_inset` is what keeps the paragraph's own floats out of
+    // its padding: a left float sits at the content box's left edge.
+    let (mut doc, cascade, float, _root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px",
+        " bbbb",
+        "padding:0 10px;box-sizing:border-box",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(doc.nodes[float].unrounded_layout.location.x, 10.0);
+}
+
+#[test]
+fn relayout_keeps_the_lines_of_a_paragraph_that_has_boxes() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, _float, root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px",
+        " bbbb cccc dddd",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let before: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    let after: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    assert_eq!(
+        after, before,
+        "a float fixes the positions the lines were broken for"
+    );
+}
+
+#[test]
+fn a_float_wider_than_the_rest_of_its_line_waits_for_the_next_line() {
+    // Two 60px left floats anchored after "aa": the first takes 60px of the
+    // 100px line, the second no longer fits beside it and is placed at the
+    // start of the next line instead of shortening this one.
+    let (mut doc, cascade, first, root) =
+        ahem_paragraph_with_float("aa", "float:left;width:60px;height:10px", "", "");
+    let second = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;width:60px;height:10px"),
+    );
+    doc.append_text(root, " bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_2 = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    drop(cascade);
+    lay_out_with_switch(&mut doc, &cascade_2);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa", "bb"]
+    );
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(60.0), Some(60.0)]
+    );
+    let at = |id: usize| {
+        let layout = doc.nodes[id].unrounded_layout;
+        (layout.location.x, layout.location.y)
+    };
+    assert_eq!(at(first), (0.0, 0.0));
+    assert_eq!(at(second), (0.0, 10.0));
+}
+
+#[test]
+fn a_cleared_float_does_not_shorten_the_line_above_its_clearance() {
+    // A 30x20 left float sits beside the root. The root's own float, anchored
+    // before its text, clears left, so it goes below that float (y=20) and
+    // must not take room from the first line, which starts after the outer
+    // float only. Its anchor stays on the first line either way, so nothing
+    // but the clearance check keeps it off that line.
+    let (mut doc, cascade, _outer, root) =
+        ahem_paragraph_beside_float("", "float:left;width:30px;height:20px", "");
+    let inner = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;clear:left;width:30px;height:10px"),
+    );
+    doc.append_text(root, "aa bb cc dd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_2 = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    drop(cascade);
+    lay_out_with_switch(&mut doc, &cascade_2);
+    assert!(doc.nodes[root].is_ifc_root());
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa bb", "cc dd"]
+    );
+    assert_eq!(line_start_x(&lines[0]), Some(30.0));
+    let layout = doc.nodes[inner].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 20.0));
+}
+
+#[test]
+fn a_paragraph_inside_a_float_of_a_root_is_measured() {
+    // The float holds a paragraph of its own. Laying the float out from the
+    // outer root lays that paragraph out too, which needs the engine state:
+    // the float gets the height of its two lines.
+    let (mut doc, cascade, float, root) =
+        ahem_paragraph_with_float("aa", "float:left;width:30px", " bbbb", "");
+    let inner = doc.append_element(Some(float), "div", Style::default(), Some("display:block"));
+    doc.append_text(inner, "ff gg");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_2 = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    drop(cascade);
+    lay_out_with_switch(&mut doc, &cascade_2);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert!(doc.nodes[inner].is_ifc_root());
+    assert_eq!(stored_lines(&doc, inner).lines.len(), 2);
+    assert_eq!(doc.nodes[float].unrounded_layout.size.height, 20.0);
+}
+
+#[test]
+fn relayout_keeps_the_lines_of_a_paragraph_whose_float_is_below_them() {
+    // The float is withdrawn from the only line and placed below it, so no
+    // line is beside a float; the lines still belong with the float's place.
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_with_float("aaaa bbbb", "float:left;width:60px;height:10px", "", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(!stored_lines(&doc, root).beside_floats);
+    let before: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    assert_eq!(before, ["aaaa bbbb"]);
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    let after: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn only_a_root_that_is_its_own_formatting_context_grows_around_its_floats() {
+    // One 10px line and a 20px float. An in-flow root leaves the float
+    // hanging below its line for the parent to collect; a floated root is a
+    // formatting context of its own and contains it. (A later pass grows
+    // auto-height ancestors of every float on both paths, so the node height
+    // is not what tells the two apart; the measured content height is.)
+    for (root_css, height) in [("", 10.0), ("float:left", 20.0)] {
+        let (mut doc, cascade, _float, root) =
+            ahem_paragraph_with_float("aa", "float:left;width:30px;height:20px", " bb", root_css);
+        lay_out_with_switch(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{root_css}");
+        let lines = stored_lines(&doc, root);
+        assert_eq!(lines.lines.len(), 1, "{root_css}");
+        assert_eq!(lines.height, height, "{root_css}");
+    }
 }

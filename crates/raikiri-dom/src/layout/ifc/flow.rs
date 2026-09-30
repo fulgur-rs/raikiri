@@ -32,7 +32,7 @@ pub(crate) struct FlowGeometry {
 
 /// How many times a line is laid out again because the space turned out to
 /// differ for the height it took.
-const MAX_SPACE_RETRIES: usize = 4;
+pub(crate) const MAX_SPACE_RETRIES: usize = 4;
 
 pub(crate) fn resolve_indent(indent: ComputedTextIndent, width: f32) -> f32 {
     match indent {
@@ -43,15 +43,23 @@ pub(crate) fn resolve_indent(indent: ComputedTextIndent, width: f32) -> f32 {
 }
 
 pub(crate) fn intrinsic_widths(root: &IfcRoot, cx: &mut LayoutContext) -> (f32, f32) {
+    intrinsic_widths_with(root, cx, &AtomicIntrinsics::EMPTY)
+}
+
+/// Min- and max-content widths of the paragraph with the intrinsic widths of
+/// its boxes.
+pub(crate) fn intrinsic_widths_with(
+    root: &IfcRoot,
+    cx: &mut LayoutContext,
+    boxes: &AtomicIntrinsics,
+) -> (f32, f32) {
     // The indent needs the width it is resolved against, which intrinsic
     // sizing does not have; it contributes only when it is a plain length.
     let mut options = root.options;
     if let ComputedTextIndent::Px(px) = root.indent {
         options.text_indent.length = px;
     }
-    let sizes = root
-        .paragraph
-        .intrinsic_sizes(cx, &options, &AtomicIntrinsics::EMPTY);
+    let sizes = root.paragraph.intrinsic_sizes(cx, &options, boxes);
     (sizes.min_content, sizes.max_content)
 }
 
@@ -275,8 +283,9 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         };
         // Lines laid out beside floats depend on the float context of the
         // performed layout, which is gone here; breaking them again at the
-        // full width would run them under the floats.
-        if root.lines.as_ref().is_some_and(|lines| lines.beside_floats) {
+        // full width would run them under the floats. The positions of a
+        // root's own boxes are tied to the lines they were placed with.
+        if !root.boxes.is_empty() || root.lines.as_ref().is_some_and(|lines| lines.beside_floats) {
             continue;
         }
         root.lines = Some(break_lines(root, &mut state.layout_cx, width));

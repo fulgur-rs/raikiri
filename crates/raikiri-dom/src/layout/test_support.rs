@@ -180,3 +180,46 @@ pub(crate) fn line_text(line: &shodo::Line) -> String {
         .trim_end()
         .to_owned()
 }
+
+/// `html > body > div(root)` whose content is `before`, a float div, `after`.
+/// Returns `(doc, cascade, float, root)`.
+pub(crate) fn ahem_paragraph_with_float(
+    before: &str,
+    float_css: &str,
+    after: &str,
+    root_css: &str,
+) -> (Document, CascadeResult, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:block;width:100px;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
+        )),
+    );
+    doc.append_text(root, before);
+    let float = doc.append_element(
+        Some(root),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:block;{float_css}")),
+    );
+    doc.append_text(root, after);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, float, root)
+}
