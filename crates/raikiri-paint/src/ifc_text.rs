@@ -19,6 +19,7 @@ use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
+use shodo::geometry::BaselineKind;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -31,13 +32,15 @@ pub(crate) struct IfcPosition {
 }
 
 /// The decoration context of a text node: the context after the ifc root,
-/// folded through the elements between the root and the text.
+/// folded through the elements between the root and the text. Each element's
+/// decoration sits at that element's baseline, `shifts` below the line's.
 fn context_for_text(
     document: &Document,
     cascade: &CascadeResult,
     root_id: usize,
     text_node: usize,
     base: &DecorationContext,
+    shifts: &HashMap<usize, f32>,
 ) -> DecorationContext {
     let mut chain = Vec::new();
     let mut current = document.parent_of(text_node);
@@ -49,8 +52,33 @@ fn context_for_text(
         current = document.parent_of(id);
     }
     chain.iter().rev().fold(base.clone(), |context, &id| {
-        decorations_for_element(&context, &cascade.computed[id], 0.0)
+        decorations_for_element(
+            &context,
+            &cascade.computed[id],
+            shifts.get(&id).copied().unwrap_or(0.0),
+        )
     })
+}
+
+/// How far each inline element's baseline lies below the line's baseline, on
+/// this line. An element with no fragment on the line is not in the map.
+///
+/// A fragment's content area starts at the top of its font's ascent, so the
+/// element's baseline is that top plus the ascent.
+fn baseline_shifts(document: &Document, line: &shodo::Line) -> HashMap<usize, f32> {
+    let line_baseline = line.baseline(BaselineKind::Alphabetic);
+    let mut shifts = HashMap::new();
+    for fragment in line.fragments() {
+        let Fragment::InlineBox(inline_box) = fragment else {
+            continue;
+        };
+        let Some(metrics) = document.ifc_font_metrics(inline_box.font, inline_box.font_size) else {
+            continue;
+        };
+        let baseline = inline_box.content_rect.block_start + metrics.ascent;
+        shifts.insert(inline_box.node.0 as usize, baseline - line_baseline);
+    }
+    shifts
 }
 
 /// One glyph run ready to draw, with its decoration context.
@@ -63,7 +91,7 @@ struct RunDraw<'a> {
     /// Horizontal extent of the run in page coordinates.
     x0: f64,
     x1: f64,
-    /// Baseline in page coordinates.
+    /// The line's baseline in page coordinates.
     baseline: f64,
     decorations: DecorationContext,
 }
@@ -92,8 +120,11 @@ pub(crate) fn draw_ifc_lines(
         .and_then(|n| n.ifc_size())
         .unwrap_or((0.0, 0.0));
     let content_width = size.0;
-    let mut contexts: HashMap<usize, DecorationContext> = HashMap::new();
     for line in lines {
+        // An element's shift can differ from line to line, so the contexts
+        // are built per line.
+        let shifts = baseline_shifts(document, line);
+        let mut contexts: HashMap<usize, DecorationContext> = HashMap::new();
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
         for fragment in line.fragments() {
             let Fragment::GlyphRun(run) = fragment else {
@@ -140,7 +171,7 @@ pub(crate) fn draw_ifc_lines(
             let decorations = contexts
                 .entry(owner)
                 .or_insert_with(|| {
-                    context_for_text(document, cascade, root_id, owner, base_decorations)
+                    context_for_text(document, cascade, root_id, owner, base_decorations, &shifts)
                 })
                 .clone();
             runs.push(RunDraw {
@@ -152,7 +183,7 @@ pub(crate) fn draw_ifc_lines(
                 x1: f64::from(position.x) + last_x,
                 baseline: f64::from(position.y + position.shift_y)
                     + f64::from(line.block_offset())
-                    + f64::from(run.baseline()),
+                    + f64::from(line.baseline(BaselineKind::Alphabetic)),
                 decorations,
             });
         }

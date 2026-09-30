@@ -591,18 +591,21 @@ fn a_paragraph_inside_a_fixed_box_with_a_width_is_still_a_root() {
 }
 
 #[test]
-fn a_raised_inline_under_a_decoration_stays_on_the_parley_path() {
-    // A decoration that starts above a raised inline belongs at the parent's
-    // baseline, but the painter places it at the baseline of each run.
-    assert_stays_on_parley("text-decoration:underline", |doc, root| {
+fn a_raised_inline_under_a_decoration_is_an_ifc_root() {
+    // The painter places a decoration at the baseline of the element that
+    // declares it, so a raised inline no longer keeps the paragraph off.
+    let mut fixture = block_fixture("text-decoration:underline", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;vertical-align:super");
         doc.append_text(inner, "bb");
     });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_raised_inline_under_an_ancestor_decoration_stays_on_the_parley_path() {
+fn a_raised_inline_under_an_ancestor_decoration_is_an_ifc_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;vertical-align:sub");
@@ -617,7 +620,76 @@ fn a_raised_inline_under_an_ancestor_decoration_stays_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_line_relative_inline_under_a_decoration_stays_on_the_parley_path() {
+    for value in ["top", "bottom", "middle", "text-top", "text-bottom"] {
+        assert_stays_on_parley("text-decoration:underline", |doc, root| {
+            doc.append_text(root, "aa ");
+            let inner = span(doc, root, &format!("display:inline;vertical-align:{value}"));
+            doc.append_text(inner, "bb");
+        });
+    }
+}
+
+#[test]
+fn a_line_relative_inline_under_an_ancestor_decoration_stays_on_the_parley_path() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;vertical-align:top");
+        doc.append_text(inner, "bb");
+    });
+    let body = fixture.doc.parent_of(fixture.root).expect("body");
+    fixture
+        .doc
+        .set_element_inline_style(body, Some("display:block;text-decoration:underline".into()));
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    enable(&mut fixture);
+    assign(&mut fixture);
     assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_line_relative_inline_with_its_own_decoration_stays_on_the_parley_path() {
+    assert_stays_on_parley("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(
+            doc,
+            root,
+            "display:inline;vertical-align:text-top;text-decoration:underline",
+        );
+        doc.append_text(inner, "bb");
+    });
+}
+
+#[test]
+fn a_line_relative_inline_without_a_decoration_is_still_a_root() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;vertical-align:top");
+        doc.append_text(inner, "bb");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_length_or_percentage_raise_under_a_decoration_is_an_ifc_root() {
+    for value in ["4px", "-3px", "50%"] {
+        let mut fixture = block_fixture("text-decoration:underline", |doc, root| {
+            doc.append_text(root, "aa ");
+            let inner = span(doc, root, &format!("display:inline;vertical-align:{value}"));
+            doc.append_text(inner, "bb");
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{value}");
+    }
 }
 
 #[test]
@@ -697,11 +769,11 @@ fn rtl_text_inside_a_float_does_not_keep_the_paragraph_on_the_parley_path() {
 #[test]
 fn a_shifted_inline_inside_a_float_does_not_keep_a_decorated_paragraph_off() {
     // The decoration of the paragraph never reaches the float's content, so
-    // a raised inline inside the float does not matter to the painter.
+    // a line-relative inline inside the float does not matter to the painter.
     let mut fixture = block_fixture("text-decoration-line:underline", |doc, root| {
         doc.append_text(root, "aa ");
         let float = span(doc, root, "display:block;float:left;width:30px");
-        let raised = span(doc, float, "display:inline;vertical-align:super");
+        let raised = span(doc, float, "display:inline;vertical-align:top");
         doc.append_text(raised, "ff");
     });
     enable(&mut fixture);

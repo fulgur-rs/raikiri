@@ -378,6 +378,19 @@ impl Document {
         self.layout_dirty = true;
     }
 
+    /// Metrics of a font of the inline engine, at `size`. `None` when the
+    /// inline engine is not enabled.
+    #[doc(hidden)]
+    pub fn ifc_font_metrics(
+        &self,
+        font: shodo::font::FontId,
+        size: f32,
+    ) -> Option<shodo::font::FontMetrics> {
+        self.ifc
+            .as_ref()
+            .map(|state| state.fonts.metrics(font, size))
+    }
+
     /// Whether [`Document::enable_inline_formatting`] was called.
     pub fn inline_formatting_enabled(&self) -> bool {
         self.ifc.is_some()

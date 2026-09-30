@@ -825,8 +825,9 @@ pub(crate) struct DecorationGeometry {
     pub(crate) x1: f64,
     pub(crate) abs_y: f64,
     pub(crate) line_top: f32,
-    /// Baseline in page coordinates, when the layout engine supplies it.
-    /// `None` derives it from the decorating element's metrics.
+    /// The line's baseline in page coordinates, when the layout engine
+    /// supplies it; each decoration adds its element's `origin_shift_y`.
+    /// `None` derives the baseline from the decorating element's metrics.
     pub(crate) baseline: Option<f64>,
 }
 
@@ -991,9 +992,17 @@ fn paint_decoration_line(
             continue;
         };
         let color = css_color_to_peniko(decoration.color);
-        let baseline = baseline_override.unwrap_or(
-            abs_y + line_top as f64 + decoration.origin_ascent + decoration.origin_shift_y as f64,
-        );
+        let baseline = match baseline_override {
+            // The layout engine gave the line's baseline; the decorating
+            // element's baseline lies `origin_shift_y` below it.
+            Some(line_baseline) => line_baseline + decoration.origin_shift_y as f64,
+            None => {
+                abs_y
+                    + line_top as f64
+                    + decoration.origin_ascent
+                    + decoration.origin_shift_y as f64
+            }
+        };
         let thickness = decoration.origin_thickness;
         let center = match kind {
             DecorationLineKind::Underline => {
@@ -1287,7 +1296,10 @@ mod tests {
     #[test]
     fn parley_decorations_are_unchanged_by_the_geometry_field() {
         // A geometry without an explicit baseline derives it from the
-        // decorating element, exactly as before the field existed.
+        // decorating element, exactly as before the field existed. An
+        // explicit baseline is the line's; the decorating element's shift is
+        // added to it, so the line's baseline without the shift draws the
+        // same line.
         let spec = DecorationSpec {
             line: TextDecorationLine::UNDERLINE,
             style: TextDecorationStyle::Solid,
@@ -1302,8 +1314,7 @@ mod tests {
             origin_rtl: false,
         };
         let (abs_y, line_top) = (100.0_f64, 2.0_f32);
-        let derived =
-            abs_y + f64::from(line_top) + spec.origin_ascent + f64::from(spec.origin_shift_y);
+        let derived = abs_y + f64::from(line_top) + spec.origin_ascent;
         let draw = |baseline: Option<f64>| {
             let mut scene = anyrender::recording::Scene::new();
             let geometry = DecorationGeometry {

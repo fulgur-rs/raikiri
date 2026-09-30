@@ -930,3 +930,91 @@ fn an_underline_under_a_hanging_bracket_covers_the_bracket_and_the_content() {
     assert_eq!(fills.len(), 1);
     assert_eq!((fills[0].0, fills[0].2), (-10 * 64, 20 * 64));
 }
+
+/// `aa` then a span `bb` with `vertical-align: {align}`. No space at the text
+/// boundary: the parley path ends each text node's decoration before a
+/// trailing space, which is unrelated to the baseline.
+fn raised(doc: &mut Document, root: usize, align: &str, css: &str) {
+    doc.append_text(root, "aa");
+    let inner = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some(format!("display:inline;vertical-align:{align};{css}").as_str()),
+    );
+    doc.append_text(inner, "bb");
+}
+
+#[test]
+fn an_outer_underline_stays_at_the_parents_baseline_under_a_raised_inline() {
+    // Lengths and percentages raise by the same amount on both paths.
+    for align in ["4px", "-3px", "50%"] {
+        let (off, on) = off_and_on("width:100px;text-decoration:underline", |doc, root| {
+            raised(doc, root, align, "");
+        });
+        assert!(!decoration_fills(&off).is_empty(), "{align}");
+        assert_eq!(decoration_fills(&on), decoration_fills(&off), "{align}");
+    }
+}
+
+#[test]
+fn an_inner_underline_follows_the_raised_inline() {
+    for align in ["4px", "-3px"] {
+        let (off, on) = off_and_on("width:100px", |doc, root| {
+            raised(doc, root, align, "text-decoration:underline");
+        });
+        assert!(!decoration_fills(&off).is_empty(), "{align}");
+        assert_eq!(decoration_fills(&on), decoration_fills(&off), "{align}");
+    }
+}
+
+#[test]
+fn a_line_through_follows_the_same_rule() {
+    let (off, on) = off_and_on("width:100px;text-decoration:line-through", |doc, root| {
+        raised(doc, root, "4px", "");
+    });
+    assert!(!decoration_fills(&off).is_empty());
+    assert_eq!(decoration_fills(&on), decoration_fills(&off));
+}
+
+/// y0 (in 1/64 px) of the decoration rectangles that start at `x` (in px),
+/// lowest first.
+fn fills_starting_at(scene: &Scene, x: i64) -> Vec<i64> {
+    let mut ys: Vec<i64> = decoration_fills(scene)
+        .into_iter()
+        .filter(|fill| fill.0 == x * 64)
+        .map(|fill| fill.1)
+        .collect();
+    ys.sort_unstable();
+    ys
+}
+
+#[test]
+fn super_and_sub_raise_by_the_fonts_offsets() {
+    // Both the root and the span carry an underline, so the two rectangles that
+    // start at the span's text (x = 20: `aa` is 2 glyphs of 10px) differ only by
+    // how far the span is raised: the root's underline sits at the parent's
+    // baseline and the span's at the span's own. shodo raises by the font's
+    // OS/2 offsets: Ahem has 453/1000 em for `super` and 143/1000 em for
+    // `sub`, i.e. 4.53px and 1.43px at 10px. Each value is rounded to 1/64 px
+    // once, so the difference can be 1/64 px off the exact product.
+    for (align, expected) in [("super", -4.53_f64), ("sub", 1.43)] {
+        let (mut doc, cascade, root) =
+            paragraph("width:100px;text-decoration:underline", |doc, root| {
+                raised(doc, root, align, "text-decoration:underline")
+            });
+        lay_out(&mut doc, &cascade, true);
+        assert!(
+            doc.get_node(root).is_some_and(|n| n.is_ifc_root()),
+            "{align}"
+        );
+        let ys = fills_starting_at(&painted(&doc, &cascade), 20);
+        assert_eq!(ys.len(), 2, "{align}: the outer and the inner underline");
+        let delta = (ys[1] - ys[0]) as f64 / 64.0;
+        assert!(
+            (delta - expected.abs()).abs() <= 1.0 / 64.0 + 1e-9,
+            "{align}: {delta} vs {}",
+            expected.abs()
+        );
+    }
+}

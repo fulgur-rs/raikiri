@@ -169,12 +169,17 @@ fn inside_unsized_fixed_box(doc: &Document, cascade: &CascadeResult, idx: usize)
     false
 }
 
-/// Whether a decoration line meets a raised or lowered inline in the paragraph.
-///
-/// A decoration that starts above a shifted inline belongs at the parent's
-/// baseline, but the painter places a line at the baseline of each run, which
-/// follows the shift. Such paragraphs stay on the parley path.
-fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+/// Whether a decoration line meets an inline whose `vertical-align` is
+/// measured from the line box or the parent's content area rather than from
+/// the baseline (`top`, `bottom`, `middle`, `text-top`, `text-bottom`). The
+/// painter places a decoration at the baseline of the element that declares
+/// it; for those values neither a parley-path counterpart nor a hand-computed
+/// position has been checked, so such paragraphs stay on the parley path.
+fn decoration_meets_a_line_relative_inline(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> bool {
     let decorated =
         |id: usize| cascade.computed[id].text_decoration_line != TextDecorationLine::NONE;
     let mut any_decoration = false;
@@ -183,7 +188,7 @@ fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, id
         any_decoration |= decorated(id);
         current = doc.parent_of(id);
     }
-    let mut shifted = false;
+    let mut line_relative = false;
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
@@ -194,10 +199,17 @@ fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, id
             continue;
         }
         any_decoration |= decorated(id);
-        shifted |= cascade.computed[id].vertical_align != VerticalAlign::Baseline;
+        line_relative |= matches!(
+            cascade.computed[id].vertical_align,
+            VerticalAlign::Top
+                | VerticalAlign::Bottom
+                | VerticalAlign::Middle
+                | VerticalAlign::TextTop
+                | VerticalAlign::TextBottom
+        );
         stack.extend(node.children.iter().copied());
     }
-    any_decoration && shifted
+    any_decoration && line_relative
 }
 
 /// Whether a block child of the paragraph would take a decoration from the
@@ -302,7 +314,7 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
             || !has_visible_text(doc, cascade, idx)
             || !paragraph_is_paintable(doc, cascade, idx)
             || inside_unsized_fixed_box(doc, cascade, idx)
-            || decoration_meets_a_shifted_inline(doc, cascade, idx)
+            || decoration_meets_a_line_relative_inline(doc, cascade, idx)
         {
             continue;
         }
