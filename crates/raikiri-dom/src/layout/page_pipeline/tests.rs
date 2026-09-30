@@ -4117,3 +4117,183 @@ fn an_image_is_placed_like_an_inline_block() {
     assert_eq!((layout.size.width, layout.size.height), (10.0, 10.0));
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 12.0);
 }
+
+// ── block children of ifc roots ──────────────────────────────
+
+/// `root` holds `before`, a block div of the given css, then `after`.
+fn paragraph_with_block(
+    before: &str,
+    block_css: &str,
+    after: &str,
+    root_css: &str,
+) -> (Document, CascadeResult, usize, usize) {
+    let (mut doc, _cascade, root) = ahem_paragraph(before, &format!("width:100px;{root_css}"));
+    let block = doc.append_element(
+        Some(root),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:block;{block_css}")),
+    );
+    doc.append_text(root, after);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, block, root)
+}
+
+#[test]
+fn a_block_child_splits_the_lines_around_it() {
+    let (mut doc, cascade, block, root) = paragraph_with_block("aa", "height:20px", "bb", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa", "bb"]
+    );
+    assert_eq!(
+        lines.iter().map(|l| l.block_offset()).collect::<Vec<_>>(),
+        [0.0, 30.0]
+    );
+    let layout = doc.nodes[block].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
+    assert_eq!((layout.size.width, layout.size.height), (100.0, 20.0));
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 40.0);
+}
+
+#[test]
+fn a_leading_block_child_starts_the_paragraph() {
+    let (mut doc, cascade, block, root) = paragraph_with_block("", "height:20px", "bb", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[block].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
+}
+
+#[test]
+fn a_block_child_is_as_wide_as_the_content_box_less_its_margins() {
+    let (mut doc, cascade, block, _root) = paragraph_with_block(
+        "aa",
+        "height:10px;margin-left:10px;margin-right:20px",
+        "bb",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[block].unrounded_layout;
+    assert_eq!((layout.location.x, layout.size.width), (10.0, 70.0));
+}
+
+#[test]
+fn a_block_child_is_offset_by_the_content_box_of_its_paragraph() {
+    let (mut doc, cascade, block, root) = paragraph_with_block(
+        "aa",
+        "height:10px",
+        "bb",
+        "padding:4px 6px;box-sizing:border-box",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let layout = doc.nodes[block].unrounded_layout;
+    // The content box is 88px wide and starts at (6, 4); the block follows
+    // the first line.
+    assert_eq!((layout.location.x, layout.location.y), (6.0, 14.0));
+    assert_eq!(layout.size.width, 88.0);
+}
+
+#[test]
+fn text_inside_a_block_child_is_laid_out_inside_the_block() {
+    // The block's parent is the outer root, which also holds inline text, so
+    // `parent_holds_only_blocks` rejects the block as a root of its own: its
+    // text stays on the parley path and the block is one 10px line tall
+    // ("bb cc dd" is 80px in the 100px block).
+    let (mut doc, _cascade, block, root) = paragraph_with_block("aa", "", "cc", "");
+    doc.append_text(block, "bb cc dd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert!(!doc.nodes[block].is_ifc_root());
+    let layout = doc.nodes[block].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
+    assert_eq!(layout.size.height, 10.0);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa", "cc"]
+    );
+    assert_eq!(
+        lines.iter().map(|l| l.block_offset()).collect::<Vec<_>>(),
+        [0.0, 20.0]
+    );
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
+}
+
+#[test]
+fn a_float_anchored_right_before_a_block_child_is_placed_above_it() {
+    // No text precedes the block, so the float's anchor ends no line: the
+    // float is still placed, at the top, and the block starts there too.
+    let (mut doc, _cascade, root) = ahem_paragraph("", "width:100px");
+    let float = doc.append_element(
+        Some(root),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;float:left;width:30px;height:10px"),
+    );
+    let block = doc.append_element(
+        Some(root),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;height:20px"),
+    );
+    doc.append_text(root, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
+    assert_eq!((layout.size.width, layout.size.height), (30.0, 10.0));
+    assert_eq!(doc.nodes[block].unrounded_layout.location.y, 0.0);
+}
+
+#[test]
+fn a_shrink_to_fit_paragraph_is_as_wide_as_its_widest_block_child() {
+    // max-content: the lines are 20px wide, the block child 60px.
+    let (mut doc, cascade, _block, root) = paragraph_with_block(
+        "aa",
+        "width:60px;height:10px",
+        "bb",
+        "float:left;width:auto",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 60.0);
+}
+
+#[test]
+fn a_paragraph_that_contains_its_floats_contains_those_of_its_block_children() {
+    // The root floats, so it is a formatting context of its own. The block
+    // child holds only a 30x50 float, which starts below "aa" (y=10) and ends
+    // at 60; "bb" goes beside it. (The node height grows to the float in a
+    // later pass on both paths; the measured content height is what counts.)
+    let (mut doc, _cascade, block, root) = paragraph_with_block("aa", "", "bb", "float:left");
+    doc.append_element(
+        Some(block),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;float:left;width:30px;height:50px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let lines = stored_lines(&doc, root);
+    assert_eq!(
+        lines.lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(0.0), Some(30.0)]
+    );
+    assert_eq!(lines.height, 60.0);
+}

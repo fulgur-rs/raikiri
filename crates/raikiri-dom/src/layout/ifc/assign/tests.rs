@@ -49,9 +49,9 @@ fn without_the_switch_no_root_is_assigned() {
 fn ineligible_shapes_stay_on_the_parley_path() {
     type Build = fn(&mut crate::Document, usize);
     let cases: [(&str, Build); 3] = [
-        ("block child", |doc, root| {
+        ("flex child", |doc, root| {
             doc.append_text(root, "aa");
-            let b = span(doc, root, "display:block");
+            let b = span(doc, root, "display:flex");
             doc.append_text(b, "bb");
         }),
         ("whitespace only", |doc, root| {
@@ -76,8 +76,8 @@ fn reassignment_clears_stale_marks() {
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
-    // The switch stays on but the root no longer projects: add a block child.
-    let f = span(&mut fixture.doc, fixture.root, "display:block");
+    // The switch stays on but the root no longer projects: add a flex child.
+    let f = span(&mut fixture.doc, fixture.root, "display:flex");
     fixture.doc.append_text(f, "x");
     fixture.doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&fixture.doc);
@@ -628,4 +628,27 @@ fn a_paragraph_with_only_an_image_is_not_a_root() {
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_block_child_under_a_decoration_keeps_the_paragraph_on_the_parley_path() {
+    // A decoration propagates into an in-flow block, which the lines do not
+    // carry.
+    assert_stays_on_parley("text-decoration:underline", |doc, root| {
+        doc.append_text(root, "aa");
+        let block = span(doc, root, "display:block;height:10px");
+        doc.append_text(block, "bb");
+    });
+}
+
+#[test]
+fn a_block_child_without_a_decoration_is_a_root() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        let block = span(doc, root, "display:block;height:10px");
+        doc.append_text(block, "bb");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }

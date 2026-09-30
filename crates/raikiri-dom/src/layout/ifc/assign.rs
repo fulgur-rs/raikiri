@@ -1,6 +1,6 @@
 //! Choose the blocks laid out by the shodo inline engine.
 
-use super::boxes::IfcBoxKind;
+use super::boxes::{IfcBox, IfcBoxKind};
 use super::projection::{box_kind, project_ifc};
 use super::root::IfcRoot;
 use crate::Document;
@@ -227,8 +227,30 @@ fn decoration_meets_a_shifted_inline(doc: &Document, cascade: &CascadeResult, id
     any_decoration && shifted
 }
 
+/// Whether a block child of the paragraph would take a decoration from the
+/// root or one of its ancestors. A decoration propagates into in-flow block
+/// children (CSS Text Decoration 3, 2.1), and the lines do not carry it there.
+fn has_block_child_under_a_decoration(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    boxes: &[IfcBox],
+) -> bool {
+    if !boxes.iter().any(|b| b.kind == IfcBoxKind::Block) {
+        return false;
+    }
+    let mut current = Some(idx);
+    while let Some(id) = current {
+        if cascade.computed[id].text_decoration_line != TextDecorationLine::NONE {
+            return true;
+        }
+        current = doc.parent_of(id);
+    }
+    false
+}
+
 /// Whether the paragraph itself holds text other than white space; text inside
-/// its boxes (floats, atomic inlines) does not count.
+/// its boxes (floats, atomic inlines, blocks) does not count.
 fn has_visible_text(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
@@ -321,6 +343,9 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
         ) else {
             continue;
         };
+        if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
+            continue;
+        }
         let has_own_floats = projected.boxes.iter().any(|b| b.kind == IfcBoxKind::Float);
         if has_own_floats && has_float_beside(doc, cascade, idx) {
             continue;

@@ -578,13 +578,17 @@ fn measure_ifc_root(
         };
         crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis)
     } else {
-        shodo::AtomicIntrinsics::EMPTY
+        crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };
     let Some((min_content, max_content)) = with_state(tree, |state| {
-        flow::intrinsic_widths_with(&probe, &mut state.layout_cx, &box_intrinsics)
+        flow::intrinsic_widths_with(&probe, &mut state.layout_cx, &box_intrinsics.engine)
     }) else {
         return (Size::ZERO, None);
     };
+    let (min_content, max_content) = (
+        min_content.max(box_intrinsics.blocks.0),
+        max_content.max(box_intrinsics.blocks.1),
+    );
     let width = match available.width {
         AvailableSpace::Definite(width) if measure.stretched => width,
         AvailableSpace::Definite(width) => width.max(min_content).min(max_content),

@@ -27,6 +27,9 @@ pub(crate) struct IfcBox {
 pub(crate) enum IfcBoxKind {
     Float,
     Atomic,
+    /// A block child of the root: it ends the line before it, and the lines
+    /// after it start below it.
+    Block,
 }
 
 /// A float met while laying out the current line. It is not in the context
@@ -122,6 +125,8 @@ fn run_boxes(
     let max_calls = 3 * root.boxes.len() + MAX_SPACE_RETRIES + 2;
     let mut moves = 0;
     let mut calls = 0;
+    // Bottom of the floats inside block children, from the content-box top.
+    let mut block_floats_bottom = f32::NEG_INFINITY;
 
     loop {
         calls += 1;
@@ -259,10 +264,28 @@ fn run_boxes(
                     ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
                 }
             }
+            LineResult::BlockInInline { node, token_after } => {
+                // Floats anchored before the block and not placed yet go
+                // above it: the block starts below the last line.
+                for float in tentative.drain(..).chain(deferred.drain(..)) {
+                    ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
+                }
+                let block = layout_block_child(tree, ctx, node.0 as usize, y, geometry, perform);
+                block_floats_bottom = block_floats_bottom.max(y + block.floats_bottom);
+                y += block.height;
+                token = token_after;
+                // The call count is kept: every block is one of the root's
+                // boxes, so blocks in a row stay within the bound, and a
+                // result that does not move past its block ends the loop.
+                withdrawn.clear();
+                assumed_height = 0.0;
+                retries = 0;
+                moves = 0;
+            }
             LineResult::Done => break,
             other => {
-                // Blocks are not projected into paragraphs laid out here,
-                // so no other result is expected.
+                // Absolutely positioned boxes are not projected, so no
+                // other result is expected.
                 debug_assert!(false, "unexpected line result: {other:?}");
                 break;
             }
@@ -281,11 +304,13 @@ fn run_boxes(
     // content-box top, hence the subtraction.
     let height = if local {
         let floats_bottom = ctx.floated_content_height_contribution();
-        if floats_bottom.is_finite() {
+        let own = if floats_bottom.is_finite() {
             y.max(floats_bottom - top_edge)
         } else {
             y
-        }
+        };
+        // The context does not collect what its sub-contexts placed.
+        own.max(block_floats_bottom)
     } else {
         y
     };
@@ -468,6 +493,82 @@ pub(crate) fn measure_atomics(
     AtomicMeasure { sizes, outputs }
 }
 
+/// What laying out a block child gives the line loop.
+struct BlockChild {
+    /// Border-box height: the block has no vertical margins.
+    height: f32,
+    /// Bottom of the floats placed inside the block, from its top;
+    /// `NEG_INFINITY` when it has none.
+    floats_bottom: f32,
+}
+
+/// Lay a block child out at the line offset `y`, as wide as the content box
+/// less its side margins, the way the parent's block algorithm lays out an
+/// in-flow block. With `perform`, its final layout is stored.
+fn layout_block_child(
+    tree: &mut Document,
+    ctx: &mut BlockContext<'_>,
+    node: usize,
+    y: f32,
+    geometry: FlowGeometry,
+    perform: bool,
+) -> BlockChild {
+    use taffy::LayoutBlockContainer;
+    let margin = resolved_margins(tree, node, geometry.width);
+    let width = (geometry.width - margin.left - margin.right).max(0.0);
+    // The context measures from the root's border box; the insets are added
+    // to the root's own.
+    let mut child_ctx = ctx.sub_context(
+        geometry.top_edge + y,
+        [
+            geometry.edges.0 + margin.left,
+            geometry.edges.1 + margin.right,
+        ],
+    );
+    let inputs = LayoutInput {
+        run_mode: if perform {
+            RunMode::PerformLayout
+        } else {
+            RunMode::ComputeSize
+        },
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(width),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: true,
+        },
+        parent_size: Size {
+            width: Some(geometry.width),
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(width),
+            height: AvailableSpace::MaxContent,
+        },
+        // Neither the block's margins (zero) nor its children's collapse
+        // with the lines around it.
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let output =
+        tree.compute_block_child_layout(taffy::NodeId::from(node), inputs, Some(&mut child_ctx));
+    let floats_bottom = child_ctx.floated_content_height_contribution();
+    if perform {
+        let location = taffy::Point {
+            x: geometry.edges.0 + margin.left,
+            y: geometry.top_edge + y,
+        };
+        commit_child_layout(tree, node, &output, location, geometry.width);
+    }
+    BlockChild {
+        height: output.size.height,
+        floats_bottom,
+    }
+}
+
 /// Store the final layout of every atomic inline at its fragment in the
 /// accepted lines.
 fn place_atomics(
@@ -568,15 +669,35 @@ pub(crate) fn commit_child_layout(
     tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
 }
 
+/// Intrinsic widths of the root's boxes.
+pub(crate) struct BoxIntrinsics {
+    /// What the engine takes for atomic inlines and floats.
+    pub(crate) engine: AtomicIntrinsics,
+    /// The widest min- and max-content margin-box width of the block
+    /// children. The engine breaks a line at a block child and does not size
+    /// it, so the paragraph's widths are at least these.
+    pub(crate) blocks: (f32, f32),
+}
+
+impl BoxIntrinsics {
+    pub(crate) const EMPTY: Self = Self {
+        engine: AtomicIntrinsics::EMPTY,
+        blocks: (0.0, 0.0),
+    };
+}
+
 /// Min- and max-content widths of the root's boxes, for the paragraph's
 /// intrinsic sizes. Each box is measured without changing its layout.
-pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -> AtomicIntrinsics {
+pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -> BoxIntrinsics {
     let boxes = tree.nodes[idx]
         .ifc
         .as_ref()
         .map(|root| root.boxes.clone())
         .unwrap_or_default();
-    let mut intrinsics = AtomicIntrinsics::new();
+    let mut intrinsics = BoxIntrinsics {
+        engine: AtomicIntrinsics::new(),
+        blocks: (0.0, 0.0),
+    };
     for b in boxes {
         match b.kind {
             IfcBoxKind::Float => {
@@ -594,7 +715,7 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
                     Clear::Right => FloatClear::Right,
                     Clear::Both => FloatClear::Both,
                 };
-                intrinsics.insert_float(
+                intrinsics.engine.insert_float(
                     shodo::node::NodeId(b.node as u64),
                     FloatIntrinsic {
                         min_content,
@@ -604,11 +725,18 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
                     },
                 );
             }
+            IfcBoxKind::Block => {
+                let margin = resolved_margins(tree, b.node, basis);
+                let (min_content, max_content) =
+                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
+                intrinsics.blocks.1 = intrinsics.blocks.1.max(max_content);
+            }
             IfcBoxKind::Atomic => {
                 let margin = resolved_margins(tree, b.node, basis);
                 let (min_content, max_content) =
                     content_widths(tree, b.node, basis, margin.left + margin.right);
-                intrinsics.insert_atomic(
+                intrinsics.engine.insert_atomic(
                     shodo::node::NodeId(b.node as u64),
                     AtomicIntrinsic {
                         min_content,

@@ -1,21 +1,25 @@
 //! Project one in-flow block's inline content into a shodo paragraph.
 //!
-//! Text, ordinary inline elements, `<br>`, left or right floats and atomic
-//! inlines (inline-blocks, images, inline SVG) are projected; a float becomes
-//! an anchor in the text and an atomic a placeholder, and both are laid out as
-//! boxes of their own. Anything the inline path cannot place yet (positioned
-//! boxes, block children, form controls and other replaced elements,
-//! generated content) is rejected with [`IfcError::Unsupported`] rather than
-//! approximated.
+//! Text, ordinary inline elements, `<br>`, left or right floats, atomic
+//! inlines (inline-blocks, images, inline SVG) and block children of the root
+//! are projected; a float becomes an anchor in the text, an atomic a
+//! placeholder and a block a break between lines, and all three are laid out
+//! as boxes of their own. Anything the inline path cannot place yet
+//! (positioned boxes, blocks inside inline elements or with vertical margins,
+//! form controls and other replaced elements, generated content) is rejected
+//! with [`IfcError::Unsupported`] rather than approximated.
 
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::style;
 use crate::Document;
 use raikiri_style::property::{
-    ClearValue, ContentComponent, DisplayValue, FloatValue, PositionValue,
+    ClearValue, ContentComponent, DisplayValue, FloatValue, OverflowValue, PositionValue,
 };
-use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem, StyleNodeId};
+use raikiri_style::{
+    CascadeResult, ComputedLengthPercentageOrAuto, ComputedTextIndent, ComputedValues, PseudoElem,
+    StyleNodeId,
+};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
@@ -108,6 +112,12 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     if inline_block || replaced {
         return Some(IfcBoxKind::Atomic);
     }
+    // `flow-root`, flex and grid boxes avoid floats as formatting contexts of
+    // their own; taffy places those in the parent's item loop, which this
+    // path does not run, so they stay unsupported.
+    if cv.display == DisplayValue::Block {
+        return Some(IfcBoxKind::Block);
+    }
     None
 }
 
@@ -141,8 +151,40 @@ fn supported_atomic(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     Ok(())
 }
 
+/// A block child the inline engine can place between lines: in normal
+/// position, with no vertical margin (collapsing it with the lines and with
+/// other blocks is not modelled), no `auto` side margin, not a scroll
+/// container and not cleared.
+fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
+    let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
+    if cv.position != PositionValue::Static {
+        return Err(unsupported("positioned blocks are not placed yet"));
+    }
+    let zero = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if px == 0.0);
+    if !zero(cv.margin.top) || !zero(cv.margin.bottom) {
+        return Err(unsupported(
+            "vertical margins of a block child are not collapsed yet",
+        ));
+    }
+    if matches!(cv.margin.left, ComputedLengthPercentageOrAuto::Auto)
+        || matches!(cv.margin.right, ComputedLengthPercentageOrAuto::Auto)
+    {
+        return Err(unsupported(
+            "auto side margins of a block child are not resolved yet",
+        ));
+    }
+    if cv.overflow.x != OverflowValue::Visible || cv.overflow.y != OverflowValue::Visible {
+        return Err(unsupported("a block child that clips is not placed yet"));
+    }
+    if cv.clear != ClearValue::None {
+        return Err(unsupported("a cleared block child is not placed yet"));
+    }
+    Ok(())
+}
+
 enum Step {
-    Enter(usize),
+    /// A node to project, and whether it sits inside an inline element.
+    Enter(usize, bool),
     Close,
 }
 
@@ -189,15 +231,15 @@ pub(crate) fn project_ifc(
         .children
         .iter()
         .rev()
-        .map(|&child| Step::Enter(child))
+        .map(|&child| Step::Enter(child, false))
         .collect();
     while let Some(step) = stack.pop() {
-        let id = match step {
+        let (id, nested) = match step {
             Step::Close => {
                 builder.close_inline();
                 continue;
             }
-            Step::Enter(id) => id,
+            Step::Enter(id, nested) => (id, nested),
         };
         let node = doc.get_node(id).ok_or(IfcError::InvalidNode(id))?;
         if !node.is_in_document() {
@@ -255,6 +297,23 @@ pub(crate) fn project_ifc(
                     }
                     continue;
                 }
+                if box_kind(cascade, doc, id) == Some(IfcBoxKind::Block) {
+                    if nested {
+                        return Err(unsupported(
+                            "a block inside an inline element is not placed yet",
+                        ));
+                    }
+                    supported_block(cv, id)?;
+                    builder.push_block_in_inline(NodeId(id as u64));
+                    boxes.push(IfcBox {
+                        node: id,
+                        kind: IfcBoxKind::Block,
+                    });
+                    if let Some(error) = builder.error() {
+                        return Err(IfcError::Limit(error));
+                    }
+                    continue;
+                }
                 if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
                     return Err(unsupported("positioned inline boxes are not supported yet"));
                 }
@@ -271,7 +330,12 @@ pub(crate) fn project_ifc(
                     builder.close_inline();
                 } else {
                     stack.push(Step::Close);
-                    stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
+                    stack.extend(
+                        node.children
+                            .iter()
+                            .rev()
+                            .map(|&child| Step::Enter(child, true)),
+                    );
                 }
             }
             _ => {

@@ -84,8 +84,7 @@ fn display_none_children_are_skipped() {
 
 #[test]
 fn constructs_the_inline_path_cannot_place_yet_are_rejected() {
-    let cases: [(&str, &str); 3] = [
-        ("block child", "display:block"),
+    let cases: [(&str, &str); 2] = [
         ("absolute", "display:inline;position:absolute"),
         ("flex child", "display:flex"),
     ];
@@ -389,6 +388,57 @@ fn unsupported_floats_stay_unsupported() {
         assert!(
             matches!(error, IfcError::Unsupported { .. }),
             "{css}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_block_child_is_recorded_as_a_block_box() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        let block = span(doc, root, "display:block;height:20px");
+        doc.append_text(block, "bb");
+        doc.append_text(root, "cc");
+    });
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block);
+    // The block's text is not part of the paragraph; "aa" and "cc" are on
+    // separate lines on either side of it.
+    assert_eq!(line_texts(&projected, 500.0), ["aa", "cc"]);
+}
+
+#[test]
+fn blocks_that_are_not_placed_yet_stay_unsupported() {
+    for (name, css, nested) in [
+        ("vertical margin", "display:block;margin-top:5px", false),
+        ("bottom margin", "display:block;margin-bottom:5px", false),
+        ("percentage margin", "display:block;margin-top:10%", false),
+        ("auto side margin", "display:block;margin-left:auto", false),
+        ("positioned", "display:block;position:relative", false),
+        ("inside an inline element", "display:block", true),
+        // A block that has to avoid floats or clear them is placed by the
+        // parent's item loop in taffy, which this path replaces.
+        ("flow-root", "display:flow-root", false),
+        ("flex", "display:flex", false),
+        ("grid", "display:grid", false),
+        ("scroll container", "display:block;overflow:hidden", false),
+        ("clearing", "display:block;clear:left", false),
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let parent = if nested {
+                span(doc, root, "display:inline")
+            } else {
+                root
+            };
+            let block = span(doc, parent, css);
+            doc.append_text(block, "bb");
+        });
+        let error = project(&fixture).expect_err(name);
+        assert!(
+            matches!(error, IfcError::Unsupported { .. }),
+            "{name}: {error}"
         );
     }
 }
