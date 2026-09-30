@@ -932,10 +932,19 @@ impl Document {
         // A canvas width/height change resizes and clears the bitmap (HTML
         // Standard §4.12.5 always clears, even when the size is unchanged)
         // and changes the intrinsic size, so layout caches must be
-        // invalidated the same way image resolution does.
+        // invalidated the same way image resolution does. Huge bitmaps are
+        // cleared lazily (None) to avoid allocating gigabytes for absurd
+        // content-attribute values; the next paint re-creates them on demand.
         if is_canvas_size_attr {
             let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
-            self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            let area = u64::from(width) * u64::from(height);
+            if area <= 10_000_000 {
+                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            } else if let Some(node) = self.nodes.get_mut(id)
+                && let NodeData::Element(element) = &mut node.data
+            {
+                element.canvas_bitmap = None;
+            }
             self.invalidate_layout_cache();
         }
         Ok(())
@@ -1009,10 +1018,17 @@ impl Document {
         // Removing a canvas width/height attribute reverts to the default
         // size (HTML Standard §4.12.5), clearing the bitmap and changing the
         // intrinsic size. Only when the attribute actually existed: removing
-        // a missing attribute is a no-op.
+        // a missing attribute is a no-op. Huge bitmaps clear lazily, as above.
         if is_canvas_size_attr && first_value.is_some() {
             let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
-            self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            let area = u64::from(width) * u64::from(height);
+            if area <= 10_000_000 {
+                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+            } else if let Some(node) = self.nodes.get_mut(id)
+                && let NodeData::Element(element) = &mut node.data
+            {
+                element.canvas_bitmap = None;
+            }
             self.invalidate_layout_cache();
         }
         Ok(first_value)
@@ -1848,13 +1864,13 @@ impl Document {
             return false;
         }
         let Some(node) = self.nodes.get_mut(id) else {
-            return false;
+            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
         };
         let NodeData::Element(element) = &mut node.data else {
-            return false;
+            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
         };
         let Some(bitmap) = element.canvas_bitmap.as_mut() else {
-            return false;
+            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
         };
         if bitmap.width == 0 || bitmap.height == 0 {
             return true;
@@ -1919,13 +1935,13 @@ impl Document {
             return false;
         }
         let Some(node) = self.nodes.get_mut(id) else {
-            return false;
+            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
         };
         let NodeData::Element(element) = &mut node.data else {
-            return false;
+            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
         };
         let Some(bitmap) = element.canvas_bitmap.as_mut() else {
-            return false;
+            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
         };
         if bitmap.width == 0 || bitmap.height == 0 {
             return true;
@@ -1970,7 +1986,7 @@ impl Document {
             .unwrap_or_default();
         while let Some(index) = stack.pop() {
             let Some(node) = self.nodes.get(index) else {
-                continue;
+                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
             };
             if self.is_canvas_element(index) {
                 let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
@@ -1997,7 +2013,7 @@ impl Document {
             .unwrap_or_default();
         while let Some(index) = stack.pop() {
             let Some(node) = self.nodes.get(index) else {
-                continue;
+                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
             };
             if self.is_canvas_element(index) {
                 ids.push(index);

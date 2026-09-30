@@ -124,3 +124,55 @@ fn canvas_sidecar_round_trips_in_tree_order() {
     assert_eq!(fresh.canvas_bitmap(fresh_first).unwrap(), sidecar[0]);
     assert_eq!(fresh.canvas_bitmap(fresh_second).unwrap(), sidecar[1]);
 }
+
+#[test]
+fn canvas_overlong_dimensions_saturate_and_zero_sizes_noop() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "123456789012")
+        .unwrap();
+    assert_eq!(doc.canvas_size(canvas), Some((u32::MAX, 150)));
+    doc.set_element_attribute(canvas, "width", "0").unwrap();
+    doc.set_element_attribute(canvas, "height", "0").unwrap();
+    assert!(doc.canvas_fill_rect(canvas, 0, 0, 4, 4, [255, 0, 0, 255]));
+    assert!(doc.canvas_clear_rect(canvas, 0, 0, 4, 4));
+    let bitmap = doc.canvas_bitmap(canvas).expect("zero-size bitmap exists");
+    assert!(bitmap.rgba.is_empty());
+}
+
+#[test]
+fn canvas_zero_area_and_transparent_fills_are_noops() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "4").unwrap();
+    doc.set_element_attribute(canvas, "height", "4").unwrap();
+    doc.canvas_fill_rect(canvas, 0, 0, 4, 4, [255, 0, 0, 255]);
+    let before = doc.canvas_bitmap(canvas).unwrap();
+    assert!(doc.canvas_fill_rect(canvas, 0, 0, 0, 4, [0, 0, 255, 255]));
+    assert!(doc.canvas_fill_rect(canvas, 0, 0, 4, 0, [0, 0, 255, 255]));
+    assert_eq!(doc.canvas_bitmap(canvas).unwrap(), before);
+    assert!(doc.canvas_fill_rect(canvas, 0, 0, 4, 4, [0, 0, 0, 0]));
+    assert_eq!(doc.canvas_bitmap(canvas).unwrap(), before);
+    assert!(doc.canvas_clear_rect(canvas, 0, 0, 0, 4));
+    assert_eq!(doc.canvas_bitmap(canvas).unwrap(), before);
+}
+
+#[test]
+fn canvas_translucent_fill_blends_source_over() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "1").unwrap();
+    doc.set_element_attribute(canvas, "height", "1").unwrap();
+    doc.canvas_fill_rect(canvas, 0, 0, 1, 1, [0, 0, 255, 255]);
+    doc.canvas_fill_rect(canvas, 0, 0, 1, 1, [255, 0, 0, 128]);
+    let bitmap = doc.canvas_bitmap(canvas).unwrap();
+    // Red 128 over blue 255: r=(255*128+0*127)/255=128, g=0, b=(0*128+255*127)/255=127, a=255.
+    assert_eq!(bitmap.rgba.as_slice(), &[128, 0, 127, 255]);
+}
+
+#[test]
+fn canvas_bitmap_ref_returns_none_for_non_elements() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    assert_eq!(doc.canvas_bitmap(root), None);
+    assert!(doc.canvas_bitmap_ref(root).is_none());
+    let text = doc.create_detached_text("hi");
+    assert_eq!(doc.canvas_bitmap(text), None);
+}

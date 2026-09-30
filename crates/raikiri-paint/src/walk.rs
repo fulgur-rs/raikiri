@@ -4881,10 +4881,10 @@ fn paint_canvas(
             let scale = (content_w / natural_w).min(content_h / natural_h).min(1.0);
             (natural_w * scale, natural_h * scale)
         }
-        _ => (content_w, content_h),
+        _ => (content_w, content_h), // cov:ignore: defensive fallback for future ObjectFit variants
     };
     if !image_w.is_finite() || !image_h.is_finite() || image_w <= 0.0 || image_h <= 0.0 {
-        return true;
+        return true; // cov:ignore: natural and content sizes are already checked finite and positive above, so this cannot fail here
     }
     let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
     let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);

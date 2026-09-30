@@ -3501,3 +3501,202 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
     );
     assert_eq!(px(30, 60), [255, 255, 0, 255], "yellow overflow corner");
 }
+
+#[test]
+fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
+    // Blank (never painted) canvas: transparent, still handled.
+    let mut parsed = raikiri_html::parse(
+        "<body style='margin:0'><canvas width='2' height='2' style='width:2px;height:2px'></canvas>".as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    assert!(scene.commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_))
+    )));
+
+    // Hidden canvas paints nothing visible but still counts as handled (no fallback).
+    let mut parsed = raikiri_html::parse(
+        "<body style='margin:0'><canvas width='2' height='2' style='width:2px;height:2px;visibility:hidden'></canvas>".as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let canvas = {
+        let mut stack = vec![parsed.dom.root_index()];
+        let mut found = None;
+        while let Some(id) = stack.pop() {
+            if parsed.dom.is_canvas_element(id) {
+                found = Some(id);
+                break;
+            }
+            if let Some(node) = parsed.dom.get_node(id) {
+                stack.extend(node.children.iter().rev().copied());
+            }
+        }
+        found.expect("canvas")
+    };
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
+}
+
+#[test]
+fn canvas_object_fit_variants_all_paint() {
+    for fit in ["fill", "contain", "cover", "scale-down"] {
+        let mut parsed = raikiri_html::parse(
+            format!("<body style='margin:0'><canvas width='4' height='2' style='width:2px;height:2px;object-fit:{fit}'></canvas>").as_bytes(),
+            &raikiri_html::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .unwrap();
+        let canvas = {
+            let mut stack = vec![parsed.dom.root_index()];
+            let mut found = None;
+            while let Some(id) = stack.pop() {
+                if parsed.dom.is_canvas_element(id) {
+                    found = Some(id);
+                    break;
+                }
+                if let Some(node) = parsed.dom.get_node(id) {
+                    stack.extend(node.children.iter().rev().copied());
+                }
+            }
+            found.expect("canvas")
+        };
+        parsed
+            .dom
+            .canvas_fill_rect(canvas, 0, 0, 4, 2, [255, 0, 0, 255]);
+        let cascade = raikiri_html::build_cascaded(&parsed);
+        raikiri_dom::layout_single_page(
+            &mut parsed.dom,
+            &cascade,
+            PageBox::A4,
+            parley::FontContext::new(),
+        )
+        .unwrap();
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+        assert!(
+            scene.commands.iter().any(|command| matches!(
+                command,
+                RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_))
+            )),
+            "object-fit:{fit} must paint an image"
+        );
+    }
+}
+
+#[test]
+fn canvas_hidden_overflow_clips_to_content_box() {
+    let mut parsed = raikiri_html::parse(
+        "<body style='margin:0'><canvas width='4' height='4' style='width:2px;height:2px;object-fit:none;object-position:0% 0%;overflow:hidden'></canvas>".as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let canvas = {
+        let mut stack = vec![parsed.dom.root_index()];
+        let mut found = None;
+        while let Some(id) = stack.pop() {
+            if parsed.dom.is_canvas_element(id) {
+                found = Some(id);
+                break;
+            }
+            if let Some(node) = parsed.dom.get_node(id) {
+                stack.extend(node.children.iter().rev().copied());
+            }
+        }
+        found.expect("canvas")
+    };
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 0, 4, 4, [255, 0, 0, 255]);
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    // Content box is 2x2 at origin; overflow hidden clips the 4x4 bitmap.
+    assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
+    assert_eq!(&rgba[12..16], &[255, 255, 255, 255]);
+}
+
+#[test]
+fn canvas_zero_bitmap_size_paints_nothing() {
+    let mut parsed = raikiri_html::parse(
+        "<body style='margin:0'><canvas width='0' height='0' style='width:2px;height:2px'></canvas>".as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        parley::FontContext::new(),
+    )
+    .unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    // Zero-size bitmap paints nothing but does not fall back to image error paths.
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
+}

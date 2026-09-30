@@ -245,3 +245,85 @@ fn paint_canvases_helper_sequence_matches_wpt() {
     assert_eq!(px(0, 50), [255, 0, 0, 255], "red quadrant");
     assert_eq!(px(25, 50), [255, 255, 0, 255], "yellow quadrant");
 }
+
+#[test]
+fn fill_style_accepts_every_supported_color_shape() {
+    let mut rt = rt();
+    for (input, expected) in [
+        ("transparent", "transparent"),
+        ("#f00", "#f00"),
+        ("#f008", "#f008"),
+        ("#ff0000", "#ff0000"),
+        ("#ff000080", "#ff000080"),
+        ("rgb(255, 0, 0)", "rgb(255, 0, 0)"),
+        ("rgba(255, 0, 0, 0.5)", "rgba(255, 0, 0, 0.5)"),
+        ("rgb(100%, 0%, 0%)", "rgb(100%, 0%, 0%)"),
+        ("rgb(255 0 0 / 50%)", "rgb(255 0 0 / 50%)"),
+    ] {
+        rt.evaluate(&format!(
+            "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); ctx.fillStyle = '{input}';"
+        ))
+        .unwrap();
+        ok(&mut rt, &format!("ctx.fillStyle === '{expected}'"));
+    }
+    // Invalid shapes retain the previous value.
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = '#12'; ctx.fillStyle === 'blue' && \
+         (ctx.fillStyle = 'rgb(bogus)', ctx.fillStyle === 'blue')",
+    );
+}
+
+#[test]
+fn context_brand_and_arity_checks_fail_closed() {
+    let mut rt = rt();
+    let err = rt.evaluate("CanvasRenderingContext2D.prototype.fillRect.call({}, 0, 0, 1, 1)");
+    assert!(
+        matches!(err, Err(RuntimeError::JavaScript(ref m)) if m.contains("TypeError")),
+        "fillRect on non-context throws, got {err:?}"
+    );
+    for src in [
+        "document.createElement('canvas').getContext('2d').fillRect(0, 0, 1)",
+        "document.createElement('canvas').getContext('2d').clearRect(0, 0, 1)",
+    ] {
+        let err = rt.evaluate(&format!(
+            "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); {src}"
+        ));
+        assert!(
+            matches!(err, Err(RuntimeError::JavaScript(ref m)) if m.contains("requires 4")),
+            "arity throws, got {err:?} for {src}"
+        );
+    }
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.canvas === c && c.getContext(null) === null && c.getContext(undefined) === null",
+    );
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'red'; ctx.fillRect(0, 0, 0, 2) === undefined && \
+         ctx.clearRect(NaN, 0, 2, 2) === undefined",
+    );
+}
+
+#[test]
+fn translucent_fill_blends_in_js_bitmap() {
+    let (mut host, _, _, body) = StubHost::page();
+    let canvas = host.document.create_detached_element("canvas").unwrap();
+    host.document.append_child(body, canvas).unwrap();
+    host.document.mark_in_document_flags();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var c = document.getElementsByTagName('canvas')[0]; \
+         c.width = 1; c.height = 1; \
+         var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillRect(0, 0, 1, 1); \
+         ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'; ctx.fillRect(0, 0, 1, 1);",
+    )
+    .unwrap();
+    let host = rt.into_host();
+    let bitmap = host.document().canvas_bitmap(canvas).expect("bitmap");
+    assert_eq!(bitmap.rgba.as_slice(), &[128, 0, 127, 255]);
+}

@@ -43,7 +43,7 @@ fn has_script_elements(document: &raikiri_dom::Document) -> bool {
     let mut stack = vec![document.root_index()];
     while let Some(id) = stack.pop() {
         let Some(node) = document.get_node(id) else {
-            continue;
+            continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
         };
         if node.tag_name() == Some("script")
             && document.element_namespace_uri(id) == Some("http://www.w3.org/1999/xhtml")

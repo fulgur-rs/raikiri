@@ -152,9 +152,29 @@ fn parse_rgb_function(input: &str) -> Option<[u8; 4]> {
         return None;
     };
     let args = args.strip_suffix(')')?;
-    // Modern space/slash syntax (`rgb(255 0 0 / 50%)`) and legacy commas
-    // both appear in WPT helpers; accept either by normalizing commas to
-    // spaces and splitting a slash-separated alpha.
+    // Legacy `rgba(r, g, b, a)` with commas takes precedence when present:
+    // four comma-separated parts parse directly, before any space/slash
+    // normalization that would otherwise merge them into four whitespace
+    // tokens and reject the shape.
+    if name == "rgba" && args.contains(',') {
+        let legacy: Vec<&str> = args.split(',').map(str::trim).collect();
+        if legacy.len() != 4 {
+            return None;
+        }
+        let r = parse_rgb_component(legacy[0], false)?;
+        let g = parse_rgb_component(legacy[1], false)?;
+        let b = parse_rgb_component(legacy[2], false)?;
+        let a = parse_rgb_component(legacy[3], true)?;
+        return Some([
+            r.round() as u8,
+            g.round() as u8,
+            b.round() as u8,
+            (a * 255.0).round() as u8,
+        ]);
+    }
+    // Modern space/slash syntax (`rgb(255 0 0 / 50%)`) and legacy `rgb()`
+    // with commas (three parts) both appear; normalize commas to spaces and
+    // split a slash-separated alpha.
     let normalized = args.replace(',', " ");
     let (rgb_part, alpha_part) = match normalized.split_once('/') {
         Some((rgb, alpha)) => (rgb, Some(alpha)),
@@ -170,29 +190,9 @@ fn parse_rgb_function(input: &str) -> Option<[u8; 4]> {
     let r = parse_rgb_component(rgb_tokens[0], false)?;
     let g = parse_rgb_component(rgb_tokens[1], false)?;
     let b = parse_rgb_component(rgb_tokens[2], false)?;
-    let a = match (name, alpha_part) {
-        ("rgba", None) => {
-            // Legacy `rgba(r, g, b, a)` has four comma-separated tokens,
-            // which the comma normalization above already split into four
-            // whitespace tokens; that shape is rejected above. Re-split the
-            // original on commas to recover it.
-            let legacy: Vec<&str> = args.split(',').map(str::trim).collect();
-            if legacy.len() != 4 {
-                return None;
-            }
-            let r = parse_rgb_component(legacy[0], false)?;
-            let g = parse_rgb_component(legacy[1], false)?;
-            let b = parse_rgb_component(legacy[2], false)?;
-            let a = parse_rgb_component(legacy[3], true)?;
-            return Some([
-                r.round() as u8,
-                g.round() as u8,
-                b.round() as u8,
-                (a * 255.0).round() as u8,
-            ]);
-        }
-        (_, Some(alpha)) => parse_rgb_component(alpha, true)?,
-        (_, None) => 1.0,
+    let a = match alpha_part {
+        Some(alpha) => parse_rgb_component(alpha, true)?,
+        None => 1.0,
     };
     Some([
         r.round() as u8,
@@ -222,6 +222,7 @@ fn set_canvas_width(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
             .set_element_attribute(index, "width", value.to_string())
     })?;
     if let Err(message) = result {
+        // cov:ignore: "width" is always a valid XML name, so set_element_attribute cannot fail here
         return Err(boa_engine::JsError::from(
             JsNativeError::typ().with_message(message),
         ));
@@ -250,6 +251,7 @@ fn set_canvas_height(this: &JsValue, args: &[JsValue], context: &mut Context) ->
             .set_element_attribute(index, "height", value.to_string())
     })?;
     if let Err(message) = result {
+        // cov:ignore: "height" is always a valid XML name, so set_element_attribute cannot fail here
         return Err(boa_engine::JsError::from(
             JsNativeError::typ().with_message(message),
         ));
