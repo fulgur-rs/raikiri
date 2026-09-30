@@ -36,8 +36,18 @@ fn parent_holds_only_blocks(doc: &Document, cascade: &CascadeResult, parent: usi
                 .text_content()
                 .is_none_or(|text| text.chars().all(|c| c.is_ascii_whitespace())),
             NodeKind::Element => {
-                let display = cascade.computed[child].display;
-                is_block_container(display) || display == DisplayValue::None
+                // Only an inline-level sibling puts the paragraph inside an
+                // inline formatting context of its parent; a block-level box
+                // of any inner display type does not.
+                !matches!(
+                    cascade.computed[child].display,
+                    DisplayValue::Inline
+                        | DisplayValue::InlineBlock
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::InlineGrid
+                        | DisplayValue::InlineTable
+                        | DisplayValue::Contents
+                )
             }
             _ => true,
         }

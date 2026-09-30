@@ -164,3 +164,48 @@ fn assignment_drops_the_layout_cache_only_when_the_switch_is_on() {
     assign(&mut fixture);
     assert!(fixture.doc.layout_dirty);
 }
+
+/// Append a sibling element under the root's parent.
+fn add_sibling(doc: &mut crate::Document, root: usize, display: &str) {
+    let parent = doc.parent_of(root).expect("root has a parent");
+    let sibling = doc.append_element(
+        Some(parent),
+        "div",
+        taffy::Style::default(),
+        Some(format!("display:{display}").as_str()),
+    );
+    doc.append_text(sibling, "x");
+}
+
+#[test]
+fn block_level_siblings_do_not_disqualify_a_paragraph() {
+    for display in ["flex", "grid", "table", "list-item", "flow-root", "block"] {
+        let mut fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            add_sibling(doc, root, display);
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{display}");
+    }
+}
+
+#[test]
+fn inline_level_siblings_still_disqualify_a_paragraph() {
+    for display in [
+        "inline",
+        "inline-block",
+        "inline-flex",
+        "inline-grid",
+        "inline-table",
+        "contents",
+    ] {
+        let mut fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            add_sibling(doc, root, display);
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(!is_root(&fixture, fixture.root), "{display}");
+    }
+}
