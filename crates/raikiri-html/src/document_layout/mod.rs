@@ -21,6 +21,11 @@ pub enum LayoutStatus {
     /// Layout finished.
     Completed(DocumentLayout),
     /// The abort signal fired. No partial result is returned.
+    ///
+    /// When the signal fires while consumer property events are being
+    /// delivered, the driver still delivers the remaining events of the same
+    /// batch before returning. The consumer discards the per-call collection
+    /// in that case; one observer call is not a success confirmation.
     Aborted,
 }
 
@@ -57,6 +62,13 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
 
     /// Register consumer-owned properties and receive their resolved values
     /// before [`layout`] returns.
+    ///
+    /// Events arrive in deterministic document order after the page count is
+    /// fixed. When the abort signal fires during delivery, the remaining events
+    /// of the same batch are still delivered and [`layout`] then reports an
+    /// aborted status with no partial result. Keep a per-call collection and
+    /// discard it unless the status is completed; one observer call is not a
+    /// success confirmation.
     pub fn consumer_properties(
         mut self,
         registrations: &'r [ConsumerPropertyRegistration],
@@ -80,6 +92,13 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
 /// The input document is borrowed and cloned internally, so it stays usable
 /// after an error or abort. Only print media is supported; a screen media
 /// context returns [`RenderError::Configuration`] before layout begins.
+///
+/// Consumer property events, when registered, are delivered after the page
+/// count is fixed and before this function returns, in deterministic document
+/// order. An abort that fires during delivery does not stop the current batch:
+/// remaining events are still delivered, then an aborted status is returned
+/// with no partial result. Discard the per-call collection unless the status
+/// is completed.
 ///
 /// ```
 /// use raikiri_html::{

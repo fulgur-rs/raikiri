@@ -59,6 +59,13 @@ impl ConsumerPropertyEvent {
 /// Optional receiver for resolved consumer-owned properties.
 ///
 /// The render driver invokes `observe_event` in deterministic document order.
+///
+/// The batch contract is: events are delivered after the page count is fixed
+/// and before the layout call returns. One observer call is not a success
+/// confirmation. When the abort signal fires during delivery, the driver still
+/// delivers the remaining events of the same batch and then reports an aborted
+/// status with no partial result. The consumer keeps a per-call collection and
+/// discards it when the call reports aborted or an error.
 // cov:ignore: observer trait declaration has no executable body
 pub trait ConsumerPropertyObserver: Send {
     /// Receive one resolved property event.

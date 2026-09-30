@@ -312,6 +312,90 @@ fn layout_aborts_when_property_observer_aborts() {
     ));
 }
 
+// An abort fired by the observer does not stop the current batch: the driver
+// still delivers the remaining events before reporting Aborted with no partial
+// result. The consumer discards the per-call collection in that case.
+#[test]
+fn layout_abort_on_first_event_still_delivers_remaining_batch() {
+    let doc = dom(
+        "<h1 style='bookmark-level: 1'>a</h1>\
+         <h2 style='bookmark-level: 2'>b</h2><p style='bookmark-level: 3'>c</p>",
+    );
+    let registrations = [crate::ConsumerPropertyRegistration::integer(
+        "bookmark-level",
+    )];
+    let controller = AbortController::new();
+    let mut values = Vec::new();
+    let mut orders = Vec::new();
+    let mut observer = |event: ConsumerPropertyEvent| {
+        if let raikiri_traits::ConsumerPropertyValue::Integer(value) = event.value {
+            values.push(value);
+        }
+        orders.push(event.source_order);
+        controller.abort();
+        Ok::<_, std::io::Error>(())
+    };
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::builder()
+            .signal(Some(controller.signal.clone()))
+            .build(),
+        LayoutOptions::new().consumer_properties(&registrations, &mut observer),
+    )
+    .expect("layout returns a status, not an observer error");
+    assert!(
+        matches!(status, LayoutStatus::Aborted),
+        "abort during delivery reports Aborted"
+    );
+    assert_eq!(values, vec![1, 2, 3], "full batch is delivered in document order");
+    assert_eq!(orders.len(), 3);
+    assert!(
+        orders.windows(2).all(|pair| pair[0] < pair[1]),
+        "source order is strictly increasing, got {orders:?}"
+    );
+}
+
+// Aborting on a middle event delivers the same full batch, not a prefix.
+#[test]
+fn layout_abort_on_middle_event_delivers_full_batch_without_partial_result() {
+    let doc = dom(
+        "<h1 style='bookmark-level: 1'>a</h1>\
+         <h2 style='bookmark-level: 2'>b</h2><p style='bookmark-level: 3'>c</p>",
+    );
+    let registrations = [crate::ConsumerPropertyRegistration::integer(
+        "bookmark-level",
+    )];
+    let controller = AbortController::new();
+    let mut values = Vec::new();
+    let mut seen = 0;
+    let mut observer = |event: ConsumerPropertyEvent| {
+        seen += 1;
+        if let raikiri_traits::ConsumerPropertyValue::Integer(value) = event.value {
+            values.push(value);
+        }
+        if seen == 2 {
+            controller.abort();
+        }
+        Ok::<_, std::io::Error>(())
+    };
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::builder()
+            .signal(Some(controller.signal.clone()))
+            .build(),
+        LayoutOptions::new().consumer_properties(&registrations, &mut observer),
+    )
+    .expect("layout returns a status, not an observer error");
+    assert!(matches!(status, LayoutStatus::Aborted));
+    assert_eq!(
+        values,
+        vec![1, 2, 3],
+        "events after the aborting event are still delivered"
+    );
+}
+
 // A second origin offset would move placements and clickable areas off the page.
 #[test]
 fn layout_page_origin_is_applied_once_to_fragments_and_links() {
