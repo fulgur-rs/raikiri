@@ -3571,38 +3571,6 @@ fn a_float_wider_than_the_rest_of_its_line_waits_for_the_next_line() {
 }
 
 #[test]
-fn a_cleared_float_does_not_shorten_the_line_above_its_clearance() {
-    // A 30x20 left float sits beside the root. The root's own float, anchored
-    // before its text, clears left, so it goes below that float (y=20) and
-    // must not take room from the first line, which starts after the outer
-    // float only. Its anchor stays on the first line either way, so nothing
-    // but the clearance check keeps it off that line.
-    let (mut doc, cascade, _outer, root) =
-        ahem_paragraph_beside_float("", "float:left;width:30px;height:20px", "");
-    let inner = doc.append_element(
-        Some(root),
-        "div",
-        Style::default(),
-        Some("display:block;float:left;clear:left;width:30px;height:10px"),
-    );
-    doc.append_text(root, "aa bb cc dd");
-    doc.mark_in_document_flags();
-    let rules = raikiri_style::build_rule_tree(&doc);
-    let cascade_2 = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    drop(cascade);
-    lay_out_with_switch(&mut doc, &cascade_2);
-    assert!(doc.nodes[root].is_ifc_root());
-    let lines = &stored_lines(&doc, root).lines;
-    assert_eq!(
-        lines.iter().map(line_text).collect::<Vec<_>>(),
-        ["aa bb", "cc dd"]
-    );
-    assert_eq!(line_start_x(&lines[0]), Some(30.0));
-    let layout = doc.nodes[inner].unrounded_layout;
-    assert_eq!((layout.location.x, layout.location.y), (0.0, 20.0));
-}
-
-#[test]
 fn a_paragraph_inside_a_float_of_a_root_is_measured() {
     // The float holds a paragraph of its own. Laying the float out from the
     // outer root lays that paragraph out too, which needs the engine state:
@@ -3741,4 +3709,149 @@ fn a_padded_formatting_context_does_not_count_its_top_edge_twice() {
     );
     lay_out_with_switch(&mut doc, &cascade);
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 65.0);
+}
+
+// ── float placement rules the shadow record has to follow ────
+
+/// `ahem_paragraph_with_float` with more floats after the first one: each
+/// entry of `more` is `(float_css, text_after)`. Returns the floats in order.
+fn ahem_paragraph_with_floats(
+    before: &str,
+    first: (&str, &str),
+    more: &[(&str, &str)],
+    root_css: &str,
+) -> (Document, CascadeResult, Vec<usize>, usize) {
+    let (mut doc, _cascade, float, root) =
+        ahem_paragraph_with_float(before, first.0, first.1, root_css);
+    let mut floats = vec![float];
+    for (css, after) in more {
+        floats.push(doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        ));
+        if !after.is_empty() {
+            doc.append_text(root, *after);
+        }
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, floats, root)
+}
+
+fn origin(doc: &Document, id: usize) -> (f32, f32) {
+    let layout = doc.nodes[id].unrounded_layout;
+    (layout.location.x, layout.location.y)
+}
+
+#[test]
+fn a_float_after_a_deferred_float_is_deferred_too() {
+    // CSS 2.1 9.5.1 rule 5: a float is not placed above an earlier one. The
+    // 60px float does not stay on "aaaa bbbb" and goes to the next line, so
+    // the 5px float after it must follow it there instead of taking line 1.
+    let (mut doc, cascade, floats, root) = ahem_paragraph_with_floats(
+        "aaaa bbbb",
+        ("float:left;width:60px;height:10px", ""),
+        &[("float:left;width:5px;height:10px", " cc")],
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(line_text(&lines[0]), "aaaa bbbb");
+    assert_eq!(line_start_x(&lines[0]), Some(0.0));
+    assert_eq!(origin(&doc, floats[0]), (0.0, 10.0));
+    assert_eq!(origin(&doc, floats[1]), (60.0, 10.0));
+}
+
+#[test]
+fn a_float_that_clears_a_float_of_the_same_line_does_not_narrow_it() {
+    // The second float clears the first one, so it sits below it and takes no
+    // room from the line both are anchored in.
+    let (mut doc, cascade, floats, root) = ahem_paragraph_with_floats(
+        "aa",
+        ("float:left;width:20px;height:10px", ""),
+        &[("float:left;clear:left;width:20px;height:10px", " bb")],
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(line_start_x(&lines[0]), Some(20.0));
+    assert_eq!(origin(&doc, floats[0]), (0.0, 0.0));
+    assert_eq!(origin(&doc, floats[1]), (0.0, 10.0));
+}
+
+#[test]
+fn a_float_is_not_placed_above_an_earlier_cleared_float() {
+    // Line 1 holds a 30x30 float and one that clears it (placed at y=30).
+    // The 10px float on line 2 (y=10) may not go above that one, so it does
+    // not narrow line 2 either.
+    let (mut doc, cascade, floats, root) = ahem_paragraph_with_floats(
+        "aa",
+        ("float:left;width:30px;height:30px", ""),
+        &[
+            ("float:left;clear:left;width:30px;height:10px", " bbbb cc"),
+            ("float:left;width:10px;height:10px", " dd"),
+        ],
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa bbbb", "cc dd"]
+    );
+    assert_eq!(line_start_x(&lines[1]), Some(30.0));
+    assert_eq!(origin(&doc, floats[1]), (0.0, 30.0));
+    assert_eq!(origin(&doc, floats[2]).1, 30.0);
+}
+
+#[test]
+fn a_line_too_narrow_beside_a_float_moves_below_it() {
+    // CSS 2.1 9.5: a line box that does not fit next to a float is shifted
+    // down. Only 20px are left beside the 80px float, too little for "aaaa".
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb", "float:left;width:80px;height:20px", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aaaa bbbb"]
+    );
+    assert_eq!(lines[0].block_offset(), 20.0);
+    assert_eq!(line_start_x(&lines[0]), Some(0.0));
+}
+
+#[test]
+fn a_float_wider_than_the_paragraph_stays_at_the_top_and_the_text_goes_below() {
+    let (mut doc, cascade, float, root) =
+        ahem_paragraph_with_float("", "float:left;width:150px;height:20px", "aa", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(origin(&doc, float), (0.0, 0.0));
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(line_text(&lines[0]), "aa");
+    assert_eq!(lines[0].block_offset(), 20.0);
+}
+
+#[test]
+fn a_cleared_float_does_not_shorten_the_line_above_its_clearance() {
+    // The 30x30 float of line 1 still reaches line 2 (y=10). The float of
+    // line 2 clears it, so it goes below it (y=30) and must not take room
+    // from line 2, which starts after the first float only.
+    let (mut doc, cascade, floats, root) = ahem_paragraph_with_floats(
+        "aa",
+        ("float:left;width:30px;height:30px", " bbbb cc"),
+        &[("float:left;clear:left;width:20px;height:10px", " dd")],
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aa bbbb", "cc dd"]
+    );
+    assert_eq!(line_start_x(&lines[1]), Some(30.0));
+    assert_eq!(origin(&doc, floats[1]), (0.0, 30.0));
 }

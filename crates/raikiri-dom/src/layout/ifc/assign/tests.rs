@@ -543,3 +543,17 @@ fn a_shifted_inline_inside_a_float_does_not_keep_a_decorated_paragraph_off() {
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
 }
+
+#[test]
+fn a_paragraph_with_a_float_child_beside_an_outer_float_stays_on_the_parley_path() {
+    // An outer float can keep the paragraph's own floats lower than the line
+    // they are anchored in, which the line layout cannot see.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        span(doc, root, "display:block;float:left;width:30px;height:20px");
+        add_sibling(doc, root, "block;float:left;width:30px");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}

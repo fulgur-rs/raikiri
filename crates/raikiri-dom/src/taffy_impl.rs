@@ -605,17 +605,11 @@ fn measure_ifc_root(
         edges: measure.edges,
         top_edge: measure.top_inset,
     };
-    let lines = if has_boxes {
-        let perform = measure.run_mode == RunMode::PerformLayout;
-        crate::layout::ifc::boxes::layout_with_boxes(tree, idx, geometry, block_ctx, perform)
-    } else {
-        let Some(lines) = with_state(tree, |state| {
-            flow::layout_flow(&probe, &mut state.layout_cx, geometry, block_ctx)
-        }) else {
-            return (Size::ZERO, None);
-        };
-        lines
-    };
+    // Lines, and the paragraph's own floats, are laid out by one loop; it
+    // takes the engine state only around each call into the engine.
+    let perform = measure.run_mode == RunMode::PerformLayout;
+    let lines =
+        crate::layout::ifc::boxes::layout_with_boxes(tree, idx, geometry, block_ctx, perform);
     let size = Size {
         width,
         height: known_height.unwrap_or(lines.height),

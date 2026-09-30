@@ -7,7 +7,7 @@ use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
-use raikiri_style::property::{ColumnCountValue, DisplayValue};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, FloatValue};
 use raikiri_style::property::{
     Direction, HangingPunctuation, PositionValue, TextDecorationLine, TextEmphasisStyle,
     TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
@@ -156,6 +156,28 @@ fn paragraph_is_paintable(doc: &Document, cascade: &CascadeResult, idx: usize) -
     true
 }
 
+/// Whether a float next to the paragraph, or next to any of its ancestors,
+/// can reach its lines. The paragraph's own floats are placed against the
+/// lines they are anchored in; an outer float can hold them lower than that
+/// line (a float is never placed above an earlier one), which the line layout
+/// does not see.
+fn has_float_beside(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let mut node = idx;
+    while let Some(parent) = doc.parent_of(node) {
+        let floats_beside = doc.nodes[parent].children.iter().any(|&sibling| {
+            sibling != node
+                && doc.nodes[sibling].is_in_document()
+                && doc.nodes[sibling].kind() == NodeKind::Element
+                && cascade.computed[sibling].float != FloatValue::None
+        });
+        if floats_beside {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
 /// Whether the paragraph sits inside a fixed box without an authored width.
 /// taffy sizes such a box against its nearest positioned ancestor, which can
 /// be zero wide, and the paragraph would wrap at that width.
@@ -298,6 +320,9 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
         ) else {
             continue;
         };
+        if !projected.boxes.is_empty() && has_float_beside(doc, cascade, idx) {
+            continue;
+        }
         // Boxes are laid out and painted as nodes of their own, so neither
         // they nor their content belong to the paragraph's subtree.
         let boxes: Vec<usize> = projected.boxes.iter().map(|b| b.node).collect();

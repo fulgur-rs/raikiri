@@ -64,8 +64,9 @@ pub(crate) fn layout_with_boxes(
             beside_floats: false,
         };
     };
-    // One inner function takes the context from both arms, as in
-    // `flow::layout_flow`.
+    // One inner function takes the context from both arms: the caller's
+    // context and a local one cannot share a lifetime, because the pointee of
+    // `&mut BlockContext<'_>` is invariant.
     match block_ctx {
         Some(ctx) => run_boxes(tree, &root, geometry, ctx, perform, false),
         None => {
@@ -108,10 +109,14 @@ fn run_boxes(
     let mut assumed_height = 0.0_f32;
     let mut retries = 0;
     let mut beside = false;
+    // Top of the lowest float this paragraph has placed, from its content
+    // box: a later float may not be placed above it (CSS 2.1 9.5.1 rule 5).
+    let mut ceiling = f32::NEG_INFINITY;
     // Every float of a line is met, may be withdrawn and is met again, and
     // the line may be retried for its height; more calls than that for one
     // line mean the loop does not converge.
     let max_calls = 3 * root.boxes.len() + MAX_SPACE_RETRIES + 2;
+    let mut moves = 0;
     let mut calls = 0;
 
     loop {
@@ -143,27 +148,49 @@ fn run_boxes(
                 node, float_cursor, ..
             } => {
                 let node = node.0 as usize;
+                cursor = Some(float_cursor);
+                // A withdrawal rewinds the cursor, so a float that already
+                // waits for the next line can be met again.
+                if deferred.iter().any(|f| f.node == node) {
+                    continue;
+                }
                 let float = measure_float(tree, node, geometry);
-                // `space` already has the tentative floats taken off.
-                let fits = float.margin_box.width <= space.width;
-                let below = float.clear != Clear::None
-                    && ctx
-                        .cleared_threshold(float.clear)
-                        .is_some_and(|bottom| bottom > top_edge + y);
-                if withdrawn.contains(&node) || !fits || below {
+                // `space` already has the tentative floats taken off. A float
+                // with no other float beside it is placed where it is even
+                // when it is wider than the line.
+                let narrowed = !tentative.is_empty() || space.start != 0.0 || space.width < width;
+                let fits = float.margin_box.width <= space.width || !narrowed;
+                // Clearance moves the float below the floats it clears,
+                // whether they are placed already or only on this line.
+                let clears_tentative = tentative.iter().any(|f| clears(float.clear, f.direction));
+                let below = clears_tentative
+                    || ceiling > y
+                    || (float.clear != Clear::None
+                        && ctx
+                            .cleared_threshold(float.clear)
+                            .is_some_and(|bottom| bottom > top_edge + y));
+                // Floats are placed in source order (CSS 2.1 9.5.1 rule 5):
+                // once one of this line waits for the next line, the later
+                // ones wait too.
+                if withdrawn.contains(&node) || !fits || below || !deferred.is_empty() {
                     deferred.push(float);
                 } else {
                     tentative.push(float);
                 }
-                cursor = Some(float_cursor);
             }
             LineResult::Line(line) => {
-                if let Some(&(node, earlier)) = line.displaced_floats().last() {
-                    // Placing the float moved its anchor to a later line.
-                    // Take it back and lay the line out again without it.
+                // Placing a float moved its anchor to a later line: take the
+                // last such float back and lay the line out again without it.
+                // A displaced float that already waits for the next line
+                // takes no room from this one and needs nothing.
+                let displaced = line
+                    .displaced_floats()
+                    .iter()
+                    .rev()
+                    .find(|(node, _)| tentative.iter().any(|f| f.node == node.0 as usize));
+                if let Some(&(node, earlier)) = displaced {
                     let node = node.0 as usize;
                     tentative.retain(|f| f.node != node);
-                    deferred.retain(|f| f.node != node);
                     withdrawn.push(node);
                     cursor = earlier.before();
                     continue;
@@ -181,16 +208,42 @@ fn run_boxes(
                     retries += 1;
                     continue;
                 }
-                if space.start != 0.0 || space.width < width {
+                // A line that does not fit beside the floats is moved down
+                // until it fits or no float is left beside it (CSS 2.1 9.5).
+                // Its own floats keep the place they have at this offset.
+                let indent = if lines.is_empty() {
+                    options.text_indent.length
+                } else {
+                    0.0
+                };
+                let narrowed = space.start != 0.0 || space.width < width;
+                let overflows = narrowed
+                    && line.inline_size() + indent > space.width + 0.01
+                    && moves < MAX_LINE_MOVES;
+                if overflows {
+                    for float in tentative.drain(..) {
+                        ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
+                    }
+                }
+                if overflows && let Some(next) = next_float_edge(ctx, top_edge, y) {
+                    y = next;
+                    moves += 1;
+                    assumed_height = 0.0;
+                    retries = 0;
+                    calls = 0;
+                    continue;
+                }
+                if narrowed {
                     beside = true;
                 }
                 for float in tentative.drain(..) {
-                    commit_float(tree, ctx, float, y, geometry, perform);
+                    ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
                 }
                 withdrawn.clear();
                 assumed_height = 0.0;
                 retries = 0;
                 calls = 0;
+                moves = 0;
                 y += height;
                 token = line.break_token();
                 lines.push(line);
@@ -199,7 +252,7 @@ fn run_boxes(
                 // Placing them any earlier would narrow the line that is
                 // still being retried.
                 for float in deferred.drain(..) {
-                    commit_float(tree, ctx, float, y, geometry, perform);
+                    ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
                 }
             }
             LineResult::Done => break,
@@ -235,6 +288,35 @@ fn run_boxes(
         lines,
         beside_floats: beside,
     }
+}
+
+/// How many times one line is moved down past floats before it is accepted
+/// where it is.
+const MAX_LINE_MOVES: usize = 64;
+
+/// Whether a float with `clear` is moved below a float on the `side`.
+fn clears(clear: Clear, side: FloatDirection) -> bool {
+    matches!(
+        (clear, side),
+        (Clear::Both, _)
+            | (Clear::Left, FloatDirection::Left)
+            | (Clear::Right, FloatDirection::Right)
+    )
+}
+
+/// The next block offset below `y` (both from the content-box top) where the
+/// floats beside a line change: the start of the next float segment, else the
+/// bottom of the floats. `None` when no float is beside `y`.
+fn next_float_edge(ctx: &BlockContext<'_>, top_edge: f32, y: f32) -> Option<f32> {
+    let at = top_edge + y;
+    let segment = ctx.find_content_slot(at, Clear::None, None).segment_id?;
+    let next = ctx.find_content_slot(at, Clear::None, Some(segment));
+    let edge = if next.segment_id.is_some() && next.y > at {
+        next.y
+    } else {
+        ctx.cleared_threshold(Clear::Both)?
+    };
+    (edge > at).then_some(edge - top_edge)
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left
@@ -314,7 +396,8 @@ fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> Te
 }
 
 /// Place a float in the context at the line offset `y` and, when performing
-/// layout, store its position.
+/// layout, store its position. Returns the top of the placed margin box from
+/// the content-box top.
 pub(crate) fn commit_float(
     tree: &mut Document,
     ctx: &mut BlockContext<'_>,
@@ -322,7 +405,7 @@ pub(crate) fn commit_float(
     y: f32,
     geometry: FlowGeometry,
     perform: bool,
-) {
+) -> f32 {
     // The context measures block offsets from the border-box top.
     let position = ctx.place_floated_box(
         float.margin_box,
@@ -338,6 +421,7 @@ pub(crate) fn commit_float(
         };
         commit_child_layout(tree, float.node, &float.output, location, geometry.width);
     }
+    position.y - geometry.top_edge
 }
 
 /// Store the final layout of a child that the ifc root laid out itself.

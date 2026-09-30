@@ -7,7 +7,7 @@ use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
 use shodo::style::LineOptions;
 use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
-use taffy::{BlockContext, BlockFormattingContext, Clear};
+use taffy::{BlockContext, Clear};
 
 /// Horizontal space of one line, in content-box coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,65 +118,6 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
         |_, _| LineSpace { start: 0.0, width },
     );
     placed.width = width;
-    placed
-}
-
-/// Lay the paragraph out at the content width of `geometry`, against the
-/// floats of `block_ctx` (the parent's shared context) or, without one,
-/// against none. Sets `IfcLines.beside_floats`.
-pub(crate) fn layout_flow(
-    root: &IfcRoot,
-    cx: &mut LayoutContext,
-    geometry: FlowGeometry,
-    block_ctx: Option<&mut BlockContext<'_>>,
-) -> IfcLines {
-    // One inner function takes the context from both arms: the caller's
-    // context and a local one cannot share a lifetime, because the pointee of
-    // `&mut BlockContext<'_>` is invariant.
-    match block_ctx {
-        Some(ctx) => run_flow(root, cx, geometry, ctx),
-        None => {
-            let mut bfc = BlockFormattingContext::new();
-            let mut ctx = bfc.root_block_context();
-            ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
-            run_flow(root, cx, geometry, &mut ctx)
-        }
-    }
-}
-
-fn run_flow(
-    root: &IfcRoot,
-    cx: &mut LayoutContext,
-    geometry: FlowGeometry,
-    ctx: &mut BlockContext<'_>,
-) -> IfcLines {
-    let FlowGeometry {
-        width,
-        edges,
-        top_edge,
-    } = geometry;
-    let mut options = root.options;
-    options.text_indent.length = resolve_indent(root.indent, width);
-    // The context starts at the block's border box; the lines live in its
-    // content box.
-    ctx.apply_content_box_inset([edges.0, edges.1]);
-    let ctx: &BlockContext<'_> = ctx;
-    let mut beside = false;
-    let mut placed = place_lines(
-        &root.paragraph,
-        &options,
-        cx,
-        &AtomicSizes::EMPTY,
-        |y, height| {
-            let space = line_space(ctx, edges.0, top_edge, width, y, height);
-            if space.start != 0.0 || space.width < width {
-                beside = true;
-            }
-            space
-        },
-    );
-    placed.width = width;
-    placed.beside_floats = beside;
     placed
 }
 
