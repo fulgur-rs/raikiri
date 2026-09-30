@@ -49,6 +49,8 @@ pub(crate) fn first_line_property_applies(key: PropertyKey) -> bool {
             | WordSpacing
             | WhiteSpace
             | WhiteSpaceCollapse
+            | TextWrap
+            | HangingPunctuation
             | Hyphens
             | HyphenateCharacter
             | HyphenateLimitChars
@@ -109,8 +111,9 @@ pub struct FirstLineStyles {
 /// Resolve real first-line rules and alternate descendant inheritance.
 ///
 /// This strict entry point supports one block with inline/text descendants.
-/// It skips detached and display:none subtrees and rejects nested blocks or
-/// atomic inline containers. It does not determine which text fits on a line;
+/// It skips detached and display:none subtrees and rejects nested blocks,
+/// atomic inline containers, floats and absolutely/fixed positioned descendants.
+/// It does not determine which text fits on a line;
 /// the layout consumer selects these styles only for its first accepted line.
 /// Custom properties, non-inherited properties explicitly set to inherit, and
 /// excluded writing properties retain their non-pseudo inheritance channels.
@@ -190,7 +193,14 @@ pub fn cascade_with_first_line<D: StyleDom>(
             if ordinary.display == DisplayValue::None {
                 continue;
             }
-            if ordinary.display != DisplayValue::Inline {
+            if ordinary.display != DisplayValue::Inline
+                || matches!(
+                    ordinary.position,
+                    crate::property::PositionValue::Absolute
+                        | crate::property::PositionValue::Fixed
+                )
+                || ordinary.float != crate::property::FloatValue::None
+            {
                 return Err(error(id));
             }
         }

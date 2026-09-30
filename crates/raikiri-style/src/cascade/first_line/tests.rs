@@ -222,6 +222,62 @@ fn first_line_rejects_unsupported_roots_and_subtrees() {
 }
 use crate::{ComputedValues, PseudoElem, StyleNodeId, cascade};
 
+#[test]
+fn first_line_applies_direct_and_deferred_inline_wrapping() {
+    for rule in [
+        "text-wrap-mode:nowrap;hanging-punctuation:first",
+        "text-wrap:var(--wrap);hanging-punctuation:var(--hang)",
+    ] {
+        let (mut doc, root) = tree_doc(&format!(
+            "#root{{--wrap:nowrap;--hang:first}}#root::first-line{{{rule}}}"
+        ));
+        let text = doc.push_text(root, "actual text");
+        let result = cascade_with_first_line(
+            &doc,
+            &build_rule_tree(&doc),
+            &MediaContext::screen(),
+            StyleNodeId(root as u64),
+        )
+        .unwrap();
+        let first = result.first_line.unwrap();
+        for id in [root, text] {
+            let cv = first.computed[id].as_ref().unwrap();
+            assert_eq!(
+                cv.text_wrap,
+                crate::property::TextWrapMode::Nowrap,
+                "{rule}"
+            );
+            assert_ne!(
+                cv.hanging_punctuation,
+                ComputedValues::initial().hanging_punctuation,
+                "{rule}"
+            );
+        }
+        assert_eq!(
+            result.normal.computed[root].text_wrap,
+            crate::property::TextWrapMode::Wrap
+        );
+    }
+}
+
+#[test]
+fn first_line_rejects_out_of_flow_descendants() {
+    for css in ["position:absolute", "position:fixed", "float:left"] {
+        let (mut doc, root) = tree_doc("#root::first-line{color:red}");
+        doc.push_element(root, "span", Some(css));
+        assert!(
+            cascade_with_first_line(
+                &doc,
+                &build_rule_tree(&doc),
+                &MediaContext::screen(),
+                StyleNodeId(root as u64)
+            )
+            .is_err(),
+            "{css}"
+        );
+    }
+}
+
 fn pseudo(css: &str) -> (ComputedValues, ComputedValues) {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
