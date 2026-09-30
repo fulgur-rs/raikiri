@@ -31,26 +31,6 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     None
 }
 
-/// Force the `<body>` taffy::Style.size to the PageBox width / height (CSS px).
-///
-/// CSS Paged Media defines initial containing block = @page size. Since @page is
-/// not yet supported, the current implementation injects it into body.style.size.
-/// When @page cascade + per-page PageBox arrive, move this site to the `<html>` root style.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "superseded in the layout pipeline by apply_page_content_box_to_body; \
-                  kept for its unit tests and the intra-doc links that describe it"
-    )
-)]
-pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_box: PageBox) {
-    doc.nodes[body_id].style.size = Size {
-        width: Dimension::length(page_box.width),
-        height: Dimension::length(page_box.height),
-    };
-}
-
 pub(crate) fn apply_page_content_box_to_body(
     doc: &mut Document,
     body_id: usize,

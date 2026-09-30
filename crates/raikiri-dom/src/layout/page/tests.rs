@@ -221,7 +221,10 @@ fn find_body_returns_first_body_in_document_order() {
 }
 
 #[test]
-fn apply_page_box_to_body_sets_body_style_size_to_page_dimensions() {
+fn apply_page_content_box_sets_body_style_size_to_content_dimensions() {
+    // The production Step 4 helper writes the page content box, not the full
+    // paper size: horizontal margins narrow the width, and vertical margins
+    // plus top/bottom content insets narrow the height.
     use raikiri_traits::PageBox;
     use taffy::{Dimension, Size};
 
@@ -229,11 +232,29 @@ fn apply_page_box_to_body_sets_body_style_size_to_page_dimensions() {
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
 
-    apply_page_box_to_body(&mut doc, body, PageBox::A4);
+    let margins = PageMargins {
+        top: 20.0,
+        right: 10.0,
+        bottom: 20.0,
+        left: 10.0,
+    };
+    let insets = PageContentInsets {
+        top: 1.0,
+        right: 2.0,
+        bottom: 3.0,
+        left: 4.0,
+    };
+    apply_page_content_box_to_body(&mut doc, body, PageBox::A4, margins, insets);
 
     let size: Size<Dimension> = doc.nodes[body].style.size;
-    assert_eq!(size.width, Dimension::length(793.7008));
-    assert_eq!(size.height, Dimension::length(1122.5197));
+    assert_eq!(
+        size.width,
+        Dimension::length(PageBox::A4.width - 10.0 - 10.0)
+    );
+    assert_eq!(
+        size.height,
+        Dimension::length(PageBox::A4.height - 20.0 - 20.0 - 1.0 - 3.0)
+    );
 }
 
 #[test]

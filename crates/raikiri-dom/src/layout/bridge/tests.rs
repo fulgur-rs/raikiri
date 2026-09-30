@@ -1162,9 +1162,9 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
     // (`pt` is converted to px in cascade phase 3).
     //
     // Test approach: use a **non-body element** (here `<p>`) as the fixture:
-    // `<body>` is overwritten by `apply_page_box_to_body` later, so the
+    // `<body>` is overwritten by `apply_page_content_box_to_body` later, so the
     // bridge's effect is not observable there. A separate test,
-    // `apply_page_box_clobbers_body_width_from_bridge`, pins that behavior.
+    // `apply_page_content_box_clobbers_body_width_from_bridge`, pins that behavior.
     // The inline style also checks raikiri-style's parse_width path and
     // ComputedLengthPercentageOrAuto encoding as a regression check.
     //
@@ -1178,7 +1178,7 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         // Put the inline style on non-body element p. Since
-        // apply_page_box_to_body only touches body, p's style.size is observable after the bridge.
+        // apply_page_content_box_to_body only touches body, p's style.size is observable after the bridge.
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1218,7 +1218,7 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
     // as intended.
     //
     // Test approach: use a **non-body element** (`<p>`) as the fixture:
-    // the later `apply_page_box_to_body` also overwrites height on `<body>`,
+    // the later `apply_page_content_box_to_body` also overwrites height on `<body>`,
     // so the bridge's effect is not observable there. The inline style
     // also checks raikiri-style's parse_height path and the
     // ComputedLengthPercentageOrAuto encoding as a regression check.
@@ -1235,7 +1235,7 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         // Put the inline style on non-body element p. Since
-        // apply_page_box_to_body only touches body, p's style.size is observable after the bridge.
+        // apply_page_content_box_to_body only touches body, p's style.size is observable after the bridge.
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1262,7 +1262,7 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
     // both ComputedLengthPercentageOrAuto, into taffy::Style::min_size,
     // a Size<Dimension>. Use the same fixture pattern as the
     // sibling `apply_computed_to_style_bridges_height_to_taffy` test:
-    // a non-body `<p>`. `apply_page_box_to_body` overwrites only size on
+    // a non-body `<p>`. `apply_page_content_box_to_body` overwrites only size on
     // body, not min/max; this fixture stays consistent with the other
     // size tests.
     //
@@ -1651,15 +1651,18 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
 }
 
 #[test]
-fn apply_page_box_clobbers_body_width_from_bridge() {
+fn apply_page_content_box_clobbers_body_width_from_bridge() {
     // PageBox compromise:
     // Regression check for `<body style="width: 100px">`:
     //   Step 1 (`apply_computed_to_style`) → bridge_size writes
     //       length(100.0) to body.style.size.width
-    //   Step 4 (`apply_page_box_to_body`) → PageBox.width overwrites it.
-    // After Step 4, body.style.size.width is PageBox.width rather than the
+    //   Step 4 (`apply_page_content_box_to_body`) → content-box width overwrites it.
+    // After Step 4, body.style.size.width is the page content-box width rather than the
     // author value. Preserve this intentional overwrite until a future
     // @page cascade and per-page PageBox refactor; detect silent regressions.
+    // With default (zero) margins and insets the content box matches the paper
+    // size here; `apply_page_content_box_sets_body_style_size_to_content_dimensions`
+    // pins the margin/inset subtraction that distinguishes the two.
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
@@ -1676,14 +1679,20 @@ fn apply_page_box_clobbers_body_width_from_bridge() {
         "bridge_size must first write author width (100px) to body.style.size.width"
     );
 
-    // Step 4: PageBox overwrites the author value with PageBox.width.
-    apply_page_box_to_body(&mut doc, body, PageBox::A4);
+    // Step 4: the page content box overwrites the author value with the content width.
+    apply_page_content_box_to_body(
+        &mut doc,
+        body,
+        PageBox::A4,
+        PageMargins::default(),
+        PageContentInsets::default(),
+    );
     assert_eq!(
         doc.nodes[body].style.size.width,
         Dimension::length(PageBox::A4.width),
-        "apply_page_box_to_body must clobber author width with PageBox.width (現行実装での妥協)"
+        "apply_page_content_box_to_body must clobber author width with the content-box width"
     );
-    // Author and PageBox values differ, proving the overwrite actually occurs.
+    // Author and content-box values differ, proving the overwrite actually occurs.
     assert_ne!(
         doc.nodes[body].style.size.width,
         Dimension::length(100.0),

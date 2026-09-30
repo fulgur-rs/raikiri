@@ -226,7 +226,7 @@ pub fn compute_table_layout(
     let table_border = resolve_table_border(doc, table_idx, inputs.parent_size);
 
     // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
-    // The table's outer size caller may have imposed via `apply_page_box_to_body` / block layout.
+    // The table's outer size caller may have imposed via `apply_page_content_box_to_body` / block layout.
     // For tables, style.size is already injected via bridge; inputs.known_dimensions carries it.
     // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
     // taffy's Dimension::maybe_resolve not directly available; use helper below.
