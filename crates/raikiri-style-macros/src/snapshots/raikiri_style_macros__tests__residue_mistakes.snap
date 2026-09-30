@@ -35,5 +35,5 @@ error: the "b-prop" entry is missing `residue: none | <fn>`; its value type is n
 error: the "c-prop" entry is missing `residue: none | <fn>`; it has a hook, so say whether its specified value can carry a length that computing resolves: `none`, or a `fn(&Specified) -> Option<&'static str>` that names it
   --> 17:21
    |
-17 |         "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, computed: T via t },
+17 |         "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, computed: T, compute: t },
    |                     ^^^^^

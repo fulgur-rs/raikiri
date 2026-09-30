@@ -94,7 +94,7 @@ fn parses_computed_forms() {
     let (entries, errors) = parse(
         r#"
         "a" => A: Length { computed: as_specified, field: a_field, lift: f },
-        "b" => B: Length { computed: ComputedLength<'static, u8> via absolutize, lift: crate::lift_b },
+        "b" => B: Length { computed: ComputedLength<'static, u8>, compute: absolutize, lift: crate::lift_b },
         "#,
     );
     assert_eq!(errors, Vec::<String>::new());
@@ -103,15 +103,45 @@ fn parses_computed_forms() {
         Some(ComputedSpec::AsSpecified)
     ));
     assert_eq!(tokens(&entries[0].field), "a_field");
-    let Some(ComputedSpec::Via { ty, hook }) = entries[1].computed.value() else {
-        panic!("expected `via`");
+    let Some(ComputedSpec::Type(ty)) = entries[1].computed.value() else {
+        panic!("expected a computed type");
     };
     assert_eq!(
         ty.to_token_stream().to_string(),
         "ComputedLength < 'static , u8 >"
     );
-    assert_eq!(hook.to_token_stream().to_string(), "absolutize");
+    assert_eq!(tokens(&entries[1].compute), "absolutize");
     assert_eq!(tokens(&entries[1].lift), "crate :: lift_b");
+}
+
+/// `computed: Type via hook` is one error on `via` that spells out the two
+/// keys with the written type and hook; the rest of the entry is kept.
+#[test]
+fn computed_via_is_one_error_suggesting_the_split_keys() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A: L { computed: Px via to_px, initial: X },
+        "b" => B: L { computed: C<'static, u8> via crate::hooks::to_c, lift: l },
+        "c" => C: L { computed: Px via |v| v, initial: X },
+        "d" => D: L { via: to_px, initial: X },
+        "#,
+    );
+    assert_eq!(
+        errors,
+        [
+            "`computed:` takes only the computed type; name the hook with its own key: `computed: Px, compute: to_px`",
+            "`computed:` takes only the computed type; name the hook with its own key: `computed: C<'static, u8>, compute: crate::hooks::to_c`",
+            "`computed:` takes only the computed type; name the hook with its own key: `computed: Px, compute: <fn>`",
+            "`via` is not a key; name the hook with `compute: <fn>`, and a computed type that differs from the specified one with `computed: Type`",
+        ]
+    );
+    for entry in &entries[..3] {
+        assert!(matches!(entry.computed, Slot::Invalid(_)), "{entry:?}");
+    }
+    assert_eq!(tokens(&entries[0].initial), "X");
+    assert_eq!(tokens(&entries[1].lift), "l");
+    assert_eq!(tokens(&entries[2].initial), "X");
+    assert_eq!(tokens(&entries[3].initial), "X");
 }
 
 #[test]

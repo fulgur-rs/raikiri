@@ -6,6 +6,7 @@
 //! other entries (or even the broken entry's own variant and field).
 
 use proc_macro2::TokenStream;
+use quote::ToTokens;
 
 /// Every error found during one expansion, in source order of discovery.
 #[derive(Default)]
@@ -39,4 +40,24 @@ impl Errors {
     pub(crate) fn into_vec(self) -> Vec<syn::Error> {
         self.0.map(|e| e.into_iter().collect()).unwrap_or_default()
     }
+}
+
+/// Tokens as a user would write them: `crate::f`, `L<'static, u8>` rather
+/// than the spaced `crate :: f` of `TokenStream`'s `Display`.
+pub(crate) fn display(tokens: &impl ToTokens) -> String {
+    let spaced = tokens.to_token_stream().to_string();
+    let chars: Vec<char> = spaced.chars().collect();
+    let word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric() || *c == '_');
+    let mut out = String::with_capacity(spaced.len());
+    for (i, &c) in chars.iter().enumerate() {
+        if c == ' ' {
+            let prev = i.checked_sub(1).and_then(|p| chars.get(p));
+            if prev == Some(&',') || (word(prev) && word(chars.get(i + 1))) {
+                out.push(' ');
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }

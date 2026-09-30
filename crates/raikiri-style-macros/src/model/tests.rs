@@ -1,7 +1,7 @@
 use quote::ToTokens as _;
 use syn::Ident;
 
-use super::{Entry, Lift, Residue, Value, build, is_css_name};
+use super::{Compute, Entry, Lift, Residue, Value, build, is_css_name};
 use crate::diag::Errors;
 use crate::parse::parse_block;
 
@@ -42,7 +42,7 @@ fn keyword_entry_defaults() {
     assert_eq!(text(entry.initial.as_ref()), "TextWrapMode :: Wrap");
     // The sample defaults to the first keyword that is not the initial one.
     assert_eq!(text(entry.sample.as_ref()), "TextWrapMode :: NoWrap");
-    assert!(entry.compute.is_none());
+    assert!(matches!(entry.compute, Compute::Identity));
     assert!(entry.computed_ty.is_none());
     assert!(entry.name_listed);
 }
@@ -90,28 +90,79 @@ fn parsed_entry_defaults() {
     let opacity = &entries[1];
     assert_eq!(opacity.field, "alpha");
     assert_eq!(text(opacity.initial.as_ref()), "1.0");
-    assert_eq!(opacity.compute.to_token_stream().to_string(), "clamp");
+    assert_eq!(compute_path(opacity), "clamp");
+}
+
+fn compute_path(entry: &Entry) -> String {
+    match &entry.compute {
+        Compute::Path(path) => path.to_token_stream().to_string(),
+        Compute::Identity => "identity".to_owned(),
+        Compute::Broken => "broken".to_owned(),
+    }
 }
 
 #[test]
-fn computed_via_sets_the_type_hook_and_lift() {
+fn computed_compute_and_lift_set_the_type_hook_and_lift() {
     let (entries, errors) = build_str(
         r#"
         /// Docs.
-        "a" => A: L { initial: L::Z, inherited: yes, parse: p, computed: Px via to_px, sample: L::O, residue: l_residue },
+        "a" => A: L { initial: L::Z, inherited: yes, parse: p, computed: Px, compute: to_px, sample: L::O, residue: l_residue },
         /// Docs.
-        "b" => B: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: from_px, sample: L::O, residue: none },
+        "b" => B: L { initial: L::Z, inherited: no, parse: p, lift: from_px, compute: to_px, computed: Px, sample: L::O, residue: none },
+        /// A same-type hook: `compute:` alone.
+        "c" => C: f32 { initial: 1.0, inherited: no, parse: p, compute: clamp, sample: 2.0, residue: none },
+        /// `as_specified` spells out the default.
+        "d" => D: f32 { initial: 1.0, inherited: no, parse: p, computed: as_specified, compute: clamp, sample: 2.0, residue: none },
         "#,
         &[],
     );
     assert_eq!(errors, Vec::<String>::new());
     assert_eq!(entries[0].computed_ty.to_token_stream().to_string(), "Px");
-    assert_eq!(entries[0].compute.to_token_stream().to_string(), "to_px");
+    assert_eq!(compute_path(&entries[0]), "to_px");
     assert!(matches!(entries[0].lift, Lift::Into));
     let Lift::Path(lift) = &entries[1].lift else {
         panic!("expected `lift: from_px`");
     };
     assert_eq!(lift.to_token_stream().to_string(), "from_px");
+    assert_eq!(entries[1].computed_ty.to_token_stream().to_string(), "Px");
+    for entry in &entries[2..] {
+        assert!(entry.computed_ty.is_none());
+        assert_eq!(compute_path(entry), "clamp");
+    }
+}
+
+/// `computed: Type` needs `compute:`; `lift:` needs `computed: Type`. Each
+/// broken rule is one error on the key that breaks it, and the entry keeps
+/// its computed type so its type aliases still declare.
+#[test]
+fn computed_needs_compute_and_lift_needs_computed() {
+    let (entries, errors) = build_str(
+        r#"
+        /// Docs.
+        "a" => A: L { initial: L::Z, inherited: no, parse: p, computed: Px, sample: L::O, residue: none },
+        /// Docs.
+        "b" => B: L { initial: L::Z, inherited: no, parse: p, computed: crate::Px<'static>, lift: l, sample: L::O, residue: none },
+        /// Docs.
+        "c" => C: f32 { initial: 1.0, inherited: no, parse: p, compute: c, lift: l, sample: 2.0, residue: none },
+        /// Docs.
+        "d" => D: f32 { initial: 1.0, inherited: no, parse: p, computed: as_specified, lift: l, sample: 2.0, residue: none },
+        "#,
+        &[],
+    );
+    assert_eq!(
+        errors,
+        [
+            "`computed: Px` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> Px` hook that produces it",
+            "`computed: crate::Px<'static>` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> crate::Px<'static>` hook that produces it",
+            "`lift:` is only used with `computed: Type`; a computed value of the specified type needs no lift",
+            "`lift:` is only used with `computed: Type`; a computed value of the specified type needs no lift",
+        ]
+    );
+    assert_eq!(compute_path(&entries[0]), "broken");
+    assert_eq!(entries[0].computed_ty.to_token_stream().to_string(), "Px");
+    assert_eq!(compute_path(&entries[1]), "broken");
+    assert!(matches!(entries[1].lift, Lift::Path(_)));
+    assert!(matches!(entries[2].lift, Lift::Into));
 }
 
 #[test]
@@ -204,20 +255,27 @@ fn acronym_variants_get_readable_default_fields() {
 
 #[test]
 fn a_malformed_key_is_not_reported_again_by_related_rules() {
-    // A malformed `computed:` with `lift:`, and a malformed `compute:` with
-    // `computed: .. via ..`: one error each.
+    // A malformed `computed:` with `lift:`, a malformed `compute:` with
+    // `computed: Type`, a malformed `lift:`, and `computed: .. via ..` with
+    // `lift:` (with and without `compute:`): one error each.
     let (entries, errors) = build_str(
         r#"
         /// Docs.
-        "a" => A: L { initial: L::Z, inherited: no, parse: p, computed: Px, lift: l, sample: L::O, residue: none },
+        "a" => A: L { initial: L::Z, inherited: no, parse: p, computed: 3, lift: l, sample: L::O, residue: none },
         /// Docs.
-        "b" => B: L { initial: L::Z, inherited: no, parse: p, compute: |x| x, computed: Px via to_px, sample: L::O, residue: none },
+        "b" => B: L { initial: L::Z, inherited: no, parse: p, compute: |x| x, computed: Px, sample: L::O, residue: none },
         /// Docs.
-        "c" => C: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: |x| x, sample: L::O, residue: none },
+        "c" => C: L { initial: L::Z, inherited: no, parse: p, computed: Px, compute: to_px, lift: |x| x, sample: L::O, residue: none },
+        /// Docs.
+        "d" => D: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: l, sample: L::O, residue: none },
+        /// Docs.
+        "e" => E: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, compute: to_px, lift: l, sample: L::O, residue: none },
         "#,
         &[],
     );
-    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert_eq!(errors.len(), 5, "{errors:?}");
+    assert_eq!(compute_path(&entries[1]), "broken");
+    assert_eq!(entries[1].computed_ty.to_token_stream().to_string(), "Px");
     assert!(matches!(entries[2].lift, Lift::Broken));
 }
 
@@ -228,7 +286,7 @@ fn reserved_alias_names_are_rejected_as_value_types() {
         /// Docs.
         "a" => A: Specified { initial: X, inherited: no, parse: p, sample: Y, residue: none },
         /// Docs.
-        "b" => B: f32 { initial: 1.0, inherited: no, parse: p, computed: Computed via c, sample: 2.0, residue: none },
+        "b" => B: f32 { initial: 1.0, inherited: no, parse: p, computed: Computed, compute: c, sample: 2.0, residue: none },
         /// Docs.
         "c" => Property { keywords: [X, Y], initial: X, inherited: no },
         /// Docs.
@@ -405,8 +463,8 @@ fn residue_is_required_for_hooked_and_parsed_entries() {
         r#"
         /// A keyword entry with a `compute:` hook.
         "a" => A { keywords: [X, Y], initial: X, inherited: no, compute: c },
-        /// A keyword entry with a `computed: .. via` hook.
-        "b" => B { keywords: [X, Y], initial: X, inherited: no, computed: T via c },
+        /// A keyword entry with a computed type and its hook.
+        "b" => B { keywords: [X, Y], initial: X, inherited: no, computed: T, compute: c },
         /// A parsed entry without a hook.
         "c" => C: L { initial: L::Z, inherited: no, parse: p, sample: L::O },
         /// A parsed entry with a hook.
@@ -445,11 +503,13 @@ fn a_missing_residue_is_not_reported_after_a_related_mistake() {
         /// Docs.
         "b" => B { keywords: [X, Y], initial: X, inherited: no, compute: |x| x },
         /// Docs.
-        "c" => C { keywords: [X, Y], initial: X, inherited: no, computed: T },
+        "c" => C { keywords: [X, Y], initial: X, inherited: no, computed: 3 },
+        /// Docs.
+        "d" => D { keywords: [X, Y], initial: X, inherited: no, computed: T via t },
         "#,
         &[],
     );
-    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert_eq!(errors.len(), 4, "{errors:?}");
     assert!(errors.iter().all(|e| !e.contains("residue")), "{errors:?}");
     assert!(entries.iter().all(|e| matches!(e.residue, Residue::Broken)));
 }

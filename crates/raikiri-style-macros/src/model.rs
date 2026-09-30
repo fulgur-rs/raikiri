@@ -16,7 +16,7 @@ use syn::spanned::Spanned as _;
 use syn::{Attribute, Expr, ExprPath, Ident, LitStr, Path, Type};
 
 use crate::case::split_camel;
-use crate::diag::Errors;
+use crate::diag::{Errors, display};
 use crate::parse::{ComputedSpec, RawEntry, ResidueSpec, Slot};
 
 /// One keyword of a `keywords` entry, with its spelling resolved.
@@ -41,6 +41,17 @@ pub(crate) enum Value {
         /// The parse function; `None` after an error.
         parse: Option<ExprPath>,
     },
+}
+
+/// How a specified value is turned into a computed one.
+pub(crate) enum Compute {
+    /// The identity (no `compute:` written, and no `computed: Type`).
+    Identity,
+    /// `compute: <path>`.
+    Path(ExprPath),
+    /// `compute:` was malformed, or is missing next to `computed: Type`
+    /// (both already reported).
+    Broken,
 }
 
 /// How a computed value is turned back into a specified one.
@@ -122,10 +133,10 @@ pub(crate) struct Entry {
     pub(crate) initial: Option<TokenStream>,
     /// Whether the property is inherited.
     pub(crate) inherited: bool,
-    /// The specified-to-computed hook (`compute:` or the hook of
-    /// `computed: Type via hook`); `None` is the identity.
-    pub(crate) compute: Option<ExprPath>,
-    /// The computed value type when it differs from the specified one.
+    /// The specified-to-computed hook (`compute:`).
+    pub(crate) compute: Compute,
+    /// The computed value type (`computed: Type`) when it differs from the
+    /// specified one.
     pub(crate) computed_ty: Option<Box<Type>>,
     /// The computed-to-specified function. Only used when `computed_ty` is
     /// set.
@@ -416,32 +427,37 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
     };
 
     let computed_invalid = matches!(computed, Slot::Invalid(_));
-    // Whether the entry has a specified-to-computed hook; `None` when a
-    // malformed hook key leaves that unknown.
+    // Whether the entry has a specified-to-computed hook (a computed type of
+    // its own implies one); `None` when a malformed hook key leaves that
+    // unknown.
     let hooked = match (&compute, &computed) {
-        (Slot::Present(..), _) | (_, Slot::Present(_, ComputedSpec::Via { .. })) => Some(true),
+        (Slot::Present(..), _) | (_, Slot::Present(_, ComputedSpec::Type(_))) => Some(true),
         (Slot::Invalid(_), _) | (_, Slot::Invalid(_)) => None,
         _ => Some(false),
     };
-    let (computed_ty, via_hook) = match computed {
-        Slot::Present(_, ComputedSpec::Via { ty, hook }) => {
+    let computed_ty = match computed {
+        Slot::Present(key, ComputedSpec::Type(ty)) => {
             check_reserved_type(&ty, errors);
-            (Some(ty), Some(hook))
+            if compute.is_absent() {
+                errors.push(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "`computed: {ty}` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> {ty}` hook that produces it",
+                        ty = display(&ty)
+                    ),
+                ));
+            }
+            Some(ty)
         }
-        _ => (None, None),
+        _ => None,
     };
-    let compute = match (compute, via_hook) {
+    let compute = match compute {
+        Slot::Present(_, hook) => Compute::Path(hook),
         // A malformed `compute:` has been reported already.
-        (Slot::Invalid(_), via) => via,
-        (Slot::Present(key, _), Some(hook)) => {
-            errors.push(syn::Error::new(
-                key.span(),
-                "`compute:` and `computed: Type via hook` both name a hook; keep `computed: .. via ..` when the computed type differs, `compute:` otherwise",
-            ));
-            Some(hook)
-        }
-        (Slot::Present(_, hook), None) => Some(hook),
-        (_, via) => via,
+        Slot::Invalid(_) => Compute::Broken,
+        // Reported above: a computed type without its hook.
+        Slot::Absent if computed_ty.is_some() => Compute::Broken,
+        Slot::Absent => Compute::Identity,
     };
     let lift = match lift {
         Slot::Present(key, path) => {
@@ -453,7 +469,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
                 if !computed_invalid {
                     errors.push(syn::Error::new(
                         key.span(),
-                        "`lift:` is only used with `computed: Type via hook`; a computed value of the specified type needs no lift",
+                        "`lift:` is only used with `computed: Type`; a computed value of the specified type needs no lift",
                     ));
                 }
                 Lift::Into

@@ -113,10 +113,12 @@
 //! - `compute: f`, with `fn f(Specified, &AbsolutizeCx<'_>) -> Specified`,
 //!   when the computed value has the specified type (`opacity`:
 //!   `clamp_opacity`);
-//! - `computed: Type via f`, with `fn f(Specified, &AbsolutizeCx<'_>) ->
-//!   Type`, when it has its own computed type (`object-position`:
-//!   `ComputedCssPosition via compute_object_position`), together with
-//!   `lift: g`, `fn g(Type) -> Specified`, unless `Type: Into<Specified>`.
+//! - `computed: Type` and `compute: f`, with `fn f(Specified,
+//!   &AbsolutizeCx<'_>) -> Type`, when it has its own computed type
+//!   (`object-position`: `computed: ComputedCssPosition, compute:
+//!   compute_object_position`), together with `lift: g`, `fn g(Type) ->
+//!   Specified`, unless `Type: Into<Specified>`. `computed:` without
+//!   `compute:`, and `lift:` without `computed:`, are compile errors.
 //!
 //! The hooks are private functions of this file, above the `#[longhands]`
 //! module. The generated code calls `compute` in
@@ -211,7 +213,7 @@ use crate::resolve::{
     ComputedCssPosition, ComputedCssPositionOffset, ComputedLengthPercentage, resolve_css_position,
 };
 
-// Hooks named by `compute:` / `computed: .. via` / `lift:` in the table below.
+// Hooks named by `compute:` / `lift:` in the table below.
 
 /// `opacity`'s specified-to-computed step: clamp to `[0, 1]` (CSS Color 4
 /// §3.3; see the `"opacity"` entry for the NaN / infinity rationale).
@@ -2609,7 +2611,8 @@ mod decl {
             },
             inherited: no,
             parse: parse_position_strict,
-            computed: ComputedCssPosition via compute_object_position,
+            computed: ComputedCssPosition,
+            compute: compute_object_position,
             lift: lift_object_position,
             // Font- and root-relative lengths on distinct edges, so that the
             // page-cascade corpus sees specified-layer residue before phase 3

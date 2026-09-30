@@ -201,7 +201,7 @@ fn generates_parsed_and_hook_entries() {
         /// CSS Text 3 §7.2
         "word-spacing" => WordSpacing: Length {
             initial: Length::Px(0.0), inherited: yes, parse: parse_length,
-            computed: ComputedLength via absolutize_length, lift: lift_length,
+            computed: ComputedLength, compute: absolutize_length, lift: lift_length,
             field: spacing, sample: Length::Em(2.0), residue: length_residue,
         },
     }
@@ -345,7 +345,7 @@ fn malformed_values() {
         /// B.
         "b-prop" => BProp: Length { initial: L, inherited: no, parse: |i| None, sample: L, residue: none },
         /// C.
-        "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: Px, sample: L, residue: none },
+        "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: 3, sample: L, residue: none },
         /// D.
         "d-prop" => DProp { keywords: Auto, initial: Auto, inherited: no },
         /// E.
@@ -365,13 +365,52 @@ fn conflicting_keys() {
         /// B.
         "b-prop" => BProp: u8 { keywords: [X, Y], initial: X, inherited: no },
         /// C.
-        "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c,
-                                 computed: Px via to_px, sample: 2.0, residue: none },
+        "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p,
+                                 computed: Px, sample: 2.0, residue: none },
         /// D.
         "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0, residue: none },"#,
     ));
     assert_eq!(count, 4);
     insta::assert_snapshot!("conflicting_keys", rendered);
+}
+
+/// The computed type, its hook and the lift back are three keys: the old
+/// `computed: Type via hook` form is one error on `via` naming the two keys
+/// with the written tokens, and each cross-key rule is one error on the key
+/// that breaks it.
+#[test]
+fn computed_key_mistakes() {
+    let src = module(
+        r#"        /// A.
+        "a-prop" => AProp: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, lift: l, sample: L::O, residue: none },
+        /// B.
+        "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, lift: l, sample: L::O, residue: none },
+        /// C.
+        "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c, lift: l, sample: 2.0, residue: none },
+        /// D.
+        "d-prop" => DProp: L { initial: L::Z, inherited: no, parse: p, via: to_px, sample: L::O, residue: none },
+        /// E.
+        "e-prop" => EProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, compute: to_px, lift: l, sample: L::O, residue: none },"#,
+    );
+    let (expanded, errors) = expand(&src);
+    assert_eq!(errors.len(), 4, "{}", render(&src, &errors));
+    insta::assert_snapshot!("computed_key_mistakes", render(&src, &errors));
+    assert_eq!(
+        enum_variants(&expanded, "PropertyValue"),
+        [
+            "Color",
+            "CustomProperty",
+            "AProp",
+            "BProp",
+            "CProp",
+            "DProp",
+            "EProp"
+        ]
+    );
+    // A computed type without its hook keeps the type and expands the hook
+    // to an unreachable body rather than a mistyped identity.
+    let text = expanded.to_string();
+    assert!(text.contains("pub type Computed = Px ;"), "{text}");
 }
 
 #[test]
@@ -418,7 +457,7 @@ fn residue_mistakes() {
         /// B.
         "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, sample: L::O },
         /// C.
-        "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, computed: T via t },
+        "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, computed: T, compute: t },
         /// D.
         "d-prop" => DProp { keywords: [X, Y], initial: X, inherited: no, residue: None },
         /// E.
@@ -451,7 +490,7 @@ fn generates_the_residue_check() {
         r#"        /// A keyword entry: `none` by default.
         "a-prop" => AProp { keywords: [X, Y], initial: X, inherited: no },
         /// A length entry with its residue function.
-        "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, computed: Px via to_px, sample: L::O, residue: l_residue },
+        "b-prop" => BProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, compute: to_px, sample: L::O, residue: l_residue },
         /// A written `none`.
         "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c, sample: 2.0, residue: none },
         /// A malformed `residue:`: the arm is unreachable.

@@ -12,7 +12,7 @@ use quote::{ToTokens as _, format_ident, quote, quote_spanned};
 use syn::spanned::Spanned as _;
 use syn::{Ident, Variant};
 
-use crate::model::{Entry, FIXED_DERIVES, Lift, Residue, Value, is_reserved_type};
+use crate::model::{Compute, Entry, FIXED_DERIVES, Lift, Residue, Value, is_reserved_type};
 
 /// A local identifier invisible to user tokens.
 fn local(name: &str) -> Ident {
@@ -227,17 +227,18 @@ fn longhand_impl(entry: &Entry) -> TokenStream {
     };
 
     let compute = match &entry.compute {
-        Some(hook) => {
+        Compute::Path(hook) => {
             let f = local("compute");
             quote_spanned! {hook.span()=>
                 let #f: fn(Self::Specified, &#cx_ty) -> Self::Computed = #hook;
                 #f(#specified, #cx)
             }
         }
-        None => quote! {
+        Compute::Identity => quote! {
             let _ = #cx;
             #specified
         },
+        Compute::Broken => unreachable_body(&[&specified, &cx]),
     };
 
     let lift = match (&entry.computed_ty, &entry.lift) {

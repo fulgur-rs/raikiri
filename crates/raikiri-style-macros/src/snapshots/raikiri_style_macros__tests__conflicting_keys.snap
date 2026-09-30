@@ -14,13 +14,13 @@ error: a `keywords` entry's value type is the generated enum `BProp`; remove `: 
 15 |         "b-prop" => BProp: u8 { keywords: [X, Y], initial: X, inherited: no },
    |                            ^^
 
-error: `compute:` and `computed: Type via hook` both name a hook; keep `computed: .. via ..` when the computed type differs, `compute:` otherwise
-  --> 17:73
+error: `computed: Px` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> Px` hook that produces it
+  --> 18:34
    |
-17 |         "c-prop" => CProp: f32 { initial: 1.0, inherited: no, parse: p, compute: c,
-   |                                                                         ^^^^^^^
+18 |                                  computed: Px, sample: 2.0, residue: none },
+   |                                  ^^^^^^^^
 
-error: `lift:` is only used with `computed: Type via hook`; a computed value of the specified type needs no lift
+error: `lift:` is only used with `computed: Type`; a computed value of the specified type needs no lift
   --> 20:73
    |
 20 |         "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, lift: l, sample: 2.0, residue: none },

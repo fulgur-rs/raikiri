@@ -228,13 +228,13 @@ mod property {
             /// back through `Into::into`.
             "word-spacing" => WordSpacing: Length {
                 initial: Length::Px(0.0), inherited: yes, parse: parse_length,
-                computed: Px via absolutize_length, sample: Length::Em(2.0),
+                computed: Px, compute: absolutize_length, sample: Length::Em(2.0),
                 residue: length_residue
             },
             /// A non-inherited longhand with an explicit lift and field.
             "tab-width" => TabWidth: Length {
                 initial: Length::Px(8.0), inherited: no, parse: parse_length,
-                computed: Px via absolutize_length, lift: px_to_length,
+                computed: Px, compute: absolutize_length, lift: px_to_length,
                 field: tab, sample: Length::Em(1.0), residue: crate::property::length_residue,
             },
             /// A keywords longhand whose initial value is written as a path.

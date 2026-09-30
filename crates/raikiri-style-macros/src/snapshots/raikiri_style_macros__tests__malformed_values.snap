@@ -14,11 +14,11 @@ error: expected a path to a function, e.g. `parse_object_fit`
 15 |         "b-prop" => BProp: Length { initial: L, inherited: no, parse: |i| None, sample: L, residue: none },
    |                                                                       ^
 
-error: a computed type needs its hook: `computed: Type via hook`, or `computed: as_specified`
+error: expected `as_specified` or the computed value type, e.g. `computed: ComputedLength`
   --> 17:84
    |
-17 |         "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: Px, sample: L, residue: none },
-   |                                                                                    ^^
+17 |         "c-prop" => CProp: Length { initial: L, inherited: no, parse: p, computed: 3, sample: L, residue: none },
+   |                                                                                    ^
 
 error: expected a keyword list, e.g. `keywords: [Auto, Isolate]`
   --> 19:39

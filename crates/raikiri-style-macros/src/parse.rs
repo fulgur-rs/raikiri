@@ -24,7 +24,7 @@ use syn::parse::{ParseStream, Parser as _};
 use syn::punctuated::Punctuated;
 use syn::{Attribute, Expr, ExprPath, Ident, LitBool, LitStr, Path, Token, Type, bracketed, token};
 
-use crate::diag::Errors;
+use crate::diag::{Errors, display};
 
 /// Every key an entry accepts, in the order the documentation lists them.
 pub(crate) const KEYS: [&str; 11] = [
@@ -100,13 +100,9 @@ pub(crate) struct Keyword {
 pub(crate) enum ComputedSpec {
     /// `computed: as_specified`.
     AsSpecified,
-    /// `computed: Type via hook`.
-    Via {
-        /// The computed value type.
-        ty: Box<Type>,
-        /// The `fn(Specified, &AbsolutizeCx) -> Type` hook.
-        hook: ExprPath,
-    },
+    /// `computed: Type`: the computed value type, produced by the entry's
+    /// `compute:` hook.
+    Type(Box<Type>),
 }
 
 /// The value of `residue:`.
@@ -142,7 +138,7 @@ pub(crate) struct RawEntry {
     pub(crate) parse: Slot<ExprPath>,
     /// `compute: <path>`.
     pub(crate) compute: Slot<ExprPath>,
-    /// `computed: as_specified | Type via <path>`.
+    /// `computed: as_specified | Type`.
     pub(crate) computed: Slot<ComputedSpec>,
     /// `lift: <path>`.
     pub(crate) lift: Slot<ExprPath>,
@@ -426,6 +422,14 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             content,
             errors,
         ),
+        "via" => {
+            errors.push(syn::Error::new(
+                key.span(),
+                "`via` is not a key; name the hook with `compute: <fn>`, and a computed type that differs from the specified one with `computed: Type`",
+            ));
+            skip_to_next_key(content);
+            false
+        }
         _ => {
             errors.push(syn::Error::new(
                 key.span(),
@@ -561,24 +565,35 @@ fn parse_computed(content: ParseStream) -> syn::Result<ComputedSpec> {
         }
     }
     let ty: Type = content.parse().map_err(|_| {
-        content.error("expected `as_specified` or `Type via hook`, e.g. `computed: ComputedLength via absolutize_length`")
+        content.error(
+            "expected `as_specified` or the computed value type, e.g. `computed: ComputedLength`",
+        )
     })?;
-    let via_ok = content
-        .cursor()
-        .ident()
-        .is_some_and(|(ident, _)| ident == "via");
-    if !via_ok {
-        return Err(syn::Error::new_spanned(
-            &ty,
-            "a computed type needs its hook: `computed: Type via hook`, or `computed: as_specified`",
-        ));
+    if let Some((via, _)) = content.cursor().ident()
+        && via == "via"
+    {
+        return Err(via_error(content, &ty, &via));
     }
-    content.call(Ident::parse_any)?;
-    let hook = parse_fn_path(content)?;
-    Ok(ComputedSpec::Via {
-        ty: Box::new(ty),
-        hook,
-    })
+    Ok(ComputedSpec::Type(Box::new(ty)))
+}
+
+/// The error for `computed: Type via hook`: the hook has its own key. The
+/// suggestion repeats the written type and hook when the hook is a path.
+fn via_error(content: ParseStream, ty: &Type, via: &Ident) -> syn::Error {
+    let fork = content.fork();
+    let hook = fork
+        .call(Ident::parse_any)
+        .and_then(|_| fork.parse::<ExprPath>())
+        .ok()
+        .filter(|_| fork.is_empty() || fork.peek(Token![,]));
+    let ty = display(ty);
+    let hook = hook.map_or_else(|| "<fn>".to_owned(), |hook| display(&hook));
+    syn::Error::new(
+        via.span(),
+        format!(
+            "`computed:` takes only the computed type; name the hook with its own key: `computed: {ty}, compute: {hook}`"
+        ),
+    )
 }
 
 /// `none`, or a path to a function (`object_position_residue`).

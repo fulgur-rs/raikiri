@@ -79,9 +79,9 @@
 //! | `parse` | path to `fn(&mut cssparser::Parser) -> Option<Specified>` | none |
 //! | `initial` | expression of the specified type | required |
 //! | `inherited` | `yes` or `no` | required |
-//! | `compute` | path to `fn(Specified, &AbsolutizeCx) -> Specified` | identity |
-//! | `computed` | `as_specified`, or `Type via path` with `fn(Specified, &AbsolutizeCx) -> Type` | `as_specified` |
-//! | `lift` | path to `fn(Computed) -> Specified` | `Into::into` |
+//! | `compute` | path to `fn(Specified, &AbsolutizeCx) -> Computed` | identity |
+//! | `computed` | the computed value type (needs `compute`), or `as_specified` | `as_specified` |
+//! | `lift` | path to `fn(Computed) -> Specified` (needs `computed: Type`) | `Into::into` |
 //! | `field` | identifier | snake case of `Variant` |
 //! | `sample` | expression of the specified type (test only) | first non-initial keyword |
 //! | `residue` | `none`, or path to `fn(&Specified) -> Option<&'static str>` (test only) | `none` for a `keywords` entry without a hook; required otherwise |
@@ -108,12 +108,17 @@
 //!   `keywords` entry (`Auto` is `Isolation::Auto`) or an associated item of
 //!   the value type (`Fill` is `<ObjectFit>::Fill`). Write a path or any
 //!   other expression for anything else.
-//! - The computed type equals the specified type, and `compute` (when
-//!   given) maps one to the other. When they differ, `computed: Type via
-//!   hook` names both the computed type and the hook; `compute` must then be
-//!   omitted. `lift` turns a computed value back into a specified one, for
-//!   inheritance and page-context absolutization; it only applies with
-//!   `computed: Type via hook`.
+//! - `Computed` is the computed value type: the specified type, unless
+//!   `computed: Type` names another. `compute` maps a specified value to a
+//!   computed one; it is optional when the types are equal (a same-type
+//!   hook is `compute:` alone) and required with `computed: Type`, where
+//!   the identity does not type-check. `lift` turns a computed value back
+//!   into a specified one, for inheritance and page-context
+//!   absolutization; it only applies with `computed: Type`, and defaults to
+//!   `Into::into` there. `computed: as_specified` spells out the default.
+//!   The three keys are separate: the hook is never written inside
+//!   `computed:` (`computed: Type via hook` is an error that names the two
+//!   keys to write instead).
 //! - `sample` is the non-initial worst-case value of the page-cascade test
 //!   corpus, compiled only under `cfg(test)`. Every entry without
 //!   `keywords` must supply one. It also fills the test fixtures
@@ -130,9 +135,9 @@
 //!   defined under `#[cfg(test)]` too. A `keywords` entry without a hook
 //!   defaults to `none`, since a generated keyword enum carries no length.
 //!   Every other entry must write it, as a missing `residue` is an error on
-//!   the entry: an entry with a hook (`compute` or `computed: Type via
-//!   hook`) has a computed value that differs from the specified one, and
-//!   the macro cannot tell whether a written value type carries lengths.
+//!   the entry: an entry with a hook (`compute`, or `computed: Type`) has a
+//!   computed value that differs from the specified one, and the macro
+//!   cannot tell whether a written value type carries lengths.
 //!   Defaulting either case to `none` would hide a length that computing
 //!   should have resolved.
 //! - Each entry needs at least one doc comment (the specification
@@ -167,7 +172,7 @@
 //!   The aliases repeat the written types inside `field`, which imports the
 //!   annotated module with `use super::*`. Plain and crate-rooted paths
 //!   therefore resolve as written, but a `self::` or `super::` path in a
-//!   value type (`: ValueType` or `computed: Type via ..`) would be resolved
+//!   value type (`: ValueType` or `computed: Type`) would be resolved
 //!   one module too deep; write those types without the relative prefix.
 //!   A value type named bare `Specified`, `Computed` or `Property` is
 //!   rejected, since it would name the alias itself.
@@ -253,10 +258,9 @@
 //!   name or from sibling modules instead (`use super::types::*;`,
 //!   `use super::parse::*;`). Inside the annotated module itself,
 //!   `use super::*` is fine.
-//! - **Parser and hook visibility.** `parse:`, `compute:`, `computed: ..
-//!   via`, `lift:` and `residue:` paths are resolved in the annotated
-//!   module, so each function must be visible there. A parser defined in a
-//!   sibling module
+//! - **Parser and hook visibility.** `parse:`, `compute:`, `lift:` and
+//!   `residue:` paths are resolved in the annotated module, so each
+//!   function must be visible there. A parser defined in a sibling module
 //!   (such as a `parse/` submodule, where parsers are typically
 //!   `pub(super)`) must be widened to the common ancestor, e.g.
 //!   `pub(in crate::property)`; a missing widening is a privacy error at the
