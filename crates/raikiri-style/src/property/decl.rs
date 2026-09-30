@@ -166,6 +166,12 @@
 //!   `length_residue`, the unit classification the detector uses for its
 //!   own lengths).
 //!
+//! `length_residue` takes its `Length` by value, while a `residue:`
+//! function must be `fn(&Specified)`, so an entry whose specified type is
+//! `Length` itself needs a one-line `#[cfg(test)]` wrapper, such as
+//! `fn length_value_residue(l: &Length) -> Option<&'static str> {
+//! length_residue(*l) }` (`residue:` takes a path, not a closure).
+//!
 //! Adding a length-bearing property therefore means writing its residue
 //! function; the macro rejects the entry without `residue:`, so a
 //! forgotten check cannot silently report "no residue". A residue function

@@ -4293,10 +4293,10 @@ fn page_corpus_covers_every_registered_property_value_variant() {
 /// `longhand_specified_residue`: each entry answers through its `residue:`
 /// key (`none`, or a test-only residue function next to the entry, such as
 /// `object_position_residue`). The macro requires that key on every entry
-/// whose payload could carry a length (any entry with a hook or with a
-/// written value type), so a length-bearing table entry cannot fall into
-/// this arm unchecked, and an explicit arm for a table variant is an
-/// unreachable pattern.
+/// it cannot prove length-free (any entry with a written value type), plus
+/// every hooked entry for uniformity, so a length-bearing table entry
+/// cannot fall into this arm unchecked, and an explicit arm for a table
+/// variant is an unreachable pattern.
 fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     /// The `<length-percentage>` of a box property (`padding` / `margin` /
     /// `width` / `height` / `border-*-width`): percentages stay, and every
@@ -4497,8 +4497,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // Table-declared longhands (`properties!` in property/decl.rs)
             // answer through each entry's `residue:`: `object-position`
             // (CSS Images 3 §5.2) checks its offsets' lengths, and the
-            // keyword payloads of `isolation`, `object-fit` and
-            // `empty-cells` and `opacity`'s bare `f32` (CSS Color 4 §3.3)
+            // keyword payloads of `isolation`, `object-fit`, `empty-cells`
+            // and `opacity`'s bare `f32` (CSS Color 4 §3.3)
             // are `none`. This detector only checks for *length* residue, so
             // it reports `None` for `opacity` regardless of the value's
             // range; its `[0,1]` clamp (the entry's `compute:` hook) is real
@@ -5733,17 +5733,6 @@ fn specified_layer_residue_detector_is_not_vacuous() {
     );
 }
 
-/// Phase 3 must leave every computed-equivalent value untouched — the
-/// pass-through arm covers `PHASE_3_PASS_THROUGH_VARIANTS` of
-/// `page_corpus`'s entries (the rest are transformed) and a wrong
-/// classification there would corrupt a value rather than merely leave it
-/// unresolved. That count is only a stand-in for "of the `PropertyValue`
-/// variants" while `page_corpus` stays complete — completeness is no
-/// longer independently checked (see the section comment above
-/// `page_corpus`). The counts
-/// themselves are pinned by
-/// `phase_3_variant_classification_matches_the_documented_counts`; this
-/// test drives the same rule end-to-end through `cascade_page`.
 /// Table-declared values reach the detector through their entries'
 /// `residue:`: of the table samples, only `object-position`'s (font- and
 /// root-relative offsets) is residue, and every keyword or number payload
@@ -5757,6 +5746,17 @@ fn table_declared_samples_report_residue_through_their_entries() {
     assert_eq!(reported, [("object-position", "Length::Em")]);
 }
 
+/// Phase 3 must leave every computed-equivalent value untouched — the
+/// pass-through arm covers `PHASE_3_PASS_THROUGH_VARIANTS` of
+/// `page_corpus`'s entries (the rest are transformed) and a wrong
+/// classification there would corrupt a value rather than merely leave it
+/// unresolved. That count is only a stand-in for "of the `PropertyValue`
+/// variants" while `page_corpus` stays complete — completeness is no
+/// longer independently checked (see the section comment above
+/// `page_corpus`). The counts
+/// themselves are pinned by
+/// `phase_3_variant_classification_matches_the_documented_counts`; this
+/// test drives the same rule end-to-end through `cascade_page`.
 #[test]
 fn cascade_page_computed_equivalent_values_pass_phase_3_unchanged() {
     let root = root_with_weight(700.0);
