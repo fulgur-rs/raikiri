@@ -7,6 +7,7 @@ use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
 use shodo::style::LineOptions;
 use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
+use taffy::{BlockContext, BlockFormattingContext, Clear};
 
 /// Horizontal space of one line, in content-box coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,6 +15,19 @@ pub(crate) struct LineSpace {
     /// Offset of the line's start from the content-box start.
     pub(crate) start: f32,
     pub(crate) width: f32,
+}
+
+/// What a layout needs to know about the root's box.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FlowGeometry {
+    /// Content-box width the lines are broken at.
+    pub(crate) width: f32,
+    /// Border plus padding on the start and end side.
+    pub(crate) edges: (f32, f32),
+    /// Border plus padding above the content box. A `BlockContext` measures
+    /// block offsets from the block's border-box top, so a block offset inside
+    /// the content box needs this added.
+    pub(crate) top_edge: f32,
 }
 
 /// How many times a line is laid out again because the space turned out to
@@ -41,6 +55,50 @@ pub(crate) fn intrinsic_widths(root: &IfcRoot, cx: &mut LayoutContext) -> (f32, 
     (sizes.min_content, sizes.max_content)
 }
 
+/// Space of a line at block offset `y` that is `height` tall, from the float
+/// segments it spans.
+///
+/// `content_left` and `content_top` are the distances from the context's
+/// border-box corner to the content-box corner (border plus padding). The
+/// result is relative to the content-box start and never wider than
+/// `content_width`.
+pub(crate) fn line_space(
+    ctx: &BlockContext<'_>,
+    content_left: f32,
+    content_top: f32,
+    content_width: f32,
+    y: f32,
+    height: f32,
+) -> LineSpace {
+    let y = content_top + y;
+    let mut start = 0.0_f32;
+    let mut end = content_width;
+    let mut slot = ctx.find_content_slot(y, Clear::None, None);
+    loop {
+        start = start.max(slot.x - content_left);
+        end = end.min(slot.x - content_left + slot.width);
+        // Without an active float the slot has no segment to continue from.
+        let Some(segment) = slot.segment_id else {
+            break;
+        };
+        // The next segment narrows the line only if it starts before the
+        // line ends. A slot that does not advance ends the walk.
+        let next = ctx.find_content_slot(y, Clear::None, Some(segment));
+        if next
+            .segment_id
+            .is_none_or(|next_segment| next_segment <= segment)
+            || next.y >= y + height
+        {
+            break;
+        }
+        slot = next;
+    }
+    LineSpace {
+        start,
+        width: (end - start).max(0.0),
+    }
+}
+
 pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) -> IfcLines {
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
@@ -52,6 +110,65 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
         |_, _| LineSpace { start: 0.0, width },
     );
     placed.width = width;
+    placed
+}
+
+/// Lay the paragraph out at the content width of `geometry`, against the
+/// floats of `block_ctx` (the parent's shared context) or, without one,
+/// against none. Sets `IfcLines.beside_floats`.
+pub(crate) fn layout_flow(
+    root: &IfcRoot,
+    cx: &mut LayoutContext,
+    geometry: FlowGeometry,
+    block_ctx: Option<&mut BlockContext<'_>>,
+) -> IfcLines {
+    // One inner function takes the context from both arms: the caller's
+    // context and a local one cannot share a lifetime, because the pointee of
+    // `&mut BlockContext<'_>` is invariant.
+    match block_ctx {
+        Some(ctx) => run_flow(root, cx, geometry, ctx),
+        None => {
+            let mut bfc = BlockFormattingContext::new();
+            let mut ctx = bfc.root_block_context();
+            ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
+            run_flow(root, cx, geometry, &mut ctx)
+        }
+    }
+}
+
+fn run_flow(
+    root: &IfcRoot,
+    cx: &mut LayoutContext,
+    geometry: FlowGeometry,
+    ctx: &mut BlockContext<'_>,
+) -> IfcLines {
+    let FlowGeometry {
+        width,
+        edges,
+        top_edge,
+    } = geometry;
+    let mut options = root.options;
+    options.text_indent.length = resolve_indent(root.indent, width);
+    // The context starts at the block's border box; the lines live in its
+    // content box.
+    ctx.apply_content_box_inset([edges.0, edges.1]);
+    let ctx: &BlockContext<'_> = ctx;
+    let mut beside = false;
+    let mut placed = place_lines(
+        &root.paragraph,
+        &options,
+        cx,
+        &AtomicSizes::EMPTY,
+        |y, height| {
+            let space = line_space(ctx, edges.0, top_edge, width, y, height);
+            if space.start != 0.0 || space.width < width {
+                beside = true;
+            }
+            space
+        },
+    );
+    placed.width = width;
+    placed.beside_floats = beside;
     placed
 }
 
@@ -156,6 +273,12 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         let Some(root) = doc.nodes[id].ifc.as_mut() else {
             continue;
         };
+        // Lines laid out beside floats depend on the float context of the
+        // performed layout, which is gone here; breaking them again at the
+        // full width would run them under the floats.
+        if root.lines.as_ref().is_some_and(|lines| lines.beside_floats) {
+            continue;
+        }
         root.lines = Some(break_lines(root, &mut state.layout_cx, width));
     }
     doc.ifc = Some(state);

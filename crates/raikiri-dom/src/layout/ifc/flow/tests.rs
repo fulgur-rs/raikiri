@@ -2,6 +2,7 @@ use super::*;
 use crate::layout::ifc::projection::project_ifc;
 use crate::layout::ifc::test_support::{ahem_fonts, block_fixture};
 use shodo::limits::Limits;
+use taffy::{BlockFormattingContext, Clear, FloatDirection, Size};
 
 fn root_of(css: &str, text: &str) -> (IfcRoot, LayoutContext) {
     // Ahem at 10px: an explicit line-height keeps these tests about breaking,
@@ -156,4 +157,96 @@ fn place_lines_asks_for_the_space_at_each_line_offset() {
     for offset in [0.0, 10.0, 20.0] {
         assert!(asked.contains(&offset), "{asked:?}");
     }
+}
+
+/// A 100px wide context with a left float (30x10 at the top) and a right float
+/// (20x30 starting at y=10).
+fn two_floats() -> BlockFormattingContext {
+    let mut bfc = BlockFormattingContext::new();
+    {
+        let mut ctx = bfc.root_block_context();
+        ctx.set_width(100.0);
+        ctx.place_floated_box(
+            Size {
+                width: 30.0,
+                height: 10.0,
+            },
+            0.0,
+            FloatDirection::Left,
+            Clear::None,
+            false,
+        );
+        ctx.place_floated_box(
+            Size {
+                width: 20.0,
+                height: 30.0,
+            },
+            10.0,
+            FloatDirection::Right,
+            Clear::None,
+            false,
+        );
+    }
+    bfc
+}
+
+#[test]
+fn line_space_reads_the_segment_at_a_line() {
+    let mut bfc = two_floats();
+    let ctx = bfc.root_block_context();
+    // Only the left float is active at y=0..5.
+    assert_eq!(
+        line_space(&ctx, 0.0, 0.0, 100.0, 0.0, 5.0),
+        LineSpace {
+            start: 30.0,
+            width: 70.0
+        }
+    );
+    // Below both floats the line has the whole width.
+    assert_eq!(
+        line_space(&ctx, 0.0, 0.0, 100.0, 50.0, 10.0),
+        LineSpace {
+            start: 0.0,
+            width: 100.0
+        }
+    );
+}
+
+#[test]
+fn line_space_intersects_the_segments_a_line_spans() {
+    let mut bfc = two_floats();
+    let ctx = bfc.root_block_context();
+    // A 10px line at y=5 spans the left float (until y=10) and the right float
+    // (from y=10): it is narrowed by both.
+    assert_eq!(
+        line_space(&ctx, 0.0, 0.0, 100.0, 5.0, 10.0),
+        LineSpace {
+            start: 30.0,
+            width: 50.0
+        }
+    );
+    // At y=20 only the right float remains.
+    assert_eq!(
+        line_space(&ctx, 0.0, 0.0, 100.0, 20.0, 10.0),
+        LineSpace {
+            start: 0.0,
+            width: 80.0
+        }
+    );
+}
+
+#[test]
+fn line_space_is_relative_to_the_content_box_and_never_wider_than_it() {
+    let mut bfc = two_floats();
+    let ctx = bfc.root_block_context();
+    // A content box that starts 10px in and is 60px wide: the left float still
+    // covers 30px of the context, so 20px of this box; the right float does not
+    // reach it.
+    assert_eq!(
+        line_space(&ctx, 10.0, 0.0, 60.0, 0.0, 5.0),
+        LineSpace {
+            start: 20.0,
+            width: 40.0
+        }
+    );
 }

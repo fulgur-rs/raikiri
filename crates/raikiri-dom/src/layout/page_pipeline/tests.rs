@@ -2996,8 +2996,8 @@ fn without_the_switch_the_same_paragraph_is_shaped_by_parley() {
 // ── ifc roots in taffy ───────────────────────────────────────
 
 use crate::layout::test_support::{
-    ahem_font_context, ahem_paragraph, ahem_paragraph_in_block_wrapper, ifc_ahem_fonts,
-    page_box_800x600,
+    ahem_font_context, ahem_paragraph, ahem_paragraph_beside_float, ahem_paragraph_beside_floats,
+    ahem_paragraph_in_block_wrapper, ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
 };
 
 fn lay_out_with_switch(doc: &mut Document, cascade: &CascadeResult) {
@@ -3269,4 +3269,132 @@ fn relayout_matches_the_parley_line_count() {
             "{css} / {max_advance}"
         );
     }
+}
+
+// ── ifc roots beside floats ──────────────────────────────────
+
+#[test]
+fn a_paragraph_beside_a_left_float_starts_after_it() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(
+        doc.nodes[root].is_ifc_root(),
+        "the paragraph beside a float is an ifc root"
+    );
+    let lines = &stored_lines(&doc, root).lines;
+    // Two lines fit beside the 20px float (70px wide), the third has the width.
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aaaa", "bbbb", "cccc"]
+    );
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(30.0), Some(30.0), Some(0.0)]
+    );
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
+    assert!(stored_lines(&doc, root).beside_floats);
+}
+
+#[test]
+fn a_paragraph_beside_a_right_float_keeps_its_start_and_loses_width() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:right;width:30px;height:20px", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aaaa", "bbbb", "cccc"]
+    );
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(0.0); 3]
+    );
+}
+
+#[test]
+fn a_line_that_reaches_a_later_float_segment_is_narrowed_by_it() {
+    // Two floats: a 30x10 one on the left at the top, then a 30x30 one on the
+    // right that clears it, so it starts at y=10. The root has a 20px line
+    // height. The first attempt at line 1 (assumed height 0) sees only the
+    // left float: "aaa bb" (60px) fits in 70px. Its real height, 20px, reaches
+    // into the right float's segment (y=10..40), so the line has to be laid
+    // out again in 100 - 30 - 30 = 40px, where only "aaa" fits. A loop that
+    // reads one segment, or never re-checks the space for the real height,
+    // keeps "aaa bb".
+    let (mut doc, cascade, _floats, root) = ahem_paragraph_beside_floats(
+        "aaa bb cc",
+        &[
+            "float:left;width:30px;height:10px",
+            "float:right;clear:left;width:30px;height:30px",
+        ],
+        "line-height:20px",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["aaa", "bb cc"]
+    );
+    // Line 2 (y=20) is inside the right float's segment only: 70px wide from 0.
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(30.0), Some(0.0)]
+    );
+}
+
+#[test]
+fn relayout_keeps_the_lines_of_a_paragraph_beside_a_float() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    let before: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    assert_eq!(before, ["aaaa", "bbbb", "cccc"]);
+    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    // The shared float context is gone at this point; re-breaking at the full
+    // width would ignore the float the lines were laid out beside.
+    let after: Vec<_> = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn a_paragraph_with_padding_beside_a_float_is_offset_inside_its_content_box() {
+    let (mut doc, cascade, _float, root) = ahem_paragraph_beside_float(
+        "aaaa bbbb",
+        "float:left;width:30px;height:20px",
+        "padding:0 10px;box-sizing:border-box",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    // The content box is 80px wide and starts 10px in; the float covers the
+    // first 30px of the context, so 20px of the content box remain covered.
+    assert_eq!(line_start_x(&lines[0]), Some(20.0));
+}
+
+#[test]
+fn a_paragraph_with_top_padding_asks_for_space_below_its_border_top() {
+    // The float is 20px tall and starts at the top of the wrapper. A root with
+    // 15px of top padding has its content box at y=15, so the first line
+    // (y=15..25) still overlaps the float (until y=20) and starts after it,
+    // while the second line (y=25) is below it.
+    let (mut doc, cascade, _float, root) = ahem_paragraph_beside_float(
+        "aaaa bbbb",
+        "float:left;width:30px;height:20px",
+        "padding-top:15px",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(30.0), Some(0.0)]
+    );
 }

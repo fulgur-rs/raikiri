@@ -21,7 +21,12 @@ fn line_texts(projected: &ProjectedIfc, width: f32) -> Vec<String> {
         .paragraph
         .break_all(&mut cx, &projected.options, width, &AtomicSizes::EMPTY)
         .iter()
-        .map(|line| line.text()[line.text_range()].trim_end().to_owned())
+        .map(|line| {
+            line.text()[line.text_range()]
+                .replace('\u{FFFC}', "")
+                .trim_end()
+                .to_owned()
+        })
         .collect()
 }
 

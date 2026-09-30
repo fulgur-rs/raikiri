@@ -53,21 +53,33 @@ fn resolve_calc(val: *const (), basis: f32) -> f32 {
     if resolved.is_finite() { resolved } else { 0.0 }
 }
 
+/// Resolve a padding or border length of an ifc root against the parent's
+/// width.
+fn ifc_edge(value: taffy::LengthPercentage, parent_width: Option<f32>) -> f32 {
+    let basis = parent_width.unwrap_or(0.0);
+    let raw = value.into_raw();
+    if raw.is_calc() {
+        resolve_calc(raw.calc_value(), basis)
+    } else {
+        crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
+    }
+}
+
 /// Padding-top plus border-top of an ifc root, resolved from its style.
 ///
 /// The parent has not stored this node's layout yet when the root is
 /// measured, so the insets come from the style and the parent's width.
 fn ifc_top_inset(style: &Style, parent_width: Option<f32>) -> f32 {
-    let basis = parent_width.unwrap_or(0.0);
-    let resolve = |value: taffy::LengthPercentage| {
-        let raw = value.into_raw();
-        if raw.is_calc() {
-            resolve_calc(raw.calc_value(), basis)
-        } else {
-            crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
-        }
-    };
-    resolve(style.padding.top) + resolve(style.border.top)
+    ifc_edge(style.padding.top, parent_width) + ifc_edge(style.border.top, parent_width)
+}
+
+/// Border plus padding on the left and right of an ifc root, resolved from
+/// its style like [`ifc_top_inset`].
+fn ifc_horizontal_edges(style: &Style, parent_width: Option<f32>) -> (f32, f32) {
+    (
+        ifc_edge(style.padding.left, parent_width) + ifc_edge(style.border.left, parent_width),
+        ifc_edge(style.padding.right, parent_width) + ifc_edge(style.border.right, parent_width),
+    )
 }
 
 /// Taffy child iterator: filter nodes with `is_in_document() == false`
@@ -363,7 +375,13 @@ impl Document {
                 // A known width on the input means the parent stretched or
                 // fixed the box; otherwise the box shrinks to fit.
                 let stretched = inputs.known_dimensions.width.is_some();
-                let width_bounds = ifc_content_width_bounds(&style, inputs.parent_size.width);
+                let measure = IfcMeasure {
+                    run_mode: inputs.run_mode,
+                    stretched,
+                    width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
+                    edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
+                    top_inset,
+                };
                 let mut content_baseline = None;
                 let mut output =
                     compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
@@ -372,9 +390,8 @@ impl Document {
                             idx,
                             known.height,
                             available,
-                            inputs.run_mode,
-                            stretched,
-                            width_bounds,
+                            measure,
+                            block_ctx,
                         );
                         content_baseline = baseline;
                         size
@@ -509,22 +526,38 @@ fn ifc_content_width_bounds(style: &Style, parent_width: Option<f32>) -> (f32, f
     )
 }
 
+/// What the measure callback of an ifc root needs besides the available
+/// space.
+#[derive(Clone, Copy)]
+struct IfcMeasure {
+    run_mode: RunMode,
+    /// The parent stretched or fixed the box's width.
+    stretched: bool,
+    /// The box's own content-box `min-width` and `max-width`.
+    width_bounds: (f32, f32),
+    /// Border plus padding on the left and right.
+    edges: (f32, f32),
+    /// Border plus padding above the content box.
+    top_inset: f32,
+}
+
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
 ///
 /// The width comes from `available.width`, which taffy has already reduced to
 /// the content box. `known` is not used for the width: it is `NONE` when
 /// performing layout and border-box when only computing a size. A box the
 /// parent stretched or fixed breaks at the available width; a shrink-to-fit
-/// box is kept between its min- and max-content widths. Every performed
-/// layout stores its lines, so the last one wins after a parent's probes.
+/// box is kept between its min- and max-content widths. The lines wrap around
+/// the floats of `block_ctx`, the parent's float context, when there is one.
+/// Every performed layout stores its lines, so the last one wins after a
+/// parent's probes.
 fn measure_ifc_root(
     tree: &mut Document,
     idx: usize,
     known_height: Option<f32>,
     available: Size<AvailableSpace>,
-    run_mode: RunMode,
-    stretched: bool,
-    width_bounds: (f32, f32),
+    measure: IfcMeasure,
+    block_ctx: Option<&mut BlockContext<'_>>,
 ) -> (Size<f32>, Option<f32>) {
     use crate::layout::ifc::{flow, root::with_state};
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
@@ -539,20 +572,27 @@ fn measure_ifc_root(
         return (Size::ZERO, None);
     };
     let width = match available.width {
-        AvailableSpace::Definite(width) if stretched => width,
+        AvailableSpace::Definite(width) if measure.stretched => width,
         AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
         AvailableSpace::MinContent => min_content,
         AvailableSpace::MaxContent => max_content,
     };
     // A stretched or fixed box already carries its clamped width; a
     // shrink-to-fit box is clamped by its own min/max after measurement.
-    let width = if stretched {
+    let width = if measure.stretched {
         width
     } else {
-        width.min(width_bounds.1).max(width_bounds.0)
+        width
+            .min(measure.width_bounds.1)
+            .max(measure.width_bounds.0)
+    };
+    let geometry = flow::FlowGeometry {
+        width,
+        edges: measure.edges,
+        top_edge: measure.top_inset,
     };
     let Some(lines) = with_state(tree, |state| {
-        flow::break_lines(&probe, &mut state.layout_cx, width)
+        flow::layout_flow(&probe, &mut state.layout_cx, geometry, block_ctx)
     }) else {
         return (Size::ZERO, None);
     };
@@ -561,7 +601,7 @@ fn measure_ifc_root(
         height: known_height.unwrap_or(lines.height),
     };
     let baseline = flow::first_baseline(&lines);
-    if run_mode == RunMode::PerformLayout
+    if measure.run_mode == RunMode::PerformLayout
         && let Some(root) = tree.nodes[idx].ifc.as_mut()
     {
         root.lines = Some(lines);

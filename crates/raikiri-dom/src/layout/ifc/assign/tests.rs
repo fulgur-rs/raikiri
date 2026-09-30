@@ -359,22 +359,20 @@ fn an_absolutely_positioned_root_is_still_a_root() {
 }
 
 #[test]
-fn a_paragraph_beside_a_float_stays_on_the_parley_path() {
-    // The inline engine does not yet wrap text around floats; the parley path
-    // starts the lines beside the float.
+fn a_paragraph_beside_a_float_is_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
         add_sibling(doc, root, "block;float:left;width:30px");
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_float_beside_an_ancestor_keeps_the_paragraph_on_the_parley_path() {
-    // The float sits next to the wrapper, above the paragraph, and still
-    // intrudes into its lines.
+fn a_float_beside_an_ancestor_leaves_the_paragraph_a_root() {
+    // The float sits next to the wrapper, above the paragraph, and intrudes
+    // into its lines through the shared float context.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -392,7 +390,7 @@ fn a_float_beside_an_ancestor_keeps_the_paragraph_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
