@@ -6759,11 +6759,15 @@ pub struct CssPosition {
 /// Scope carving for `<gradient>` (features intentionally omitted from the
 /// Level 4 grammar; see also the [`GradientColorStop`] docs):
 ///
-/// - Color stop positions support only `<color> <length-percentage>?` (the
-///   CSS Images 3 §3.4.1 baseline grammar). The Level 4 addition
-///   `<color-stop-length> = <length-percentage>{1,2}` (two positions for
-///   one stop to form a band of the same color) is unsupported. So are
-///   `<angular-color-stop>`/`<color-stop-angle>` (their conic equivalents).
+/// - Linear and radial color stop positions support only
+///   `<color> <length-percentage>?` (the CSS Images 3 §3.4.1 baseline
+///   grammar). The Level 4 addition `<color-stop-length> =
+///   <length-percentage>{1,2}` (two positions for one stop to form a band
+///   of the same color) is unsupported there. Conic stops instead accept
+///   `<color> <color-stop-angle>{1,2}?`: a double angle expands at parse
+///   time into two single-position stops sharing the color (see
+///   [`AngularColorStop`] docs), which preserves the solid-band meaning
+///   without a two-position type.
 /// - `<linear-color-hint>` (a transition hint between two stops) is
 ///   unsupported: `<color-stop-list>` is parsed as `<linear-color-stop>#`
 ///   with no hint elements. **This is already part of the CSS Images 3
@@ -6789,10 +6793,11 @@ pub struct CssPosition {
 ///   `<radial-extent>{1,2}` form added by CSS Images 4 §3.2.2 is
 ///   unsupported (see the [`RadialSize`] docs).
 ///
-/// None of these features has practical use here yet because raikiri-paint
-/// does not implement gradient filling. Expanding the grammar now would
-/// increase validation costs before it provides a benefit. Revisit each
-/// feature when painting is implemented.
+/// Linear and radial filling remains solid-first-stop in raikiri-paint, so
+/// expanding their grammars now would increase validation costs before it
+/// provides a benefit. Conic filling is implemented (see
+/// [`Gradient::Conic`] paint), which is why its double-angle form is
+/// accepted while the linear and radial counterparts stay deferred.
 ///
 /// The comma-separated list (`#` multiplier) for multiple background layers
 /// is also restricted to a single layer by this enum (the same "multiple-layer
@@ -6808,9 +6813,10 @@ pub enum BackgroundImage {
     /// (following sibling `url` fields such as [`ContentComponent::Image`],
     /// without depending on the `url` crate).
     Url(String),
-    /// `<gradient>` — one of six gradient functions. Actual filling in the
-    /// paint layer is not yet implemented (see the type docs). This variant
-    /// retains the parsed result in
+    /// `<gradient>` — one of six gradient functions. Conic filling is
+    /// implemented in the paint layer; linear and radial still paint as
+    /// their solid first stop (see the type docs). This variant retains
+    /// the parsed result in
     /// [`ComputedValues`](crate::computed::ComputedValues); the font-relative
     /// part of `<length-percentage>` is absolutized to `Px` in the computed
     /// layer, and only `<percentage>` is deferred to painting (see the
@@ -7135,9 +7141,12 @@ pub struct GradientColorStop {
 
 /// `<angular-color-stop>` — the conic-gradient counterpart to
 /// [`GradientColorStop`] (only the position type changes to
-/// `<angle-percentage>`; CSS Images 4 §3.5.1). The scope carving is the same
-/// as for [`GradientColorStop`]: `<color-stop-angle>{1,2}` and
-/// `<angular-color-hint>` are unsupported.
+/// `<angle-percentage>`; CSS Images 4 §3.5.1). One stop carries a single
+/// optional position; an authored double position such as `red 0 25%`
+/// expands at parse time into two stops (`red 0`, `red 25%`) with the same
+/// color, which keeps the solid-band meaning while this type stays
+/// single-position. `<angular-color-hint>` remains unsupported, as for
+/// [`GradientColorStop`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AngularColorStop {
@@ -8651,12 +8660,23 @@ pub enum PropertyValue {
     /// contract match [`Self::Border`]; only the expansion target differs (three
     /// right-side longhands instead of twelve). See [`crate::rule::expand_border_right`].
     BorderRight(Border),
+    /// `border-left: <line-width> || <line-style> || <color>` — single-side shorthand
+    /// for the three left-side longhands (CSS Backgrounds 3 §3.4
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>).
+    ///
+    /// The `||` grammar, omitted-component initial fill, and declaration-ordering
+    /// contract match [`Self::Border`]; only the expansion target differs (three
+    /// left-side longhands instead of twelve). See [`crate::rule::expand_border_left`].
+    BorderLeft(Border),
     /// `border: <css-wide-keyword>` — expands to twelve longhand CSS-wide markers
     /// (see [`CssWideKeyword`]).
     BorderCssWide(CssWideKeyword),
     /// `border-right: <css-wide-keyword>` — expands to three right-side longhand
     /// CSS-wide markers (see [`CssWideKeyword`]).
     BorderRightCssWide(CssWideKeyword),
+    /// `border-left: <css-wide-keyword>` — expands to three left-side longhand
+    /// CSS-wide markers (see [`CssWideKeyword`]).
+    BorderLeftCssWide(CssWideKeyword),
     /// `border-top-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
     BorderTopWidthCssWide(CssWideKeyword),
     /// `border-right-width: <css-wide-keyword>` (see [`CssWideKeyword`]).
@@ -9751,6 +9771,9 @@ pub enum PropertyKey {
     // `border-right` single-side shorthand key (semantics on the matching
     // PropertyValue::BorderRight variant).
     BorderRight,
+    // `border-left` single-side shorthand key (semantics on the matching
+    // PropertyValue::BorderLeft variant).
+    BorderLeft,
     // `border-style` / `border-width` / `border-color` shorthand keys
     // (semantics on the matching PropertyValue variants above).
     BorderStyle,
@@ -10270,6 +10293,9 @@ impl PropertyValue {
             PropertyValue::Border(_) | PropertyValue::BorderCssWide(_) => PropertyKey::Border,
             PropertyValue::BorderRight(_) | PropertyValue::BorderRightCssWide(_) => {
                 PropertyKey::BorderRight
+            }
+            PropertyValue::BorderLeft(_) | PropertyValue::BorderLeftCssWide(_) => {
+                PropertyKey::BorderLeft
             }
             PropertyValue::BorderStyle(_) => PropertyKey::BorderStyle,
             PropertyValue::BorderWidth(_) => PropertyKey::BorderWidth,
@@ -11463,6 +11489,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-left-color" => PropertyKey::BorderLeftColor,
         "border" => PropertyKey::Border,
         "border-right" => PropertyKey::BorderRight,
+        "border-left" => PropertyKey::BorderLeft,
         "border-style" => PropertyKey::BorderStyle,
         "border-width" => PropertyKey::BorderWidth,
         "border-color" => PropertyKey::BorderColor,

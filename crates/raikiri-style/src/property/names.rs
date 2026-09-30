@@ -38,6 +38,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "border-bottom-width",
         "border-collapse",
         "border-color",
+        "border-left",
         "border-left-color",
         "border-left-style",
         "border-left-width",
