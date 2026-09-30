@@ -1,7 +1,7 @@
 use quote::ToTokens as _;
 use syn::Ident;
 
-use super::{Compute, Entry, Lift, Residue, Value, build, is_css_name};
+use super::{Compute, Entry, Lift, Residue, Serialize, Value, build, is_css_name};
 use crate::diag::Errors;
 use crate::parse::parse_block;
 
@@ -522,4 +522,67 @@ fn a_missing_residue_is_not_reported_after_a_related_mistake() {
     assert_eq!(errors.len(), 4, "{errors:?}");
     assert!(errors.iter().all(|e| !e.contains("residue")), "{errors:?}");
     assert!(entries.iter().all(|e| matches!(e.residue, Residue::Broken)));
+}
+
+fn serialize_kind(entry: &Entry) -> String {
+    match &entry.serialize {
+        Serialize::None => "none".to_owned(),
+        Serialize::Keyword => "keyword".to_owned(),
+        Serialize::Path(path) => path.to_token_stream().to_string(),
+        Serialize::Broken => "broken".to_owned(),
+    }
+}
+
+/// `serialize:` is omitted (no serialization, not a keyword default),
+/// `keyword` on a `keywords:` entry, or a path on any entry, including one
+/// with a computed type of its own.
+#[test]
+fn serialize_defaults_to_none_and_takes_keyword_or_a_path() {
+    let (entries, errors) = build_str(
+        r#"
+        /// Docs.
+        "a" => A { keywords: [X, Y], initial: X, inherited: no },
+        /// Docs.
+        "b" => B { keywords: [X, Y], initial: X, inherited: no, serialize: keyword },
+        /// Docs.
+        "c" => C: f32 { initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none, serialize: s },
+        /// Docs.
+        "d" => D: L { initial: L::Z, inherited: yes, parse: p, computed: Px, compute: to_px, sample: L::O, residue: none, serialize: crate::s },
+        /// Docs.
+        "e" => E { keywords: [X, Y], initial: X, inherited: no, serialize: s },
+        "#,
+        &[],
+    );
+    assert_eq!(errors, Vec::<String>::new());
+    let kinds: Vec<_> = entries.iter().map(serialize_kind).collect();
+    assert_eq!(kinds, ["none", "keyword", "s", "crate :: s", "s"]);
+}
+
+/// `serialize: keyword` needs the generated keyword enum: one error on the
+/// word for a `parse:` entry, none for an entry that already lacks both
+/// `keywords:` and `parse:`, and none for a malformed `serialize:` (the
+/// parse error is the report).
+#[test]
+fn serialize_keyword_needs_a_keywords_entry() {
+    let (entries, errors) = build_str(
+        r#"
+        /// Docs.
+        "a" => A: f32 { initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none, serialize: keyword },
+        /// Docs.
+        "b" => B: f32 { initial: 1.0, inherited: no, sample: 2.0, residue: none, serialize: keyword },
+        /// Docs.
+        "c" => C { keywords: [X, Y], initial: X, inherited: no, serialize: 3 },
+        "#,
+        &[],
+    );
+    assert_eq!(
+        errors,
+        [
+            "expected `keyword` or a path to a `fn(&Specified) -> Option<String>`, e.g. `serialize: serialize_object_position`",
+            "`serialize: keyword` uses the enum a `keywords:` entry generates; a `parse:` entry names a `fn(&Specified) -> Option<String>`",
+            "the \"b\" entry needs `keywords: [..]` or `parse: <fn>` to know how its value is parsed",
+        ]
+    );
+    let kinds: Vec<_> = entries.iter().map(serialize_kind).collect();
+    assert_eq!(kinds, ["broken", "broken", "broken"]);
 }

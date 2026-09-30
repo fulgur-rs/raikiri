@@ -27,7 +27,7 @@ use syn::{Attribute, Expr, ExprPath, Ident, LitBool, LitStr, Path, Token, Type, 
 use crate::diag::{Errors, display};
 
 /// Every key an entry accepts, in the order the documentation lists them.
-pub(crate) const KEYS: [&str; 11] = [
+pub(crate) const KEYS: [&str; 12] = [
     "keywords",
     "derive",
     "initial",
@@ -36,6 +36,7 @@ pub(crate) const KEYS: [&str; 11] = [
     "compute",
     "computed",
     "lift",
+    "serialize",
     "field",
     "sample",
     "residue",
@@ -105,6 +106,16 @@ pub(crate) enum ResidueSpec {
     Path(ExprPath),
 }
 
+/// The value of `serialize:`.
+#[derive(Debug)]
+pub(crate) enum SerializeSpec {
+    /// `serialize: keyword`: the generated keyword enum's `as_css_str`. The
+    /// word is kept for the error when the entry has no keyword enum.
+    Keyword(Ident),
+    /// `serialize: path`: a `fn(&Specified) -> Option<String>`.
+    Path(ExprPath),
+}
+
 /// One entry as written, before validation.
 #[derive(Debug)]
 pub(crate) struct RawEntry {
@@ -133,6 +144,8 @@ pub(crate) struct RawEntry {
     pub(crate) computed: Slot<Box<Type>>,
     /// `lift: <path>`.
     pub(crate) lift: Slot<ExprPath>,
+    /// `serialize: keyword | <path>`.
+    pub(crate) serialize: Slot<SerializeSpec>,
     /// `field: <ident>`.
     pub(crate) field: Slot<Ident>,
     /// `sample: <expr>`.
@@ -240,6 +253,7 @@ fn parse_entry(input: ParseStream, errors: &mut Errors) -> syn::Result<RawEntry>
         compute: Slot::Absent,
         computed: Slot::Absent,
         lift: Slot::Absent,
+        serialize: Slot::Absent,
         field: Slot::Absent,
         sample: Slot::Absent,
         residue: Slot::Absent,
@@ -402,6 +416,13 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             errors,
         ),
         "lift" => store(&mut entry.lift, k, parse_fn_path(content), content, errors),
+        "serialize" => store(
+            &mut entry.serialize,
+            k,
+            parse_serialize(content),
+            content,
+            errors,
+        ),
         "field" => {
             let value = plain_ident(content, "expected a field name, e.g. `field: object_fit`");
             store(&mut entry.field, k, value, content, errors)
@@ -619,6 +640,36 @@ fn parse_residue(content: ParseStream) -> syn::Result<ResidueSpec> {
     match fork.parse::<ExprPath>() {
         Ok(_) if fork.is_empty() || fork.peek(Token![,]) => {
             Ok(ResidueSpec::Path(content.parse::<ExprPath>()?))
+        }
+        _ => Err(content.error(EXPECTED)),
+    }
+}
+
+/// `keyword`, or a path to a function (`serialize_object_position`).
+fn parse_serialize(content: ParseStream) -> syn::Result<SerializeSpec> {
+    const EXPECTED: &str = "expected `keyword` or a path to a `fn(&Specified) -> Option<String>`, e.g. `serialize: serialize_object_position`";
+    if let Some((ident, rest)) = content.cursor().ident() {
+        let ends = rest.eof() || matches!(rest.punct(), Some((comma, _)) if comma.as_char() == ',');
+        if ends && ident == "keyword" {
+            return Ok(SerializeSpec::Keyword(content.call(Ident::parse_any)?));
+        }
+        if ends && ident == "keywords" {
+            return Err(syn::Error::new(
+                ident.span(),
+                "write `serialize: keyword` (singular) to serialize the keyword enum through `as_css_str`",
+            ));
+        }
+        if ends && (ident == "none" || ident == "None") {
+            return Err(syn::Error::new(
+                ident.span(),
+                "omit `serialize:` for a value that has no serialization (callers then echo the input)",
+            ));
+        }
+    }
+    let fork = content.fork();
+    match fork.parse::<ExprPath>() {
+        Ok(_) if fork.is_empty() || fork.peek(Token![,]) => {
+            Ok(SerializeSpec::Path(content.parse::<ExprPath>()?))
         }
         _ => Err(content.error(EXPECTED)),
     }

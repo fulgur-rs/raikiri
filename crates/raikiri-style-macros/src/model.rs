@@ -17,7 +17,7 @@ use syn::{Attribute, Expr, ExprPath, Ident, LitStr, Path, Type};
 
 use crate::case::split_camel;
 use crate::diag::{Errors, display};
-use crate::parse::{RawEntry, ResidueSpec, Slot};
+use crate::parse::{RawEntry, ResidueSpec, SerializeSpec, Slot};
 
 /// One keyword of a `keywords` entry, with its spelling resolved.
 pub(crate) struct Keyword {
@@ -61,6 +61,19 @@ pub(crate) enum Lift {
     /// `lift: <path>`.
     Path(ExprPath),
     /// `lift:` was malformed (already reported).
+    Broken,
+}
+
+/// How a value is serialized back to CSS text.
+pub(crate) enum Serialize {
+    /// No `serialize:`: no serialization (callers echo the input).
+    None,
+    /// `serialize: keyword`: the keyword enum's `as_css_str`.
+    Keyword,
+    /// `serialize: <path>`.
+    Path(ExprPath),
+    /// `serialize:` was malformed, or is `keyword` on an entry without
+    /// `keywords:` (both already reported).
     Broken,
 }
 
@@ -141,6 +154,8 @@ pub(crate) struct Entry {
     /// The computed-to-specified function. Only used when `computed_ty` is
     /// set.
     pub(crate) lift: Lift,
+    /// The serialization of the specified value (`serialize:`).
+    pub(crate) serialize: Serialize,
     /// The test-only sample value expression; `None` after an error.
     pub(crate) sample: Option<TokenStream>,
     /// The test-only length-residue check of the specified value.
@@ -267,6 +282,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         compute,
         computed,
         lift,
+        serialize,
         field,
         sample,
         residue,
@@ -481,6 +497,25 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         Slot::Absent => Lift::Into,
     };
 
+    let serialize = match serialize {
+        Slot::Present(_, SerializeSpec::Keyword(word)) => match &value {
+            Value::Keywords(_) => Serialize::Keyword,
+            // Without `keywords:` or `parse:` the entry has been reported
+            // already.
+            Value::Parsed { .. } if value_kind_unknown => Serialize::Broken,
+            Value::Parsed { .. } => {
+                errors.push(syn::Error::new(
+                    word.span(),
+                    "`serialize: keyword` uses the enum a `keywords:` entry generates; a `parse:` entry names a `fn(&Specified) -> Option<String>`",
+                ));
+                Serialize::Broken
+            }
+        },
+        Slot::Present(_, SerializeSpec::Path(path)) => Serialize::Path(path),
+        Slot::Invalid(_) => Serialize::Broken,
+        Slot::Absent => Serialize::None,
+    };
+
     let field = match field {
         Slot::Present(_, field) => field,
         _ => {
@@ -563,6 +598,7 @@ fn build_entry(raw: RawEntry, errors: &mut Errors) -> Entry {
         compute,
         computed_ty,
         lift,
+        serialize,
         sample: sample_expr,
         residue,
         name_listed: true,

@@ -490,6 +490,40 @@ fn residue_mistakes() {
     );
 }
 
+/// A malformed `serialize:`, and `keyword` on an entry without a keyword
+/// enum, are one error each on the written tokens; the entries are still
+/// declared.
+#[test]
+fn serialize_mistakes() {
+    let src = module(
+        r#"        /// A.
+        "a-prop" => AProp: f32 { initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none, serialize: keyword },
+        /// B.
+        "b-prop" => BProp { keywords: [X, Y], initial: X, inherited: no, serialize: keywords },
+        /// C.
+        "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, serialize: none },
+        /// D.
+        "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none, serialize: |v| None },
+        /// E.
+        "e-prop" => EProp { keywords: [X, Y], initial: X, inherited: no, serialize: keyword, serialize: s },"#,
+    );
+    let (expanded, errors) = expand(&src);
+    assert_eq!(errors.len(), 5, "{}", render(&src, &errors));
+    insta::assert_snapshot!("serialize_mistakes", render(&src, &errors));
+    assert_eq!(
+        enum_variants(&expanded, "PropertyValue"),
+        [
+            "Color",
+            "CustomProperty",
+            "AProp",
+            "BProp",
+            "CProp",
+            "DProp",
+            "EProp"
+        ]
+    );
+}
+
 #[test]
 fn generates_the_residue_check() {
     let src = module(

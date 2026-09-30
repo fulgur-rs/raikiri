@@ -1,0 +1,33 @@
+---
+source: crates/raikiri-style-macros/src/tests.rs
+expression: "render(&src, &errors)"
+---
+error: write `serialize: keyword` (singular) to serialize the keyword enum through `as_css_str`
+  --> 15:85
+   |
+15 |         "b-prop" => BProp { keywords: [X, Y], initial: X, inherited: no, serialize: keywords },
+   |                                                                                     ^^^^^^^^
+
+error: omit `serialize:` for a value that has no serialization (callers then echo the input)
+  --> 17:85
+   |
+17 |         "c-prop" => CProp { keywords: [X, Y], initial: X, inherited: no, serialize: none },
+   |                                                                                     ^^^^
+
+error: expected `keyword` or a path to a `fn(&Specified) -> Option<String>`, e.g. `serialize: serialize_object_position`
+  --> 19:112
+   |
+19 |         "d-prop" => DProp: f32 { initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none, serialize: |v| None },
+   |                                                                                                                ^
+
+error: duplicate key `serialize` in this entry
+  --> 21:94
+   |
+21 |         "e-prop" => EProp { keywords: [X, Y], initial: X, inherited: no, serialize: keyword, serialize: s },
+   |                                                                                              ^^^^^^^^^
+
+error: `serialize: keyword` uses the enum a `keywords:` entry generates; a `parse:` entry names a `fn(&Specified) -> Option<String>`
+  --> 13:112
+   |
+13 |         "a-prop" => AProp: f32 { initial: 1.0, inherited: no, parse: p, sample: 2.0, residue: none, serialize: keyword },
+   |                                                                                                                ^^^^^^^

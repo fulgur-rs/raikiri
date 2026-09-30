@@ -20,7 +20,9 @@ use quote::{ToTokens as _, format_ident, quote, quote_spanned};
 use syn::spanned::Spanned as _;
 use syn::{Ident, Variant};
 
-use crate::model::{Compute, Entry, FIXED_DERIVES, Lift, Residue, Value, is_reserved_type};
+use crate::model::{
+    Compute, Entry, FIXED_DERIVES, Lift, Residue, Serialize, Value, is_reserved_type,
+};
 
 /// A local identifier invisible to user tokens.
 fn local(name: &str) -> Ident {
@@ -337,6 +339,9 @@ pub(crate) fn items(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream 
         registry_macros(entries),
         name_lookup_fn(entries),
         parse_dispatch_fn(entries),
+        serialize_fn(entries),
+        serialize_computed_fn(entries),
+        serializes_fn(entries),
     ];
     quote!(#(#items)*)
 }
@@ -769,6 +774,127 @@ fn parse_dispatch_fn(entries: &[Entry]) -> TokenStream {
                     ::core::option::Option::None
                 }
             }
+        }
+    }
+}
+
+/// The `longhand_serialize` arm of one entry.
+fn serialize_arm(entry: &Entry, value: &Ident) -> TokenStream {
+    let variant = &entry.variant;
+    let field = &entry.field;
+    let body = match &entry.serialize {
+        Serialize::None => quote! {
+            let _ = #value;
+            ::core::option::Option::None
+        },
+        Serialize::Keyword => quote! {
+            ::core::option::Option::Some(::std::string::String::from(#value.as_css_str()))
+        },
+        Serialize::Path(path) => {
+            let f = local("serialize");
+            quote_spanned! {path.span()=>
+                let #f: fn(&#field::Specified) -> ::core::option::Option<::std::string::String> = #path;
+                #f(#value)
+            }
+        }
+        Serialize::Broken => unreachable_body(&[value]),
+    };
+    quote!(PropertyValue::#variant(#value) => { #body })
+}
+
+/// `longhand_serialize`: one arm per entry.
+fn serialize_fn(entries: &[Entry]) -> TokenStream {
+    let value = local("value");
+    let v = local("v");
+    let other = local("other");
+    let arms = entries.iter().map(|e| serialize_arm(e, &v));
+    quote! {
+        /// Serializes a declared longhand's specified value to CSS text
+        /// through its entry's `serialize:` (the keyword spelling, or the
+        /// named function); `None` for an entry without `serialize:`, whose
+        /// callers echo the input instead. `value` must be a variant
+        /// declared in `properties!`.
+        pub(crate) fn longhand_serialize(
+            #value: &PropertyValue,
+        ) -> ::core::option::Option<::std::string::String> {
+            match #value {
+                #( #arms )*
+                #other => ::core::unreachable!(
+                    "not a longhand declared in `properties!`: {:?}", #other
+                ),
+            }
+        }
+    }
+}
+
+/// `longhand_serialize_computed`: per entry with `serialize:`, the computed
+/// field lifted back to specified form and serialized by
+/// `longhand_serialize`, so a serializer's signature is checked in one
+/// place.
+fn serialize_computed_fn(entries: &[Entry]) -> TokenStream {
+    let key = local("key");
+    let computed = local("computed");
+    let serialized: Vec<&Entry> = entries
+        .iter()
+        .filter(|e| !matches!(e.serialize, Serialize::None))
+        .collect();
+    // Without a serialized entry no arm reads the table.
+    let touch = if serialized.is_empty() {
+        quote!(let _ = #computed;)
+    } else {
+        TokenStream::new()
+    };
+    let arms = serialized.iter().map(|e| {
+        let variant = &e.variant;
+        let field = &e.field;
+        let p = projection(e);
+        quote! {
+            PropertyKey::#variant => longhand_serialize(&PropertyValue::#variant(
+                #p::lift(::core::clone::Clone::clone(&#computed.#field)),
+            )),
+        }
+    });
+    quote! {
+        /// Serializes the computed value of the declared longhand `key`
+        /// from `computed`, for CSSOM computed-style reads: the field is
+        /// lifted back to its specified type (the identity when the entry
+        /// has no computed type of its own) and serialized as
+        /// `longhand_serialize` does. `None` for an entry without
+        /// `serialize:` and for a key not declared in `properties!`.
+        pub(crate) fn longhand_serialize_computed(
+            #key: PropertyKey,
+            #computed: &ComputedTable,
+        ) -> ::core::option::Option<::std::string::String> {
+            #touch
+            match #key {
+                #( #arms )*
+                _ => ::core::option::Option::None,
+            }
+        }
+    }
+}
+
+/// `longhand_serializes`: whether an entry has `serialize:`.
+fn serializes_fn(entries: &[Entry]) -> TokenStream {
+    let key = local("key");
+    let serialized: Vec<_> = entries
+        .iter()
+        .filter(|e| !matches!(e.serialize, Serialize::None))
+        .map(|e| &e.variant)
+        .collect();
+    let body = if serialized.is_empty() {
+        quote! {
+            let _ = #key;
+            false
+        }
+    } else {
+        quote!(::core::matches!(#key, #( PropertyKey::#serialized )|*))
+    };
+    quote! {
+        /// Whether the declared longhand `key` has a serialization
+        /// (`serialize:`); `false` for a key not declared in `properties!`.
+        pub(crate) fn longhand_serializes(#key: PropertyKey) -> bool {
+            #body
         }
     }
 }

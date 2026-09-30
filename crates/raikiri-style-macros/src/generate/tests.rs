@@ -1,7 +1,8 @@
 //! One snapshot per projection of [`super::items`] (and per per-entry
 //! projection the expansion uses), over a fixed three-entry fixture: a
-//! `keywords:` entry, a `parse:` entry, and an inherited entry with a
-//! computed type, its hook, a lift, a renamed field and a residue function.
+//! `keywords:` entry serialized by keyword, a `parse:` entry without a
+//! serialization, and an inherited entry with a computed type, its hook, a
+//! lift, a renamed field, a residue function and a serializer function.
 //! The whole-module snapshots in the crate's expansion tests pin how the
 //! projections combine.
 
@@ -16,7 +17,7 @@ use crate::tests::pretty;
 
 const FIXTURE: &str = r#"
     /// CSS Compositing 1 §3.4.2
-    "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },
+    "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no, serialize: keyword },
     /// CSS Images 3 §5.1
     "object-fit" => ObjectFit { initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain, residue: none },
     /// CSS Text 3 §7.2
@@ -24,6 +25,7 @@ const FIXTURE: &str = r#"
         initial: Length::Px(0.0), inherited: yes, parse: parse_length,
         computed: ComputedLength, compute: absolutize_length, lift: lift_length,
         field: spacing, sample: Length::Em(2.0), residue: length_residue,
+        serialize: serialize_length,
     },
 "#;
 
@@ -208,4 +210,59 @@ fn projection_name_lookup_fn() {
 #[test]
 fn projection_parse_dispatch_fn() {
     insta::assert_snapshot!("parse_dispatch_fn", over_fixture(parse_dispatch_fn));
+}
+
+#[test]
+fn projection_serialize_fn() {
+    insta::assert_snapshot!("serialize_fn", over_fixture(serialize_fn));
+}
+
+#[test]
+fn projection_serialize_computed_fn() {
+    insta::assert_snapshot!("serialize_computed_fn", over_fixture(serialize_computed_fn));
+}
+
+#[test]
+fn projection_serializes_fn() {
+    insta::assert_snapshot!("serializes_fn", over_fixture(serializes_fn));
+}
+
+/// The serializer shapes the main fixture lacks: `serialize: keyword` on a
+/// `parse:` entry (reported once, its arm unreachable), and no entry with
+/// `serialize:` at all (the predicate is `false`, and the computed
+/// serializer only has its `None` arms).
+#[test]
+fn projection_serialize_fns_broken_and_without_serializers() {
+    let mut errors = Errors::default();
+    let raw = parse_block(
+        r#"
+        /// Keyword on a parsed value.
+        "opacity" => Opacity: f32 { initial: 1.0, inherited: no, parse: parse_number,
+            sample: 2.0, residue: none, serialize: keyword },
+        "#
+        .parse()
+        .expect("fixture tokenizes"),
+        &mut errors,
+    );
+    let broken = build(raw, &[], &mut errors);
+    let errors: Vec<String> = errors.into_vec().iter().map(|e| e.to_string()).collect();
+    assert_eq!(
+        errors,
+        [
+            "`serialize: keyword` uses the enum a `keywords:` entry generates; a `parse:` entry names a `fn(&Specified) -> Option<String>`"
+        ]
+    );
+    let without: Vec<Entry> = fixture()
+        .into_iter()
+        .filter(|e| matches!(e.serialize, crate::model::Serialize::None))
+        .collect();
+    assert_eq!(without.len(), 1);
+    let rendered = format!(
+        "--- broken ---\n{}--- broken, computed ---\n{}--- without serializers ---\n{}{}",
+        pretty(serialize_fn(&broken)),
+        pretty(serialize_computed_fn(&broken)),
+        pretty(serialize_computed_fn(&without)),
+        pretty(serializes_fn(&without)),
+    );
+    insta::assert_snapshot!("serialize_fns_broken_and_without_serializers", rendered);
 }

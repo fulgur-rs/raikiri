@@ -1,0 +1,25 @@
+---
+source: crates/raikiri-style-macros/src/generate/tests.rs
+expression: over_fixture(serialize_fn)
+---
+# [doc = r" Serializes a declared longhand's specified value to CSS text"]
+# [doc = r" through its entry's `serialize:` (the keyword spelling, or the"]
+# [doc = r" named function); `None` for an entry without `serialize:`, whose"]
+# [doc = r" callers echo the input instead. `value` must be a variant"]
+# [doc = r" declared in `properties!`."]
+pub (crate) fn longhand_serialize (value : & PropertyValue ,) -> :: core :: option :: Option < :: std :: string :: String > {
+    match value {
+        PropertyValue :: Isolation (v) => {
+            :: core :: option :: Option :: Some (:: std :: string :: String :: from (v . as_css_str ()))
+        }
+        PropertyValue :: ObjectFit (v) => {
+            let _ = v ;
+            :: core :: option :: Option :: None
+        }
+        PropertyValue :: WordSpacing (v) => {
+            let serialize : fn (& spacing :: Specified) -> :: core :: option :: Option < :: std :: string :: String > = serialize_length ;
+            serialize (v)
+        }
+        other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+    }
+}

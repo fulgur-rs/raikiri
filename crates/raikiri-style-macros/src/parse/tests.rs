@@ -1,6 +1,6 @@
 use quote::ToTokens as _;
 
-use super::{RawEntry, ResidueSpec, Slot, parse_block};
+use super::{RawEntry, ResidueSpec, SerializeSpec, Slot, parse_block};
 use crate::diag::Errors;
 
 fn parse(src: &str) -> (Vec<RawEntry>, Vec<String>) {
@@ -337,4 +337,59 @@ fn a_repeated_residue_is_one_error() {
         entries[0].residue.value(),
         Some(ResidueSpec::None)
     ));
+}
+
+#[test]
+fn parses_serialize_forms() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A { serialize: keyword },
+        "b" => B { serialize: serialize_b, initial: X },
+        "c" => C { serialize: crate::serialize::<u8>, },
+        "#,
+    );
+    assert_eq!(errors, Vec::<String>::new());
+    assert!(matches!(
+        entries[0].serialize.value(),
+        Some(SerializeSpec::Keyword(word)) if word == "keyword"
+    ));
+    let path = |i: usize| match entries[i].serialize.value() {
+        Some(SerializeSpec::Path(path)) => path.to_token_stream().to_string(),
+        other => panic!("expected a path, got {other:?}"),
+    };
+    assert_eq!(path(1), "serialize_b");
+    assert_eq!(tokens(&entries[1].initial), "X");
+    assert_eq!(path(2), "crate :: serialize :: < u8 >");
+}
+
+#[test]
+fn a_malformed_serialize_is_one_error() {
+    let (entries, errors) = parse(
+        r#"
+        "a" => A { serialize: keywords, initial: X },
+        "b" => B { serialize: none, initial: X },
+        "c" => C { serialize: None, initial: X },
+        "d" => D { serialize: |v| None, initial: X },
+        "e" => E { serialize: keyword keyword, initial: X },
+        "f" => F { serialize: , initial: X },
+        "#,
+    );
+    assert_eq!(errors.len(), 6, "{errors:?}");
+    assert!(
+        errors[0].starts_with("write `serialize: keyword` (singular)"),
+        "{errors:?}"
+    );
+    for error in &errors[1..3] {
+        assert!(error.starts_with("omit `serialize:`"), "{errors:?}");
+    }
+    for error in &errors[3..] {
+        assert!(
+            error.starts_with("expected `keyword` or a path to a `fn(&Specified)"),
+            "{errors:?}"
+        );
+    }
+    for entry in &entries {
+        assert!(matches!(entry.serialize, Slot::Invalid(_)), "{entry:?}");
+        assert_eq!(tokens(&entry.initial), "X");
+    }
 }

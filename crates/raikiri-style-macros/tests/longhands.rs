@@ -140,6 +140,21 @@ mod property {
         }
     }
 
+    /// The serializer of the number entries.
+    pub fn serialize_number(value: &f32) -> Option<String> {
+        Some(value.to_string())
+    }
+
+    /// The serializer of the length entries; `None` for `rem`, to show that
+    /// a serializer may decline a value.
+    pub fn serialize_length(length: &Length) -> Option<String> {
+        match length {
+            Length::Px(px) => Some(format!("{px}px")),
+            Length::Em(em) => Some(format!("{em}em")),
+            Length::Rem(_) => None,
+        }
+    }
+
     /// An explicit lift, for the entry that does not use `Into::into`.
     pub fn px_to_length(px: Px) -> Length {
         Length::Px(px.0)
@@ -197,7 +212,9 @@ mod property {
 
         properties! {
             /// CSS Compositing 1 §3.4.2
-            "isolation" => Isolation { keywords: [Auto, Isolate], initial: Auto, inherited: no },
+            "isolation" => Isolation {
+                keywords: [Auto, Isolate], initial: Auto, inherited: no, serialize: keyword,
+            },
             /// CSS Images 3 §5.1
             "object-fit" => ObjectFit {
                 initial: Fill, inherited: no, parse: parse_object_fit, sample: Contain, residue: none,
@@ -210,7 +227,7 @@ mod property {
                 initial: 1.0, inherited: no, parse: parse_number,
                 // Deliberately clamps to the initial value, against the crate
                 // docs' advice, so that `equal_fields` has a clamp to catch.
-                compute: clamp_opacity, sample: 2.0, residue: none,
+                compute: clamp_opacity, sample: 2.0, residue: none, serialize: serialize_number,
             },
             /// An inherited keyword longhand with explicit spellings.
             "text-case" => TextCase {
@@ -229,7 +246,7 @@ mod property {
             "word-spacing" => WordSpacing: Length {
                 initial: Length::Px(0.0), inherited: yes, parse: parse_length,
                 computed: Px, compute: absolutize_length, sample: Length::Em(2.0),
-                residue: length_residue
+                residue: length_residue, serialize: crate::property::serialize_length
             },
             /// A non-inherited longhand with an explicit lift and field.
             "tab-width" => TabWidth: Length {
@@ -647,6 +664,106 @@ fn specified_residue_asks_each_entry() {
 #[should_panic(expected = "not a longhand declared in `properties!`")]
 fn specified_residue_rejects_hand_written_variants() {
     property::longhand_specified_residue(&PropertyValue::Color(0));
+}
+
+/// `serialize:` answers per entry: the keyword spelling, a serializer
+/// function, or `None` (no `serialize:`, so callers echo the input).
+#[test]
+fn serialize_asks_each_entry() {
+    use property::longhand_serialize as serialize;
+
+    assert_eq!(
+        serialize(&PropertyValue::Isolation(Isolation::Isolate)),
+        Some("isolate".to_owned())
+    );
+    assert_eq!(
+        serialize(&PropertyValue::Opacity(2.0)),
+        Some("2".to_owned())
+    );
+    assert_eq!(
+        serialize(&PropertyValue::WordSpacing(Length::Em(1.5))),
+        Some("1.5em".to_owned())
+    );
+    // The serializer may decline a value.
+    assert_eq!(
+        serialize(&PropertyValue::WordSpacing(Length::Rem(1.0))),
+        None
+    );
+    // Entries without `serialize:`.
+    assert_eq!(serialize(&PropertyValue::ObjectFit(ObjectFit::Cover)), None);
+    assert_eq!(serialize(&PropertyValue::TextCase(TextCase::Upper)), None);
+    assert_eq!(serialize(&PropertyValue::TabWidth(Length::Px(1.0))), None);
+    assert_eq!(serialize(&PropertyValue::BreakMode(BreakMode::Avoid)), None);
+}
+
+#[test]
+#[should_panic(expected = "not a longhand declared in `properties!`")]
+fn serialize_rejects_hand_written_variants() {
+    property::longhand_serialize(&PropertyValue::Color(0));
+}
+
+/// The computed serializer reads the computed field, lifts it back to the
+/// specified type when the entry has a computed type of its own, and
+/// serializes it like the specified serializer.
+#[test]
+fn serialize_computed_lifts_then_serializes() {
+    use property::longhand_serialize_computed as serialize;
+
+    let mut computed = ComputedTable::initial();
+    computed.isolation = Isolation::Isolate;
+    computed.opacity = 0.25;
+    // `Px(3.0)` lifts through `Into::into` to `Length::Px(3.0)`.
+    computed.word_spacing = Px(3.0);
+    computed.tab = Px(4.0);
+    assert_eq!(
+        serialize(PropertyKey::Isolation, &computed),
+        Some("isolate".to_owned())
+    );
+    assert_eq!(
+        serialize(PropertyKey::Opacity, &computed),
+        Some("0.25".to_owned())
+    );
+    assert_eq!(
+        serialize(PropertyKey::WordSpacing, &computed),
+        Some("3px".to_owned())
+    );
+    // Entries without `serialize:`.
+    assert_eq!(serialize(PropertyKey::TabWidth, &computed), None);
+    assert_eq!(serialize(PropertyKey::ObjectFit, &computed), None);
+    // A hand-written key is not a table entry: `None`, not a panic.
+    assert_eq!(serialize(PropertyKey::Color, &computed), None);
+    assert_eq!(serialize(PropertyKey::Custom, &computed), None);
+
+    // The computed serializer agrees with the specified one on the value
+    // the page context exposes, `lift(compute(v))`.
+    let ctx = resolve::ResolveContext::initial();
+    let cx = cx_with_font_size(&ctx, 10.0);
+    let mut table = SpecifiedTable::initial();
+    table.apply(PropertyValue::WordSpacing(Length::Em(1.5)));
+    let absolutized =
+        property::longhand_page_absolutize(PropertyValue::WordSpacing(Length::Em(1.5)), &cx);
+    let computed = table.absolutize(&cx);
+    assert_eq!(
+        serialize(PropertyKey::WordSpacing, &computed),
+        property::longhand_serialize(&absolutized)
+    );
+    assert_eq!(
+        serialize(PropertyKey::WordSpacing, &computed),
+        Some("15px".to_owned())
+    );
+}
+
+#[test]
+fn serializes_names_the_entries_with_serialize() {
+    let serialized: Vec<_> = property::LONGHAND_NAMES
+        .iter()
+        .filter(|name| {
+            property::longhand_key_for_name(name).is_some_and(property::longhand_serializes)
+        })
+        .copied()
+        .collect();
+    assert_eq!(serialized, ["isolation", "opacity", "word-spacing"]);
+    assert!(!property::longhand_serializes(PropertyKey::Color));
 }
 
 /// Table fields are read through `Deref` and written through `longhands`:

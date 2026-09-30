@@ -82,6 +82,7 @@
 //! | `compute` | path to `fn(Specified, &AbsolutizeCx) -> Computed` | identity |
 //! | `computed` | the computed value type (needs `compute`) | the specified type |
 //! | `lift` | path to `fn(Computed) -> Specified` (needs `computed: Type`) | `Into::into` |
+//! | `serialize` | `keyword` (`keywords` only), or path to `fn(&Specified) -> Option<String>` | no serialization |
 //! | `field` | identifier | snake case of `Variant` |
 //! | `sample` | expression of the specified type (test only) | first non-initial keyword |
 //! | `residue` | `none`, or path to `fn(&Specified) -> Option<&'static str>` (test only) | `none` for a `keywords` entry without a hook; required otherwise |
@@ -119,6 +120,14 @@
 //!   as_specified` is an error). The three keys are separate: the hook is
 //!   never written inside `computed:` (`computed: Type via hook` is an
 //!   error that names the two keys to write instead).
+//! - `serialize` names how a value is written back as CSS text: `keyword`
+//!   (a `keywords` entry only) writes the keyword's spelling (`as_css_str`),
+//!   and a path names a function that returns the canonical text, or `None`
+//!   for a value it cannot serialize. Without `serialize` the entry has no
+//!   serialization: the generated serializers return `None`, and the host's
+//!   callers echo the input as written. The computed serializer lifts the
+//!   computed value back to the specified type first (see `lift`), so one
+//!   function serves both the specified and the computed value.
 //! - `sample` is the non-initial worst-case value of the page-cascade test
 //!   corpus, compiled only under `cfg(test)`. Every entry without
 //!   `keywords` must supply one. It also fills the test fixtures
@@ -150,9 +159,9 @@
 //!   and digits joined by single `-`, optionally after one leading `-`
 //!   (vendor prefixes).
 //!
-//! Hook, parser and residue paths are coerced to the fn-pointer types
-//! above, so a wrong signature is reported at the path in the table (for
-//! `residue`, only in builds with `cfg(test)`, such as `cargo test` or
+//! Hook, parser, serializer and residue paths are coerced to the fn-pointer
+//! types above, so a wrong signature is reported at the path in the table
+//! (for `residue`, only in builds with `cfg(test)`, such as `cargo test` or
 //! `clippy --all-targets`).
 //!
 //! # Generated items
@@ -193,6 +202,13 @@
 //! - `longhand_key_for_name(name)` and `parse_longhand_value(name, input)`,
 //!   the fall-through targets of the hand-written name lookup and parse
 //!   dispatch, and `LONGHAND_NAMES`;
+//! - `longhand_serialize(value)`, the entry's `serialize` applied to one
+//!   table value (`None` without `serialize`);
+//!   `longhand_serialize_computed(key, &ComputedTable)`, the same for the
+//!   computed field of `key`, lifted back to the specified type first
+//!   (`None` without `serialize`, and for a key that is not a table entry);
+//!   and `longhand_serializes(key)`, whether `key` is a table entry with
+//!   `serialize`;
 //! - `longhand_value_pat!()`, a pattern matching every table variant
 //!   (omitted when no entry could be declared, since a pattern must match
 //!   at least one variant);
@@ -237,7 +253,7 @@
 //!   generated table type;
 //! - the `cssparser` crate as a dependency, and `Debug` on `PropertyValue`
 //!   and `PropertyKey` (the generated `unreachable!` messages of `apply`,
-//!   `longhand_page_absolutize`, `longhand_sample` and
+//!   `longhand_page_absolutize`, `longhand_serialize`, `longhand_sample` and
 //!   `longhand_specified_residue` format them with `{:?}`);
 //! - `Clone`, `Debug` and `PartialEq` on every specified and computed value
 //!   type (the `Longhand` bounds, and the derives of the generated tables).
@@ -258,9 +274,9 @@
 //!   name or from sibling modules instead (`use super::types::*;`,
 //!   `use super::parse::*;`). Inside the annotated module itself,
 //!   `use super::*` is fine.
-//! - **Parser and hook visibility.** `parse:`, `compute:`, `lift:` and
-//!   `residue:` paths are resolved in the annotated module, so each
-//!   function must be visible there. A parser defined in a sibling module
+//! - **Parser and hook visibility.** `parse:`, `compute:`, `lift:`,
+//!   `serialize:` and `residue:` paths are resolved in the annotated
+//!   module, so each function must be visible there. A parser defined in a sibling module
 //!   (such as a `parse/` submodule, where parsers are typically
 //!   `pub(super)`) must be widened to the common ancestor, e.g.
 //!   `pub(in crate::property)`; a missing widening is a privacy error at the

@@ -319,4 +319,36 @@ mod decl {
             }
         }
     }
+    # [doc = r" Serializes a declared longhand's specified value to CSS text"]
+    # [doc = r" through its entry's `serialize:` (the keyword spelling, or the"]
+    # [doc = r" named function); `None` for an entry without `serialize:`, whose"]
+    # [doc = r" callers echo the input instead. `value` must be a variant"]
+    # [doc = r" declared in `properties!`."]
+    pub (crate) fn longhand_serialize (value : & PropertyValue ,) -> :: core :: option :: Option < :: std :: string :: String > {
+        match value {
+            PropertyValue :: Isolation (v) => {
+                let _ = v ;
+                :: core :: option :: Option :: None
+            }
+            other => :: core :: unreachable ! ("not a longhand declared in `properties!`: {:?}" , other) ,
+        }
+    }
+    # [doc = r" Serializes the computed value of the declared longhand `key`"]
+    # [doc = r" from `computed`, for CSSOM computed-style reads: the field is"]
+    # [doc = r" lifted back to its specified type (the identity when the entry"]
+    # [doc = r" has no computed type of its own) and serialized as"]
+    # [doc = r" `longhand_serialize` does. `None` for an entry without"]
+    # [doc = r" `serialize:` and for a key not declared in `properties!`."]
+    pub (crate) fn longhand_serialize_computed (key : PropertyKey , computed : & ComputedTable ,) -> :: core :: option :: Option < :: std :: string :: String > {
+        let _ = computed ;
+        match key {
+            _ => :: core :: option :: Option :: None ,
+        }
+    }
+    # [doc = r" Whether the declared longhand `key` has a serialization"]
+    # [doc = r" (`serialize:`); `false` for a key not declared in `properties!`."]
+    pub (crate) fn longhand_serializes (key : PropertyKey) -> bool {
+        let _ = key ;
+        false
+    }
 }
