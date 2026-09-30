@@ -3,7 +3,8 @@
 //! Consumers can depend on the single `raikiri` crate for HTML parsing and
 //! cascaded ComputedValues. This facade re-exports the necessary types,
 //! traits, and functions from sub-crates. Document parsing, cascade
-//! orchestration, and page-stream rendering originate in `raikiri-html`;
+//! orchestration, and [`crate::layout`] returning an owned [`crate::DocumentLayout`]
+//! originate in `raikiri-html`;
 //! this crate only re-exports their entry points. It also supplies PageScene
 //! and PageDrawables for internal dogfooding and validation, while the main
 //! contract for external page-output consumers lives in `raikiri-html` and
