@@ -25,6 +25,8 @@ const GENERICS: [GenericFamily; 6] = [
     GenericFamily::Fantasy,
 ];
 
+pub(crate) mod face;
+
 /// One font file registered under an authored family name.
 pub(crate) struct BundledFace {
     /// CSS family name the face is registered under.
