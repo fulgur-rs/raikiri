@@ -363,7 +363,7 @@ fn listed(entries: &[Entry]) -> Vec<&Entry> {
 
 /// Per entry, in entry order: its keyword enum (for `keywords`), its type
 /// module and its `Longhand` impl.
-pub(crate) fn per_entry_items(entries: &[Entry]) -> TokenStream {
+fn per_entry_items(entries: &[Entry]) -> TokenStream {
     let items = entries.iter().map(|entry| {
         let keyword_enum = keyword_enum(entry);
         let module = type_module(entry);
@@ -374,7 +374,7 @@ pub(crate) fn per_entry_items(entries: &[Entry]) -> TokenStream {
 }
 
 /// `PropertyValue::key()`: the hand-written arms, then one arm per entry.
-pub(crate) fn key_method(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream {
+fn key_method(entries: &[Entry], key_arms: &[TokenStream]) -> TokenStream {
     let variants = variants(entries);
     quote! {
         impl PropertyValue {
@@ -393,7 +393,7 @@ pub(crate) fn key_method(entries: &[Entry], key_arms: &[TokenStream]) -> TokenSt
 }
 
 /// `SpecifiedTable` and `ComputedTable`: one field per entry.
-pub(crate) fn table_structs(entries: &[Entry]) -> TokenStream {
+fn table_structs(entries: &[Entry]) -> TokenStream {
     let fields = fields(entries);
     let specified_docs = entries
         .iter()
@@ -452,7 +452,7 @@ fn equal_fields_method(entries: &[Entry]) -> TokenStream {
 
 /// `impl SpecifiedTable`: `initial`, `inherit_from`, `absolutize`, `apply`
 /// and the test-only `sample` and `equal_fields`.
-pub(crate) fn specified_table_impl(entries: &[Entry]) -> TokenStream {
+fn specified_table_impl(entries: &[Entry]) -> TokenStream {
     let variants = variants(entries);
     let fields = fields(entries);
     let projections = projections(entries);
@@ -521,7 +521,7 @@ pub(crate) fn specified_table_impl(entries: &[Entry]) -> TokenStream {
 
 /// `impl ComputedTable`: `initial` and the test-only `sample` and
 /// `equal_fields`.
-pub(crate) fn computed_table_impl(entries: &[Entry]) -> TokenStream {
+fn computed_table_impl(entries: &[Entry]) -> TokenStream {
     let fields = fields(entries);
     let projections = projections(entries);
     let cx = local("cx");
@@ -559,7 +559,7 @@ pub(crate) fn computed_table_impl(entries: &[Entry]) -> TokenStream {
 }
 
 /// `longhand_page_absolutize`: `lift(compute(value))` per entry.
-pub(crate) fn page_absolutize_fn(entries: &[Entry]) -> TokenStream {
+fn page_absolutize_fn(entries: &[Entry]) -> TokenStream {
     let variants = variants(entries);
     let projections = projections(entries);
     let value = local("value");
@@ -591,7 +591,7 @@ pub(crate) fn page_absolutize_fn(entries: &[Entry]) -> TokenStream {
 }
 
 /// The read-only `Deref` from the host's value structs to the tables.
-pub(crate) fn deref_impls() -> TokenStream {
+fn deref_impls() -> TokenStream {
     quote! {
         impl ::core::ops::Deref for crate::specified::SpecifiedValues {
             type Target = SpecifiedTable;
@@ -609,7 +609,7 @@ pub(crate) fn deref_impls() -> TokenStream {
 }
 
 /// `LONGHAND_NAMES`.
-pub(crate) fn longhand_names_const(entries: &[Entry]) -> TokenStream {
+fn longhand_names_const(entries: &[Entry]) -> TokenStream {
     let listed_names = listed(entries).into_iter().map(|e| &e.name);
     quote! {
         /// Every longhand name declared in `properties!`, lowercase, in
@@ -619,7 +619,7 @@ pub(crate) fn longhand_names_const(entries: &[Entry]) -> TokenStream {
 }
 
 /// `longhand_value_pat!()`, or nothing without entries.
-pub(crate) fn value_pat_macro(entries: &[Entry]) -> TokenStream {
+fn value_pat_macro(entries: &[Entry]) -> TokenStream {
     let variants = variants(entries);
     let value_pat_name = format_ident!("longhand_value_pat");
     // An or-pattern needs at least one alternative, and no pattern matches
@@ -640,7 +640,7 @@ pub(crate) fn value_pat_macro(entries: &[Entry]) -> TokenStream {
 }
 
 /// The test-only `longhand_samples` and `longhand_sample`.
-pub(crate) fn sample_fns(entries: &[Entry]) -> TokenStream {
+fn sample_fns(entries: &[Entry]) -> TokenStream {
     let variants = variants(entries);
     let projections = projections(entries);
     let key = local("key");
@@ -666,7 +666,7 @@ pub(crate) fn sample_fns(entries: &[Entry]) -> TokenStream {
 }
 
 /// The test-only `longhand_specified_residue`: one arm per entry.
-pub(crate) fn specified_residue_fn(entries: &[Entry]) -> TokenStream {
+fn specified_residue_fn(entries: &[Entry]) -> TokenStream {
     let value = local("value");
     let v = local("v");
     let other = local("other");
@@ -694,7 +694,7 @@ pub(crate) fn specified_residue_fn(entries: &[Entry]) -> TokenStream {
 
 /// The test-only registry callbacks `with_longhand_samples!` and
 /// `with_longhand_variants!`.
-pub(crate) fn registry_macros(entries: &[Entry]) -> TokenStream {
+fn registry_macros(entries: &[Entry]) -> TokenStream {
     let variants = variants(entries);
     quote! {
         /// Invokes `$cb! { <hand entries> Variant => sample, ... }` with every
@@ -724,7 +724,7 @@ pub(crate) fn registry_macros(entries: &[Entry]) -> TokenStream {
 }
 
 /// `longhand_key_for_name`: name lookup over the listed names.
-pub(crate) fn name_lookup_fn(entries: &[Entry]) -> TokenStream {
+fn name_lookup_fn(entries: &[Entry]) -> TokenStream {
     let listed = listed(entries);
     let listed_names = listed.iter().map(|e| &e.name);
     let listed_variants = listed.iter().map(|e| &e.variant);
@@ -744,7 +744,7 @@ pub(crate) fn name_lookup_fn(entries: &[Entry]) -> TokenStream {
 }
 
 /// `parse_longhand_value`: parse dispatch over the listed names.
-pub(crate) fn parse_dispatch_fn(entries: &[Entry]) -> TokenStream {
+fn parse_dispatch_fn(entries: &[Entry]) -> TokenStream {
     let listed = listed(entries);
     let listed_names = listed.iter().map(|e| &e.name);
     let listed_variants = listed.iter().map(|e| &e.variant);
