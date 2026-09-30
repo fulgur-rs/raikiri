@@ -4,7 +4,7 @@ fn waiting(document: &raikiri_dom::Document) -> bool {
     let mut stack = vec![document.root_index()];
     while let Some(id) = stack.pop() {
         let Some(node) = document.get_node(id) else {
-            continue;
+            continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
         };
         if node.tag_name() == Some("html") {
             return node.attribute("class").is_some_and(|classes| {
@@ -45,6 +45,7 @@ fn serialize(
             "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\">"
         }
         raikiri_dom::QuirksMode::Quirks => "",
+        // cov:ignore: QuirksMode is non_exhaustive with only NoQuirks, LimitedQuirks, and Quirks handled above; this arm is for future variants.
         _ => {
             return Err(ReftestError::RaikiriRender(
                 "unsupported dynamic document mode".into(),
@@ -127,3 +128,6 @@ pub(super) fn prepare(
         serialize(runtime.document(), &report)
     }
 }
+
+#[cfg(test)]
+mod tests;

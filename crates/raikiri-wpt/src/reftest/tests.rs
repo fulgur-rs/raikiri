@@ -951,3 +951,59 @@ fn reference_query_and_fragment_control_dynamic_rendering_and_keyed_fuzzy() {
         assert!(matches!(result.outcome, TestOutcome::Pass));
     }
 }
+
+#[test]
+fn compare_documents_wrapper_reports_identical_pages_as_matched() {
+    let image = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0, 255],
+    };
+    let left = RenderedDocument {
+        pages: vec![image.clone()],
+    };
+    let right = RenderedDocument { pages: vec![image] };
+    let diff = compare_documents(&left, &right, Tolerance::EXACT);
+    assert!(diff.matched);
+    assert_eq!(diff.mismatched_pixels, 0);
+    assert_eq!(diff.left_pages, 1);
+    assert_eq!(diff.right_pages, 1);
+}
+
+#[test]
+fn dynamic_prepare_rejects_relative_path_needing_absolute_file_url() {
+    let html = "<!DOCTYPE html><html class='reftest-wait'><body></body></html>";
+    let relative = std::path::Path::new("relative/test.html");
+    let error = dynamic::prepare(html, relative, "", ReftestConfig::default())
+        .expect_err("dynamic reftest needs an absolute path for its file URL");
+    assert!(
+        format!("{error:?}").contains("absolute path"),
+        "unexpected dynamic path error: {error:?}"
+    );
+}
+
+#[test]
+fn fuzzy_compare_treats_truncated_buffer_as_mismatch() {
+    let pair = ReftestPair {
+        test: PathBuf::from("/virtual/test.html"),
+        reference: PathBuf::from("/virtual/ref.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let fuzzy = fuzzy::metadata("<meta name='fuzzy' content='0;0'>", &pair)
+        .unwrap()
+        .unwrap();
+    let full = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0, 255],
+    };
+    let truncated = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0],
+    };
+    let diff = fuzzy::compare(&full, &truncated, fuzzy);
+    assert!(!diff.matched);
+    assert_eq!(diff.mismatched_pixels, diff.total_pixels);
+}

@@ -414,3 +414,50 @@ fn named_window_property_precedes_object_prototype() {
         "element.remove(); typeof window.toString === 'function'",
     );
 }
+
+#[test]
+fn named_nodes_rejects_empty_name_without_tree_walk() {
+    let document = Document::new();
+    assert!(super::named::nodes(&document, "").is_empty());
+    let mut runtime = rt();
+    ok(&mut runtime, "typeof window[''] === 'undefined'");
+}
+
+#[test]
+fn named_window_index_key_resolves_numeric_id() {
+    let mut runtime = rt();
+    ok(
+        &mut runtime,
+        "var zero = document.createElement('div'); zero.id = '0'; document.body.appendChild(zero); window[0] === zero && window['0'] === zero && (0 in window)",
+    );
+    ok(
+        &mut runtime,
+        "zero.remove(); typeof window[0] === 'undefined' && !(0 in window)",
+    );
+}
+
+#[test]
+fn named_window_symbol_keys_fall_through_to_target() {
+    let mut runtime = rt();
+    ok(
+        &mut runtime,
+        "typeof window[Symbol('namedSymbol')] === 'undefined'",
+    );
+    ok(&mut runtime, "!(Symbol('namedHas') in window)");
+}
+
+#[test]
+fn named_install_reports_when_global_is_non_extensible() {
+    let mut context = boa_engine::Context::default();
+    context
+        .eval(boa_engine::Source::from_bytes(
+            "Object.preventExtensions(globalThis);",
+        ))
+        .unwrap();
+    let err = super::named::install(&mut context)
+        .expect_err("frozen global should reject the named-properties prototype");
+    assert!(
+        format!("{err:?}").contains("cannot install Window named properties"),
+        "unexpected install error: {err:?}"
+    );
+}

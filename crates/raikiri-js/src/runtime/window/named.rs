@@ -15,7 +15,7 @@ pub(crate) fn nodes(document: &Document, name: &str) -> Vec<usize> {
     let mut stack = vec![document.root_index()];
     while let Some(id) = stack.pop() {
         let Some(node) = document.get_node(id) else {
-            continue;
+            continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
         };
         stack.extend(node.children.iter().rev().copied());
         if document.element_namespace_uri(id) != Some(super::super::interfaces::HTML_NS) {
