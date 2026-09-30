@@ -21,6 +21,11 @@ use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
 pub mod border;
+#[allow(
+    dead_code,
+    reason = "no caller until the paint walk dispatches ifc roots"
+)]
+mod ifc_text;
 mod text;
 mod transform;
 mod walk;

@@ -263,7 +263,7 @@ pub(crate) struct TextPosition {
     pub(crate) shift_y: f32,
 }
 
-fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
+pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     if enabled {
         let size = font_size as f64;
         Vec2::new((0.015125 * size).min(0.3), (0.0121 * size).min(0.3))
@@ -1181,7 +1181,7 @@ fn to_anyrender_glyph(g: ParleyGlyph) -> AnyrenderGlyph {
 ///
 /// Keep this helper separate for a future move to `peniko::AlphaColor`
 /// (it is one line today but easier to find this way).
-fn css_color_to_peniko(c: CssColor) -> Color {
+pub(crate) fn css_color_to_peniko(c: CssColor) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)
 }
 
