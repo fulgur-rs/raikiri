@@ -209,3 +209,91 @@ fn inline_level_siblings_still_disqualify_a_paragraph() {
         assert!(!is_root(&fixture, fixture.root), "{display}");
     }
 }
+
+/// Assert that the paragraph `build` fills under a root styled `css` stays on
+/// the parley path.
+fn assert_stays_on_parley(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
+    let mut fixture = block_fixture(css, build);
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+fn text_only(text: &'static str) -> impl FnOnce(&mut crate::Document, usize) {
+    move |doc, root| {
+        doc.append_text(root, text);
+    }
+}
+
+#[test]
+fn an_rtl_root_stays_on_the_parley_path() {
+    assert_stays_on_parley("direction:rtl", text_only("aa"));
+}
+
+#[test]
+fn an_rtl_character_stays_on_the_parley_path() {
+    assert_stays_on_parley("", text_only("aa \u{05d0}\u{05d1}"));
+}
+
+#[test]
+fn text_shadow_stays_on_the_parley_path() {
+    assert_stays_on_parley("text-shadow:1px 1px red", text_only("aa"));
+}
+
+#[test]
+fn text_emphasis_stays_on_the_parley_path() {
+    assert_stays_on_parley("text-emphasis-style:dot", text_only("aa"));
+}
+
+#[test]
+fn hanging_punctuation_stays_on_the_parley_path() {
+    assert_stays_on_parley("hanging-punctuation:first", text_only("aa"));
+}
+
+#[test]
+fn an_rtl_descendant_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;direction:rtl");
+        doc.append_text(inner, "bb");
+    });
+}
+
+#[test]
+fn a_relatively_positioned_inline_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;position:relative;top:2px");
+        doc.append_text(inner, "bb");
+    });
+}
+
+#[test]
+fn an_inline_with_opacity_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;opacity:0.5");
+        doc.append_text(inner, "bb");
+    });
+}
+
+#[test]
+fn a_plain_ltr_paragraph_is_still_a_root() {
+    let mut fixture = block_fixture("text-decoration:underline;color:red", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn the_root_itself_may_have_opacity_and_a_relative_position() {
+    // Both act on the root's own box, which the walk handles before the lines.
+    let mut fixture = block_fixture("opacity:0.5;position:relative;top:2px", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}

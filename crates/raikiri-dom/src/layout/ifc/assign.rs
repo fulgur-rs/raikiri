@@ -7,6 +7,7 @@ use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
 use raikiri_style::property::{ColumnCountValue, DisplayValue};
+use raikiri_style::property::{Direction, HangingPunctuation, PositionValue, TextEmphasisStyle};
 use raikiri_traits::NodeKind;
 
 fn is_block_container(display: DisplayValue) -> bool {
@@ -52,6 +53,72 @@ fn parent_holds_only_blocks(doc: &Document, cascade: &CascadeResult, parent: usi
             _ => true,
         }
     })
+}
+
+/// Whether `text` holds a character of a right-to-left script or an explicit
+/// bidi control. The painter draws left-to-right lines only.
+fn has_rtl_char(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(
+            c as u32,
+            0x0590..=0x08FF
+                | 0xFB1D..=0xFDFF
+                | 0xFE70..=0xFEFF
+                | 0x10800..=0x10FFF
+                | 0x1E800..=0x1EFFF
+                | 0x200E..=0x200F
+                | 0x202A..=0x202E
+                | 0x2066..=0x2069
+        )
+    })
+}
+
+/// Whether the painter can draw the text of an element (the root or a
+/// descendant): direction, shadows, emphasis and hanging punctuation are not
+/// drawn.
+fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
+    let cv = &cascade.computed[id];
+    cv.direction == Direction::Ltr
+        && cv.text_shadow.is_empty()
+        && matches!(cv.text_emphasis_style, TextEmphasisStyle::None)
+        && cv.hanging_punctuation == HangingPunctuation::None
+}
+
+/// Descendants are drawn without their own boxes: a relative offset moves the
+/// element on the parley path (taffy applies it) and an opacity group wraps it
+/// (the walk pushes a layer per element), neither of which the lines carry.
+fn is_paintable_descendant(cascade: &CascadeResult, id: usize) -> bool {
+    let cv = &cascade.computed[id];
+    is_paintable_element(cascade, id) && cv.position != PositionValue::Relative && cv.opacity >= 1.0
+}
+
+/// Every element and text of the paragraph rooted at `idx` can be drawn.
+fn paragraph_is_paintable(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    if !is_paintable_element(cascade, idx) {
+        return false;
+    }
+    let mut stack = doc.nodes[idx].children.clone();
+    while let Some(id) = stack.pop() {
+        let node = &doc.nodes[id];
+        if !node.is_in_document() {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => {
+                if node.text_content().is_some_and(has_rtl_char) {
+                    return false;
+                }
+            }
+            NodeKind::Element => {
+                if !is_paintable_descendant(cascade, id) {
+                    return false;
+                }
+                stack.extend(node.children.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 fn has_visible_text(doc: &Document, idx: usize) -> bool {
@@ -122,7 +189,7 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
             }
             ancestor = doc.parent_of(id);
         }
-        if blocked || !has_visible_text(doc, idx) {
+        if blocked || !has_visible_text(doc, idx) || !paragraph_is_paintable(doc, cascade, idx) {
             continue;
         }
         let Ok(projected) = project_ifc(
