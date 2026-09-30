@@ -274,6 +274,23 @@ pub(super) const ENTRIES: &[Entry] = &[
         parent: "avoid",
         samples: ["auto", "avoid-page", "avoid-column", "avoid-region", "page"],
     },
+    // The CSS2.1 legacy names have parse arms of their own (`always` maps to
+    // `page`) and store into the break-* fields.
+    entry! {
+        "page-break-before", break_before,
+        parent: "always",
+        samples: ["auto", "avoid", "always", "page", "left", "avoid-page", "bogus"],
+    },
+    entry! {
+        "page-break-after", break_after,
+        parent: "always",
+        samples: ["auto", "avoid", "always", "page", "left", "avoid-page", "bogus"],
+    },
+    entry! {
+        "page-break-inside", break_inside,
+        parent: "avoid",
+        samples: ["auto", "avoid", "avoid-page", "always", "bogus"],
+    },
     entry! {
         "float", float,
         parent: "left",

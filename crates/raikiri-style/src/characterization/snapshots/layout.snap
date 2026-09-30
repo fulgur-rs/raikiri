@@ -2097,6 +2097,181 @@ break-inside: var(--undefined) | serialize | None
 break-inside: var(--undefined) | computed | Auto
 break-inside: var(--undefined) | page | <absent>
 
+page-break-before: <undeclared> | page | <absent>
+page-break-before: <parent always> | computed | Page
+page-break-before: <undeclared> | computed | Auto
+page-break-before: * | cssom | <not a ComputedProperty>
+page-break-before: auto | parse | Some(BreakBefore(Auto))
+page-break-before: auto | serialize | None
+page-break-before: auto | computed | Auto
+page-break-before: auto | page | BreakBefore(Auto)
+page-break-before: avoid | parse | Some(BreakBefore(Avoid))
+page-break-before: avoid | serialize | None
+page-break-before: avoid | computed | Avoid
+page-break-before: avoid | page | BreakBefore(Avoid)
+page-break-before: always | parse | Some(BreakBefore(Page))
+page-break-before: always | serialize | None
+page-break-before: always | computed | Page
+page-break-before: always | page | BreakBefore(Page)
+page-break-before: page | parse | None
+page-break-before: page | serialize | -
+page-break-before: page | computed | Auto
+page-break-before: page | page | <absent>
+page-break-before: left | parse | None
+page-break-before: left | serialize | -
+page-break-before: left | computed | Auto
+page-break-before: left | page | <absent>
+page-break-before: avoid-page | parse | None
+page-break-before: avoid-page | serialize | -
+page-break-before: avoid-page | computed | Auto
+page-break-before: avoid-page | page | <absent>
+page-break-before: bogus | parse | None
+page-break-before: bogus | serialize | -
+page-break-before: bogus | computed | Auto
+page-break-before: bogus | page | <absent>
+page-break-before: inherit | parse | None
+page-break-before: inherit | serialize | -
+page-break-before: inherit | computed | Auto
+page-break-before: inherit | page | <absent>
+page-break-before: initial | parse | None
+page-break-before: initial | serialize | -
+page-break-before: initial | computed | Auto
+page-break-before: initial | page | <absent>
+page-break-before: unset | parse | None
+page-break-before: unset | serialize | -
+page-break-before: unset | computed | Auto
+page-break-before: unset | page | <absent>
+page-break-before: revert | parse | None
+page-break-before: revert | serialize | -
+page-break-before: revert | computed | Auto
+page-break-before: revert | page | <absent>
+page-break-before: revert-layer | parse | None
+page-break-before: revert-layer | serialize | -
+page-break-before: revert-layer | computed | Auto
+page-break-before: revert-layer | page | <absent>
+page-break-before: var(--v) | parse | Some(Deferred(DeferredValue { property: "page-break-before", value: "var(--v)", key: BreakBefore }))
+page-break-before: var(--v) | serialize | None
+page-break-before: var(--v) | computed | Page
+page-break-before: var(--v) | page | BreakBefore(Page)
+page-break-before: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "page-break-before", value: "var(--undefined)", key: BreakBefore }))
+page-break-before: var(--undefined) | serialize | None
+page-break-before: var(--undefined) | computed | Auto
+page-break-before: var(--undefined) | page | <absent>
+
+page-break-after: <undeclared> | page | <absent>
+page-break-after: <parent always> | computed | Page
+page-break-after: <undeclared> | computed | Auto
+page-break-after: * | cssom | <not a ComputedProperty>
+page-break-after: auto | parse | Some(BreakAfter(Auto))
+page-break-after: auto | serialize | None
+page-break-after: auto | computed | Auto
+page-break-after: auto | page | BreakAfter(Auto)
+page-break-after: avoid | parse | Some(BreakAfter(Avoid))
+page-break-after: avoid | serialize | None
+page-break-after: avoid | computed | Avoid
+page-break-after: avoid | page | BreakAfter(Avoid)
+page-break-after: always | parse | Some(BreakAfter(Page))
+page-break-after: always | serialize | None
+page-break-after: always | computed | Page
+page-break-after: always | page | BreakAfter(Page)
+page-break-after: page | parse | None
+page-break-after: page | serialize | -
+page-break-after: page | computed | Auto
+page-break-after: page | page | <absent>
+page-break-after: left | parse | None
+page-break-after: left | serialize | -
+page-break-after: left | computed | Auto
+page-break-after: left | page | <absent>
+page-break-after: avoid-page | parse | None
+page-break-after: avoid-page | serialize | -
+page-break-after: avoid-page | computed | Auto
+page-break-after: avoid-page | page | <absent>
+page-break-after: bogus | parse | None
+page-break-after: bogus | serialize | -
+page-break-after: bogus | computed | Auto
+page-break-after: bogus | page | <absent>
+page-break-after: inherit | parse | None
+page-break-after: inherit | serialize | -
+page-break-after: inherit | computed | Auto
+page-break-after: inherit | page | <absent>
+page-break-after: initial | parse | None
+page-break-after: initial | serialize | -
+page-break-after: initial | computed | Auto
+page-break-after: initial | page | <absent>
+page-break-after: unset | parse | None
+page-break-after: unset | serialize | -
+page-break-after: unset | computed | Auto
+page-break-after: unset | page | <absent>
+page-break-after: revert | parse | None
+page-break-after: revert | serialize | -
+page-break-after: revert | computed | Auto
+page-break-after: revert | page | <absent>
+page-break-after: revert-layer | parse | None
+page-break-after: revert-layer | serialize | -
+page-break-after: revert-layer | computed | Auto
+page-break-after: revert-layer | page | <absent>
+page-break-after: var(--v) | parse | Some(Deferred(DeferredValue { property: "page-break-after", value: "var(--v)", key: BreakAfter }))
+page-break-after: var(--v) | serialize | None
+page-break-after: var(--v) | computed | Page
+page-break-after: var(--v) | page | BreakAfter(Page)
+page-break-after: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "page-break-after", value: "var(--undefined)", key: BreakAfter }))
+page-break-after: var(--undefined) | serialize | None
+page-break-after: var(--undefined) | computed | Auto
+page-break-after: var(--undefined) | page | <absent>
+
+page-break-inside: <undeclared> | page | <absent>
+page-break-inside: <parent avoid> | computed | Avoid
+page-break-inside: <undeclared> | computed | Auto
+page-break-inside: * | cssom | <not a ComputedProperty>
+page-break-inside: auto | parse | Some(BreakInside(Auto))
+page-break-inside: auto | serialize | None
+page-break-inside: auto | computed | Auto
+page-break-inside: auto | page | BreakInside(Auto)
+page-break-inside: avoid | parse | Some(BreakInside(Avoid))
+page-break-inside: avoid | serialize | None
+page-break-inside: avoid | computed | Avoid
+page-break-inside: avoid | page | BreakInside(Avoid)
+page-break-inside: avoid-page | parse | None
+page-break-inside: avoid-page | serialize | -
+page-break-inside: avoid-page | computed | Auto
+page-break-inside: avoid-page | page | <absent>
+page-break-inside: always | parse | None
+page-break-inside: always | serialize | -
+page-break-inside: always | computed | Auto
+page-break-inside: always | page | <absent>
+page-break-inside: bogus | parse | None
+page-break-inside: bogus | serialize | -
+page-break-inside: bogus | computed | Auto
+page-break-inside: bogus | page | <absent>
+page-break-inside: inherit | parse | None
+page-break-inside: inherit | serialize | -
+page-break-inside: inherit | computed | Auto
+page-break-inside: inherit | page | <absent>
+page-break-inside: initial | parse | None
+page-break-inside: initial | serialize | -
+page-break-inside: initial | computed | Auto
+page-break-inside: initial | page | <absent>
+page-break-inside: unset | parse | None
+page-break-inside: unset | serialize | -
+page-break-inside: unset | computed | Auto
+page-break-inside: unset | page | <absent>
+page-break-inside: revert | parse | None
+page-break-inside: revert | serialize | -
+page-break-inside: revert | computed | Auto
+page-break-inside: revert | page | <absent>
+page-break-inside: revert-layer | parse | None
+page-break-inside: revert-layer | serialize | -
+page-break-inside: revert-layer | computed | Auto
+page-break-inside: revert-layer | page | <absent>
+page-break-inside: var(--v) | parse | Some(Deferred(DeferredValue { property: "page-break-inside", value: "var(--v)", key: BreakInside }))
+page-break-inside: var(--v) | serialize | None
+page-break-inside: var(--v) | computed | Avoid
+page-break-inside: var(--v) | page | BreakInside(Avoid)
+page-break-inside: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "page-break-inside", value: "var(--undefined)", key: BreakInside }))
+page-break-inside: var(--undefined) | serialize | None
+page-break-inside: var(--undefined) | computed | Auto
+page-break-inside: var(--undefined) | page | <absent>
+
 float: <undeclared> | page | <absent>
 float: <parent left> | computed | Left
 float: <undeclared> | computed | None

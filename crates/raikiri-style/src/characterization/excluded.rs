@@ -1,13 +1,13 @@
-//! Properties with a `PropertyKey` that the corpus deliberately leaves out.
+//! Supported property names the corpus deliberately does not record.
 //!
 //! The corpus covers the longhands that can move into the `properties!`
-//! table one field per entry. The rows below are shorthands, or longhands
-//! whose value is stored in or computed from more than their own field, so
-//! they stay hand-written and are characterized by their own tests.
+//! table one field per entry. The names below are shorthands, longhands
+//! whose value is stored in or computed from more than their own field, or
+//! aliases; they stay hand-written and are characterized by their own tests.
+//! `meta.rs` checks that every name `parse_value` dispatches on is in the
+//! corpus or in exactly one of these lists.
 
-/// `(property name, reason)`, one row per excluded `PropertyKey`. Aliases of
-/// an excluded key (`inline-size`, logical margins and paddings, ...) need no
-/// row of their own.
+/// `(property name, reason)` for names left out of the corpus.
 pub(super) const EXCLUDED: &[(&str, &str)] = &[
     // Shorthands: expanded into longhands before the cascade, or applied as a
     // group.
@@ -38,6 +38,10 @@ pub(super) const EXCLUDED: &[(&str, &str)] = &[
     ("text-decoration", "shorthand"),
     ("text-emphasis", "shorthand"),
     ("text-spacing", "shorthand"),
+    (
+        "text-wrap",
+        "shorthand of text-wrap-mode and text-wrap-style; shares text-wrap-mode's PropertyKey",
+    ),
     // Longhands stored in a shared aggregate field (`padding`, `margin`,
     // `border`, `outline`, `overflow`), several of them also coupled to a
     // sibling longhand or carrying `ch` provenance.
@@ -73,6 +77,16 @@ pub(super) const EXCLUDED: &[(&str, &str)] = &[
     ("padding-right", "aggregate field with ch provenance"),
     ("padding-bottom", "aggregate field with ch provenance"),
     ("padding-left", "aggregate field with ch provenance"),
+    // Flow-relative names of the aggregate longhands: separate parse arms
+    // that call the physical side's parser and store into its field.
+    ("margin-block-start", "logical alias of margin-top"),
+    ("margin-block-end", "logical alias of margin-bottom"),
+    ("margin-inline-start", "logical alias of margin-left"),
+    ("margin-inline-end", "logical alias of margin-right"),
+    ("padding-block-start", "logical alias of padding-top"),
+    ("padding-block-end", "logical alias of padding-bottom"),
+    ("padding-inline-start", "logical alias of padding-left"),
+    ("padding-inline-end", "logical alias of padding-right"),
     ("outline-width", "aggregate field, coupled to outline-style"),
     ("outline-style", "aggregate field"),
     ("outline-color", "aggregate field"),
@@ -115,4 +129,52 @@ pub(super) const EXCLUDED: &[(&str, &str)] = &[
     ("quotes", "writes quotes_auto as well"),
     ("position", "running() appends to the running templates"),
     ("transform-origin", "two-field value"),
+];
+
+/// `(alias, target)`: legacy or logical names that share the target's parse
+/// arm (`"target" | "alias" => ..` in `parse_value`), so they parse, cascade
+/// and serialize exactly like the target, which is itself in the corpus or in
+/// [`EXCLUDED`]. An alias with a parse arm of its own belongs in the corpus
+/// or in [`EXCLUDED`] instead.
+pub(super) const ALIASES_COVERED_BY_TARGET: &[(&str, &str)] = &[
+    ("word-wrap", "overflow-wrap"),
+    ("inline-size", "width"),
+    ("block-size", "height"),
+];
+
+/// `(property name, reason)` for the names `parse_value` accepts that have
+/// no `PropertyKey`. `meta.rs` checks that this is exactly the current set of
+/// keyless names, so a new one has to be classified here.
+pub(super) const KEYLESS: &[(&str, &str)] = &[
+    (
+        "border-radius",
+        "shorthand; expands into the four corner longhands while parsing",
+    ),
+    (
+        "border-top-left-radius",
+        "longhand stored in the shared border_radius aggregate; keyed only through its variant",
+    ),
+    (
+        "border-top-right-radius",
+        "longhand stored in the shared border_radius aggregate; keyed only through its variant",
+    ),
+    (
+        "border-bottom-right-radius",
+        "longhand stored in the shared border_radius aggregate; keyed only through its variant",
+    ),
+    (
+        "border-bottom-left-radius",
+        "longhand stored in the shared border_radius aggregate; keyed only through its variant",
+    ),
+    ("grid", "shorthand applied as a group in apply_value"),
+    ("grid-area", "shorthand applied as a group in apply_value"),
+    ("grid-gap", "legacy name of the gap shorthand"),
+    (
+        "grid-row-gap",
+        "legacy name of row-gap with its own arm calling row-gap's parser",
+    ),
+    (
+        "grid-column-gap",
+        "legacy name of column-gap with its own arm calling column-gap's parser",
+    ),
 ];
