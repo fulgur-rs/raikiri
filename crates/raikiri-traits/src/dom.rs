@@ -199,9 +199,10 @@ pub trait Node {
 
 /// DOM element abstraction.
 ///
-/// Added `inline_style_source` / `namespace_uri` / `id` / `has_class` / `attr`.
-/// Attribute lookup is limited to null-namespace attributes (namespaced
-/// attributes such as xlink:href are deferred).
+/// Added `inline_style_source` / `namespace_uri` / `id` / `has_class` /
+/// `attr` / `attr_ns`. Null-namespace lookup uses [`Element::attr`];
+/// namespace-qualified lookup (for example SVG `xlink:href`) uses
+/// [`Element::attr_ns`].
 ///
 /// **Lifetime elision**: This was formerly `Element<'a>`, but the lifetime
 /// was dropped because method signatures did not use `'a`.
@@ -294,6 +295,21 @@ pub trait Element {
         } else {
             None
         }
+    }
+
+    /// Look up a namespace-qualified attribute by namespace URI and local name.
+    ///
+    /// DOM `getAttributeNS` semantics: matching is exact on the namespace URI
+    /// and local name, with no ASCII case folding. For example SVG
+    /// `xlink:href` is `namespace = "http://www.w3.org/1999/xlink"`,
+    /// `local = "href"`, while SVG2 plain `href` remains null-namespace and
+    /// is read through [`Element::attr`]. The separate `style` slot is
+    /// null-namespace only, so a namespaced `style` lookup returns `None`.
+    /// Renderer-neutral: the value is a plain string slice with no SVG or
+    /// renderer types. The default implementation returns `None` (no
+    /// namespaced storage); DOM backends with namespace support override it.
+    fn attr_ns(&self, _namespace: &str, _local: &str) -> Option<&str> {
+        None
     }
 }
 

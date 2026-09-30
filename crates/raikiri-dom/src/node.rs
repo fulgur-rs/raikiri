@@ -656,6 +656,8 @@ impl Node {
     /// The `style` attribute is stored separately from the ordinary attribute
     /// vector and is exposed here as the same raw value for consumers that need
     /// a small DOM-side resource hint (for example a replaced image `src`).
+    /// Namespaced attributes (for example SVG `xlink:href`) are not visible
+    /// here; use [`Node::attribute_ns`] for those.
     #[inline]
     pub fn attribute(&self, local: &str) -> Option<&str> {
         let NodeData::Element(element) = &self.data else {
@@ -668,6 +670,33 @@ impl Node {
             .attributes
             .iter()
             .find(|attribute| attribute.namespace.is_none() && attribute.local == local)
+            .map(|attribute| attribute.value.as_str())
+    }
+
+    /// Return a namespace-qualified element attribute value, if present.
+    ///
+    /// Lookup is by namespace URI and local name (DOM `getAttributeNS`
+    /// semantics), not by prefix. For example SVG `xlink:href` is
+    /// `namespace = "http://www.w3.org/1999/xlink"`, `local = "href"`.
+    /// Matching is exact; unlike HTML null-namespace lookup, no ASCII
+    /// case folding applies. The separate `style` slot is null-namespace
+    /// only, so this always returns `None` for namespaced `style` lookups.
+    /// Returns `None` for non-elements and when no such attribute exists.
+    /// Renderer-neutral: the value is a plain string slice with no SVG or
+    /// renderer types. See [`Node::attribute`] for null-namespace lookup and
+    /// [`crate::Document::serialize_svg_subtree`] for whole-subtree XML
+    /// source reconstruction.
+    #[inline]
+    pub fn attribute_ns(&self, namespace: &str, local: &str) -> Option<&str> {
+        let NodeData::Element(element) = &self.data else {
+            return None;
+        };
+        element
+            .attributes
+            .iter()
+            .find(|attribute| {
+                attribute.namespace.as_deref() == Some(namespace) && attribute.local == local
+            })
             .map(|attribute| attribute.value.as_str())
     }
 
