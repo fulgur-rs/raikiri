@@ -8,7 +8,7 @@ use crate::fonts::{
     FONT_SIZE_CAP, FontError, FontReadReject, FontWarn, FontWarnObserver, PREFERRED_FIRST,
     emit_warn, read_bounded_font_file, read_reject_to_warn, walk_fonts,
 };
-use shodo::font::{FontCollection, FontFaceDescriptor, FontOptions};
+use shodo::font::{FontCollection, FontOptions};
 use shodo::limits::Limits;
 use shodo::style::GenericFamily;
 use skrifa::string::StringId;
@@ -28,6 +28,7 @@ const GENERICS: [GenericFamily; 6] = [
 pub(crate) mod face;
 
 /// One font file registered under an authored family name.
+#[cfg(test)]
 pub(crate) struct BundledFace {
     /// CSS family name the face is registered under.
     pub(crate) family: String,
@@ -66,6 +67,7 @@ fn map_generics(collection: &FontCollection, families: &[String]) {
 ///
 /// # Errors
 /// An empty list, a face shodo rejects, or a resource limit.
+#[cfg(test)]
 pub(crate) fn bundled_collection(
     limits: &Limits,
     faces: Vec<BundledFace>,
@@ -89,9 +91,9 @@ pub(crate) fn bundled_collection(
         collection.register_face(
             face.bytes,
             0,
-            FontFaceDescriptor {
+            shodo::font::FontFaceDescriptor {
                 family: family.clone(),
-                ..FontFaceDescriptor::default()
+                ..shodo::font::FontFaceDescriptor::default()
             },
         )?;
         if !families.contains(&family) {

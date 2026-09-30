@@ -65,10 +65,6 @@ fn style_dimension_length(value: Dimension) -> Option<f32> {
 }
 
 mod bridge;
-#[allow(
-    dead_code,
-    reason = "the inline formatting context path is wired into layout in a later step"
-)]
 pub(crate) mod ifc;
 mod inline_text;
 mod multicol;

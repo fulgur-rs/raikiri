@@ -50,8 +50,6 @@ pub(crate) struct ProjectedIfc {
     pub(crate) options: LineOptions,
     /// The block's raw `text-indent`, to be resolved against its width.
     pub(crate) indent: ComputedTextIndent,
-    /// Node id of the block root.
-    pub(crate) root: usize,
     /// Children laid out as boxes of their own, in document order.
     pub(crate) boxes: Vec<IfcBox>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
@@ -436,7 +434,6 @@ pub(crate) fn project_ifc(
         paragraph,
         options,
         indent,
-        root,
         boxes,
         rtl: root_cv.direction == Direction::Rtl,
     })

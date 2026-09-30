@@ -42,6 +42,8 @@ pub(crate) fn resolve_indent(indent: ComputedTextIndent, width: f32) -> f32 {
     }
 }
 
+/// Min- and max-content widths of a paragraph without boxes.
+#[cfg(test)]
 pub(crate) fn intrinsic_widths(root: &IfcRoot, cx: &mut LayoutContext) -> (f32, f32) {
     intrinsic_widths_with(root, cx, &AtomicIntrinsics::EMPTY)
 }
