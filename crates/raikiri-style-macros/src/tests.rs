@@ -390,10 +390,14 @@ fn computed_key_mistakes() {
         /// D.
         "d-prop" => DProp: L { initial: L::Z, inherited: no, parse: p, via: to_px, sample: L::O, residue: none },
         /// E.
-        "e-prop" => EProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, compute: to_px, lift: l, sample: L::O, residue: none },"#,
+        "e-prop" => EProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, compute: to_px, lift: l, sample: L::O, residue: none },
+        /// F: `via:` in place of `compute:` is the one error.
+        "f-prop" => FProp: L { initial: L::Z, inherited: no, parse: p, computed: Px, via: to_px, sample: L::O, residue: none },
+        /// G: a `compute:` after `via:` is not a duplicate.
+        "g-prop" => GProp: L { initial: L::Z, inherited: no, parse: p, via: to_px, compute: to_px, computed: Px, sample: L::O, residue: none },"#,
     );
     let (expanded, errors) = expand(&src);
-    assert_eq!(errors.len(), 4, "{}", render(&src, &errors));
+    assert_eq!(errors.len(), 6, "{}", render(&src, &errors));
     insta::assert_snapshot!("computed_key_mistakes", render(&src, &errors));
     assert_eq!(
         enum_variants(&expanded, "PropertyValue"),
@@ -404,7 +408,9 @@ fn computed_key_mistakes() {
             "BProp",
             "CProp",
             "DProp",
-            "EProp"
+            "EProp",
+            "FProp",
+            "GProp"
         ]
     );
     // A computed type without its hook keeps the type and expands the hook

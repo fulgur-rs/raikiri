@@ -389,13 +389,20 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
             errors,
         ),
         "parse" => store(&mut entry.parse, k, parse_fn_path(content), content, errors),
-        "compute" => store(
-            &mut entry.compute,
-            k,
-            parse_fn_path(content),
-            content,
-            errors,
-        ),
+        "compute" => {
+            // A `via:` key stands in for a missing `compute:` (see below);
+            // a real `compute:` after it replaces the stand-in.
+            if matches!(&entry.compute, Slot::Invalid(stand_in) if stand_in == "via") {
+                entry.compute = Slot::Absent;
+            }
+            store(
+                &mut entry.compute,
+                k,
+                parse_fn_path(content),
+                content,
+                errors,
+            )
+        }
         "computed" => store(
             &mut entry.computed,
             k,
@@ -427,6 +434,12 @@ fn parse_key(content: ParseStream, entry: &mut RawEntry, errors: &mut Errors) ->
                 key.span(),
                 "`via` is not a key; name the hook with `compute: <fn>`, and a computed type that differs from the specified one with `computed: Type`",
             ));
+            // The entry did name a hook, just under the wrong key: mark
+            // `compute:` as malformed so that `computed: Type` is not also
+            // reported as missing its hook.
+            if entry.compute.is_absent() {
+                entry.compute = Slot::Invalid(key.clone());
+            }
             skip_to_next_key(content);
             false
         }
