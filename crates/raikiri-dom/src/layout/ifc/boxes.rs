@@ -137,7 +137,14 @@ fn run_boxes(
         let base = line_space(ctx, edges.0, top_edge, width, y, assumed_height);
         let space = shorten(base, &tentative);
         let mut constraint = LineConstraint::new(space.width);
-        constraint.inline_start_offset = space.start;
+        // `space` is measured from the content box's left edge; shodo measures
+        // the offset from the inline-start edge, which is the right edge in a
+        // right-to-left paragraph.
+        constraint.inline_start_offset = if root.rtl {
+            width - (space.start + space.width)
+        } else {
+            space.start
+        };
         constraint.block_offset = y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float

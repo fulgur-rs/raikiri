@@ -726,3 +726,150 @@ fn a_shadow_of_an_inline_element_uses_that_elements_color() {
     assert_eq!(runs_in_order(&off).len(), 4, "a shadow and a glyph each");
     assert_eq!(runs_in_order(&on), runs_in_order(&off));
 }
+
+/// Whole-pixel x of every drawn glyph, sorted. Ahem's space glyph has no
+/// outline and is left out: at the end of a wrapped right-to-left line the
+/// inline engine hangs it at the line's left end, past the content, while the
+/// parley path puts it at the right edge.
+fn sorted_xs(scene: &Scene) -> Vec<i64> {
+    let mut xs: Vec<i64> = ink(scene)
+        .iter()
+        .filter(|g| g.0 != AHEM_SPACE_GLYPH)
+        .map(|g| g.1 / 64)
+        .collect();
+    xs.sort_unstable();
+    xs
+}
+
+#[test]
+fn rtl_lines_place_glyphs_like_the_parley_path() {
+    let cases = [
+        ("direction:rtl;width:100px", "abc"),
+        ("direction:rtl;width:50px", "abc def"),
+        ("direction:rtl;text-align:left;width:100px", "abc"),
+        ("direction:rtl;width:100px;text-align:center", "abc"),
+        // Hebrew letters have no glyph in Ahem, so every one draws the same
+        // notdef box: the positions of the boxes are still compared, but not
+        // the order of the letters inside the right-to-left run.
+        ("width:100px", "abc \u{05d0}\u{05d1}\u{05d2}"),
+        ("direction:rtl;width:100px", "\u{05d0}\u{05d1} abc"),
+        // The content box does not start at the page's left edge, and its
+        // width is not authored.
+        ("direction:rtl;margin:0 30px", "abc def"),
+    ];
+    for (css, text) in cases {
+        let (off, on) = off_and_on(css, |doc, root| {
+            doc.append_text(root, text);
+        });
+        assert!(!ink(&off).is_empty(), "{css}");
+        assert_eq!(sorted_xs(&on), sorted_xs(&off), "{css}");
+    }
+}
+
+#[test]
+fn an_rtl_underline_spans_the_same_extent_as_the_parley_path() {
+    let (off, on) = off_and_on(
+        "direction:rtl;width:100px;text-decoration:underline",
+        |doc, root| {
+            doc.append_text(root, "abc");
+        },
+    );
+    assert!(!decoration_fills(&off).is_empty());
+    assert_eq!(decoration_fills(&on), decoration_fills(&off));
+}
+
+#[test]
+fn an_rtl_text_indent_is_taken_from_the_right_edge() {
+    // CSS Text 3 §7.1: the indent is at the start side, the right in a
+    // right-to-left line. The start is at 100 - 20 = 80, so the three 10px
+    // letters end there: a 50, b 60, c 70. The parley path does not indent a
+    // run it does not re-break, so this is hand-computed, not an oracle.
+    let (mut doc, cascade, root) =
+        paragraph("direction:rtl;width:100px;text-indent:20px", |doc, root| {
+            doc.append_text(root, "abc");
+        });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    assert_eq!(sorted_xs(&painted(&doc, &cascade)), vec![50, 60, 70]);
+}
+
+/// `html > body > div(width:100px) > [empty float div, root div]`, Ahem 10px.
+fn beside_float(
+    float_css: &str,
+    root_css: &str,
+    text: &'static str,
+) -> (Document, raikiri_style::CascadeResult, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some(format!("display:block;{float_css}").as_str()),
+    );
+    let root = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some(format!("display:block;{root_css}").as_str()),
+    );
+    doc.append_text(root, text);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root)
+}
+
+#[test]
+fn an_rtl_paragraph_beside_a_left_float_ends_at_the_right_edge() {
+    let (mut doc, cascade, root) =
+        beside_float("float:left;width:30px;height:10px", "direction:rtl", "ab");
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    // The line spans 30..100 and the two glyphs end at the right edge.
+    assert_eq!(sorted_xs(&painted(&doc, &cascade)), vec![80, 90]);
+}
+
+#[test]
+fn an_rtl_paragraph_beside_a_right_float_starts_before_it() {
+    let (mut doc, cascade, root) =
+        beside_float("float:right;width:30px;height:10px", "direction:rtl", "ab");
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    // The line spans 0..70 and the glyphs end at the float's left edge.
+    assert_eq!(sorted_xs(&painted(&doc, &cascade)), vec![50, 60]);
+}
+
+#[test]
+fn an_ltr_paragraph_beside_a_left_float_is_unchanged() {
+    let (mut doc, cascade, root) =
+        beside_float("float:left;width:30px;height:10px", "direction:ltr", "ab");
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    assert_eq!(sorted_xs(&painted(&doc, &cascade)), vec![30, 40]);
+}
+
+#[test]
+fn an_rtl_line_ends_at_the_right_edge_of_the_content_box() {
+    // Padding 5px left and 15px right around a 100px content box: the content
+    // box spans 5..105, so `abc` ends at 105 (a 75, b 85, c 95). The parley
+    // path aligns the run 20px further right, past the content box, for
+    // `text-align: right` in a left-to-right paragraph as well, so this is
+    // hand-computed, not an oracle.
+    let (mut doc, cascade, root) = paragraph(
+        "direction:rtl;padding:0 15px 0 5px;width:100px",
+        |doc, root| {
+            doc.append_text(root, "abc");
+        },
+    );
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    assert_eq!(sorted_xs(&painted(&doc, &cascade)), vec![75, 85, 95]);
+}

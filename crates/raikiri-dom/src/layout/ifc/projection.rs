@@ -6,15 +6,17 @@
 //! placeholder and a block a break between lines, and all three are laid out
 //! as boxes of their own. Anything the inline path cannot place yet
 //! (positioned boxes, blocks inside inline elements or with vertical margins,
-//! form controls and other replaced elements, generated content) is rejected
-//! with [`IfcError::Unsupported`] rather than approximated.
+//! boxes in right-to-left paragraphs, form controls and other replaced
+//! elements, generated content) is rejected with [`IfcError::Unsupported`]
+//! rather than approximated.
 
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::style;
 use crate::Document;
 use raikiri_style::property::{
-    ClearValue, ContentComponent, DisplayValue, FloatValue, OverflowValue, PositionValue,
+    ClearValue, ContentComponent, Direction, DisplayValue, FloatValue, OverflowValue,
+    PositionValue, UnicodeBidi,
 };
 use raikiri_style::{
     CascadeResult, ComputedLengthPercentageOrAuto, ComputedTextIndent, ComputedValues, PseudoElem,
@@ -52,6 +54,8 @@ pub(crate) struct ProjectedIfc {
     pub(crate) root: usize,
     /// Children laid out as boxes of their own, in document order.
     pub(crate) boxes: Vec<IfcBox>,
+    /// The root's `direction` is `rtl`: its lines start at the right edge.
+    pub(crate) rtl: bool,
 }
 
 /// The effective `lang` of `node`: the nearest ancestor-or-self `lang`
@@ -184,6 +188,67 @@ fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     Ok(())
 }
 
+/// Whether `text` holds a character of a right-to-left script or an explicit
+/// bidi control.
+fn has_rtl_char(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(
+            c as u32,
+            0x0590..=0x08FF
+                | 0xFB1D..=0xFDFF
+                | 0xFE70..=0xFEFF
+                | 0x10800..=0x10FFF
+                | 0x1E800..=0x1EFFF
+                | 0x200E..=0x200F
+                | 0x202A..=0x202E
+                | 0x2066..=0x2069
+        )
+    })
+}
+
+/// Right-to-left content of a paragraph, outside its boxes (a box lays out
+/// its own content).
+#[derive(Clone, Copy, Default)]
+struct BidiContent {
+    /// The root or an inline element has `direction: rtl`, or some text holds
+    /// a right-to-left character or an explicit bidi control.
+    rtl: bool,
+    /// The root or an inline element has a `unicode-bidi` value other than
+    /// `normal`.
+    unicode_bidi: bool,
+}
+
+fn bidi_content(doc: &Document, cascade: &CascadeResult, root: usize) -> BidiContent {
+    let mut found = BidiContent::default();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        let Some(node) = doc.get_node(id) else {
+            continue;
+        };
+        if !node.is_in_document() {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => {
+                found.rtl |= node.text_content().is_some_and(has_rtl_char);
+            }
+            NodeKind::Element => {
+                if id != root && box_kind(cascade, doc, id).is_some() {
+                    continue;
+                }
+                let Some(cv) = cascade.computed.get(id) else {
+                    continue;
+                };
+                found.rtl |= cv.direction != Direction::Ltr;
+                found.unicode_bidi |= cv.unicode_bidi != UnicodeBidi::Normal;
+                stack.extend(node.children.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 enum Step {
     /// A node to project, and whether it sits inside an inline element.
     Enter(usize, bool),
@@ -219,6 +284,16 @@ pub(crate) fn project_ifc(
         });
     }
     reject_generated_content(cascade, root)?;
+    let bidi = bidi_content(doc, cascade, root);
+    // Without right-to-left content nothing is reordered, so `unicode-bidi`
+    // changes nothing. With it, the parley path orders the text without
+    // reading `unicode-bidi` and so differs for every other value.
+    if bidi.rtl && bidi.unicode_bidi {
+        return Err(IfcError::Unsupported {
+            node: root,
+            reason: "unicode-bidi is not read by the parley path, which orders right-to-left text differently",
+        });
+    }
 
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
@@ -270,6 +345,11 @@ pub(crate) fn project_ifc(
                 let tag = node.tag_name().unwrap_or_default();
                 if UNSUPPORTED_REPLACED_TAGS.contains(&tag) {
                     return Err(unsupported("this replaced element is not sized yet"));
+                }
+                if bidi.rtl && box_kind(cascade, doc, id).is_some() {
+                    return Err(unsupported(
+                        "boxes in right-to-left paragraphs are not placed yet",
+                    ));
                 }
                 if cv.float != FloatValue::None {
                     supported_float(cv, id)?;
@@ -358,6 +438,7 @@ pub(crate) fn project_ifc(
         indent,
         root,
         boxes,
+        rtl: root_cv.direction == Direction::Rtl,
     })
 }
 

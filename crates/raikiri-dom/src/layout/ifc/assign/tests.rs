@@ -2,6 +2,9 @@ use super::*;
 use crate::layout::ifc::test_support::{ahem_fonts, block_fixture, span};
 use shodo::limits::Limits;
 
+/// A paragraph builder for table-driven cases.
+type Build = fn(&mut crate::Document, usize);
+
 fn enable(fixture: &mut crate::layout::ifc::test_support::Fixture) {
     fixture
         .doc
@@ -47,7 +50,6 @@ fn without_the_switch_no_root_is_assigned() {
 
 #[test]
 fn ineligible_shapes_stay_on_the_parley_path() {
-    type Build = fn(&mut crate::Document, usize);
     let cases: [(&str, Build); 3] = [
         ("flex child", |doc, root| {
             doc.append_text(root, "aa");
@@ -221,13 +223,117 @@ fn text_only(text: &'static str) -> impl FnOnce(&mut crate::Document, usize) {
 }
 
 #[test]
-fn an_rtl_root_stays_on_the_parley_path() {
-    assert_stays_on_parley("direction:rtl", text_only("aa"));
+fn an_rtl_paragraph_is_an_ifc_root() {
+    for (css, text) in [("direction:rtl", "aa"), ("", "aa \u{05d0}\u{05d1}")] {
+        let mut fixture = block_fixture(css, |doc, root| {
+            doc.append_text(root, text);
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{css:?} {text:?}");
+    }
 }
 
 #[test]
-fn an_rtl_character_stays_on_the_parley_path() {
-    assert_stays_on_parley("", text_only("aa \u{05d0}\u{05d1}"));
+fn an_rtl_paragraph_with_a_box_stays_on_the_parley_path() {
+    // Float, atomic and block-child placement is written for left-to-right lines.
+    let cases: [(&str, Build); 3] = [
+        ("float", |doc, root| {
+            doc.append_text(root, "aa ");
+            let f = span(doc, root, "float:left;width:20px;height:10px");
+            doc.append_text(f, "x");
+        }),
+        ("inline-block", |doc, root| {
+            doc.append_text(root, "aa ");
+            let b = span(doc, root, "display:inline-block;width:20px;height:10px");
+            doc.append_text(b, "x");
+        }),
+        ("block child", |doc, root| {
+            doc.append_text(root, "aa");
+            let b = span(doc, root, "display:block");
+            doc.append_text(b, "x");
+        }),
+    ];
+    for (name, build) in cases {
+        let mut fixture = block_fixture("direction:rtl", build);
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(!is_root(&fixture, fixture.root), "{name}");
+    }
+}
+
+#[test]
+fn a_box_in_a_paragraph_with_rtl_characters_stays_on_the_parley_path() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "\u{05d0} ");
+        let b = span(doc, root, "display:inline-block;width:20px;height:10px");
+        doc.append_text(b, "x");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn right_to_left_content_inside_a_box_does_not_make_the_paragraph_rtl() {
+    // The box lays out its own content; the paragraph's lines stay left to
+    // right.
+    let cases: [(&str, Build); 2] = [
+        ("rtl text in a float", |doc, root| {
+            doc.append_text(root, "aa ");
+            let f = span(doc, root, "float:left;width:20px;height:10px");
+            doc.append_text(f, "\u{05d0}");
+        }),
+        ("an rtl inline-block", |doc, root| {
+            doc.append_text(root, "aa ");
+            let b = span(
+                doc,
+                root,
+                "display:inline-block;direction:rtl;unicode-bidi:bidi-override;width:20px;height:10px",
+            );
+            doc.append_text(b, "x");
+        }),
+    ];
+    for (name, build) in cases {
+        let mut fixture = block_fixture("", build);
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{name}");
+    }
+}
+
+#[test]
+fn an_rtl_paragraph_with_a_unicode_bidi_value_stays_on_the_parley_path() {
+    // The parley path does not read `unicode-bidi`, so its order differs from
+    // the inline engine's for every value but `normal`.
+    for value in [
+        "bidi-override",
+        "isolate-override",
+        "embed",
+        "isolate",
+        "plaintext",
+    ] {
+        let css = format!("direction:rtl;unicode-bidi:{value}");
+        assert_stays_on_parley(&css, text_only("aa"));
+        // On a descendant of a right-to-left paragraph too.
+        assert_stays_on_parley("direction:rtl", |doc, root| {
+            doc.append_text(root, "aa ");
+            let inner = span(doc, root, &format!("display:inline;unicode-bidi:{value}"));
+            doc.append_text(inner, "bb");
+        });
+    }
+}
+
+#[test]
+fn a_unicode_bidi_value_in_a_left_to_right_paragraph_is_still_a_root() {
+    // Nothing is reordered without right-to-left content, so the value has no
+    // effect on either path.
+    let mut fixture = block_fixture("unicode-bidi:bidi-override", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -270,12 +376,15 @@ fn text_emphasis_keeps_a_paragraph_an_ifc_root() {
 }
 
 #[test]
-fn an_rtl_descendant_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn an_rtl_inline_keeps_the_paragraph_an_ifc_root() {
+    let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;direction:rtl");
         doc.append_text(inner, "bb");
     });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -704,6 +813,25 @@ fn a_block_child_without_a_decoration_is_a_root() {
         let block = span(doc, root, "display:block;height:10px");
         doc.append_text(block, "bb");
     });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn right_to_left_text_outside_the_document_is_ignored() {
+    // A child that is not in the document is not laid out, so its text does
+    // not make the paragraph right to left.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let b = span(doc, root, "display:inline-block;width:20px;height:10px");
+        doc.append_text(b, "x");
+    });
+    let root = fixture.root;
+    let detached = fixture.doc.append_text(root, "\u{05d0}");
+    fixture.doc.nodes[detached]
+        .flags
+        .remove(NodeFlags::IS_IN_DOCUMENT);
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));

@@ -11,8 +11,7 @@ use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
 use raikiri_style::property::{ColumnCountValue, DisplayValue, FloatValue};
 use raikiri_style::property::{
-    Direction, PositionValue, TextDecorationLine, TextTransform, VerticalAlign, VisualBox,
-    WordSpaceTransform,
+    PositionValue, TextDecorationLine, TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
 };
 use raikiri_traits::NodeKind;
 
@@ -61,24 +60,6 @@ fn parent_holds_only_blocks(doc: &Document, cascade: &CascadeResult, parent: usi
     })
 }
 
-/// Whether `text` holds a character of a right-to-left script or an explicit
-/// bidi control. The painter draws left-to-right lines only.
-fn has_rtl_char(text: &str) -> bool {
-    text.chars().any(|c| {
-        matches!(
-            c as u32,
-            0x0590..=0x08FF
-                | 0xFB1D..=0xFDFF
-                | 0xFE70..=0xFEFF
-                | 0x10800..=0x10FFF
-                | 0x1E800..=0x1EFFF
-                | 0x200E..=0x200F
-                | 0x202A..=0x202E
-                | 0x2066..=0x2069
-        )
-    })
-}
-
 /// Whether a `text-transform` value includes `full-width`. shodo's mapping
 /// covers fewer characters than the parley path, so such text is not handed
 /// to the inline engine.
@@ -97,12 +78,10 @@ fn has_full_width_transform(value: TextTransform) -> bool {
 }
 
 /// Whether the painter can draw the text of an element (the root or a
-/// descendant): direction is not drawn. Emphasis marks are drawn by neither
-/// path.
+/// descendant). Emphasis marks are drawn by neither path.
 fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
-    cv.direction == Direction::Ltr
-        && cv.word_space_transform == WordSpaceTransform::None
+    cv.word_space_transform == WordSpaceTransform::None
         && cv.background_clip != VisualBox::Text
         && !has_full_width_transform(cv.text_transform)
 }
@@ -136,24 +115,16 @@ fn paragraph_is_paintable(doc: &Document, cascade: &CascadeResult, idx: usize) -
         if !node.is_in_document() {
             continue;
         }
-        match node.kind() {
-            NodeKind::Text => {
-                if node.text_content().is_some_and(has_rtl_char) {
-                    return false;
-                }
+        if node.kind() == NodeKind::Element {
+            // A box is painted on its own, so its content does not reach the
+            // paragraph painter.
+            if box_kind(cascade, doc, id).is_some() {
+                continue;
             }
-            NodeKind::Element => {
-                // A box is painted on its own, so its content does not reach
-                // the paragraph painter.
-                if box_kind(cascade, doc, id).is_some() {
-                    continue;
-                }
-                if !is_paintable_descendant(cascade, id) {
-                    return false;
-                }
-                stack.extend(node.children.iter().copied());
+            if !is_paintable_descendant(cascade, id) {
+                return false;
             }
-            _ => {}
+            stack.extend(node.children.iter().copied());
         }
     }
     true

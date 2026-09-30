@@ -3,8 +3,9 @@
 //! The lines live on the block's node (`Node::ifc_lines`). Glyph positions
 //! come from `GlyphRunView::glyph_origin`, which is relative to the block's
 //! content box; the caller supplies that origin in page coordinates. Only
-//! left-to-right horizontal lines are drawn: paragraphs that need anything
-//! else are not assigned to the inline engine in the first place.
+//! horizontal lines are drawn: paragraphs that need anything else are not
+//! assigned to the inline engine in the first place. A right-to-left line
+//! measures its glyph positions from the right edge of the content box.
 
 use crate::text::{
     DecorationContext, DecorationGeometry, DecorationPhase, css_color_to_peniko,
@@ -90,6 +91,7 @@ pub(crate) fn draw_ifc_lines(
         .get_node(root_id)
         .and_then(|n| n.ifc_size())
         .unwrap_or((0.0, 0.0));
+    let content_width = size.0;
     let mut contexts: HashMap<usize, DecorationContext> = HashMap::new();
     for line in lines {
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
@@ -108,11 +110,15 @@ pub(crate) fn draw_ifc_lines(
                 continue;
             };
             let _ = font;
+            let rtl = line.used_direction() == shodo::geometry::Direction::Rtl;
             let glyphs: Vec<AnyrenderGlyph> = run
                 .glyphs()
                 .enumerate()
                 .filter_map(|(index, glyph)| {
-                    let (x, y) = run.glyph_origin(index)?;
+                    let (inline, y) = run.glyph_origin(index)?;
+                    // In a right-to-left line the origin is the distance from
+                    // the inline-start (right) edge to the glyph's far edge.
+                    let x = if rtl { content_width - inline } else { inline };
                     Some(AnyrenderGlyph {
                         id: glyph.id,
                         x,
@@ -123,15 +129,14 @@ pub(crate) fn draw_ifc_lines(
             if glyphs.is_empty() {
                 continue;
             }
-            // Lines are left to right, so the run spans from its first glyph
-            // origin to the end of its last advance.
-            let count = glyphs.len();
-            let first_x = f64::from(glyphs[0].x);
-            let last_advance = run
-                .glyphs()
-                .get(count - 1)
-                .map_or(0.0, |glyph| f64::from(glyph.advance));
-            let last_x = f64::from(glyphs[count - 1].x);
+            // The run spans from its leftmost glyph origin to the right end
+            // of its rightmost advance, in either direction.
+            let mut first_x = f64::INFINITY;
+            let mut last_x = f64::NEG_INFINITY;
+            for (glyph, shaped) in glyphs.iter().zip(run.glyphs()) {
+                first_x = first_x.min(f64::from(glyph.x));
+                last_x = last_x.max(f64::from(glyph.x) + f64::from(shaped.advance));
+            }
             let decorations = contexts
                 .entry(owner)
                 .or_insert_with(|| {
@@ -144,7 +149,7 @@ pub(crate) fn draw_ifc_lines(
                 color: css_color_to_peniko(cv.color),
                 glyphs,
                 x0: f64::from(position.x) + first_x,
-                x1: f64::from(position.x) + last_x + last_advance,
+                x1: f64::from(position.x) + last_x,
                 baseline: f64::from(position.y + position.shift_y)
                     + f64::from(line.block_offset())
                     + f64::from(run.baseline()),

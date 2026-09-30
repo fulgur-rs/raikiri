@@ -22,6 +22,8 @@ pub(crate) struct IfcRoot {
     /// Children laid out as boxes of their own (floats and atomic inlines),
     /// in document order.
     pub(crate) boxes: Vec<IfcBox>,
+    /// The root's `direction` is `rtl`: its lines start at the right edge.
+    pub(crate) rtl: bool,
 }
 
 /// Lines broken for one content-box width.
@@ -45,6 +47,7 @@ impl IfcRoot {
             indent: projected.indent,
             lines: None,
             boxes: projected.boxes,
+            rtl: projected.rtl,
         }
     }
 
@@ -57,6 +60,7 @@ impl IfcRoot {
             indent: self.indent,
             lines: None,
             boxes: self.boxes.clone(),
+            rtl: self.rtl,
         }
     }
 }
@@ -101,6 +105,7 @@ impl fmt::Debug for IfcRoot {
             .field("indent", &self.indent)
             .field("lines", &self.lines)
             .field("boxes", &self.boxes)
+            .field("rtl", &self.rtl)
             .finish_non_exhaustive()
     }
 }
