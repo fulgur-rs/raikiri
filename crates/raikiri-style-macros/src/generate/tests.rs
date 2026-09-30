@@ -97,6 +97,48 @@ fn projection_per_entry_items_interleaves_the_entry_projections() {
     assert_eq!(per_entry_items(&entries).to_string(), expected.to_string());
 }
 
+/// The two `Longhand` impl shapes the main fixture lacks: a computed type
+/// lifted back through the default `Into::into` (no `lift:`), and a computed
+/// type whose hook is missing, whose `compute` body is `unreachable!()` (the
+/// missing hook is reported once, as checked here).
+#[test]
+fn projection_longhand_impl_default_lift_and_broken_compute() {
+    let mut errors = Errors::default();
+    let raw = parse_block(
+        r#"
+        /// Default lift.
+        "tab-width" => TabWidth: Length { initial: Length::Px(8.0), inherited: yes, parse: parse_length,
+            computed: Px, compute: absolutize_length, sample: Length::Em(1.0), residue: length_residue },
+        /// Missing hook.
+        "gap-width" => GapWidth: Length { initial: Length::Px(0.0), inherited: no, parse: parse_length,
+            computed: Px, sample: Length::Em(1.0), residue: length_residue },
+        "#
+        .parse()
+        .expect("fixture tokenizes"),
+        &mut errors,
+    );
+    let entries = build(raw, &[], &mut errors);
+    let errors: Vec<String> = errors.into_vec().iter().map(|e| e.to_string()).collect();
+    assert_eq!(
+        errors,
+        [
+            "`computed: Px` needs `compute: <fn>`, the `fn(Specified, &AbsolutizeCx) -> Px` hook that produces it"
+        ]
+    );
+    let rendered = entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "--- {} ---\n{}",
+                entry.name.value(),
+                pretty(longhand_impl(entry))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!("longhand_impl_default_lift_and_broken_compute", rendered);
+}
+
 #[test]
 fn projection_key_method() {
     let hand_written = quote!(PropertyValue::Color { .. } => PropertyKey::Color,);
