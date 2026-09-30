@@ -4411,3 +4411,33 @@ fn a_right_float_inside_a_narrow_block_child_sits_at_the_block_edge() {
         assert_eq!(doc.nodes[float].unrounded_layout.location.x, 30.0, "{css}");
     }
 }
+
+#[test]
+fn a_float_root_with_its_own_width_breaks_a_long_word_at_that_width() {
+    // `overflow-wrap: break-word` does not lower the min-content width, so a
+    // shrink-to-fit clamp would lay the word out on one 240px line; the
+    // float's own `width` fixes the line width instead (CSS 2.1 10.3.5 applies
+    // shrink-to-fit only to an `auto` width).
+    for css in [
+        "float:left;width:100px;overflow-wrap:break-word",
+        "float:left;width:100px;word-break:break-word",
+        "float:left;width:12.5%;overflow-wrap:break-word",
+        "float:left;width:calc(50px + 6.25%);overflow-wrap:break-word",
+    ] {
+        let (mut doc, cascade, root) = ahem_paragraph("FillerFillerFillerFiller", css);
+        lay_out_with_switch(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{css}");
+        assert_eq!(doc.nodes[root].unrounded_layout.size.width, 100.0, "{css}");
+        assert_eq!(stored_lines(&doc, root).lines.len(), 3, "{css}");
+        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0, "{css}");
+    }
+}
+
+#[test]
+fn a_float_root_without_a_width_still_shrinks_to_fit() {
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bb", "float:left");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 70.0);
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+}

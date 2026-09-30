@@ -373,8 +373,12 @@ impl Document {
                 // stored this node's layout yet.
                 let top_inset = ifc_top_inset(&style, inputs.parent_size.width);
                 // A known width on the input means the parent stretched or
-                // fixed the box; otherwise the box shrinks to fit.
-                let stretched = inputs.known_dimensions.width.is_some();
+                // fixed the box, and a definite `width` of its own fixes it
+                // too (taffy passes it as the available width); otherwise the
+                // box shrinks to fit.
+                let stretched = inputs.known_dimensions.width.is_some()
+                    || (inputs.sizing_mode == taffy::SizingMode::InherentSize
+                        && ifc_has_definite_width(&style, inputs.parent_size.width));
                 let measure = IfcMeasure {
                     run_mode: inputs.run_mode,
                     stretched,
@@ -524,6 +528,21 @@ fn ifc_content_width_bounds(style: &Style, parent_width: Option<f32>) -> (f32, f
         resolve_dim(style.min_size.width, 0.0),
         resolve_dim(style.max_size.width, f32::INFINITY),
     )
+}
+
+/// Whether the box's own `width` resolves to a length, as taffy's leaf layout
+/// resolves it before calling the measure callback.
+fn ifc_has_definite_width(style: &Style, parent_width: Option<f32>) -> bool {
+    let raw = style.size.width.into_raw();
+    // Calc pointers carry address bits in `tag()`, so test them first.
+    if raw.is_calc() {
+        return parent_width.is_some();
+    }
+    match raw.tag() {
+        taffy::CompactLength::LENGTH_TAG => true,
+        taffy::CompactLength::PERCENT_TAG => parent_width.is_some(),
+        _ => false,
+    }
 }
 
 /// What the measure callback of an ifc root needs besides the available

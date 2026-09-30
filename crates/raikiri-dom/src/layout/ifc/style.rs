@@ -65,8 +65,10 @@ pub(crate) fn map_text_combine_upright(
     }
 }
 
-/// A `position: relative` box whose offsets are all `auto` or `0` and that
-/// makes no stacking context: it moves nothing and paints in place.
+/// A `position: relative` box whose offsets are all `auto` or `0` and whose
+/// `z-index` is `auto` (no stacking context). It moves nothing, so drawing it
+/// in place differs from the positioned paint layer only where it overlaps
+/// other content.
 pub(crate) fn is_inert_relative(cv: &ComputedValues) -> bool {
     let zero = |value: LengthOrAuto| match value {
         LengthOrAuto::Auto => true,
