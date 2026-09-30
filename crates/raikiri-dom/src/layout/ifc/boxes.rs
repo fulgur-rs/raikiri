@@ -8,6 +8,7 @@ use shodo::{
     AtomicIntrinsics, AtomicSizes, FloatClear, FloatCursor, FloatIntrinsic, FloatSide,
     LineConstraint, LineResult,
 };
+use taffy::util::ResolveOrZero;
 use taffy::{
     AvailableSpace, BlockContext, BlockFormattingContext, Clear, FloatDirection, LayoutInput,
     LayoutPartialTree, Line, RequestedAxis, RunMode, Size, SizingMode,
@@ -331,13 +332,44 @@ pub(crate) fn commit_float(
         false,
     );
     if perform {
-        let layout = &mut tree.nodes[float.node].unrounded_layout;
-        layout.location = taffy::Point {
+        let location = taffy::Point {
             x: position.x + float.margin.left,
             y: position.y + float.margin.top,
         };
-        layout.size = float.output.size;
+        commit_child_layout(tree, float.node, &float.output, location, geometry.width);
     }
+}
+
+/// Store the final layout of a child that the ifc root laid out itself.
+///
+/// `location` is the border-box position relative to the ifc root's border
+/// box. `output` is what the child's layout returned. `basis` is what a
+/// percentage in the child's margin, padding and border resolves against: the
+/// root's content width.
+pub(crate) fn commit_child_layout(
+    tree: &mut Document,
+    node: usize,
+    output: &taffy::LayoutOutput,
+    location: taffy::Point<f32>,
+    basis: f32,
+) {
+    let style = &tree.nodes[node].style;
+    let padding = style.padding.resolve_or_zero(Some(basis), resolve_calc);
+    let border = style.border.resolve_or_zero(Some(basis), resolve_calc);
+    let margin = style
+        .margin
+        .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0));
+    let layout = taffy::Layout {
+        order: tree.nodes[node].unrounded_layout.order,
+        location,
+        size: output.size,
+        scrollable_overflow_rect: output.scrollable_overflow_rect,
+        scrollbar_size: Size::ZERO,
+        border,
+        padding,
+        margin,
+    };
+    tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
 }
 
 /// Min- and max-content widths of the root's boxes, for the paragraph's

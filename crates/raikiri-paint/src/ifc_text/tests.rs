@@ -398,3 +398,66 @@ fn a_trailing_empty_line_paints_no_glyphs() {
     // The empty second line draws nothing and does not panic.
     assert_eq!(glyphs(&scene).len(), 4);
 }
+
+#[test]
+fn a_float_inside_the_paragraph_is_painted_as_a_box() {
+    let css = "width:100px";
+    let (mut doc, cascade, root) = paragraph(css, |doc, root| {
+        doc.append_text(root, "aa");
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:30px;height:20px;background-color:red"),
+        );
+        doc.append_text(root, " bbbb cccc");
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    // The float's background is a 30x20 fill at the top left of the paragraph.
+    let fills: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        fills
+            .iter()
+            .any(|b| (b.x0, b.y0, b.x1, b.y1) == (0.0, 0.0, 30.0, 20.0)),
+        "{fills:?}"
+    );
+    // The text starts after the float on the first line.
+    assert!(glyphs(&scene).iter().any(|g| g.1 == 30.0));
+}
+
+#[test]
+fn a_float_inside_the_paragraph_is_painted_once() {
+    let (mut doc, cascade, _root) = paragraph("width:100px", |doc, root| {
+        doc.append_text(root, "aa");
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:30px;height:20px;background-color:red"),
+        );
+        doc.append_text(root, " bb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let scene = painted(&doc, &cascade);
+    let red_boxes = scene
+        .commands
+        .iter()
+        .filter(|command| {
+            matches!(command, RenderCommand::Fill(fill)
+            if {
+                let b = kurbo::Shape::bounding_box(&fill.shape);
+                (b.x1 - b.x0, b.y1 - b.y0) == (30.0, 20.0)
+            })
+        })
+        .count();
+    assert_eq!(red_boxes, 1);
+}

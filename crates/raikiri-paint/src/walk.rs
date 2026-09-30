@@ -4399,8 +4399,13 @@ fn paint_document_impl(
                 // This is intentionally local to the current parent; full
                 // nested stacking-context isolation remains outside this
                 // minimal painter.
-                let mut children = if node.is_inline_svg_root() || node.is_ifc_root() {
+                let mut children = if node.is_inline_svg_root() {
                     Vec::new()
+                } else if node.is_ifc_root() {
+                    // The paragraph's own text and inline elements are drawn
+                    // from the lines; only the boxes laid out beside them are
+                    // visited like ordinary children.
+                    node.ifc_boxes()
                 } else {
                     node.children.clone()
                 };

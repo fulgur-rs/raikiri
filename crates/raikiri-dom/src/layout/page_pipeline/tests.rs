@@ -3663,3 +3663,82 @@ fn only_a_root_that_is_its_own_formatting_context_grows_around_its_floats() {
         assert_eq!(lines.height, height, "{root_css}");
     }
 }
+
+// ── committed boxes of ifc roots ─────────────────────────────
+
+#[test]
+fn a_paragraph_that_is_a_formatting_context_contains_its_floats() {
+    // The root is itself a block formatting context (it floats), so its height
+    // reaches the bottom of the tallest float even when the text is shorter.
+    let (mut doc, cascade, _float, root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:50px",
+        " bb",
+        "float:left;width:100px",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 50.0);
+}
+
+#[test]
+fn an_in_flow_paragraph_does_not_grow_for_its_floats() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_with_float("aa", "float:left;width:30px;height:50px", " bb", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // One 10px line; the float hangs below the content, which is what a block
+    // that is not a formatting context does.
+    assert_eq!(stored_lines(&doc, root).height, 10.0);
+    // `realign_text_after_layout` later grows every auto-height ancestor of a
+    // float to the float's bottom, on either path; the float starts at the
+    // top of the paragraph, so that is 50px.
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 50.0);
+}
+
+#[test]
+fn a_committed_float_layout_carries_its_box_model() {
+    let (mut doc, cascade, float, _root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px;margin-left:5px;padding-top:2px;box-sizing:content-box",
+        " bb",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[float].unrounded_layout;
+    // The border box starts after the 5px margin and is 22px tall.
+    assert_eq!((layout.location.x, layout.location.y), (5.0, 0.0));
+    assert_eq!(layout.size.height, 22.0);
+    assert_eq!(layout.padding.top, 2.0);
+    assert_eq!(layout.margin.left, 5.0);
+}
+
+#[test]
+fn a_percentage_margin_resolves_against_the_paragraph_width() {
+    // The root is 100px wide under an 800px body: 10% is 10px, not 80px.
+    let (mut doc, cascade, float, _root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px;margin-left:10%",
+        " bb",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!(layout.margin.left, 10.0);
+    assert_eq!(layout.location.x, 10.0);
+}
+
+#[test]
+fn a_padded_formatting_context_does_not_count_its_top_edge_twice() {
+    // The context measures floats from the border-box top, the box height from
+    // the content-box top: a 15px top padding and a 50px float make a box that
+    // is 15 + 50 = 65px tall, not 15 + 65.
+    let (mut doc, cascade, _float, root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:50px",
+        " bb",
+        "float:left;width:100px;padding-top:15px",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 65.0);
+}
