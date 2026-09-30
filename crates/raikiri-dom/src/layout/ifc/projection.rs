@@ -107,15 +107,17 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
         cv.display,
         DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
     );
-    let replaced =
-        cv.display == DisplayValue::Inline && ATOMIC_TAGS.contains(&node.tag_name().unwrap_or(""));
+    let tag = node.tag_name().unwrap_or("");
+    let replaced = cv.display == DisplayValue::Inline && ATOMIC_TAGS.contains(&tag);
     if inline_block || replaced {
         return Some(IfcBoxKind::Atomic);
     }
     // `flow-root`, flex and grid boxes avoid floats as formatting contexts of
     // their own; taffy places those in the parent's item loop, which this
     // path does not run, so they stay unsupported.
-    if cv.display == DisplayValue::Block {
+    // A block-level image or SVG is sized by its replaced-element path, which
+    // this path does not reproduce; it stays unsupported.
+    if cv.display == DisplayValue::Block && !ATOMIC_TAGS.contains(&tag) {
         return Some(IfcBoxKind::Block);
     }
     None

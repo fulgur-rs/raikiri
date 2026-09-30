@@ -515,15 +515,16 @@ fn layout_block_child(
 ) -> BlockChild {
     use taffy::LayoutBlockContainer;
     let margin = resolved_margins(tree, node, geometry.width);
-    let width = (geometry.width - margin.left - margin.right).max(0.0);
+    let stretch = (geometry.width - margin.left - margin.right).max(0.0);
+    let width = used_block_width(tree, node, geometry.width).unwrap_or(stretch);
+    let width = clamp_block_width(tree, node, geometry.width, width);
     // The context measures from the root's border box; the insets are added
-    // to the root's own.
+    // to the root's own. The right inset follows the used width, as in
+    // taffy's own in-flow loop.
+    let right = geometry.width - margin.left - width + geometry.edges.1;
     let mut child_ctx = ctx.sub_context(
         geometry.top_edge + y,
-        [
-            geometry.edges.0 + margin.left,
-            geometry.edges.1 + margin.right,
-        ],
+        [geometry.edges.0 + margin.left, right],
     );
     let inputs = LayoutInput {
         run_mode: if perform {
@@ -567,6 +568,50 @@ fn layout_block_child(
         height: output.size.height,
         floats_bottom,
     }
+}
+
+/// The border-box width a block child's own `width` gives, resolved against
+/// the root's content width the way taffy's block algorithm resolves the size
+/// of an in-flow item; `None` for `auto`.
+fn used_block_width(tree: &Document, node: usize, basis: f32) -> Option<f32> {
+    use taffy::util::MaybeResolve;
+    let style = &tree.nodes[node].style;
+    style
+        .size
+        .width
+        .maybe_resolve(Some(basis), resolve_calc)
+        .map(|width| width + box_sizing_adjustment(tree, node, basis))
+}
+
+/// `width` clamped by the block child's own `min-width` and `max-width`,
+/// resolved like [`used_block_width`].
+fn clamp_block_width(tree: &Document, node: usize, basis: f32, width: f32) -> f32 {
+    use taffy::util::MaybeResolve;
+    let style = &tree.nodes[node].style;
+    let adjustment = box_sizing_adjustment(tree, node, basis);
+    let min = style
+        .min_size
+        .width
+        .maybe_resolve(Some(basis), resolve_calc)
+        .map(|min| min + adjustment);
+    let max = style
+        .max_size
+        .width
+        .maybe_resolve(Some(basis), resolve_calc)
+        .map(|max| max + adjustment);
+    let width = max.map_or(width, |max| width.min(max));
+    min.map_or(width, |min| width.max(min))
+}
+
+/// What a `content-box` size needs added to become a border-box size.
+fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
+    let style = &tree.nodes[node].style;
+    if style.box_sizing != taffy::BoxSizing::ContentBox {
+        return 0.0;
+    }
+    let padding = style.padding.resolve_or_zero(Some(basis), resolve_calc);
+    let border = style.border.resolve_or_zero(Some(basis), resolve_calc);
+    padding.left + padding.right + border.left + border.right
 }
 
 /// Store the final layout of every atomic inline at its fragment in the

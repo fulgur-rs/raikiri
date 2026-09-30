@@ -453,3 +453,23 @@ fn an_absolutely_positioned_child_is_still_unsupported() {
     let error = project(&fixture).expect_err("abspos");
     assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
 }
+
+#[test]
+fn a_block_level_image_or_svg_is_not_a_block_child() {
+    for tag in ["img", "svg"] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            doc.append_element(
+                Some(root),
+                tag,
+                taffy::Style::default(),
+                Some("display:block;width:10px;height:10px"),
+            );
+        });
+        let error = project(&fixture).expect_err(tag);
+        assert!(
+            matches!(error, IfcError::Unsupported { .. }),
+            "{tag}: {error}"
+        );
+    }
+}

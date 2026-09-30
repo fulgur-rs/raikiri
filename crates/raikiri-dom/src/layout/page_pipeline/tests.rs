@@ -4194,10 +4194,12 @@ fn a_block_child_is_offset_by_the_content_box_of_its_paragraph() {
     lay_out_with_switch(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[block].unrounded_layout;
-    // The content box is 88px wide and starts at (6, 4); the block follows
-    // the first line.
+    // The content box starts at (6, 4); the block follows the first line.
+    // (Its width is the root's authored 100px, which a pre-layout pass copies
+    // into every auto-width block under an authored-width ancestor on both
+    // paths; the block child keeps the width taffy's style gives it.)
     assert_eq!((layout.location.x, layout.location.y), (6.0, 14.0));
-    assert_eq!(layout.size.width, 88.0);
+    assert_eq!(layout.size.width, 100.0);
 }
 
 #[test]
@@ -4364,4 +4366,48 @@ fn relayout_still_follows_the_page_width_for_a_plain_paragraph() {
     lay_out_with_switch(&mut doc, &cascade);
     relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
     assert_eq!(stored_lines(&doc, root).lines.len(), 3);
+}
+
+#[test]
+fn a_block_child_keeps_its_own_width() {
+    for (css, width) in [
+        ("width:40px;height:10px", 40.0),
+        ("max-width:50%;height:10px", 50.0),
+        ("width:10px;min-width:30px;height:10px", 30.0),
+        (
+            "width:40px;padding-left:5px;box-sizing:border-box;height:10px",
+            40.0,
+        ),
+        ("width:40px;padding-left:5px;height:10px", 45.0),
+    ] {
+        let (mut doc, cascade, block, root) = paragraph_with_block("aa", css, "bb", "");
+        lay_out_with_switch(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{css}");
+        let layout = doc.nodes[block].unrounded_layout;
+        assert_eq!(
+            (layout.location.x, layout.size.width),
+            (0.0, width),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_right_float_inside_a_narrow_block_child_sits_at_the_block_edge() {
+    // Each block is 40px wide, so its 10px right float is 30px in.
+    for css in ["width:40px", "max-width:40px", "width:10px;min-width:40px"] {
+        let (mut doc, _cascade, block, root) = paragraph_with_block("aa", css, "bb", "");
+        let float = doc.append_element(
+            Some(block),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;float:right;width:10px;height:10px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out_with_switch(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{css}");
+        assert_eq!(doc.nodes[float].unrounded_layout.location.x, 30.0, "{css}");
+    }
 }
