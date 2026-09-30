@@ -1,4 +1,5 @@
 use crate::Atom;
+use crate::media::MediaCondition;
 use crate::property::Length;
 use crate::rule::Declaration;
 use crate::ruletree::Origin;
@@ -690,4 +691,10 @@ pub struct PageRule {
     /// re-index page rules by origin later. The cascade *ordering* itself
     /// remains future work and is not wired here.
     pub origin: Origin,
+    /// Media condition guarding this rule. `None` means the rule always applies.
+    ///
+    /// Top-level `@page` rules store `None`. Rules nested in `@media` store the
+    /// intersected condition from [`crate::media::MediaContext`] evaluation, and
+    /// [`crate::page::cascade_page`] skips them when the condition does not match.
+    pub(crate) media_condition: Option<MediaCondition>,
 }
