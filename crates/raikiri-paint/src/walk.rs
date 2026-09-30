@@ -4566,6 +4566,7 @@ fn paint_document_impl(
                             y: content_y,
                             shift_y: child_shift_y,
                         },
+                        &child_decorations,
                     );
                     if text_clip.is_some() {
                         scene.pop_layer();

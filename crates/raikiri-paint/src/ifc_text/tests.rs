@@ -75,6 +75,7 @@ fn glyph_runs_land_on_the_baseline_of_each_line() {
             y: 200.0,
             shift_y: 0.0,
         },
+        &crate::text::DecorationContext::default(),
     );
     let placed = glyphs(&scene);
     assert!(!placed.is_empty(), "the ifc painter emitted no glyphs");
@@ -113,6 +114,7 @@ fn each_run_takes_the_color_of_its_text_node() {
             y: 0.0,
             shift_y: 0.0,
         },
+        &crate::text::DecorationContext::default(),
     );
     let blue = anyrender::Paint::Solid(peniko::Color::from_rgba8(0, 0, 255, 255));
     let red = anyrender::Paint::Solid(peniko::Color::from_rgba8(255, 0, 0, 255));
@@ -276,4 +278,94 @@ fn ifc_text_is_painted_once() {
         .count();
     assert_eq!(runs, 1);
     assert_eq!(glyphs(&scene).len(), 5);
+}
+
+/// Decoration rectangles, rounded to 1/64px.
+///
+/// `paint_single_page` always fills the paper, so only thin rectangles
+/// (decoration lines are at most a couple of pixels tall) are counted; the
+/// paper fill would otherwise make an emptiness check vacuous.
+fn decoration_fills(scene: &Scene) -> Vec<(i64, i64, i64, i64)> {
+    use kurbo::Shape;
+    let mut out = Vec::new();
+    for command in &scene.commands {
+        if let RenderCommand::Fill(fill) = command {
+            let bounds = fill.shape.bounding_box();
+            if bounds.height() > 3.0 {
+                continue;
+            }
+            let r = |v: f64| (v * 64.0).round() as i64;
+            out.push((r(bounds.x0), r(bounds.y0), r(bounds.x1), r(bounds.y1)));
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+#[test]
+fn underline_and_line_through_match_the_parley_path() {
+    for css in ["text-decoration:underline", "text-decoration:line-through"] {
+        let build = |doc: &mut Document, root: usize| {
+            doc.append_text(root, "abcde");
+        };
+        let (mut off_doc, cascade, _) = paragraph(css, build);
+        lay_out(&mut off_doc, &cascade, false);
+        let off = decoration_fills(&painted(&off_doc, &cascade));
+
+        let (mut on_doc, cascade, _) = paragraph(css, build);
+        lay_out(&mut on_doc, &cascade, true);
+        let on = decoration_fills(&painted(&on_doc, &cascade));
+
+        assert!(!off.is_empty(), "{css}: the parley path drew no line");
+        assert_eq!(on, off, "{css}");
+    }
+}
+
+#[test]
+fn an_undecorated_paragraph_draws_no_decoration_rectangle() {
+    let (mut doc, cascade, _) = paragraph("", |doc, root| {
+        doc.append_text(root, "abcde");
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(decoration_fills(&painted(&doc, &cascade)).is_empty());
+}
+
+#[test]
+fn a_decoration_reaches_text_inside_an_inline_element() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa ");
+        let inner =
+            doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+        doc.append_text(inner, "bb");
+    };
+    let css = "text-decoration:underline";
+    let (mut on_doc, cascade, _) = paragraph(css, build);
+    lay_out(&mut on_doc, &cascade, true);
+    // One segment for "aa " and one for "bb": the line reaches the inline
+    // element's text through the ancestor decoration context.
+    assert_eq!(decoration_fills(&painted(&on_doc, &cascade)).len(), 2);
+}
+
+#[test]
+fn a_decoration_originating_on_an_inline_element_covers_only_its_text() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa ");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;text-decoration:underline"),
+        );
+        doc.append_text(inner, "bb");
+    };
+    let (mut on_doc, cascade, _) = paragraph("", build);
+    lay_out(&mut on_doc, &cascade, true);
+    let on = decoration_fills(&painted(&on_doc, &cascade));
+
+    let (mut off_doc, cascade, _) = paragraph("", build);
+    lay_out(&mut off_doc, &cascade, false);
+    let off = decoration_fills(&painted(&off_doc, &cascade));
+
+    assert_eq!(off.len(), 1, "the parley path underlines only the span");
+    assert_eq!(on, off);
 }

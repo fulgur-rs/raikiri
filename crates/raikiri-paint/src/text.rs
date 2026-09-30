@@ -128,6 +128,11 @@ impl DecorationContext {
         self.0.is_none()
     }
 
+    /// The specifications in paint order (ancestor to descendant).
+    pub(crate) fn specs(&self) -> Vec<&DecorationSpec> {
+        self.iter().collect()
+    }
+
     fn push(&self, spec: DecorationSpec) -> Self {
         Self(Some(Arc::new(DecorationLink {
             spec,
@@ -815,11 +820,14 @@ fn decoration_line_width(metrics: &parley::LineMetrics, leading_whitespace: f32)
 }
 
 #[derive(Clone, Copy, Debug)]
-struct DecorationGeometry {
-    x0: f64,
-    x1: f64,
-    abs_y: f64,
-    line_top: f32,
+pub(crate) struct DecorationGeometry {
+    pub(crate) x0: f64,
+    pub(crate) x1: f64,
+    pub(crate) abs_y: f64,
+    pub(crate) line_top: f32,
+    /// Baseline in page coordinates, when the layout engine supplies it.
+    /// `None` derives it from the decorating element's metrics.
+    pub(crate) baseline: Option<f64>,
 }
 
 fn decoration_geometry(
@@ -862,11 +870,12 @@ fn decoration_geometry(
         // Keep the line's block origin from the current layout, but derive
         // the baseline within it from the originating decoration metrics.
         line_top: metrics.block_min_coord,
+        baseline: None,
     })
 }
 
 #[derive(Clone, Copy, Debug)]
-enum DecorationPhase {
+pub(crate) enum DecorationPhase {
     BeforeGlyphs,
     AfterGlyphs,
 }
@@ -878,7 +887,7 @@ enum DecorationLineKind {
     LineThrough,
 }
 
-fn draw_decoration_phase(
+pub(crate) fn draw_decoration_phase(
     scene: &mut impl PaintScene,
     decorations: &[&DecorationSpec],
     geometry: DecorationGeometry,
@@ -967,6 +976,7 @@ fn paint_decoration_line(
         x1,
         abs_y,
         line_top,
+        baseline: baseline_override,
     } = geometry;
     for decoration in decorations {
         let enabled = match kind {
@@ -981,8 +991,9 @@ fn paint_decoration_line(
             continue;
         };
         let color = css_color_to_peniko(decoration.color);
-        let baseline =
-            abs_y + line_top as f64 + decoration.origin_ascent + decoration.origin_shift_y as f64;
+        let baseline = baseline_override.unwrap_or(
+            abs_y + line_top as f64 + decoration.origin_ascent + decoration.origin_shift_y as f64,
+        );
         let thickness = decoration.origin_thickness;
         let center = match kind {
             DecorationLineKind::Underline => {
@@ -1188,11 +1199,12 @@ pub(crate) fn css_color_to_peniko(c: CssColor) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationSpec, MAX_DECORATION_SEGMENTS,
-        dashed_lengths, decoration_line_width, decoration_span, decoration_spans,
-        decorations_for_element, is_autospace_inline_box, measure_margin_text_advance,
-        measure_margin_text_height, paint_decoration_style, run_baseline_delta,
-        standalone_run_baseline, synthetic_embolden, text_align_last_delta,
+        AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationGeometry, DecorationPhase,
+        DecorationSpec, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
+        decoration_span, decoration_spans, decorations_for_element, draw_decoration_phase,
+        is_autospace_inline_box, measure_margin_text_advance, measure_margin_text_height,
+        paint_decoration_style, run_baseline_delta, standalone_run_baseline, synthetic_embolden,
+        text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
     use kurbo::Vec2;
@@ -1270,6 +1282,57 @@ mod tests {
 
         spec.origin_rtl = true;
         assert_eq!(decoration_span(100.0, 200.0, &spec), Some((90.0, 190.0)));
+    }
+
+    #[test]
+    fn parley_decorations_are_unchanged_by_the_geometry_field() {
+        // A geometry without an explicit baseline derives it from the
+        // decorating element, exactly as before the field existed.
+        let spec = DecorationSpec {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Solid,
+            color: CssColor::BLACK,
+            origin_thickness: 1.0,
+            origin_ascent: 8.0,
+            origin_descent: 2.0,
+            origin_shift_y: 1.5,
+            inset_start: 0.0,
+            inset_end: 0.0,
+            underline_offset: 0.0,
+            origin_rtl: false,
+        };
+        let (abs_y, line_top) = (100.0_f64, 2.0_f32);
+        let derived =
+            abs_y + f64::from(line_top) + spec.origin_ascent + f64::from(spec.origin_shift_y);
+        let draw = |baseline: Option<f64>| {
+            let mut scene = anyrender::recording::Scene::new();
+            let geometry = DecorationGeometry {
+                x0: 0.0,
+                x1: 10.0,
+                abs_y,
+                line_top,
+                baseline,
+            };
+            draw_decoration_phase(
+                &mut scene,
+                &[&spec],
+                geometry,
+                DecorationPhase::BeforeGlyphs,
+            );
+            scene
+        };
+        let (implicit, explicit) = (draw(None), draw(Some(derived)));
+        assert!(!implicit.commands.is_empty());
+        assert_eq!(
+            format!("{:?}", implicit.commands),
+            format!("{:?}", explicit.commands)
+        );
+        // A different explicit baseline moves the line.
+        let moved = draw(Some(derived + 3.0));
+        assert_ne!(
+            format!("{:?}", implicit.commands),
+            format!("{:?}", moved.commands)
+        );
     }
 
     #[test]
