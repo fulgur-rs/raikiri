@@ -156,6 +156,7 @@ pub(crate) fn draw_ifc_lines(
                 decorations,
             });
         }
+        clip_runs_to_the_line_content(line, &mut runs);
         draw_decorations(scene, &runs, DecorationPhase::BeforeGlyphs);
         for draw in &runs {
             let Some(font) = draw.run.font_data() else {
@@ -274,6 +275,31 @@ fn draw_shadows(
         );
         if use_blur_layer {
             scene.pop_layer();
+        }
+    }
+}
+
+/// Stop the decoration extents of a line's runs at the end of its content.
+///
+/// A collapsible space at the end of a wrapped line hangs past the content;
+/// a decoration does not cover it. `inline_size` is the width of the content
+/// without it, but also without a punctuation mark that hangs before the line
+/// start (`hang_start`), which the decoration does cover, so that is added
+/// back. The content starts at the leftmost run in a left-to-right line and
+/// ends at the rightmost one in a right-to-left line. A run left with no
+/// extent draws no decoration.
+fn clip_runs_to_the_line_content(line: &shodo::Line, runs: &mut [RunDraw<'_>]) {
+    let content = f64::from(line.inline_size());
+    let hang_start = f64::from(line.hang_start());
+    if line.used_direction() == shodo::geometry::Direction::Rtl {
+        let right = runs.iter().map(|r| r.x1).fold(f64::NEG_INFINITY, f64::max);
+        for run in runs.iter_mut() {
+            run.x0 = run.x0.max(right - hang_start - content);
+        }
+    } else {
+        let left = runs.iter().map(|r| r.x0).fold(f64::INFINITY, f64::min);
+        for run in runs.iter_mut() {
+            run.x1 = run.x1.min(left + hang_start + content);
         }
     }
 }

@@ -873,3 +873,60 @@ fn an_rtl_line_ends_at_the_right_edge_of_the_content_box() {
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     assert_eq!(sorted_xs(&painted(&doc, &cascade)), vec![75, 85, 95]);
 }
+
+#[test]
+fn a_wrapped_underline_leaves_out_the_break_space() {
+    // "aaaa bbbb" at 50px wraps after the space. The underline of the first
+    // line ends at the last letter, not after the space. The indent is not
+    // part of the line's content width either.
+    for css in [
+        "width:50px;text-decoration:underline",
+        "width:60px;text-indent:10px;text-decoration:underline",
+    ] {
+        let (off, on) = off_and_on(css, |doc, root| {
+            doc.append_text(root, "aaaa bbbb");
+        });
+        assert!(decoration_fills(&off).len() >= 2, "{css}: one line each");
+        assert_eq!(decoration_fills(&on), decoration_fills(&off), "{css}");
+    }
+}
+
+#[test]
+fn an_unwrapped_underline_keeps_its_full_extent() {
+    let (off, on) = off_and_on("width:200px;text-decoration:underline", |doc, root| {
+        doc.append_text(root, "aaaa bbbb");
+    });
+    assert!(!decoration_fills(&off).is_empty());
+    assert_eq!(decoration_fills(&on), decoration_fills(&off));
+}
+
+#[test]
+fn a_rtl_wrapped_underline_leaves_out_the_break_space_too() {
+    let (off, on) = off_and_on(
+        "direction:rtl;width:50px;text-decoration:underline",
+        |doc, root| {
+            doc.append_text(root, "aaaa bbbb");
+        },
+    );
+    assert!(decoration_fills(&off).len() >= 2, "one line each");
+    assert_eq!(decoration_fills(&on), decoration_fills(&off));
+}
+
+#[test]
+fn an_underline_under_a_hanging_bracket_covers_the_bracket_and_the_content() {
+    // `(` hangs one em (10px) before the line start, so the glyphs are at
+    // -10, 0, 10. The line's content width leaves the hung bracket out (it is
+    // 20px), so the extent has to add the hang back: -10 .. 20. The parley
+    // path only hangs a leading U+3000, so this is a hand-computed value, not
+    // an oracle.
+    let (mut doc, cascade, _) = paragraph(
+        "width:100px;hanging-punctuation:first;text-decoration:underline",
+        |doc, root| {
+            doc.append_text(root, "(ab");
+        },
+    );
+    lay_out(&mut doc, &cascade, true);
+    let fills = decoration_fills(&painted(&doc, &cascade));
+    assert_eq!(fills.len(), 1);
+    assert_eq!((fills[0].0, fills[0].2), (-10 * 64, 20 * 64));
+}
