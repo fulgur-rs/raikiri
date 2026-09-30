@@ -96,14 +96,16 @@ fn media_applies_to_named_page_and_later_page() {
         "<style>{WIDTH_CSS} @page chapter {{size:300px 200px;margin:20px}} \
          p{{page:chapter}}</style><p></p><p style='break-before:page'></p>"
     );
-    let result = completed(
-        &html,
-        MediaContext::with_viewport(MediaType::Print, 261, 160),
-    );
-    assert_eq!(result.page_count(), 2);
-    for page in result.pages() {
-        assert_eq!(page.name(), Some("chapter"));
-        assert_paragraph_width(page, 30.0);
+    for (width, expected) in [(260, 10.0), (261, 30.0)] {
+        let result = completed(
+            &html,
+            MediaContext::with_viewport(MediaType::Print, width, 160),
+        );
+        assert_eq!(result.page_count(), 2);
+        for page in result.pages() {
+            assert_eq!(page.name(), Some("chapter"));
+            assert_paragraph_width(page, expected);
+        }
     }
 }
 
