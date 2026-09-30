@@ -1,0 +1,2242 @@
+---
+source: crates/raikiri-style/src/characterization.rs
+---
+list-style-type: <parent square> | computed | Named("square")
+list-style-type: <undeclared> | computed | Named("square")
+list-style-type: * | cssom | <not a ComputedProperty>
+list-style-type: disc | parse | Some(ListStyleType(Disc))
+list-style-type: disc | serialize | None
+list-style-type: disc | computed | Disc
+list-style-type: disc | page | ListStyleType(Disc)
+list-style-type: none | parse | Some(ListStyleType(None))
+list-style-type: none | serialize | None
+list-style-type: none | computed | None
+list-style-type: none | page | ListStyleType(None)
+list-style-type: decimal | parse | Some(ListStyleType(Named("decimal")))
+list-style-type: decimal | serialize | None
+list-style-type: decimal | computed | Named("decimal")
+list-style-type: decimal | page | ListStyleType(Named("decimal"))
+list-style-type: lower-roman | parse | Some(ListStyleType(Named("lower-roman")))
+list-style-type: lower-roman | serialize | None
+list-style-type: lower-roman | computed | Named("lower-roman")
+list-style-type: lower-roman | page | ListStyleType(Named("lower-roman"))
+list-style-type: "-" | parse | Some(ListStyleType(String("-")))
+list-style-type: "-" | serialize | None
+list-style-type: "-" | computed | String("-")
+list-style-type: "-" | page | ListStyleType(String("-"))
+list-style-type: symbols(cyclic "*") | parse | None
+list-style-type: symbols(cyclic "*") | serialize | -
+list-style-type: symbols(cyclic "*") | computed | Named("square")
+list-style-type: symbols(cyclic "*") | page | <absent>
+list-style-type: my-style | parse | Some(ListStyleType(Named("my-style")))
+list-style-type: my-style | serialize | None
+list-style-type: my-style | computed | Named("my-style")
+list-style-type: my-style | page | ListStyleType(Named("my-style"))
+list-style-type: 123 | parse | None
+list-style-type: 123 | serialize | -
+list-style-type: 123 | computed | Named("square")
+list-style-type: 123 | page | <absent>
+list-style-type: inherit | parse | None
+list-style-type: inherit | serialize | -
+list-style-type: inherit | computed | Named("square")
+list-style-type: inherit | page | <absent>
+list-style-type: initial | parse | None
+list-style-type: initial | serialize | -
+list-style-type: initial | computed | Named("square")
+list-style-type: initial | page | <absent>
+list-style-type: unset | parse | None
+list-style-type: unset | serialize | -
+list-style-type: unset | computed | Named("square")
+list-style-type: unset | page | <absent>
+list-style-type: var(--v) | parse | Some(Deferred(DeferredValue { property: "list-style-type", value: "var(--v)", key: ListStyleType }))
+list-style-type: var(--v) | serialize | None
+list-style-type: var(--v) | computed | Named("square")
+list-style-type: var(--v) | page | ListStyleType(Named("square"))
+list-style-type: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "list-style-type", value: "var(--undefined)", key: ListStyleType }))
+list-style-type: var(--undefined) | serialize | None
+list-style-type: var(--undefined) | computed | Named("square")
+list-style-type: var(--undefined) | page | <absent>
+
+list-style-position: <parent inside> | computed | Inside
+list-style-position: <undeclared> | computed | Inside
+list-style-position: * | cssom | <not a ComputedProperty>
+list-style-position: outside | parse | Some(ListStylePosition(Outside))
+list-style-position: outside | serialize | None
+list-style-position: outside | computed | Outside
+list-style-position: outside | page | ListStylePosition(Outside)
+list-style-position: inside | parse | Some(ListStylePosition(Inside))
+list-style-position: inside | serialize | None
+list-style-position: inside | computed | Inside
+list-style-position: inside | page | ListStylePosition(Inside)
+list-style-position: middle | parse | None
+list-style-position: middle | serialize | -
+list-style-position: middle | computed | Inside
+list-style-position: middle | page | <absent>
+list-style-position: inherit | parse | None
+list-style-position: inherit | serialize | -
+list-style-position: inherit | computed | Inside
+list-style-position: inherit | page | <absent>
+list-style-position: initial | parse | None
+list-style-position: initial | serialize | -
+list-style-position: initial | computed | Inside
+list-style-position: initial | page | <absent>
+list-style-position: unset | parse | None
+list-style-position: unset | serialize | -
+list-style-position: unset | computed | Inside
+list-style-position: unset | page | <absent>
+list-style-position: var(--v) | parse | Some(Deferred(DeferredValue { property: "list-style-position", value: "var(--v)", key: ListStylePosition }))
+list-style-position: var(--v) | serialize | None
+list-style-position: var(--v) | computed | Inside
+list-style-position: var(--v) | page | ListStylePosition(Inside)
+list-style-position: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "list-style-position", value: "var(--undefined)", key: ListStylePosition }))
+list-style-position: var(--undefined) | serialize | None
+list-style-position: var(--undefined) | computed | Inside
+list-style-position: var(--undefined) | page | <absent>
+
+list-style-image: <parent url(p.png)> | computed | Url("p.png")
+list-style-image: <undeclared> | computed | Url("p.png")
+list-style-image: * | cssom | <not a ComputedProperty>
+list-style-image: none | parse | Some(ListStyleImage(None))
+list-style-image: none | serialize | None
+list-style-image: none | computed | None
+list-style-image: none | page | ListStyleImage(None)
+list-style-image: url(a.png) | parse | Some(ListStyleImage(Url("a.png")))
+list-style-image: url(a.png) | serialize | None
+list-style-image: url(a.png) | computed | Url("a.png")
+list-style-image: url(a.png) | page | ListStyleImage(Url("a.png"))
+list-style-image: linear-gradient(red, blue) | parse | None
+list-style-image: linear-gradient(red, blue) | serialize | -
+list-style-image: linear-gradient(red, blue) | computed | Url("p.png")
+list-style-image: linear-gradient(red, blue) | page | <absent>
+list-style-image: linear-gradient(red 1em, blue) | parse | None
+list-style-image: linear-gradient(red 1em, blue) | serialize | -
+list-style-image: linear-gradient(red 1em, blue) | computed | Url("p.png")
+list-style-image: linear-gradient(red 1em, blue) | page | <absent>
+list-style-image: bogus | parse | None
+list-style-image: bogus | serialize | -
+list-style-image: bogus | computed | Url("p.png")
+list-style-image: bogus | page | <absent>
+list-style-image: inherit | parse | None
+list-style-image: inherit | serialize | -
+list-style-image: inherit | computed | Url("p.png")
+list-style-image: inherit | page | <absent>
+list-style-image: initial | parse | None
+list-style-image: initial | serialize | -
+list-style-image: initial | computed | Url("p.png")
+list-style-image: initial | page | <absent>
+list-style-image: unset | parse | None
+list-style-image: unset | serialize | -
+list-style-image: unset | computed | Url("p.png")
+list-style-image: unset | page | <absent>
+list-style-image: var(--v) | parse | Some(Deferred(DeferredValue { property: "list-style-image", value: "var(--v)", key: ListStyleImage }))
+list-style-image: var(--v) | serialize | None
+list-style-image: var(--v) | computed | Url("p.png")
+list-style-image: var(--v) | page | ListStyleImage(Url("p.png"))
+list-style-image: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "list-style-image", value: "var(--undefined)", key: ListStyleImage }))
+list-style-image: var(--undefined) | serialize | None
+list-style-image: var(--undefined) | computed | Url("p.png")
+list-style-image: var(--undefined) | page | <absent>
+
+flex-direction: <parent column> | computed | Column
+flex-direction: <undeclared> | computed | Row
+flex-direction: * | cssom | <not a ComputedProperty>
+flex-direction: row | parse | Some(FlexDirection(Row))
+flex-direction: row | serialize | None
+flex-direction: row | computed | Row
+flex-direction: row | page | FlexDirection(Row)
+flex-direction: row-reverse | parse | Some(FlexDirection(RowReverse))
+flex-direction: row-reverse | serialize | None
+flex-direction: row-reverse | computed | RowReverse
+flex-direction: row-reverse | page | FlexDirection(RowReverse)
+flex-direction: column-reverse | parse | Some(FlexDirection(ColumnReverse))
+flex-direction: column-reverse | serialize | None
+flex-direction: column-reverse | computed | ColumnReverse
+flex-direction: column-reverse | page | FlexDirection(ColumnReverse)
+flex-direction: up | parse | None
+flex-direction: up | serialize | -
+flex-direction: up | computed | Row
+flex-direction: up | page | <absent>
+flex-direction: inherit | parse | None
+flex-direction: inherit | serialize | -
+flex-direction: inherit | computed | Row
+flex-direction: inherit | page | <absent>
+flex-direction: initial | parse | None
+flex-direction: initial | serialize | -
+flex-direction: initial | computed | Row
+flex-direction: initial | page | <absent>
+flex-direction: unset | parse | None
+flex-direction: unset | serialize | -
+flex-direction: unset | computed | Row
+flex-direction: unset | page | <absent>
+flex-direction: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-direction", value: "var(--v)", key: FlexDirection }))
+flex-direction: var(--v) | serialize | None
+flex-direction: var(--v) | computed | Column
+flex-direction: var(--v) | page | FlexDirection(Column)
+flex-direction: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "flex-direction", value: "var(--undefined)", key: FlexDirection }))
+flex-direction: var(--undefined) | serialize | None
+flex-direction: var(--undefined) | computed | Row
+flex-direction: var(--undefined) | page | <absent>
+
+flex-wrap: <parent wrap> | computed | Wrap
+flex-wrap: <undeclared> | computed | NoWrap
+flex-wrap: * | cssom | <not a ComputedProperty>
+flex-wrap: nowrap | parse | Some(FlexWrap(NoWrap))
+flex-wrap: nowrap | serialize | None
+flex-wrap: nowrap | computed | NoWrap
+flex-wrap: nowrap | page | FlexWrap(NoWrap)
+flex-wrap: wrap-reverse | parse | Some(FlexWrap(WrapReverse))
+flex-wrap: wrap-reverse | serialize | None
+flex-wrap: wrap-reverse | computed | WrapReverse
+flex-wrap: wrap-reverse | page | FlexWrap(WrapReverse)
+flex-wrap: both | parse | None
+flex-wrap: both | serialize | -
+flex-wrap: both | computed | NoWrap
+flex-wrap: both | page | <absent>
+flex-wrap: inherit | parse | None
+flex-wrap: inherit | serialize | -
+flex-wrap: inherit | computed | NoWrap
+flex-wrap: inherit | page | <absent>
+flex-wrap: initial | parse | None
+flex-wrap: initial | serialize | -
+flex-wrap: initial | computed | NoWrap
+flex-wrap: initial | page | <absent>
+flex-wrap: unset | parse | None
+flex-wrap: unset | serialize | -
+flex-wrap: unset | computed | NoWrap
+flex-wrap: unset | page | <absent>
+flex-wrap: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-wrap", value: "var(--v)", key: FlexWrap }))
+flex-wrap: var(--v) | serialize | None
+flex-wrap: var(--v) | computed | Wrap
+flex-wrap: var(--v) | page | FlexWrap(Wrap)
+flex-wrap: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "flex-wrap", value: "var(--undefined)", key: FlexWrap }))
+flex-wrap: var(--undefined) | serialize | None
+flex-wrap: var(--undefined) | computed | NoWrap
+flex-wrap: var(--undefined) | page | <absent>
+
+flex-grow: <parent 2> | computed | 2.0
+flex-grow: <undeclared> | computed | 0.0
+flex-grow: * | cssom | <not a ComputedProperty>
+flex-grow: 0 | parse | Some(FlexGrow(0.0))
+flex-grow: 0 | serialize | None
+flex-grow: 0 | computed | 0.0
+flex-grow: 0 | page | FlexGrow(0.0)
+flex-grow: 1.5 | parse | Some(FlexGrow(1.5))
+flex-grow: 1.5 | serialize | None
+flex-grow: 1.5 | computed | 1.5
+flex-grow: 1.5 | page | FlexGrow(1.5)
+flex-grow: -1 | parse | None
+flex-grow: -1 | serialize | -
+flex-grow: -1 | computed | 0.0
+flex-grow: -1 | page | <absent>
+flex-grow: calc(1 + 1) | parse | Some(Deferred(DeferredValue { property: "flex-grow", value: "calc(1 + 1)", key: FlexGrow }))
+flex-grow: calc(1 + 1) | serialize | None
+flex-grow: calc(1 + 1) | computed | 2.0
+flex-grow: calc(1 + 1) | page | FlexGrow(2.0)
+flex-grow: 1px | parse | None
+flex-grow: 1px | serialize | -
+flex-grow: 1px | computed | 0.0
+flex-grow: 1px | page | <absent>
+flex-grow: inherit | parse | None
+flex-grow: inherit | serialize | -
+flex-grow: inherit | computed | 0.0
+flex-grow: inherit | page | <absent>
+flex-grow: initial | parse | None
+flex-grow: initial | serialize | -
+flex-grow: initial | computed | 0.0
+flex-grow: initial | page | <absent>
+flex-grow: unset | parse | None
+flex-grow: unset | serialize | -
+flex-grow: unset | computed | 0.0
+flex-grow: unset | page | <absent>
+flex-grow: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-grow", value: "var(--v)", key: FlexGrow }))
+flex-grow: var(--v) | serialize | None
+flex-grow: var(--v) | computed | 2.0
+flex-grow: var(--v) | page | FlexGrow(2.0)
+flex-grow: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "flex-grow", value: "var(--undefined)", key: FlexGrow }))
+flex-grow: var(--undefined) | serialize | None
+flex-grow: var(--undefined) | computed | 0.0
+flex-grow: var(--undefined) | page | <absent>
+
+flex-shrink: <parent 2> | computed | 2.0
+flex-shrink: <undeclared> | computed | 1.0
+flex-shrink: * | cssom | <not a ComputedProperty>
+flex-shrink: 0 | parse | Some(FlexShrink(0.0))
+flex-shrink: 0 | serialize | None
+flex-shrink: 0 | computed | 0.0
+flex-shrink: 0 | page | FlexShrink(0.0)
+flex-shrink: 1.5 | parse | Some(FlexShrink(1.5))
+flex-shrink: 1.5 | serialize | None
+flex-shrink: 1.5 | computed | 1.5
+flex-shrink: 1.5 | page | FlexShrink(1.5)
+flex-shrink: -1 | parse | None
+flex-shrink: -1 | serialize | -
+flex-shrink: -1 | computed | 1.0
+flex-shrink: -1 | page | <absent>
+flex-shrink: calc(1 + 1) | parse | Some(Deferred(DeferredValue { property: "flex-shrink", value: "calc(1 + 1)", key: FlexShrink }))
+flex-shrink: calc(1 + 1) | serialize | None
+flex-shrink: calc(1 + 1) | computed | 2.0
+flex-shrink: calc(1 + 1) | page | FlexShrink(2.0)
+flex-shrink: 1px | parse | None
+flex-shrink: 1px | serialize | -
+flex-shrink: 1px | computed | 1.0
+flex-shrink: 1px | page | <absent>
+flex-shrink: inherit | parse | None
+flex-shrink: inherit | serialize | -
+flex-shrink: inherit | computed | 1.0
+flex-shrink: inherit | page | <absent>
+flex-shrink: initial | parse | None
+flex-shrink: initial | serialize | -
+flex-shrink: initial | computed | 1.0
+flex-shrink: initial | page | <absent>
+flex-shrink: unset | parse | None
+flex-shrink: unset | serialize | -
+flex-shrink: unset | computed | 1.0
+flex-shrink: unset | page | <absent>
+flex-shrink: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-shrink", value: "var(--v)", key: FlexShrink }))
+flex-shrink: var(--v) | serialize | None
+flex-shrink: var(--v) | computed | 2.0
+flex-shrink: var(--v) | page | FlexShrink(2.0)
+flex-shrink: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "flex-shrink", value: "var(--undefined)", key: FlexShrink }))
+flex-shrink: var(--undefined) | serialize | None
+flex-shrink: var(--undefined) | computed | 1.0
+flex-shrink: var(--undefined) | page | <absent>
+
+flex-basis: <parent 2em> | computed | Px(40.0)
+flex-basis: <undeclared> | computed | Auto
+flex-basis: * | cssom | <not a ComputedProperty>
+flex-basis: auto | parse | Some(FlexBasis(Auto))
+flex-basis: auto | serialize | None
+flex-basis: auto | computed | Auto
+flex-basis: auto | page | FlexBasis(Auto)
+flex-basis: content | parse | Some(FlexBasis(Content))
+flex-basis: content | serialize | None
+flex-basis: content | computed | Content
+flex-basis: content | page | FlexBasis(Content)
+flex-basis: 100px | parse | Some(FlexBasis(Length(Px(100.0))))
+flex-basis: 100px | serialize | None
+flex-basis: 100px | computed | Px(100.0)
+flex-basis: 100px | page | FlexBasis(Length(Px(100.0)))
+flex-basis: 0 | parse | Some(FlexBasis(Length(Px(0.0))))
+flex-basis: 0 | serialize | None
+flex-basis: 0 | computed | Px(0.0)
+flex-basis: 0 | page | FlexBasis(Length(Px(0.0)))
+flex-basis: -1px | parse | None
+flex-basis: -1px | serialize | -
+flex-basis: -1px | computed | Auto
+flex-basis: -1px | page | <absent>
+flex-basis: min-content | parse | Some(FlexBasis(MinContent))
+flex-basis: min-content | serialize | None
+flex-basis: min-content | computed | MinContent
+flex-basis: min-content | page | FlexBasis(MinContent)
+flex-basis: 1em | parse | Some(FlexBasis(Length(Em(1.0))))
+flex-basis: 1em | serialize | None
+flex-basis: 1em | computed | Px(10.0)
+flex-basis: 1em | page | FlexBasis(Length(Px(12.0)))
+flex-basis: 1rem | parse | Some(FlexBasis(Length(Rem(1.0))))
+flex-basis: 1rem | serialize | None
+flex-basis: 1rem | computed | Px(16.0)
+flex-basis: 1rem | page | FlexBasis(Length(Px(20.0)))
+flex-basis: 10% | parse | Some(FlexBasis(Length(Percent(10.0))))
+flex-basis: 10% | serialize | None
+flex-basis: 10% | computed | Percent(10.0)
+flex-basis: 10% | page | FlexBasis(Length(Percent(10.0)))
+flex-basis: 2ch | parse | Some(FlexBasis(Length(Ch(2.0))))
+flex-basis: 2ch | serialize | None
+flex-basis: 2ch | computed | Px(10.0)
+flex-basis: 2ch | page | FlexBasis(Length(Px(12.0)))
+flex-basis: 1lh | parse | Some(FlexBasis(Length(Lh(1.0))))
+flex-basis: 1lh | serialize | None
+flex-basis: 1lh | computed | Px(15.0)
+flex-basis: 1lh | page | FlexBasis(Length(Px(18.0)))
+flex-basis: 1rlh | parse | Some(FlexBasis(Length(Rlh(1.0))))
+flex-basis: 1rlh | serialize | None
+flex-basis: 1rlh | computed | Auto
+flex-basis: 1rlh | page | FlexBasis(Length(Px(30.0)))
+flex-basis: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "flex-basis", value: "calc(1em + 2px)", key: FlexBasis }))
+flex-basis: calc(1em + 2px) | serialize | None
+flex-basis: calc(1em + 2px) | computed | Auto
+flex-basis: calc(1em + 2px) | page | <absent>
+flex-basis: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "flex-basis", value: "calc(10% + 1em)", key: FlexBasis }))
+flex-basis: calc(10% + 1em) | serialize | None
+flex-basis: calc(10% + 1em) | computed | Auto
+flex-basis: calc(10% + 1em) | page | <absent>
+flex-basis: inherit | parse | None
+flex-basis: inherit | serialize | -
+flex-basis: inherit | computed | Auto
+flex-basis: inherit | page | <absent>
+flex-basis: initial | parse | None
+flex-basis: initial | serialize | -
+flex-basis: initial | computed | Auto
+flex-basis: initial | page | <absent>
+flex-basis: unset | parse | None
+flex-basis: unset | serialize | -
+flex-basis: unset | computed | Auto
+flex-basis: unset | page | <absent>
+flex-basis: var(--v) | parse | Some(Deferred(DeferredValue { property: "flex-basis", value: "var(--v)", key: FlexBasis }))
+flex-basis: var(--v) | serialize | None
+flex-basis: var(--v) | computed | Px(20.0)
+flex-basis: var(--v) | page | FlexBasis(Length(Px(24.0)))
+flex-basis: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "flex-basis", value: "var(--undefined)", key: FlexBasis }))
+flex-basis: var(--undefined) | serialize | None
+flex-basis: var(--undefined) | computed | Auto
+flex-basis: var(--undefined) | page | <absent>
+
+order: <parent 2> | computed | 2
+order: <undeclared> | computed | 0
+order: * | cssom | <not a ComputedProperty>
+order: 0 | parse | Some(Order(0))
+order: 0 | serialize | None
+order: 0 | computed | 0
+order: 0 | page | Order(0)
+order: -3 | parse | Some(Order(-3))
+order: -3 | serialize | None
+order: -3 | computed | -3
+order: -3 | page | Order(-3)
+order: 1.5 | parse | None
+order: 1.5 | serialize | -
+order: 1.5 | computed | 0
+order: 1.5 | page | <absent>
+order: calc(2 * 2) | parse | Some(Deferred(DeferredValue { property: "order", value: "calc(2 * 2)", key: Order }))
+order: calc(2 * 2) | serialize | None
+order: calc(2 * 2) | computed | 4
+order: calc(2 * 2) | page | Order(4)
+order: inherit | parse | None
+order: inherit | serialize | -
+order: inherit | computed | 0
+order: inherit | page | <absent>
+order: initial | parse | None
+order: initial | serialize | -
+order: initial | computed | 0
+order: initial | page | <absent>
+order: unset | parse | None
+order: unset | serialize | -
+order: unset | computed | 0
+order: unset | page | <absent>
+order: var(--v) | parse | Some(Deferred(DeferredValue { property: "order", value: "var(--v)", key: Order }))
+order: var(--v) | serialize | None
+order: var(--v) | computed | 2
+order: var(--v) | page | Order(2)
+order: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "order", value: "var(--undefined)", key: Order }))
+order: var(--undefined) | serialize | None
+order: var(--undefined) | computed | 0
+order: var(--undefined) | page | <absent>
+
+justify-content: <parent center> | computed | Center
+justify-content: <undeclared> | computed | Normal
+justify-content: * | cssom | <not a ComputedProperty>
+justify-content: normal | parse | Some(JustifyContent(Normal))
+justify-content: normal | serialize | None
+justify-content: normal | computed | Normal
+justify-content: normal | page | JustifyContent(Normal)
+justify-content: flex-start | parse | Some(JustifyContent(FlexStart))
+justify-content: flex-start | serialize | None
+justify-content: flex-start | computed | FlexStart
+justify-content: flex-start | page | JustifyContent(FlexStart)
+justify-content: space-between | parse | Some(JustifyContent(SpaceBetween))
+justify-content: space-between | serialize | None
+justify-content: space-between | computed | SpaceBetween
+justify-content: space-between | page | JustifyContent(SpaceBetween)
+justify-content: safe center | parse | None
+justify-content: safe center | serialize | -
+justify-content: safe center | computed | Normal
+justify-content: safe center | page | <absent>
+justify-content: stretch | parse | Some(JustifyContent(Stretch))
+justify-content: stretch | serialize | None
+justify-content: stretch | computed | Stretch
+justify-content: stretch | page | JustifyContent(Stretch)
+justify-content: left | parse | None
+justify-content: left | serialize | -
+justify-content: left | computed | Normal
+justify-content: left | page | <absent>
+justify-content: baseline | parse | None
+justify-content: baseline | serialize | -
+justify-content: baseline | computed | Normal
+justify-content: baseline | page | <absent>
+justify-content: inherit | parse | None
+justify-content: inherit | serialize | -
+justify-content: inherit | computed | Normal
+justify-content: inherit | page | <absent>
+justify-content: initial | parse | None
+justify-content: initial | serialize | -
+justify-content: initial | computed | Normal
+justify-content: initial | page | <absent>
+justify-content: unset | parse | None
+justify-content: unset | serialize | -
+justify-content: unset | computed | Normal
+justify-content: unset | page | <absent>
+justify-content: var(--v) | parse | Some(Deferred(DeferredValue { property: "justify-content", value: "var(--v)", key: JustifyContent }))
+justify-content: var(--v) | serialize | None
+justify-content: var(--v) | computed | Center
+justify-content: var(--v) | page | JustifyContent(Center)
+justify-content: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "justify-content", value: "var(--undefined)", key: JustifyContent }))
+justify-content: var(--undefined) | serialize | None
+justify-content: var(--undefined) | computed | Normal
+justify-content: var(--undefined) | page | <absent>
+
+align-content: <parent center> | computed | Center
+align-content: <undeclared> | computed | Normal
+align-content: * | cssom | <not a ComputedProperty>
+align-content: normal | parse | Some(AlignContent(Normal))
+align-content: normal | serialize | None
+align-content: normal | computed | Normal
+align-content: normal | page | AlignContent(Normal)
+align-content: flex-end | parse | Some(AlignContent(FlexEnd))
+align-content: flex-end | serialize | None
+align-content: flex-end | computed | FlexEnd
+align-content: flex-end | page | AlignContent(FlexEnd)
+align-content: space-around | parse | Some(AlignContent(SpaceAround))
+align-content: space-around | serialize | None
+align-content: space-around | computed | SpaceAround
+align-content: space-around | page | AlignContent(SpaceAround)
+align-content: baseline | parse | None
+align-content: baseline | serialize | -
+align-content: baseline | computed | Normal
+align-content: baseline | page | <absent>
+align-content: unsafe end | parse | None
+align-content: unsafe end | serialize | -
+align-content: unsafe end | computed | Normal
+align-content: unsafe end | page | <absent>
+align-content: left | parse | None
+align-content: left | serialize | -
+align-content: left | computed | Normal
+align-content: left | page | <absent>
+align-content: inherit | parse | None
+align-content: inherit | serialize | -
+align-content: inherit | computed | Normal
+align-content: inherit | page | <absent>
+align-content: initial | parse | None
+align-content: initial | serialize | -
+align-content: initial | computed | Normal
+align-content: initial | page | <absent>
+align-content: unset | parse | None
+align-content: unset | serialize | -
+align-content: unset | computed | Normal
+align-content: unset | page | <absent>
+align-content: var(--v) | parse | Some(Deferred(DeferredValue { property: "align-content", value: "var(--v)", key: AlignContent }))
+align-content: var(--v) | serialize | None
+align-content: var(--v) | computed | Center
+align-content: var(--v) | page | AlignContent(Center)
+align-content: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "align-content", value: "var(--undefined)", key: AlignContent }))
+align-content: var(--undefined) | serialize | None
+align-content: var(--undefined) | computed | Normal
+align-content: var(--undefined) | page | <absent>
+
+align-items: <parent center> | computed | Center
+align-items: <undeclared> | computed | Normal
+align-items: * | cssom | <not a ComputedProperty>
+align-items: normal | parse | Some(AlignItems(Normal))
+align-items: normal | serialize | None
+align-items: normal | computed | Normal
+align-items: normal | page | AlignItems(Normal)
+align-items: stretch | parse | Some(AlignItems(Stretch))
+align-items: stretch | serialize | None
+align-items: stretch | computed | Stretch
+align-items: stretch | page | AlignItems(Stretch)
+align-items: flex-start | parse | Some(AlignItems(FlexStart))
+align-items: flex-start | serialize | None
+align-items: flex-start | computed | FlexStart
+align-items: flex-start | page | AlignItems(FlexStart)
+align-items: baseline | parse | Some(AlignItems(Baseline))
+align-items: baseline | serialize | None
+align-items: baseline | computed | Baseline
+align-items: baseline | page | AlignItems(Baseline)
+align-items: last baseline | parse | Some(AlignItems(Baseline))
+align-items: last baseline | serialize | None
+align-items: last baseline | computed | Baseline
+align-items: last baseline | page | AlignItems(Baseline)
+align-items: safe end | parse | Some(AlignItems(Start))
+align-items: safe end | serialize | None
+align-items: safe end | computed | Start
+align-items: safe end | page | AlignItems(Start)
+align-items: legacy | parse | None
+align-items: legacy | serialize | -
+align-items: legacy | computed | Normal
+align-items: legacy | page | <absent>
+align-items: auto | parse | None
+align-items: auto | serialize | -
+align-items: auto | computed | Normal
+align-items: auto | page | <absent>
+align-items: inherit | parse | None
+align-items: inherit | serialize | -
+align-items: inherit | computed | Normal
+align-items: inherit | page | <absent>
+align-items: initial | parse | None
+align-items: initial | serialize | -
+align-items: initial | computed | Normal
+align-items: initial | page | <absent>
+align-items: unset | parse | None
+align-items: unset | serialize | -
+align-items: unset | computed | Normal
+align-items: unset | page | <absent>
+align-items: var(--v) | parse | Some(Deferred(DeferredValue { property: "align-items", value: "var(--v)", key: AlignItems }))
+align-items: var(--v) | serialize | None
+align-items: var(--v) | computed | Center
+align-items: var(--v) | page | AlignItems(Center)
+align-items: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "align-items", value: "var(--undefined)", key: AlignItems }))
+align-items: var(--undefined) | serialize | None
+align-items: var(--undefined) | computed | Normal
+align-items: var(--undefined) | page | <absent>
+
+justify-items: <parent center> | computed | Center
+justify-items: <undeclared> | computed | Normal
+justify-items: * | cssom | <not a ComputedProperty>
+justify-items: normal | parse | Some(JustifyItems(Normal))
+justify-items: normal | serialize | None
+justify-items: normal | computed | Normal
+justify-items: normal | page | JustifyItems(Normal)
+justify-items: stretch | parse | Some(JustifyItems(Stretch))
+justify-items: stretch | serialize | None
+justify-items: stretch | computed | Stretch
+justify-items: stretch | page | JustifyItems(Stretch)
+justify-items: start | parse | Some(JustifyItems(Start))
+justify-items: start | serialize | None
+justify-items: start | computed | Start
+justify-items: start | page | JustifyItems(Start)
+justify-items: left | parse | Some(JustifyItems(Start))
+justify-items: left | serialize | None
+justify-items: left | computed | Start
+justify-items: left | page | JustifyItems(Start)
+justify-items: legacy | parse | None
+justify-items: legacy | serialize | -
+justify-items: legacy | computed | Normal
+justify-items: legacy | page | <absent>
+justify-items: legacy left | parse | None
+justify-items: legacy left | serialize | -
+justify-items: legacy left | computed | Normal
+justify-items: legacy left | page | <absent>
+justify-items: auto | parse | None
+justify-items: auto | serialize | -
+justify-items: auto | computed | Normal
+justify-items: auto | page | <absent>
+justify-items: inherit | parse | None
+justify-items: inherit | serialize | -
+justify-items: inherit | computed | Normal
+justify-items: inherit | page | <absent>
+justify-items: initial | parse | None
+justify-items: initial | serialize | -
+justify-items: initial | computed | Normal
+justify-items: initial | page | <absent>
+justify-items: unset | parse | None
+justify-items: unset | serialize | -
+justify-items: unset | computed | Normal
+justify-items: unset | page | <absent>
+justify-items: var(--v) | parse | Some(Deferred(DeferredValue { property: "justify-items", value: "var(--v)", key: JustifyItems }))
+justify-items: var(--v) | serialize | None
+justify-items: var(--v) | computed | Center
+justify-items: var(--v) | page | JustifyItems(Center)
+justify-items: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "justify-items", value: "var(--undefined)", key: JustifyItems }))
+justify-items: var(--undefined) | serialize | None
+justify-items: var(--undefined) | computed | Normal
+justify-items: var(--undefined) | page | <absent>
+
+align-self: <parent center> | computed | Value(Center)
+align-self: <undeclared> | computed | Auto
+align-self: * | cssom | <not a ComputedProperty>
+align-self: auto | parse | Some(AlignSelf(Auto))
+align-self: auto | serialize | None
+align-self: auto | computed | Auto
+align-self: auto | page | AlignSelf(Auto)
+align-self: normal | parse | Some(AlignSelf(Value(Normal)))
+align-self: normal | serialize | None
+align-self: normal | computed | Value(Normal)
+align-self: normal | page | AlignSelf(Value(Normal))
+align-self: stretch | parse | Some(AlignSelf(Value(Stretch)))
+align-self: stretch | serialize | None
+align-self: stretch | computed | Value(Stretch)
+align-self: stretch | page | AlignSelf(Value(Stretch))
+align-self: flex-end | parse | Some(AlignSelf(Value(FlexEnd)))
+align-self: flex-end | serialize | None
+align-self: flex-end | computed | Value(FlexEnd)
+align-self: flex-end | page | AlignSelf(Value(FlexEnd))
+align-self: baseline | parse | Some(AlignSelf(Value(Baseline)))
+align-self: baseline | serialize | None
+align-self: baseline | computed | Value(Baseline)
+align-self: baseline | page | AlignSelf(Value(Baseline))
+align-self: unsafe center | parse | Some(AlignSelf(Value(Center)))
+align-self: unsafe center | serialize | None
+align-self: unsafe center | computed | Value(Center)
+align-self: unsafe center | page | AlignSelf(Value(Center))
+align-self: left | parse | Some(AlignSelf(Value(Start)))
+align-self: left | serialize | None
+align-self: left | computed | Value(Start)
+align-self: left | page | AlignSelf(Value(Start))
+align-self: inherit | parse | None
+align-self: inherit | serialize | -
+align-self: inherit | computed | Auto
+align-self: inherit | page | <absent>
+align-self: initial | parse | None
+align-self: initial | serialize | -
+align-self: initial | computed | Auto
+align-self: initial | page | <absent>
+align-self: unset | parse | None
+align-self: unset | serialize | -
+align-self: unset | computed | Auto
+align-self: unset | page | <absent>
+align-self: var(--v) | parse | Some(Deferred(DeferredValue { property: "align-self", value: "var(--v)", key: AlignSelf }))
+align-self: var(--v) | serialize | None
+align-self: var(--v) | computed | Value(Center)
+align-self: var(--v) | page | AlignSelf(Value(Center))
+align-self: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "align-self", value: "var(--undefined)", key: AlignSelf }))
+align-self: var(--undefined) | serialize | None
+align-self: var(--undefined) | computed | Auto
+align-self: var(--undefined) | page | <absent>
+
+justify-self: <parent center> | computed | Value(Center)
+justify-self: <undeclared> | computed | Auto
+justify-self: * | cssom | <not a ComputedProperty>
+justify-self: auto | parse | Some(JustifySelf(Auto))
+justify-self: auto | serialize | None
+justify-self: auto | computed | Auto
+justify-self: auto | page | JustifySelf(Auto)
+justify-self: normal | parse | Some(JustifySelf(Value(Normal)))
+justify-self: normal | serialize | None
+justify-self: normal | computed | Value(Normal)
+justify-self: normal | page | JustifySelf(Value(Normal))
+justify-self: start | parse | Some(JustifySelf(Value(Start)))
+justify-self: start | serialize | None
+justify-self: start | computed | Value(Start)
+justify-self: start | page | JustifySelf(Value(Start))
+justify-self: left | parse | Some(JustifySelf(Value(Start)))
+justify-self: left | serialize | None
+justify-self: left | computed | Value(Start)
+justify-self: left | page | JustifySelf(Value(Start))
+justify-self: right | parse | Some(JustifySelf(Value(End)))
+justify-self: right | serialize | None
+justify-self: right | computed | Value(End)
+justify-self: right | page | JustifySelf(Value(End))
+justify-self: baseline | parse | Some(JustifySelf(Value(Baseline)))
+justify-self: baseline | serialize | None
+justify-self: baseline | computed | Value(Baseline)
+justify-self: baseline | page | JustifySelf(Value(Baseline))
+justify-self: space-between | parse | None
+justify-self: space-between | serialize | -
+justify-self: space-between | computed | Auto
+justify-self: space-between | page | <absent>
+justify-self: inherit | parse | None
+justify-self: inherit | serialize | -
+justify-self: inherit | computed | Auto
+justify-self: inherit | page | <absent>
+justify-self: initial | parse | None
+justify-self: initial | serialize | -
+justify-self: initial | computed | Auto
+justify-self: initial | page | <absent>
+justify-self: unset | parse | None
+justify-self: unset | serialize | -
+justify-self: unset | computed | Auto
+justify-self: unset | page | <absent>
+justify-self: var(--v) | parse | Some(Deferred(DeferredValue { property: "justify-self", value: "var(--v)", key: JustifySelf }))
+justify-self: var(--v) | serialize | None
+justify-self: var(--v) | computed | Value(Center)
+justify-self: var(--v) | page | JustifySelf(Value(Center))
+justify-self: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "justify-self", value: "var(--undefined)", key: JustifySelf }))
+justify-self: var(--undefined) | serialize | None
+justify-self: var(--undefined) | computed | Auto
+justify-self: var(--undefined) | page | <absent>
+
+row-gap: <parent 2em> | computed | Px(40.0)
+row-gap: <undeclared> | computed | Normal
+row-gap: * | cssom | <not a ComputedProperty>
+row-gap: normal | parse | Some(RowGap(Normal))
+row-gap: normal | serialize | None
+row-gap: normal | computed | Normal
+row-gap: normal | page | RowGap(Normal)
+row-gap: 0 | parse | Some(RowGap(Length(Px(0.0))))
+row-gap: 0 | serialize | None
+row-gap: 0 | computed | Px(0.0)
+row-gap: 0 | page | RowGap(Length(Px(0.0)))
+row-gap: 10px | parse | Some(RowGap(Length(Px(10.0))))
+row-gap: 10px | serialize | None
+row-gap: 10px | computed | Px(10.0)
+row-gap: 10px | page | RowGap(Length(Px(10.0)))
+row-gap: -1px | parse | None
+row-gap: -1px | serialize | -
+row-gap: -1px | computed | Normal
+row-gap: -1px | page | <absent>
+row-gap: auto | parse | None
+row-gap: auto | serialize | -
+row-gap: auto | computed | Normal
+row-gap: auto | page | <absent>
+row-gap: 1em | parse | Some(RowGap(Length(Em(1.0))))
+row-gap: 1em | serialize | None
+row-gap: 1em | computed | Px(10.0)
+row-gap: 1em | page | RowGap(Length(Px(12.0)))
+row-gap: 1rem | parse | Some(RowGap(Length(Rem(1.0))))
+row-gap: 1rem | serialize | None
+row-gap: 1rem | computed | Px(16.0)
+row-gap: 1rem | page | RowGap(Length(Px(20.0)))
+row-gap: 10% | parse | Some(RowGap(Length(Percent(10.0))))
+row-gap: 10% | serialize | None
+row-gap: 10% | computed | Percent(10.0)
+row-gap: 10% | page | RowGap(Length(Percent(10.0)))
+row-gap: 2ch | parse | Some(RowGap(Length(Ch(2.0))))
+row-gap: 2ch | serialize | None
+row-gap: 2ch | computed | Px(10.0)
+row-gap: 2ch | page | RowGap(Length(Px(12.0)))
+row-gap: 1lh | parse | Some(RowGap(Length(Lh(1.0))))
+row-gap: 1lh | serialize | None
+row-gap: 1lh | computed | Px(15.0)
+row-gap: 1lh | page | RowGap(Length(Px(18.0)))
+row-gap: 1rlh | parse | Some(RowGap(Length(Rlh(1.0))))
+row-gap: 1rlh | serialize | None
+row-gap: 1rlh | computed | Px(0.0)
+row-gap: 1rlh | page | RowGap(Length(Px(30.0)))
+row-gap: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "row-gap", value: "calc(1em + 2px)", key: RowGap }))
+row-gap: calc(1em + 2px) | serialize | None
+row-gap: calc(1em + 2px) | computed | Normal
+row-gap: calc(1em + 2px) | page | <absent>
+row-gap: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "row-gap", value: "calc(10% + 1em)", key: RowGap }))
+row-gap: calc(10% + 1em) | serialize | None
+row-gap: calc(10% + 1em) | computed | Normal
+row-gap: calc(10% + 1em) | page | <absent>
+row-gap: inherit | parse | None
+row-gap: inherit | serialize | -
+row-gap: inherit | computed | Normal
+row-gap: inherit | page | <absent>
+row-gap: initial | parse | None
+row-gap: initial | serialize | -
+row-gap: initial | computed | Normal
+row-gap: initial | page | <absent>
+row-gap: unset | parse | None
+row-gap: unset | serialize | -
+row-gap: unset | computed | Normal
+row-gap: unset | page | <absent>
+row-gap: var(--v) | parse | Some(Deferred(DeferredValue { property: "row-gap", value: "var(--v)", key: RowGap }))
+row-gap: var(--v) | serialize | None
+row-gap: var(--v) | computed | Px(20.0)
+row-gap: var(--v) | page | RowGap(Length(Px(24.0)))
+row-gap: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "row-gap", value: "var(--undefined)", key: RowGap }))
+row-gap: var(--undefined) | serialize | None
+row-gap: var(--undefined) | computed | Normal
+row-gap: var(--undefined) | page | <absent>
+
+column-gap: <parent 2em> | computed | Px(40.0)
+column-gap: <undeclared> | computed | Normal
+column-gap: * | cssom | <not a ComputedProperty>
+column-gap: normal | parse | Some(ColumnGap(Normal))
+column-gap: normal | serialize | None
+column-gap: normal | computed | Normal
+column-gap: normal | page | ColumnGap(Normal)
+column-gap: 0 | parse | Some(ColumnGap(Length(Px(0.0))))
+column-gap: 0 | serialize | None
+column-gap: 0 | computed | Px(0.0)
+column-gap: 0 | page | ColumnGap(Length(Px(0.0)))
+column-gap: 10px | parse | Some(ColumnGap(Length(Px(10.0))))
+column-gap: 10px | serialize | None
+column-gap: 10px | computed | Px(10.0)
+column-gap: 10px | page | ColumnGap(Length(Px(10.0)))
+column-gap: -1px | parse | None
+column-gap: -1px | serialize | -
+column-gap: -1px | computed | Normal
+column-gap: -1px | page | <absent>
+column-gap: auto | parse | None
+column-gap: auto | serialize | -
+column-gap: auto | computed | Normal
+column-gap: auto | page | <absent>
+column-gap: 1em | parse | Some(ColumnGap(Length(Em(1.0))))
+column-gap: 1em | serialize | None
+column-gap: 1em | computed | Px(10.0)
+column-gap: 1em | page | ColumnGap(Length(Px(12.0)))
+column-gap: 1rem | parse | Some(ColumnGap(Length(Rem(1.0))))
+column-gap: 1rem | serialize | None
+column-gap: 1rem | computed | Px(16.0)
+column-gap: 1rem | page | ColumnGap(Length(Px(20.0)))
+column-gap: 10% | parse | Some(ColumnGap(Length(Percent(10.0))))
+column-gap: 10% | serialize | None
+column-gap: 10% | computed | Percent(10.0)
+column-gap: 10% | page | ColumnGap(Length(Percent(10.0)))
+column-gap: 2ch | parse | Some(ColumnGap(Length(Ch(2.0))))
+column-gap: 2ch | serialize | None
+column-gap: 2ch | computed | Px(10.0)
+column-gap: 2ch | page | ColumnGap(Length(Px(12.0)))
+column-gap: 1lh | parse | Some(ColumnGap(Length(Lh(1.0))))
+column-gap: 1lh | serialize | None
+column-gap: 1lh | computed | Px(15.0)
+column-gap: 1lh | page | ColumnGap(Length(Px(18.0)))
+column-gap: 1rlh | parse | Some(ColumnGap(Length(Rlh(1.0))))
+column-gap: 1rlh | serialize | None
+column-gap: 1rlh | computed | Px(0.0)
+column-gap: 1rlh | page | ColumnGap(Length(Px(30.0)))
+column-gap: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "column-gap", value: "calc(1em + 2px)", key: ColumnGap }))
+column-gap: calc(1em + 2px) | serialize | None
+column-gap: calc(1em + 2px) | computed | Normal
+column-gap: calc(1em + 2px) | page | <absent>
+column-gap: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "column-gap", value: "calc(10% + 1em)", key: ColumnGap }))
+column-gap: calc(10% + 1em) | serialize | None
+column-gap: calc(10% + 1em) | computed | Normal
+column-gap: calc(10% + 1em) | page | <absent>
+column-gap: inherit | parse | None
+column-gap: inherit | serialize | -
+column-gap: inherit | computed | Normal
+column-gap: inherit | page | <absent>
+column-gap: initial | parse | None
+column-gap: initial | serialize | -
+column-gap: initial | computed | Normal
+column-gap: initial | page | <absent>
+column-gap: unset | parse | None
+column-gap: unset | serialize | -
+column-gap: unset | computed | Normal
+column-gap: unset | page | <absent>
+column-gap: var(--v) | parse | Some(Deferred(DeferredValue { property: "column-gap", value: "var(--v)", key: ColumnGap }))
+column-gap: var(--v) | serialize | None
+column-gap: var(--v) | computed | Px(20.0)
+column-gap: var(--v) | page | ColumnGap(Length(Px(24.0)))
+column-gap: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "column-gap", value: "var(--undefined)", key: ColumnGap }))
+column-gap: var(--undefined) | serialize | None
+column-gap: var(--undefined) | computed | Normal
+column-gap: var(--undefined) | page | <absent>
+
+grid-template-columns: <parent 2em 1fr> | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(40.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: <undeclared> | computed | None
+grid-template-columns: * | cssom | <not a ComputedProperty>
+grid-template-columns: none | parse | Some(GridTemplateColumns(None))
+grid-template-columns: none | serialize | None
+grid-template-columns: none | computed | None
+grid-template-columns: none | page | GridTemplateColumns(None)
+grid-template-columns: 100px 1fr | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(100.0)))), Size(Breadth(Flex(1.0)))] })))
+grid-template-columns: 100px 1fr | serialize | None
+grid-template-columns: 100px 1fr | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(100.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: 100px 1fr | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(100.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: repeat(2, 10px) | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], []], components: [Repeat(GridTrackRepeat { count: Count(2), line_names: [[], []], tracks: [Breadth(Length(Px(10.0)))] })] })))
+grid-template-columns: repeat(2, 10px) | serialize | None
+grid-template-columns: repeat(2, 10px) | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Repeat(ComputedGridTrackRepeat { count: Count(2), line_names: [[], []], tracks: [Breadth(Px(10.0))] })] })
+grid-template-columns: repeat(2, 10px) | page | GridTemplateColumns(List(GridTrackList { line_names: [[], []], components: [Repeat(GridTrackRepeat { count: Count(2), line_names: [[], []], tracks: [Breadth(Length(Px(10.0)))] })] }))
+grid-template-columns: minmax(10px, 1fr) auto | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(MinMax(Length(Px(10.0)), Flex(1.0))), Size(Breadth(Auto))] })))
+grid-template-columns: minmax(10px, 1fr) auto | serialize | None
+grid-template-columns: minmax(10px, 1fr) auto | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(MinMax(Px(10.0), Flex(1.0))), Size(Breadth(Auto))] })
+grid-template-columns: minmax(10px, 1fr) auto | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(MinMax(Length(Px(10.0)), Flex(1.0))), Size(Breadth(Auto))] }))
+grid-template-columns: [a] 10px [b] | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [["a"], ["b"]], components: [Size(Breadth(Length(Px(10.0))))] })))
+grid-template-columns: [a] 10px [b] | serialize | None
+grid-template-columns: [a] 10px [b] | computed | List(ComputedGridTrackList { line_names: [["a"], ["b"]], components: [Size(Breadth(Px(10.0)))] })
+grid-template-columns: [a] 10px [b] | page | GridTemplateColumns(List(GridTrackList { line_names: [["a"], ["b"]], components: [Size(Breadth(Length(Px(10.0))))] }))
+grid-template-columns: repeat(auto-fill, 10px) | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], []], components: [Repeat(GridTrackRepeat { count: AutoFill, line_names: [[], []], tracks: [Breadth(Length(Px(10.0)))] })] })))
+grid-template-columns: repeat(auto-fill, 10px) | serialize | None
+grid-template-columns: repeat(auto-fill, 10px) | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Repeat(ComputedGridTrackRepeat { count: AutoFill, line_names: [[], []], tracks: [Breadth(Px(10.0))] })] })
+grid-template-columns: repeat(auto-fill, 10px) | page | GridTemplateColumns(List(GridTrackList { line_names: [[], []], components: [Repeat(GridTrackRepeat { count: AutoFill, line_names: [[], []], tracks: [Breadth(Length(Px(10.0)))] })] }))
+grid-template-columns: subgrid | parse | None
+grid-template-columns: subgrid | serialize | -
+grid-template-columns: subgrid | computed | None
+grid-template-columns: subgrid | page | <absent>
+grid-template-columns: fit-content(10px) | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], []], components: [Size(FitContent(Px(10.0)))] })))
+grid-template-columns: fit-content(10px) | serialize | None
+grid-template-columns: fit-content(10px) | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(FitContent(Px(10.0)))] })
+grid-template-columns: fit-content(10px) | page | GridTemplateColumns(List(GridTrackList { line_names: [[], []], components: [Size(FitContent(Px(10.0)))] }))
+grid-template-columns: -1px | parse | None
+grid-template-columns: -1px | serialize | -
+grid-template-columns: -1px | computed | None
+grid-template-columns: -1px | page | <absent>
+grid-template-columns: 1em 1fr | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Em(1.0)))), Size(Breadth(Flex(1.0)))] })))
+grid-template-columns: 1em 1fr | serialize | None
+grid-template-columns: 1em 1fr | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(10.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: 1em 1fr | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(12.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: 1rem 1fr | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Rem(1.0)))), Size(Breadth(Flex(1.0)))] })))
+grid-template-columns: 1rem 1fr | serialize | None
+grid-template-columns: 1rem 1fr | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(16.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: 1rem 1fr | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(20.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: 10% 1fr | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Percent(10.0)))), Size(Breadth(Flex(1.0)))] })))
+grid-template-columns: 10% 1fr | serialize | None
+grid-template-columns: 10% 1fr | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Percent(10.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: 10% 1fr | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Percent(10.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: 2ch 1fr | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Ch(2.0)))), Size(Breadth(Flex(1.0)))] })))
+grid-template-columns: 2ch 1fr | serialize | None
+grid-template-columns: 2ch 1fr | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(10.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: 2ch 1fr | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(12.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: 1lh 1fr | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Lh(1.0)))), Size(Breadth(Flex(1.0)))] })))
+grid-template-columns: 1lh 1fr | serialize | None
+grid-template-columns: 1lh 1fr | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(15.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: 1lh 1fr | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(18.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: 1rlh 1fr | parse | Some(GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Rlh(1.0)))), Size(Breadth(Flex(1.0)))] })))
+grid-template-columns: 1rlh 1fr | serialize | None
+grid-template-columns: 1rlh 1fr | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(0.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: 1rlh 1fr | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(30.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: calc(1em + 2px) 1fr | parse | Some(Deferred(DeferredValue { property: "grid-template-columns", value: "calc(1em + 2px) 1fr", key: GridTemplateColumns }))
+grid-template-columns: calc(1em + 2px) 1fr | serialize | None
+grid-template-columns: calc(1em + 2px) 1fr | computed | None
+grid-template-columns: calc(1em + 2px) 1fr | page | <absent>
+grid-template-columns: calc(10% + 1em) 1fr | parse | Some(Deferred(DeferredValue { property: "grid-template-columns", value: "calc(10% + 1em) 1fr", key: GridTemplateColumns }))
+grid-template-columns: calc(10% + 1em) 1fr | serialize | None
+grid-template-columns: calc(10% + 1em) 1fr | computed | None
+grid-template-columns: calc(10% + 1em) 1fr | page | <absent>
+grid-template-columns: inherit | parse | None
+grid-template-columns: inherit | serialize | -
+grid-template-columns: inherit | computed | None
+grid-template-columns: inherit | page | <absent>
+grid-template-columns: initial | parse | None
+grid-template-columns: initial | serialize | -
+grid-template-columns: initial | computed | None
+grid-template-columns: initial | page | <absent>
+grid-template-columns: unset | parse | None
+grid-template-columns: unset | serialize | -
+grid-template-columns: unset | computed | None
+grid-template-columns: unset | page | <absent>
+grid-template-columns: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-template-columns", value: "var(--v)", key: GridTemplateColumns }))
+grid-template-columns: var(--v) | serialize | None
+grid-template-columns: var(--v) | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(20.0))), Size(Breadth(Flex(1.0)))] })
+grid-template-columns: var(--v) | page | GridTemplateColumns(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(24.0)))), Size(Breadth(Flex(1.0)))] }))
+grid-template-columns: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-template-columns", value: "var(--undefined)", key: GridTemplateColumns }))
+grid-template-columns: var(--undefined) | serialize | None
+grid-template-columns: var(--undefined) | computed | None
+grid-template-columns: var(--undefined) | page | <absent>
+
+grid-template-rows: <parent 2em> | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(40.0)))] })
+grid-template-rows: <undeclared> | computed | None
+grid-template-rows: * | cssom | <not a ComputedProperty>
+grid-template-rows: none | parse | Some(GridTemplateRows(None))
+grid-template-rows: none | serialize | None
+grid-template-rows: none | computed | None
+grid-template-rows: none | page | GridTemplateRows(None)
+grid-template-rows: 100px auto | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(100.0)))), Size(Breadth(Auto))] })))
+grid-template-rows: 100px auto | serialize | None
+grid-template-rows: 100px auto | computed | List(ComputedGridTrackList { line_names: [[], [], []], components: [Size(Breadth(Px(100.0))), Size(Breadth(Auto))] })
+grid-template-rows: 100px auto | page | GridTemplateRows(List(GridTrackList { line_names: [[], [], []], components: [Size(Breadth(Length(Px(100.0)))), Size(Breadth(Auto))] }))
+grid-template-rows: repeat(3, 1fr) | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Repeat(GridTrackRepeat { count: Count(3), line_names: [[], []], tracks: [Breadth(Flex(1.0))] })] })))
+grid-template-rows: repeat(3, 1fr) | serialize | None
+grid-template-rows: repeat(3, 1fr) | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Repeat(ComputedGridTrackRepeat { count: Count(3), line_names: [[], []], tracks: [Breadth(Flex(1.0))] })] })
+grid-template-rows: repeat(3, 1fr) | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Repeat(GridTrackRepeat { count: Count(3), line_names: [[], []], tracks: [Breadth(Flex(1.0))] })] }))
+grid-template-rows: bogus | parse | None
+grid-template-rows: bogus | serialize | -
+grid-template-rows: bogus | computed | None
+grid-template-rows: bogus | page | <absent>
+grid-template-rows: 1em | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Em(1.0))))] })))
+grid-template-rows: 1em | serialize | None
+grid-template-rows: 1em | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(10.0)))] })
+grid-template-rows: 1em | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Px(12.0))))] }))
+grid-template-rows: 1rem | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Rem(1.0))))] })))
+grid-template-rows: 1rem | serialize | None
+grid-template-rows: 1rem | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(16.0)))] })
+grid-template-rows: 1rem | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Px(20.0))))] }))
+grid-template-rows: 10% | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Percent(10.0))))] })))
+grid-template-rows: 10% | serialize | None
+grid-template-rows: 10% | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Percent(10.0)))] })
+grid-template-rows: 10% | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Percent(10.0))))] }))
+grid-template-rows: 2ch | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Ch(2.0))))] })))
+grid-template-rows: 2ch | serialize | None
+grid-template-rows: 2ch | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(10.0)))] })
+grid-template-rows: 2ch | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Px(12.0))))] }))
+grid-template-rows: 1lh | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Lh(1.0))))] })))
+grid-template-rows: 1lh | serialize | None
+grid-template-rows: 1lh | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(15.0)))] })
+grid-template-rows: 1lh | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Px(18.0))))] }))
+grid-template-rows: 1rlh | parse | Some(GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Rlh(1.0))))] })))
+grid-template-rows: 1rlh | serialize | None
+grid-template-rows: 1rlh | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(0.0)))] })
+grid-template-rows: 1rlh | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Px(30.0))))] }))
+grid-template-rows: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "grid-template-rows", value: "calc(1em + 2px)", key: GridTemplateRows }))
+grid-template-rows: calc(1em + 2px) | serialize | None
+grid-template-rows: calc(1em + 2px) | computed | None
+grid-template-rows: calc(1em + 2px) | page | <absent>
+grid-template-rows: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "grid-template-rows", value: "calc(10% + 1em)", key: GridTemplateRows }))
+grid-template-rows: calc(10% + 1em) | serialize | None
+grid-template-rows: calc(10% + 1em) | computed | None
+grid-template-rows: calc(10% + 1em) | page | <absent>
+grid-template-rows: inherit | parse | None
+grid-template-rows: inherit | serialize | -
+grid-template-rows: inherit | computed | None
+grid-template-rows: inherit | page | <absent>
+grid-template-rows: initial | parse | None
+grid-template-rows: initial | serialize | -
+grid-template-rows: initial | computed | None
+grid-template-rows: initial | page | <absent>
+grid-template-rows: unset | parse | None
+grid-template-rows: unset | serialize | -
+grid-template-rows: unset | computed | None
+grid-template-rows: unset | page | <absent>
+grid-template-rows: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-template-rows", value: "var(--v)", key: GridTemplateRows }))
+grid-template-rows: var(--v) | serialize | None
+grid-template-rows: var(--v) | computed | List(ComputedGridTrackList { line_names: [[], []], components: [Size(Breadth(Px(20.0)))] })
+grid-template-rows: var(--v) | page | GridTemplateRows(List(GridTrackList { line_names: [[], []], components: [Size(Breadth(Length(Px(24.0))))] }))
+grid-template-rows: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-template-rows", value: "var(--undefined)", key: GridTemplateRows }))
+grid-template-rows: var(--undefined) | serialize | None
+grid-template-rows: var(--undefined) | computed | None
+grid-template-rows: var(--undefined) | page | <absent>
+
+grid-template-areas: <parent "a b"> | computed | Areas(GridTemplateAreas { row_strings: ["a b"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "b", row_start: 1, row_end: 2, column_start: 2, column_end: 3 }], row_count: 1, column_count: 2 })
+grid-template-areas: <undeclared> | computed | None
+grid-template-areas: * | cssom | <not a ComputedProperty>
+grid-template-areas: none | parse | Some(GridTemplateAreas(None))
+grid-template-areas: none | serialize | None
+grid-template-areas: none | computed | None
+grid-template-areas: none | page | GridTemplateAreas(None)
+grid-template-areas: "a a" "b c" | parse | Some(GridTemplateAreas(Areas(GridTemplateAreas { row_strings: ["a a", "b c"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 3 }, GridTemplateAreaEntry { name: "b", row_start: 2, row_end: 3, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "c", row_start: 2, row_end: 3, column_start: 2, column_end: 3 }], row_count: 2, column_count: 2 })))
+grid-template-areas: "a a" "b c" | serialize | None
+grid-template-areas: "a a" "b c" | computed | Areas(GridTemplateAreas { row_strings: ["a a", "b c"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 3 }, GridTemplateAreaEntry { name: "b", row_start: 2, row_end: 3, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "c", row_start: 2, row_end: 3, column_start: 2, column_end: 3 }], row_count: 2, column_count: 2 })
+grid-template-areas: "a a" "b c" | page | GridTemplateAreas(Areas(GridTemplateAreas { row_strings: ["a a", "b c"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 3 }, GridTemplateAreaEntry { name: "b", row_start: 2, row_end: 3, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "c", row_start: 2, row_end: 3, column_start: 2, column_end: 3 }], row_count: 2, column_count: 2 }))
+grid-template-areas: "a ." | parse | Some(GridTemplateAreas(Areas(GridTemplateAreas { row_strings: ["a ."], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }], row_count: 1, column_count: 2 })))
+grid-template-areas: "a ." | serialize | None
+grid-template-areas: "a ." | computed | Areas(GridTemplateAreas { row_strings: ["a ."], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }], row_count: 1, column_count: 2 })
+grid-template-areas: "a ." | page | GridTemplateAreas(Areas(GridTemplateAreas { row_strings: ["a ."], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }], row_count: 1, column_count: 2 }))
+grid-template-areas: "a" "b c" | parse | None
+grid-template-areas: "a" "b c" | serialize | -
+grid-template-areas: "a" "b c" | computed | None
+grid-template-areas: "a" "b c" | page | <absent>
+grid-template-areas: a | parse | None
+grid-template-areas: a | serialize | -
+grid-template-areas: a | computed | None
+grid-template-areas: a | page | <absent>
+grid-template-areas: inherit | parse | None
+grid-template-areas: inherit | serialize | -
+grid-template-areas: inherit | computed | None
+grid-template-areas: inherit | page | <absent>
+grid-template-areas: initial | parse | None
+grid-template-areas: initial | serialize | -
+grid-template-areas: initial | computed | None
+grid-template-areas: initial | page | <absent>
+grid-template-areas: unset | parse | None
+grid-template-areas: unset | serialize | -
+grid-template-areas: unset | computed | None
+grid-template-areas: unset | page | <absent>
+grid-template-areas: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-template-areas", value: "var(--v)", key: GridTemplateAreas }))
+grid-template-areas: var(--v) | serialize | None
+grid-template-areas: var(--v) | computed | Areas(GridTemplateAreas { row_strings: ["a b"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "b", row_start: 1, row_end: 2, column_start: 2, column_end: 3 }], row_count: 1, column_count: 2 })
+grid-template-areas: var(--v) | page | GridTemplateAreas(Areas(GridTemplateAreas { row_strings: ["a b"], areas: [GridTemplateAreaEntry { name: "a", row_start: 1, row_end: 2, column_start: 1, column_end: 2 }, GridTemplateAreaEntry { name: "b", row_start: 1, row_end: 2, column_start: 2, column_end: 3 }], row_count: 1, column_count: 2 }))
+grid-template-areas: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-template-areas", value: "var(--undefined)", key: GridTemplateAreas }))
+grid-template-areas: var(--undefined) | serialize | None
+grid-template-areas: var(--undefined) | computed | None
+grid-template-areas: var(--undefined) | page | <absent>
+
+grid-auto-columns: <parent 2em> | computed | [Breadth(Px(40.0))]
+grid-auto-columns: <undeclared> | computed | [Breadth(Auto)]
+grid-auto-columns: * | cssom | <not a ComputedProperty>
+grid-auto-columns: auto | parse | Some(GridAutoColumns([Breadth(Auto)]))
+grid-auto-columns: auto | serialize | None
+grid-auto-columns: auto | computed | [Breadth(Auto)]
+grid-auto-columns: auto | page | GridAutoColumns([Breadth(Auto)])
+grid-auto-columns: 1fr | parse | Some(GridAutoColumns([Breadth(Flex(1.0))]))
+grid-auto-columns: 1fr | serialize | None
+grid-auto-columns: 1fr | computed | [Breadth(Flex(1.0))]
+grid-auto-columns: 1fr | page | GridAutoColumns([Breadth(Flex(1.0))])
+grid-auto-columns: 10px 20px | parse | Some(GridAutoColumns([Breadth(Length(Px(10.0))), Breadth(Length(Px(20.0)))]))
+grid-auto-columns: 10px 20px | serialize | None
+grid-auto-columns: 10px 20px | computed | [Breadth(Px(10.0)), Breadth(Px(20.0))]
+grid-auto-columns: 10px 20px | page | GridAutoColumns([Breadth(Length(Px(10.0))), Breadth(Length(Px(20.0)))])
+grid-auto-columns: minmax(10px, auto) | parse | Some(GridAutoColumns([MinMax(Length(Px(10.0)), Auto)]))
+grid-auto-columns: minmax(10px, auto) | serialize | None
+grid-auto-columns: minmax(10px, auto) | computed | [MinMax(Px(10.0), Auto)]
+grid-auto-columns: minmax(10px, auto) | page | GridAutoColumns([MinMax(Length(Px(10.0)), Auto)])
+grid-auto-columns: none | parse | None
+grid-auto-columns: none | serialize | -
+grid-auto-columns: none | computed | [Breadth(Auto)]
+grid-auto-columns: none | page | <absent>
+grid-auto-columns: 1em | parse | Some(GridAutoColumns([Breadth(Length(Em(1.0)))]))
+grid-auto-columns: 1em | serialize | None
+grid-auto-columns: 1em | computed | [Breadth(Px(10.0))]
+grid-auto-columns: 1em | page | GridAutoColumns([Breadth(Length(Px(12.0)))])
+grid-auto-columns: 1rem | parse | Some(GridAutoColumns([Breadth(Length(Rem(1.0)))]))
+grid-auto-columns: 1rem | serialize | None
+grid-auto-columns: 1rem | computed | [Breadth(Px(16.0))]
+grid-auto-columns: 1rem | page | GridAutoColumns([Breadth(Length(Px(20.0)))])
+grid-auto-columns: 10% | parse | Some(GridAutoColumns([Breadth(Length(Percent(10.0)))]))
+grid-auto-columns: 10% | serialize | None
+grid-auto-columns: 10% | computed | [Breadth(Percent(10.0))]
+grid-auto-columns: 10% | page | GridAutoColumns([Breadth(Length(Percent(10.0)))])
+grid-auto-columns: 2ch | parse | Some(GridAutoColumns([Breadth(Length(Ch(2.0)))]))
+grid-auto-columns: 2ch | serialize | None
+grid-auto-columns: 2ch | computed | [Breadth(Px(10.0))]
+grid-auto-columns: 2ch | page | GridAutoColumns([Breadth(Length(Px(12.0)))])
+grid-auto-columns: 1lh | parse | Some(GridAutoColumns([Breadth(Length(Lh(1.0)))]))
+grid-auto-columns: 1lh | serialize | None
+grid-auto-columns: 1lh | computed | [Breadth(Px(15.0))]
+grid-auto-columns: 1lh | page | GridAutoColumns([Breadth(Length(Px(18.0)))])
+grid-auto-columns: 1rlh | parse | Some(GridAutoColumns([Breadth(Length(Rlh(1.0)))]))
+grid-auto-columns: 1rlh | serialize | None
+grid-auto-columns: 1rlh | computed | [Breadth(Px(0.0))]
+grid-auto-columns: 1rlh | page | GridAutoColumns([Breadth(Length(Px(30.0)))])
+grid-auto-columns: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "grid-auto-columns", value: "calc(1em + 2px)", key: GridAutoColumns }))
+grid-auto-columns: calc(1em + 2px) | serialize | None
+grid-auto-columns: calc(1em + 2px) | computed | [Breadth(Auto)]
+grid-auto-columns: calc(1em + 2px) | page | <absent>
+grid-auto-columns: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "grid-auto-columns", value: "calc(10% + 1em)", key: GridAutoColumns }))
+grid-auto-columns: calc(10% + 1em) | serialize | None
+grid-auto-columns: calc(10% + 1em) | computed | [Breadth(Auto)]
+grid-auto-columns: calc(10% + 1em) | page | <absent>
+grid-auto-columns: inherit | parse | None
+grid-auto-columns: inherit | serialize | -
+grid-auto-columns: inherit | computed | [Breadth(Auto)]
+grid-auto-columns: inherit | page | <absent>
+grid-auto-columns: initial | parse | None
+grid-auto-columns: initial | serialize | -
+grid-auto-columns: initial | computed | [Breadth(Auto)]
+grid-auto-columns: initial | page | <absent>
+grid-auto-columns: unset | parse | None
+grid-auto-columns: unset | serialize | -
+grid-auto-columns: unset | computed | [Breadth(Auto)]
+grid-auto-columns: unset | page | <absent>
+grid-auto-columns: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-auto-columns", value: "var(--v)", key: GridAutoColumns }))
+grid-auto-columns: var(--v) | serialize | None
+grid-auto-columns: var(--v) | computed | [Breadth(Px(20.0))]
+grid-auto-columns: var(--v) | page | GridAutoColumns([Breadth(Length(Px(24.0)))])
+grid-auto-columns: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-auto-columns", value: "var(--undefined)", key: GridAutoColumns }))
+grid-auto-columns: var(--undefined) | serialize | None
+grid-auto-columns: var(--undefined) | computed | [Breadth(Auto)]
+grid-auto-columns: var(--undefined) | page | <absent>
+
+grid-auto-rows: <parent 2em> | computed | [Breadth(Px(40.0))]
+grid-auto-rows: <undeclared> | computed | [Breadth(Auto)]
+grid-auto-rows: * | cssom | <not a ComputedProperty>
+grid-auto-rows: auto | parse | Some(GridAutoRows([Breadth(Auto)]))
+grid-auto-rows: auto | serialize | None
+grid-auto-rows: auto | computed | [Breadth(Auto)]
+grid-auto-rows: auto | page | GridAutoRows([Breadth(Auto)])
+grid-auto-rows: 1fr | parse | Some(GridAutoRows([Breadth(Flex(1.0))]))
+grid-auto-rows: 1fr | serialize | None
+grid-auto-rows: 1fr | computed | [Breadth(Flex(1.0))]
+grid-auto-rows: 1fr | page | GridAutoRows([Breadth(Flex(1.0))])
+grid-auto-rows: 10px 20px | parse | Some(GridAutoRows([Breadth(Length(Px(10.0))), Breadth(Length(Px(20.0)))]))
+grid-auto-rows: 10px 20px | serialize | None
+grid-auto-rows: 10px 20px | computed | [Breadth(Px(10.0)), Breadth(Px(20.0))]
+grid-auto-rows: 10px 20px | page | GridAutoRows([Breadth(Length(Px(10.0))), Breadth(Length(Px(20.0)))])
+grid-auto-rows: minmax(10px, auto) | parse | Some(GridAutoRows([MinMax(Length(Px(10.0)), Auto)]))
+grid-auto-rows: minmax(10px, auto) | serialize | None
+grid-auto-rows: minmax(10px, auto) | computed | [MinMax(Px(10.0), Auto)]
+grid-auto-rows: minmax(10px, auto) | page | GridAutoRows([MinMax(Length(Px(10.0)), Auto)])
+grid-auto-rows: none | parse | None
+grid-auto-rows: none | serialize | -
+grid-auto-rows: none | computed | [Breadth(Auto)]
+grid-auto-rows: none | page | <absent>
+grid-auto-rows: 1em | parse | Some(GridAutoRows([Breadth(Length(Em(1.0)))]))
+grid-auto-rows: 1em | serialize | None
+grid-auto-rows: 1em | computed | [Breadth(Px(10.0))]
+grid-auto-rows: 1em | page | GridAutoRows([Breadth(Length(Px(12.0)))])
+grid-auto-rows: 1rem | parse | Some(GridAutoRows([Breadth(Length(Rem(1.0)))]))
+grid-auto-rows: 1rem | serialize | None
+grid-auto-rows: 1rem | computed | [Breadth(Px(16.0))]
+grid-auto-rows: 1rem | page | GridAutoRows([Breadth(Length(Px(20.0)))])
+grid-auto-rows: 10% | parse | Some(GridAutoRows([Breadth(Length(Percent(10.0)))]))
+grid-auto-rows: 10% | serialize | None
+grid-auto-rows: 10% | computed | [Breadth(Percent(10.0))]
+grid-auto-rows: 10% | page | GridAutoRows([Breadth(Length(Percent(10.0)))])
+grid-auto-rows: 2ch | parse | Some(GridAutoRows([Breadth(Length(Ch(2.0)))]))
+grid-auto-rows: 2ch | serialize | None
+grid-auto-rows: 2ch | computed | [Breadth(Px(10.0))]
+grid-auto-rows: 2ch | page | GridAutoRows([Breadth(Length(Px(12.0)))])
+grid-auto-rows: 1lh | parse | Some(GridAutoRows([Breadth(Length(Lh(1.0)))]))
+grid-auto-rows: 1lh | serialize | None
+grid-auto-rows: 1lh | computed | [Breadth(Px(15.0))]
+grid-auto-rows: 1lh | page | GridAutoRows([Breadth(Length(Px(18.0)))])
+grid-auto-rows: 1rlh | parse | Some(GridAutoRows([Breadth(Length(Rlh(1.0)))]))
+grid-auto-rows: 1rlh | serialize | None
+grid-auto-rows: 1rlh | computed | [Breadth(Px(0.0))]
+grid-auto-rows: 1rlh | page | GridAutoRows([Breadth(Length(Px(30.0)))])
+grid-auto-rows: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "grid-auto-rows", value: "calc(1em + 2px)", key: GridAutoRows }))
+grid-auto-rows: calc(1em + 2px) | serialize | None
+grid-auto-rows: calc(1em + 2px) | computed | [Breadth(Auto)]
+grid-auto-rows: calc(1em + 2px) | page | <absent>
+grid-auto-rows: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "grid-auto-rows", value: "calc(10% + 1em)", key: GridAutoRows }))
+grid-auto-rows: calc(10% + 1em) | serialize | None
+grid-auto-rows: calc(10% + 1em) | computed | [Breadth(Auto)]
+grid-auto-rows: calc(10% + 1em) | page | <absent>
+grid-auto-rows: inherit | parse | None
+grid-auto-rows: inherit | serialize | -
+grid-auto-rows: inherit | computed | [Breadth(Auto)]
+grid-auto-rows: inherit | page | <absent>
+grid-auto-rows: initial | parse | None
+grid-auto-rows: initial | serialize | -
+grid-auto-rows: initial | computed | [Breadth(Auto)]
+grid-auto-rows: initial | page | <absent>
+grid-auto-rows: unset | parse | None
+grid-auto-rows: unset | serialize | -
+grid-auto-rows: unset | computed | [Breadth(Auto)]
+grid-auto-rows: unset | page | <absent>
+grid-auto-rows: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-auto-rows", value: "var(--v)", key: GridAutoRows }))
+grid-auto-rows: var(--v) | serialize | None
+grid-auto-rows: var(--v) | computed | [Breadth(Px(20.0))]
+grid-auto-rows: var(--v) | page | GridAutoRows([Breadth(Length(Px(24.0)))])
+grid-auto-rows: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-auto-rows", value: "var(--undefined)", key: GridAutoRows }))
+grid-auto-rows: var(--undefined) | serialize | None
+grid-auto-rows: var(--undefined) | computed | [Breadth(Auto)]
+grid-auto-rows: var(--undefined) | page | <absent>
+
+grid-auto-flow: <parent column> | computed | Column
+grid-auto-flow: <undeclared> | computed | Row
+grid-auto-flow: * | cssom | <not a ComputedProperty>
+grid-auto-flow: row | parse | Some(GridAutoFlow(Row))
+grid-auto-flow: row | serialize | None
+grid-auto-flow: row | computed | Row
+grid-auto-flow: row | page | GridAutoFlow(Row)
+grid-auto-flow: dense | parse | Some(GridAutoFlow(RowDense))
+grid-auto-flow: dense | serialize | None
+grid-auto-flow: dense | computed | RowDense
+grid-auto-flow: dense | page | GridAutoFlow(RowDense)
+grid-auto-flow: row dense | parse | Some(GridAutoFlow(RowDense))
+grid-auto-flow: row dense | serialize | None
+grid-auto-flow: row dense | computed | RowDense
+grid-auto-flow: row dense | page | GridAutoFlow(RowDense)
+grid-auto-flow: column dense | parse | Some(GridAutoFlow(ColumnDense))
+grid-auto-flow: column dense | serialize | None
+grid-auto-flow: column dense | computed | ColumnDense
+grid-auto-flow: column dense | page | GridAutoFlow(ColumnDense)
+grid-auto-flow: dense column | parse | Some(GridAutoFlow(ColumnDense))
+grid-auto-flow: dense column | serialize | None
+grid-auto-flow: dense column | computed | ColumnDense
+grid-auto-flow: dense column | page | GridAutoFlow(ColumnDense)
+grid-auto-flow: row column | parse | None (input left after GridAutoFlow(Row))
+grid-auto-flow: row column | serialize | -
+grid-auto-flow: row column | computed | Row
+grid-auto-flow: row column | page | <absent>
+grid-auto-flow: inherit | parse | None
+grid-auto-flow: inherit | serialize | -
+grid-auto-flow: inherit | computed | Row
+grid-auto-flow: inherit | page | <absent>
+grid-auto-flow: initial | parse | None
+grid-auto-flow: initial | serialize | -
+grid-auto-flow: initial | computed | Row
+grid-auto-flow: initial | page | <absent>
+grid-auto-flow: unset | parse | None
+grid-auto-flow: unset | serialize | -
+grid-auto-flow: unset | computed | Row
+grid-auto-flow: unset | page | <absent>
+grid-auto-flow: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-auto-flow", value: "var(--v)", key: GridAutoFlow }))
+grid-auto-flow: var(--v) | serialize | None
+grid-auto-flow: var(--v) | computed | Column
+grid-auto-flow: var(--v) | page | GridAutoFlow(Column)
+grid-auto-flow: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-auto-flow", value: "var(--undefined)", key: GridAutoFlow }))
+grid-auto-flow: var(--undefined) | serialize | None
+grid-auto-flow: var(--undefined) | computed | Row
+grid-auto-flow: var(--undefined) | page | <absent>
+
+grid-row-start: <parent 2> | computed | Line(2)
+grid-row-start: <undeclared> | computed | Auto
+grid-row-start: * | cssom | <not a ComputedProperty>
+grid-row-start: auto | parse | Some(GridRowStart(Auto))
+grid-row-start: auto | serialize | None
+grid-row-start: auto | computed | Auto
+grid-row-start: auto | page | GridRowStart(Auto)
+grid-row-start: 3 | parse | Some(GridRowStart(Line(3)))
+grid-row-start: 3 | serialize | None
+grid-row-start: 3 | computed | Line(3)
+grid-row-start: 3 | page | GridRowStart(Line(3))
+grid-row-start: -1 | parse | Some(GridRowStart(Line(-1)))
+grid-row-start: -1 | serialize | None
+grid-row-start: -1 | computed | Line(-1)
+grid-row-start: -1 | page | GridRowStart(Line(-1))
+grid-row-start: span 2 | parse | Some(GridRowStart(Span(2)))
+grid-row-start: span 2 | serialize | None
+grid-row-start: span 2 | computed | Span(2)
+grid-row-start: span 2 | page | GridRowStart(Span(2))
+grid-row-start: a | parse | Some(GridRowStart(Named("a")))
+grid-row-start: a | serialize | None
+grid-row-start: a | computed | Named("a")
+grid-row-start: a | page | GridRowStart(Named("a"))
+grid-row-start: a 2 | parse | Some(GridRowStart(NamedLine("a", 2)))
+grid-row-start: a 2 | serialize | None
+grid-row-start: a 2 | computed | NamedLine("a", 2)
+grid-row-start: a 2 | page | GridRowStart(NamedLine("a", 2))
+grid-row-start: span a | parse | Some(GridRowStart(SpanNamed("a", 1)))
+grid-row-start: span a | serialize | None
+grid-row-start: span a | computed | SpanNamed("a", 1)
+grid-row-start: span a | page | GridRowStart(SpanNamed("a", 1))
+grid-row-start: 0 | parse | None
+grid-row-start: 0 | serialize | -
+grid-row-start: 0 | computed | Auto
+grid-row-start: 0 | page | <absent>
+grid-row-start: span 0 | parse | None
+grid-row-start: span 0 | serialize | -
+grid-row-start: span 0 | computed | Auto
+grid-row-start: span 0 | page | <absent>
+grid-row-start: inherit | parse | None
+grid-row-start: inherit | serialize | -
+grid-row-start: inherit | computed | Auto
+grid-row-start: inherit | page | <absent>
+grid-row-start: initial | parse | None
+grid-row-start: initial | serialize | -
+grid-row-start: initial | computed | Auto
+grid-row-start: initial | page | <absent>
+grid-row-start: unset | parse | None
+grid-row-start: unset | serialize | -
+grid-row-start: unset | computed | Auto
+grid-row-start: unset | page | <absent>
+grid-row-start: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-row-start", value: "var(--v)", key: GridRowStart }))
+grid-row-start: var(--v) | serialize | None
+grid-row-start: var(--v) | computed | Line(2)
+grid-row-start: var(--v) | page | GridRowStart(Line(2))
+grid-row-start: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-row-start", value: "var(--undefined)", key: GridRowStart }))
+grid-row-start: var(--undefined) | serialize | None
+grid-row-start: var(--undefined) | computed | Auto
+grid-row-start: var(--undefined) | page | <absent>
+
+grid-row-end: <parent 2> | computed | Line(2)
+grid-row-end: <undeclared> | computed | Auto
+grid-row-end: * | cssom | <not a ComputedProperty>
+grid-row-end: auto | parse | Some(GridRowEnd(Auto))
+grid-row-end: auto | serialize | None
+grid-row-end: auto | computed | Auto
+grid-row-end: auto | page | GridRowEnd(Auto)
+grid-row-end: 3 | parse | Some(GridRowEnd(Line(3)))
+grid-row-end: 3 | serialize | None
+grid-row-end: 3 | computed | Line(3)
+grid-row-end: 3 | page | GridRowEnd(Line(3))
+grid-row-end: -1 | parse | Some(GridRowEnd(Line(-1)))
+grid-row-end: -1 | serialize | None
+grid-row-end: -1 | computed | Line(-1)
+grid-row-end: -1 | page | GridRowEnd(Line(-1))
+grid-row-end: span 2 | parse | Some(GridRowEnd(Span(2)))
+grid-row-end: span 2 | serialize | None
+grid-row-end: span 2 | computed | Span(2)
+grid-row-end: span 2 | page | GridRowEnd(Span(2))
+grid-row-end: a | parse | Some(GridRowEnd(Named("a")))
+grid-row-end: a | serialize | None
+grid-row-end: a | computed | Named("a")
+grid-row-end: a | page | GridRowEnd(Named("a"))
+grid-row-end: a 2 | parse | Some(GridRowEnd(NamedLine("a", 2)))
+grid-row-end: a 2 | serialize | None
+grid-row-end: a 2 | computed | NamedLine("a", 2)
+grid-row-end: a 2 | page | GridRowEnd(NamedLine("a", 2))
+grid-row-end: span a | parse | Some(GridRowEnd(SpanNamed("a", 1)))
+grid-row-end: span a | serialize | None
+grid-row-end: span a | computed | SpanNamed("a", 1)
+grid-row-end: span a | page | GridRowEnd(SpanNamed("a", 1))
+grid-row-end: 0 | parse | None
+grid-row-end: 0 | serialize | -
+grid-row-end: 0 | computed | Auto
+grid-row-end: 0 | page | <absent>
+grid-row-end: span 0 | parse | None
+grid-row-end: span 0 | serialize | -
+grid-row-end: span 0 | computed | Auto
+grid-row-end: span 0 | page | <absent>
+grid-row-end: inherit | parse | None
+grid-row-end: inherit | serialize | -
+grid-row-end: inherit | computed | Auto
+grid-row-end: inherit | page | <absent>
+grid-row-end: initial | parse | None
+grid-row-end: initial | serialize | -
+grid-row-end: initial | computed | Auto
+grid-row-end: initial | page | <absent>
+grid-row-end: unset | parse | None
+grid-row-end: unset | serialize | -
+grid-row-end: unset | computed | Auto
+grid-row-end: unset | page | <absent>
+grid-row-end: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-row-end", value: "var(--v)", key: GridRowEnd }))
+grid-row-end: var(--v) | serialize | None
+grid-row-end: var(--v) | computed | Line(2)
+grid-row-end: var(--v) | page | GridRowEnd(Line(2))
+grid-row-end: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-row-end", value: "var(--undefined)", key: GridRowEnd }))
+grid-row-end: var(--undefined) | serialize | None
+grid-row-end: var(--undefined) | computed | Auto
+grid-row-end: var(--undefined) | page | <absent>
+
+grid-column-start: <parent 2> | computed | Line(2)
+grid-column-start: <undeclared> | computed | Auto
+grid-column-start: * | cssom | <not a ComputedProperty>
+grid-column-start: auto | parse | Some(GridColumnStart(Auto))
+grid-column-start: auto | serialize | None
+grid-column-start: auto | computed | Auto
+grid-column-start: auto | page | GridColumnStart(Auto)
+grid-column-start: 3 | parse | Some(GridColumnStart(Line(3)))
+grid-column-start: 3 | serialize | None
+grid-column-start: 3 | computed | Line(3)
+grid-column-start: 3 | page | GridColumnStart(Line(3))
+grid-column-start: -1 | parse | Some(GridColumnStart(Line(-1)))
+grid-column-start: -1 | serialize | None
+grid-column-start: -1 | computed | Line(-1)
+grid-column-start: -1 | page | GridColumnStart(Line(-1))
+grid-column-start: span 2 | parse | Some(GridColumnStart(Span(2)))
+grid-column-start: span 2 | serialize | None
+grid-column-start: span 2 | computed | Span(2)
+grid-column-start: span 2 | page | GridColumnStart(Span(2))
+grid-column-start: a | parse | Some(GridColumnStart(Named("a")))
+grid-column-start: a | serialize | None
+grid-column-start: a | computed | Named("a")
+grid-column-start: a | page | GridColumnStart(Named("a"))
+grid-column-start: a 2 | parse | Some(GridColumnStart(NamedLine("a", 2)))
+grid-column-start: a 2 | serialize | None
+grid-column-start: a 2 | computed | NamedLine("a", 2)
+grid-column-start: a 2 | page | GridColumnStart(NamedLine("a", 2))
+grid-column-start: span a | parse | Some(GridColumnStart(SpanNamed("a", 1)))
+grid-column-start: span a | serialize | None
+grid-column-start: span a | computed | SpanNamed("a", 1)
+grid-column-start: span a | page | GridColumnStart(SpanNamed("a", 1))
+grid-column-start: 0 | parse | None
+grid-column-start: 0 | serialize | -
+grid-column-start: 0 | computed | Auto
+grid-column-start: 0 | page | <absent>
+grid-column-start: span 0 | parse | None
+grid-column-start: span 0 | serialize | -
+grid-column-start: span 0 | computed | Auto
+grid-column-start: span 0 | page | <absent>
+grid-column-start: inherit | parse | None
+grid-column-start: inherit | serialize | -
+grid-column-start: inherit | computed | Auto
+grid-column-start: inherit | page | <absent>
+grid-column-start: initial | parse | None
+grid-column-start: initial | serialize | -
+grid-column-start: initial | computed | Auto
+grid-column-start: initial | page | <absent>
+grid-column-start: unset | parse | None
+grid-column-start: unset | serialize | -
+grid-column-start: unset | computed | Auto
+grid-column-start: unset | page | <absent>
+grid-column-start: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-column-start", value: "var(--v)", key: GridColumnStart }))
+grid-column-start: var(--v) | serialize | None
+grid-column-start: var(--v) | computed | Line(2)
+grid-column-start: var(--v) | page | GridColumnStart(Line(2))
+grid-column-start: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-column-start", value: "var(--undefined)", key: GridColumnStart }))
+grid-column-start: var(--undefined) | serialize | None
+grid-column-start: var(--undefined) | computed | Auto
+grid-column-start: var(--undefined) | page | <absent>
+
+grid-column-end: <parent 2> | computed | Line(2)
+grid-column-end: <undeclared> | computed | Auto
+grid-column-end: * | cssom | <not a ComputedProperty>
+grid-column-end: auto | parse | Some(GridColumnEnd(Auto))
+grid-column-end: auto | serialize | None
+grid-column-end: auto | computed | Auto
+grid-column-end: auto | page | GridColumnEnd(Auto)
+grid-column-end: 3 | parse | Some(GridColumnEnd(Line(3)))
+grid-column-end: 3 | serialize | None
+grid-column-end: 3 | computed | Line(3)
+grid-column-end: 3 | page | GridColumnEnd(Line(3))
+grid-column-end: -1 | parse | Some(GridColumnEnd(Line(-1)))
+grid-column-end: -1 | serialize | None
+grid-column-end: -1 | computed | Line(-1)
+grid-column-end: -1 | page | GridColumnEnd(Line(-1))
+grid-column-end: span 2 | parse | Some(GridColumnEnd(Span(2)))
+grid-column-end: span 2 | serialize | None
+grid-column-end: span 2 | computed | Span(2)
+grid-column-end: span 2 | page | GridColumnEnd(Span(2))
+grid-column-end: a | parse | Some(GridColumnEnd(Named("a")))
+grid-column-end: a | serialize | None
+grid-column-end: a | computed | Named("a")
+grid-column-end: a | page | GridColumnEnd(Named("a"))
+grid-column-end: a 2 | parse | Some(GridColumnEnd(NamedLine("a", 2)))
+grid-column-end: a 2 | serialize | None
+grid-column-end: a 2 | computed | NamedLine("a", 2)
+grid-column-end: a 2 | page | GridColumnEnd(NamedLine("a", 2))
+grid-column-end: span a | parse | Some(GridColumnEnd(SpanNamed("a", 1)))
+grid-column-end: span a | serialize | None
+grid-column-end: span a | computed | SpanNamed("a", 1)
+grid-column-end: span a | page | GridColumnEnd(SpanNamed("a", 1))
+grid-column-end: 0 | parse | None
+grid-column-end: 0 | serialize | -
+grid-column-end: 0 | computed | Auto
+grid-column-end: 0 | page | <absent>
+grid-column-end: span 0 | parse | None
+grid-column-end: span 0 | serialize | -
+grid-column-end: span 0 | computed | Auto
+grid-column-end: span 0 | page | <absent>
+grid-column-end: inherit | parse | None
+grid-column-end: inherit | serialize | -
+grid-column-end: inherit | computed | Auto
+grid-column-end: inherit | page | <absent>
+grid-column-end: initial | parse | None
+grid-column-end: initial | serialize | -
+grid-column-end: initial | computed | Auto
+grid-column-end: initial | page | <absent>
+grid-column-end: unset | parse | None
+grid-column-end: unset | serialize | -
+grid-column-end: unset | computed | Auto
+grid-column-end: unset | page | <absent>
+grid-column-end: var(--v) | parse | Some(Deferred(DeferredValue { property: "grid-column-end", value: "var(--v)", key: GridColumnEnd }))
+grid-column-end: var(--v) | serialize | None
+grid-column-end: var(--v) | computed | Line(2)
+grid-column-end: var(--v) | page | GridColumnEnd(Line(2))
+grid-column-end: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "grid-column-end", value: "var(--undefined)", key: GridColumnEnd }))
+grid-column-end: var(--undefined) | serialize | None
+grid-column-end: var(--undefined) | computed | Auto
+grid-column-end: var(--undefined) | page | <absent>
+
+orphans: <parent 3> | computed | 3
+orphans: <undeclared> | computed | 3
+orphans: * | cssom | <not a ComputedProperty>
+orphans: 1 | parse | Some(Orphans(1))
+orphans: 1 | serialize | None
+orphans: 1 | computed | 1
+orphans: 1 | page | Orphans(1)
+orphans: 2 | parse | Some(Orphans(2))
+orphans: 2 | serialize | None
+orphans: 2 | computed | 2
+orphans: 2 | page | Orphans(2)
+orphans: 0 | parse | None
+orphans: 0 | serialize | -
+orphans: 0 | computed | 3
+orphans: 0 | page | <absent>
+orphans: -1 | parse | None
+orphans: -1 | serialize | -
+orphans: -1 | computed | 3
+orphans: -1 | page | <absent>
+orphans: 2.5 | parse | None
+orphans: 2.5 | serialize | -
+orphans: 2.5 | computed | 3
+orphans: 2.5 | page | <absent>
+orphans: inherit | parse | None
+orphans: inherit | serialize | -
+orphans: inherit | computed | 3
+orphans: inherit | page | <absent>
+orphans: initial | parse | None
+orphans: initial | serialize | -
+orphans: initial | computed | 3
+orphans: initial | page | <absent>
+orphans: unset | parse | None
+orphans: unset | serialize | -
+orphans: unset | computed | 3
+orphans: unset | page | <absent>
+orphans: var(--v) | parse | Some(Deferred(DeferredValue { property: "orphans", value: "var(--v)", key: Orphans }))
+orphans: var(--v) | serialize | None
+orphans: var(--v) | computed | 3
+orphans: var(--v) | page | Orphans(3)
+orphans: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "orphans", value: "var(--undefined)", key: Orphans }))
+orphans: var(--undefined) | serialize | None
+orphans: var(--undefined) | computed | 3
+orphans: var(--undefined) | page | <absent>
+
+widows: <parent 3> | computed | 3
+widows: <undeclared> | computed | 3
+widows: * | cssom | <not a ComputedProperty>
+widows: 1 | parse | Some(Widows(1))
+widows: 1 | serialize | None
+widows: 1 | computed | 1
+widows: 1 | page | Widows(1)
+widows: 2 | parse | Some(Widows(2))
+widows: 2 | serialize | None
+widows: 2 | computed | 2
+widows: 2 | page | Widows(2)
+widows: 0 | parse | None
+widows: 0 | serialize | -
+widows: 0 | computed | 3
+widows: 0 | page | <absent>
+widows: -1 | parse | None
+widows: -1 | serialize | -
+widows: -1 | computed | 3
+widows: -1 | page | <absent>
+widows: 2.5 | parse | None
+widows: 2.5 | serialize | -
+widows: 2.5 | computed | 3
+widows: 2.5 | page | <absent>
+widows: inherit | parse | None
+widows: inherit | serialize | -
+widows: inherit | computed | 3
+widows: inherit | page | <absent>
+widows: initial | parse | None
+widows: initial | serialize | -
+widows: initial | computed | 3
+widows: initial | page | <absent>
+widows: unset | parse | None
+widows: unset | serialize | -
+widows: unset | computed | 3
+widows: unset | page | <absent>
+widows: var(--v) | parse | Some(Deferred(DeferredValue { property: "widows", value: "var(--v)", key: Widows }))
+widows: var(--v) | serialize | None
+widows: var(--v) | computed | 3
+widows: var(--v) | page | Widows(3)
+widows: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "widows", value: "var(--undefined)", key: Widows }))
+widows: var(--undefined) | serialize | None
+widows: var(--undefined) | computed | 3
+widows: var(--undefined) | page | <absent>
+
+break-before: <parent page> | computed | Page
+break-before: <undeclared> | computed | Auto
+break-before: * | cssom | <not a ComputedProperty>
+break-before: auto | parse | Some(BreakBefore(Auto))
+break-before: auto | serialize | None
+break-before: auto | computed | Auto
+break-before: auto | page | BreakBefore(Auto)
+break-before: avoid | parse | Some(BreakBefore(Avoid))
+break-before: avoid | serialize | None
+break-before: avoid | computed | Avoid
+break-before: avoid | page | BreakBefore(Avoid)
+break-before: always | parse | None
+break-before: always | serialize | -
+break-before: always | computed | Auto
+break-before: always | page | <absent>
+break-before: left | parse | None
+break-before: left | serialize | -
+break-before: left | computed | Auto
+break-before: left | page | <absent>
+break-before: right | parse | None
+break-before: right | serialize | -
+break-before: right | computed | Auto
+break-before: right | page | <absent>
+break-before: recto | parse | None
+break-before: recto | serialize | -
+break-before: recto | computed | Auto
+break-before: recto | page | <absent>
+break-before: verso | parse | None
+break-before: verso | serialize | -
+break-before: verso | computed | Auto
+break-before: verso | page | <absent>
+break-before: avoid-page | parse | Some(BreakBefore(AvoidPage))
+break-before: avoid-page | serialize | None
+break-before: avoid-page | computed | AvoidPage
+break-before: avoid-page | page | BreakBefore(AvoidPage)
+break-before: column | parse | None
+break-before: column | serialize | -
+break-before: column | computed | Auto
+break-before: column | page | <absent>
+break-before: avoid-column | parse | None
+break-before: avoid-column | serialize | -
+break-before: avoid-column | computed | Auto
+break-before: avoid-column | page | <absent>
+break-before: region | parse | None
+break-before: region | serialize | -
+break-before: region | computed | Auto
+break-before: region | page | <absent>
+break-before: bogus | parse | None
+break-before: bogus | serialize | -
+break-before: bogus | computed | Auto
+break-before: bogus | page | <absent>
+break-before: inherit | parse | None
+break-before: inherit | serialize | -
+break-before: inherit | computed | Auto
+break-before: inherit | page | <absent>
+break-before: initial | parse | None
+break-before: initial | serialize | -
+break-before: initial | computed | Auto
+break-before: initial | page | <absent>
+break-before: unset | parse | None
+break-before: unset | serialize | -
+break-before: unset | computed | Auto
+break-before: unset | page | <absent>
+break-before: var(--v) | parse | Some(Deferred(DeferredValue { property: "break-before", value: "var(--v)", key: BreakBefore }))
+break-before: var(--v) | serialize | None
+break-before: var(--v) | computed | Page
+break-before: var(--v) | page | BreakBefore(Page)
+break-before: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "break-before", value: "var(--undefined)", key: BreakBefore }))
+break-before: var(--undefined) | serialize | None
+break-before: var(--undefined) | computed | Auto
+break-before: var(--undefined) | page | <absent>
+
+break-after: <parent page> | computed | Page
+break-after: <undeclared> | computed | Auto
+break-after: * | cssom | <not a ComputedProperty>
+break-after: auto | parse | Some(BreakAfter(Auto))
+break-after: auto | serialize | None
+break-after: auto | computed | Auto
+break-after: auto | page | BreakAfter(Auto)
+break-after: avoid | parse | Some(BreakAfter(Avoid))
+break-after: avoid | serialize | None
+break-after: avoid | computed | Avoid
+break-after: avoid | page | BreakAfter(Avoid)
+break-after: always | parse | None
+break-after: always | serialize | -
+break-after: always | computed | Auto
+break-after: always | page | <absent>
+break-after: left | parse | None
+break-after: left | serialize | -
+break-after: left | computed | Auto
+break-after: left | page | <absent>
+break-after: right | parse | None
+break-after: right | serialize | -
+break-after: right | computed | Auto
+break-after: right | page | <absent>
+break-after: recto | parse | None
+break-after: recto | serialize | -
+break-after: recto | computed | Auto
+break-after: recto | page | <absent>
+break-after: verso | parse | None
+break-after: verso | serialize | -
+break-after: verso | computed | Auto
+break-after: verso | page | <absent>
+break-after: avoid-page | parse | Some(BreakAfter(AvoidPage))
+break-after: avoid-page | serialize | None
+break-after: avoid-page | computed | AvoidPage
+break-after: avoid-page | page | BreakAfter(AvoidPage)
+break-after: column | parse | None
+break-after: column | serialize | -
+break-after: column | computed | Auto
+break-after: column | page | <absent>
+break-after: avoid-column | parse | None
+break-after: avoid-column | serialize | -
+break-after: avoid-column | computed | Auto
+break-after: avoid-column | page | <absent>
+break-after: region | parse | None
+break-after: region | serialize | -
+break-after: region | computed | Auto
+break-after: region | page | <absent>
+break-after: bogus | parse | None
+break-after: bogus | serialize | -
+break-after: bogus | computed | Auto
+break-after: bogus | page | <absent>
+break-after: inherit | parse | None
+break-after: inherit | serialize | -
+break-after: inherit | computed | Auto
+break-after: inherit | page | <absent>
+break-after: initial | parse | None
+break-after: initial | serialize | -
+break-after: initial | computed | Auto
+break-after: initial | page | <absent>
+break-after: unset | parse | None
+break-after: unset | serialize | -
+break-after: unset | computed | Auto
+break-after: unset | page | <absent>
+break-after: var(--v) | parse | Some(Deferred(DeferredValue { property: "break-after", value: "var(--v)", key: BreakAfter }))
+break-after: var(--v) | serialize | None
+break-after: var(--v) | computed | Page
+break-after: var(--v) | page | BreakAfter(Page)
+break-after: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "break-after", value: "var(--undefined)", key: BreakAfter }))
+break-after: var(--undefined) | serialize | None
+break-after: var(--undefined) | computed | Auto
+break-after: var(--undefined) | page | <absent>
+
+break-inside: <parent avoid> | computed | Avoid
+break-inside: <undeclared> | computed | Auto
+break-inside: * | cssom | <not a ComputedProperty>
+break-inside: auto | parse | Some(BreakInside(Auto))
+break-inside: auto | serialize | None
+break-inside: auto | computed | Auto
+break-inside: auto | page | BreakInside(Auto)
+break-inside: avoid-page | parse | Some(BreakInside(AvoidPage))
+break-inside: avoid-page | serialize | None
+break-inside: avoid-page | computed | AvoidPage
+break-inside: avoid-page | page | BreakInside(AvoidPage)
+break-inside: avoid-column | parse | None
+break-inside: avoid-column | serialize | -
+break-inside: avoid-column | computed | Auto
+break-inside: avoid-column | page | <absent>
+break-inside: avoid-region | parse | None
+break-inside: avoid-region | serialize | -
+break-inside: avoid-region | computed | Auto
+break-inside: avoid-region | page | <absent>
+break-inside: page | parse | None
+break-inside: page | serialize | -
+break-inside: page | computed | Auto
+break-inside: page | page | <absent>
+break-inside: inherit | parse | None
+break-inside: inherit | serialize | -
+break-inside: inherit | computed | Auto
+break-inside: inherit | page | <absent>
+break-inside: initial | parse | None
+break-inside: initial | serialize | -
+break-inside: initial | computed | Auto
+break-inside: initial | page | <absent>
+break-inside: unset | parse | None
+break-inside: unset | serialize | -
+break-inside: unset | computed | Auto
+break-inside: unset | page | <absent>
+break-inside: var(--v) | parse | Some(Deferred(DeferredValue { property: "break-inside", value: "var(--v)", key: BreakInside }))
+break-inside: var(--v) | serialize | None
+break-inside: var(--v) | computed | Avoid
+break-inside: var(--v) | page | BreakInside(Avoid)
+break-inside: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "break-inside", value: "var(--undefined)", key: BreakInside }))
+break-inside: var(--undefined) | serialize | None
+break-inside: var(--undefined) | computed | Auto
+break-inside: var(--undefined) | page | <absent>
+
+float: <parent left> | computed | Left
+float: <undeclared> | computed | None
+float: * | cssom | <not a ComputedProperty>
+float: none | parse | Some(Float(None))
+float: none | serialize | None
+float: none | computed | None
+float: none | page | Float(None)
+float: right | parse | Some(Float(Right))
+float: right | serialize | None
+float: right | computed | Right
+float: right | page | Float(Right)
+float: inline-start | parse | Some(Float(InlineStart))
+float: inline-start | serialize | None
+float: inline-start | computed | InlineStart
+float: inline-start | page | Float(InlineStart)
+float: inline-end | parse | Some(Float(InlineEnd))
+float: inline-end | serialize | None
+float: inline-end | computed | InlineEnd
+float: inline-end | page | Float(InlineEnd)
+float: center | parse | None
+float: center | serialize | -
+float: center | computed | None
+float: center | page | <absent>
+float: inherit | parse | None
+float: inherit | serialize | -
+float: inherit | computed | None
+float: inherit | page | <absent>
+float: initial | parse | None
+float: initial | serialize | -
+float: initial | computed | None
+float: initial | page | <absent>
+float: unset | parse | None
+float: unset | serialize | -
+float: unset | computed | None
+float: unset | page | <absent>
+float: var(--v) | parse | Some(Deferred(DeferredValue { property: "float", value: "var(--v)", key: Float }))
+float: var(--v) | serialize | None
+float: var(--v) | computed | Left
+float: var(--v) | page | Float(Left)
+float: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "float", value: "var(--undefined)", key: Float }))
+float: var(--undefined) | serialize | None
+float: var(--undefined) | computed | None
+float: var(--undefined) | page | <absent>
+
+clear: <parent both> | computed | Both
+clear: <undeclared> | computed | None
+clear: * | cssom | <not a ComputedProperty>
+clear: none | parse | Some(Clear(None))
+clear: none | serialize | None
+clear: none | computed | None
+clear: none | page | Clear(None)
+clear: left | parse | Some(Clear(Left))
+clear: left | serialize | None
+clear: left | computed | Left
+clear: left | page | Clear(Left)
+clear: right | parse | Some(Clear(Right))
+clear: right | serialize | None
+clear: right | computed | Right
+clear: right | page | Clear(Right)
+clear: inline-start | parse | Some(Clear(InlineStart))
+clear: inline-start | serialize | None
+clear: inline-start | computed | InlineStart
+clear: inline-start | page | Clear(InlineStart)
+clear: both | parse | Some(Clear(Both))
+clear: both | serialize | None
+clear: both | computed | Both
+clear: both | page | Clear(Both)
+clear: all | parse | None
+clear: all | serialize | -
+clear: all | computed | None
+clear: all | page | <absent>
+clear: inherit | parse | None
+clear: inherit | serialize | -
+clear: inherit | computed | None
+clear: inherit | page | <absent>
+clear: initial | parse | None
+clear: initial | serialize | -
+clear: initial | computed | None
+clear: initial | page | <absent>
+clear: unset | parse | None
+clear: unset | serialize | -
+clear: unset | computed | None
+clear: unset | page | <absent>
+clear: var(--v) | parse | Some(Deferred(DeferredValue { property: "clear", value: "var(--v)", key: Clear }))
+clear: var(--v) | serialize | None
+clear: var(--v) | computed | Both
+clear: var(--v) | page | Clear(Both)
+clear: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "clear", value: "var(--undefined)", key: Clear }))
+clear: var(--undefined) | serialize | None
+clear: var(--undefined) | computed | None
+clear: var(--undefined) | page | <absent>
+
+table-layout: <parent fixed> | computed | Fixed
+table-layout: <undeclared> | computed | Auto
+table-layout: * | cssom | <not a ComputedProperty>
+table-layout: auto | parse | Some(TableLayout(Auto))
+table-layout: auto | serialize | None
+table-layout: auto | computed | Auto
+table-layout: auto | page | TableLayout(Auto)
+table-layout: fixed | parse | Some(TableLayout(Fixed))
+table-layout: fixed | serialize | None
+table-layout: fixed | computed | Fixed
+table-layout: fixed | page | TableLayout(Fixed)
+table-layout: none | parse | None
+table-layout: none | serialize | -
+table-layout: none | computed | Auto
+table-layout: none | page | <absent>
+table-layout: inherit | parse | None
+table-layout: inherit | serialize | -
+table-layout: inherit | computed | Auto
+table-layout: inherit | page | <absent>
+table-layout: initial | parse | None
+table-layout: initial | serialize | -
+table-layout: initial | computed | Auto
+table-layout: initial | page | <absent>
+table-layout: unset | parse | None
+table-layout: unset | serialize | -
+table-layout: unset | computed | Auto
+table-layout: unset | page | <absent>
+table-layout: var(--v) | parse | Some(Deferred(DeferredValue { property: "table-layout", value: "var(--v)", key: TableLayout }))
+table-layout: var(--v) | serialize | None
+table-layout: var(--v) | computed | Fixed
+table-layout: var(--v) | page | TableLayout(Fixed)
+table-layout: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "table-layout", value: "var(--undefined)", key: TableLayout }))
+table-layout: var(--undefined) | serialize | None
+table-layout: var(--undefined) | computed | Auto
+table-layout: var(--undefined) | page | <absent>
+
+border-collapse: <parent collapse> | computed | Collapse
+border-collapse: <undeclared> | computed | Collapse
+border-collapse: * | cssom | <not a ComputedProperty>
+border-collapse: separate | parse | Some(BorderCollapse(Separate))
+border-collapse: separate | serialize | None
+border-collapse: separate | computed | Separate
+border-collapse: separate | page | BorderCollapse(Separate)
+border-collapse: collapse | parse | Some(BorderCollapse(Collapse))
+border-collapse: collapse | serialize | None
+border-collapse: collapse | computed | Collapse
+border-collapse: collapse | page | BorderCollapse(Collapse)
+border-collapse: none | parse | None
+border-collapse: none | serialize | -
+border-collapse: none | computed | Collapse
+border-collapse: none | page | <absent>
+border-collapse: inherit | parse | None
+border-collapse: inherit | serialize | -
+border-collapse: inherit | computed | Collapse
+border-collapse: inherit | page | <absent>
+border-collapse: initial | parse | None
+border-collapse: initial | serialize | -
+border-collapse: initial | computed | Collapse
+border-collapse: initial | page | <absent>
+border-collapse: unset | parse | None
+border-collapse: unset | serialize | -
+border-collapse: unset | computed | Collapse
+border-collapse: unset | page | <absent>
+border-collapse: var(--v) | parse | Some(Deferred(DeferredValue { property: "border-collapse", value: "var(--v)", key: BorderCollapse }))
+border-collapse: var(--v) | serialize | None
+border-collapse: var(--v) | computed | Collapse
+border-collapse: var(--v) | page | BorderCollapse(Collapse)
+border-collapse: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "border-collapse", value: "var(--undefined)", key: BorderCollapse }))
+border-collapse: var(--undefined) | serialize | None
+border-collapse: var(--undefined) | computed | Collapse
+border-collapse: var(--undefined) | page | <absent>
+
+border-spacing: <parent 2em 1em> | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: <undeclared> | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: * | cssom | <not a ComputedProperty>
+border-spacing: 0 | parse | Some(BorderSpacing(BorderSpacingValue { horizontal: Px(0.0), vertical: Px(0.0) }))
+border-spacing: 0 | serialize | None
+border-spacing: 0 | computed | ComputedBorderSpacing { horizontal: ComputedLength(0.0), vertical: ComputedLength(0.0) }
+border-spacing: 0 | page | BorderSpacing(BorderSpacingValue { horizontal: Px(0.0), vertical: Px(0.0) })
+border-spacing: 1px 2px | parse | Some(BorderSpacing(BorderSpacingValue { horizontal: Px(1.0), vertical: Px(2.0) }))
+border-spacing: 1px 2px | serialize | None
+border-spacing: 1px 2px | computed | ComputedBorderSpacing { horizontal: ComputedLength(1.0), vertical: ComputedLength(2.0) }
+border-spacing: 1px 2px | page | BorderSpacing(BorderSpacingValue { horizontal: Px(1.0), vertical: Px(2.0) })
+border-spacing: 1px 2px 3px | parse | None (input left after BorderSpacing(BorderSpacingValue { horizontal: Px(1.0), vertical: Px(2.0) }))
+border-spacing: 1px 2px 3px | serialize | -
+border-spacing: 1px 2px 3px | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: 1px 2px 3px | page | <absent>
+border-spacing: -1px | parse | None
+border-spacing: -1px | serialize | -
+border-spacing: -1px | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: -1px | page | <absent>
+border-spacing: 1px 10% | parse | None (input left after BorderSpacing(BorderSpacingValue { horizontal: Px(1.0), vertical: Px(1.0) }))
+border-spacing: 1px 10% | serialize | -
+border-spacing: 1px 10% | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: 1px 10% | page | <absent>
+border-spacing: 1em | parse | Some(BorderSpacing(BorderSpacingValue { horizontal: Em(1.0), vertical: Em(1.0) }))
+border-spacing: 1em | serialize | None
+border-spacing: 1em | computed | ComputedBorderSpacing { horizontal: ComputedLength(10.0), vertical: ComputedLength(10.0) }
+border-spacing: 1em | page | BorderSpacing(BorderSpacingValue { horizontal: Px(12.0), vertical: Px(12.0) })
+border-spacing: 1rem | parse | Some(BorderSpacing(BorderSpacingValue { horizontal: Rem(1.0), vertical: Rem(1.0) }))
+border-spacing: 1rem | serialize | None
+border-spacing: 1rem | computed | ComputedBorderSpacing { horizontal: ComputedLength(16.0), vertical: ComputedLength(16.0) }
+border-spacing: 1rem | page | BorderSpacing(BorderSpacingValue { horizontal: Px(20.0), vertical: Px(20.0) })
+border-spacing: 10% | parse | None
+border-spacing: 10% | serialize | -
+border-spacing: 10% | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: 10% | page | <absent>
+border-spacing: 2ch | parse | Some(BorderSpacing(BorderSpacingValue { horizontal: Ch(2.0), vertical: Ch(2.0) }))
+border-spacing: 2ch | serialize | None
+border-spacing: 2ch | computed | ComputedBorderSpacing { horizontal: ComputedLength(10.0), vertical: ComputedLength(10.0) }
+border-spacing: 2ch | page | BorderSpacing(BorderSpacingValue { horizontal: Px(12.0), vertical: Px(12.0) })
+border-spacing: 1lh | parse | Some(BorderSpacing(BorderSpacingValue { horizontal: Lh(1.0), vertical: Lh(1.0) }))
+border-spacing: 1lh | serialize | None
+border-spacing: 1lh | computed | ComputedBorderSpacing { horizontal: ComputedLength(15.0), vertical: ComputedLength(15.0) }
+border-spacing: 1lh | page | BorderSpacing(BorderSpacingValue { horizontal: Px(18.0), vertical: Px(18.0) })
+border-spacing: 1rlh | parse | Some(BorderSpacing(BorderSpacingValue { horizontal: Rlh(1.0), vertical: Rlh(1.0) }))
+border-spacing: 1rlh | serialize | None
+border-spacing: 1rlh | computed | ComputedBorderSpacing { horizontal: ComputedLength(0.0), vertical: ComputedLength(0.0) }
+border-spacing: 1rlh | page | BorderSpacing(BorderSpacingValue { horizontal: Px(30.0), vertical: Px(30.0) })
+border-spacing: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "border-spacing", value: "calc(1em + 2px)", key: BorderSpacing }))
+border-spacing: calc(1em + 2px) | serialize | None
+border-spacing: calc(1em + 2px) | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: calc(1em + 2px) | page | <absent>
+border-spacing: calc(10% + 1em) | parse | None
+border-spacing: calc(10% + 1em) | serialize | -
+border-spacing: calc(10% + 1em) | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: calc(10% + 1em) | page | <absent>
+border-spacing: inherit | parse | None
+border-spacing: inherit | serialize | -
+border-spacing: inherit | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: inherit | page | <absent>
+border-spacing: initial | parse | None
+border-spacing: initial | serialize | -
+border-spacing: initial | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: initial | page | <absent>
+border-spacing: unset | parse | None
+border-spacing: unset | serialize | -
+border-spacing: unset | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: unset | page | <absent>
+border-spacing: var(--v) | parse | Some(Deferred(DeferredValue { property: "border-spacing", value: "var(--v)", key: BorderSpacing }))
+border-spacing: var(--v) | serialize | None
+border-spacing: var(--v) | computed | ComputedBorderSpacing { horizontal: ComputedLength(20.0), vertical: ComputedLength(10.0) }
+border-spacing: var(--v) | page | BorderSpacing(BorderSpacingValue { horizontal: Px(24.0), vertical: Px(12.0) })
+border-spacing: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "border-spacing", value: "var(--undefined)", key: BorderSpacing }))
+border-spacing: var(--undefined) | serialize | None
+border-spacing: var(--undefined) | computed | ComputedBorderSpacing { horizontal: ComputedLength(40.0), vertical: ComputedLength(20.0) }
+border-spacing: var(--undefined) | page | <absent>
+
+caption-side: <parent bottom> | computed | Bottom
+caption-side: <undeclared> | computed | Bottom
+caption-side: * | cssom | <not a ComputedProperty>
+caption-side: top | parse | Some(CaptionSide(Top))
+caption-side: top | serialize | None
+caption-side: top | computed | Top
+caption-side: top | page | CaptionSide(Top)
+caption-side: bottom | parse | Some(CaptionSide(Bottom))
+caption-side: bottom | serialize | None
+caption-side: bottom | computed | Bottom
+caption-side: bottom | page | CaptionSide(Bottom)
+caption-side: left | parse | None
+caption-side: left | serialize | -
+caption-side: left | computed | Bottom
+caption-side: left | page | <absent>
+caption-side: block-end | parse | None
+caption-side: block-end | serialize | -
+caption-side: block-end | computed | Bottom
+caption-side: block-end | page | <absent>
+caption-side: inherit | parse | None
+caption-side: inherit | serialize | -
+caption-side: inherit | computed | Bottom
+caption-side: inherit | page | <absent>
+caption-side: initial | parse | None
+caption-side: initial | serialize | -
+caption-side: initial | computed | Bottom
+caption-side: initial | page | <absent>
+caption-side: unset | parse | None
+caption-side: unset | serialize | -
+caption-side: unset | computed | Bottom
+caption-side: unset | page | <absent>
+caption-side: var(--v) | parse | Some(Deferred(DeferredValue { property: "caption-side", value: "var(--v)", key: CaptionSide }))
+caption-side: var(--v) | serialize | None
+caption-side: var(--v) | computed | Bottom
+caption-side: var(--v) | page | CaptionSide(Bottom)
+caption-side: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "caption-side", value: "var(--undefined)", key: CaptionSide }))
+caption-side: var(--undefined) | serialize | None
+caption-side: var(--undefined) | computed | Bottom
+caption-side: var(--undefined) | page | <absent>
+
+column-count: <parent 3> | computed | Count(3)
+column-count: <undeclared> | computed | Auto
+column-count: * | cssom | <not a ComputedProperty>
+column-count: auto | parse | Some(ColumnCount(Auto))
+column-count: auto | serialize | None
+column-count: auto | computed | Auto
+column-count: auto | page | ColumnCount(Auto)
+column-count: 1 | parse | Some(ColumnCount(Count(1)))
+column-count: 1 | serialize | None
+column-count: 1 | computed | Count(1)
+column-count: 1 | page | ColumnCount(Count(1))
+column-count: 0 | parse | None
+column-count: 0 | serialize | -
+column-count: 0 | computed | Auto
+column-count: 0 | page | <absent>
+column-count: -2 | parse | None
+column-count: -2 | serialize | -
+column-count: -2 | computed | Auto
+column-count: -2 | page | <absent>
+column-count: 2.5 | parse | None
+column-count: 2.5 | serialize | -
+column-count: 2.5 | computed | Auto
+column-count: 2.5 | page | <absent>
+column-count: inherit | parse | None
+column-count: inherit | serialize | -
+column-count: inherit | computed | Auto
+column-count: inherit | page | <absent>
+column-count: initial | parse | None
+column-count: initial | serialize | -
+column-count: initial | computed | Auto
+column-count: initial | page | <absent>
+column-count: unset | parse | None
+column-count: unset | serialize | -
+column-count: unset | computed | Auto
+column-count: unset | page | <absent>
+column-count: var(--v) | parse | Some(Deferred(DeferredValue { property: "column-count", value: "var(--v)", key: ColumnCount }))
+column-count: var(--v) | serialize | None
+column-count: var(--v) | computed | Count(3)
+column-count: var(--v) | page | ColumnCount(Count(3))
+column-count: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "column-count", value: "var(--undefined)", key: ColumnCount }))
+column-count: var(--undefined) | serialize | None
+column-count: var(--undefined) | computed | Auto
+column-count: var(--undefined) | page | <absent>
+
+column-width: <parent 2em> | computed | Px(40.0)
+column-width: <undeclared> | computed | Auto
+column-width: * | cssom | <not a ComputedProperty>
+column-width: auto | parse | Some(ColumnWidth(Auto))
+column-width: auto | serialize | None
+column-width: auto | computed | Auto
+column-width: auto | page | ColumnWidth(Auto)
+column-width: 100px | parse | Some(ColumnWidth(Length(Px(100.0))))
+column-width: 100px | serialize | None
+column-width: 100px | computed | Px(100.0)
+column-width: 100px | page | ColumnWidth(Length(Px(100.0)))
+column-width: 0 | parse | Some(ColumnWidth(Length(Px(0.0))))
+column-width: 0 | serialize | None
+column-width: 0 | computed | Px(0.0)
+column-width: 0 | page | ColumnWidth(Length(Px(0.0)))
+column-width: -1px | parse | None
+column-width: -1px | serialize | -
+column-width: -1px | computed | Auto
+column-width: -1px | page | <absent>
+column-width: 1em | parse | Some(ColumnWidth(Length(Em(1.0))))
+column-width: 1em | serialize | None
+column-width: 1em | computed | Px(10.0)
+column-width: 1em | page | ColumnWidth(Length(Px(12.0)))
+column-width: 1rem | parse | Some(ColumnWidth(Length(Rem(1.0))))
+column-width: 1rem | serialize | None
+column-width: 1rem | computed | Px(16.0)
+column-width: 1rem | page | ColumnWidth(Length(Px(20.0)))
+column-width: 10% | parse | None
+column-width: 10% | serialize | -
+column-width: 10% | computed | Auto
+column-width: 10% | page | <absent>
+column-width: 2ch | parse | Some(ColumnWidth(Length(Ch(2.0))))
+column-width: 2ch | serialize | None
+column-width: 2ch | computed | Px(10.0)
+column-width: 2ch | page | ColumnWidth(Length(Px(12.0)))
+column-width: 1lh | parse | Some(ColumnWidth(Length(Lh(1.0))))
+column-width: 1lh | serialize | None
+column-width: 1lh | computed | Px(15.0)
+column-width: 1lh | page | ColumnWidth(Length(Px(18.0)))
+column-width: 1rlh | parse | Some(ColumnWidth(Length(Rlh(1.0))))
+column-width: 1rlh | serialize | None
+column-width: 1rlh | computed | Px(0.0)
+column-width: 1rlh | page | ColumnWidth(Length(Px(30.0)))
+column-width: calc(1em + 2px) | parse | Some(Deferred(DeferredValue { property: "column-width", value: "calc(1em + 2px)", key: ColumnWidth }))
+column-width: calc(1em + 2px) | serialize | None
+column-width: calc(1em + 2px) | computed | Auto
+column-width: calc(1em + 2px) | page | <absent>
+column-width: calc(10% + 1em) | parse | Some(Deferred(DeferredValue { property: "column-width", value: "calc(10% + 1em)", key: ColumnWidth }))
+column-width: calc(10% + 1em) | serialize | None
+column-width: calc(10% + 1em) | computed | Auto
+column-width: calc(10% + 1em) | page | <absent>
+column-width: inherit | parse | None
+column-width: inherit | serialize | -
+column-width: inherit | computed | Auto
+column-width: inherit | page | <absent>
+column-width: initial | parse | None
+column-width: initial | serialize | -
+column-width: initial | computed | Auto
+column-width: initial | page | <absent>
+column-width: unset | parse | None
+column-width: unset | serialize | -
+column-width: unset | computed | Auto
+column-width: unset | page | <absent>
+column-width: var(--v) | parse | Some(Deferred(DeferredValue { property: "column-width", value: "var(--v)", key: ColumnWidth }))
+column-width: var(--v) | serialize | None
+column-width: var(--v) | computed | Px(20.0)
+column-width: var(--v) | page | ColumnWidth(Length(Px(24.0)))
+column-width: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "column-width", value: "var(--undefined)", key: ColumnWidth }))
+column-width: var(--undefined) | serialize | None
+column-width: var(--undefined) | computed | Auto
+column-width: var(--undefined) | page | <absent>
+
+empty-cells: <parent hide> | computed | Hide
+empty-cells: <undeclared> | computed | Hide
+empty-cells: * | cssom | <not a ComputedProperty>
+empty-cells: show | parse | Some(EmptyCells(Show))
+empty-cells: show | serialize | None
+empty-cells: show | computed | Show
+empty-cells: show | page | EmptyCells(Show)
+empty-cells: hide | parse | Some(EmptyCells(Hide))
+empty-cells: hide | serialize | None
+empty-cells: hide | computed | Hide
+empty-cells: hide | page | EmptyCells(Hide)
+empty-cells: collapse | parse | None
+empty-cells: collapse | serialize | -
+empty-cells: collapse | computed | Hide
+empty-cells: collapse | page | <absent>
+empty-cells: inherit | parse | None
+empty-cells: inherit | serialize | -
+empty-cells: inherit | computed | Hide
+empty-cells: inherit | page | <absent>
+empty-cells: initial | parse | None
+empty-cells: initial | serialize | -
+empty-cells: initial | computed | Hide
+empty-cells: initial | page | <absent>
+empty-cells: unset | parse | None
+empty-cells: unset | serialize | -
+empty-cells: unset | computed | Hide
+empty-cells: unset | page | <absent>
+empty-cells: var(--v) | parse | Some(Deferred(DeferredValue { property: "empty-cells", value: "var(--v)", key: EmptyCells }))
+empty-cells: var(--v) | serialize | None
+empty-cells: var(--v) | computed | Hide
+empty-cells: var(--v) | page | EmptyCells(Hide)
+empty-cells: var(--undefined) | parse | Some(Deferred(DeferredValue { property: "empty-cells", value: "var(--undefined)", key: EmptyCells }))
+empty-cells: var(--undefined) | serialize | None
+empty-cells: var(--undefined) | computed | Hide
+empty-cells: var(--undefined) | page | <absent>
