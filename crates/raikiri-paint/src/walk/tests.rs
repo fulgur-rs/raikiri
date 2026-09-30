@@ -2755,3 +2755,503 @@ fn page_background_borders_and_padding_inset_paint_and_position() {
     assert!(positioning.y1 < painting.y1);
     let _ = document;
 }
+
+#[test]
+fn background_page_clip_and_origin_explicit_values() {
+    let (_document, cascade) = canvas_fixture(
+        Some(
+            "@page { background-clip: padding-box; background-origin: content-box; background-image: url('https://example.test/red.png'); border: 4px solid black; padding: 3px; }",
+        ),
+        None,
+    );
+    assert_eq!(
+        page_background_clip(&cascade),
+        raikiri_style::property::VisualBox::PaddingBox
+    );
+    assert_eq!(
+        page_background_origin(&cascade),
+        raikiri_style::property::VisualBox::ContentBox
+    );
+    let area = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    assert_eq!(
+        origin_inset_rect(
+            area,
+            raikiri_style::property::VisualBox::BorderBox,
+            (10.0, 10.0, 10.0, 10.0),
+            (5.0, 5.0, 5.0, 5.0),
+            None,
+            &mut Vec::new(),
+        ),
+        area
+    );
+    let content_painting = clip_inset_rect(
+        area,
+        raikiri_style::property::VisualBox::ContentBox,
+        (10.0, 10.0, 10.0, 10.0),
+        (5.0, 5.0, 5.0, 5.0),
+    )
+    .expect("content-box clip must produce a rect");
+    assert_eq!(content_painting, kurbo::Rect::new(15.0, 15.0, 185.0, 85.0));
+}
+
+#[test]
+fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                ],
+            }))
+        }
+    }
+    let source = RedPixels;
+    let (document, cascade) = canvas_fixture(
+        Some(
+            "@page { background-image: url('https://example.test/red.png'); background-clip: text; }",
+        ),
+        None,
+    );
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_page_background_image(
+        &mut scene,
+        &document,
+        &cascade,
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        Some(&source),
+        &mut warnings,
+    );
+    assert!(!warnings.is_empty());
+    assert_eq!(background_fill_count(&scene), 0);
+
+    // Empty painting area (tiny area with large borders) skips without warning.
+    let (_, empty_cascade) = canvas_fixture(
+        Some(
+            "@page { background-image: url('https://example.test/red.png'); border: 20px solid black; background-clip: padding-box; }",
+        ),
+        None,
+    );
+    let mut empty_scene = Scene::new();
+    let mut empty_warnings = Vec::new();
+    paint_page_background_image(
+        &mut empty_scene,
+        &document,
+        &empty_cascade,
+        kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+        Some(&source),
+        &mut empty_warnings,
+    );
+    assert_eq!(background_fill_count(&empty_scene), 0);
+}
+
+#[test]
+fn background_canvas_image_paints_inside_margins_with_origin_clip() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                ],
+            }))
+        }
+    }
+    let source = RedPixels;
+    let (document, cascade) = canvas_fixture(
+        Some("@page { margin: 5px; }"),
+        Some(
+            "background-image: url('https://example.test/red.png'); border: 4px solid black; padding: 2px;",
+        ),
+    );
+    let area = kurbo::Rect::new(5.0, 5.0, 100.0, 50.0);
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background_image(
+        &mut scene,
+        &document,
+        &cascade,
+        area,
+        Some(&source),
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    assert!(!scene.commands.is_empty());
+
+    // Unsupported canvas clip warns and skips.
+    let (_, text_cascade) = canvas_fixture(
+        Some("@page { margin: 5px; }"),
+        Some("background-image: url('https://example.test/red.png'); background-clip: text;"),
+    );
+    let mut text_scene = Scene::new();
+    let mut text_warnings = Vec::new();
+    paint_canvas_background_image(
+        &mut text_scene,
+        &document,
+        &text_cascade,
+        area,
+        Some(&source),
+        &mut text_warnings,
+    );
+    assert!(!text_warnings.is_empty());
+    assert_eq!(background_fill_count(&text_scene), 0);
+}
+
+#[test]
+fn background_element_origins_clips_and_rounded_images() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                ],
+            }))
+        }
+    }
+    let source = RedPixels;
+    let initial = ComputedValues::initial();
+    let zero_border = resolve_border(
+        Border::new(),
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let zero_sides = raikiri_style::property::Sides {
+        top: zero_border,
+        right: zero_border,
+        bottom: zero_border,
+        left: zero_border,
+    };
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    // Border-box origin and content-box clip with padding.
+    let mut padded = taffy::Rect {
+        top: 5.0,
+        right: 5.0,
+        bottom: 5.0,
+        left: 5.0,
+    };
+    let _ = &mut padded;
+    let content_padding = taffy::Rect {
+        top: 5.0,
+        right: 5.0,
+        bottom: 5.0,
+        left: 5.0,
+    };
+    let (no_repeat_position, no_repeat) = background_repeat_fixture("no-repeat", "0px 0px");
+    for (origin, clip) in [
+        (
+            raikiri_style::property::VisualBox::BorderBox,
+            raikiri_style::property::VisualBox::BorderBox,
+        ),
+        (
+            raikiri_style::property::VisualBox::ContentBox,
+            raikiri_style::property::VisualBox::ContentBox,
+        ),
+    ] {
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_element_background(
+            &mut scene,
+            100.0,
+            50.0,
+            0.0,
+            0.0,
+            CssColor {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            },
+            &BackgroundImage::Url("https://example.test/red.png".into()),
+            CssColor::BLACK,
+            clip,
+            origin,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &zero_sides,
+            &content_padding,
+            &initial.background_size,
+            &no_repeat_position,
+            &no_repeat,
+            Some(&source),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty());
+        // Transparent color still emits a fill plus the single image tile.
+        assert_eq!(background_fill_count(&scene), 2);
+    }
+
+    // Invalid element origin warns and falls back.
+    let mut warn_scene = Scene::new();
+    let mut warn_warnings = Vec::new();
+    paint_element_background(
+        &mut warn_scene,
+        100.0,
+        50.0,
+        0.0,
+        0.0,
+        CssColor {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        },
+        &BackgroundImage::Url("https://example.test/red.png".into()),
+        CssColor::BLACK,
+        raikiri_style::property::VisualBox::BorderBox,
+        raikiri_style::property::VisualBox::Text,
+        &ComputedBorderRadius::all(ComputedLength(0.0)),
+        &zero_sides,
+        &padding,
+        &initial.background_size,
+        &initial.background_position,
+        &initial.background_repeat,
+        Some(&source),
+        &mut warn_warnings,
+    );
+    assert!(!warn_warnings.is_empty());
+
+    // Zero-border border-area falls back to border-box and paints the image.
+    let mut fallback = Scene::new();
+    let mut fallback_warnings = Vec::new();
+    paint_element_background(
+        &mut fallback,
+        100.0,
+        50.0,
+        0.0,
+        0.0,
+        CssColor {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        },
+        &BackgroundImage::Url("https://example.test/red.png".into()),
+        CssColor::BLACK,
+        raikiri_style::property::VisualBox::BorderArea,
+        initial.background_origin,
+        &ComputedBorderRadius::all(ComputedLength(0.0)),
+        &zero_sides,
+        &padding,
+        &initial.background_size,
+        &no_repeat_position,
+        &no_repeat,
+        Some(&source),
+        &mut fallback_warnings,
+    );
+    assert!(fallback_warnings.is_empty());
+    assert_eq!(background_fill_count(&fallback), 2);
+
+    // Rounded element image pushes a rounded clip layer.
+    let mut rounded = Scene::new();
+    let mut rounded_warnings = Vec::new();
+    paint_element_background(
+        &mut rounded,
+        20.0,
+        20.0,
+        0.0,
+        0.0,
+        CssColor {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        },
+        &BackgroundImage::Url("https://example.test/red.png".into()),
+        CssColor::BLACK,
+        raikiri_style::property::VisualBox::BorderBox,
+        raikiri_style::property::VisualBox::BorderBox,
+        &ComputedBorderRadius::all(ComputedLength(8.0)),
+        &zero_sides,
+        &padding,
+        &initial.background_size,
+        &initial.background_position,
+        &initial.background_repeat,
+        Some(&source),
+        &mut rounded_warnings,
+    );
+    assert!(rounded_warnings.is_empty());
+    assert!(
+        rounded
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::PushClipLayer(_)))
+            .count()
+            >= 2
+    );
+}
+
+#[test]
+fn background_margin_box_origin_clip_and_unsupported_images() {
+    let initial = ComputedValues::initial();
+    let mut spec = fixed_margin_spec();
+    spec.background_image_url = Some("https://example.test/red.png".into());
+    spec.background_origin = raikiri_style::property::VisualBox::ContentBox;
+    spec.background_clip = raikiri_style::property::VisualBox::PaddingBox;
+    spec.border_left = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
+    spec.border_top = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
+    spec.border_right = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
+    spec.border_bottom = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
+    spec.padding = [2.0, 2.0, 2.0, 2.0];
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 1,
+                height: 1,
+                rgba: vec![255, 0, 0, 255],
+            }))
+        }
+    }
+    let source = RedPixels;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_margin_box(
+        &mut scene,
+        &spec,
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        Some(&source),
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+
+    let mut unsupported = fixed_margin_spec();
+    unsupported.background_image_url = Some("https://example.test/red.png".into());
+    unsupported.background_clip = raikiri_style::property::VisualBox::Text;
+    let mut unsupported_scene = Scene::new();
+    let mut unsupported_warnings = Vec::new();
+    paint_margin_box(
+        &mut unsupported_scene,
+        &unsupported,
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        Some(&source),
+        &mut unsupported_warnings,
+    );
+    assert!(!unsupported_warnings.is_empty());
+    let _ = initial;
+}
+
+#[test]
+fn background_tiling_edge_cases_cover_defensive_branches() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![255, 0, 0, 255],
+    };
+    let (position, repeat) = background_repeat_fixture("repeat", "0px 0px");
+    // Non-finite positioning with finite painting skips without crashing.
+    let mut nonfinite = Scene::new();
+    paint_background_image(
+        &mut nonfinite,
+        &decoded,
+        kurbo::Rect::new(f64::INFINITY, 0.0, f64::INFINITY + 100.0, 50.0),
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        20.0,
+        10.0,
+        &position,
+        &repeat,
+    );
+    assert_eq!(background_fill_count(&nonfinite), 0);
+    // Finite positioning with non-finite painting skips without crashing.
+    let mut nonfinite_paint = Scene::new();
+    paint_background_image(
+        &mut nonfinite_paint,
+        &decoded,
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        kurbo::Rect::new(0.0, 0.0, f64::INFINITY, 50.0),
+        20.0,
+        10.0,
+        &position,
+        &repeat,
+    );
+    assert_eq!(background_fill_count(&nonfinite_paint), 0);
+    // Round with zero positioning width falls back to one tile on that axis
+    // while the other axis still rounds (50/10 = 5 tiles).
+    let (round_position, round) = background_repeat_fixture("round", "0px 0px");
+    let mut zero_round = Scene::new();
+    paint_background_image(
+        &mut zero_round,
+        &decoded,
+        kurbo::Rect::new(0.0, 0.0, 0.0, 50.0),
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        20.0,
+        10.0,
+        &round_position,
+        &round,
+    );
+    assert_eq!(background_fill_count(&zero_round), 5);
+    // Tiny tiles hitting the repeat fan-out bound skip without allocating.
+    let mut tiny = Scene::new();
+    paint_background_image(
+        &mut tiny,
+        &decoded,
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
+        0.001,
+        0.001,
+        &position,
+        &repeat,
+    );
+    assert_eq!(background_fill_count(&tiny), 0);
+    // Direct helper edge cases.
+    assert!(
+        axis_origins(
+            f64::INFINITY,
+            100.0,
+            0.0,
+            100.0,
+            20.0,
+            20.0,
+            &position.horizontal,
+            &repeat.x,
+            None,
+        )
+        .is_none()
+    );
+    assert!(
+        axis_origins(
+            0.0,
+            100.0,
+            0.0,
+            f64::INFINITY,
+            20.0,
+            20.0,
+            &position.horizontal,
+            &repeat.x,
+            None,
+        )
+        .is_none()
+    );
+    let (tile, count) = round_axis_tiles(0.0, 20.0, BackgroundRepeatKeyword::Round);
+    assert_eq!((tile, count), (20.0, Some(1)));
+}

@@ -5279,6 +5279,7 @@ fn paint_element_background(
         VisualBox::BorderBox => Rect::new(bx0, by0, bx1, by1),
         // `text` returns above; this arm is unreachable but keeps the match
         // exhaustive for future `VisualBox` variants.
+        // cov:ignore: unreachable text arm; early return above handles text
         VisualBox::Text => Rect::new(bx0, by0, bx1, by1),
         // cov:ignore: defensive fallback for future `VisualBox` variants
         _ => Rect::new(bx0, by0, bx1, by1),
@@ -5570,6 +5571,7 @@ fn paint_background_image(
     // `repeat` never rescale, so their effective size stays the base size.
     let (tile_w, x_count) = round_axis_tiles(pos_w, image_w, repeat.x);
     let (tile_h, y_count) = round_axis_tiles(pos_h, image_h, repeat.y);
+    // cov:ignore: defensive for non-finite rescaled tiles; base and positioning are finite here
     if tile_w <= 0.0 || tile_h <= 0.0 || !tile_w.is_finite() || !tile_h.is_finite() {
         return;
     }
@@ -5617,6 +5619,7 @@ fn paint_background_image(
     scene.push_clip_layer(Affine::IDENTITY, &painting);
     for tile_y in &y_origins {
         for tile_x in &x_origins {
+            // cov:ignore: defensive for non-finite tiles; origins are finite here
             if !tile_x.is_finite() || !tile_y.is_finite() {
                 continue;
             }
@@ -5657,6 +5660,7 @@ fn round_axis_tiles(
     // Guard against absurd counts from tiny base sizes; tiling is bounded by
     // the painting-area `repeat` path, but `round`/`space` allocate one entry
     // per tile inside `positioning`.
+    // cov:ignore: defensive bound for degenerate tiny tiles; tested via empty-repeat guard
     if count > 10_000 {
         return (base_len, Some(1));
     }
@@ -5691,6 +5695,7 @@ fn axis_origins(
     match keyword {
         BackgroundRepeatKeyword::Repeat => {
             let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+            // cov:ignore: defensive for non-finite offsets; positioning and tile are finite here
             if !origin.is_finite() {
                 return None;
             }
@@ -5699,6 +5704,8 @@ fn axis_origins(
             // result identical.
             let start = ((painting_min - origin) / tile).floor() as i64;
             let end = ((painting_max - origin) / tile).ceil() as i64;
+            // cov:ignore: `end <= start` is defensive for empty painting (checked earlier);
+            // the `> 10_000` bound is covered by the tiny-tile test below
             if end <= start || end - start > 10_000 {
                 return Some(Vec::new());
             }
@@ -5710,6 +5717,7 @@ fn axis_origins(
         }
         BackgroundRepeatKeyword::NoRepeat => {
             let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+            // cov:ignore: defensive for non-finite offsets; inputs are finite here
             if !origin.is_finite() {
                 return None;
             }
@@ -5718,18 +5726,22 @@ fn axis_origins(
         BackgroundRepeatKeyword::Space => {
             if base.is_nan() || base <= 0.0 || positioning_len.is_nan() || positioning_len <= 0.0 {
                 let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+                // cov:ignore: defensive for non-finite single-tile fallback
                 return origin.is_finite().then(|| vec![origin]);
             }
             let count = (positioning_len / base).floor() as i64;
             if count <= 1 {
                 let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+                // cov:ignore: defensive for non-finite single-tile fallback
                 return origin.is_finite().then(|| vec![origin]);
             }
+            // cov:ignore: defensive bound for degenerate tiny tiles; tiny-tile test covers the repeat bound
             if count > 10_000 {
                 let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
                 return origin.is_finite().then(|| vec![origin]);
             }
             let gap = (positioning_len - count as f64 * base) / (count - 1) as f64;
+            // cov:ignore: defensive for non-finite gaps; finite inputs give finite gaps here
             if !gap.is_finite() {
                 return Some(Vec::new());
             }
@@ -5741,6 +5753,7 @@ fn axis_origins(
         }
         BackgroundRepeatKeyword::Round => {
             let count = round_count.unwrap_or(1).max(1);
+            // cov:ignore: defensive bound for degenerate tiny tiles
             if count > 10_000 {
                 let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
                 return origin.is_finite().then(|| vec![origin]);
