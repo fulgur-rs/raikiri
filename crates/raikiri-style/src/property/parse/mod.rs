@@ -44,6 +44,25 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
     let key = property_key_for_name(name);
     let normalized_name = name.to_ascii_lowercase();
     let start = input.state();
+    // These CSS-wide values need their actual inheritance parent at cascade
+    // time. Keep a keyed deferred candidate so they win specificity/source
+    // order instead of being discarded as invalid color/length tokens.
+    if matches!(
+        key,
+        Some(PropertyKey::Color | PropertyKey::BackgroundColor | PropertyKey::FontSize)
+    ) && input
+        .try_parse(|parser| {
+            parser.expect_ident_matching("inherit")?;
+            parser.expect_exhausted()
+        })
+        .is_ok()
+    {
+        return Some(PropertyValue::Deferred(DeferredValue {
+            property: normalized_name.clone().into(),
+            value: "inherit".into(),
+            key: key?,
+        }));
+    }
     if key.is_some() && contains_deferred_function(input) {
         input.reset(&start);
         let value = consume_deferred_value(input)?;

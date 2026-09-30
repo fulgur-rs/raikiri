@@ -688,6 +688,25 @@ pub(crate) fn apply_winners(
                 }
                 PropertyValue::Deferred(deferred) => {
                     let resolved = resolve_deferred_value(deferred, custom_properties);
+                    let resolved = match resolved {
+                        Some(PropertyValue::Deferred(marker))
+                            if marker.value.trim().eq_ignore_ascii_case("inherit") =>
+                        {
+                            match marker.key {
+                                crate::property::PropertyKey::Color => {
+                                    Some(PropertyValue::Color(inherited.color))
+                                }
+                                crate::property::PropertyKey::BackgroundColor => {
+                                    Some(PropertyValue::BackgroundColor(inherited.background_color))
+                                }
+                                crate::property::PropertyKey::FontSize => {
+                                    Some(PropertyValue::FontSize(Length::Px(inherited.font_size.0)))
+                                }
+                                _ => None,
+                            }
+                        }
+                        value => value,
+                    };
                     match resolved {
                         None => None,
                         Some(

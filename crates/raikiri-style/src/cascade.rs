@@ -237,6 +237,15 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &mut cascaded,
         media_context,
     );
+    cascade_from_candidates(dom, rule_tree, page_query, &cascaded)
+}
+
+fn cascade_from_candidates<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    page_query: &PageContextQuery,
+    cascaded: &collect::CascadedArena,
+) -> Result<CascadeResult, CascadeError> {
     let opacity_specified = (0..dom.node_count())
         .map(|index| {
             cascaded
@@ -280,7 +289,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         dom,
         dom.root_id(),
         &ComputedValues::initial(),
-        &cascaded,
+        cascaded,
         &mut computed,
         &mut non_ua_margin_sides,
         &mut authored_writing_modes,
@@ -330,6 +339,7 @@ mod custom_property;
 mod html_quirks;
 pub(crate) use custom_property::*;
 mod first_line;
+pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line};
 mod inherit;
 pub(crate) use inherit::*;
 
