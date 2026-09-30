@@ -3994,3 +3994,126 @@ fn a_clipping_inline_block_sits_on_its_bottom_margin_edge() {
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].block_size(), 12.0);
 }
+
+#[test]
+fn an_inline_block_is_placed_at_its_fragment() {
+    // The atomic follows "aa " (30px) and rises 30px above the baseline: its
+    // top is the line's top (y=0).
+    let (mut doc, cascade, atomic, _root) =
+        ahem_paragraph_with_atomic("aa ", "width:30px;height:30px", " bb", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[atomic].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
+    assert_eq!((layout.size.width, layout.size.height), (30.0, 30.0));
+}
+
+#[test]
+fn an_inline_block_with_text_sits_on_its_last_baseline() {
+    // The atomic holds one line of text, so its baseline is the text's (8px
+    // from its top) and it lines up with the surrounding text: same line
+    // height, top at y=0.
+    let (mut doc, _cascade, root) = ahem_paragraph("aa ", "width:100px");
+    let atomic = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline-block;width:20px"),
+    );
+    doc.append_text(atomic, "ii");
+    doc.append_text(root, " bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let layout = doc.nodes[atomic].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+}
+
+#[test]
+fn an_atomic_margin_moves_its_border_box_inside_the_margin_box() {
+    let (mut doc, cascade, atomic, _root) = ahem_paragraph_with_atomic(
+        "aa ",
+        "width:30px;height:10px;margin-left:5px;margin-top:3px",
+        "",
+        "",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[atomic].unrounded_layout;
+    // The margin box starts after "aa " (30px); the border box is 5px in.
+    assert_eq!(layout.location.x, 35.0);
+    assert_eq!(layout.margin.left, 5.0);
+    // The atomic has no text, so its baseline is the margin box's bottom edge
+    // and the margin box (3 + 10 = 13px) rises 13px above the baseline: the
+    // margin box starts at the line top and the border box 3px below it.
+    assert_eq!(layout.location.y, 3.0);
+}
+
+#[test]
+fn atomics_on_later_lines_are_placed_on_their_own_line() {
+    let (mut doc, cascade, atomic, root) =
+        ahem_paragraph_with_atomic("aaaaaaaa ", "width:30px;height:10px", "", "");
+    lay_out_with_switch(&mut doc, &cascade);
+    // "aaaaaaaa " is 90px; the atomic (30px) starts the second line.
+    let layout = doc.nodes[atomic].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
+    assert_eq!(stored_lines(&doc, root).lines.len(), 2);
+}
+
+#[test]
+fn an_atomic_is_offset_by_the_content_box_of_its_paragraph() {
+    let (mut doc, cascade, atomic, _root) = ahem_paragraph_with_atomic(
+        "aa ",
+        "width:30px;height:10px",
+        "",
+        "padding:4px 6px;box-sizing:border-box",
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    let layout = doc.nodes[atomic].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (36.0, 4.0));
+}
+
+#[test]
+fn an_atomic_beside_a_float_starts_after_it() {
+    // The float covers the first 30px of the line, so "aa " starts at 30 and
+    // the atomic follows it at 60.
+    let (mut doc, _cascade, _float, root) =
+        ahem_paragraph_with_float("aa ", "float:left;width:30px;height:30px", "", "");
+    let atomic = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline-block;width:30px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let layout = doc.nodes[atomic].unrounded_layout;
+    assert_eq!(layout.location.x, 60.0);
+}
+
+#[test]
+fn an_image_is_placed_like_an_inline_block() {
+    // A 10x10 image after "aa " sits on the baseline with its bottom edge: it
+    // rises 10px, 2px above the strut's ascent, so the line is 12px tall and
+    // the image's top is the line's top.
+    let (mut doc, _cascade, root) = ahem_paragraph("aa ", "width:100px");
+    let image = doc.append_element(
+        Some(root),
+        "img",
+        taffy::Style::default(),
+        Some("display:inline;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let layout = doc.nodes[image].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
+    assert_eq!((layout.size.width, layout.size.height), (10.0, 10.0));
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 12.0);
+}

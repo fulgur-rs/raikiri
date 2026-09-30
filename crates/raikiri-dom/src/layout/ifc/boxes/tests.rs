@@ -1,6 +1,8 @@
 use super::*;
 use crate::layout::ifc::flow::FlowGeometry;
-use crate::layout::test_support::{ahem_paragraph_with_float, ifc_ahem_fonts, line_start_x};
+use crate::layout::test_support::{
+    ahem_paragraph_with_atomic, ahem_paragraph_with_float, ifc_ahem_fonts, line_start_x,
+};
 
 #[test]
 fn a_probe_stores_nothing_and_a_performed_layout_does() {
@@ -34,4 +36,35 @@ fn a_probe_stores_nothing_and_a_performed_layout_does() {
     let layout = doc.nodes[float].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (30.0, 20.0));
+}
+
+#[test]
+fn a_probe_does_not_place_an_atomic_and_a_performed_layout_does() {
+    let (mut doc, cascade, atomic, root) =
+        ahem_paragraph_with_atomic("aa ", "width:30px;height:10px", " bb", "");
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::layout_single_page(
+        &mut doc,
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+        crate::layout::test_support::ahem_font_context(),
+    )
+    .expect("layout");
+    doc.nodes[atomic].unrounded_layout = taffy::Layout::new();
+    let geometry = FlowGeometry {
+        width: 100.0,
+        edges: (0.0, 0.0),
+        top_edge: 0.0,
+    };
+
+    layout_with_boxes(&mut doc, root, geometry, None, false);
+    assert_eq!(
+        doc.nodes[atomic].unrounded_layout.size.width, 0.0,
+        "a probe must not store the atomic's layout"
+    );
+
+    layout_with_boxes(&mut doc, root, geometry, None, true);
+    let layout = doc.nodes[atomic].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
+    assert_eq!((layout.size.width, layout.size.height), (30.0, 10.0));
 }

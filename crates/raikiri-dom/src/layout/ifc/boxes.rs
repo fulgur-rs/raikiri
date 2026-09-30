@@ -272,6 +272,9 @@ fn run_boxes(
     for float in tentative.drain(..).chain(deferred.drain(..)) {
         commit_float(tree, ctx, float, y, geometry, perform);
     }
+    if perform {
+        place_atomics(tree, &lines, &atomics.outputs, geometry);
+    }
     // A paragraph that is its own formatting context contains its floats; one
     // that is not leaves them hanging below, and the parent collects them.
     // The context measures from the border-box top, the height from the
@@ -463,6 +466,34 @@ pub(crate) fn measure_atomics(
         outputs.push((node, output));
     }
     AtomicMeasure { sizes, outputs }
+}
+
+/// Store the final layout of every atomic inline at its fragment in the
+/// accepted lines.
+fn place_atomics(
+    tree: &mut Document,
+    lines: &[shodo::Line],
+    outputs: &[(usize, taffy::LayoutOutput)],
+    geometry: FlowGeometry,
+) {
+    for line in lines {
+        for fragment in line.fragments() {
+            let shodo::Fragment::Atomic(atomic) = fragment else {
+                continue;
+            };
+            let node = atomic.node.0 as usize;
+            let Some((_, output)) = outputs.iter().find(|(n, _)| *n == node) else {
+                continue;
+            };
+            // The fragment is relative to the line's top and the content-box
+            // start; the layout is relative to the root's border box.
+            let location = taffy::Point {
+                x: geometry.edges.0 + atomic.border_rect.inline_start,
+                y: geometry.top_edge + line.block_offset() + atomic.border_rect.block_start,
+            };
+            commit_child_layout(tree, node, output, location, geometry.width);
+        }
+    }
 }
 
 /// The baseline of an atomic inline from its border-box top, if it has one.

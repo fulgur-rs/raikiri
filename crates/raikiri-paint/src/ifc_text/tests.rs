@@ -461,3 +461,31 @@ fn a_float_inside_the_paragraph_is_painted_once() {
         .count();
     assert_eq!(red_boxes, 1);
 }
+
+#[test]
+fn an_atomic_inline_is_painted_at_its_position_once() {
+    let (mut doc, cascade, root) = paragraph("width:100px", |doc, root| {
+        doc.append_text(root, "aa ");
+        doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:30px;height:10px;background-color:red"),
+        );
+        doc.append_text(root, " bb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let boxes: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .filter(|b| (b.x1 - b.x0, b.y1 - b.y0) == (30.0, 10.0))
+        .collect();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    assert_eq!((boxes[0].x0, boxes[0].y0), (30.0, 0.0));
+}
