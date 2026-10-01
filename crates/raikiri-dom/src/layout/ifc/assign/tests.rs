@@ -1419,10 +1419,10 @@ fn a_cleared_line_break_is_a_root() {
 }
 
 #[test]
-fn replaced_and_svg_elements_are_never_roots() {
-    // A flex item or an authored inline-block that is a replaced element, a
-    // form control or an inline SVG lays out its content by other means; text
-    // inside it (an SVG <title>, a button label) is not a paragraph.
+fn svg_elements_are_never_roots_and_a_form_control_lays_out_its_label() {
+    // An inline SVG lays out its content by other means: text inside it (an
+    // SVG <title>) is not a paragraph. A form control is an atomic box whose
+    // label is a paragraph of its own.
     let mut nodes = Vec::new();
     let mut fixture = block_fixture("display:flex", |doc, root| {
         let svg = doc.append_element(Some(root), "svg", taffy::Style::default(), None::<&str>);
@@ -1439,13 +1439,9 @@ fn replaced_and_svg_elements_are_never_roots() {
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    for node in nodes {
-        assert!(
-            !is_root(&fixture, node),
-            "{:?}",
-            fixture.doc.nodes[node].tag_name()
-        );
-    }
+    assert!(!is_root(&fixture, nodes[0]));
+    assert!(!is_root(&fixture, nodes[1]));
+    assert!(is_root(&fixture, nodes[2]));
 }
 
 #[test]

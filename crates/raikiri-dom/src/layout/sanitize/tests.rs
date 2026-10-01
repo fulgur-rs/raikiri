@@ -1891,13 +1891,13 @@ fn layout_page_fragments_clips_long_block_into_split_fragments() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let tall = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width:20px;height:120px"),
+        Some("display:block;width:20px;height:120px"),
     );
     doc.append_text(tall, "tall");
     let rules = build_rule_tree(&doc);

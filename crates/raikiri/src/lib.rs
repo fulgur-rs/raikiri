@@ -67,8 +67,8 @@ pub use entries::{
     ParagraphEntry, SemanticEntry, SvgEntry, TableEntry, TransformEntry,
 };
 
-// ── Page and font error types ─────────────────────────────────────────────
-pub use raikiri_dom::{FontError, PageMargins, PageSlice, first_page_name};
+// ── Page geometry types ───────────────────────────────────────────────────
+pub use raikiri_dom::{PageMargins, PageSlice, first_page_name};
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // A consumer implementing `NetworkProvider` needs Request, FetchedResource,

@@ -129,7 +129,7 @@ fn is_vertical_writing_mode(mode: WritingMode) -> bool {
     )
 }
 
-fn layout_empty_table_caption(
+fn layout_table_caption(
     doc: &mut Document,
     table_idx: usize,
     parent_width: f32,
@@ -307,7 +307,7 @@ pub fn compute_table_layout(
                 }
             })
         };
-        let caption_size = layout_empty_table_caption(
+        let caption_size = layout_table_caption(
             doc,
             table_idx,
             effective_known
@@ -587,6 +587,10 @@ pub fn compute_table_layout(
             y_origin,
         );
     }
+    // The caption box gets the table's width and the table's top edge. It
+    // is not placed above the rows (the caption-side box of CSS 2.1 17.4):
+    // the rows keep their place, so a caption overlaps the first row.
+    layout_table_caption(doc, table_idx, final_size.width, inputs.parent_size.height);
 
     LayoutOutput::from_outer_size(final_size)
 }

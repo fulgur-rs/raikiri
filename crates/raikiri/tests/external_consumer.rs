@@ -370,8 +370,8 @@ const AHEM: &[u8] = include_bytes!(concat!(
 /// it, using only `use raikiri::*;`.
 #[test]
 fn external_consumer_renders_with_its_own_fonts() {
-    // Font errors are nameable through the umbrella.
-    let _ = std::marker::PhantomData::<(FontError, FontCollection)>;
+    // The font types are nameable through the umbrella.
+    let _ = std::marker::PhantomData::<(FontCollection, FontCollectionBuildError)>;
     let fonts: RenderFonts = FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM)
         .build()

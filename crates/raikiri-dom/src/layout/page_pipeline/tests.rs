@@ -9,10 +9,15 @@ fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     // Equivalent to parsing (built manually instead; future umbrella integration handles raikiri-html).
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("color:red"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;color:red"),
+    );
     let _text = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -25,13 +30,17 @@ fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
     use raikiri_traits::PageBox;
 
     let mut direct_doc = Document::new();
-    let html =
-        direct_doc.append_element(Some(0), "html", Style::default(), Some("margin-top:auto"));
+    let html = direct_doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:auto"),
+    );
     let body = direct_doc.append_element(
         Some(html),
         "body",
         Style::default(),
-        Some("background-color:red"),
+        Some("display:block;background-color:red"),
     );
     direct_doc.append_text(body, "direct body text");
     let direct_rules = build_rule_tree(&direct_doc);
@@ -46,13 +55,14 @@ fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
     );
 
     let mut block_doc = Document::new();
-    let html = block_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = block_doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = block_doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body =
+        block_doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     block_doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("height:20px;margin-bottom:auto"),
+        Some("display:block;height:20px;margin-bottom:auto"),
     );
     let mut block_rules = build_rule_tree(&block_doc);
     block_rules.add_stylesheet("@page { padding:10px; }", Origin::Author);
@@ -824,15 +834,20 @@ fn layout_page_fragments_preserves_forced_page_break() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let first = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let first = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
     doc.append_text(first, "first");
     let second = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("break-before:page;height:10px"),
+        Some("display:block;break-before:page;height:10px"),
     );
     doc.append_text(second, "second");
     let rules = build_rule_tree(&doc);

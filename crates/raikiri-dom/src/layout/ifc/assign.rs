@@ -18,7 +18,8 @@ use shodo::LayoutContext;
 
 /// Whether `idx` generates a box of its own: any display other than `inline`,
 /// `contents` and `none`, an absolutely positioned or fixed inline element
-/// (blockified, CSS 2.1 9.7), and an inline element that a flex or grid
+/// (blockified, CSS 2.1 9.7), a replaced element or form control (an
+/// atomic inline), and an inline element that a flex or grid
 /// container blockifies as its item (CSS Display 3, 2.7). The cascade leaves
 /// such elements `inline`; only the taffy bridge maps them to blocks.
 pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
@@ -30,42 +31,60 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
         {
             true
         }
-        DisplayValue::Inline => doc.parent_of(idx).is_some_and(|parent| {
-            doc.nodes[parent].kind() == NodeKind::Element
-                && matches!(
-                    cascade.computed[parent].display,
-                    DisplayValue::Flex
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::Grid
-                        | DisplayValue::InlineGrid
-                )
+        // Replaced elements and form controls are atomic inlines: their box is
+        // their own, and so is the content inside it (a button label, the
+        // text of a textarea, the fallback content of an object).
+        DisplayValue::Inline
+            if doc.nodes[idx]
+                .tag_name()
+                .is_some_and(|tag| super::projection::REPLACED_BOX_TAGS.contains(&tag)) =>
+        {
+            true
+        }
+        DisplayValue::Inline => box_parent(doc, cascade, idx).is_some_and(|parent| {
+            matches!(
+                cascade.computed[parent].display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
         }),
         _ => true,
     }
 }
 
-/// Form controls, whose content the painter draws as a control.
-const FORM_CONTROL_TAGS: &[&str] = &["input", "button", "select", "textarea"];
+/// The nearest element ancestor of `idx` that generates a box: elements with
+/// `display: contents` are skipped, their children take part in their
+/// parent's layout (CSS Display 3, 2.5). `None` past the root element.
+fn box_parent(doc: &Document, cascade: &CascadeResult, idx: usize) -> Option<usize> {
+    let mut parent = doc.parent_of(idx)?;
+    while doc.nodes[parent].kind() == NodeKind::Element
+        && cascade.computed[parent].display == DisplayValue::Contents
+    {
+        parent = doc.parent_of(parent)?;
+    }
+    (doc.nodes[parent].kind() == NodeKind::Element).then_some(parent)
+}
 
 /// Whether `idx` is a box that lays its own inline content out in lines: a
 /// block container (`block`, `flow-root`, `inline-block`, `list-item`, a
 /// table cell), a blockified inline flex or grid item, or a table box holding
 /// only inline-level children. Flex and grid boxes and tables with rows lay
-/// their children out by algorithms of their own; the table algorithm places a
-/// caption only when the table is empty, so a caption is not a root either. A
+/// their children out by algorithms of their own. A table caption is a block
+/// container (the table algorithm lays it out at the table's width). A
 /// multicol container is a root like any block container: its lines are
 /// split in columns.
 pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    // Images, inline SVG and form controls lay their content out by other
-    // means: text inside them (an SVG `<title>`, a button label) is not a
-    // paragraph of theirs. The fallback content of the other replaced
-    // elements is laid out as ordinary content, as on the parley path.
+    // Images and inline SVG lay their content out by other means: text
+    // inside them (an SVG `<title>`) is not a paragraph of theirs. Form
+    // controls and the other replaced elements lay their content (a label,
+    // fallback content) out as a paragraph of their own.
     let node = &doc.nodes[idx];
     let tag = node.tag_name().unwrap_or("");
     if node.is_inline_svg_content()
         || node.is_inline_svg_root()
         || super::projection::ATOMIC_TAGS.contains(&tag)
-        || FORM_CONTROL_TAGS.contains(&tag)
     {
         return false;
     }
@@ -78,7 +97,8 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
         | DisplayValue::InlineBlock
         | DisplayValue::ListItem
         | DisplayValue::Inline
-        | DisplayValue::TableCell => true,
+        | DisplayValue::TableCell
+        | DisplayValue::TableCaption => true,
         // A table box whose children are all inline-level is one anonymous
         // cell's content (CSS 2.1 17.2.1); one with rows, row groups or
         // block children is laid out by the table algorithm.
@@ -229,7 +249,50 @@ pub(crate) fn assign_ifc_roots(
     });
     let result = built.map(|built| write_roots(doc, built));
     doc.ifc = Some(state);
-    result
+    result?;
+    match text_outside_paragraphs(doc, cascade) {
+        Some(node) => Err(LayoutError::IfcUnsupported {
+            node,
+            reason: "text outside any paragraph",
+        }),
+        None => Ok(()),
+    }
+}
+
+/// The first rendered text node with more than collapsible white space that
+/// no paragraph lays out: it would be neither measured nor drawn. Text of
+/// non-rendered elements (`head`, `script`, `template`, ...), of elements
+/// that do not generate boxes (`display: none` on an ancestor), and SVG
+/// content (drawn by the SVG renderer) is not text of the document flow.
+fn text_outside_paragraphs(doc: &Document, cascade: &CascadeResult) -> Option<usize> {
+    (0..doc.nodes.len()).find(|&idx| {
+        let node = &doc.nodes[idx];
+        if node.kind() != NodeKind::Text
+            || !node.is_in_document()
+            || node.is_inline_svg_content()
+            || node
+                .flags
+                .intersects(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE)
+            || node.text_content().is_none_or(|text| {
+                text.chars()
+                    .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+            })
+        {
+            return false;
+        }
+        let mut ancestor = doc.parent_of(idx);
+        while let Some(id) = ancestor {
+            let element = &doc.nodes[id];
+            if element.kind() == NodeKind::Element
+                && (element.is_non_rendered_html_element()
+                    || cascade.computed[id].display == DisplayValue::None)
+            {
+                return false;
+            }
+            ancestor = doc.parent_of(id);
+        }
+        true
+    })
 }
 
 /// Walk the document in index order and return the eligible paragraphs, in
@@ -291,7 +354,8 @@ fn collect_candidates(
 }
 
 /// Whether `text` is laid out by a flex or grid container as an anonymous
-/// item of its own: it is a direct child of the container and holds more than
+/// item of its own: it is a child of the container (through `display:
+/// contents` elements) and holds more than
 /// collapsible white space (CSS Flexbox 1, 4; CSS Grid 1, 6). The white-space
 /// test matches the item collection of the taffy tree.
 fn is_anonymous_item_text(doc: &Document, cascade: &CascadeResult, text: usize) -> bool {
@@ -299,22 +363,20 @@ fn is_anonymous_item_text(doc: &Document, cascade: &CascadeResult, text: usize) 
     if node.kind() != NodeKind::Text || !node.is_in_document() {
         return false;
     }
-    let Some(parent) = doc.parent_of(text) else {
+    let Some(parent) = box_parent(doc, cascade, text) else {
         return false;
     };
-    doc.nodes[parent].kind() == NodeKind::Element
-        && matches!(
-            cascade.computed[parent].display,
-            DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-        )
-        && node.text_content().is_some_and(|text| {
-            !text
-                .chars()
-                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
-        })
+    matches!(
+        cascade.computed[parent].display,
+        DisplayValue::Flex
+            | DisplayValue::InlineFlex
+            | DisplayValue::Grid
+            | DisplayValue::InlineGrid
+    ) && node.text_content().is_some_and(|text| {
+        !text
+            .chars()
+            .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+    })
 }
 
 /// The text nodes that are anonymous flex or grid items and can be laid out

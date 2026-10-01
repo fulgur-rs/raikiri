@@ -10,11 +10,21 @@ use taffy::Style;
 #[test]
 fn public_page_fragment_snapshot_is_node_ordered() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let first = document.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let first = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
     document.append_text(first, "first");
-    let second = document.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let second = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
     document.append_text(second, "second");
 
     let rules = build_rule_tree(&document);
@@ -66,20 +76,20 @@ fn public_page_fragment_item_keeps_repeat_distinct_from_split() {
 #[test]
 fn fixed_position_subtrees_repeat_on_every_page() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let flow = document.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("height:70px;width:20px"),
+        Some("display:block;height:70px;width:20px"),
     );
     document.append_text(flow, "flow");
     let fixed = document.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("position:fixed;top:0;left:0;width:20px;height:5px"),
+        Some("display:block;position:fixed;top:0;left:0;width:20px;height:5px"),
     );
     let fixed_text = document.append_text(fixed, "fixed");
     let fixed_link = document.append_element(
@@ -97,7 +107,7 @@ fn fixed_position_subtrees_repeat_on_every_page() {
         Some(body),
         "div",
         Style::default(),
-        Some("break-before:page;height:10px"),
+        Some("display:block;break-before:page;height:10px"),
     );
     document.append_text(forced, "forced");
 
@@ -369,13 +379,13 @@ fn page_fragment_link_events_prefer_leaf_placements_and_keep_box_fallbacks() {
 #[test]
 fn page_fragment_margin_padding_coordinates_are_applied_once() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let box_id = document.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width:10px;height:10px"),
+        Some("display:block;width:10px;height:10px"),
     );
     document.append_text(box_id, "box");
 
@@ -485,17 +495,22 @@ fn page_fragment_projection_keeps_distinct_resolved_geometry_per_page() {
 #[test]
 fn named_page_propagation_skips_out_of_flow_children() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let named = document.append_element(Some(body), "div", Style::default(), Some("page:named"));
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let named = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;page:named"),
+    );
     let out = document.append_element(
         Some(named),
         "div",
         Style::default(),
-        Some("position:absolute;top:0"),
+        Some("display:block;position:absolute;top:0"),
     );
     document.append_text(out, "out of flow");
-    let flow = document.append_element(Some(named), "div", Style::default(), None::<&str>);
+    let flow = document.append_element(Some(named), "div", Style::default(), Some("display:block"));
     document.append_text(flow, "in flow");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade named-page fixture");

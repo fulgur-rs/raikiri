@@ -34,7 +34,7 @@ pub(crate) const ATOMIC_TAGS: &[&str] = &["img", "svg"];
 /// leaf measurement: their authored or intrinsic size, zero when neither is
 /// known), whose content (fallback content, a control's label, MathML) is
 /// not part of the paragraph's text.
-const REPLACED_BOX_TAGS: &[&str] = &[
+pub(crate) const REPLACED_BOX_TAGS: &[&str] = &[
     "canvas", "video", "audio", "iframe", "object", "embed", "input", "button", "select",
     "textarea", "math",
 ];
