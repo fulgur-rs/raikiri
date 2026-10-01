@@ -359,14 +359,20 @@ pub(crate) fn inline_style(
             ));
         }
     };
-    let text_transform = same_enum!(
-        TextTransform, cv.text_transform, node;
-        None, Capitalize, Uppercase, Lowercase, FullWidth, FullSizeKana,
-        CapitalizeFullWidth, UppercaseFullWidth, LowercaseFullWidth,
-        CapitalizeFullSizeKana, UppercaseFullSizeKana, LowercaseFullSizeKana,
-        FullWidthFullSizeKana, CapitalizeFullWidthFullSizeKana,
-        UppercaseFullWidthFullSizeKana, LowercaseFullWidthFullSizeKana
-    )?;
+    // `math-auto` only changes single-letter MathML identifiers, which are
+    // not laid out as paragraph text here: no transform.
+    let text_transform = if cv.text_transform == p::TextTransform::MathAuto {
+        Ok(s::TextTransform::None)
+    } else {
+        same_enum!(
+            TextTransform, cv.text_transform, node;
+            None, Capitalize, Uppercase, Lowercase, FullWidth, FullSizeKana,
+            CapitalizeFullWidth, UppercaseFullWidth, LowercaseFullWidth,
+            CapitalizeFullSizeKana, UppercaseFullSizeKana, LowercaseFullSizeKana,
+            FullWidthFullSizeKana, CapitalizeFullWidthFullSizeKana,
+            UppercaseFullWidthFullSizeKana, LowercaseFullWidthFullSizeKana
+        )
+    }?;
     let direction = match cv.direction {
         p::Direction::Ltr => shodo::geometry::Direction::Ltr,
         p::Direction::Rtl => shodo::geometry::Direction::Rtl,
@@ -558,12 +564,21 @@ pub(crate) fn line_options(
         p::TextAlign::JustifyAll => s::TextAlign::JustifyAll,
         _ => return Err(unsupported("text-align needs the parent's resolved value")),
     };
-    let text_align_last = same_enum!(
-        TextAlignLast, cv.text_align_last, node;
-        Auto, Start, End, Left, Right, Center, Justify
-    )?;
-    let text_justify =
-        same_enum!(TextJustify, cv.text_justify, node; Auto, None, InterWord, InterCharacter)?;
+    // `match-parent` is left to the paragraph's `text-align`, as `auto` does.
+    let text_align_last = if cv.text_align_last == p::TextAlignLast::MatchParent {
+        Ok(s::TextAlignLast::Auto)
+    } else {
+        same_enum!(
+            TextAlignLast, cv.text_align_last, node;
+            Auto, Start, End, Left, Right, Center, Justify
+        )
+    }?;
+    // `distribute` is the legacy name of `inter-character` (CSS Text 3, 7.4).
+    let text_justify = if cv.text_justify == p::TextJustify::Distribute {
+        Ok(s::TextJustify::InterCharacter)
+    } else {
+        same_enum!(TextJustify, cv.text_justify, node; Auto, None, InterWord, InterCharacter)
+    }?;
     let text_wrap_style =
         same_enum!(TextWrapStyle, cv.text_wrap_style, node; Auto, Balance, Pretty, Stable)?;
     Ok((

@@ -460,3 +460,28 @@ fn a_relative_offset_in_lines_keeps_lengths_and_degrades_the_rest() {
     // An inset that needs the containing block is taken as zero.
     assert_eq!(offset("left:calc(1% + 1px);top:4px"), (0.0, 4.0));
 }
+
+#[test]
+fn values_shodo_does_not_name_map_to_their_equivalents() {
+    use shodo::style::{TextAlignLast, TextJustify, TextTransform};
+    assert_eq!(
+        root_style("text-transform:math-auto")
+            .expect("math-auto")
+            .text_transform,
+        TextTransform::None
+    );
+    let fixture = block_fixture(
+        "text-align-last:match-parent;text-justify:distribute",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let (options, _) = line_options(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("options");
+    assert_eq!(options.text_align_last, TextAlignLast::Auto);
+    assert_eq!(options.text_justify, TextJustify::InterCharacter);
+}
