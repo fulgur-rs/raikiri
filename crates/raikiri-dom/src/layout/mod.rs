@@ -95,6 +95,9 @@ pub(crate) use sanitize::sanitize_taffy_layout;
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
+/// Text outside paragraphs shaped by the inline engine.
+#[doc(hidden)]
+pub use ifc::standalone::{StandaloneAlign, StandaloneStyle, StandaloneText};
 #[doc(hidden)]
 pub use ifc::style::relative_offset;
 pub use page::{

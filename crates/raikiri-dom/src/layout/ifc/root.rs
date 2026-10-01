@@ -9,6 +9,7 @@ use shodo::limits::Limits;
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Line, Paragraph};
 use std::fmt;
+use std::sync::atomic::AtomicUsize;
 
 /// A block laid out as one shodo paragraph.
 #[derive(Clone)]
@@ -95,6 +96,9 @@ pub(crate) struct IfcState {
     pub(crate) fonts: FontCollection,
     pub(crate) limits: Limits,
     pub(crate) layout_cx: LayoutContext,
+    /// Results produced by `Document::shape_standalone_text` for this
+    /// document. Atomic because shaping takes `&Document`.
+    pub(crate) standalone_calls: AtomicUsize,
 }
 
 impl IfcState {
@@ -103,6 +107,7 @@ impl IfcState {
             fonts,
             limits,
             layout_cx: LayoutContext::new(),
+            standalone_calls: AtomicUsize::new(0),
         }
     }
 }
@@ -140,7 +145,8 @@ impl fmt::Debug for IfcState {
     }
 }
 
-// The layout context is per-owner scratch space, so a clone starts fresh.
+// The layout context is per-owner scratch space and the call count belongs
+// to its document, so a clone starts fresh.
 impl Clone for IfcState {
     fn clone(&self) -> Self {
         Self::new(self.fonts.clone(), self.limits.clone())

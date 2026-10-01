@@ -76,6 +76,8 @@ pub use layout::{
     layout_single_page_with_resolver, layout_single_page_with_resolver_and_base_url,
     page_content_insets, page_margins, relayout_text_for_width, resolve_initial_page_context,
 };
+#[doc(hidden)]
+pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use node::{CanvasBitmap, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
 pub use raikiri_traits::{NodeKind, QuirksMode};

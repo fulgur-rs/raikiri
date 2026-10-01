@@ -11,6 +11,7 @@ pub(crate) mod inline_boxes;
 pub(crate) mod projection;
 pub(crate) mod records;
 pub(crate) mod root;
+pub(crate) mod standalone;
 pub(crate) mod style;
 
 #[cfg(test)]

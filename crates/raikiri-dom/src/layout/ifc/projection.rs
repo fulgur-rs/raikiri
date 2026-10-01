@@ -194,7 +194,7 @@ fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
 
 /// Whether `text` holds a character of a right-to-left script or an explicit
 /// bidi control.
-fn has_rtl_char(text: &str) -> bool {
+pub(crate) fn has_rtl_char(text: &str) -> bool {
     text.chars().any(|c| {
         matches!(
             c as u32,
