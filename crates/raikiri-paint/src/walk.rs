@@ -5297,7 +5297,7 @@ fn vertical_table_cell_background_width(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_element_background(
+pub(crate) fn paint_element_background(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -6113,7 +6113,10 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: RoundedRectRadii
     path
 }
 
-fn paintable_border_radius(radius: &ComputedBorderRadius, enabled: bool) -> ComputedBorderRadius {
+pub(crate) fn paintable_border_radius(
+    radius: &ComputedBorderRadius,
+    enabled: bool,
+) -> ComputedBorderRadius {
     if !enabled {
         return ComputedBorderRadius::all(ComputedLength(0.0));
     }
@@ -6130,6 +6133,121 @@ fn paintable_border_radius(radius: &ComputedBorderRadius, enabled: bool) -> Comp
         zero_percent(radius.bottom_right),
         zero_percent(radius.bottom_left),
     )
+}
+
+/// Paint the shadows, background, borders and outline of one piece of an
+/// inline element, the way the element visit paints a box. `x` and `y` are
+/// the page position of the paragraph's content box.
+///
+/// A side whose edge the piece does not carry (the element continues on
+/// another line there) has no border, padding or corner radius: the box is
+/// sliced (CSS Fragmentation 3 `box-decoration-break: slice`). The padding is
+/// what the piece leaves around its content box once the border is taken off.
+pub(crate) fn paint_inline_box(
+    scene: &mut impl PaintScene,
+    cv: &ComputedValues,
+    piece: &raikiri_dom::InlineBoxPiece,
+    x: f32,
+    y: f32,
+) {
+    let outer = piece.border_box;
+    let content = piece.content_box;
+    // The start edge is on the physical left when the element's own direction
+    // is left to right, whatever the paragraph's direction.
+    let (left_edge, right_edge) = if cv.direction == raikiri_style::property::Direction::Rtl {
+        (piece.has_end_edge, piece.has_start_edge)
+    } else {
+        (piece.has_start_edge, piece.has_end_edge)
+    };
+    let mut border = cv.border;
+    if !left_edge {
+        border.left = border.left.without_line();
+    }
+    if !right_edge {
+        border.right = border.right.without_line();
+    }
+    let padding = taffy::Rect {
+        left: (content.x - outer.x - border.left.width().px()).max(0.0),
+        right: ((outer.x + outer.width) - (content.x + content.width) - border.right.width().px())
+            .max(0.0),
+        top: (content.y - outer.y - border.top.width().px()).max(0.0),
+        bottom: ((outer.y + outer.height)
+            - (content.y + content.height)
+            - border.bottom.width().px())
+        .max(0.0),
+    };
+    // The same rule as the element visit: radii only for a box that draws a
+    // border or a background, and never under a transform or a filter.
+    let has_border = [&border.top, &border.right, &border.bottom, &border.left]
+        .iter()
+        .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
+    let mut radius = paintable_border_radius(
+        &cv.border_radius,
+        (has_border || cv.background_color.a > 0)
+            && cv.transform.is_empty()
+            && cv.filter.is_empty(),
+    );
+    let square = ComputedLengthPercentage::Px(0.0);
+    if !left_edge {
+        radius.top_left = square;
+        radius.bottom_left = square;
+    }
+    if !right_edge {
+        radius.top_right = square;
+        radius.bottom_right = square;
+    }
+    let abs_x = x + outer.x;
+    let abs_y = y + outer.y;
+    paint_element_box_shadows(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        &radius,
+        &cv.box_shadow,
+        cv.color,
+    );
+    paint_element_background(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        cv.background_color,
+        &BackgroundImage::None,
+        cv.color,
+        cv.background_clip,
+        cv.background_origin,
+        &radius,
+        &border,
+        &padding,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        None,
+        &mut Vec::new(),
+    );
+    paint_element_border_rounded(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        &border,
+        cv.color,
+        &radius,
+    );
+    paint_element_outline(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        &cv.outline,
+        cv.outline_offset,
+        cv.color,
+    );
 }
 
 /// Fill a background using the computed circular corner radii.  The shape is
@@ -6179,7 +6297,7 @@ fn fill_rounded_background(
 /// geometry for the initial outer-shadow slice. Inset shadows and fully
 /// per-corner radii remain follow-up work.
 #[allow(clippy::too_many_arguments)]
-fn paint_element_box_shadows(
+pub(crate) fn paint_element_box_shadows(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -6240,7 +6358,7 @@ fn paint_element_box_shadows(
 /// sides share one solid width and color.  The existing strip painter remains
 /// the conservative fallback for mixed side styles and widths.
 #[allow(clippy::too_many_arguments)]
-fn paint_element_border_rounded(
+pub(crate) fn paint_element_border_rounded(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -6363,7 +6481,7 @@ fn paint_element_border_rounded(
 /// Inset/negative-offset edge cases, non-solid styles, and rounded outlines
 /// remain outside this focused slice.
 #[allow(clippy::too_many_arguments)]
-fn paint_element_outline(
+pub(crate) fn paint_element_outline(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,

@@ -962,6 +962,18 @@ fn border_absolutizes_width_and_carries_style_and_color() {
     assert_eq!(computed.color, specified.color);
 }
 
+#[test]
+fn a_border_without_a_line_keeps_its_colour_and_loses_its_width() {
+    let mut specified = SpecifiedValues::initial().border.top;
+    specified.style = BorderStyle::Solid;
+    let border = resolve_border(specified, ComputedLength(20.0), None, &CTX);
+    assert_eq!(border.width(), ComputedLength(3.0));
+    let none = border.without_line();
+    assert_eq!(none.width(), ComputedLength::ZERO);
+    assert_eq!(none.style(), BorderStyle::None);
+    assert_eq!(none.color, border.color);
+}
+
 /// `border-*-width: 1lh` / `1rlh` — use a resolvable basis as a multiplier;
 /// if the basis is `None` (`normal` is unresolved), use `resolve_length`'s
 /// grammar-unreachable `Percent` arm's fallback, `0px`.

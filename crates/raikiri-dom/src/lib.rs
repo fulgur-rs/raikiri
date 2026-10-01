@@ -65,6 +65,8 @@ pub use fonts::{
     build_inline_document_fonts, build_wpt_font_collection, build_wpt_font_ctx,
     build_wpt_font_ctx_with_observer, expand_font_face_aliases, register_font_face_sources,
 };
+#[doc(hidden)]
+pub use layout::{BoxRect, InlineBoxPiece};
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
     PageMargins, PageSlice, first_page_name, layout_pages, layout_pages_with_page_geometry,

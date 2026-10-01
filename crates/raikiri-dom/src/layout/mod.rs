@@ -92,6 +92,9 @@ pub(crate) use inline_text::preshape_text;
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 
+/// Boxes of the inline elements of a paragraph laid out by the inline engine.
+#[doc(hidden)]
+pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
 pub use page::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
     PageMargins, first_page_name, page_content_insets, page_margins, resolve_initial_page_context,

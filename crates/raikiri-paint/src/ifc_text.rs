@@ -120,7 +120,26 @@ pub(crate) fn draw_ifc_lines(
         .and_then(|n| n.ifc_size())
         .unwrap_or((0.0, 0.0));
     let content_width = size.0;
-    for line in lines {
+    let pieces = document
+        .get_node(root_id)
+        .and_then(|node| node.ifc_inline_boxes())
+        .unwrap_or_default();
+    for (line_index, line) in lines.iter().enumerate() {
+        // The boxes of the inline elements on this line go below its text
+        // (CSS 2.1 Appendix E: an inline box's background and borders, then
+        // its text).
+        for piece in pieces.iter().filter(|piece| piece.line == line_index) {
+            let Some(cv) = cascade.computed.get(piece.node) else {
+                continue;
+            };
+            crate::walk::paint_inline_box(
+                scene,
+                cv,
+                piece,
+                position.x,
+                position.y + position.shift_y,
+            );
+        }
         // An element's shift can differ from line to line, so the contexts
         // are built per line.
         let shifts = baseline_shifts(document, line);

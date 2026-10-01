@@ -1018,3 +1018,403 @@ fn super_and_sub_raise_by_the_fonts_offsets() {
         );
     }
 }
+
+// ── boxes of inline elements ─────────────────────────────────
+
+fn solid(r: u8, g: u8, b: u8) -> anyrender::Paint {
+    anyrender::Paint::Solid(peniko::Color::from_rgba8(r, g, b, 255))
+}
+
+/// Bounding boxes of the fills painted with `brush`, rounded to 1/64px, in
+/// paint order.
+fn fills_with(scene: &Scene, brush: &anyrender::Paint) -> Vec<[i64; 4]> {
+    use kurbo::Shape;
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if &fill.brush == brush => {
+                let b = fill.shape.bounding_box();
+                let r = |v: f64| (v * 64.0).round() as i64;
+                Some([r(b.x0), r(b.y0), r(b.x1), r(b.y1)])
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every fill as (brush, rounded bounding box), in paint order.
+fn all_fills(scene: &Scene) -> Vec<(String, [i64; 4])> {
+    use kurbo::Shape;
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => {
+                let b = fill.shape.bounding_box();
+                let r = |v: f64| (v * 64.0).round() as i64;
+                Some((
+                    format!("{:?}", fill.brush),
+                    [r(b.x0), r(b.y0), r(b.x1), r(b.y1)],
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// In 1/64px, so expectations read like pixels.
+fn px(v: i64) -> i64 {
+    v * 64
+}
+
+const BOX_EDGES: &str = "background-color:rgb(255,0,0);padding:0 3px;\
+border-width:0 2px;border-style:solid;border-color:rgb(0,0,255);margin:0 4px";
+
+#[test]
+fn an_inline_background_and_border_match_the_parley_path() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(format!("display:inline;{BOX_EDGES}").as_str()),
+        );
+        doc.append_text(inner, "bb");
+        doc.append_text(root, "cc");
+    };
+    let (off, on) = off_and_on("width:200px", build);
+    // The span of `F`: border box x 24..54, y 0..10; borders 2px wide.
+    assert_eq!(
+        fills_with(&off, &solid(255, 0, 0)),
+        [[px(24), 0, px(54), px(10)]]
+    );
+    assert_eq!(
+        fills_with(&off, &solid(0, 0, 255)),
+        [[px(24), 0, px(26), px(10)], [px(52), 0, px(54), px(10)]]
+    );
+    assert_eq!(all_fills(&on), all_fills(&off));
+}
+
+#[test]
+fn a_wrapping_inline_keeps_the_start_border_on_its_first_piece_only() {
+    let (mut doc, cascade, _root) = paragraph("width:60px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(format!("display:inline;{BOX_EDGES}").as_str()),
+        );
+        doc.append_text(inner, "aaaa bbbb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let scene = painted(&doc, &cascade);
+    // `W`: line 1 piece x 4..49 (y 0..10), line 2 piece x 0..45 (y 10..20).
+    assert_eq!(
+        fills_with(&scene, &solid(255, 0, 0)),
+        [[px(4), 0, px(49), px(10)], [0, px(10), px(45), px(20)]]
+    );
+    // Line 1 keeps the left border, line 2 the right one.
+    assert_eq!(
+        fills_with(&scene, &solid(0, 0, 255)),
+        [[px(4), 0, px(6), px(10)], [px(43), px(10), px(45), px(20)]]
+    );
+}
+
+#[test]
+fn a_wrapping_inline_has_square_corners_where_it_continues() {
+    // With a radius, line 1's piece is rounded on the left only: its right
+    // edge runs straight from the top to the bottom.
+    let (mut doc, cascade, _root) = paragraph("width:60px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(format!("display:inline;{BOX_EDGES};border-radius:4px").as_str()),
+        );
+        doc.append_text(inner, "aaaa bbbb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let scene = painted(&doc, &cascade);
+    let backgrounds: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if fill.brush == solid(255, 0, 0) => Some(&fill.shape),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(backgrounds.len(), 2);
+    let corner_inside = |shape: &kurbo::BezPath, x: f64, y: f64| {
+        use kurbo::Shape;
+        shape.contains(kurbo::Point::new(x, y))
+    };
+    // Line 1 (x 4..49, y 0..10): the top-right corner point is inside the
+    // background, the top-left one is cut by the radius.
+    assert!(corner_inside(backgrounds[0], 48.9, 0.1));
+    assert!(!corner_inside(backgrounds[0], 4.1, 0.1));
+    // Line 2 (x 0..45, y 10..20): the other way round.
+    assert!(corner_inside(backgrounds[1], 0.1, 10.1));
+    assert!(!corner_inside(backgrounds[1], 44.9, 10.1));
+}
+
+#[test]
+fn vertical_edges_grow_the_painted_box_but_not_the_line() {
+    let (mut doc, cascade, _root) = paragraph("width:200px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(
+                "display:inline;background-color:rgb(255,0,0);padding:1px 0;\
+                 border-width:2px 0;border-style:solid;border-color:rgb(0,0,255)",
+            ),
+        );
+        doc.append_text(inner, "bb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let scene = painted(&doc, &cascade);
+    // `F-v`: border box x 0..20, y -3..13; the line stays 10px tall.
+    assert_eq!(
+        fills_with(&scene, &solid(255, 0, 0)),
+        [[0, px(-3), px(20), px(13)]]
+    );
+    assert_eq!(
+        fills_with(&scene, &solid(0, 0, 255)),
+        [[0, px(-3), px(20), px(-1)], [0, px(11), px(20), px(13)]]
+    );
+}
+
+#[test]
+fn an_inline_box_shadow_matches_the_parley_path() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;padding:0 3px;box-shadow:2px 2px rgb(0,255,0)"),
+        );
+        doc.append_text(inner, "bb");
+    };
+    let (off, on) = off_and_on("width:200px", build);
+    // The span: x 20..46 (padding 3 + "bb" 20 + padding 3), y 0..10.
+    assert_eq!(
+        box_shadows(&off),
+        [([px(22), px(2), px(48), px(12)], solid(0, 255, 0))],
+        "the parley path paints a shadow"
+    );
+    assert_eq!(box_shadows(&on), box_shadows(&off));
+    assert_eq!(all_fills(&on), all_fills(&off));
+}
+
+/// Every box shadow as (rounded rectangle, colour), in paint order.
+fn box_shadows(scene: &Scene) -> Vec<([i64; 4], anyrender::Paint)> {
+    box_shadows_with_radius(scene)
+        .into_iter()
+        .map(|(rect, brush, _)| (rect, brush))
+        .collect()
+}
+
+/// Every box shadow as (rounded rectangle, colour, corner radius).
+fn box_shadows_with_radius(scene: &Scene) -> Vec<([i64; 4], anyrender::Paint, i64)> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::BoxShadow(shadow) => {
+                let b = shadow.transform.transform_rect_bbox(shadow.rect);
+                let r = |v: f64| (v * 64.0).round() as i64;
+                Some((
+                    [r(b.x0), r(b.y0), r(b.x1), r(b.y1)],
+                    anyrender::Paint::Solid(shadow.brush),
+                    r(shadow.radius),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_inline_outline_matches_the_parley_path() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;padding:0 3px;outline:2px solid rgb(0,255,0)"),
+        );
+        doc.append_text(inner, "bb");
+    };
+    let (off, on) = off_and_on("width:200px", build);
+    assert!(
+        !fills_with(&off, &solid(0, 255, 0)).is_empty(),
+        "the parley path paints an outline"
+    );
+    assert_eq!(all_fills(&on), all_fills(&off));
+}
+
+#[test]
+fn the_start_border_follows_the_elements_own_direction() {
+    // An ltr span in an rtl paragraph still has its start (left) border on
+    // the physical left of the piece that carries the start edge.
+    let (mut doc, cascade, root) = paragraph("width:60px;direction:rtl", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(
+                "display:inline;direction:ltr;padding:0 3px;border-width:0 2px;\
+                 border-style:solid;border-color:rgb(0,0,255)",
+            ),
+        );
+        doc.append_text(inner, "aaaa bbbb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let node = doc.get_node(root).expect("root");
+    assert!(node.is_ifc_root());
+    let pieces = node.ifc_inline_boxes().expect("pieces");
+    assert_eq!(pieces.len(), 2);
+    let first = pieces
+        .iter()
+        .find(|p| p.has_start_edge)
+        .expect("start piece");
+    assert!(!first.has_end_edge);
+    let scene = painted(&doc, &cascade);
+    let blue = fills_with(&scene, &solid(0, 0, 255));
+    // The piece with the start edge carries a left border only: a 2px strip
+    // whose left edge is the piece's left edge.
+    let left = (first.border_box.x * 64.0).round() as i64;
+    let top = (first.border_box.y * 64.0).round() as i64;
+    let on_first_line: Vec<_> = blue.iter().filter(|b| b[1] == top).collect();
+    assert_eq!(on_first_line.len(), 1, "{blue:?}");
+    assert_eq!(on_first_line[0][0], left, "{blue:?}");
+    assert_eq!(on_first_line[0][2] - on_first_line[0][0], px(2), "{blue:?}");
+}
+
+#[test]
+fn an_inline_shadow_without_a_border_or_background_has_square_corners() {
+    // The element visit drops the radius of a box that draws neither a border
+    // nor a background; the shadow then has square corners on both paths.
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;border-radius:4px;box-shadow:2px 2px rgb(0,255,0)"),
+        );
+        doc.append_text(inner, "bb");
+    };
+    let (off, on) = off_and_on("width:200px", build);
+    let off_shadows = box_shadows_with_radius(&off);
+    assert_eq!(off_shadows.len(), 1);
+    assert_eq!(off_shadows[0].2, 0, "the parley path squares the corners");
+    assert_eq!(box_shadows_with_radius(&on), off_shadows);
+}
+
+#[test]
+fn an_inline_background_clipped_to_its_content_box_matches_the_parley_path() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(format!("display:inline;{BOX_EDGES};background-clip:content-box").as_str()),
+        );
+        doc.append_text(inner, "bb");
+    };
+    let (off, on) = off_and_on("width:200px", build);
+    // The content box of `F`: x 29..49.
+    assert_eq!(
+        fills_with(&off, &solid(255, 0, 0)),
+        [[px(29), 0, px(49), px(10)]]
+    );
+    assert_eq!(all_fills(&on), all_fills(&off));
+}
+
+#[test]
+fn a_wrapped_piece_has_no_padding_where_it_continues() {
+    // `W` with the background clipped to the content box: line 1's piece has
+    // its padding on the left only (content x 9..49), line 2's on the right
+    // only (content x 0..40).
+    let (mut doc, cascade, _root) = paragraph("width:60px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(format!("display:inline;{BOX_EDGES};background-clip:content-box").as_str()),
+        );
+        doc.append_text(inner, "aaaa bbbb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let scene = painted(&doc, &cascade);
+    assert_eq!(
+        fills_with(&scene, &solid(255, 0, 0)),
+        [[px(9), 0, px(49), px(10)], [0, px(10), px(40), px(20)]]
+    );
+}
+
+#[test]
+fn a_right_to_left_element_has_its_start_border_on_the_right() {
+    // An rtl span in an ltr paragraph starts on its right side: the piece
+    // that carries the start edge has its border on the physical right.
+    let (mut doc, cascade, root) = paragraph("width:60px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(
+                "display:inline;direction:rtl;padding:0 3px;border-width:0 2px;\
+                 border-style:solid;border-color:rgb(0,0,255)",
+            ),
+        );
+        doc.append_text(inner, "aaaa bbbb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let node = doc.get_node(root).expect("root");
+    assert!(node.is_ifc_root());
+    let pieces = node.ifc_inline_boxes().expect("pieces");
+    assert_eq!(pieces.len(), 2);
+    let first = pieces
+        .iter()
+        .find(|p| p.has_start_edge)
+        .expect("start piece");
+    assert!(!first.has_end_edge);
+    let scene = painted(&doc, &cascade);
+    let blue = fills_with(&scene, &solid(0, 0, 255));
+    let right = ((first.border_box.x + first.border_box.width) * 64.0).round() as i64;
+    let top = (first.border_box.y * 64.0).round() as i64;
+    let on_first_line: Vec<_> = blue.iter().filter(|b| b[1] == top).collect();
+    assert_eq!(on_first_line.len(), 1, "{blue:?}");
+    assert_eq!(on_first_line[0][2], right, "{blue:?}");
+    assert_eq!(on_first_line[0][2] - on_first_line[0][0], px(2), "{blue:?}");
+}
+
+#[test]
+fn a_content_box_background_leaves_out_the_vertical_padding() {
+    // `F-v` with the background clipped to the content box: y 0..10, inside
+    // the 1px padding and 2px border above and below.
+    let (mut doc, cascade, _root) = paragraph("width:200px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(
+                "display:inline;background-color:rgb(255,0,0);background-clip:content-box;\
+                 padding:1px 0;border-width:2px 0;border-style:solid;border-color:rgb(0,0,255)",
+            ),
+        );
+        doc.append_text(inner, "bb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let scene = painted(&doc, &cascade);
+    assert_eq!(
+        fills_with(&scene, &solid(255, 0, 0)),
+        [[0, 0, px(20), px(10)]]
+    );
+}

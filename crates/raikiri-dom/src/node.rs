@@ -680,6 +680,19 @@ impl Node {
             .map(|lines| lines.lines.as_slice())
     }
 
+    /// Pieces of the inline elements of an ifc root on its lines, in the
+    /// root's content box; `None` for a node without lines.
+    #[doc(hidden)]
+    pub fn ifc_inline_boxes(&self) -> Option<Vec<crate::layout::InlineBoxPiece>> {
+        let root = self.ifc.as_ref()?;
+        let lines = root.lines.as_ref()?;
+        Some(crate::layout::ifc::inline_boxes::inline_box_pieces(
+            &lines.lines,
+            lines.width,
+            root.rtl,
+        ))
+    }
+
     /// Content width the lines of an ifc root were broken at, and their total
     /// height.
     #[doc(hidden)]

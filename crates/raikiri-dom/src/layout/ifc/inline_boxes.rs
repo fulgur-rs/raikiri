@@ -7,9 +7,13 @@ use shodo::{Fragment, Line};
 /// A physical rectangle in the paragraph's content box.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxRect {
+    /// Left edge.
     pub x: f32,
+    /// Top edge.
     pub y: f32,
+    /// Width.
     pub width: f32,
+    /// Height.
     pub height: f32,
 }
 

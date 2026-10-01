@@ -975,6 +975,17 @@ impl ComputedBorder {
     pub fn style(&self) -> BorderStyle {
         self.style
     }
+
+    /// The same border with no line: width 0 and style `none`, keeping the
+    /// colour. Used to draw the side of a sliced box that continues elsewhere.
+    #[must_use]
+    pub fn without_line(&self) -> Self {
+        Self {
+            width: ComputedLength::ZERO,
+            style: BorderStyle::None,
+            color: self.color,
+        }
+    }
 }
 
 /// Computed value of one `text-shadow` entry.
