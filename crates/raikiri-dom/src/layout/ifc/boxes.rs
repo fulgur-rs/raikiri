@@ -46,9 +46,7 @@ pub(crate) struct TentativeFloat {
     pub(crate) output: taffy::LayoutOutput,
 }
 
-/// Lay the paragraph out with its boxes against `block_ctx` (the parent's
-/// context) or a context of its own. When `perform` is true, floats are
-/// committed to the context and the boxes get their final layouts.
+/// [`layout_with_boxes_in`] for a root whose margins stay inside it.
 #[cfg(test)]
 pub(crate) fn layout_with_boxes(
     tree: &mut Document,
@@ -60,10 +58,14 @@ pub(crate) fn layout_with_boxes(
     layout_with_boxes_in(tree, idx, geometry, block_ctx, perform, false)
 }
 
-/// [`layout_with_boxes`] for a root whose bottom margin may collapse with the
-/// bottom margins of its last block child (`bottom_margin_escapes`): the root
-/// is in its parent's formatting context and has no bottom padding, border
-/// or height in between. Those margins are then returned in
+/// Lay the paragraph out with its boxes against `block_ctx` (the parent's
+/// context) or a context of its own. When `perform` is true, floats are
+/// committed to the context and the boxes get their final layouts.
+///
+/// `bottom_margin_escapes` is set for a root whose bottom margin may collapse
+/// with the bottom margins of its last block child: the root is in its
+/// parent's formatting context and has no bottom padding, border or height
+/// in between. Those margins are then returned in
 /// [`IfcLines::escaping_margin`] instead of being added to the height.
 pub(crate) fn layout_with_boxes_in(
     tree: &mut Document,

@@ -1049,18 +1049,14 @@ fn with_block_child(css: &'static str) -> impl FnOnce(&mut crate::Document, usiz
 }
 
 #[test]
-fn a_block_child_with_a_forced_page_break_is_laid_out_by_the_engine() {
-    // An accepted degradation: pagination moves the box alone and the lines
-    // after it do not follow.
-    assert_is_root("", with_block_child("display:block;break-before:page"));
-    assert_is_root("", with_block_child("display:block;break-after:page"));
+fn a_block_child_with_a_forced_page_break_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", with_block_child("display:block;break-before:page"));
+    assert_stays_on_parley("", with_block_child("display:block;break-after:page"));
 }
 
 #[test]
-fn a_box_with_a_named_page_is_laid_out_by_the_engine() {
-    // An accepted degradation: pagination moves the box alone and the lines
-    // after it do not follow.
-    assert_is_root("", with_block_child("display:block;page:chapter"));
+fn a_box_with_a_named_page_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", with_block_child("display:block;page:chapter"));
 }
 
 #[test]
@@ -1072,14 +1068,14 @@ fn a_block_child_without_a_page_break_is_still_a_root() {
 }
 
 #[test]
-fn a_page_break_inside_a_box_of_the_paragraph_is_laid_out_by_the_engine() {
-    // An accepted degradation: pagination breaks at the inner block on its
-    // own and the lines after the box do not follow it.
+fn a_page_break_inside_a_box_of_the_paragraph_keeps_it_on_the_parley_path() {
+    // Pagination breaks at the inner block on its own; the lines after the
+    // box would not follow it.
     for css in [
         "display:block;break-before:page",
         "display:block;page:chapter",
     ] {
-        assert_is_root("", move |doc, root| {
+        assert_stays_on_parley("", move |doc, root| {
             doc.append_text(root, "aa ");
             let block = doc.append_element(
                 Some(root),
