@@ -335,3 +335,114 @@ fn system_generics_resolve_to_the_same_face_in_both_engines() {
         "no installed font resolved a generic on this host"
     );
 }
+
+/// `bytes` with the big-endian `value` written at `offset` of the OS/2 table.
+fn with_os2_field(bytes: &[u8], offset: usize, value: u16) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let tables = u16::from_be_bytes([out[4], out[5]]) as usize;
+    let os2 = (0..tables)
+        .map(|index| 12 + index * 16)
+        .find(|&record| &out[record..record + 4] == b"OS/2")
+        .map(|record| {
+            u32::from_be_bytes([
+                out[record + 8],
+                out[record + 9],
+                out[record + 10],
+                out[record + 11],
+            ]) as usize
+        })
+        .expect("an OS/2 table");
+    out[os2 + offset..os2 + offset + 2].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+/// OS/2 `usWeightClass`, `usWidthClass` and `fsSelection` offsets.
+const WEIGHT_CLASS: usize = 4;
+const WIDTH_CLASS: usize = 6;
+const FS_SELECTION: usize = 62;
+
+#[test]
+fn the_faces_of_one_family_resolve_by_weight_width_and_style_alike_in_both_engines() {
+    use parley::fontique::{FontStyle, FontWeight, FontWidth};
+    let bold = with_os2_field(AHEM, WEIGHT_CLASS, 700);
+    // Width class 3 is condensed (75%); fsSelection bit 0 is italic.
+    let condensed = with_os2_field(AHEM, WIDTH_CLASS, 3);
+    let italic = with_os2_field(AHEM, FS_SELECTION, 1);
+    let fonts = FontContextBuilder::new()
+        .font_bytes("Quad", AHEM.to_vec())
+        .font_bytes("Quad", bold.clone())
+        .font_bytes("Quad", condensed.clone())
+        .font_bytes("Quad", italic.clone())
+        .build_fonts()
+        .expect("fonts");
+    let mut context = fonts.context().clone();
+    let id = context
+        .collection
+        .family_id("Quad")
+        .expect("parley knows Quad");
+    let family = context.collection.family(id).expect("family");
+    assert_eq!(
+        family.fonts().len(),
+        4,
+        "parley holds the faces in one family"
+    );
+    let cases = [
+        ("regular", 400.0_f32, 100.0_f32, false, AHEM),
+        ("bold", 700.0, 100.0, false, bold.as_slice()),
+        ("condensed", 400.0, 75.0, false, condensed.as_slice()),
+        ("italic", 400.0, 100.0, true, italic.as_slice()),
+    ];
+    for (name, weight, width, is_italic, expected) in cases {
+        let font = family
+            .match_font(
+                FontWidth::from_percentage(width),
+                if is_italic {
+                    FontStyle::Italic
+                } else {
+                    FontStyle::Normal
+                },
+                FontWeight::new(weight),
+                false,
+            )
+            .expect("parley matches a face")
+            .clone();
+        let parley = font.load(Some(&mut context.source_cache)).expect("blob");
+        assert!(
+            parley.as_ref() == expected,
+            "parley picks another face for {name}"
+        );
+        let query = shodo::font::FontQuery {
+            families: vec![shodo::style::FontFamily::Named("Quad".to_owned())],
+            weight,
+            width,
+            style: if is_italic {
+                shodo::style::FontStyle::Italic
+            } else {
+                shodo::style::FontStyle::Normal
+            },
+            ..Default::default()
+        };
+        let matched = fonts
+            .collection()
+            .match_cluster(&query, "a")
+            .expect("shodo matches a face");
+        let shodo = fonts.collection().font_data(matched.id).expect("data");
+        assert!(
+            shodo.data.as_ref() == expected,
+            "shodo picks another face for {name}"
+        );
+        assert!(!matched.embolden, "no synthesized bold for {name}");
+        assert_eq!(matched.skew, None, "no synthesized slant for {name}");
+    }
+}
+
+#[test]
+fn a_face_with_an_out_of_range_weight_class_is_still_accepted() {
+    // Parley takes such a face as it is; the inline engine must not refuse a
+    // font set parley accepts.
+    let heavy = with_os2_field(AHEM, WEIGHT_CLASS, 1200);
+    let fonts = FontContextBuilder::new()
+        .font_bytes("Heavy", heavy)
+        .build_fonts();
+    assert!(fonts.is_ok(), "{fonts:?}");
+}
