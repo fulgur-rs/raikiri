@@ -11,18 +11,25 @@ use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
-use raikiri_style::property::DisplayValue;
+use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
 
 /// Whether `idx` generates a box of its own: any display other than `inline`,
-/// `contents` and `none`, and an inline element that a flex or grid container
-/// blockifies as its item (CSS Display 3, 2.7). The cascade leaves such an
-/// item `inline`; only the taffy bridge maps it to a block.
+/// `contents` and `none`, an absolutely positioned or fixed inline element
+/// (blockified, CSS 2.1 9.7), and an inline element that a flex or grid
+/// container blockifies as its item (CSS Display 3, 2.7). The cascade leaves
+/// such elements `inline`; only the taffy bridge maps them to blocks.
 pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    match cascade.computed[idx].display {
+    let cv = &cascade.computed[idx];
+    match cv.display {
         DisplayValue::Contents | DisplayValue::None => false,
+        DisplayValue::Inline
+            if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) =>
+        {
+            true
+        }
         DisplayValue::Inline => doc.parent_of(idx).is_some_and(|parent| {
             doc.nodes[parent].kind() == NodeKind::Element
                 && matches!(

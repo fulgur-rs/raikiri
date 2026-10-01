@@ -7365,3 +7365,29 @@ fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
     assert_eq!(size(true), size(false));
     assert_eq!((size(true).width, size(true).height), (140.0, 10.0));
 }
+
+#[test]
+fn the_text_of_an_absolutely_positioned_inline_is_its_own_paragraph() {
+    // An absolutely positioned box is blockified (CSS 2.1 9.7): a `<span>`
+    // with `position: absolute` is a block container whose text is a
+    // paragraph of the engine. Hand-computed: "abspos" is one 60px line.
+    let mut span = 0;
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_text(root, "aa");
+        span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("position:absolute;left:0;top:20px"),
+        );
+        doc.append_text(span, "abspos");
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert!(doc.nodes[span].is_ifc_root());
+    let layout = doc.nodes[span].unrounded_layout;
+    assert_eq!(
+        (layout.location.y, layout.size.width, layout.size.height),
+        (20.0, 60.0, 10.0)
+    );
+}
