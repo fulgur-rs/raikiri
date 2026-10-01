@@ -1634,6 +1634,54 @@ fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &
     }
 }
 
+pub use crate::layout::ifc::font::BundledFace;
+
+/// Build a shodo shared layer from bundled fonts.
+///
+/// The fonts are registered in order under their authored family names, and
+/// every generic family maps onto the bundle in registration order, so the
+/// result does not depend on the fonts installed on the host. The same list
+/// given to `FontContextBuilder` in `raikiri-html` resolves a family to the
+/// same face on the parley path. With `system_fonts` set, the installed
+/// fonts are consulted after the bundle.
+///
+/// # Errors
+/// An empty list, a face shodo rejects, or a resource limit.
+pub fn build_bundled_font_collection(
+    faces: Vec<BundledFace>,
+    system_fonts: bool,
+) -> Result<shodo::font::FontCollection, shodo::font::FontError> {
+    crate::layout::ifc::font::bundled_collection(
+        &shodo::limits::Limits::default(),
+        faces,
+        system_fonts,
+    )
+}
+
+/// The process-wide shared layer built from the platform's installed fonts.
+///
+/// The platform is scanned once; later calls clone the shared layer. Faces
+/// are loaded from the platform lazily, the first time a lookup selects them,
+/// into this one layer, so every document and every thread of the process
+/// shares it and its lock. The per-layer face and byte caps are lifted: with
+/// a layer that lives as long as the process, a cap would become a lifetime
+/// limit after which lookups silently fall back to the last resort. Callers
+/// must not configure it (for example with `set_generic_families`): that
+/// changes the answers for every other user of the layer.
+pub fn system_font_collection() -> shodo::font::FontCollection {
+    static SHARED: std::sync::OnceLock<shodo::font::FontCollection> = std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| {
+            let limits = shodo::limits::Limits {
+                max_faces_per_layer: None,
+                max_layer_blob_bytes: None,
+                ..shodo::limits::Limits::default()
+            };
+            shodo::font::FontCollection::with_options(&limits, shodo::font::FontOptions::default())
+        })
+        .clone()
+}
+
 /// A document layer over `shared` holding the faces of `faces`, for the
 /// inline engine.
 ///
@@ -4155,5 +4203,51 @@ mod tests {
     fn wpt_font_collection_reports_a_missing_directory() {
         let error = build_wpt_font_collection(Path::new("/nonexistent-fonts")).unwrap_err();
         assert!(matches!(error, FontError::DirNotFound(_)));
+    }
+
+    const AHEM_BYTES: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace/Ahem.ttf"
+    ));
+
+    #[test]
+    fn a_bundled_collection_resolves_its_family_and_every_generic_to_the_bundle() {
+        let collection = build_bundled_font_collection(
+            vec![BundledFace {
+                family: "Ahem".to_owned(),
+                bytes: AHEM_BYTES.to_vec(),
+            }],
+            false,
+        )
+        .expect("collection");
+        for family in [
+            shodo::style::FontFamily::Named("Ahem".to_owned()),
+            shodo::style::FontFamily::Generic(shodo::style::GenericFamily::Serif),
+            shodo::style::FontFamily::Generic(shodo::style::GenericFamily::Monospace),
+        ] {
+            let query = shodo::font::FontQuery {
+                families: vec![family.clone()],
+                ..Default::default()
+            };
+            let matched = collection
+                .match_cluster(&query, "a")
+                .unwrap_or_else(|| panic!("{family:?} resolves"));
+            let data = collection.font_data(matched.id).expect("font data");
+            assert_eq!(data.data.as_ref(), AHEM_BYTES, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_bundle_is_refused() {
+        assert!(build_bundled_font_collection(Vec::new(), false).is_err());
+    }
+
+    #[test]
+    fn the_system_collection_is_built_once_and_shared() {
+        let first = system_font_collection();
+        let second = system_font_collection();
+        // Every layer gets an identity of its own, so equal identities mean
+        // the second call returned the layer the first call built.
+        assert_eq!(first.layer_handle().id(), second.layer_handle().id());
     }
 }

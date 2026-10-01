@@ -28,12 +28,12 @@ const GENERICS: [GenericFamily; 6] = [
 pub(crate) mod face;
 
 /// One font file registered under an authored family name.
-#[cfg(test)]
-pub(crate) struct BundledFace {
+#[derive(Clone, Debug)]
+pub struct BundledFace {
     /// CSS family name the face is registered under.
-    pub(crate) family: String,
+    pub family: String,
     /// Encoded sfnt bytes.
-    pub(crate) bytes: Vec<u8>,
+    pub bytes: Vec<u8>,
 }
 
 /// The primary family name in a font's name table, preferring the typographic
@@ -67,7 +67,6 @@ fn map_generics(collection: &FontCollection, families: &[String]) {
 ///
 /// # Errors
 /// An empty list, a face shodo rejects, or a resource limit.
-#[cfg(test)]
 pub(crate) fn bundled_collection(
     limits: &Limits,
     faces: Vec<BundledFace>,
