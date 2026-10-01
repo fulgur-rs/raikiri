@@ -35,6 +35,8 @@ pub(crate) struct IfcRoot {
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
+    /// The root is a fixed box: its containing block is the page area.
+    pub(crate) fixed: bool,
     /// Line ranges of the last performed lines and where each range is drawn
     /// in the columns of a multicol container, when the lines are split
     /// across columns. `y` is the block offset the range's first line is
@@ -104,6 +106,7 @@ impl IfcRoot {
             offsets: projected.offsets,
             preserved_spaces: projected.preserved_spaces,
             cleared_breaks: projected.cleared_breaks,
+            fixed: projected.fixed,
             multicol_fragments: None,
         }
     }
@@ -120,6 +123,7 @@ impl IfcRoot {
             offsets: self.offsets.clone(),
             preserved_spaces: self.preserved_spaces.clone(),
             cleared_breaks: self.cleared_breaks.clone(),
+            fixed: self.fixed,
             multicol_fragments: None,
         }
     }
@@ -162,6 +166,9 @@ pub(crate) struct IfcState {
     /// Every paragraph must be laid out by the engine: one it refuses is an
     /// error instead of being left to the parley path.
     pub(crate) engine_only: bool,
+    /// Width of the page area of the current layout pass: the containing
+    /// block of fixed boxes.
+    pub(crate) page_width: Option<f32>,
 }
 
 /// How a layout pass built its paragraphs.
@@ -189,6 +196,7 @@ impl IfcState {
             parallel_build: false,
             last_build: None,
             engine_only: false,
+            page_width: None,
         }
     }
 }

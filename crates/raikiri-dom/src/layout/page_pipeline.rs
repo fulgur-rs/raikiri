@@ -292,6 +292,10 @@ pub fn layout_single_page(
     // taffy already shrink-wraps direct-body and nested absolute boxes alike.
     // See the §10.3.7 note on the layout helpers for the removed fill override.
 
+    // Fixed boxes laid out by the inline engine shrink against the page area.
+    if let Some(state) = document.ifc.as_mut() {
+        state.page_width = Some(content_width);
+    }
     // Step 5: taffy compute
     compute_root_layout(
         document,

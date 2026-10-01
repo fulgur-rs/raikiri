@@ -61,6 +61,8 @@ pub(crate) struct ProjectedIfc {
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
+    /// The root is a fixed box: its containing block is the page area.
+    pub(crate) fixed: bool,
 }
 
 /// Whether `node` or one of its ancestors has an authored vertical writing
@@ -322,6 +324,8 @@ pub(crate) struct ProjectedBuilder {
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
+    /// The root is a fixed box: its containing block is the page area.
+    pub(crate) fixed: bool,
 }
 
 impl ProjectedBuilder {
@@ -344,6 +348,7 @@ impl ProjectedBuilder {
             offsets: self.offsets,
             preserved_spaces: self.preserved_spaces,
             cleared_breaks: self.cleared_breaks,
+            fixed: self.fixed,
         })
     }
 }
@@ -443,6 +448,7 @@ pub(crate) fn project_ifc_text_builder(
         offsets: Vec::new(),
         preserved_spaces,
         cleared_breaks,
+        fixed: false,
     })
 }
 
@@ -720,6 +726,7 @@ pub(crate) fn project_ifc_builder_with(
         offsets,
         preserved_spaces,
         cleared_breaks,
+        fixed: root_cv.position == PositionValue::Fixed,
     })
 }
 

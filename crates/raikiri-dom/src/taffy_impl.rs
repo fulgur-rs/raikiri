@@ -670,6 +670,18 @@ fn measure_ifc_root(
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
         return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
     };
+    // A fixed box shrinks to fit against its containing block, the page area
+    // (CSS 2.1 10.1), while taffy hands it its parent's room.
+    let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
+    let available = match page_width {
+        Some(page_width) if root.fixed && !measure.stretched => Size {
+            width: AvailableSpace::Definite(
+                (page_width - measure.edges.0 - measure.edges.1).max(0.0),
+            ),
+            ..available
+        },
+        _ => available,
+    };
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
     let probe = root.without_lines();

@@ -7297,12 +7297,13 @@ fn measure_ch_advance_uses_the_engine_fonts() {
 
 #[test]
 fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engine() {
-    // taffy sizes a fixed box against its parent, on both paths; the
-    // engine breaks the lines at that width.
-    for (parent_css, css) in [
-        ("", "position:fixed"),
-        ("width:0;position:relative", "position:fixed"),
-        ("position:fixed", ""),
+    // A fixed box shrinks against the page area; "aaaa bbbb cccc" is one
+    // 140px line wherever the box sits. The parley path agrees except under a
+    // zero-wide positioned parent, where taffy sizes the fixed box against
+    // that parent (40x30, three lines): a parley error (CSS 2.1 10.1).
+    for (parent_css, css, parley) in [
+        ("", "position:fixed", (140.0, 10.0)),
+        ("width:0;position:relative", "position:fixed", (40.0, 30.0)),
     ] {
         let (mut doc, cascade, root) = ahem_paragraph_in(parent_css, css, "aaaa bbbb cccc");
         doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
@@ -7310,11 +7311,57 @@ fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engi
         layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
             .expect("layout");
         assert!(doc.nodes[root].is_ifc_root(), "{parent_css} / {css}");
+        let size = doc.nodes[root].unrounded_layout.size;
+        assert_eq!(
+            (size.width, size.height),
+            (140.0, 10.0),
+            "{parent_css} / {css}"
+        );
         let (mut off, off_cascade, off_root) = ahem_paragraph_in(parent_css, css, "aaaa bbbb cccc");
         lay_out(&mut off, &off_cascade, false);
+        let off_size = off.nodes[off_root].unrounded_layout.size;
         assert_eq!(
-            doc.nodes[root].unrounded_layout.size, off.nodes[off_root].unrounded_layout.size,
+            (off_size.width, off_size.height),
+            parley,
             "{parent_css} / {css}"
         );
     }
+    // A block paragraph inside a fixed box: the box is laid out by taffy on
+    // both paths, the paragraph by the engine.
+    let (mut doc, cascade, root) = ahem_paragraph_in("position:fixed", "", "aaaa bbbb cccc");
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.inline_formatting_engine_only(true);
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
+    // A fixed box's containing block is the viewport (the page area here),
+    // not the narrow absolutely positioned box it sits in: its 140px line
+    // "aaaa bbbb cccc" stays one line. The parley path gives it the same box.
+    let size = |ifc: bool| {
+        let mut fixed = 0;
+        let (mut doc, cascade, _root) = paragraph_of(|doc, root| {
+            let abs = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;position:absolute"),
+            );
+            doc.append_text(abs, "aa");
+            fixed = doc.append_element(
+                Some(abs),
+                "div",
+                Style::default(),
+                Some("display:block;position:fixed;bottom:0"),
+            );
+            doc.append_text(fixed, "aaaa bbbb cccc");
+        });
+        lay_out(&mut doc, &cascade, ifc);
+        doc.nodes[fixed].unrounded_layout.size
+    };
+    assert_eq!(size(true), size(false));
+    assert_eq!((size(true).width, size(true).height), (140.0, 10.0));
 }
