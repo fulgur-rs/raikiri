@@ -3,7 +3,8 @@
 use super::boxes::IfcBoxKind;
 use super::error::IfcError;
 use super::projection::{
-    ProjectedBuilder, ProjectedIfc, box_kind, project_ifc_builder, project_ifc_text_builder,
+    GeneratedCounters, ProjectedBuilder, ProjectedIfc, box_kind, has_in_flow_generated_text,
+    project_ifc_builder_with, project_ifc_text_builder,
 };
 use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
@@ -123,18 +124,21 @@ fn inside_unsized_fixed_box(doc: &Document, cascade: &CascadeResult, idx: usize)
 }
 
 /// Whether the paragraph has inline content that makes a line: text other
-/// than white space, an atomic inline, a `<br>`, or an inline element with a
-/// margin, border or padding on an inline side (CSS 2.1, 9.4.2: a line box
-/// without any of these is treated as zero-height). The content of its boxes
-/// does not count, and neither do floats and block children alone: they are
-/// not inline content, so a block that holds only those is laid out by the
-/// block algorithm.
+/// than white space (generated text included), an atomic inline, a `<br>`,
+/// or an inline element with a margin, border or padding on an inline side
+/// (CSS 2.1, 9.4.2: a line box without any of these is treated as
+/// zero-height). The content of its boxes does not count, and neither do
+/// floats and block children alone: they are not inline content, so a block
+/// that holds only those is laid out by the block algorithm.
 fn has_inline_content(
     doc: &Document,
     cascade: &CascadeResult,
     idx: usize,
     fonts: &shodo::font::FontCollection,
 ) -> bool {
+    if has_in_flow_generated_text(cascade, idx) {
+        return true;
+    }
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
@@ -160,6 +164,9 @@ fn has_inline_content(
                         || node.is_inline_svg_content()
                     {
                         continue;
+                    }
+                    if has_in_flow_generated_text(cascade, id) {
+                        return true;
                     }
                     if cv.display == DisplayValue::Inline {
                         if node.tag_name() == Some("br") {
@@ -298,6 +305,7 @@ fn collect_candidates(
     let engine_only = state.engine_only;
     let mut candidates = Vec::new();
     let mut taken = vec![false; doc.nodes.len()];
+    let counters = GeneratedCounters::default();
     for idx in 0..doc.nodes.len() {
         let node = &doc.nodes[idx];
         // A root is any box that lays its own inline content out, whatever
@@ -344,7 +352,14 @@ fn collect_candidates(
             refuse(engine_only, idx, reason)?;
             continue;
         }
-        let projected = match project_ifc_builder(doc, cascade, idx, &state.fonts, &state.limits) {
+        let projected = match project_ifc_builder_with(
+            doc,
+            cascade,
+            idx,
+            &state.fonts,
+            &state.limits,
+            &counters,
+        ) {
             Ok(projected) => projected,
             Err(error) => {
                 projection_error(engine_only, idx, error)?;

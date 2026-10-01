@@ -6270,3 +6270,152 @@ fn a_min_height_keeps_the_last_childs_margin_inside_the_root() {
         );
     }
 }
+
+/// `aa <span>bb</span>` in an Ahem root with a 10px line height, `root_css`
+/// on the root and `sheet` as the author style sheet.
+fn generated_paragraph(sheet: &str, root_css: &str) -> (Document, CascadeResult, usize) {
+    let crate::layout::ifc::test_support::Fixture { doc, cascade, root } =
+        crate::layout::ifc::test_support::sheet_fixture(
+            sheet,
+            &format!("line-height:10px;{root_css}"),
+            |doc, root| {
+                doc.append_text(root, "aa ");
+                let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+                doc.set_element_attribute(span, "data-k", "zz")
+                    .expect("attribute");
+                doc.append_text(span, "bb");
+            },
+        );
+    (doc, cascade, root)
+}
+
+/// The text of every stored line of the engine root of `generated_paragraph`,
+/// and the root's height.
+fn generated_lines(sheet: &str, root_css: &str) -> (Vec<String>, f32) {
+    let (mut doc, cascade, root) = generated_paragraph(sheet, root_css);
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{sheet}");
+    let lines = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    (lines, doc.nodes[root].unrounded_layout.size.height)
+}
+
+#[test]
+fn generated_text_of_an_inline_takes_room_on_its_line() {
+    // Hand-computed: "aa " is 30px, then the span's "x" and "bb" make "xbb"
+    // (30px), which does not fit the 20px left of a 50px line.
+    assert_eq!(
+        generated_lines(r#"span::before { content: "x" }"#, "width:50px"),
+        (vec!["aa".to_owned(), "xbb".to_owned()], 20.0)
+    );
+    // `::after` closes the span's content.
+    assert_eq!(
+        generated_lines(r#"span::after { content: "y" }"#, "width:200px").0,
+        ["aa bby"]
+    );
+}
+
+#[test]
+fn parley_gives_inline_generated_text_no_room() {
+    // Parley error: the parley path paints `::before` as an overlay and lays
+    // the line out without it, so "aa bb" fits the 50px line.
+    let (mut doc, cascade, root) =
+        generated_paragraph(r#"span::before { content: "x" }"#, "width:50px");
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+}
+
+#[test]
+fn generated_text_of_the_root_starts_and_ends_its_lines() {
+    assert_eq!(
+        generated_lines(
+            r#"div::before { content: "x" } div::after { content: "y" }"#,
+            "width:200px"
+        ),
+        (vec!["xaa bby".to_owned()], 10.0)
+    );
+}
+
+#[test]
+fn counters_and_attributes_resolve_in_generated_text() {
+    // `counter-reset: n 6` on the root; the span's `::before` reads it and the
+    // span's `data-k` attribute.
+    assert_eq!(
+        generated_lines(
+            r#"div { counter-reset: n 6 } span::before { content: counter(n) attr(data-k) }"#,
+            "width:200px"
+        )
+        .0,
+        ["aa 6zzbb"]
+    );
+}
+
+#[test]
+fn generated_images_and_out_of_flow_generated_boxes_are_not_in_the_lines() {
+    for sheet in [
+        r#"span::before { content: url(missing.png) }"#,
+        r#"span::before { content: "x"; position: absolute }"#,
+        r#"span::before { content: "x"; float: left }"#,
+        r#"span::before { content: none }"#,
+    ] {
+        assert_eq!(
+            generated_lines(sheet, "width:200px").0,
+            ["aa bb"],
+            "{sheet}"
+        );
+    }
+}
+
+#[test]
+fn block_level_generated_text_gets_a_line_of_its_own() {
+    assert_eq!(
+        generated_lines(
+            r#"div::before { content: "x"; display: block }"#,
+            "width:200px"
+        ),
+        (vec!["x".to_owned(), "aa bb".to_owned()], 20.0)
+    );
+    assert_eq!(
+        generated_lines(
+            r#"div::after { content: "y"; display: block }"#,
+            "width:200px"
+        ),
+        (vec!["aa bb".to_owned(), "y".to_owned()], 20.0)
+    );
+}
+
+#[test]
+fn an_element_with_only_generated_text_is_a_one_line_root() {
+    let crate::layout::ifc::test_support::Fixture {
+        mut doc,
+        cascade,
+        root,
+    } = crate::layout::ifc::test_support::sheet_fixture(
+        r#"div::before { content: "x" }"#,
+        "line-height:10px",
+        |_, _| {},
+    );
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.inline_formatting_engine_only(true);
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+}
+
+#[test]
+fn generated_content_is_laid_out_in_engine_only_mode() {
+    let (mut doc, cascade, root) = generated_paragraph(
+        r#"div::before { content: "x" } span::before { content: url(missing.png) "w" }"#,
+        "width:200px",
+    );
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.inline_formatting_engine_only(true);
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert_eq!(line_text(&stored_lines(&doc, root).lines[0]), "xaa wbb");
+}

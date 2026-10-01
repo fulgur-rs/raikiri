@@ -593,7 +593,7 @@ fn generated_content_resolves_dom_attributes_and_fallbacks() {
         },
     ];
     let registry = CounterStyleRegistry::new();
-    let rendered = content_components_to_text_with_quotes(
+    let rendered = raikiri_dom::generated_content::content_components_to_text_with_quotes(
         &document,
         element,
         &components,
@@ -4291,13 +4291,16 @@ fn the_text_after_a_generated_before_starts_after_its_advance() {
         true,
     );
     assert_eq!(glyph_xs(&scene), [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
-    assert!(document.standalone_text_calls() > 0);
+    // The generated text is laid out in the div's paragraph, not drawn as a
+    // separately shaped overlay.
+    assert_eq!(document.standalone_text_calls(), 0);
 }
 
 #[test]
 fn a_generated_run_is_measured_with_the_document_font() {
     let (document, cascade, _, div) = generated_scene(
-        r#"div::before { content: "A" } div::after { content: "B " }"#,
+        // Out-of-flow pseudo-elements stay overlays measured by the painter.
+        r#"div::before { content: "A"; position: absolute } div::after { content: "B "; float: left }"#,
         |doc, div| {
             doc.append_text(div, "x");
         },

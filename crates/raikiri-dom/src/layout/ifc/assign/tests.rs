@@ -1018,9 +1018,8 @@ fn a_contents_child_does_not_keep_the_paragraph_on_the_parley_path() {
 }
 
 #[test]
-fn a_paragraph_with_generated_text_stays_on_the_parley_path() {
-    // The text of ::before is measured and painted at paint time; the lines
-    // of the inline engine would not contain it.
+fn a_paragraph_with_generated_text_is_a_root() {
+    // The text of ::before is laid out in the paragraph.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -1035,7 +1034,7 @@ fn a_paragraph_with_generated_text_stays_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 /// `aa <div css>bb</div> cc`: a block child inside the paragraph.

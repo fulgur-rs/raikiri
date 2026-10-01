@@ -16,6 +16,7 @@ use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::{Affine, Rect};
 use peniko::{Fill, Mix};
 use raikiri_dom::Document;
+use raikiri_dom::generated_content::{computed_for_id, generated_origin};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
@@ -43,7 +44,15 @@ fn context_for_text(
     shifts: &HashMap<usize, f32>,
 ) -> DecorationContext {
     let mut chain = Vec::new();
-    let mut current = document.parent_of(text_node);
+    // The text of a pseudo-element is owned by the pseudo-element's own box,
+    // which is decorated like an inline element child of its element.
+    let mut current = match generated_origin(text_node) {
+        Some((element, _)) => {
+            chain.push(text_node);
+            (element != root_id).then_some(element)
+        }
+        None => document.parent_of(text_node),
+    };
     while let Some(id) = current {
         if id == root_id {
             break;
@@ -52,11 +61,10 @@ fn context_for_text(
         current = document.parent_of(id);
     }
     chain.iter().rev().fold(base.clone(), |context, &id| {
-        decorations_for_element(
-            &context,
-            &cascade.computed[id],
-            shifts.get(&id).copied().unwrap_or(0.0),
-        )
+        let Some(cv) = computed_for_id(cascade, id) else {
+            return context;
+        };
+        decorations_for_element(&context, cv, shifts.get(&id).copied().unwrap_or(0.0))
     })
 }
 
@@ -108,6 +116,8 @@ fn cumulative_offset(
     node: usize,
 ) -> (f32, f32) {
     let (mut dx, mut dy) = (0.0, 0.0);
+    // A pseudo-element moves with its element.
+    let node = generated_origin(node).map_or(node, |(element, _)| element);
     let mut current = Some(node);
     while let Some(id) = current {
         if id == root_id {
@@ -159,7 +169,7 @@ pub(crate) fn draw_ifc_lines(
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
         for piece in pieces.iter().filter(|piece| piece.line == line_index) {
-            let Some(cv) = cascade.computed.get(piece.node) else {
+            let Some(cv) = computed_for_id(cascade, piece.node) else {
                 continue;
             };
             let (dx, dy) = cumulative_offset(document, root_id, offsets, piece.node);
@@ -184,7 +194,7 @@ pub(crate) fn draw_ifc_lines(
             // inherited one.
             let Some(owner) = run.node() else { continue };
             let owner = owner.0 as usize;
-            let Some(cv) = cascade.computed.get(owner) else {
+            let Some(cv) = computed_for_id(cascade, owner) else {
                 continue;
             };
             let Some(font) = run.font_data() else {
@@ -252,6 +262,9 @@ pub(crate) fn draw_ifc_lines(
             let Some(font) = draw.run.font_data() else {
                 continue;
             };
+            let Some(owner_style) = computed_for_id(cascade, draw.owner) else {
+                continue;
+            };
             let font_size = draw.run.font_size();
             // shodo's normalized coordinates are `F2Dot14` newtypes; the scene
             // takes the raw `i16` bits.
@@ -275,7 +288,7 @@ pub(crate) fn draw_ifc_lines(
                     coords: &coords,
                     glyph_transform,
                 },
-                &cascade.computed[draw.owner],
+                owner_style,
                 run_transform,
                 IfcPosition {
                     x: position.x + draw.offset.0,

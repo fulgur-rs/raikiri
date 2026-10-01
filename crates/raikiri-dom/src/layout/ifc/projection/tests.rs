@@ -223,7 +223,7 @@ fn an_invalid_root_is_reported() {
 }
 
 #[test]
-fn generated_content_is_rejected_instead_of_ignored() {
+fn generated_text_of_the_root_is_projected_before_its_content() {
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::Style;
     let mut doc = crate::Document::new();
@@ -243,7 +243,7 @@ fn generated_content_is_rejected_instead_of_ignored() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     let mut cx = LayoutContext::new();
-    let error = project_ifc(
+    let projected = project_ifc(
         &doc,
         &cascade,
         root,
@@ -251,8 +251,8 @@ fn generated_content_is_rejected_instead_of_ignored() {
         &ahem_fonts(),
         &Limits::default(),
     )
-    .expect_err("generated content");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    .expect("generated content");
+    assert_eq!(projected.paragraph.text(), "xaa");
 }
 
 #[test]
@@ -586,8 +586,9 @@ fn a_float_and_an_atomic_directly_under_the_root_are_still_projected() {
 }
 
 #[test]
-fn a_contents_element_with_generated_content_is_rejected() {
-    // The overlay of `::before` is painted by the parley path.
+fn generated_text_of_a_contents_element_is_projected_in_place() {
+    // A `display: contents` element has no box, but its pseudo-elements do:
+    // they sit before and after its children (CSS Display 3, 2.5).
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::Style;
     let mut doc = crate::Document::new();
@@ -613,7 +614,7 @@ fn a_contents_element_with_generated_content_is_rejected() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    let error = project_ifc(
+    let projected = project_ifc(
         &doc,
         &cascade,
         root,
@@ -621,17 +622,8 @@ fn a_contents_element_with_generated_content_is_rejected() {
         &ahem_fonts(),
         &Limits::default(),
     )
-    .expect_err("generated content on a contents element");
-    assert!(
-        matches!(
-            error,
-            IfcError::Unsupported {
-                reason: "generated content is painted as an overlay",
-                ..
-            }
-        ),
-        "{error}"
-    );
+    .expect("generated content on a contents element");
+    assert_eq!(projected.paragraph.text(), "aaxbb");
 }
 
 #[test]

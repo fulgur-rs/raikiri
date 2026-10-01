@@ -1699,3 +1699,72 @@ fn a_propagated_underline_stays_on_its_box_across_a_line_relative_inline() {
     );
     assert_eq!(ink(&on), ink(&off));
 }
+
+/// `aa <span>bb</span>` in an Ahem root 200px wide, styled by `sheet`.
+fn generated_paragraph(sheet: &str) -> (Document, raikiri_style::CascadeResult, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(style, sheet);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:200px"),
+    );
+    doc.append_text(root, "aa ");
+    let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+    doc.append_text(span, "bb");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root)
+}
+
+/// The x of every glyph painted in `color`.
+fn glyph_xs_in(scene: &Scene, color: peniko::Color) -> Vec<f64> {
+    glyphs(scene)
+        .into_iter()
+        .filter(|g| g.3 == anyrender::Paint::Solid(color))
+        .map(|g| g.1)
+        .collect()
+}
+
+#[test]
+fn generated_text_of_an_inline_is_painted_once_in_its_place_and_style() {
+    let (mut doc, cascade, root) =
+        generated_paragraph(r#"span::before { content: "x"; color: rgb(255, 0, 0) }"#);
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    // Hand-computed: "aa " is 30px wide, so the span's "x" starts at 30 and
+    // its "bb" at 40.
+    assert_eq!(
+        glyph_xs_in(&scene, peniko::Color::from_rgba8(255, 0, 0, 255)),
+        [30.0]
+    );
+    let black: Vec<f64> = glyph_xs_in(&scene, peniko::Color::from_rgba8(0, 0, 0, 255));
+    assert!(black.contains(&40.0) && black.contains(&50.0), "{black:?}");
+}
+
+#[test]
+fn generated_text_of_the_root_is_painted_once() {
+    let (mut doc, cascade, root) = generated_paragraph(
+        r#"div::before { content: "x"; color: rgb(255, 0, 0) } div::after { content: "y"; color: rgb(0, 0, 255) }"#,
+    );
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    // Hand-computed: "x" at 0, "aa bb" from 10 to 60, "y" at 60; the overlay
+    // the parley path paints is not drawn again.
+    assert_eq!(
+        glyph_xs_in(&scene, peniko::Color::from_rgba8(255, 0, 0, 255)),
+        [0.0]
+    );
+    assert_eq!(
+        glyph_xs_in(&scene, peniko::Color::from_rgba8(0, 0, 255, 255)),
+        [60.0]
+    );
+}

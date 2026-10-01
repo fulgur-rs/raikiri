@@ -1,24 +1,25 @@
 //! Project one in-flow block's inline content into a shodo paragraph.
 //!
-//! Text, ordinary inline elements, `<br>`, left or right floats, atomic
-//! inlines (inline-blocks, images, inline SVG) and block children of the root
-//! are projected; a float becomes an anchor in the text, an atomic a
-//! placeholder and a block a break between lines, and all three are laid out
-//! as boxes of their own. Anything the inline path cannot place yet
-//! (positioned boxes, blocks inside inline elements, boxes in right-to-left
-//! paragraphs, form controls and other replaced
-//! elements, generated content) is rejected with [`IfcError::Unsupported`]
+//! Text, the text of in-flow `::before` and `::after`, ordinary inline
+//! elements, `<br>`, left or right floats, atomic inlines (inline-blocks,
+//! replaced elements, form controls) and block children of the root are
+//! projected; a float becomes an anchor in the text, an atomic a placeholder
+//! and a block a break between lines, and all three are laid out as boxes of
+//! their own. Anything the inline path cannot place yet (positioned boxes,
+//! blocks inside inline elements) is rejected with [`IfcError::Unsupported`]
 //! rather than approximated.
 
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::style;
 use crate::Document;
+use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
+use crate::target::CounterSnapshot;
 use raikiri_style::property::{
-    ClearValue, ContentComponent, Direction, DisplayValue, FloatValue, OverflowValue,
-    PositionValue, WhiteSpaceCollapse,
+    ClearValue, Direction, DisplayValue, FloatValue, OverflowValue, PositionValue,
+    WhiteSpaceCollapse,
 };
-use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem, StyleNodeId};
+use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
@@ -118,27 +119,84 @@ pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
     None
 }
 
-/// Generated `::before` / `::after` content is painted as an overlay, not laid
-/// out in the paragraph, so a node that renders any is not projected.
-fn reject_generated_content(cascade: &CascadeResult, node: usize) -> Result<(), IfcError> {
-    for pseudo in [PseudoElem::Before, PseudoElem::After] {
-        let Some(cv) = cascade.pseudo.get(&(StyleNodeId::new(node as u64), pseudo)) else {
-            continue;
-        };
-        let renders = cv.display != DisplayValue::None
-            && !cv.content.is_empty()
-            && !cv
-                .content
-                .iter()
-                .any(|part| matches!(part, ContentComponent::None));
-        if renders {
-            return Err(IfcError::Unsupported {
-                node,
-                reason: "generated content is painted as an overlay",
-            });
-        }
+/// The counters of the document, computed once per layout pass and only when
+/// some paragraph lays out generated text.
+#[derive(Default)]
+pub(crate) struct GeneratedCounters(std::cell::OnceCell<Vec<CounterSnapshot>>);
+
+impl GeneratedCounters {
+    fn get(&self, doc: &Document, cascade: &CascadeResult) -> &[CounterSnapshot] {
+        self.0
+            .get_or_init(|| crate::target::counter_snapshots(doc, cascade))
     }
-    Ok(())
+}
+
+/// Whether `element` has a `::before` or `::after` that the paragraph lays
+/// out as text.
+pub(crate) fn has_in_flow_generated_text(cascade: &CascadeResult, element: usize) -> bool {
+    [PseudoElem::Before, PseudoElem::After]
+        .into_iter()
+        .any(|pseudo| is_in_flow_generated_text(cascade, element, pseudo))
+}
+
+/// Push the text of the `pseudo` of `element` into the paragraph, as an
+/// inline box of its own with the pseudo-element's style (CSS 2.1 12.1: the
+/// generated box is a child of its element, before or after its content).
+/// Only the text of `content` is laid out: images contribute nothing. A
+/// block-level pseudo-element is approximated by a line of its own: a forced
+/// break after `::before`, before `::after`. Floated and out-of-flow
+/// pseudo-elements are not part of the paragraph; the painter draws them as
+/// overlays.
+#[allow(clippy::too_many_arguments)]
+fn push_generated(
+    builder: &mut ParagraphBuilder,
+    doc: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    fonts: &FontCollection,
+    counters: &GeneratedCounters,
+) -> Result<(), IfcError> {
+    if !is_in_flow_generated_text(cascade, element, pseudo) {
+        return Ok(());
+    }
+    let Some((cv, text)) =
+        generated_text(doc, cascade, element, pseudo, counters.get(doc, cascade))
+    else {
+        return Ok(());
+    };
+    if text.is_empty() {
+        return Ok(());
+    }
+    let id = NodeId(generated_node_id(element, pseudo) as u64);
+    let inline_level = matches!(
+        cv.display,
+        DisplayValue::Inline
+            | DisplayValue::Contents
+            | DisplayValue::InlineBlock
+            | DisplayValue::InlineFlex
+            | DisplayValue::InlineGrid
+            | DisplayValue::InlineTable
+    );
+    let inline_style = styled(doc, cascade, cv, element, fonts)?;
+    let edges = if inline_level {
+        style::inline_edges(cv, element, fonts)?
+    } else {
+        InlineEdges::default()
+    };
+    builder.open_inline(id, &inline_style, edges);
+    if !inline_level && pseudo == PseudoElem::After {
+        builder.push_forced_break(id);
+    }
+    builder.push_text(TextSource::Generated { node: id }, &text);
+    if !inline_level && pseudo == PseudoElem::Before {
+        builder.push_forced_break(id);
+    }
+    builder.close_inline();
+    match builder.error() {
+        Some(error) => Err(IfcError::Limit(error)),
+        None => Ok(()),
+    }
 }
 
 /// The box kind of a child of an ifc root, from its computed style; `None` for
@@ -265,6 +323,8 @@ pub(crate) fn has_rtl_char(text: &str) -> bool {
 enum Step {
     /// A node to project, and whether it sits inside an inline element.
     Enter(usize, bool),
+    /// The `::after` of an element, after its content.
+    After(usize),
     Close,
 }
 
@@ -417,12 +477,36 @@ pub(crate) fn project_ifc_text_builder(
 /// [`IfcError::Unsupported`] for anything the first slice does not place, and
 /// [`IfcError::Limit`] when a shodo resource limit is exceeded while the
 /// content is pushed.
+#[cfg(test)]
 pub(crate) fn project_ifc_builder(
     doc: &Document,
     cascade: &CascadeResult,
     root: usize,
     fonts: &FontCollection,
     limits: &Limits,
+) -> Result<ProjectedBuilder, IfcError> {
+    project_ifc_builder_with(
+        doc,
+        cascade,
+        root,
+        fonts,
+        limits,
+        &GeneratedCounters::default(),
+    )
+}
+
+/// [`project_ifc_builder`] with the document's counters shared between the
+/// paragraphs of one layout pass.
+///
+/// # Errors
+/// As [`project_ifc_builder`].
+pub(crate) fn project_ifc_builder_with(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    fonts: &FontCollection,
+    limits: &Limits,
+    counters: &GeneratedCounters,
 ) -> Result<ProjectedBuilder, IfcError> {
     let root_node = doc.get_node(root).ok_or(IfcError::InvalidNode(root))?;
     let root_cv = cascade
@@ -438,7 +522,6 @@ pub(crate) fn project_ifc_builder(
             reason: "root must be a box that lays out its own inline content",
         });
     }
-    reject_generated_content(cascade, root)?;
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
     let (options, indent) = style::line_options(root_cv, root, fonts)?;
@@ -448,6 +531,15 @@ pub(crate) fn project_ifc_builder(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut preserved_spaces = Vec::new();
+    push_generated(
+        &mut builder,
+        doc,
+        cascade,
+        root,
+        PseudoElem::Before,
+        fonts,
+        counters,
+    )?;
 
     let mut stack: Vec<Step> = root_node
         .children
@@ -459,6 +551,18 @@ pub(crate) fn project_ifc_builder(
         let (id, nested) = match step {
             Step::Close => {
                 builder.close_inline();
+                continue;
+            }
+            Step::After(id) => {
+                push_generated(
+                    &mut builder,
+                    doc,
+                    cascade,
+                    id,
+                    PseudoElem::After,
+                    fonts,
+                    counters,
+                )?;
                 continue;
             }
             Step::Enter(id, nested) => (id, nested),
@@ -507,7 +611,16 @@ pub(crate) fn project_ifc_builder(
                     // children take part in the paragraph as if they were the
                     // element's siblings. `float` and `position` apply to a
                     // box, so they change nothing here (CSS Display 3, 2.5).
-                    reject_generated_content(cascade, id)?;
+                    push_generated(
+                        &mut builder,
+                        doc,
+                        cascade,
+                        id,
+                        PseudoElem::Before,
+                        fonts,
+                        counters,
+                    )?;
+                    stack.push(Step::After(id));
                     // Its children count as nested: a box among them would sit
                     // below an element of the paragraph's subtree, which the
                     // passes that skip that subtree never reach.
@@ -583,7 +696,6 @@ pub(crate) fn project_ifc_builder(
                 if cv.display != DisplayValue::Inline {
                     return Err(unsupported("only inline-level boxes are projected"));
                 }
-                reject_generated_content(cascade, id)?;
                 let inline_style = styled(doc, cascade, cv, id, fonts)?;
                 let edges = style::inline_edges(cv, id, fonts)?;
                 // The eligibility check keeps every offset that is not a plain
@@ -602,7 +714,17 @@ pub(crate) fn project_ifc_builder(
                     builder.push_forced_break(NodeId(id as u64));
                     builder.close_inline();
                 } else {
+                    push_generated(
+                        &mut builder,
+                        doc,
+                        cascade,
+                        id,
+                        PseudoElem::Before,
+                        fonts,
+                        counters,
+                    )?;
                     stack.push(Step::Close);
+                    stack.push(Step::After(id));
                     stack.extend(
                         node.children
                             .iter()
@@ -622,6 +744,15 @@ pub(crate) fn project_ifc_builder(
             return Err(IfcError::Limit(error));
         }
     }
+    push_generated(
+        &mut builder,
+        doc,
+        cascade,
+        root,
+        PseudoElem::After,
+        fonts,
+        counters,
+    )?;
     Ok(ProjectedBuilder {
         builder,
         options,

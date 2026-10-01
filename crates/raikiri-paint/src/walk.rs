@@ -56,6 +56,10 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use taffy::CompactLength;
 
 use crate::text;
+use raikiri_dom::generated_content::{
+    apply_counter_directives_to_snapshot, format_counter, format_counter_component,
+    format_counters_component,
+};
 
 /// Canvas background fill site — minimal CSS Backgrounds 3 §2.11 canvas propagation.
 ///
@@ -922,60 +926,6 @@ fn inherited_margin_box_font(
     (font_size.max(0.1), family)
 }
 
-fn apply_counter_directives_to_snapshot(
-    snapshot: &mut CounterSnapshot,
-    computed: &raikiri_style::ComputedValues,
-) {
-    // Apply pseudo directives to the local content snapshot. `::before`
-    // scope propagation to descendants is handled by
-    // `raikiri_dom::counter_snapshots`; this clone resolves the pseudo's own
-    // generated content before the scope is used by later real children.
-    let mut reset_values = std::collections::HashMap::new();
-    for (name, value) in computed.counter_reset.iter() {
-        reset_values.insert(name.as_str(), *value);
-    }
-    for (name, value) in reset_values {
-        snapshot
-            .entry(raikiri_traits::Symbol::new(name))
-            .or_default()
-            .push(value);
-    }
-    for (name, delta) in computed.counter_increment.iter() {
-        let stack = snapshot
-            .entry(raikiri_traits::Symbol::new(name.as_str()))
-            .or_default();
-        if let Some(top) = stack.last_mut() {
-            *top = top.saturating_add(*delta);
-        } else {
-            stack.push(*delta);
-        }
-    }
-    for (name, value) in computed.counter_set.iter() {
-        let stack = snapshot
-            .entry(raikiri_traits::Symbol::new(name.as_str()))
-            .or_default();
-        if let Some(top) = stack.last_mut() {
-            *top = *value;
-        } else {
-            stack.push(*value);
-        }
-    }
-}
-
-fn format_counter_component(
-    snapshot: &CounterSnapshot,
-    name: &str,
-    style: &CounterStyle,
-    registry: &CounterStyleRegistry,
-) -> String {
-    let value = snapshot
-        .get(&raikiri_traits::Symbol::new(name))
-        .and_then(|values| values.last())
-        .copied()
-        .unwrap_or(0);
-    format_counter(value, style, registry)
-}
-
 fn list_item_counter_value(counters: &CounterSnapshot, ordinal: u32) -> i32 {
     counters
         .get(&raikiri_traits::Symbol::new("list-item"))
@@ -986,110 +936,6 @@ fn list_item_counter_value(counters: &CounterSnapshot, ordinal: u32) -> i32 {
 
 fn list_item_marker_ordinal(counters: &CounterSnapshot, ordinal: u32) -> u32 {
     list_item_counter_value(counters, ordinal).max(0) as u32
-}
-
-fn format_counters_component(
-    snapshot: &CounterSnapshot,
-    name: &str,
-    separator: &str,
-    style: &CounterStyle,
-    registry: &CounterStyleRegistry,
-) -> String {
-    snapshot
-        .get(&raikiri_traits::Symbol::new(name))
-        .map(|values| {
-            values
-                .iter()
-                .map(|value| format_counter(*value, style, registry))
-                .collect::<Vec<_>>()
-                .join(separator)
-        })
-        .unwrap_or_default()
-}
-
-fn content_components_to_text_with_quotes<T: AsRef<str>>(
-    document: &Document,
-    node_id: usize,
-    components: &[ContentComponent],
-    quotes: &[(T, T)],
-    quotes_auto: bool,
-    counters: &CounterSnapshot,
-    registry: &CounterStyleRegistry,
-) -> Option<String> {
-    if components.is_empty() {
-        return None;
-    }
-    let mut text = String::new();
-    let mut depth = 0_usize;
-    for component in components {
-        match component {
-            ContentComponent::Literal(value) => text.push_str(value.as_str()),
-            ContentComponent::Attr { name } => {
-                if let Some(node) = document.get_node(node_id) {
-                    text.push_str(node.attribute(name.as_str()).unwrap_or_default());
-                }
-            }
-            ContentComponent::AttrFallback { name, fallback } => {
-                let value = document
-                    .get_node(node_id)
-                    .and_then(|node| node.attribute(name.as_str()))
-                    .map(str::to_owned)
-                    .or_else(|| fallback.as_ref().map(|value| value.to_string()))
-                    .unwrap_or_default();
-                text.push_str(&value);
-            }
-            ContentComponent::Counter { name, style } => {
-                text.push_str(&format_counter_component(
-                    counters,
-                    name.as_str(),
-                    style,
-                    registry,
-                ));
-            }
-            ContentComponent::Counters {
-                name,
-                separator,
-                style,
-            } => {
-                text.push_str(&format_counters_component(
-                    counters,
-                    name.as_str(),
-                    separator.as_str(),
-                    style,
-                    registry,
-                ));
-            }
-            ContentComponent::Quote(keyword) => match keyword {
-                QuoteKeyword::OpenQuote => {
-                    if let Some((open, _)) = quotes.get(depth) {
-                        text.push_str(open.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(match depth {
-                            0 => "“",
-                            _ => "‘",
-                        });
-                    }
-                    depth = depth.saturating_add(1);
-                }
-                QuoteKeyword::CloseQuote => {
-                    depth = depth.saturating_sub(1);
-                    if let Some((_, close)) = quotes.get(depth) {
-                        text.push_str(close.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(match depth {
-                            0 => "”",
-                            _ => "’",
-                        });
-                    }
-                }
-                QuoteKeyword::NoOpenQuote => depth = depth.saturating_add(1),
-                QuoteKeyword::NoCloseQuote => depth = depth.saturating_sub(1),
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-    Some(text)
 }
 
 fn counter_reset_value(value: Option<&PropertyValue>, name: &str) -> Option<i32> {
@@ -1254,46 +1100,6 @@ fn inherited_margin_box_quotes(
         .iter()
         .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
         .collect()
-}
-
-fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
-    match style {
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("lower-roman") => {
-            if value <= 0 {
-                return value.to_string();
-            }
-            let mut n = value;
-            let mut result = String::new();
-            for (unit, glyph) in [
-                (1000, "m"),
-                (900, "cm"),
-                (500, "d"),
-                (400, "cd"),
-                (100, "c"),
-                (90, "xc"),
-                (50, "l"),
-                (40, "xl"),
-                (10, "x"),
-                (9, "ix"),
-                (5, "v"),
-                (4, "iv"),
-                (1, "i"),
-            ] {
-                while n >= unit {
-                    result.push_str(glyph);
-                    n -= unit;
-                }
-            }
-            result
-        }
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("upper-roman") => {
-            format_counter(value, &CounterStyle::Named("lower-roman".into()), registry)
-                .to_uppercase()
-        }
-        CounterStyle::Named(name) => resolve_custom_counter(registry, name.as_str(), value)
-            .unwrap_or_else(|| value.to_string()),
-        _ => value.to_string(),
-    }
 }
 
 fn element_string_value(document: &Document, root: usize) -> String {
@@ -1723,21 +1529,22 @@ fn generated_pseudo_content_with_snapshots<'a>(
     pseudo: raikiri_style::PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
-    let computed = cascade
-        .pseudo
-        .get(&(raikiri_style::StyleNodeId::new(node_id as u64), pseudo))?;
-    let mut counters = snapshots.get(node_id).cloned().unwrap_or_default();
-    apply_counter_directives_to_snapshot(&mut counters, computed);
-    let content = content_components_to_text_with_quotes(
-        document,
-        node_id,
-        &computed.content,
-        &computed.quotes,
-        computed.quotes_auto,
-        &counters,
-        &cascade.counter_styles,
-    )?;
-    Some((computed, content))
+    raikiri_dom::generated_content::generated_text(document, cascade, node_id, pseudo, snapshots)
+}
+
+/// Whether the inline engine laid the `pseudo` of `node_id` out as text of
+/// the paragraph `node_id` roots: it is drawn from the lines, not as an
+/// overlay, and the root's layout already holds its height.
+fn laid_out_in_lines(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    pseudo: raikiri_style::PseudoElem,
+) -> bool {
+    document
+        .get_node(node_id)
+        .is_some_and(|node| node.is_ifc_root())
+        && raikiri_dom::generated_content::is_in_flow_generated_text(cascade, node_id, pseudo)
 }
 
 fn generated_pseudo_text_advance(
@@ -1747,6 +1554,9 @@ fn generated_pseudo_text_advance(
     pseudo: raikiri_style::PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
+    if laid_out_in_lines(document, cascade, node_id, pseudo) {
+        return 0.0;
+    }
     let Some((computed, content)) =
         generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
@@ -1861,6 +1671,9 @@ fn generated_pseudo_text_height(
     pseudo: raikiri_style::PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
+    if laid_out_in_lines(document, cascade, node_id, pseudo) {
+        return 0.0;
+    }
     let Some((computed, content)) =
         generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
@@ -1890,6 +1703,9 @@ fn paint_generated_pseudo(
     height: f32,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
+    if laid_out_in_lines(document, cascade, node_id, pseudo) {
+        return 0.0;
+    }
     let Some((computed, content)) =
         generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
