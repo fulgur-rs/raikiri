@@ -174,7 +174,7 @@ pub(crate) fn draw_ifc_lines(
         .get_node(root_id)
         .map(|n| n.ifc_line_shifts())
         .unwrap_or_default();
-    for (offset, shift) in line_offsets.iter_mut().zip(shifts) {
+    for (offset, shift) in line_offsets.iter_mut().zip(&shifts) {
         if let Some((_, dy)) = offset {
             *dy += shift;
         }
@@ -214,12 +214,15 @@ pub(crate) fn draw_ifc_lines(
                 continue;
             };
             let (dx, dy) = cumulative_offset(document, root_id, offsets, piece.node);
+            // The pieces already carry the line's pagination shift, which
+            // `position` holds too.
+            let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
             crate::walk::paint_inline_box(
                 scene,
                 cv,
                 piece,
                 position.x + dx,
-                position.y + position.shift_y + dy,
+                position.y + position.shift_y + dy - line_shift,
             );
         }
         // An element's shift can differ from line to line, so the contexts

@@ -1959,3 +1959,51 @@ fn a_fixed_root_is_painted_like_fixed_text() {
     assert!(!off.is_empty(), "the parley path draws fixed text");
     assert_eq!(on, off);
 }
+
+#[test]
+fn an_inline_box_after_a_block_moved_to_the_next_page_is_painted_with_its_line() {
+    // "aa", a block with `break-before: page` holding "bb", then a span with
+    // a background holding "cc": the span's box follows its line to the
+    // second page, once.
+    let (mut doc, cascade, root) = paragraph("width:100px", |doc, root| {
+        doc.append_text(root, "aa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;break-before:page"),
+        );
+        doc.append_text(block, "bb");
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("background-color:red"),
+        );
+        doc.append_text(span, "cc");
+    });
+    let dir = std::path::Path::new(FONT_DIR);
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    raikiri_dom::layout_pages(&mut doc, &cascade, page, fonts).expect("pages");
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0);
+    let boxes: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .filter(|b| (b.x1 - b.x0, b.y1 - b.y0) == (20.0, 10.0))
+        .map(|b| (b.x0, b.y0))
+        .collect();
+    // Hand-computed: "cc" is the second line of the second page, so its box
+    // spans y 10..20 from the page top.
+    assert_eq!(boxes, [(0.0, 10.0)]);
+}
