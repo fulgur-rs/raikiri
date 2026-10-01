@@ -4852,3 +4852,32 @@ fn a_child_of_a_relative_inline_moves_with_it() {
     // The child is not itself relative, but sits inside the shifted parent.
     assert_eq!(absolute_rect(&doc, inner_id), (15.0, 0.0, 10.0, 10.0));
 }
+
+#[test]
+fn an_element_inside_a_contents_element_is_located_from_the_nearest_box() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let (mut wrapper_id, mut inner_id) = (0, 0);
+    let (mut doc, cascade, root) = ahem_paragraph_with("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        let wrapper = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:contents"),
+        );
+        let inner = doc.append_element(
+            Some(wrapper),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;padding:0 3px"),
+        );
+        doc.append_text(inner, "bb");
+        wrapper_id = wrapper;
+        inner_id = inner;
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // The contents element has no box; the span after "aa" is x 20..46.
+    assert_eq!(absolute_rect(&doc, wrapper_id), (0.0, 0.0, 0.0, 0.0));
+    assert_eq!(absolute_rect(&doc, inner_id), (20.0, 0.0, 26.0, 10.0));
+}

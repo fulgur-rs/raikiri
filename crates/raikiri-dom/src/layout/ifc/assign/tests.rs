@@ -977,3 +977,15 @@ fn the_root_itself_may_have_a_background_image() {
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
 }
+
+#[test]
+fn a_contents_child_does_not_keep_the_paragraph_on_the_parley_path() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        let wrapper = span(doc, root, "display:contents");
+        doc.append_text(wrapper, "bb");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}

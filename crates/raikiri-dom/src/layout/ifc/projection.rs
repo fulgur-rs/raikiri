@@ -353,6 +353,27 @@ pub(crate) fn project_ifc(
                         "boxes in right-to-left paragraphs are not placed yet",
                     ));
                 }
+                if cv.display == DisplayValue::Contents {
+                    // A `display: contents` element generates no box: its
+                    // children take part in the paragraph as if they were the
+                    // element's siblings. Anything that would give the element
+                    // a box of its own is left to the parley path.
+                    reject_generated_content(cascade, id)?;
+                    if cv.float != FloatValue::None
+                        || !matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+                    {
+                        return Err(unsupported(
+                            "a display: contents element that is floated or positioned is not projected",
+                        ));
+                    }
+                    stack.extend(
+                        node.children
+                            .iter()
+                            .rev()
+                            .map(|&child| Step::Enter(child, nested)),
+                    );
+                    continue;
+                }
                 // A box is laid out relative to the root, while its DOM parent
                 // is the inline element, which now has a layout of its own:
                 // readers that add up the locations of the DOM parents would

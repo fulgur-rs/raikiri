@@ -1485,3 +1485,35 @@ fn the_dom_and_the_paint_crate_agree_on_the_relative_offset() {
         );
     }
 }
+
+#[test]
+fn a_contents_element_is_transparent_in_the_paragraph() {
+    // The parley path stacks the three texts on three lines here, so the
+    // positions are hand-computed: "aabbcc" on one line, 10px per glyph, on
+    // the 8px baseline; "bb" takes the contents element's colour.
+    let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        let wrapper = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:contents;color:rgb(0,0,255)"),
+        );
+        doc.append_text(wrapper, "bb");
+        doc.append_text(root, "cc");
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        (0..6).map(|i| (px(10 * i), px(8))).collect::<Vec<_>>()
+    );
+    let blue: Vec<i64> = glyphs(&scene)
+        .into_iter()
+        .filter(|g| g.3 == solid(0, 0, 255))
+        .map(|g| (g.1 * 64.0).round() as i64)
+        .collect();
+    assert_eq!(blue, [px(20), px(30)]);
+}

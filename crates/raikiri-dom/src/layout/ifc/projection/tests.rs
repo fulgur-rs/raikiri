@@ -548,3 +548,115 @@ fn a_float_and_an_atomic_directly_under_the_root_are_still_projected() {
     let projected = project(&fixture).expect("boxes directly under the root");
     assert_eq!(projected.boxes.len(), 2);
 }
+
+#[test]
+fn a_contents_element_with_generated_content_is_rejected() {
+    // The overlay of `::before` is painted by the parley path.
+    use raikiri_style::{build_rule_tree, cascade};
+    use taffy::Style;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(style, "span::before { content: \"x\" }");
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px"),
+    );
+    doc.append_text(root, "aa");
+    let wrapper = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    doc.append_text(wrapper, "bb");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let error = project_ifc(
+        &doc,
+        &cascade,
+        root,
+        &mut LayoutContext::new(),
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .expect_err("generated content on a contents element");
+    assert!(
+        matches!(
+            error,
+            IfcError::Unsupported {
+                reason: "generated content is painted as an overlay",
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_contents_element_that_is_floated_or_positioned_is_rejected() {
+    for css in [
+        "display:contents;float:left",
+        "display:contents;position:absolute",
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let wrapper = span(doc, root, css);
+            doc.append_text(wrapper, "bb");
+        });
+        let error = project(&fixture).expect_err(css);
+        assert!(
+            matches!(error, IfcError::Unsupported { .. }),
+            "{css}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_contents_element_passes_nesting_on_to_its_children() {
+    // A box inside a contents element inside an inline element is still a
+    // box inside an inline element.
+    for css in ["display:block", "display:inline-block"] {
+        let fixture = block_fixture("", |doc, root| {
+            let inner = span(doc, root, "display:inline");
+            doc.append_text(inner, "a");
+            let wrapper = span(doc, inner, "display:contents");
+            span(doc, wrapper, css);
+        });
+        let error = project(&fixture).expect_err(css);
+        assert!(
+            matches!(error, IfcError::Unsupported { .. }),
+            "{css}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_box_inside_a_contents_child_of_the_root_is_placed_like_a_root_child() {
+    // The contents element has no box, so its inline-block child sits
+    // directly in the paragraph.
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "a");
+        let wrapper = span(doc, root, "display:contents");
+        span(doc, wrapper, "display:inline-block;width:10px;height:10px");
+    });
+    let projected = project(&fixture).expect("a box in a contents child of the root");
+    assert_eq!(projected.boxes.len(), 1);
+}
+
+#[test]
+fn a_contents_child_contributes_its_text() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        let wrapper = span(doc, root, "display:contents");
+        doc.append_text(wrapper, "bb");
+        doc.append_text(root, "cc");
+    });
+    let projected = project(&fixture).expect("project");
+    assert_eq!(line_texts(&projected, 500.0), ["aabbcc"]);
+}
