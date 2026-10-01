@@ -321,6 +321,93 @@ pub(crate) fn project_ifc(
     project_ifc_builder(doc, cascade, root, fonts, limits)?.build(cx, fonts)
 }
 
+/// Build the shodo paragraph for a text node that is a flex or grid item of
+/// its own: the walk and the shaping in one call.
+///
+/// # Errors
+/// The errors of [`project_ifc_text_builder`] and [`ProjectedBuilder::build`].
+#[cfg(test)]
+pub(crate) fn project_ifc_text(
+    doc: &Document,
+    cascade: &CascadeResult,
+    text: usize,
+    cx: &mut LayoutContext,
+    fonts: &FontCollection,
+    limits: &Limits,
+) -> Result<ProjectedIfc, IfcError> {
+    project_ifc_text_builder(doc, cascade, text, fonts, limits)?.build(cx, fonts)
+}
+
+/// Fill a paragraph builder with the text node `text` alone.
+///
+/// A flex or grid container wraps each run of its text in an anonymous item
+/// (CSS Flexbox 1, 4; CSS Grid 1, 6), whose box has no edges of its own and
+/// whose inherited properties come from the container. The text node's own
+/// computed values are those inherited values, so they style the paragraph.
+///
+/// # Errors
+/// [`IfcError::InvalidNode`] for an unknown, detached or non-text node,
+/// [`IfcError::Unsupported`] for a style the inline engine does not map, and
+/// [`IfcError::Limit`] when a shodo resource limit is exceeded.
+pub(crate) fn project_ifc_text_builder(
+    doc: &Document,
+    cascade: &CascadeResult,
+    text: usize,
+    fonts: &FontCollection,
+    limits: &Limits,
+) -> Result<ProjectedBuilder, IfcError> {
+    let node = doc.get_node(text).ok_or(IfcError::InvalidNode(text))?;
+    let cv = cascade
+        .computed
+        .get(text)
+        .ok_or(IfcError::InvalidNode(text))?;
+    if !node.is_in_document() || node.kind() != NodeKind::Text {
+        return Err(IfcError::InvalidNode(text));
+    }
+    let content = node.text_content().ok_or(IfcError::InvalidNode(text))?;
+    // As for an element root: with right-to-left content, the parley path
+    // orders the text without reading `unicode-bidi`.
+    let rtl = has_rtl_char(content) || cv.direction != Direction::Ltr;
+    if rtl && cv.unicode_bidi != UnicodeBidi::Normal {
+        return Err(IfcError::Unsupported {
+            node: text,
+            reason: "unicode-bidi is not read by the parley path, which orders right-to-left text differently",
+        });
+    }
+    let (options, indent) = style::line_options(cv, text, fonts)?;
+    let mut root_style = style::inline_style(cv, text, fonts)?;
+    root_style.lang = language_of(doc, text);
+    let paragraph_style = style::paragraph_style(cv, text, root_style)?;
+    let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
+    let preserved_spaces = if matches!(
+        cv.effective_white_space_collapse,
+        WhiteSpaceCollapse::Preserve | WhiteSpaceCollapse::PreserveSpaces
+    ) {
+        vec![text]
+    } else {
+        Vec::new()
+    };
+    builder.push_text(
+        TextSource::Dom {
+            node: NodeId(text as u64),
+            offset: 0,
+        },
+        content,
+    );
+    if let Some(error) = builder.error() {
+        return Err(IfcError::Limit(error));
+    }
+    Ok(ProjectedBuilder {
+        builder,
+        options,
+        indent,
+        boxes: Vec::new(),
+        rtl: cv.direction == Direction::Rtl,
+        offsets: Vec::new(),
+        preserved_spaces,
+    })
+}
+
 /// Walk the box `root` and fill a paragraph builder, without
 /// shaping. `fonts` is read for font-relative lengths (`ch`).
 ///

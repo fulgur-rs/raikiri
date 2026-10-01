@@ -653,7 +653,10 @@ pub(crate) fn prepare_text_indent_before_taffy(
         text.text_indent_hanging = false;
         text.text_indent_each_line = false;
         text.text_indent_rebreak = false;
-        if doc.nodes[idx].flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+        if doc.nodes[idx]
+            .flags
+            .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
+        {
             continue;
         }
         if !doc.nodes[idx].is_in_document() {
@@ -1323,7 +1326,10 @@ pub(crate) fn realign_text_after_layout(
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
-        if doc.nodes[idx].flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+        if doc.nodes[idx]
+            .flags
+            .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
+        {
             continue;
         }
         // cov:ignore: multicol fragment detection is exercised by the ignored foundation WPT run.
@@ -5584,7 +5590,10 @@ pub(crate) fn preshape_text(
         if !doc.nodes[idx].is_in_document() || doc.nodes[idx].is_inline_svg_content() {
             continue;
         }
-        if doc.nodes[idx].flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+        if doc.nodes[idx]
+            .flags
+            .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
+        {
             continue;
         }
         let raw: String = match &doc.nodes[idx].data {

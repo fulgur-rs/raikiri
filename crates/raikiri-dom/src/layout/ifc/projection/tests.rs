@@ -730,3 +730,36 @@ fn a_builder_error_is_reported_before_any_shaping() {
     .expect("refused");
     assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
 }
+
+#[test]
+fn a_text_node_projects_as_a_paragraph_of_its_own() {
+    let fixture = block_fixture("display:flex", |doc, root| {
+        doc.append_text(root, "aaaa bbbb cccc");
+    });
+    let text = fixture.doc.nodes[fixture.root].children[0];
+    let mut cx = LayoutContext::new();
+    let projected = project_ifc_text(
+        &fixture.doc,
+        &fixture.cascade,
+        text,
+        &mut cx,
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .expect("project");
+    assert!(projected.boxes.is_empty());
+    assert_eq!(line_texts(&projected, 50.0), ["aaaa", "bbbb", "cccc"]);
+    // An element is not a text node.
+    let mut cx = LayoutContext::new();
+    assert!(matches!(
+        project_ifc_text(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &mut cx,
+            &ahem_fonts(),
+            &Limits::default(),
+        ),
+        Err(IfcError::InvalidNode(_))
+    ));
+}

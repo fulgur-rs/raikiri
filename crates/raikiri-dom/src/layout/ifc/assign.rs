@@ -1,7 +1,9 @@
 //! Choose the blocks laid out by the shodo inline engine.
 
 use super::boxes::{IfcBox, IfcBoxKind};
-use super::projection::{ProjectedBuilder, ProjectedIfc, box_kind, project_ifc_builder};
+use super::projection::{
+    ProjectedBuilder, ProjectedIfc, box_kind, project_ifc_builder, project_ifc_text_builder,
+};
 use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
 use crate::Document;
@@ -356,7 +358,9 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
     // The roots are rebuilt on every pass, so a cached layout would skip the
     // measure callback that fills their lines.
     doc.layout_dirty = true;
-    let candidates = collect_candidates(doc, cascade, &state);
+    let mut candidates = collect_candidates(doc, cascade, &state);
+    candidates.extend(collect_text_candidates(doc, cascade, &state));
+    candidates.sort_by_key(|candidate| candidate.idx);
     let built = build_all(&mut state, candidates);
     write_roots(doc, built);
     doc.ifc = Some(state);
@@ -435,6 +439,76 @@ fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState)
             stack.extend(doc.nodes[id].children.iter().copied());
         }
         taken[idx] = true;
+        candidates.push(Candidate { idx, projected });
+    }
+    candidates
+}
+
+/// Whether `text` is laid out by a flex or grid container as an anonymous
+/// item of its own: it is a direct child of the container and holds more than
+/// collapsible white space (CSS Flexbox 1, 4; CSS Grid 1, 6). The white-space
+/// test matches the item collection of the taffy tree.
+fn is_anonymous_item_text(doc: &Document, cascade: &CascadeResult, text: usize) -> bool {
+    let node = &doc.nodes[text];
+    if node.kind() != NodeKind::Text || !node.is_in_document() {
+        return false;
+    }
+    let Some(parent) = doc.parent_of(text) else {
+        return false;
+    };
+    doc.nodes[parent].kind() == NodeKind::Element
+        && matches!(
+            cascade.computed[parent].display,
+            DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+        )
+        && node.text_content().is_some_and(|text| {
+            !text
+                .chars()
+                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+        })
+}
+
+/// The text nodes that are anonymous flex or grid items and can be laid out
+/// as paragraphs of their own, with their builders. Such a text node is the
+/// root of its paragraph; it has no boxes, so only the checks on its style and
+/// its ancestors apply.
+fn collect_text_candidates(
+    doc: &Document,
+    cascade: &CascadeResult,
+    state: &IfcState,
+) -> Vec<Candidate> {
+    let mut candidates = Vec::new();
+    for idx in 0..doc.nodes.len() {
+        if !is_anonymous_item_text(doc, cascade, idx) {
+            continue;
+        }
+        let Some(parent) = doc.parent_of(idx) else {
+            continue;
+        };
+        let mut ancestor = Some(parent);
+        let mut blocked = false;
+        while let Some(id) = ancestor {
+            if is_multicol(cascade, id) {
+                blocked = true;
+                break;
+            }
+            ancestor = doc.parent_of(id);
+        }
+        if blocked
+            || !is_horizontal(cascade, idx)
+            || !is_paintable_element(cascade, parent)
+            || inside_unsized_fixed_box(doc, cascade, idx)
+        {
+            continue;
+        }
+        let Ok(projected) =
+            project_ifc_text_builder(doc, cascade, idx, &state.fonts, &state.limits)
+        else {
+            continue;
+        };
         candidates.push(Candidate { idx, projected });
     }
     candidates

@@ -4752,18 +4752,36 @@ fn paint_document_impl(
                     if let Some(clip) = &text_clip {
                         scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                     }
-                    text::draw_text_node(
-                        scene,
-                        node,
-                        cascade,
-                        node_id,
-                        text::TextPosition {
-                            abs_x: abs_x + page_offset_x + transform_x,
-                            abs_y: abs_y + page_offset_y + transform_y,
-                            shift_y,
-                        },
-                        &decorations,
-                    );
+                    if node.is_ifc_root() {
+                        // A text node laid out as an anonymous flex or grid
+                        // item is a paragraph of its own: its lines start at
+                        // its own box, which has no edges.
+                        crate::ifc_text::draw_ifc_lines(
+                            scene,
+                            document,
+                            cascade,
+                            node_id,
+                            crate::ifc_text::IfcPosition {
+                                x: abs_x + page_offset_x + transform_x,
+                                y: abs_y + page_offset_y + transform_y,
+                                shift_y,
+                            },
+                            &decorations,
+                        );
+                    } else {
+                        text::draw_text_node(
+                            scene,
+                            node,
+                            cascade,
+                            node_id,
+                            text::TextPosition {
+                                abs_x: abs_x + page_offset_x + transform_x,
+                                abs_y: abs_y + page_offset_y + transform_y,
+                                shift_y,
+                            },
+                            &decorations,
+                        );
+                    }
                     if text_clip.is_some() {
                         scene.pop_layer();
                     }

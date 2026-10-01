@@ -27,9 +27,11 @@ pub struct IfcTextLines {
     pub lines: Vec<IfcTextLine>,
 }
 
-/// The paragraph root above `node`: its nearest `IS_IFC_ROOT` ancestor.
+/// The paragraph root of `node`: the node itself when it is a root (a text
+/// node laid out as an anonymous flex or grid item), else its nearest
+/// `IS_IFC_ROOT` ancestor.
 fn root_of(doc: &Document, node: usize) -> Option<usize> {
-    let mut current = doc.parent_of(node);
+    let mut current = Some(node);
     while let Some(id) = current {
         if doc.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {
             return Some(id);
@@ -44,7 +46,11 @@ fn root_of(doc: &Document, node: usize) -> Option<usize> {
 /// belongs to both, and a line of atomic boxes only belongs to none.
 pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
     let candidate = doc.nodes.get(node)?;
-    if !candidate.flags.contains(NodeFlags::IN_IFC_SUBTREE) || candidate.kind() != NodeKind::Text {
+    if !candidate
+        .flags
+        .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
+        || candidate.kind() != NodeKind::Text
+    {
         return None;
     }
     let root_id = root_of(doc, node)?;

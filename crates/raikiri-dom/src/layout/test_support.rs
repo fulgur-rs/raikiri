@@ -477,3 +477,24 @@ pub(crate) fn paragraph_with_inline_block(
     });
     (doc, cascade, root, inline_block)
 }
+
+/// `html > body > div(parent_css) > text`: Ahem text with a 10px line height
+/// directly in a container of any display. Returns the container.
+pub(crate) fn ahem_paragraph_in_text_only(
+    parent_css: &str,
+    text: &str,
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:block;{AHEM_FAMILY_CSS}line-height:10px;{parent_css}"
+        )),
+    );
+    doc.append_text(parent, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, parent)
+}

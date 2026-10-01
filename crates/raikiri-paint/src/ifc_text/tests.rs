@@ -1539,3 +1539,30 @@ fn a_block_child_of_a_paragraph_paints_its_text() {
     // Hand-computed: "aa" on line 1 and "bbbb" in the block below it.
     assert_eq!(ink(&on).len(), 6);
 }
+
+#[test]
+fn bare_text_in_a_flex_container_is_painted() {
+    // "aaaa bbbb" directly in a 50px flex row: an anonymous item, laid out and
+    // painted as a paragraph of its own.
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aaaa bbbb");
+    };
+    let (mut doc, cascade, root) = paragraph("display:flex;width:50px", build);
+    lay_out(&mut doc, &cascade, true);
+    let text = doc.get_node(root).expect("root").children[0];
+    assert!(doc.get_node(text).is_some_and(|n| n.is_ifc_root()));
+    let on = ink(&painted(&doc, &cascade));
+    let (mut off_doc, cascade, _) = paragraph("display:flex;width:50px", build);
+    lay_out(&mut off_doc, &cascade, false);
+    assert_eq!(on, ink(&painted(&off_doc, &cascade)));
+    // Hand-computed: "aaaa " and "bbbb" on two 10px lines (the space that
+    // ends line 1 keeps its glyph on both paths), with the second line's
+    // glyphs 10px below the first's.
+    assert_eq!(on.len(), 9);
+    let ys: std::collections::BTreeSet<i64> = on.iter().map(|g| g.2).collect();
+    assert_eq!(ys.len(), 2);
+    assert_eq!(
+        ys.iter().last().unwrap() - ys.iter().next().unwrap(),
+        10 * 64
+    );
+}

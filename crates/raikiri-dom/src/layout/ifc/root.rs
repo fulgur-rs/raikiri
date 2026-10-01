@@ -49,6 +49,12 @@ pub(crate) struct IfcLines {
 }
 
 impl IfcRoot {
+    /// Baseline of the first line of the last performed layout, from the
+    /// content-box top.
+    pub(crate) fn first_baseline(&self) -> Option<f32> {
+        self.lines.as_ref().and_then(super::flow::first_baseline)
+    }
+
     /// Baseline of the last line of the last performed layout, from the
     /// content-box top.
     pub(crate) fn last_baseline(&self) -> Option<f32> {

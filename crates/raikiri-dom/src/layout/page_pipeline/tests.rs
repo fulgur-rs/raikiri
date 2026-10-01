@@ -5179,7 +5179,7 @@ fn an_empty_inline_block_keeps_its_margin_box_baseline() {
 }
 
 #[test]
-fn a_flex_container_with_bare_text_next_to_an_item_keeps_the_item_a_root() {
+fn bare_text_next_to_an_element_item_gets_its_own_root() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
@@ -5198,9 +5198,123 @@ fn a_flex_container_with_bare_text_next_to_an_item_keeps_the_item_a_root() {
     lay_out_with_switch(&mut doc, &cascade);
     assert!(!doc.nodes[flex].is_ifc_root());
     assert!(doc.nodes[item].is_ifc_root());
-    // The bare text is an anonymous item, still shaped by parley.
-    assert!(doc.nodes[bare].text_layout().is_some());
+    // The bare text is an anonymous item and the root of its own paragraph.
+    assert!(doc.nodes[bare].is_ifc_root());
+    assert!(doc.nodes[bare].text_layout().is_none());
     // Hand-computed: the item follows the 20px anonymous item.
     assert_eq!(doc.nodes[item].unrounded_layout.location.x, 20.0);
     assert_eq!(doc.nodes[item].unrounded_layout.size.width, 40.0);
+}
+
+// ── text node roots ─────────────────────────────────────────
+
+use crate::layout::test_support::ahem_paragraph_in_text_only;
+
+/// Border-box size of the bare text of [`ahem_paragraph_in_text_only`].
+fn bare_text_size(parent_css: &str, ifc: bool) -> (f32, f32) {
+    let (mut doc, cascade, parent) = ahem_paragraph_in_text_only(parent_css, "aaaa bbbb");
+    lay_out(&mut doc, &cascade, ifc);
+    let text = doc.nodes[parent].children[0];
+    let layout = doc.nodes[text].unrounded_layout;
+    (layout.size.width, layout.size.height)
+}
+
+#[test]
+fn bare_text_in_a_flex_container_becomes_a_root() {
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", "aaaa bbbb");
+    lay_out_with_switch(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    assert!(doc.nodes[text].is_ifc_root());
+}
+
+#[test]
+fn bare_text_in_a_flex_container_has_the_parley_size() {
+    for parent_css in [
+        "display:flex",
+        "display:flex;flex-direction:column",
+        "display:grid",
+    ] {
+        assert_eq!(
+            bare_text_size(parent_css, true),
+            bare_text_size(parent_css, false),
+            "{parent_css}"
+        );
+    }
+    // Hand-computed: a flex row item shrinks to "aaaa bbbb" (90px), one line;
+    // in a 50px container the two words wrap.
+    assert_eq!(bare_text_size("display:flex", true), (90.0, 10.0));
+    assert_eq!(
+        bare_text_size("display:flex;width:50px", true),
+        (50.0, 20.0)
+    );
+}
+
+#[test]
+fn parley_gives_a_shrunk_anonymous_flex_item_its_longest_line_as_width() {
+    // The anonymous item of "aaaa bbbb" in a 50px flex row shrinks from its
+    // 90px max-content to 50px, above its 40px min-content (CSS Flexbox 1,
+    // 9.7), and its two lines are laid out in that 50px box. The parley path
+    // reports the width of its longest line instead.
+    assert_eq!(
+        bare_text_size("display:flex;width:50px", false),
+        (40.0, 20.0)
+    );
+}
+
+#[test]
+fn a_text_node_root_answers_the_line_and_baseline_readers() {
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", "aaaa bbbb");
+    lay_out_with_switch(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    let lines = doc.ifc_text_lines(text).expect("lines");
+    assert_eq!(lines.root, text);
+    assert_eq!(lines.lines.len(), 1);
+    // Hand-computed: Ahem 10px, line-height 10px, ascent 8.
+    assert_eq!(
+        crate::taffy_impl::first_inline_baseline(&doc, text),
+        Some(8.0)
+    );
+}
+
+#[test]
+fn whitespace_only_text_in_a_flex_container_is_not_a_root() {
+    // Collapsible white space makes no anonymous item (CSS Flexbox 1, 4).
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", " \n\t ");
+    lay_out_with_switch(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    assert!(!doc.nodes[text].is_ifc_root());
+}
+
+#[test]
+fn a_flex_row_places_bare_text_after_its_sibling_item() {
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", "");
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;width:30px;height:10px"),
+    );
+    let text = doc.append_text(flex, "aaaa");
+    let _ = item;
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_again = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let _ = cascade;
+    lay_out_with_switch(&mut doc, &cascade_again);
+    assert!(doc.nodes[text].is_ifc_root());
+    let layout = doc.nodes[text].unrounded_layout;
+    // Hand-computed: the 30px item first, then the 40px anonymous item.
+    assert_eq!((layout.location.x, layout.size.width), (30.0, 40.0));
+}
+
+#[test]
+fn bare_text_takes_the_text_align_of_its_container() {
+    // The anonymous item inherits `text-align` from the container: in a 50px
+    // flex row, "aaaa" (40px) is centered in the 50px item.
+    let (mut doc, cascade, flex) =
+        ahem_paragraph_in_text_only("display:flex;width:50px;text-align:center", "aaaa bbbb");
+    lay_out_with_switch(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    let lines = &stored_lines(&doc, text).lines;
+    assert_eq!(line_start_x(&lines[0]), Some(5.0));
 }
