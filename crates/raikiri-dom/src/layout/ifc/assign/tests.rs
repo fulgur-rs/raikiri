@@ -470,15 +470,17 @@ fn a_relative_inline_with_a_z_index_is_laid_out_by_the_engine() {
 }
 
 #[test]
-fn a_relative_inline_that_holds_a_box_stays_on_the_parley_path() {
-    // A box inside an inline element is refused, so the shifted element never
-    // carries a box that the paragraph would place by itself.
-    assert_stays_on_parley("", |doc, root| {
+fn a_relative_inline_that_holds_a_box_is_a_root() {
+    // The box is moved with the element's offset once its lines are placed.
+    let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
         let inner = span(doc, root, "display:inline;position:relative;left:5px");
         doc.append_text(inner, "bb");
         span(doc, inner, "display:inline-block;width:10px;height:10px");
     });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]

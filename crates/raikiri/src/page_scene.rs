@@ -749,8 +749,15 @@ pub fn build_page_scene_for_page_named(
             }
 
             if node.kind() == NodeKind::Element {
+                // The children of an inline element of an inline engine
+                // paragraph are located from the paragraph's root.
+                let (base_x, base_y) = if dom.contributes_layout_offset(idx) {
+                    (abs_x, abs_y)
+                } else {
+                    (parent_abs_x, parent_abs_y)
+                };
                 for &child in node.children.iter().rev() {
-                    stack.push((child, abs_x, abs_y));
+                    stack.push((child, base_x, base_y));
                 }
             }
         }

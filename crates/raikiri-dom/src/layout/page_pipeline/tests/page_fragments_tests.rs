@@ -968,3 +968,164 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
     assert_eq!(results[0], [(1, 0.0)], "the parley path is the oracle");
     assert_eq!(results[1], results[0]);
 }
+
+#[test]
+fn pagination_keeps_an_atomic_inside_a_span_on_its_line() {
+    // `aa <span>bb<b></b></span>` in a body paragraph: the inline-block's
+    // page fragment is where the line put it, not offset again by the span.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:100px"),
+    );
+    doc.append_text(body, "aa ");
+    let span = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+    doc.append_text(span, "bb");
+    let atomic = doc.append_element(
+        Some(span),
+        "b",
+        Style::default(),
+        Some("display:inline-block;width:20px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.enable_inline_formatting(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(
+        &mut doc,
+        &cascade,
+        page,
+        crate::layout::test_support::ahem_font_context(),
+    )
+    .expect("pages");
+    assert!(doc.nodes[body].is_ifc_root());
+    let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .filter(|item| item.node_id == NodeId::new(atomic as u64))
+        .map(|item| (item.page_index, item.rect.x, item.rect.y))
+        .collect();
+    // Hand-computed: "aa bb" is 50px, the atomic follows on the first line.
+    assert_eq!(rects, [(0, 50.0, 0.0)]);
+}
+
+#[test]
+fn a_block_inside_a_span_of_a_body_paragraph_moves_to_the_next_page_like_a_direct_child() {
+    // As a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it,
+    // with the block inside a span: pagination finds it through the span.
+    let mut results = Vec::new();
+    for nested in [false, true] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
+        );
+        doc.append_text(body, "aa ");
+        let parent = if nested {
+            doc.append_element(Some(body), "span", Style::default(), None::<&str>)
+        } else {
+            body
+        };
+        doc.append_text(parent, "bb");
+        let block = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px;orphans:1;widows:1"),
+        );
+        let inner = doc.append_text(block, "bbbb cccc");
+        doc.append_text(body, " dd");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        doc.enable_inline_formatting(
+            crate::layout::test_support::ifc_ahem_fonts(),
+            shodo::limits::Limits::default(),
+        );
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 25.0;
+        let slices = layout_pages(
+            &mut doc,
+            &cascade,
+            page,
+            crate::layout::test_support::ahem_font_context(),
+        )
+        .expect("pages");
+        assert!(doc.nodes[body].is_ifc_root());
+        let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
+            .iter()
+            .flat_map(|p| p.items.iter())
+            .filter(|item| item.node_id == NodeId::new(inner as u64))
+            .map(|item| (item.page_index, item.rect.y))
+            .collect();
+        results.push(rects);
+    }
+    assert_eq!(results[0], [(1, 0.0)]);
+    assert_eq!(results[1], results[0]);
+}
+
+#[test]
+fn a_block_inside_a_span_that_fits_its_page_stays_there() {
+    // "aa", a `<br>` and the span's "bb" make the first two 10px lines; the
+    // 20px block follows at y = 20 and ends at 40, inside the 45px page. The
+    // span's own location (10px down) is not added to the block's when
+    // pagination checks whether it fits.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
+    );
+    doc.append_text(body, "aa");
+    doc.append_element(Some(body), "br", Style::default(), Some("display:inline"));
+    let span = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+    doc.append_text(span, "bb");
+    let block = doc.append_element(
+        Some(span),
+        "div",
+        Style::default(),
+        Some("display:block;height:20px;orphans:1;widows:1"),
+    );
+    let inner = doc.append_text(block, "cccc");
+    doc.append_text(body, " dd");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.enable_inline_formatting(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 45.0;
+    let slices = layout_pages(
+        &mut doc,
+        &cascade,
+        page,
+        crate::layout::test_support::ahem_font_context(),
+    )
+    .expect("pages");
+    assert!(doc.nodes[body].is_ifc_root());
+    let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .filter(|item| item.node_id == NodeId::new(inner as u64))
+        .map(|item| (item.page_index, item.rect.y))
+        .collect();
+    assert_eq!(rects, [(0, 20.0)]);
+}

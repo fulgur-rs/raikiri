@@ -5907,16 +5907,15 @@ fn a_limit_overflow_is_an_error_even_when_the_switch_is_not_engine_only() {
     );
 }
 
-/// A paragraph the engine refuses: an inline-block inside a span.
+/// A paragraph the engine refuses: an absolutely positioned inline box.
 fn refused_paragraph() -> (Document, CascadeResult, usize) {
     crate::layout::test_support::ahem_paragraph_with("", |doc, root| {
         doc.append_text(root, "aa ");
-        let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
         doc.append_element(
-            Some(span),
+            Some(root),
             "span",
             Style::default(),
-            Some("display:inline-block;width:10px;height:10px"),
+            Some("position:absolute;width:10px;height:10px"),
         );
     })
 }
@@ -6983,4 +6982,147 @@ fn logical_float_sides_and_clears_are_placed_like_the_parley_path() {
         block_after_float("width:20px;height:20px", "clear:inline-start", true),
         block_after_float("width:20px;height:20px", "clear:inline-start", false)
     );
+}
+
+// ── boxes inside inline elements ─────────────────────────────
+
+/// `root > [span > ["aaaa", child(css)], " bbbb"]` in a 200px Ahem paragraph.
+fn paragraph_with_span_child(css: &str) -> (Document, CascadeResult, usize) {
+    paragraph_of(|doc, root| {
+        let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        doc.append_text(span, "aaaa");
+        doc.append_element(
+            Some(span),
+            "span",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        );
+        doc.append_text(root, " bbbb");
+    })
+}
+
+/// The position of `node` from the page origin, adding up the locations of
+/// its layout parents.
+fn layout_position(doc: &Document, node: usize) -> (f32, f32) {
+    let (mut x, mut y) = (0.0, 0.0);
+    let mut current = Some(node);
+    while let Some(id) = current {
+        let layout = doc.nodes[id].unrounded_layout;
+        x += layout.location.x;
+        y += layout.location.y;
+        current = doc.layout_parent_of(id);
+    }
+    (x, y)
+}
+
+#[test]
+fn a_float_inside_a_span_keeps_the_root() {
+    let (mut doc, cascade, root) = paragraph_with_span_child("float:left;width:20px;height:10px");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn layout_parent_of_skips_inline_elements_inside_a_root() {
+    let (mut doc, cascade, root) =
+        paragraph_with_span_child("display:inline-block;width:20px;height:10px");
+    lay_out_with_switch(&mut doc, &cascade);
+    let span = doc.nodes[root].children[1];
+    let atomic = doc.nodes[span].children[1];
+    assert_eq!(doc.layout_parent_of(atomic), Some(root));
+    assert_eq!(doc.layout_parent_of(span), doc.parent_of(span));
+    assert!(!doc.contributes_layout_offset(span));
+    assert!(doc.contributes_layout_offset(atomic));
+}
+
+#[test]
+fn an_atomic_inside_a_span_has_the_same_absolute_position_as_without_the_span() {
+    let position = |nested: bool| {
+        let mut atomic = 0;
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            let parent = if nested {
+                doc.append_element(Some(root), "span", Style::default(), Some("padding-left:0"))
+            } else {
+                root
+            };
+            doc.append_text(parent, "aaaa");
+            atomic = doc.append_element(
+                Some(parent),
+                "span",
+                Style::default(),
+                Some("display:inline-block;width:20px;height:10px"),
+            );
+            doc.append_text(root, " bbbb");
+        });
+        lay_out_with_switch(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        let (root_x, root_y) = layout_position(&doc, root);
+        let (x, y) = layout_position(&doc, atomic);
+        (x - root_x, y - root_y)
+    };
+    assert_eq!(position(true), position(false));
+    // Hand-computed: "aaaa" (40px) then the 20x10 atomic, which sits on the
+    // baseline and is the tallest thing on the line: its top is the line's.
+    assert_eq!(position(true), (40.0, 0.0));
+}
+
+#[test]
+fn a_float_inside_a_nested_span_displaces_the_next_lines() {
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        let outer = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        let inner = doc.append_element(Some(outer), "span", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(inner),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:120px;height:20px"),
+        );
+        doc.append_text(outer, "aaaa bbbb cccc");
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // Hand-computed: 80px beside the 120px float on the first two lines, one
+    // 40px word each ("aaaa bbbb" is 90px); the third line is below it.
+    let lines = &stored_lines(&doc, root).lines;
+    let starts: Vec<Option<f32>> = lines.iter().map(line_start_x).collect();
+    assert_eq!(starts, [Some(120.0), Some(120.0), Some(0.0)]);
+}
+
+#[test]
+fn a_block_inside_a_span_splits_the_paragraph_like_parley() {
+    let geometry = |ifc: bool| {
+        let mut block = 0;
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            doc.append_text(root, "aa ");
+            let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+            doc.append_text(span, "bb");
+            block = doc.append_element(Some(span), "div", Style::default(), Some("display:block"));
+            doc.append_text(block, "cc");
+            doc.append_text(span, "dd");
+            doc.append_text(root, " ee");
+        });
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let (root_x, root_y) = layout_position(&doc, root);
+        let (x, y) = if ifc {
+            layout_position(&doc, block)
+        } else {
+            let rect = crate::layout::test_support::absolute_rect(&doc, block);
+            (rect.0, rect.1)
+        };
+        (
+            x - root_x,
+            y - root_y,
+            doc.nodes[block].unrounded_layout.size.height,
+            doc.nodes[root].unrounded_layout.size.height,
+        )
+    };
+    let (on, off) = (geometry(true), geometry(false));
+    assert_eq!((on.1, on.2, on.3), (off.1, off.2, off.3));
+    // Hand-computed: "aa bb", the block's "cc" line, then "dd ee"; the block
+    // starts at the content edge. (The parley path lays the span out as a
+    // block item after "aa ", so adding up its DOM parents puts the block at
+    // the span's x, 20.)
+    assert_eq!(on, (0.0, 10.0, 10.0, 30.0));
+    assert_eq!(off.0, 20.0);
 }

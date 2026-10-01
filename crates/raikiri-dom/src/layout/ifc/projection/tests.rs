@@ -449,7 +449,6 @@ fn blocks_that_are_not_placed_yet_stay_unsupported() {
             false,
         ),
         ("absolute", "display:block;position:absolute", false),
-        ("inside an inline element", "display:block", true),
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");
@@ -580,28 +579,29 @@ fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_rejected() {
 }
 
 #[test]
-fn a_float_inside_an_inline_element_is_rejected() {
-    // A box inside an inline element would be located relative to the
-    // element, whose layout is no longer zero; it stays on the parley path.
+fn a_float_inside_an_inline_element_is_a_box_of_the_paragraph() {
+    // A box inside an inline element is laid out relative to the root.
     let fixture = block_fixture("", |doc, root| {
         let inner = span(doc, root, "display:inline");
         doc.append_text(inner, "a");
         let float = span(doc, inner, "float:left;width:10px;height:10px");
         doc.append_text(float, "x");
     });
-    let error = project(&fixture).expect_err("a float inside an inline");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    let projected = project(&fixture).expect("a float inside an inline");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Float);
 }
 
 #[test]
-fn an_atomic_inside_an_inline_element_is_rejected() {
+fn an_atomic_inside_an_inline_element_is_a_box_of_the_paragraph() {
     let fixture = block_fixture("", |doc, root| {
         let inner = span(doc, root, "display:inline");
         doc.append_text(inner, "a");
         span(doc, inner, "display:inline-block;width:10px;height:10px");
     });
-    let error = project(&fixture).expect_err("an atomic inside an inline");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    let projected = project(&fixture).expect("an atomic inside an inline");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Atomic);
 }
 
 #[test]
@@ -676,44 +676,30 @@ fn a_contents_element_that_is_floated_or_positioned_is_still_transparent() {
 }
 
 #[test]
-fn a_contents_element_passes_nesting_on_to_its_children() {
-    // A box inside a contents element inside an inline element is still a
-    // box inside an inline element.
-    for css in ["display:block", "display:inline-block"] {
-        let fixture = block_fixture("", |doc, root| {
-            let inner = span(doc, root, "display:inline");
-            doc.append_text(inner, "a");
-            let wrapper = span(doc, inner, "display:contents");
-            span(doc, wrapper, css);
-        });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
-    }
-}
-
-#[test]
-fn a_box_inside_a_contents_child_of_the_root_is_rejected() {
-    // The contents element is part of the paragraph's subtree while the box
-    // is not; the passes that skip the subtree (pagination candidates, the
-    // layout check) would then never reach the box.
+fn boxes_inside_inline_and_contents_elements_are_boxes_of_the_paragraph() {
+    // Wherever a box sits below the root's inline content, it is laid out
+    // relative to the root: under an inline element, a contents element, or
+    // both.
     for css in [
         "display:inline-block;width:10px;height:10px",
         "float:left;width:10px;height:10px",
         "display:block",
     ] {
-        let fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "a");
-            let wrapper = span(doc, root, "display:contents");
-            span(doc, wrapper, css);
-        });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
+        for wrappers in [
+            ["display:contents", ""],
+            ["display:inline", "display:contents"],
+        ] {
+            let fixture = block_fixture("", |doc, root| {
+                doc.append_text(root, "a");
+                let mut parent = root;
+                for wrapper in wrappers.iter().filter(|w| !w.is_empty()) {
+                    parent = span(doc, parent, wrapper);
+                }
+                span(doc, parent, css);
+            });
+            let projected = project(&fixture).expect(css);
+            assert_eq!(projected.boxes.len(), 1, "{css} in {wrappers:?}");
+        }
     }
 }
 

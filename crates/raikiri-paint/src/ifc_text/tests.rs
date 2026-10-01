@@ -1787,3 +1787,63 @@ fn multicol_paint_places_lines_in_columns() {
         placed.iter().map(|g| (g.1, g.2)).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_dfs_offset_accumulator_does_not_add_an_inline_elements_location() {
+    // An inline-block inside a relatively positioned span: it is painted
+    // once, at its place on the line moved by the span's offset.
+    let (mut doc, cascade, root) = paragraph("width:100px", |doc, root| {
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("position:relative;left:5px"),
+        );
+        doc.append_text(span, "aa ");
+        doc.append_element(
+            Some(span),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:30px;height:10px;background-color:red"),
+        );
+        doc.append_text(root, " bb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let boxes: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .filter(|b| (b.x1 - b.x0, b.y1 - b.y0) == (30.0, 10.0))
+        .collect();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    // Hand-computed: "aa " is 30px, and the span moves it 5px right.
+    assert_eq!((boxes[0].x0, boxes[0].y0), (35.0, 0.0));
+}
+
+#[test]
+fn a_raised_inline_block_inside_a_span_is_painted_where_the_engine_placed_it() {
+    // As a_raised_inline_block_root_is_painted_where_the_engine_placed_it,
+    // with the inline-block inside a span: it is still a box the inline
+    // engine placed, so its text is not raised a second time.
+    let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
+        let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        doc.append_text(span, "aa");
+        let block = doc.append_element(
+            Some(span),
+            "span",
+            Style::default(),
+            Some("display:inline-block;vertical-align:10px"),
+        );
+        doc.append_text(block, "bb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let mut ys: Vec<i64> = ink(&painted(&doc, &cascade)).iter().map(|g| g.2).collect();
+    ys.sort_unstable();
+    assert_eq!(ys, [px(8), px(8), px(18), px(18)]);
+}

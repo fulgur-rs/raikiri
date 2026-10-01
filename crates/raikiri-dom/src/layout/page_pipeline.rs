@@ -645,8 +645,15 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
         } // cov:ignore: layout sanitization normally keeps source coordinates finite.
 
         if node.kind() == NodeKind::Element {
+            // The children of an inline element of an inline engine paragraph
+            // are located from the paragraph's root, not from the element.
+            let (base_x, base_y) = if document.contributes_layout_offset(node_id) {
+                (abs_x, abs_y)
+            } else {
+                (parent_abs_x, parent_abs_y)
+            };
             for &child_id in node.children.iter().rev() {
-                stack.push((child_id, abs_x, abs_y, is_repeat));
+                stack.push((child_id, base_x, base_y, is_repeat));
             }
         }
     }
@@ -1251,7 +1258,9 @@ pub fn layout_pages_with_page_geometry(
         let mut guard = 0_usize;
         while guard <= parent_of.len() {
             y += document.nodes[id].unrounded_layout.location.y;
-            let Some(parent_id) = parent_of[id] else {
+            // A box of an inline engine paragraph is located from the root,
+            // not from the inline elements around it.
+            let Some(parent_id) = parent_of[id].and_then(|_| document.layout_parent_of(id)) else {
                 break;
             };
             id = parent_id;
@@ -1472,9 +1481,33 @@ pub fn layout_pages_with_page_geometry(
                 }
                 // An element inside a paragraph laid out by the inline engine
                 // moves with the paragraph's lines; breaking at it on its own
-                // would leave the lines where they are. The flag is set only
-                // when the inline engine is switched on.
+                // would leave the lines where they are. The boxes inside it
+                // are located from the paragraph's root, like the root's own
+                // children, so they are collected as if they were. The flag
+                // is set only when the inline engine is switched on.
                 if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+                    for &child_id in &node.children {
+                        if document.nodes[child_id].kind() == NodeKind::Element {
+                            collect_candidates(
+                                document,
+                                cascade,
+                                child_id,
+                                parent_abs_y,
+                                direct_body_child,
+                                body_id,
+                                parent_height,
+                                page_step,
+                                inherited_page_name.clone(),
+                                inside_table,
+                                flex_column_parent,
+                                grid_single_column_parent,
+                                inside_flex,
+                                inside_float,
+                                inside_out_of_flow,
+                                out,
+                            );
+                        }
+                    }
                     return;
                 }
                 let raw_y = parent_abs_y + node.unrounded_layout.location.y;
@@ -1757,8 +1790,11 @@ pub fn layout_pages_with_page_geometry(
             // block fragmentation for monolithic content while leaving tall
             // blocks and already-forced page transitions to the existing
             // fragment logic.
-            let direct_block_parent = parent_of[node_id]
-                .and_then(|parent_id| (parent_of[parent_id] == Some(body_id)).then_some(parent_id));
+            // A block inside an inline element of an inline engine paragraph
+            // is laid out from the paragraph's root, as a direct child is.
+            let direct_block_parent = parent_of[node_id].and_then(|parent_id| {
+                (document.layout_parent_of(parent_id) == Some(body_id)).then_some(parent_id)
+            });
             if let Some(block_id) = direct_block_parent
                 && checked_block_text.insert(block_id)
                 && style_dimension_length(document.nodes[block_id].style.size.height)

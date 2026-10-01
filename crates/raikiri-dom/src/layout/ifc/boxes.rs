@@ -368,6 +368,7 @@ fn run_boxes(
     }
     if perform {
         place_atomics(tree, &lines, &atomics.outputs, geometry, root.rtl);
+        offset_boxes_inside_relative_inlines(tree, idx, root);
         super::records::record_inline_boxes(tree, idx, root, &lines, &geometry);
     }
     // A paragraph that is its own formatting context contains its floats; one
@@ -407,6 +408,35 @@ fn cleared_break(line: &shodo::Line, cleared: &[(usize, taffy::Clear)]) -> Optio
             .map(|(_, clear)| *clear),
         _ => None,
     })
+}
+
+/// Move every box that sits inside relatively positioned inline elements of
+/// the paragraph by their offsets: an offset moves the element together with
+/// everything inside it (CSS 2.1 9.4.3).
+fn offset_boxes_inside_relative_inlines(tree: &mut Document, idx: usize, root: &IfcRoot) {
+    if root.offsets.is_empty() {
+        return;
+    }
+    for b in &root.boxes {
+        let (mut dx, mut dy) = (0.0, 0.0);
+        let mut current = tree.parent_of(b.node);
+        while let Some(id) = current {
+            if id == idx {
+                break;
+            }
+            if let Some((_, (x, y))) = root.offsets.iter().find(|(owner, _)| *owner == id) {
+                dx += x;
+                dy += y;
+            }
+            current = tree.parent_of(id);
+        }
+        if dx != 0.0 || dy != 0.0 {
+            let mut layout = tree.nodes[b.node].unrounded_layout;
+            layout.location.x += dx;
+            layout.location.y += dy;
+            tree.set_unrounded_layout(taffy::NodeId::from(b.node), &layout);
+        }
+    }
 }
 
 /// How many times one line is moved down past floats before it is accepted

@@ -5,8 +5,8 @@
 //! replaced elements, form controls) and block children of the root are
 //! projected; a float becomes an anchor in the text, an atomic a placeholder
 //! and a block a break between lines, and all three are laid out as boxes of
-//! their own. Anything the inline path cannot place yet (positioned boxes,
-//! blocks inside inline elements) is rejected with [`IfcError::Unsupported`]
+//! their own, inside inline elements as well. Anything the inline path cannot
+//! place yet (positioned boxes) is rejected with [`IfcError::Unsupported`]
 //! rather than approximated.
 
 use super::boxes::{IfcBox, IfcBoxKind};
@@ -327,8 +327,8 @@ pub(crate) fn has_rtl_char(text: &str) -> bool {
 }
 
 enum Step {
-    /// A node to project, and whether it sits inside an inline element.
-    Enter(usize, bool),
+    /// A node to project.
+    Enter(usize),
     /// The `::after` of an element, after its content.
     After(usize),
     Close,
@@ -558,10 +558,10 @@ pub(crate) fn project_ifc_builder_with(
         .children
         .iter()
         .rev()
-        .map(|&child| Step::Enter(child, false))
+        .map(|&child| Step::Enter(child))
         .collect();
     while let Some(step) = stack.pop() {
-        let (id, nested) = match step {
+        let id = match step {
             Step::Close => {
                 builder.close_inline();
                 continue;
@@ -578,7 +578,7 @@ pub(crate) fn project_ifc_builder_with(
                 )?;
                 continue;
             }
-            Step::Enter(id, nested) => (id, nested),
+            Step::Enter(id) => id,
         };
         let node = doc.get_node(id).ok_or(IfcError::InvalidNode(id))?;
         if !node.is_in_document() {
@@ -634,31 +634,12 @@ pub(crate) fn project_ifc_builder_with(
                         counters,
                     )?;
                     stack.push(Step::After(id));
-                    // Its children count as nested: a box among them would sit
-                    // below an element of the paragraph's subtree, which the
-                    // passes that skip that subtree never reach.
-                    stack.extend(
-                        node.children
-                            .iter()
-                            .rev()
-                            .map(|&child| Step::Enter(child, true)),
-                    );
+                    stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
                     continue;
                 }
-                // A box is laid out relative to the root, while its DOM parent
-                // is the inline element, which now has a layout of its own:
-                // readers that add up the locations of the DOM parents would
-                // shift the box twice.
-                if nested
-                    && matches!(
-                        box_kind(cascade, doc, id),
-                        Some(IfcBoxKind::Float | IfcBoxKind::Atomic)
-                    )
-                {
-                    return Err(unsupported(
-                        "a box inside an inline element is located from the element, which is not modelled yet",
-                    ));
-                }
+                // A box inside an inline element is laid out relative to the
+                // root like any other box of the paragraph; readers find its
+                // layout parent with `Document::layout_parent_of`.
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Float) {
                     supported_float(cv, id)?;
                     builder.push_out_of_flow(NodeId(id as u64), OutOfFlowKind::Float);
@@ -686,12 +667,10 @@ pub(crate) fn project_ifc_builder_with(
                     }
                     continue;
                 }
+                // A block inside an inline element splits the element around
+                // it (CSS 2.1 9.2.1.1): the lines before and after it are the
+                // element's, the block sits between them.
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Block) {
-                    if nested {
-                        return Err(unsupported(
-                            "a block inside an inline element is not placed yet",
-                        ));
-                    }
                     supported_block(cv, id)?;
                     builder.push_block_in_inline(NodeId(id as u64));
                     boxes.push(IfcBox {
@@ -739,12 +718,7 @@ pub(crate) fn project_ifc_builder_with(
                     )?;
                     stack.push(Step::Close);
                     stack.push(Step::After(id));
-                    stack.extend(
-                        node.children
-                            .iter()
-                            .rev()
-                            .map(|&child| Step::Enter(child, true)),
-                    );
+                    stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
                 }
             }
             _ => {

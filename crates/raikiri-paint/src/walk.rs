@@ -3639,9 +3639,10 @@ fn paint_document_impl(
                 // already sits at its `vertical-align` position; shifting its
                 // content again would move it twice.
                 let placed_by_inline_engine = document
-                    .parent_of(node_id)
+                    .layout_parent_of(node_id)
                     .and_then(|parent| document.get_node(parent))
-                    .is_some_and(|parent| parent.is_ifc_root());
+                    .is_some_and(|parent| parent.is_ifc_root())
+                    && !node.in_ifc_subtree();
                 let own_shift = if placed_by_inline_engine {
                     0.0
                 } else {

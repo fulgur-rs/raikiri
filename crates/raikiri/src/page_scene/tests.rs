@@ -730,3 +730,20 @@ fn build_page_scene_for_page_named_attaches_name_and_landscape() {
 fn encode_png_rejects_mismatched_buffer_length() {
     super::encode_png(&[0u8; 3], 1, 1);
 }
+
+#[test]
+fn page_scene_places_an_atomic_inside_a_span_once() {
+    // The inline-block is laid out relative to the paragraph's root; the
+    // span's own location is not added to it.
+    let (dom, _cascade, scene) = scene_with_engine(
+        "<style>body{margin:0} div{font:10px/10px Ahem;width:200px} \
+         b{display:inline-block;width:20px;height:10px}</style>\
+         <div><span>aaaa<b></b></span> cc</div>",
+    );
+    let div = find_element(&dom, "div");
+    assert!(node(&dom, div).is_ifc_root());
+    assert_eq!(
+        rects(&scene, find_element(&dom, "b")),
+        [(40.0, 0.0, 20.0, 10.0)]
+    );
+}
