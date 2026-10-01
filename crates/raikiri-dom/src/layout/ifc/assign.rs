@@ -178,28 +178,20 @@ struct Candidate {
     projected: ProjectedBuilder,
 }
 
-/// A paragraph the engine does not lay out: an error when the engine is
-/// required for every paragraph, otherwise nothing (the paragraph stays on
-/// the parley path).
-fn refuse(engine_only: bool, node: usize, reason: &'static str) -> Result<(), LayoutError> {
-    if engine_only {
-        Err(LayoutError::IfcUnsupported { node, reason })
-    } else {
-        Ok(())
-    }
-}
-
 /// What a projection or shaping error of the paragraph `root` means for the
-/// layout: a limit is always an error (there is nothing to fall back to once
-/// the engine is the only path); a refusal is one only in engine-only mode.
-fn projection_error(engine_only: bool, root: usize, error: IfcError) -> Result<(), LayoutError> {
+/// layout: there is no other path to lay a paragraph out, so a limit and a
+/// refusal both fail it.
+fn projection_error(root: usize, error: IfcError) -> LayoutError {
     match error {
-        IfcError::Limit(limit) => Err(LayoutError::IfcLimitExceeded {
+        IfcError::Limit(limit) => LayoutError::IfcLimitExceeded {
             node: root,
             limit: limit.to_string(),
-        }),
-        IfcError::Unsupported { node, reason } => refuse(engine_only, node, reason),
-        IfcError::InvalidNode(node) => refuse(engine_only, node, "the node is not in the document"),
+        },
+        IfcError::Unsupported { node, reason } => LayoutError::IfcUnsupported { node, reason },
+        IfcError::InvalidNode(node) => LayoutError::IfcUnsupported {
+            node,
+            reason: "the node is not in the document",
+        },
     }
 }
 
@@ -213,8 +205,7 @@ fn projection_error(engine_only: bool, root: usize, error: IfcError) -> Result<(
 /// # Errors
 /// [`LayoutError::IfcLimitExceeded`] when a paragraph exceeds a limit of the
 /// engine, and [`LayoutError::IfcUnsupported`] for a paragraph the engine
-/// refuses when [`Document::inline_formatting_engine_only`] is set. Nothing is
-/// marked then.
+/// refuses. Nothing is marked then.
 pub(crate) fn assign_ifc_roots(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -254,7 +245,6 @@ fn collect_candidates(
     cascade: &CascadeResult,
     state: &IfcState,
 ) -> Result<Vec<Candidate>, LayoutError> {
-    let engine_only = state.engine_only;
     let mut candidates = Vec::new();
     let mut taken = vec![false; doc.nodes.len()];
     let counters = GeneratedCounters::default();
@@ -284,10 +274,7 @@ fn collect_candidates(
             &counters,
         ) {
             Ok(projected) => projected,
-            Err(error) => {
-                projection_error(engine_only, idx, error)?;
-                continue;
-            }
+            Err(error) => return Err(projection_error(idx, error)),
         };
         let mut stack = doc.nodes[idx].children.clone();
         while let Some(id) = stack.pop() {
@@ -339,7 +326,6 @@ fn collect_text_candidates(
     cascade: &CascadeResult,
     state: &IfcState,
 ) -> Result<Vec<Candidate>, LayoutError> {
-    let engine_only = state.engine_only;
     let mut candidates = Vec::new();
     for idx in 0..doc.nodes.len() {
         if !is_anonymous_item_text(doc, cascade, idx) {
@@ -347,7 +333,7 @@ fn collect_text_candidates(
         }
         match project_ifc_text_builder(doc, cascade, idx, &state.fonts, &state.limits) {
             Ok(projected) => candidates.push(Candidate { idx, projected }),
-            Err(error) => projection_error(engine_only, idx, error)?,
+            Err(error) => return Err(projection_error(idx, error)),
         }
     }
     Ok(candidates)

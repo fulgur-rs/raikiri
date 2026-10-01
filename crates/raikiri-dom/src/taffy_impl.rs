@@ -361,6 +361,17 @@ impl Document {
                 // Transfer the ratio in measurement only. Taffy's leaf ratio
                 // floor would otherwise override explicit/max heights.
                 style.aspect_ratio = None;
+                // An authored height gives an auto width through the ratio
+                // (CSS 2.1 10.3.2), also when no parent passes the height in
+                // as a known dimension; taffy's leaf then hands it to the
+                // measure function as the definite available height.
+                let height_is_authored = style.size.width.is_auto()
+                    && taffy::util::MaybeResolve::maybe_resolve(
+                        style.size.height,
+                        inputs.parent_size.height,
+                        |val, basis| tree.resolve_calc_value(val, basis),
+                    )
+                    .is_some();
                 return compute_leaf_layout(
                     inputs,
                     &style,
@@ -372,9 +383,14 @@ impl Document {
                             width: known.width.and(available.width.into_option()),
                             height: known.height.and(available.height.into_option()),
                         };
+                        let authored_height = available
+                            .height
+                            .into_option()
+                            .filter(|_| height_is_authored);
                         let width = known
                             .width
                             .or(known.height.map(|height| height * ratio))
+                            .or(authored_height.map(|height| height * ratio))
                             .unwrap_or(match available.width {
                                 AvailableSpace::Definite(width) => width,
                                 AvailableSpace::MinContent => 0.0,

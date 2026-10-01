@@ -1,7 +1,7 @@
 //! Page projection contracts.
 
 use super::super::super::*;
-use parley::FontContext;
+use crate::layout::test_support::with_ahem;
 use raikiri_style::{Origin, build_rule_tree, cascade};
 use raikiri_traits::{NodeId, PageBox};
 use smol_str::SmolStr;
@@ -19,7 +19,7 @@ fn public_page_fragment_snapshot_is_node_ordered() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4)
         .expect("page fragment layout should succeed");
 
     assert_eq!(pages.len(), 1);
@@ -106,7 +106,7 @@ fn fixed_position_subtrees_repeat_on_every_page() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
-    let pages = layout_page_fragments(&mut document, &cascade, page, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, page)
         .expect("page fragment layout should succeed");
     assert!(pages.len() >= 2);
 
@@ -197,7 +197,7 @@ fn page_fragment_link_events_preserve_anchor_and_placement_geometry() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4)
         .expect("page fragment layout should succeed");
     let events = page_fragment_events_from_pages(&document, &pages);
 
@@ -260,7 +260,7 @@ fn page_fragment_link_events_keep_empty_href_and_skip_non_links_and_hidden_nodes
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4)
         .expect("page fragment layout should succeed");
     let events = page_fragment_events_from_pages(&document, &pages);
 
@@ -287,7 +287,7 @@ fn page_fragment_link_event_order_is_page_and_node_deterministic() {
     }
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4)
         .expect("page fragment layout should succeed");
     let events = page_fragment_events_from_pages(&document, &pages);
     let events_again = page_fragment_events_from_pages(&document, &pages);
@@ -385,7 +385,7 @@ fn page_fragment_margin_padding_coordinates_are_applied_once() {
     let mut page_box = PageBox::new();
     page_box.width = 100.0;
     page_box.height = 100.0;
-    let pages = layout_page_fragments(&mut document, &cascade, page_box, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, page_box)
         .expect("page fragment layout should succeed");
 
     assert_eq!(pages.len(), 1);
@@ -500,7 +500,7 @@ fn named_page_propagation_skips_out_of_flow_children() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade named-page fixture");
 
-    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4)
         .expect("layout named-page fixture");
     assert!(!pages.is_empty());
 }
@@ -522,7 +522,7 @@ fn text_fragments(
 
 #[test]
 fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut ranges = Vec::new();
     for ifc in [false, true] {
         // Ahem at 10px, width 40: five lines of 10px; a 30px page holds three.
@@ -533,7 +533,7 @@ fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 30.0;
-        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
         let text = doc.nodes[root].children[0];
         ranges.push(text_fragments(&doc, &cascade, page, &slices, text));
     }
@@ -550,7 +550,7 @@ fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
 
 #[test]
 fn a_text_inside_a_span_starts_at_the_root_content_origin() {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let (mut doc, _cascade, root) =
         ahem_paragraph("", "width:40px;padding:5px;box-sizing:content-box");
     doc.append_text(root, "aa ");
@@ -568,7 +568,7 @@ fn a_text_inside_a_span_starts_at_the_root_content_origin() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert!(
         doc.nodes[root].is_ifc_root(),
         "the paragraph is laid out by the engine"
@@ -587,7 +587,7 @@ fn a_text_inside_a_span_starts_at_the_root_content_origin() {
 
 #[test]
 fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     // Lines (Ahem 10px, width 40): "aa", "bbbb", "cccc", "dddd". The span's
     // text owns lines 1-3 (tops 10, 20, 30); a 30px page holds the first
     // three lines, so the span's text has two lines on page 0 and one on
@@ -608,7 +608,7 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 30.0;
-    let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert!(
         doc.nodes[root].is_ifc_root(),
         "the paragraph is laid out by the engine"
@@ -624,7 +624,7 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
 
 #[test]
 fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one() {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut moved = Vec::new();
     for ifc in [false, true] {
         let (mut doc, _cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
@@ -646,8 +646,8 @@ fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one()
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 40.0;
-        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
-        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert!(doc.nodes[root].is_ifc_root());
         let text = doc.nodes[root].children[0];
         let lines_per_page: Vec<(u32, usize)> = text_fragments(&doc, &cascade, page, &slices, text)
             .iter()
@@ -674,7 +674,7 @@ fn pages_of_a_fixed_height_paragraph(
     spacer_height: f32,
     page_height: f32,
 ) -> Vec<(usize, Vec<u32>)> {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut results = Vec::new();
     for ifc in [false, true] {
         let (mut doc, _cascade, root) = ahem_paragraph(text, root_css);
@@ -696,8 +696,8 @@ fn pages_of_a_fixed_height_paragraph(
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = page_height;
-        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
-        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert!(doc.nodes[root].is_ifc_root());
         let text = doc.nodes[root].children[0];
         let on_page: Vec<u32> = text_fragments(&doc, &cascade, page, &slices, text)
             .iter()
@@ -743,7 +743,7 @@ fn a_padded_paragraph_whose_first_line_overflows_moves_like_the_parley_one() {
 fn ranges_of_a_text_below_a_span(
     page_height: f32,
 ) -> Vec<Vec<(u32, Option<PageFragmentLineRange>)>> {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut results = Vec::new();
     for ifc in [false, true] {
         let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
@@ -773,8 +773,8 @@ fn ranges_of_a_text_below_a_span(
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = page_height;
-        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
-        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert!(doc.nodes[root].is_ifc_root());
         results.push(text_fragments(&doc, &cascade, page, &slices, text));
     }
     results
@@ -810,7 +810,7 @@ fn a_text_that_starts_on_a_later_line_stays_when_its_lines_fit() {
 #[allow(clippy::type_complexity)]
 fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32>, Vec<u32>)> {
     use crate::layout::ifc::test_support::{Fixture, block_fixture};
-    use crate::layout::test_support::{ahem_font_context, ifc_ahem_fonts};
+    use crate::layout::test_support::ifc_ahem_fonts;
     let mut results = Vec::new();
     for ifc in [false, true] {
         let Fixture { mut doc, root, .. } =
@@ -849,9 +849,9 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 100.0;
-        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
-        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
-        assert_eq!(doc.nodes[next].is_ifc_root(), ifc);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert!(doc.nodes[root].is_ifc_root());
+        assert!(doc.nodes[next].is_ifc_root());
         let on_page = |id: usize| -> Vec<u32> {
             text_fragments(&doc, &cascade, page, &slices, doc.nodes[id].children[0])
                 .iter()
@@ -884,7 +884,7 @@ fn a_paragraph_whose_text_changes_the_page_name_moves_like_the_parley_one() {
 
 #[test]
 fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     // The paragraph is moved to page 1 (orphans) on every pass; a second pass
     // must start again from the laid-out positions, not add a second move.
     let (mut doc, _cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
@@ -907,7 +907,7 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
     let text = doc.nodes[root].children[0];
     let mut passes = Vec::new();
     for _ in 0..2 {
-        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
         let items: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
             .iter()
             .flat_map(|p| p.items.iter())
@@ -923,7 +923,7 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
 
 #[test]
 fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it() {
-    use crate::layout::test_support::{ahem_font_context, ifc_ahem_fonts};
+    use crate::layout::test_support::ifc_ahem_fonts;
     // body: "aa " + a 20px block of two lines + " dd". The block's first line
     // ends at 30 > 25, so the block moves to page 1 as a unit; the text after
     // it comes later in the same paragraph.
@@ -955,8 +955,8 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 25.0;
-        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
-        assert_eq!(doc.nodes[body].is_ifc_root(), ifc);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert!(doc.nodes[body].is_ifc_root());
         let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
             .iter()
             .flat_map(|p| p.items.iter())
@@ -1000,13 +1000,7 @@ fn pagination_keeps_an_atomic_inside_a_span_on_its_line() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(
-        &mut doc,
-        &cascade,
-        page,
-        crate::layout::test_support::ahem_font_context(),
-    )
-    .expect("pages");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert!(doc.nodes[body].is_ifc_root());
     let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
         .iter()
@@ -1057,13 +1051,7 @@ fn a_block_inside_a_span_of_a_body_paragraph_moves_to_the_next_page_like_a_direc
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 25.0;
-        let slices = layout_pages(
-            &mut doc,
-            &cascade,
-            page,
-            crate::layout::test_support::ahem_font_context(),
-        )
-        .expect("pages");
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
         assert!(doc.nodes[body].is_ifc_root());
         let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
             .iter()
@@ -1113,13 +1101,7 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 45.0;
-    let slices = layout_pages(
-        &mut doc,
-        &cascade,
-        page,
-        crate::layout::test_support::ahem_font_context(),
-    )
-    .expect("pages");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert!(doc.nodes[body].is_ifc_root());
     let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
         .iter()
@@ -1163,14 +1145,8 @@ fn forced_break_in_a_body_paragraph(css: &str, ifc: bool) -> ((u32, f32), (u32, 
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
-    let slices = layout_pages(
-        &mut doc,
-        &cascade,
-        page,
-        crate::layout::test_support::ahem_font_context(),
-    )
-    .expect("pages");
-    assert_eq!(doc.nodes[body].is_ifc_root(), ifc, "{css}");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert!(doc.nodes[body].is_ifc_root(), "{css}");
     let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
     let first = |node: usize| {
         fragments
@@ -1236,13 +1212,7 @@ fn a_forced_break_after_text_inside_a_span_starts_a_page() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
-    let slices = layout_pages(
-        &mut doc,
-        &cascade,
-        page,
-        crate::layout::test_support::ahem_font_context(),
-    )
-    .expect("pages");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert!(doc.nodes[body].is_ifc_root());
     assert_eq!(slices.len(), 2);
     let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
@@ -1289,14 +1259,8 @@ fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 50.0;
-        let slices = layout_pages(
-            &mut doc,
-            &cascade,
-            page,
-            crate::layout::test_support::ahem_font_context(),
-        )
-        .expect("pages");
-        assert_eq!(doc.nodes[body].is_ifc_root(), ifc);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert!(doc.nodes[body].is_ifc_root());
         let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
         texts
             .iter()
@@ -1351,14 +1315,8 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 25.0;
-        let slices = layout_pages(
-            &mut doc,
-            &cascade,
-            page,
-            crate::layout::test_support::ahem_font_context(),
-        )
-        .expect("pages");
-        assert_eq!(doc.nodes[body].is_ifc_root(), ifc);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert!(doc.nodes[body].is_ifc_root());
         let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
         [inner, tail].map(|text| {
             fragments
@@ -1427,13 +1385,7 @@ fn nested_named_pages_inside_paragraphs_start_their_pages() {
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 50.0;
-        let slices = layout_pages(
-            &mut doc,
-            &cascade,
-            page,
-            crate::layout::test_support::ahem_font_context(),
-        )
-        .expect("pages");
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
         let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
         let first_fragments: Vec<_> = texts
             .iter()
@@ -1495,13 +1447,7 @@ fn engine_fragments_of(
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
-    let slices = layout_pages(
-        &mut doc,
-        &cascade,
-        page,
-        crate::layout::test_support::ahem_font_context(),
-    )
-    .expect("pages");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert!(doc.nodes[body].is_ifc_root());
     let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
     ids.iter()

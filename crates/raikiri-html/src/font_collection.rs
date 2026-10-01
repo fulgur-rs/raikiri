@@ -1,21 +1,16 @@
-//! Consumer-facing construction of deterministic font contexts from bundled bytes.
+//! Consumer-facing construction of deterministic font sets from bundled bytes.
 
 use std::fmt;
 use std::sync::Arc;
 
-use parley::FontContext;
-use parley::fontique::{
-    Blob, Collection, CollectionOptions, FontInfoOverride, GenericFamily, SourceCache,
-};
-
-/// Maximum size of one bundled font accepted by [`FontContextBuilder`].
+/// Maximum size of one bundled font accepted by [`FontCollectionBuilder`].
 pub const MAX_BUNDLED_FONT_BYTES: u64 = 100 * 1024 * 1024;
 
 /// One bundled OpenType font face source.
 ///
 /// The bytes are owned and shared. The family name is registered as the
-/// authored family, so consumers do not need to depend on `parley` or
-/// `fontique` to build a font context.
+/// authored family, so consumers do not need to depend on the text engine to
+/// build a font set.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct BundledFont {
@@ -52,26 +47,18 @@ impl fmt::Debug for BundledFont {
     }
 }
 
-struct SharedFontBytes(Arc<[u8]>);
-
-impl AsRef<[u8]> for SharedFontBytes {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-/// Builds a [`FontContext`] from consumer-supplied font bytes.
+/// Builds a [`RenderFonts`] from consumer-supplied font bytes.
 ///
 /// System font discovery is disabled by default. Registration order is stable
 /// and also defines the fallback order for generic families. Enable system
 /// fonts only when host-dependent fallback is acceptable.
 #[derive(Debug, Clone, Default)]
-pub struct FontContextBuilder {
+pub struct FontCollectionBuilder {
     fonts: Vec<BundledFont>,
     system_fonts: bool,
 }
 
-impl FontContextBuilder {
+impl FontCollectionBuilder {
     /// Create a deterministic builder with system font discovery disabled.
     pub fn new() -> Self {
         Self::default()
@@ -94,129 +81,69 @@ impl FontContextBuilder {
         self
     }
 
-    /// Register all bundled fonts and return the prepared context.
+    /// Register all bundled fonts and return the prepared font set.
+    ///
+    /// Every family name resolves to its fonts, and every generic family
+    /// (`serif`, `sans-serif`, `monospace`, ...) to the bundle in
+    /// registration order.
     ///
     /// # Errors
     /// Returns a structured error for an empty font list, invalid family name,
     /// oversized input, or bytes rejected by the font collection.
-    pub fn build(self) -> Result<FontContext, FontContextBuildError> {
+    pub fn build(self) -> Result<RenderFonts, FontCollectionBuildError> {
         if self.fonts.is_empty() {
-            return Err(FontContextBuildError::NoFonts);
+            return Err(FontCollectionBuildError::NoFonts);
         }
-
-        let mut context = FontContext {
-            source_cache: SourceCache::new_shared(),
-            collection: Collection::new(CollectionOptions {
-                shared: false,
-                system_fonts: self.system_fonts,
-            }),
-        };
-        let mut family_ids = Vec::new();
-
-        for font in self.fonts {
+        let mut faces = Vec::with_capacity(self.fonts.len());
+        for font in &self.fonts {
             let family = font.family.trim();
             if family.is_empty() {
-                return Err(FontContextBuildError::EmptyFamily);
+                return Err(FontCollectionBuildError::EmptyFamily);
             }
             if font.bytes.is_empty() {
-                return Err(FontContextBuildError::EmptyFont {
+                return Err(FontCollectionBuildError::EmptyFont {
                     family: family.to_owned(),
                 });
             }
             if font.bytes.len() as u64 > MAX_BUNDLED_FONT_BYTES {
-                return Err(FontContextBuildError::FontTooLarge {
+                return Err(FontCollectionBuildError::FontTooLarge {
                     family: family.to_owned(),
                     limit: MAX_BUNDLED_FONT_BYTES,
                     actual: font.bytes.len() as u64,
                 });
             }
-
-            let registered = context.collection.register_fonts(
-                Blob::new(Arc::new(SharedFontBytes(Arc::clone(&font.bytes))) as _),
-                Some(FontInfoOverride {
-                    family_name: Some(family),
-                    width: None,
-                    style: None,
-                    weight: None,
-                    axes: None,
-                }),
-            );
-            if registered.is_empty() {
-                return Err(FontContextBuildError::FontRejected {
-                    family: family.to_owned(),
-                });
-            }
-            family_ids.extend(registered.iter().map(|(id, _)| *id));
+            faces.push(raikiri_dom::BundledFace {
+                family: family.to_owned(),
+                bytes: font.bytes.to_vec(),
+            });
         }
-
-        // Match the stable fallback behavior used by the WPT font context:
-        // all generic families select from the explicitly ordered bundle.
-        for generic in [
-            GenericFamily::Serif,
-            GenericFamily::SansSerif,
-            GenericFamily::Monospace,
-            GenericFamily::SystemUi,
-            GenericFamily::Cursive,
-            GenericFamily::Fantasy,
-        ] {
-            context
-                .collection
-                .append_generic_families(generic, family_ids.iter().copied());
-        }
-
-        Ok(context)
-    }
-
-    /// Build both engines' font sets from the bundled fonts: the parley
-    /// context [`build`](Self::build) returns and the shodo font layer of the
-    /// inline engine, registered in the same order under the same family
-    /// names.
-    ///
-    /// # Errors
-    /// The errors of [`build`](Self::build), which are checked first, and
-    /// [`FontContextBuildError::FontRejected`] when the inline engine refuses
-    /// a font parley accepted (it names the first bundled family).
-    pub fn build_fonts(self) -> Result<RenderFonts, FontContextBuildError> {
-        let faces: Vec<raikiri_dom::BundledFace> = self
-            .fonts
-            .iter()
-            .map(|font| raikiri_dom::BundledFace {
-                family: font.family().trim().to_owned(),
-                bytes: font.bytes().to_vec(),
-            })
-            .collect();
-        let first_family = self
-            .fonts
-            .first()
-            .map(|font| font.family().trim().to_owned())
-            .unwrap_or_default();
         let system_fonts = self.system_fonts;
-        // The parley builder validates the list first, so this reports the
-        // same errors as `build()` does.
-        let context = self.build()?;
-        let collection =
-            raikiri_dom::build_bundled_font_collection(faces, system_fonts).map_err(|_| {
-                FontContextBuildError::FontRejected {
-                    family: first_family,
-                }
+        let collection = raikiri_dom::build_bundled_font_collection(faces.clone(), system_fonts)
+            .map_err(|_| {
+                // Name the first font the collection refuses on its own.
+                let family = faces
+                    .iter()
+                    .find(|face| {
+                        raikiri_dom::build_bundled_font_collection(vec![(*face).clone()], false)
+                            .is_err()
+                    })
+                    .unwrap_or(&faces[0])
+                    .family
+                    .clone();
+                FontCollectionBuildError::FontRejected { family }
             })?;
         Ok(RenderFonts {
-            context,
             collection,
             bundled_only: !system_fonts,
         })
     }
 }
 
-/// A parley font context and the shodo font layer built from the same bytes.
+/// A font set for layout and paint, built by [`FontCollectionBuilder`].
 ///
-/// Both resolve a family name to the same face, and every generic family to
-/// the bundle in registration order, so a document laid out partly by one
-/// engine and partly by the other draws from one font set. Cloning shares
-/// both halves.
+/// Cloning shares the font set.
 #[derive(Clone)]
 pub struct RenderFonts {
-    context: FontContext,
     collection: shodo::font::FontCollection,
     bundled_only: bool,
 }
@@ -229,19 +156,14 @@ impl RenderFonts {
         self.bundled_only
     }
 
-    /// The parley font context.
-    pub fn context(&self) -> &FontContext {
-        &self.context
-    }
-
-    /// The shodo font layer of the inline engine.
+    /// The font layer of the inline layout engine.
     pub fn collection(&self) -> &shodo::font::FontCollection {
         &self.collection
     }
 
-    /// Both halves: the parley context and the shodo font layer.
-    pub fn into_parts(self) -> (FontContext, shodo::font::FontCollection) {
-        (self.context, self.collection)
+    /// The font layer of the inline layout engine, by value.
+    pub fn into_collection(self) -> shodo::font::FontCollection {
+        self.collection
     }
 }
 
@@ -253,10 +175,10 @@ impl fmt::Debug for RenderFonts {
     }
 }
 
-/// Failure while building a context from bundled fonts.
+/// Failure while building a font set from bundled fonts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum FontContextBuildError {
+pub enum FontCollectionBuildError {
     /// No bundled fonts were supplied.
     NoFonts,
     /// A font family name was empty or whitespace-only.
@@ -282,7 +204,7 @@ pub enum FontContextBuildError {
     },
 }
 
-impl fmt::Display for FontContextBuildError {
+impl fmt::Display for FontCollectionBuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoFonts => write!(f, "no bundled fonts were supplied"),
@@ -303,7 +225,7 @@ impl fmt::Display for FontContextBuildError {
     }
 }
 
-impl std::error::Error for FontContextBuildError {}
+impl std::error::Error for FontCollectionBuildError {}
 
 #[cfg(test)]
 mod tests;

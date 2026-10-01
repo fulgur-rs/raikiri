@@ -2,7 +2,6 @@ use crate::{
     Document, PageContentInsets, PageMargins, PageSlice, layout_pages, layout_single_page,
     layout_single_page_with_resolver,
 };
-use parley::FontContext;
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use raikiri_traits::{
     NodeId, PageBox, ReplacedResolver, ResolvedIntrinsic, ResolverError, ResolverRequest,
@@ -18,13 +17,18 @@ fn fixture() -> (
     usize,
 ) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
     let div = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width:10px;height:10px"),
+        Some("display:block;width:10px;height:10px"),
     );
     let link = doc.append_element(Some(div), "a", Style::default(), None::<&str>);
     doc.set_element_attributes(link, vec![("href".into(), " /go ".into())]);
@@ -47,7 +51,7 @@ fn fixture() -> (
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("layout");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("layout");
     (doc, cascade, page, slices, div, text)
 }
 
@@ -142,10 +146,10 @@ fn projection_is_cleared_by_mutation_and_relayout() {
     assert_eq!(doc.page_links(0).count(), 0);
     let rules = build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    layout_single_page(&mut doc, &cascade, page, FontContext::new()).expect("relayout");
+    layout_single_page(&mut doc, &cascade, page).expect("relayout");
     project(&mut doc, &cascade, page, &slices[..1]);
     assert!(doc.page_links(0).next().is_some());
-    layout_single_page(&mut doc, &cascade, page, FontContext::new()).expect("relayout");
+    layout_single_page(&mut doc, &cascade, page).expect("relayout");
     assert_eq!(doc.page_fragments(0).count(), 0);
     assert_eq!(doc.page_links(0).count(), 0);
 }
@@ -161,9 +165,8 @@ fn projection_is_cleared_before_a_resolver_error() {
     let (mut doc, cascade, page, slices, _, _) = fixture();
     project(&mut doc, &cascade, page, &slices[..1]);
     assert!(doc.page_links(0).next().is_some());
-    let error =
-        layout_single_page_with_resolver(&mut doc, &cascade, page, FontContext::new(), &Fails)
-            .expect_err("resolver failure");
+    let error = layout_single_page_with_resolver(&mut doc, &cascade, page, &Fails)
+        .expect_err("resolver failure");
     assert!(matches!(error, raikiri_traits::LayoutError::Resolver(_)));
     assert_eq!(doc.page_fragments(0).count(), 0);
     assert_eq!(doc.page_links(0).count(), 0);
@@ -201,21 +204,13 @@ fn assert_paged_resolver_error_clears_projection(with_geometry: bool) {
             &mut doc,
             &cascade,
             page,
-            FontContext::new(),
             &[100.0],
             &[100.0],
             &Fails,
             None,
         )
     } else {
-        crate::layout_pages_with_resolver_and_base_url(
-            &mut doc,
-            &cascade,
-            page,
-            FontContext::new(),
-            &Fails,
-            None,
-        )
+        crate::layout_pages_with_resolver_and_base_url(&mut doc, &cascade, page, &Fails, None)
     };
     assert!(matches!(
         result,
@@ -319,7 +314,7 @@ fn projection_is_cleared_by_text_relayout() {
     project(&mut doc, &cascade, page, &slices[..1]);
     assert!(doc.page_fragments(0).next().is_some());
     assert!(doc.page_links(0).next().is_some());
-    crate::relayout_text_for_width(&mut doc, &cascade, 5.0, page.width, FontContext::new());
+    crate::relayout_text_for_width(&mut doc, &cascade, 5.0);
     assert_eq!(doc.page_fragments(0).count(), 0);
     assert_eq!(doc.page_links(0).count(), 0);
 }

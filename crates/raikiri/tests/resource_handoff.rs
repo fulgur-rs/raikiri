@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use raikiri::{
-    Bytes, DecodedImage, FetchOutcome, FetchedResource, FontContextBuilder, ImagePixelSource,
+    Bytes, DecodedImage, FetchOutcome, FetchedResource, FontCollectionBuilder, ImagePixelSource,
     IntrinsicBox, LayoutConfig, LayoutOptions, LayoutStatus, NetworkError, NetworkProvider,
     PageDefaults, RenderError, RenderResources, ReplacedResolver, Request, ResolveDisposition,
     ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourceLimits,
@@ -67,9 +67,9 @@ impl ImagePixelSource for FixedResolver {
     }
 }
 
-fn bundled_test_font() -> raikiri::FontContext {
-    // This render fixture has no text; it verifies the bundled-context handoff.
-    FontContextBuilder::new()
+fn bundled_test_font() -> raikiri::RenderFonts {
+    // This render fixture has no text; it verifies the bundled font handoff.
+    FontCollectionBuilder::new()
         .font_bytes(
             "Bundled Handoff Test",
             include_bytes!("data/NotoSansTest-Regular.ttf").as_slice(),
@@ -86,7 +86,7 @@ fn bundled_no_network_resources_share_base_resolver_and_layout() {
     let resources = RenderResources::new()
         .base_url(base_url)
         .network_provider(&network)
-        .font_context(bundled_test_font())
+        .fonts(bundled_test_font())
         .replaced_resource_provider(&resolver);
 
     let status = parse_and_render(
@@ -129,7 +129,7 @@ fn bundled_no_network_page_output_is_deterministic_across_runs() {
     let resources = RenderResources::new()
         .base_url(Url::parse("https://example.test/books/chapter.html").unwrap())
         .network_provider(&network)
-        .font_context(bundled_test_font())
+        .fonts(bundled_test_font())
         .replaced_resource_provider(&resolver);
     let mut outputs = Vec::new();
 

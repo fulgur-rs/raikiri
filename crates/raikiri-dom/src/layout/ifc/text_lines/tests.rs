@@ -1,11 +1,10 @@
 use crate::layout::layout_single_page;
-use crate::layout::test_support::{
-    ahem_font_context, ahem_paragraph, ifc_ahem_fonts, page_box_800x600,
-};
+use crate::layout::test_support::with_ahem;
+use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts, page_box_800x600};
 
 fn lay_out(doc: &mut crate::Document, cascade: &raikiri_style::CascadeResult) {
     doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-    layout_single_page(doc, cascade, page_box_800x600(), ahem_font_context()).expect("layout");
+    layout_single_page(with_ahem(doc), cascade, page_box_800x600()).expect("layout");
 }
 
 fn recascade(doc: &mut crate::Document) -> raikiri_style::CascadeResult {
@@ -59,10 +58,9 @@ fn a_line_shared_by_two_text_nodes_belongs_to_both() {
 
 #[test]
 fn a_node_outside_an_ifc_paragraph_has_no_lines() {
-    let (mut doc, cascade, root) = ahem_paragraph("aaaa", "width:40px");
-    // Switch off: the text node is shaped by parley.
-    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
-        .expect("layout");
+    // A paragraph that is not rendered is not laid out at all.
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa", "width:40px;display:none");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     let text = doc.nodes[root].children[0];
     assert!(doc.ifc_text_lines(text).is_none());
     assert!(
@@ -151,8 +149,8 @@ fn the_lines_follow_a_rebreak_for_another_width() {
     assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(1));
     // No authored width anywhere: parley re-shapes at max_advance, and so does
     // the inline engine.
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(3));
-    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(1));
 }

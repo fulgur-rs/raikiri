@@ -283,7 +283,8 @@ pub struct Document {
     /// O(1) cost per mutation plus O(N) per layout batch gives amortized
     /// O(1) invalidation.
     pub(crate) layout_dirty: bool,
-    /// Shodo inline-engine state; `None` keeps the parley-only path.
+    /// Inline-engine state; `None` until fonts are set or the first layout
+    /// takes the installed fonts.
     pub(crate) ifc: Option<crate::layout::ifc::root::IfcState>,
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
@@ -366,9 +367,20 @@ pub struct Document {
 }
 
 impl Document {
-    /// Route eligible paragraphs through the shodo inline engine.
+    /// Lay text out with the fonts of `fonts`.
     ///
-    /// Without this call, layout uses the parley path only.
+    /// `fonts` is the font layer the inline engine looks families up in, for
+    /// example one built from bundled fonts, or a document layer of
+    /// `@font-face` faces over a shared layer
+    /// ([`crate::build_inline_document_fonts`]). Without this call, the first
+    /// layout uses the installed fonts ([`crate::system_font_collection`]).
+    pub fn set_font_collection(&mut self, fonts: shodo::font::FontCollection) {
+        self.enable_inline_formatting(fonts, shodo::limits::Limits::default());
+    }
+
+    /// [`Document::set_font_collection`] with explicit resource limits for
+    /// the inline engine.
+    #[doc(hidden)]
     pub fn enable_inline_formatting(
         &mut self,
         fonts: shodo::font::FontCollection,
@@ -378,8 +390,8 @@ impl Document {
         self.layout_dirty = true;
     }
 
-    /// Metrics of a font of the inline engine, at `size`. `None` when the
-    /// inline engine is not enabled.
+    /// Metrics of a font of the inline engine, at `size`. `None` before the
+    /// document has fonts.
     #[doc(hidden)]
     pub fn ifc_font_metrics(
         &self,
@@ -391,7 +403,8 @@ impl Document {
             .map(|state| state.fonts.metrics(font, size))
     }
 
-    /// Whether [`Document::enable_inline_formatting`] was called.
+    /// Whether the document has fonts for the inline engine: they were set,
+    /// or a layout took the installed fonts.
     pub fn inline_formatting_enabled(&self) -> bool {
         self.ifc.is_some()
     }
@@ -417,17 +430,11 @@ impl Document {
         }
     }
 
-    /// Require the inline engine for every paragraph: a paragraph it refuses
-    /// fails the layout with [`raikiri_traits::LayoutError::IfcUnsupported`]
-    /// instead of being laid out by the parley path. Off by default; no effect
-    /// without the inline engine.
+    /// No effect: every paragraph is laid out by the inline engine, and one
+    /// it refuses always fails the layout with
+    /// [`raikiri_traits::LayoutError::IfcUnsupported`].
     #[doc(hidden)]
-    pub fn inline_formatting_engine_only(&mut self, engine_only: bool) {
-        if let Some(state) = self.ifc.as_mut() {
-            state.engine_only = engine_only;
-            self.layout_dirty = true;
-        }
-    }
+    pub fn inline_formatting_engine_only(&mut self, _engine_only: bool) {}
 
     /// Whether paragraphs may be built on several threads (`false` without
     /// the inline engine).

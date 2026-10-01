@@ -3,23 +3,20 @@ use super::*;
 /// PNG magic bytes: \x89 P N G \r \n \x1A \n (same pin as raikiri-vrt tests).
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
 
-/// Check that `html_to_png` and `html_to_png_with_fonts` delegate to the
-/// shared implementation (DRY delegation): `html_to_png` with the installed
-/// fonts on both engines, `html_to_png_with_fonts` on the parley path only.
+/// Check that `html_to_png` and `html_to_png_with_render_fonts` delegate to
+/// the shared implementation (DRY delegation).
 #[test]
-fn html_to_png_with_fonts_delegates_to_impl() {
+fn html_to_png_and_the_font_variant_delegate_to_impl() {
     let input = br#"<p>x</p>"#;
     let a = html_to_png(&input[..]).expect("html_to_png Ok");
-    let a_impl = html_to_png_impl(&input[..], FontContext::new(), system_inline_fonts())
-        .expect("html_to_png_impl Ok");
+    let a_impl = html_to_png_impl(&input[..], None).expect("html_to_png_impl Ok");
     assert_eq!(a, a_impl, "html_to_png must produce byte-identical PNG");
-    let b =
-        html_to_png_with_fonts(&input[..], FontContext::new()).expect("html_to_png_with_fonts Ok");
-    let b_impl =
-        html_to_png_impl(&input[..], FontContext::new(), None).expect("html_to_png_impl Ok");
+    let b = html_to_png_with_render_fonts(&input[..], ahem_fonts())
+        .expect("html_to_png_with_render_fonts Ok");
+    let b_impl = html_to_png_impl(&input[..], Some(ahem_fonts())).expect("html_to_png_impl Ok");
     assert_eq!(
         b, b_impl,
-        "html_to_png_with_fonts must produce byte-identical PNG"
+        "html_to_png_with_render_fonts must produce byte-identical PNG"
     );
 }
 
@@ -148,27 +145,23 @@ fn html_to_png_propagates_parse_error_from_io() {
     );
 }
 
-#[test]
-fn a_bundled_layer_builds_in_parallel_and_the_installed_one_does_not() {
-    let mut dom = raikiri_dom::Document::new();
-    enable_inline_engine(&mut dom, system_inline_fonts());
-    assert!(dom.inline_formatting_enabled());
-    assert!(!dom.ifc_parallel_build());
-    let bundled = raikiri_html::FontContextBuilder::new()
+fn ahem_fonts() -> raikiri_html::RenderFonts {
+    raikiri_html::FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
-        .build_fonts()
-        .expect("fonts");
-    let mut dom = raikiri_dom::Document::new();
-    enable_inline_engine(&mut dom, Some((bundled.collection().clone(), true)));
-    assert!(dom.inline_formatting_enabled());
-    assert!(dom.ifc_parallel_build());
+        .build()
+        .expect("fonts")
 }
 
 #[test]
-fn no_inline_fonts_leaves_the_document_on_the_parley_path() {
+fn a_bundled_font_set_builds_in_parallel_and_the_installed_fonts_do_not() {
     let mut dom = raikiri_dom::Document::new();
-    enable_inline_engine(&mut dom, None);
+    use_fonts(&mut dom, None);
     assert!(!dom.inline_formatting_enabled());
+    assert!(!dom.ifc_parallel_build());
+    let mut dom = raikiri_dom::Document::new();
+    use_fonts(&mut dom, Some(ahem_fonts()));
+    assert!(dom.inline_formatting_enabled());
+    assert!(dom.ifc_parallel_build());
 }
 
 const AHEM: &[u8] = include_bytes!(concat!(

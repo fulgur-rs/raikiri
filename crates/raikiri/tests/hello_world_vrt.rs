@@ -1,10 +1,10 @@
 //! hello-world VRT pinned to WPT bundled fonts.
 //!
-//! Acceptance criteria: `raikiri::html_to_png_with_fonts(HELLO, font_ctx)`
+//! Acceptance criteria: `raikiri::html_to_png_with_render_fonts(HELLO, fonts)`
 //! produces output byte-identical to `tests/reference/hello-world/expected/page-0000.png`.
-//! `font_ctx` is a pinned `FontContext` built from `target/wpt/fonts` (after WPT fetch)
-//! via `build_wpt_font_ctx`. For cross-machine determinism, it does not
-//! fall back to system fonts.
+//! `fonts` is a font set of `Ahem.ttf` from `target/wpt/fonts` (after WPT fetch)
+//! built by `FontCollectionBuilder`, whose generic families all map to Ahem.
+//! For cross-machine determinism, it does not fall back to system fonts.
 //!
 //! # How to run (spec §9.2)
 //!
@@ -40,7 +40,6 @@
 //! regenerates expected/ (following raikiri-vrt::reference's UPDATE_GOLDENS_ENV convention).
 //! Spec §5.2 requires `Tolerance::EXACT` for Tier 1 (Linux x86_64).
 
-use raikiri_dom::build_wpt_font_ctx;
 use raikiri_vrt::reference::{Tolerance, run_and_compare};
 use std::path::PathBuf;
 
@@ -74,11 +73,15 @@ fn hello_world_renders_pixel_exact() {
         fonts_dir.display()
     );
 
-    let font_ctx = build_wpt_font_ctx(&fonts_dir).expect("build_wpt_font_ctx must succeed");
+    let ahem = std::fs::read(fonts_dir.join("Ahem.ttf")).expect("Ahem.ttf must be readable");
+    let fonts = raikiri::FontCollectionBuilder::new()
+        .font_bytes("Ahem", ahem)
+        .build()
+        .expect("the Ahem font set must build");
 
     run_and_compare(&fixture_dir, Tolerance::EXACT, |input_bytes| {
-        let png = raikiri::html_to_png_with_fonts(input_bytes, font_ctx)
-            .expect("html_to_png_with_fonts must succeed");
+        let png = raikiri::html_to_png_with_render_fonts(input_bytes, fonts.clone())
+            .expect("html_to_png_with_render_fonts must succeed");
         vec![png]
     });
 }

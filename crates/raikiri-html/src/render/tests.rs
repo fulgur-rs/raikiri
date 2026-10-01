@@ -31,9 +31,9 @@ impl FontFaceLoader for NoLoader {
 }
 
 fn ahem_fonts() -> crate::RenderFonts {
-    crate::FontContextBuilder::new()
+    crate::FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
-        .build_fonts()
+        .build()
         .expect("fonts")
 }
 
@@ -60,20 +60,16 @@ fn a_bundled_font_set_enables_parallel_builds_and_the_system_layer_does_not() {
 }
 
 #[test]
-fn resources_that_switch_the_engine_off_leave_the_document_alone() {
-    for resources in [
-        RenderResources::new().inline_formatting(false),
-        RenderResources::new().font_context(FontContext::new()),
-    ] {
-        let mut dom = raikiri_dom::Document::new();
-        enable_inline_engine(
-            &mut dom,
-            &resources,
-            &FontFaceRegistry::default(),
-            &NoLoader,
-        );
-        assert!(!dom.inline_formatting_enabled());
-    }
+#[allow(deprecated)]
+fn the_inline_formatting_switch_no_longer_turns_the_engine_off() {
+    let mut dom = raikiri_dom::Document::new();
+    enable_inline_engine(
+        &mut dom,
+        &RenderResources::new().inline_formatting(false),
+        &FontFaceRegistry::default(),
+        &NoLoader,
+    );
+    assert!(dom.inline_formatting_enabled());
 }
 
 mod pipeline_tests;

@@ -57,7 +57,7 @@
 //!    stub, and this benchmark does not call the now-implemented neutral
 //!    `raikiri_html::layout` bridge. The only rendering path measured here
 //!    is [`raikiri::html_to_png`] /
-//!    [`raikiri::html_to_png_with_fonts`]
+//!    [`raikiri::html_to_png_with_render_fonts`]
 //!    (`parse_html` → `layout_single_page` → `build_page_scene` →
 //!    `PageScene::rasterize`), and it is hard-pinned to a single `PageBox::A4`
 //!    page (`crates/raikiri/src/html_to_png.rs` doc comment: "single page only").
@@ -66,7 +66,7 @@
 //!    **What this file actually does about it:** it does not construct a
 //!    page-count axis at all. There is no `n_pages` parameter anywhere in
 //!    this file, and [`bench_pages`]'s timed closure calls
-//!    `html_to_png_with_fonts` exactly **once** per criterion iteration —
+//!    `html_to_png` exactly **once** per criterion iteration —
 //!    not N times, not in a batch. What the two benchmark variants actually
 //!    vary is `n_tables` (10 vs. 100), rendered onto a single synthetic page
 //!    each time; that is the *table* axis, not a page axis. Criterion's own
@@ -164,21 +164,15 @@
 //!
 //! # What's actually inside the timed region
 //!
-//! `bench_pages`'s timed closure calls `font_ctx.clone()` on every iteration
-//! (see [`FontContext`]'s call site) rather than passing a shared reference —
-//! [`raikiri::html_to_png_with_fonts`] takes `FontContext` by value. Measured
-//! directly on this host (1000 clones, outside any criterion timing): **~157
-//! ns/clone**, i.e. roughly 0.0002% of a `page_tables_100` iteration (~66 ms).
-//! The measured unit is therefore "clone + render", not "render" in
-//! isolation, but the clone's share is negligible next to the render cost —
-//! unlike the alternative of calling `FontContext::new()` per iteration,
-//! which would re-run system font discovery on every sample and dominate the
-//! measurement instead.
+//! [`bench_pages`] renders with [`raikiri::html_to_png`]: text is laid out
+//! with the installed fonts, whose process-wide font layer is built once
+//! (outside the timed region, by the probe render) and shared by every
+//! iteration.
 
 use criterion::{Criterion, Throughput};
 use raikiri::{
-    FontContext, FontContextBuilder, ParseOptions, RenderFonts, html_to_png,
-    html_to_png_with_fonts, html_to_png_with_render_fonts, parse_html,
+    FontCollectionBuilder, ParseOptions, RenderFonts, html_to_png, html_to_png_with_render_fonts,
+    parse_html,
 };
 use std::fmt::Write as _;
 
@@ -196,7 +190,7 @@ const COLS: usize = 4;
 /// support (`crates/raikiri-html/src/sink.rs`), the same mechanism
 /// `minimal.css`-style UA rules use — no `ParseOptions::extra_stylesheets`
 /// integration logic is needed, so this stays reachable through the public
-/// `html_to_png`/`html_to_png_with_fonts` entry points as-is.
+/// `html_to_png`/`html_to_png_with_render_fonts` entry points as-is.
 ///
 /// `table, tr, td { display: block; }` is **not** load-bearing for the layout
 /// path taken today: `crates/raikiri-dom/src/layout.rs` maps
@@ -238,7 +232,7 @@ fn build_page_html(n_tables: usize) -> String {
 /// broken pipeline:
 ///
 /// - **DOM side**: a well-formed PNG with an *empty* page would still pass a
-///   PNG-magic-only check. `html_to_png`/`_with_fonts` do not expose the
+///   PNG-magic-only check. `html_to_png`/`_with_render_fonts` do not expose the
 ///   intermediate DOM, so this parses the same bytes a second time via
 ///   [`raikiri::parse_html`] (throwaway, untimed) and asserts the cascaded
 ///   node count clears a floor of 2 nodes per cell (the `<td>` element itself
@@ -251,7 +245,7 @@ fn build_page_html(n_tables: usize) -> String {
 ///   that purpose.
 /// - **Raster side**: the actual timed function's own output must be a
 ///   well-formed, non-trivial PNG (magic bytes present).
-fn probe(html: &str, font_ctx: &FontContext, n_tables: usize) {
+fn probe(html: &str, n_tables: usize) {
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -268,8 +262,7 @@ fn probe(html: &str, font_ctx: &FontContext, n_tables: usize) {
          cells? foster-parenting?)"
     );
 
-    let png =
-        html_to_png_with_fonts(html.as_bytes(), font_ctx.clone()).expect("html_to_png_with_fonts");
+    let png = html_to_png(html.as_bytes()).expect("html_to_png");
     const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
     assert!(
         png.len() > 8 && png[..8] == PNG_MAGIC,
@@ -291,11 +284,9 @@ fn bench_pages(c: &mut Criterion) {
     let mut group = c.benchmark_group("fulgur_baseline_pages");
     group.sample_size(20);
 
-    let font_ctx = FontContext::new();
-
     for n_tables in [10usize, 100usize] {
         let html = build_page_html(n_tables);
-        probe(&html, &font_ctx, n_tables);
+        probe(&html, n_tables);
 
         // Throughput is denominated in tables-per-second: table count is the
         // axis under study, and unlike `cascade.rs`'s declaration-count
@@ -312,14 +303,7 @@ fn bench_pages(c: &mut Criterion) {
             // the drop is not a comparable fraction of the measurement, so
             // the constraint does not transfer.
             b.iter(|| {
-                // `font_ctx.clone()` runs inside the timed closure — see the
-                // module doc's "Measured once" section for why this is a
-                // deliberate, measured trade rather than an oversight:
-                // cloning is ~157ns, negligible next to a tens-of-ms render,
-                // while re-running `FontContext::new()` per iteration would
-                // re-enumerate system fonts and dominate the measurement.
-                let png = html_to_png_with_fonts(html.as_bytes(), font_ctx.clone())
-                    .expect("html_to_png_with_fonts must succeed");
+                let png = html_to_png(html.as_bytes()).expect("html_to_png must succeed");
                 assert!(!png.is_empty());
             });
         });
@@ -328,55 +312,28 @@ fn bench_pages(c: &mut Criterion) {
     group.finish();
 }
 
-/// Ahem, a bundled font for the variants that compare the two inline
-/// layout engines on one font set.
+/// Ahem, a bundled font for the bundled-font variant.
 const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
 
-/// The same workload laid out by each inline layout engine.
-///
-/// [`bench_pages`] measures `html_to_png_with_fonts`, which keeps every
-/// paragraph on the parley path. Here:
-///
-/// - `page_tables_N_inline_engine` is [`html_to_png`], what a consumer gets
-///   by default: the inline engine over the installed fonts (one shared font
-///   layer per process, paragraphs built in sequence). Like every
-///   `html_to_png` call it also builds a parley `FontContext::new()` for the
-///   paragraphs the engine leaves to parley, which re-enumerates the system
-///   fonts, so it is not directly comparable with `page_tables_N`.
-/// - `page_tables_N_bundled_parley` and `page_tables_N_bundled_inline_engine`
-///   lay the page out with one bundled font (Ahem) through
-///   `html_to_png_with_fonts` (parley) and `html_to_png_with_render_fonts`
-///   (the inline engine, which may build paragraphs on several threads with a
-///   bundled font set). Both clone a prepared font set per iteration, so the
-///   pair isolates the engine.
+/// The same workload with one bundled font (Ahem) through
+/// [`html_to_png_with_render_fonts`]: the inline engine may build paragraphs
+/// on several threads with a bundled font set. The font set is cloned per
+/// iteration (it shares its faces).
 fn bench_inline_engine(c: &mut Criterion) {
     let mut group = c.benchmark_group("fulgur_baseline_pages");
     group.sample_size(20);
 
-    let fonts: RenderFonts = FontContextBuilder::new()
+    let fonts: RenderFonts = FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
-        .build_fonts()
+        .build()
         .expect("Ahem builds a font set");
 
     for n_tables in [10usize, 100usize] {
         let html = build_page_html(n_tables);
         group.throughput(Throughput::Elements(n_tables as u64));
-        group.bench_function(format!("page_tables_{n_tables}_inline_engine"), |b| {
-            b.iter(|| {
-                let png = html_to_png(html.as_bytes()).expect("html_to_png must succeed");
-                assert!(!png.is_empty());
-            });
-        });
-        group.bench_function(format!("page_tables_{n_tables}_bundled_parley"), |b| {
-            b.iter(|| {
-                let png = html_to_png_with_fonts(html.as_bytes(), fonts.context().clone())
-                    .expect("html_to_png_with_fonts must succeed");
-                assert!(!png.is_empty());
-            });
-        });
         group.bench_function(
             format!("page_tables_{n_tables}_bundled_inline_engine"),
             |b| {

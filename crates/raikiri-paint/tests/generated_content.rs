@@ -23,13 +23,7 @@ fn nested_block_generated_counter_content_paints_in_flow() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &document, &cascade, PageBox::A4);

@@ -210,12 +210,7 @@ fn catch_row(id: &str, body: impl FnOnce() -> (Status, String)) -> Row {
     }
 }
 
-fn reftest_status(
-    wpt_root: &Path,
-    id: &str,
-    inline_formatting: bool,
-    wpt_fonts: bool,
-) -> (Status, String) {
+fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
     let test = wpt_root.join(id);
     let pairs = match discover_pairs_for_file_with_wpt_root(&test, Some(wpt_root)) {
         Ok(pairs) => pairs,
@@ -226,8 +221,6 @@ fn reftest_status(
     }
     // A baseline taken on the installed fonts would depend on the machine.
     let config = ReftestConfig {
-        inline_formatting,
-        wpt_fonts,
         require_inline_fonts: true,
         ..ReftestConfig::default()
     };
@@ -329,26 +322,13 @@ fn parsing_status(wpt_root: &Path, id: &str) -> (Status, String) {
 /// known-issues prefix filter is deliberately not applied: it overlaps the
 /// baseline.
 pub fn run_id(wpt_root: &Path, id: &str) -> Row {
-    let options = ReportOptions::default();
-    run_id_with_options(wpt_root, id, options.inline_formatting, options.wpt_fonts)
-}
-
-/// [`run_id`] with the shodo inline engine switched on or off.
-pub fn run_id_with_options(
-    wpt_root: &Path,
-    id: &str,
-    inline_formatting: bool,
-    wpt_fonts: bool,
-) -> Row {
     // Reference lookup and dynamic reftests need an absolute root.
     let wpt_root = std::fs::canonicalize(wpt_root).unwrap_or_else(|_| wpt_root.to_path_buf());
     let wpt_root = wpt_root.as_path();
     if is_parsing_id(id) {
         catch_row(id, || parsing_status(wpt_root, id))
     } else {
-        catch_row(id, || {
-            reftest_status(wpt_root, id, inline_formatting, wpt_fonts)
-        })
+        catch_row(id, || reftest_status(wpt_root, id))
     }
 }
 
@@ -402,16 +382,9 @@ pub fn run_ids(
     wpt_root: &Path,
     ids: &[String],
     jobs: usize,
-    inline_formatting: bool,
-    wpt_fonts: bool,
     on_row: &(dyn Fn(&Row) + Sync),
 ) -> Vec<Row> {
-    run_ids_with(
-        ids,
-        jobs,
-        |id| run_id_with_options(wpt_root, id, inline_formatting, wpt_fonts),
-        on_row,
-    )
+    run_ids_with(ids, jobs, |id| run_id(wpt_root, id), on_row)
 }
 
 /// Options of `run-baseline-report`'s report mode.
@@ -429,10 +402,6 @@ pub struct ReportOptions {
     pub only: Vec<String>,
     /// Stop after this many ids.
     pub limit: Option<usize>,
-    /// Lay out with the shodo inline engine (on unless `--no-ifc`).
-    pub inline_formatting: bool,
-    /// Give the parley path the WPT font directories (with `--no-ifc`).
-    pub wpt_fonts: bool,
 }
 
 impl Default for ReportOptions {
@@ -444,8 +413,6 @@ impl Default for ReportOptions {
             jobs: 1,
             only: Vec::new(),
             limit: None,
-            inline_formatting: true,
-            wpt_fonts: false,
         }
     }
 }
@@ -467,18 +434,13 @@ pub fn parse_report_args(args: &[String]) -> Result<ReportOptions, String> {
             "--wpt-root" => options.wpt_root = PathBuf::from(flag_value(args, index, flag)?),
             "--baseline" => options.baseline = PathBuf::from(flag_value(args, index, flag)?),
             "--output" => options.output = Some(PathBuf::from(flag_value(args, index, flag)?)),
-            "--wpt-fonts" => {
-                options.wpt_fonts = true;
-                index -= 1;
-            }
-            // The engine is the default; `--ifc` is kept so older command
-            // lines still parse.
-            "--ifc" => {
-                options.inline_formatting = true;
-                index -= 1;
-            }
+            // Text is always laid out by the inline engine with the WPT fonts;
+            // these flags are kept so older command lines still parse.
+            "--wpt-fonts" | "--ifc" => index -= 1,
             "--no-ifc" => {
-                options.inline_formatting = false;
+                eprintln!(
+                    "warning: --no-ifc is ignored: the inline engine is the only text layout path"
+                );
                 index -= 1;
             }
             "--only" => options.only.push(flag_value(args, index, flag)?.to_owned()),

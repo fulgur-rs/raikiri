@@ -1,9 +1,8 @@
 //! Resource-aware layout pipeline shared by document layout.
 
-use parley::FontContext;
 use raikiri_dom::{
     FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
-    PageMargins, PageSlice, apply_font_faces, first_page_name,
+    PageMargins, PageSlice, first_page_name,
     layout_pages_with_page_geometry_and_resolver_and_base_url,
     layout_pages_with_resolver_and_base_url, page_content_insets, page_margins,
     resolve_initial_page_context,
@@ -32,7 +31,6 @@ use crate::resources::{
 };
 
 struct RenderExecutionResources<'a> {
-    font_context: FontContext,
     font_faces: &'a FontFaceRegistry,
     font_face_loader: &'a dyn FontFaceLoader,
     effective_base_url: Option<&'a url::Url>,
@@ -570,33 +568,30 @@ fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError
     }
 }
 
-/// Switch the inline engine on for `dom` when `resources` asks for it.
+/// Give `dom` the fonts of `resources` for the inline engine.
 ///
-/// Faces from `@font-face` go into a document layer over the engine's font
-/// layer under their authored family names, so the engine needs no rewriting
-/// of the computed font families the parley path uses. The faces are fetched
-/// through `font_loader`, the loader the parley path uses too, so a source is
-/// fetched once for both. Faces the engine cannot use are already reported by
-/// the parley path, which reads the same sources.
+/// Faces from `@font-face` go into a document layer over the shared font
+/// layer under their authored family names, so computed font families need
+/// no rewriting. The faces are fetched through `font_loader`. Returns which
+/// faces were registered and which had no usable source.
 fn enable_inline_engine(
     dom: &mut raikiri_dom::Document,
     resources: &RenderResources<'_>,
     font_faces: &FontFaceRegistry,
     font_loader: &dyn FontFaceLoader,
-) {
-    let Some(shared) = resources.inline_engine_fonts() else {
-        return;
-    };
-    let fonts = if font_faces.is_empty() {
-        shared
+) -> raikiri_dom::FontFaceApplyReport {
+    let shared = resources.inline_engine_fonts();
+    let (fonts, report) = if font_faces.is_empty() {
+        (shared, raikiri_dom::FontFaceApplyReport::default())
     } else {
-        raikiri_dom::build_inline_document_fonts(&shared, font_faces, font_loader).0
+        raikiri_dom::build_inline_document_fonts(&shared, font_faces, font_loader)
     };
-    dom.enable_inline_formatting(fonts, shodo::limits::Limits::default());
+    dom.set_font_collection(fonts);
     // The layer of the installed fonts loads a face the first time a lookup
     // selects it, so threads would race to decide which face a fallback lands
     // on: only a font set of bundled fonts builds paragraphs in parallel.
     dom.set_ifc_parallel_build(resources.inline_engine_parallel_build());
+    report
 }
 
 pub(crate) struct PipelineOutput {
@@ -649,7 +644,6 @@ pub(crate) fn run_pipeline(
         Arc::clone(&warnings),
     );
     let runtime = RenderExecutionResources {
-        font_context: resources.clone_font_context(),
         font_faces: &doc.font_faces,
         font_face_loader: &font_loader,
         effective_base_url: effective_base_url.as_ref(),
@@ -693,21 +687,13 @@ pub(crate) fn run_pipeline(
             consumer_properties,
         );
     }
-    let mut font_context = runtime.font_context.clone();
-    let mut font_report = apply_font_faces(
-        &mut font_context,
-        &mut first_cascade.computed,
-        runtime.font_faces,
-        runtime.font_face_loader,
-    );
     let page_box = page_box_for_cascade(&first_cascade, &defaults);
 
-    // The inline engine lays out the eligible paragraphs unless the resources
-    // switch it off (see `RenderResources::inline_engine_fonts`). It is
-    // switched on before the first-page probe, which lays out a clone of
-    // this document, so the probe and the layout below use the same engine.
+    // The fonts are given to the document before the first-page probe, which
+    // lays out a clone of this document, so the probe and the layout below
+    // use the same fonts.
     let mut dom = doc.uncascaded.dom.clone();
-    enable_inline_engine(
+    let font_report = enable_inline_engine(
         &mut dom,
         resources,
         runtime.font_faces,
@@ -718,31 +704,22 @@ pub(crate) fn run_pipeline(
         first_query.page_name.as_ref().map(ToString::to_string),
         first_cascade,
         page_box,
-        font_context,
         InitialPageProbeResources::new(Some(&resolver), runtime.effective_base_url),
         |page_name| {
             first_query.page_name = page_name.map(Atom::from);
-            let mut cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
+            let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
                 &doc.uncascaded,
                 media_context,
                 &first_query,
                 consumer_properties,
             );
-            let mut recascade_font_context = runtime.font_context.clone();
-            font_report = apply_font_faces(
-                &mut recascade_font_context,
-                &mut cascade.computed,
-                runtime.font_faces,
-                runtime.font_face_loader,
-            );
             let page_box = page_box_for_cascade(&cascade, &defaults);
-            (cascade, page_box, recascade_font_context)
+            (cascade, page_box)
         },
     )
     .map_err(map_initial_page_context_error)?;
     let first_cascade = resolved_initial_context.cascade;
     let page_box = resolved_initial_context.page_box;
-    let font_context = resolved_initial_context.font_context;
 
     for family in font_report.skipped {
         push_resource_warning(
@@ -764,7 +741,6 @@ pub(crate) fn run_pipeline(
         &mut document,
         &first_cascade,
         page_box,
-        font_context.clone(),
         &resolver,
         runtime.effective_base_url,
     )
@@ -794,7 +770,6 @@ pub(crate) fn run_pipeline(
             &mut document,
             &first_cascade,
             page_box,
-            font_context.clone(),
             &schedule.page_steps,
             &schedule.page_widths,
             &resolver,

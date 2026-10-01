@@ -361,44 +361,44 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     let _defaults = PageDefaults::builder().page_box(PageBox::US_LETTER).build();
 }
 
-/// Compile and run a consumer that chains the VRT font-check API
-/// (`build_wpt_font_ctx`, `FontError`, `FontContext`, `html_to_png_with_fonts`)
-/// using only `use raikiri::*;`, without direct raikiri-dom/parley dependencies.
+const AHEM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+));
+
+/// A consumer builds a font set from its own font bytes and renders with
+/// it, using only `use raikiri::*;`.
 #[test]
-fn external_consumer_can_reference_vrt_font_pin_api() {
-    // 1. All types resolve through `use raikiri::*;`.
-    let _ = std::marker::PhantomData::<(FontContext, FontError)>;
-
-    // 2. build_wpt_font_ctx is callable (expect DirNotFound for a missing directory).
-    let bogus = std::path::Path::new("/definitely/does/not/exist/raikiri-vrt-fonts");
-    let err = match build_wpt_font_ctx(bogus) {
-        Err(e) => e,
-        Ok(_) => panic!("expected Err from missing dir"),
-    };
-    // FontError variants can be matched through the raikiri umbrella.
-    assert!(matches!(err, FontError::DirNotFound(_)));
-
-    // 3. html_to_png_with_fonts accepts FontContext. Compile-check with
-    //    the system-font fallback; the actual render is a smoke test
-    //    that does not require deterministic fonts.
-    let font_ctx = FontContext::new();
-    let _ = html_to_png_with_fonts(&b"<p>x</p>"[..], font_ctx);
+fn external_consumer_renders_with_its_own_fonts() {
+    // Font errors are nameable through the umbrella.
+    let _ = std::marker::PhantomData::<(FontError, FontCollection)>;
+    let fonts: RenderFonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM)
+        .build()
+        .expect("one font is enough");
+    let html = br#"<html><body style="margin:0"><div style="font-family:Ahem;font-size:50px;line-height:50px">X</div></body></html>"#;
+    let png = html_to_png_with_render_fonts(&html[..], fonts).expect("render");
+    let decoder = png::Decoder::new(std::io::Cursor::new(png));
+    let mut reader = decoder.read_info().expect("png header");
+    let mut buffer = vec![0; reader.output_buffer_size().expect("buffer size")];
+    let info = reader.next_frame(&mut buffer).expect("png frame");
+    // Ahem's "X" is a black 1em square: the middle of its 50px box is ink.
+    let pixel = ((25 * info.width + 25) * 4) as usize;
+    assert_eq!(&buffer[pixel..pixel + 3], &[0, 0, 0]);
 }
 
-/// The render font set (`FontContextBuilder::build_fonts`, `RenderFonts`,
-/// `html_to_png_with_render_fonts`, `RenderResources::fonts`) and the
-/// inline-engine switch are nameable with only a `raikiri` dependency.
+/// The render font set (`FontCollectionBuilder`, `RenderFonts`,
+/// `html_to_png_with_render_fonts`, `RenderResources::fonts`) is nameable
+/// with only a `raikiri` dependency.
 #[test]
 fn render_fonts_are_reachable_from_the_facade() {
     let _ = std::marker::PhantomData::<RenderFonts>;
-    let built: Result<RenderFonts, FontContextBuildError> = FontContextBuilder::new().build_fonts();
-    assert!(matches!(built, Err(FontContextBuildError::NoFonts)));
+    let built: Result<RenderFonts, FontCollectionBuildError> = FontCollectionBuilder::new().build();
+    assert!(matches!(built, Err(FontCollectionBuildError::NoFonts)));
     type Input = std::io::Cursor<&'static [u8]>;
     type RenderWithFonts = fn(Input, RenderFonts) -> Result<Vec<u8>, RenderError>;
     let _: RenderWithFonts = html_to_png_with_render_fonts::<Input>;
     let _: fn(RenderResources<'static>, RenderFonts) -> RenderResources<'static> =
         RenderResources::fonts;
-    let resources = RenderResources::new().inline_formatting(false);
-    assert!(!resources.inline_engine_parallel_build());
-    assert!(resources.inline_engine_fonts().is_none());
+    assert!(!RenderResources::new().inline_engine_parallel_build());
 }

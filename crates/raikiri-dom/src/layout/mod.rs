@@ -10,34 +10,29 @@
 
 use crate::page_projection::records::*;
 use raikiri_traits::{NodeId, NodeKind, ReplacedResolver};
-use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::document::Document;
 use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
-    InlineBox, InlineBoxKind, Layout, LayoutContext, LineHeight,
-    OverflowWrap as ParleyOverflowWrap, PositionedLayoutItem, StyleProperty,
-    TextWrapMode as ParleyTextWrapMode, WordBreak as ParleyWordBreak,
+    FontContext, FontFamily, FontStyle, FontWeight, InlineBox, InlineBoxKind, Layout,
+    LayoutContext, PositionedLayoutItem, StyleProperty,
 };
 use raikiri_style::property::{
     AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
     CalcLengthPercentage, ClearValue, ColumnCountValue, ContentAlignmentValue, Direction,
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
-    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length,
-    LengthOrAuto, LineBreak, OverflowValue, OverflowWrap, PositionValue, PropertyKey,
-    PropertyValue, RubyPosition, SelfAlignmentValue, TextAlign, TextAutospace, TextJustify,
-    TextTransform, TextWrapMode, VerticalAlign, WhiteSpace, WordBreak, WordSpaceTransform,
-    WritingMode,
+    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Length,
+    LengthOrAuto, OverflowValue, PositionValue, PropertyKey, PropertyValue, RubyPosition,
+    SelfAlignmentValue, TextAlign, TextAutospace, VerticalAlign, WhiteSpace, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackListComponent,
     ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedTabSize, ComputedTextIndent, ComputedValues,
+    ComputedTextIndent, ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
@@ -91,7 +86,6 @@ pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::measure_ch_advance;
 pub use inline_text::measure_ch_advance_for_font_key;
-pub(crate) use inline_text::preshape_text;
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 

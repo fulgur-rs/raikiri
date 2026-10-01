@@ -35,8 +35,10 @@ fn lay_out(doc: &mut Document, cascade: &raikiri_style::CascadeResult, inline_fo
         let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
         doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
     }
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
-    layout_single_page(doc, cascade, PageBox::A4, fonts).expect("layout");
+    if !doc.inline_formatting_enabled() {
+        doc.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("font ctx"));
+    }
+    layout_single_page(doc, cascade, PageBox::A4).expect("layout");
 }
 
 /// `(glyph id, absolute x, absolute y, brush)` of every recorded glyph.
@@ -1669,8 +1671,7 @@ fn a_block_child_under_a_decoration_is_underlined_like_the_parley_path() {
 fn a_propagated_underline_stays_on_its_box_across_a_line_relative_inline() {
     // CSS Text Decoration 3, 2.1: a decoration propagated from the root is
     // drawn at the root's position across all its text, including a
-    // descendant aligned to the line's top. The parley path draws the
-    // descendant's part at that descendant's own top instead (y 3.5).
+    // descendant aligned to the line's top.
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
         let span = doc.append_element(
@@ -1688,13 +1689,6 @@ fn a_propagated_underline_stays_on_its_box_across_a_line_relative_inline() {
         [
             (0, px(8.5), px(20.0), px(9.5)),
             (px(20.0), px(8.5), px(60.0), px(9.5))
-        ]
-    );
-    assert_eq!(
-        decoration_fills(&off),
-        [
-            (0, px(8.5), px(20.0), px(9.5)),
-            (px(20.0), px(3.5), px(60.0), px(4.5))
         ]
     );
     assert_eq!(ink(&on), ink(&off));
@@ -1865,12 +1859,11 @@ fn lines_after_a_block_moved_to_the_next_page_are_painted_there() {
     });
     let dir = std::path::Path::new(FONT_DIR);
     let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    doc.set_font_collection(collection);
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
-    raikiri_dom::layout_pages(&mut doc, &cascade, page, fonts).expect("pages");
+    raikiri_dom::layout_pages(&mut doc, &cascade, page).expect("pages");
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     let mut scene = Scene::new();
     crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0);
@@ -1984,12 +1977,11 @@ fn an_inline_box_after_a_block_moved_to_the_next_page_is_painted_with_its_line()
     });
     let dir = std::path::Path::new(FONT_DIR);
     let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    doc.set_font_collection(collection);
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
-    raikiri_dom::layout_pages(&mut doc, &cascade, page, fonts).expect("pages");
+    raikiri_dom::layout_pages(&mut doc, &cascade, page).expect("pages");
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     let mut scene = Scene::new();
     crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0);

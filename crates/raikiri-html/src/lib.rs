@@ -8,16 +8,15 @@
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
 //! - Layout layer: [`layout`] returns an owned [`DocumentLayout`] with
 //!   borrowed [`Page`] and [`Fragment`] views for drawing consumers.
-//! - Inline layout: paragraphs are laid out by the shodo inline engine
-//!   unless [`RenderResources::inline_formatting`] switches it off; a font set
-//!   both engines share comes from [`FontContextBuilder::build_fonts`] and is
-//!   passed with [`RenderResources::fonts`].
+//! - Inline layout: paragraphs are laid out by the shodo inline engine with
+//!   the installed fonts, or with a font set built by
+//!   [`FontCollectionBuilder`] and passed with [`RenderResources::fonts`].
 
 mod cascade;
 mod document;
 mod document_layout;
 mod document_parse;
-mod font_context;
+mod font_collection;
 mod import;
 pub use import::expand_live_stylesheet_imports;
 mod parse;
@@ -39,8 +38,9 @@ pub use document_layout::{
     LayoutStatus, Link, Page, PageGeometry, PageMode, RepeatKind, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
-pub use font_context::{
-    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES, RenderFonts,
+pub use font_collection::{
+    BundledFont, FontCollectionBuildError, FontCollectionBuilder, MAX_BUNDLED_FONT_BYTES,
+    RenderFonts,
 };
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
 pub use resources::{
@@ -54,11 +54,11 @@ pub use ua::MINIMAL_UA_CSS;
 // Types that appear in the signatures above, re-exported so a consumer that
 // depends only on this crate (plus `raikiri-dom` / `raikiri-traits`) can name
 // them without depending on the style or text-layout implementation crates.
-pub use parley::FontContext;
 pub use raikiri_style::{
     CascadeResult, ComputedValues, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
     MediaContext, MediaType, PageCascadeResult, PageContextQuery,
 };
+pub use shodo::font::FontCollection;
 
 pub use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, LayoutConfigBuilder, NodeId,

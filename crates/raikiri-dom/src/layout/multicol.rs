@@ -895,24 +895,6 @@ pub(crate) fn multicol_metrics_for_node(
 }
 
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-pub(crate) fn multicol_column_width_for_text(
-    cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
-    text_id: usize,
-    fallback_width: f32,
-) -> Option<f32> {
-    // Direct text is fragmented by this tranche. Descendant text inside an
-    // inline element keeps its intrinsic run width so inline backgrounds and
-    // overflow retain the existing paint behavior (the basic WPTs rely on it).
-    let parent = parent_of[text_id]?;
-    if has_vertical_writing_mode(cascade, parent_of, parent) {
-        return None;
-    }
-    multicol_metrics_for_node(cascade, parent_of, parent, fallback_width)
-        .map(|metrics| metrics.column_width)
-}
-
-// cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 pub(crate) fn line_height_px(cv: &ComputedValues) -> f32 {
     let font_size = cv.font_size.px().max(0.0);
     match cv.line_height {

@@ -1,14 +1,13 @@
-//! Which engine lays out the paragraphs of a document laid out through the
-//! public entry points.
+//! The inline engine lays out the paragraphs of a document laid out through
+//! the public entry points.
 //!
-//! The fixtures use an input the two engines lay out differently: two
-//! consecutive `<br>` leave an empty line on the inline engine (30px at
-//! `line-height:10px`) and none on the parley path (20px).
+//! The fixtures use two consecutive `<br>`, which leave an empty line on the
+//! inline engine (30px at `line-height:10px`).
 
 use std::sync::Mutex;
 
 use raikiri_html::{
-    FontContextBuilder, FragmentKind, LayoutConfig, LayoutOptions, LayoutStatus, PageDefaults,
+    FontCollectionBuilder, FragmentKind, LayoutConfig, LayoutOptions, LayoutStatus, PageDefaults,
     RenderFonts, RenderResources, ResourceLimits, layout, parse_html_with_resources,
 };
 use raikiri_traits::{FetchOutcome, FetchedResource, NetworkError, NetworkProvider, Request};
@@ -29,9 +28,9 @@ const FACE_URL: &str = "https://example.test/ahem.ttf";
 const FONT_FACE_PAGE: &str = r#"<html><head><style>@font-face{font-family:Boxy;src:url(https://example.test/ahem.ttf)}</style></head><body style="margin:0"><div id="box" style="font-family:Boxy;font-size:10px;line-height:10px;width:200px">aaaa<br><br>bbbb</div><div id="wrap" style="font-family:Boxy;font-size:10px;line-height:10px;width:40px">aa aa aa aa</div></body></html>"#;
 
 fn ahem_fonts() -> RenderFonts {
-    FontContextBuilder::new()
+    FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
-        .build_fonts()
+        .build()
         .expect("fonts")
 }
 
@@ -83,21 +82,12 @@ fn the_engine_lays_out_consecutive_breaks_with_the_empty_line() {
 }
 
 #[test]
-fn switching_the_engine_off_gives_the_parley_height() {
+#[allow(deprecated)]
+fn the_inline_formatting_switch_no_longer_turns_the_engine_off() {
     let resources = RenderResources::new()
         .fonts(ahem_fonts())
         .inline_formatting(false);
-    assert_eq!(box_height(BREAKS, &resources, "box"), 20.0);
-}
-
-#[test]
-fn a_caller_built_font_context_keeps_the_parley_path() {
-    let context = FontContextBuilder::new()
-        .font_bytes("Ahem", AHEM.to_vec())
-        .build()
-        .expect("context");
-    let resources = RenderResources::new().font_context(context);
-    assert_eq!(box_height(BREAKS, &resources, "box"), 20.0);
+    assert_eq!(box_height(BREAKS, &resources, "box"), 30.0);
 }
 
 #[test]
@@ -155,7 +145,7 @@ fn an_at_font_face_source_is_fetched_once_per_layout() {
     let server = FontServer::default();
     let resources = RenderResources::new().network_provider(&server);
     let _ = box_height(FONT_FACE_PAGE, &resources, "box");
-    // One layout: the parley path and the engine share one fetch.
+    // One layout fetches the source once.
     assert_eq!(server.fetch_count(FACE_URL), 1);
 }
 

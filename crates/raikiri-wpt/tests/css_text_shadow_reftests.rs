@@ -14,11 +14,6 @@ fn zero_blur_text_shadow_is_pixel_exact_at_800x600() {
     let mut config = ReftestConfig::default();
     config.width = 800;
     config.height = 600;
-    // The reference draws the text in absolutely positioned spans, which the
-    // inline engine does not lay out, so only the test would take the engine
-    // and the pair would compare two engines' glyph placement instead of the
-    // shadow. Keep both sides on the parley path.
-    config.inline_formatting = false;
     let result = run_pair(&pairs[0], config).unwrap();
     assert!(
         matches!(result.outcome, TestOutcome::Pass),

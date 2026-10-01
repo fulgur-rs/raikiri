@@ -1,6 +1,5 @@
 use super::*;
 use crate::build_cascaded;
-use parley::FontContext;
 use raikiri_html::{ParseOptions, parse};
 
 /// Parse, cascade, and lay out a hello-world HTML document, then return
@@ -15,8 +14,7 @@ fn hello_world_post_layout() -> (Document, CascadeResult) {
     let uncascaded = parse(&b"<p>Hi</p>"[..], &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     (dom, cascade)
 }
 
@@ -85,8 +83,7 @@ fn build_page_scene_consumes_cascaded_margin_box_rules() {
     .expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
 
     assert_eq!(scene.margin_boxes.len(), 1);
@@ -188,8 +185,7 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
         let cascade = build_cascaded(&uncascaded);
         let mut dom = uncascaded.dom;
-        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-            .expect("layout Ok");
+        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
         let scene = build_page_scene(&dom, &cascade, PageBox::A4);
         assert_eq!(
             scene.body_offset_pt, expected_offset,
@@ -232,8 +228,7 @@ fn body_margin_lone_5px_collapses_to_8px() {
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     assert_eq!(scene.body_offset_pt, (8.0, 3.0));
     let idx = (0..dom.node_count())
@@ -257,15 +252,13 @@ fn body_margin_lone_5px_collapses_to_8px() {
 /// Check that PageScene::rasterize returns the same PNG bytes as
 /// html_to_png. This tests verbatim reuse of the byte-identical sequence
 /// and pins the primary regression signal locally in this module. The
-/// fixture is laid out by the parley path with the installed fonts, so it is
-/// compared with the variant that lays out the same way.
+/// fixture is laid out with the installed fonts, as `html_to_png` does.
 #[test]
 fn rasterize_matches_html_to_png_bytes() {
     let (dom, cascade) = hello_world_post_layout();
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     let via_scene = scene.rasterize(&dom, &cascade, PageBox::A4);
-    let via_umbrella = crate::html_to_png_with_fonts(&b"<p>Hi</p>"[..], FontContext::new())
-        .expect("html_to_png_with_fonts Ok");
+    let via_umbrella = crate::html_to_png(&b"<p>Hi</p>"[..]).expect("html_to_png Ok");
     assert_eq!(
         via_scene, via_umbrella,
         "PageScene::rasterize must produce byte-identical output to html_to_png"
@@ -340,8 +333,7 @@ fn body_margin_helpers_cover_barrier_and_empty_fallbacks() {
     .expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let body_idx = (0..dom.node_count())
         .find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("body"))
         .expect("body resolves");
@@ -383,8 +375,7 @@ fn body_margin_helpers_cover_first_child_blockers() {
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
         let cascade = build_cascaded(&uncascaded);
         let mut dom = uncascaded.dom;
-        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-            .expect("layout Ok");
+        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
         let scene = build_page_scene(&dom, &cascade, PageBox::A4);
         assert!(
             scene.body_offset_pt.0.is_finite(),
@@ -423,8 +414,7 @@ fn body_margin_helpers_cover_computed_fallbacks() {
         parse(&b"<div id=b style='margin-top:10px'></div>"[..], &opts).expect("parse Ok");
     let mut cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let body_idx = (0..dom.node_count())
         .find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("body"))
         .expect("body resolves");
@@ -456,8 +446,7 @@ fn body_margin_helpers_cover_html_barrier_fallback() {
     .expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     assert!(scene.body_offset_pt.0.is_finite());
     assert!(scene.body_offset_pt.1.is_finite());
@@ -481,12 +470,8 @@ fn scene_with_engine(html: &str) -> (Document, CascadeResult, PageScene) {
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
     let dir = std::path::Path::new(FONT_DIR);
-    dom.enable_inline_formatting(
-        raikiri_dom::build_wpt_font_collection(dir).expect("collection"),
-        shodo::limits::Limits::default(),
-    );
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font context");
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, fonts).expect("layout Ok");
+    dom.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     (dom, cascade, scene)
 }

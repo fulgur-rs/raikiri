@@ -88,9 +88,24 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
             Style::default(),
             Some(display),
         );
-        let a = document.append_element(Some(parent), "div", Style::default(), Some("order:2"));
-        let b = document.append_element(Some(parent), "div", Style::default(), Some("order:-1"));
-        let c = document.append_element(Some(parent), "div", Style::default(), Some("order:2"));
+        let a = document.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;order:2"),
+        );
+        let b = document.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;order:-1"),
+        );
+        let c = document.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;order:2"),
+        );
         (parent, [a, b, c])
     }
 
@@ -100,13 +115,13 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
         Some(flex),
         "div",
         Style::default(),
-        Some("order:10;position:absolute"),
+        Some("display:block;order:10;position:absolute"),
     );
     let absolute_second = document.append_element(
         Some(flex),
         "div",
         Style::default(),
-        Some("order:5;position:absolute"),
+        Some("display:block;order:5;position:absolute"),
     );
     let (grid, grid_items) = parent_with_ordered_children(&mut document, "display:grid");
     let (block, block_items) = parent_with_ordered_children(&mut document, "display:block");
@@ -142,25 +157,25 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("z-index:1;order:1"),
+        Some("display:block;z-index:1;order:1"),
     );
     let z_two_early = document.append_element(
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("z-index:2;order:-1"),
+        Some("display:block;z-index:2;order:-1"),
     );
     let z_one_early = document.append_element(
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("z-index:1;order:0"),
+        Some("display:block;z-index:1;order:0"),
     );
     let positioned_z_two = document.append_element(
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("position:relative;z-index:2;order:-2"),
+        Some("display:block;position:relative;z-index:2;order:-2"),
     );
 
     // Out-of-flow flex children are treated as order 0 for painting. Their
@@ -175,19 +190,19 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
         Some(positioned_parent),
         "div",
         Style::default(),
-        Some("position:absolute;order:100"),
+        Some("display:block;position:absolute;order:100"),
     );
     let relative_late = document.append_element(
         Some(positioned_parent),
         "div",
         Style::default(),
-        Some("position:relative;order:1"),
+        Some("display:block;position:relative;order:1"),
     );
     let relative_early = document.append_element(
         Some(positioned_parent),
         "div",
         Style::default(),
-        Some("position:relative;order:-1"),
+        Some("display:block;position:relative;order:-1"),
     );
 
     let rules = build_rule_tree(&document);
@@ -574,7 +589,7 @@ fn generated_content_resolves_dom_attributes_and_fallbacks() {
         Some(document.root_index()),
         "div",
         Style::default(),
-        None::<&str>,
+        Some("display:block"),
     );
     document.set_element_attributes(element, vec![("data-value".into(), "Actual".into())]);
     let components = vec![
@@ -737,8 +752,8 @@ fn generated_pseudo_metrics_preserve_before_after_order() {
 #[test]
 fn paint_document_skips_hidden_table_decoration() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let table = document.append_element(
             Some(body),
             "table",
@@ -761,13 +776,7 @@ fn paint_document_skips_hidden_table_decoration() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -783,25 +792,19 @@ fn paint_document_skips_hidden_table_decoration() {
 #[test]
 fn paint_document_orders_literal_pseudos_around_direct_text() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
     document.append_text(
         style,
         r##"div::before { content: "BEFORE " } div::after { content: " AFTER" }"##,
     );
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = document.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let div = document.append_element(Some(body), "div", Style::default(), Some("display:block"));
     document.append_text(div, "BODY");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -809,7 +812,13 @@ fn paint_document_orders_literal_pseudos_around_direct_text() {
         .commands
         .iter()
         .filter_map(|command| match command {
-            RenderCommand::GlyphRun(glyph_run) => Some(glyph_run.transform.as_coeffs()[4]),
+            RenderCommand::GlyphRun(glyph_run) => Some(
+                glyph_run.transform.as_coeffs()[4]
+                    + glyph_run
+                        .glyphs
+                        .first()
+                        .map_or(0.0, |glyph| f64::from(glyph.x)),
+            ),
             _ => None,
         })
         .collect();
@@ -829,15 +838,15 @@ fn paint_document_orders_literal_pseudos_around_direct_text() {
 #[test]
 fn paint_document_offsets_generated_counter_inline_siblings() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
     document.append_text(
             style,
             r##"div { counter-reset: c } div span { counter-increment: c } div span::before { content: counter(c) } div span::after { display: none; content: "hidden" }"##,
         );
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let test = document.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let test = document.append_element(Some(body), "div", Style::default(), Some("display:block"));
     document.append_text(test, "\n");
     document.append_element(Some(test), "span", Style::default(), None::<&str>);
     document.append_text(test, "\n");
@@ -845,13 +854,7 @@ fn paint_document_offsets_generated_counter_inline_siblings() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -866,24 +869,18 @@ fn paint_document_offsets_generated_counter_inline_siblings() {
 #[test]
 fn paint_document_expands_auto_height_for_empty_pseudo_box() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
     document.append_text(
         style,
         r##"div { border: 2px solid black } div::before { content: "A" }"##,
     );
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    document.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    document.append_element(Some(body), "div", Style::default(), Some("display:block"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -1036,25 +1033,25 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: 3px 4px"),
+        Some("display:block;background-position: 3px 4px"),
     );
     let start_percent_id = document.append_element(
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: 25% 50%"),
+        Some("display:block;background-position: 25% 50%"),
     );
     let end_px_id = document.append_element(
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: right 3px bottom 4px"),
+        Some("display:block;background-position: right 3px bottom 4px"),
     );
     let end_percent_id = document.append_element(
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: bottom 50% right 25%"),
+        Some("display:block;background-position: bottom 50% right 25%"),
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -1358,7 +1355,7 @@ fn paint_root_element_border_paints_html_border_sides() {
 
 fn canvas_fixture(page_css: Option<&str>, body_style: Option<&str>) -> (Document, CascadeResult) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     if let Some(css) = page_css {
         let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
@@ -1503,20 +1500,14 @@ fn margin_row_paints_fixed_width_background() {
 
 fn transformed_box_scene(transform: &str, origin: &str) -> Scene {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = document.append_element(Some(html), "body", Style::default(), Some("margin:0"));
     document.append_element(Some(body), "div", Style::default(), Some(format!(
         "display:block;position:absolute;left:10px;top:20px;width:100px;height:50px;background:green;transform:{transform};transform-origin:{origin}"
     )));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).unwrap();
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
     scene
@@ -1592,13 +1583,7 @@ fn transform_markup_scene(markup: &str) -> Scene {
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     scene
@@ -1744,13 +1729,7 @@ fn replaced_inline_image_composes_own_and_ancestor_transform() {
     }
     let mut parsed = raikiri_html::parse("<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0'><img src='https://example.test/green.png' style='width:10px;height:10px;transform:scale(3);transform-origin:0 0'></div>".as_bytes(), &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None }).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     let warnings = crate::paint_single_page_with_images_and_warnings(
         &mut scene,
@@ -1836,7 +1815,7 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
         Some(0),
         "div",
         Style::default(),
-        Some("transform:scale(1) translate(100%,100%);transform-origin:0 0"),
+        Some("display:block;transform:scale(1) translate(100%,100%);transform-origin:0 0"),
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).unwrap();
@@ -3438,8 +3417,11 @@ fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
         let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
         document.enable_inline_formatting(collection, shodo::limits::Limits::default());
     }
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
-    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    if !document.inline_formatting_enabled() {
+        document
+            .set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("font ctx"));
+    }
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
     crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages);
     let mut out = Vec::new();
@@ -3474,8 +3456,6 @@ fn margin_boxes_are_measured_and_drawn_by_the_engine() {
     // `standalone_text_eligible`, which shapes nothing.
     let (_, calls) = margin_box_glyph_ys(true);
     assert_eq!(calls, 4);
-    let (_, off_calls) = margin_box_glyph_ys(false);
-    assert_eq!(off_calls, 0);
 }
 
 #[test]
@@ -4261,8 +4241,11 @@ fn generated_scene(
         let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
         document.enable_inline_formatting(collection, shodo::limits::Limits::default());
     }
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
-    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    if !document.inline_formatting_enabled() {
+        document
+            .set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("font ctx"));
+    }
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
     (document, cascade, scene, div)

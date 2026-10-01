@@ -1449,19 +1449,18 @@ fn replaced_and_svg_elements_are_never_roots() {
 }
 
 #[test]
-fn a_refusal_is_an_error_only_in_engine_only_mode() {
+fn a_refusal_is_always_an_error() {
     use raikiri_traits::LayoutError;
     let refusal = || IfcError::Unsupported {
         node: 3,
         reason: "an internal inconsistency",
     };
     assert!(matches!(
-        super::projection_error(true, 1, refusal()),
-        Err(LayoutError::IfcUnsupported { node: 3, .. })
+        super::projection_error(1, refusal()),
+        LayoutError::IfcUnsupported { node: 3, .. }
     ));
-    assert!(super::projection_error(false, 1, refusal()).is_ok());
     assert!(matches!(
-        super::projection_error(true, 1, IfcError::InvalidNode(5)),
-        Err(LayoutError::IfcUnsupported { node: 5, .. })
+        super::projection_error(1, IfcError::InvalidNode(5)),
+        LayoutError::IfcUnsupported { node: 5, .. }
     ));
 }

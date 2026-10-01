@@ -246,14 +246,14 @@ fn replaced_resource_provider_retains_both_roles() {
 }
 
 #[test]
-fn image_pixel_source_builder_and_font_context_ref() {
+fn image_pixel_source_builder_and_font_collection_ref() {
     let provider = StubImageProvider;
-    let resources = RenderResources::new()
-        .image_pixel_source(&provider)
-        .font_context(parley::FontContext::new());
+    let resources = RenderResources::new().image_pixel_source(&provider);
     let debug = format!("{resources:?}");
     assert!(debug.contains("has_image_pixel_source: true"), "{debug}");
-    let _ = resources.font_context_ref();
+    assert!(resources.font_collection_ref().is_none());
+    let resources = resources.fonts(ahem_fonts(false));
+    assert!(resources.font_collection_ref().is_some());
 }
 
 use std::sync::Barrier;
@@ -1437,28 +1437,21 @@ const AHEM: &[u8] = include_bytes!(concat!(
 ));
 
 fn ahem_fonts(system_fonts: bool) -> crate::RenderFonts {
-    crate::FontContextBuilder::new()
+    crate::FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
         .system_fonts(system_fonts)
-        .build_fonts()
+        .build()
         .expect("fonts")
 }
 
 #[test]
 fn the_default_resources_use_the_system_layer_for_the_inline_engine() {
     let resources = RenderResources::new();
-    let layer = resources.inline_engine_fonts().expect("engine on");
+    let layer = resources.inline_engine_fonts();
     assert_eq!(
         layer.layer_handle().id(),
         raikiri_dom::system_font_collection().layer_handle().id()
     );
-}
-
-#[test]
-fn a_caller_built_font_context_alone_is_an_escape_hatch() {
-    let resources = RenderResources::new().font_context(FontContext::new());
-    assert!(resources.inline_engine_fonts().is_none());
-    assert!(!resources.inline_engine_parallel_build());
 }
 
 #[test]
@@ -1479,57 +1472,31 @@ fn only_a_bundled_font_set_allows_parallel_builds() {
 }
 
 #[test]
-fn switching_the_engine_off_disallows_parallel_builds() {
-    let resources = RenderResources::new()
-        .fonts(ahem_fonts(false))
-        .inline_formatting(false);
-    assert!(!resources.inline_engine_parallel_build());
+#[allow(deprecated)]
+fn the_inline_formatting_switch_is_ignored() {
+    let fonts = ahem_fonts(false);
+    let expected = fonts.collection().layer_handle().id();
+    let resources = RenderResources::new().fonts(fonts).inline_formatting(false);
+    assert_eq!(
+        resources.inline_engine_fonts().layer_handle().id(),
+        expected
+    );
+    assert!(resources.inline_engine_parallel_build());
 }
 
 #[test]
-fn a_font_set_gives_both_engines_the_same_bundle() {
+fn a_font_set_is_the_layer_of_the_inline_engine() {
     let fonts = ahem_fonts(false);
     let expected = fonts.collection().layer_handle().id();
     let resources = RenderResources::new().fonts(fonts);
-    let layer = resources.inline_engine_fonts().expect("engine on");
-    assert_eq!(layer.layer_handle().id(), expected);
-    // The parley half is the context `font_context_ref` reports.
-    let mut context = resources.font_context_ref().clone();
-    assert!(context.collection.family_id("Ahem").is_some());
-}
-
-#[test]
-fn switching_the_engine_off_wins_over_a_font_set() {
-    let resources = RenderResources::new()
-        .fonts(ahem_fonts(false))
-        .inline_formatting(false);
-    assert!(resources.inline_engine_fonts().is_none());
-}
-
-#[test]
-fn switching_the_engine_off_and_on_again_restores_it() {
-    let resources = RenderResources::new()
-        .inline_formatting(false)
-        .inline_formatting(true);
-    assert!(resources.inline_engine_fonts().is_some());
-}
-
-#[test]
-fn a_font_context_set_after_a_font_set_turns_the_engine_off() {
-    let resources = RenderResources::new()
-        .fonts(ahem_fonts(false))
-        .font_context(FontContext::new());
-    assert!(resources.inline_engine_fonts().is_none());
-    assert!(!resources.inline_engine_parallel_build());
-}
-
-#[test]
-fn a_font_set_set_after_a_font_context_turns_the_engine_back_on() {
-    let fonts = ahem_fonts(false);
-    let expected = fonts.collection().layer_handle().id();
-    let resources = RenderResources::new()
-        .font_context(FontContext::new())
-        .fonts(fonts);
-    let layer = resources.inline_engine_fonts().expect("engine on");
-    assert_eq!(layer.layer_handle().id(), expected);
+    assert_eq!(
+        resources.inline_engine_fonts().layer_handle().id(),
+        expected
+    );
+    assert_eq!(
+        resources
+            .font_collection_ref()
+            .map(|layer| layer.layer_handle().id()),
+        Some(expected)
+    );
 }

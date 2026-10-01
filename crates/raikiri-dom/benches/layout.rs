@@ -5,7 +5,6 @@
 //! ```
 
 use criterion::Criterion;
-use parley::FontContext;
 use raikiri_dom::layout::layout_single_page;
 use raikiri_html::{ParseOptions, parse};
 use raikiri_style::{build_rule_tree, cascade};
@@ -13,7 +12,11 @@ use raikiri_traits::PageBox;
 
 fn build_flat_html(n_divs: usize) -> Vec<u8> {
     let mut s = String::with_capacity(n_divs * 48 + 100);
-    s.push_str("<html><head><style>div{width:100px;height:20px;margin:2px}</style></head><body>");
+    // The cascade used here does not apply the user-agent sheet: the block
+    // displays are authored, or no element would lay its text out.
+    s.push_str(
+        "<html><head><style>html,body,div{display:block}div{width:100px;height:20px;margin:2px}</style></head><body>",
+    );
     for i in 0..n_divs {
         s.push_str(&format!("<div id=\"d{i}\">hello {i}</div>"));
     }
@@ -35,7 +38,6 @@ fn prepare(n_divs: usize) -> (Vec<u8>, PageBox) {
 
 fn bench_layout(c: &mut Criterion) {
     let mut group = c.benchmark_group("layout");
-    let font_ctx = FontContext::new();
     for (name, n_divs) in [("layout_flat_500", 500u64), ("layout_flat_2000", 2000u64)] {
         let (html, page_box) = prepare(n_divs as usize);
         group.throughput(criterion::Throughput::Elements(n_divs));
@@ -53,8 +55,7 @@ fn bench_layout(c: &mut Criterion) {
                     (uncascaded.dom, cascade_result)
                 },
                 |(mut doc, cascade_result)| {
-                    let r =
-                        layout_single_page(&mut doc, &cascade_result, page_box, font_ctx.clone());
+                    let r = layout_single_page(&mut doc, &cascade_result, page_box);
                     let _ = std::hint::black_box(r);
                 },
                 criterion::BatchSize::LargeInput,
@@ -83,14 +84,13 @@ fn build_paragraph_html(n: usize) -> Vec<u8> {
 
 /// `layout_single_page` with the shodo inline engine on, over a bundled-only
 /// (Ahem) font collection, with the paragraphs built in sequence and, for the
-/// `_parallel` cases, on several threads. The parley side still gets a system font context,
+/// `_parallel` cases, on several threads. `layout` uses the installed fonts,
 /// so compare these numbers only with each other, not with `layout`.
 fn bench_layout_ifc(c: &mut Criterion) {
     let mut group = c.benchmark_group("layout_ifc");
     let fonts_dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/text-autospace");
     let shared = raikiri_dom::build_wpt_font_collection(&fonts_dir).expect("font collection");
-    let font_ctx = FontContext::new();
     for (name, n, parallel) in [
         ("paragraphs_100", 100usize, false),
         ("paragraphs_1000", 1000usize, false),
@@ -112,14 +112,13 @@ fn bench_layout_ifc(c: &mut Criterion) {
                     let rule_tree = build_rule_tree(&uncascaded.dom);
                     let cascade_result = cascade(&uncascaded.dom, &rule_tree).expect("cascade");
                     let mut dom = uncascaded.dom;
-                    dom.enable_inline_formatting(shared.clone(), shodo::limits::Limits::default());
+                    dom.set_font_collection(shared.clone());
                     // The collection holds Ahem only, no system faces.
                     dom.set_ifc_parallel_build(parallel);
                     (dom, cascade_result)
                 },
                 |(mut doc, cascade_result)| {
-                    let r =
-                        layout_single_page(&mut doc, &cascade_result, page_box, font_ctx.clone());
+                    let r = layout_single_page(&mut doc, &cascade_result, page_box);
                     let _ = std::hint::black_box(r);
                 },
                 criterion::BatchSize::LargeInput,

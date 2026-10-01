@@ -1,25 +1,18 @@
 use super::*;
 
-/// Re-shape text runs for a page-specific containing-block width.
+/// Break the lines of every paragraph again for a page-specific
+/// containing-block width.
 ///
 /// Pagination can change the page geometry after the first layout pass. This
-/// helper refreshes only text layouts, leaving taffy's already computed box
+/// helper refreshes only line breaking, leaving taffy's already computed box
 /// geometry intact, so a page-aware painter can use the correct line breaks for
 /// the page it is about to paint. It is intentionally separate from
 /// [`layout_single_page`] because callers must opt into this narrow
 /// post-pagination operation.
 ///
-/// Paragraphs laid out by the shodo inline engine are broken again at the
-/// width the parley path would re-shape their text at: the content width of
-/// the nearest ancestor with an authored width, otherwise `max_advance`. Their
-/// box geometry is left as laid out.
-pub fn relayout_text_for_width(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    max_advance: f32,
-    page_width: f32,
-    mut font_ctx: FontContext,
-) {
+/// Each paragraph is broken at the content width of the nearest ancestor
+/// with an authored width, otherwise at `max_advance`.
+pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult, max_advance: f32) {
     document.page_projection.clear();
     for node in document.nodes.iter_mut() {
         if let Some(text) = node.data.as_text_mut() {
@@ -31,22 +24,6 @@ pub fn relayout_text_for_width(
             text.text_indent_rebreak = false;
         }
     }
-    let mut layout_cx = LayoutContext::<()>::new();
-    preshape_text(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        max_advance,
-        page_width,
-    );
-    prepare_text_indent_before_taffy(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        max_advance,
-    );
     crate::layout::ifc::flow::rebreak_roots(document, cascade, max_advance);
 }
 
@@ -137,38 +114,32 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 
 /// Lay out a Document on one A4 page (or the specified PageBox).
 ///
+/// Text is laid out by the inline engine with the fonts the Document holds
+/// ([`Document::set_font_collection`]). A Document that was given no fonts
+/// takes the process-wide layer of the installed fonts
+/// ([`crate::system_font_collection`]) on its first layout.
+///
 /// # In-place changes
-/// - Clear every Node.text_layout to `None` (re-entrance safety)
-/// - Bridge computed values to taffy::Style with `apply_computed_to_style` (currently a no-op)
-/// - Shape every Text node with `preshape_text` and store it in Node.text_layout
+/// - Bridge computed values to taffy::Style with `apply_computed_to_style`
+///   and assign the paragraphs of the inline engine
 /// - Set body.style.size to the page content box with `apply_page_content_box_to_body`
 /// - Run taffy with `compute_root_layout` and store results in Node.unrounded_layout
 ///
 /// # Errors
 /// - `LayoutError::Internal` — no `<body>` element found (fragment parses
 ///   are not supported yet) or an internal taffy error
-///
-///   parley shaping (`preshape_text`) **cannot fail**
-///   (see the documentation for that function).
+/// - `LayoutError::IfcUnsupported` / `LayoutError::IfcLimitExceeded` — a
+///   paragraph the inline engine cannot lay out, or one over its limits
 ///
 /// # Current non-goals
-/// - Calling this repeatedly on one Document is safe (text_layout is cleared
-///   each time), but incremental recomputation is planned for later.
+/// - Calling this repeatedly on one Document is safe (per-pass state is
+///   cleared each time), but incremental recomputation is planned for later.
 /// - Consumer PageBox overrides will be handled by future per-page PageBox support.
 /// - Fragment parses (without `<body>`) will be supported later.
-/// # API compatibility
-///
-/// The signature deliberately changed from three arguments
-/// `(document, cascade, page_box)` to four arguments
-/// `(document, cascade, page_box, font_ctx)` (breaking change, choice β).
-/// After weighing choice α (dual API: old three-argument API plus
-/// a new `_with_fonts`), all raikiri-dom callers proved to be in-repo
-/// (12 sites: one production, 11 tests). Explicit internal DI and a unified signature are easier to maintain long-term.
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    mut font_ctx: FontContext,
 ) -> Result<(), LayoutError> {
     document.page_projection.clear();
     // At this observation-side entry point, synchronize membership.
@@ -191,6 +162,11 @@ pub fn layout_single_page(
         document.layout_dirty = true;
     }
     document.layout_cascade_generation = None;
+    // Fonts are only read when a document is laid out: one that was given
+    // none takes the installed fonts here, not when it is created.
+    if document.ifc.is_none() {
+        document.set_font_collection(crate::fonts::system_font_collection());
+    }
 
     // Step 0: text_layout re-entrance clear
     for node in document.nodes.iter_mut() {
@@ -227,28 +203,9 @@ pub fn layout_single_page(
     let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
 
-    // Step 2b: pre-shape all text with parley
-    // The caller constructs font_ctx (FontContext::new() for system fonts,
-    // or raikiri_dom::fonts::build_wpt_font_ctx for verified VRT fonts).
-    let mut layout_cx = LayoutContext::<()>::new();
-    prepare_ch_box_values_before_taffy(document, cascade, &mut font_ctx, &mut layout_cx);
-    preshape_text(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        content_width,
-        page_box.width,
-    );
-    // Resolve font-metric `text-indent: ch` before Taffy so leaf heights use
-    // the same indent that the post-layout realignment will paint.
-    prepare_text_indent_before_taffy(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        content_width,
-    );
+    // Step 2b: resolve `ch` lengths of box properties with the inline
+    // engine's fonts before taffy sizes the boxes.
+    prepare_ch_box_values_before_taffy(document, cascade);
     // Establish the foundational multicolumn fragmentainer projection after
     // text shaping, so direct text can be split by its actual line count.
     // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
@@ -307,11 +264,11 @@ pub fn layout_single_page(
     );
     realign_inline_replaced_children(document, cascade); // cov:ignore: resource-enabled ignored WPT path.
     realign_single_empty_inline_block_indent(document, cascade);
-    // Step 5a: realign text using taffy’s final width (`text-align: center`, etc.).
-    // This changes only glyph offsets, not box geometry, so it could run before or
-    // after invariant checks; put it immediately after compute to use the final width.
+    // Step 5a: post-layout corrections taffy does not make: the static
+    // position of auto-placed grid abspos items, and auto-height ancestors of
+    // floats.
     realign_grid_abspos_static_positions(document, cascade);
-    realign_text_after_layout(document, cascade, &mut font_ctx, &mut layout_cx);
+    propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
     // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only
@@ -386,9 +343,8 @@ pub(crate) fn layout_page_fragments(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
 ) -> Result<Vec<PageFragment>, LayoutError> {
-    let slices = layout_pages(document, cascade, page_box, font_ctx)?;
+    let slices = layout_pages(document, cascade, page_box)?;
     Ok(page_fragments_from_slices(
         document, cascade, page_box, &slices,
     ))
@@ -1017,9 +973,8 @@ pub fn layout_pages(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_steps(document, cascade, page_box, font_ctx, &[])
+    layout_pages_with_page_steps(document, cascade, page_box, &[])
 }
 
 /// Like [`layout_pages`], but first use `resolver` to resolve the intrinsic
@@ -1030,10 +985,9 @@ pub fn layout_pages_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_resolver_and_base_url(document, cascade, page_box, font_ctx, resolver, None)
+    layout_pages_with_resolver_and_base_url(document, cascade, page_box, resolver, None)
 }
 
 /// [`layout_pages_with_resolver`] with relative image URLs resolved against a
@@ -1042,7 +996,6 @@ pub fn layout_pages_with_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
@@ -1055,7 +1008,7 @@ pub fn layout_pages_with_resolver_and_base_url(
         None => crate::image_resolve::resolve_images(document, resolver),
     }
     .map_err(LayoutError::Resolver)?;
-    layout_pages(document, cascade, page_box, font_ctx)
+    layout_pages(document, cascade, page_box)
 }
 
 /// Like [`layout_pages_with_page_geometry`], but first use `resolver` to
@@ -1064,7 +1017,6 @@ pub fn layout_pages_with_page_geometry_and_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
     page_widths: &[f32],
     resolver: &dyn ReplacedResolver,
@@ -1073,7 +1025,6 @@ pub fn layout_pages_with_page_geometry_and_resolver(
         document,
         cascade,
         page_box,
-        font_ctx,
         page_steps,
         page_widths,
         resolver,
@@ -1087,7 +1038,6 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
     page_widths: &[f32],
     resolver: &dyn ReplacedResolver,
@@ -1102,14 +1052,7 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
         None => crate::image_resolve::resolve_images(document, resolver),
     }
     .map_err(LayoutError::Resolver)?;
-    layout_pages_with_page_geometry(
-        document,
-        cascade,
-        page_box,
-        font_ctx,
-        page_steps,
-        page_widths,
-    )
+    layout_pages_with_page_geometry(document, cascade, page_box, page_steps, page_widths)
 }
 
 /// Layout ordinary block flow with an optional per-page content-height schedule.
@@ -1121,10 +1064,9 @@ pub fn layout_pages_with_page_steps(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_geometry(document, cascade, page_box, font_ctx, page_steps, &[])
+    layout_pages_with_page_geometry(document, cascade, page_box, page_steps, &[])
 }
 
 /// Layout ordinary block flow with per-page content heights and widths.
@@ -1138,11 +1080,10 @@ pub fn layout_pages_with_page_geometry(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
     page_widths: &[f32],
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_single_page(document, cascade, page_box, font_ctx)?;
+    layout_single_page(document, cascade, page_box)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
@@ -2451,12 +2392,9 @@ pub fn layout_single_page_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
 ) -> Result<(), LayoutError> {
-    layout_single_page_with_resolver_and_base_url(
-        document, cascade, page_box, font_ctx, resolver, None,
-    )
+    layout_single_page_with_resolver_and_base_url(document, cascade, page_box, resolver, None)
 }
 
 /// [`layout_single_page_with_resolver`] with document-relative image URLs.
@@ -2464,7 +2402,6 @@ pub fn layout_single_page_with_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<(), LayoutError> {
@@ -2479,7 +2416,7 @@ pub fn layout_single_page_with_resolver_and_base_url(
         None => crate::image_resolve::resolve_images(document, resolver),
     }
     .map_err(LayoutError::Resolver)?;
-    layout_single_page(document, cascade, page_box, font_ctx)
+    layout_single_page(document, cascade, page_box)
 }
 
 #[cfg(test)]

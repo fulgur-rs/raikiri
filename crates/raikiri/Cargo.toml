@@ -26,11 +26,6 @@ anyrender_vello_cpu = { workspace = true }
 # Used by encode_png (inlined from raikiri-vrt). reference::decode_png
 # remains in raikiri-vrt, so both crates use tiny-skia.
 tiny-skia           = { workspace = true }
-# FontContext for html_to_png_with_fonts. A direct dependency is needed
-# for the umbrella crate to expose `pub use parley::FontContext`.
-parley              = { workspace = true }
-# The inline engine's font layer, which html_to_png hands to the document.
-shodo               = { workspace = true }
 
 [dev-dependencies]
 cssparser   = { workspace = true }

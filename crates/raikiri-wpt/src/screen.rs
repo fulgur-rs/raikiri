@@ -14,7 +14,7 @@ use raikiri_net::{ImageResolver, SystemHttpProvider};
 use crate::http_resources::{
     NetworkFontLoader, StylesheetUrlProvider, absolutize_img_sources, prepare_cascade_images,
 };
-use crate::reftest::{RenderedImage, resolve_font_ctx};
+use crate::reftest::{RenderedImage, wpt_document_fonts};
 
 /// Fetches and renders one HTTP document at the requested screen viewport.
 pub fn render_screen_url(
@@ -55,22 +55,19 @@ pub fn render_screen_url(
     let media_context = MediaContext::screen();
     let page_query = PageContextQuery::default();
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let mut font_context = resolve_font_ctx();
-    raikiri_dom::register_font_face_sources(
-        &mut font_context,
+    let (fonts, bundled_only) = wpt_document_fonts(
         font_face_tree.font_faces(),
-        &NetworkFontLoader {
+        Some(&NetworkFontLoader {
             provider,
             base_url: &base_url,
-        },
-    );
+        }),
+        false,
+    )
+    .map_err(ScreenRenderError::new)?;
+    uncascaded.dom.set_font_collection(fonts);
+    uncascaded.dom.set_ifc_parallel_build(bundled_only);
     let mut cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &page_query);
-    raikiri_dom::expand_font_face_aliases(
-        &mut cascade.computed,
-        font_face_tree.font_faces(),
-        &mut font_context,
-    );
     let mut page_box = PageBox::new();
     page_box.width = width as f32;
     page_box.height = height as f32;
@@ -80,7 +77,6 @@ pub fn render_screen_url(
         &mut uncascaded.dom,
         &cascade,
         page_box,
-        font_context,
         &image_resolver,
         Some(&base_url),
     )

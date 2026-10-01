@@ -31,8 +31,6 @@ fn prepare_serves_shared_helper_and_records_genuine_scroll() {
         width: 800,
         height: 600,
         tolerance: crate::runner::Tolerance::EXACT,
-        inline_formatting: false,
-        wpt_fonts: false,
         require_inline_fonts: false,
     };
     let prepared = prepare(html, &path, "", config).expect("live prepare should succeed");
@@ -66,8 +64,6 @@ fn prepare_runs_reference_side_scroll_without_wait() {
         width: 800,
         height: 600,
         tolerance: crate::runner::Tolerance::EXACT,
-        inline_formatting: false,
-        wpt_fonts: false,
         require_inline_fonts: false,
     };
     let prepared = prepare(html, &path, "", config).expect("reference prepare should succeed");

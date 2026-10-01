@@ -1,9 +1,9 @@
-//! Which engine `html_to_png` and its variants lay paragraphs out with.
+//! `html_to_png` and its font variant lay paragraphs out with the inline
+//! engine.
 //!
 //! The page holds `aaaa<br><br>bbbb` at `line-height:10px`. The inline
 //! engine keeps the empty line between the breaks, so "bbbb" sits on the
-//! third line (y 20..30); the parley path drops it, so "bbbb" sits on the
-//! second line (y 10..20).
+//! third line (y 20..30).
 
 use raikiri_net::{FileNetworkProvider, ImageResolver};
 
@@ -43,9 +43,9 @@ fn has_ink(image: &Decoded, top: u32, bottom: u32) -> bool {
 }
 
 fn ahem_fonts() -> raikiri::RenderFonts {
-    raikiri::FontContextBuilder::new()
+    raikiri::FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
-        .build_fonts()
+        .build()
         .expect("fonts")
 }
 
@@ -58,19 +58,6 @@ fn a_render_font_set_draws_the_empty_line_between_breaks() {
     // first glyph, line 2 (the empty one) is blank.
     assert_eq!(red(&image, 5, 25), 0);
     assert_eq!(red(&image, 5, 15), 255);
-}
-
-#[test]
-fn a_caller_built_font_context_keeps_the_parley_layout() {
-    let context = raikiri::FontContextBuilder::new()
-        .font_bytes("Ahem", AHEM.to_vec())
-        .build()
-        .expect("context");
-    let png = raikiri::html_to_png_with_fonts(std::io::Cursor::new(PAGE), context).expect("render");
-    let image = decode(&png);
-    // Parley drops the empty line: "bbbb" sits on line 2 (y 10..20).
-    assert_eq!(red(&image, 5, 15), 0);
-    assert_eq!(red(&image, 5, 25), 255);
 }
 
 #[test]

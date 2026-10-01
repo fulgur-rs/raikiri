@@ -1030,24 +1030,9 @@ fn a_candidate_directory_with_ahem_builds_a_collection() {
 }
 
 #[test]
-fn the_parley_path_keeps_the_historical_font_directories() {
-    // `--no-ifc` must reproduce the runs made before the engine was the
-    // default, so it searches the same directories as before.
-    let off = font_candidates(false);
-    assert_eq!(off, wpt_font_candidates().to_vec());
-    assert!(off.iter().all(|p| !p.ends_with("target/wpt/fonts")));
-}
-
-#[test]
-fn the_default_reftest_config_uses_the_inline_engine() {
-    assert!(ReftestConfig::default().inline_formatting);
-}
-
-#[test]
 fn the_engine_falls_back_to_the_installed_fonts_when_no_font_directory_exists() {
     // `require_inline_fonts` is off by default, so a checkout without the
-    // WPT fonts still renders, as the parley path does with
-    // `FontContext::new()`.
+    // WPT fonts still renders.
     assert!(!ReftestConfig::default().require_inline_fonts);
     let (collection, bundled_only) =
         inline_engine_collection_from(&[PathBuf::from("/nonexistent-wpt-fonts")], false)
@@ -1084,31 +1069,6 @@ fn a_font_directory_gives_the_engine_a_bundled_layer() {
 }
 
 #[test]
-fn the_inline_engine_run_gives_the_parley_path_the_same_fonts() {
-    // Both paths must draw from one font set, or a pair whose sides take
-    // different paths differs for reasons that have nothing to do with layout.
-    let on = font_candidates(true);
-    assert_eq!(on, inline_engine_font_candidates());
-    assert!(on.iter().any(|p| p.ends_with("target/wpt/fonts")));
-}
-
-#[test]
-fn the_wpt_fonts_switch_gives_the_parley_path_the_engine_font_directories() {
-    assert_eq!(
-        font_candidates_for(false, true),
-        inline_engine_font_candidates()
-    );
-    assert_eq!(
-        font_candidates_for(true, false),
-        inline_engine_font_candidates()
-    );
-    assert_eq!(
-        font_candidates_for(false, false),
-        wpt_font_candidates().to_vec()
-    );
-}
-
-#[test]
 fn no_wait_scripts_mutate_before_comparison() {
     let dir = tempfile::tempdir().unwrap();
     let test = dir.path().join("test.html");
@@ -1133,8 +1093,6 @@ fn no_wait_scripts_mutate_before_comparison() {
         width: 40,
         height: 40,
         tolerance: Tolerance::EXACT,
-        inline_formatting: false,
-        wpt_fonts: false,
         require_inline_fonts: false,
     };
     let result = run_pair(&pair, config).unwrap();
@@ -1175,8 +1133,6 @@ fn no_wait_canvas_paints_and_compares_pixels() {
         width: 40,
         height: 40,
         tolerance: Tolerance::EXACT,
-        inline_formatting: false,
-        wpt_fonts: false,
         require_inline_fonts: false,
     };
     let paint = |color: &str| {
@@ -1236,7 +1192,7 @@ fn page_has_ink(page: &RenderedImage, top: u32, bottom: u32) -> bool {
         .any(|y| (0..page.width).any(|x| page.rgba[((y * page.width + x) * 4) as usize] < 128))
 }
 
-fn render_with_engine(html: &str, inline_formatting: bool) -> RenderedDocument {
+fn render_with_engine(html: &str) -> RenderedDocument {
     render_raikiri_pages_inner_with_canvases(
         html,
         800,
@@ -1244,8 +1200,6 @@ fn render_with_engine(html: &str, inline_formatting: bool) -> RenderedDocument {
         None,
         None,
         InlineEngineChoice {
-            inline_formatting,
-            wpt_fonts: false,
             require_inline_fonts: false,
         },
         None,
@@ -1256,11 +1210,9 @@ fn render_with_engine(html: &str, inline_formatting: bool) -> RenderedDocument {
 #[test]
 fn a_uniform_page_geometry_lays_out_with_the_inline_engine() {
     let html = breaks_document("@page{size:300px 300px;margin:0}");
-    let engine = render_with_engine(&html, true);
+    let engine = render_with_engine(&html);
     assert!(page_has_ink(&engine.pages[0], 20, 30));
     assert!(!page_has_ink(&engine.pages[0], 10, 20));
-    let parley = render_with_engine(&html, false);
-    assert!(page_has_ink(&parley.pages[0], 10, 20));
 }
 
 #[test]
@@ -1268,7 +1220,7 @@ fn a_page_geometry_that_varies_keeps_the_inline_engine() {
     // The first page is shorter than the others, so the harness lays the
     // document out again with per-page heights.
     let html = breaks_document("@page{size:300px 300px;margin:0} @page :first{size:300px 200px}");
-    let engine = render_with_engine(&html, true);
+    let engine = render_with_engine(&html);
     assert!(!engine.pages.is_empty());
     assert!(page_has_ink(&engine.pages[0], 20, 30), "bbbb on line 3");
     assert!(!page_has_ink(&engine.pages[0], 10, 20), "line 2 is empty");

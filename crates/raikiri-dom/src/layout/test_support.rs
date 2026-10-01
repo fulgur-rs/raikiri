@@ -1,12 +1,9 @@
 //! Fixtures shared by the layout tests that need Ahem and a full page pass.
 
 use crate::Document;
-use crate::layout::ifc::test_support::{AHEM, Fixture, block_fixture};
-use parley::FontContext;
-use parley::fontique::Blob;
+use crate::layout::ifc::test_support::{Fixture, block_fixture};
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
-use std::sync::Arc;
 
 /// A `<div>` of Ahem text under `html > body`, with a fixed 10px line height.
 ///
@@ -59,14 +56,12 @@ pub(crate) fn absolute_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32)
 /// Font declarations shared by the Ahem paragraph fixtures.
 const AHEM_FAMILY_CSS: &str = "font-family:Ahem;font-size:10px;";
 
-/// A parley font context holding only Ahem.
-pub(crate) fn ahem_font_context() -> FontContext {
-    let mut ctx = FontContext::new();
-    let registered = ctx
-        .collection
-        .register_fonts(Blob::new(Arc::new(AHEM.to_vec()) as _), None);
-    assert!(!registered.is_empty(), "Ahem must register");
-    ctx
+/// `doc` with the Ahem font layer, unless it already has fonts.
+pub(crate) fn with_ahem(doc: &mut Document) -> &mut Document {
+    if !doc.inline_formatting_enabled() {
+        doc.set_font_collection(ifc_ahem_fonts());
+    }
+    doc
 }
 
 /// An 800x600 page with no margins.
