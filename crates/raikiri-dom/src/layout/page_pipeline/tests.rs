@@ -6138,4 +6138,9 @@ fn an_inline_body_still_lays_its_text_out_as_a_paragraph() {
         inline_body(Some("display:block"), "display:inline"),
         (true, false, 1)
     );
+    // `display: contents` on the root also computes to `block`.
+    assert_eq!(
+        inline_body(Some("display:block"), "display:contents"),
+        (true, false, 1)
+    );
 }

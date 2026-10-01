@@ -20,11 +20,17 @@ use shodo::LayoutContext;
 /// `contents` and `none`, an absolutely positioned or fixed inline element
 /// (blockified, CSS 2.1 9.7), a replaced element or form control (an
 /// atomic inline), and an inline element that a flex or grid
-/// container blockifies as its item (CSS Display 3, 2.7). The cascade leaves
-/// such elements `inline`; only the taffy bridge maps them to blocks.
+/// container blockifies as its item (CSS Display 3, 2.7), and the body layout
+/// starts at, whatever its display. The cascade leaves such elements
+/// `inline`; only the taffy bridge maps them to blocks.
 pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
     match cv.display {
+        // Layout starts at the body, which always generates a block box: CSS
+        // Display 3, 2.7 blockifies the root element (`inline` and
+        // `contents` alike), and the body is the root of what raikiri lays
+        // out.
+        DisplayValue::Inline | DisplayValue::Contents if is_layout_root(doc, idx) => true,
         DisplayValue::Contents | DisplayValue::None => false,
         DisplayValue::Inline
             if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) =>
@@ -41,10 +47,6 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
         {
             true
         }
-        // Layout starts at the body, which always generates a block box: CSS
-        // Display 3, 2.7 blockifies the root element, and the body is the
-        // root of what raikiri lays out.
-        DisplayValue::Inline if is_layout_root(doc, idx) => true,
         DisplayValue::Inline => box_parent(doc, cascade, idx).is_some_and(|parent| {
             matches!(
                 cascade.computed[parent].display,
@@ -86,6 +88,7 @@ fn box_parent(doc: &Document, cascade: &CascadeResult, idx: usize) -> Option<usi
     let mut parent = doc.parent_of(idx)?;
     while doc.nodes[parent].kind() == NodeKind::Element
         && cascade.computed[parent].display == DisplayValue::Contents
+        && !is_layout_root(doc, parent)
     {
         parent = doc.parent_of(parent)?;
     }
@@ -125,6 +128,8 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
         | DisplayValue::Inline
         | DisplayValue::TableCell
         | DisplayValue::TableCaption => true,
+        // The body is a block whatever its display (see `generates_own_box`).
+        DisplayValue::Contents => is_layout_root(doc, idx),
         // A table box whose children are all inline-level is one anonymous
         // cell's content (CSS 2.1 17.2.1); one with rows, row groups or
         // block children is laid out by the table algorithm.
