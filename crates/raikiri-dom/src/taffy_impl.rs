@@ -778,19 +778,9 @@ fn compute_inline_block_shrink_wrap(
     block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    // The inline engine measures an ifc root at its fit-content width itself;
-    // the block algorithm below would see none of its children. A width the
-    // parent passes is not the box's own, as for the block path below.
-    if tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) {
-        let inputs = LayoutInput {
-            known_dimensions: Size {
-                width: None,
-                height: inputs.known_dimensions.height,
-            },
-            ..inputs
-        };
-        return compute_ifc_root(tree, node_id, inputs, block_ctx);
-    }
+    // An ifc root's children are hidden from the block algorithm: the inline
+    // engine measures and lays out its content in the same steps below.
+    let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
     let display = tree.nodes[idx].display;
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.
@@ -857,6 +847,11 @@ fn compute_inline_block_shrink_wrap(
                         .size
                         .width
                 }
+                _ if ifc_root => {
+                    compute_ifc_root(tree, node_id, intrinsic_inputs, None)
+                        .size
+                        .width
+                }
                 _ => {
                     compute_block_layout(tree, node_id, intrinsic_inputs, None)
                         .size
@@ -911,6 +906,7 @@ fn compute_inline_block_shrink_wrap(
         match display {
             DisplayValue::InlineFlex => compute_flexbox_layout(tree, node_id, final_inputs),
             DisplayValue::InlineGrid => compute_grid_layout(tree, node_id, final_inputs),
+            _ if ifc_root => compute_ifc_root(tree, node_id, final_inputs, block_ctx),
             _ => compute_block_layout(tree, node_id, final_inputs, block_ctx),
         }
     }

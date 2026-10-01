@@ -5318,3 +5318,50 @@ fn bare_text_takes_the_text_align_of_its_container() {
     let lines = &stored_lines(&doc, text).lines;
     assert_eq!(line_start_x(&lines[0]), Some(5.0));
 }
+
+#[test]
+fn a_lone_empty_inline_block_is_indented_once() {
+    // The paragraph's only content is an empty inline-block: the engine
+    // places it after the 20px indent, and the parley path's post-layout
+    // indent shift for such a block must not move it again.
+    let (mut doc, cascade, root) = ahem_paragraph_in("", "width:200px;text-indent:20px", "");
+    let span = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline-block;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_again = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let _ = cascade;
+    lay_out_with_switch(&mut doc, &cascade_again);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[span].unrounded_layout.location.x, 20.0);
+}
+
+#[test]
+fn an_inline_block_root_with_side_margins_shrinks_to_its_content() {
+    // A 200px paragraph holding an inline-block with 20px side margins: the
+    // margin box may take 200px, so "aaaa bbbb cccc" (140px) fits on one
+    // line and the inline-block is 140px wide. The margins come off the
+    // available width once.
+    for ifc in [false, true] {
+        let (mut doc, cascade, root) = ahem_paragraph_in("", "width:200px", "");
+        let inline_block = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;margin:0 20px"),
+        );
+        doc.append_text(inline_block, "aaaa bbbb cccc");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade_again = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        let _ = cascade;
+        lay_out(&mut doc, &cascade_again, ifc);
+        assert_eq!(doc.nodes[inline_block].is_ifc_root(), ifc);
+        let size = doc.nodes[inline_block].unrounded_layout.size;
+        assert_eq!((size.width, size.height), (140.0, 10.0), "{ifc}");
+    }
+}

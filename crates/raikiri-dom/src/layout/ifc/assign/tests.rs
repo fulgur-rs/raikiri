@@ -1373,3 +1373,18 @@ fn without_a_threshold_set_32_roots_are_needed_for_a_parallel_build() {
     assert_eq!(build(31), Some(IfcBuildMode::Sequential));
     assert_eq!(build(32), Some(IfcBuildMode::Parallel));
 }
+
+#[test]
+fn a_cleared_line_break_stays_on_the_parley_path() {
+    // `clear` on a `<br>` moves the next line below the floats; the forced
+    // break the engine receives carries no clearance.
+    assert_stays_on_parley("", |doc, root| {
+        span(doc, root, "display:block;float:left;width:10px;height:10px");
+        doc.append_element(
+            Some(root),
+            "br",
+            taffy::Style::default(),
+            Some("display:inline;clear:both"),
+        );
+    });
+}

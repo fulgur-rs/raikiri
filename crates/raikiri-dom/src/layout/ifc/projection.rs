@@ -615,6 +615,12 @@ pub(crate) fn project_ifc_builder(
                 {
                     offsets.push((id, offset));
                 }
+                // `clear` on a line break moves the next line below the
+                // floats (CSS 2.1, 9.5.2); the engine's forced break carries
+                // no clearance.
+                if tag == "br" && cv.clear != ClearValue::None {
+                    return Err(unsupported("a cleared line break is not placed yet"));
+                }
                 builder.open_inline(NodeId(id as u64), &inline_style, edges);
                 if tag == "br" {
                     builder.push_forced_break(NodeId(id as u64));

@@ -1202,6 +1202,10 @@ pub(crate) fn realign_single_empty_inline_block_indent(
     cascade: &CascadeResult,
 ) {
     for parent_id in 0..doc.nodes.len() {
+        // The inline engine places the inline-block after the indent itself.
+        if doc.nodes[parent_id].is_ifc_root() {
+            continue;
+        }
         let cv = &cascade.computed[parent_id];
         if !matches!(cv.display, DisplayValue::Block | DisplayValue::InlineBlock) {
             continue;
