@@ -439,6 +439,10 @@ pub struct RenderResources<'a> {
     policy: Option<&'a dyn ResourcePolicy>,
     base_url: Option<Url>,
     font_context: FontContext,
+    font_collection: Option<shodo::font::FontCollection>,
+    font_collection_bundled_only: bool,
+    font_context_explicit: bool,
+    inline_formatting: bool,
     resolver: Option<&'a (dyn ReplacedResolver + Send + Sync)>,
     image_pixel_source: Option<&'a (dyn ImagePixelSource + Send + Sync)>,
     render_limits: RenderLimits,
@@ -457,6 +461,8 @@ impl fmt::Debug for RenderResources<'_> {
             .field("has_network_policy", &self.policy.is_some())
             .field("base_url", &self.base_url)
             .field("has_font_context", &true)
+            .field("has_font_collection", &self.font_collection.is_some())
+            .field("inline_formatting", &self.inline_formatting)
             .field("has_replaced_resolver", &self.resolver.is_some())
             .field("has_image_pixel_source", &self.image_pixel_source.is_some())
             .field("render_limits", &self.render_limits)
@@ -482,6 +488,10 @@ impl<'a> RenderResources<'a> {
             policy: None,
             base_url: None,
             font_context: FontContext::new(),
+            font_collection: None,
+            font_collection_bundled_only: false,
+            font_context_explicit: false,
+            inline_formatting: true,
             resolver: None,
             image_pixel_source: None,
             render_limits: RenderLimits::default(),
@@ -555,9 +565,71 @@ impl<'a> RenderResources<'a> {
     }
 
     /// Use a caller-built font context for layout and paint.
+    ///
+    /// This alone keeps every paragraph on the parley path: the inline engine
+    /// is not switched on, because a font set it does not share with this
+    /// context would make one document draw from two font sets. Use
+    /// [`fonts`](Self::fonts) to give both engines the same fonts. Calling
+    /// this after `fonts` replaces its font set.
     pub fn font_context(mut self, font_context: FontContext) -> Self {
         self.font_context = font_context;
+        self.font_context_explicit = true;
+        self.font_collection = None;
+        self.font_collection_bundled_only = false;
         self
+    }
+
+    /// Use a font set both engines are built from.
+    ///
+    /// The parley context is used for the paragraphs the parley path lays
+    /// out, and the shodo layer for the inline engine. Calling this after
+    /// [`font_context`](Self::font_context) replaces its context and switches
+    /// the inline engine back on (unless it was switched off with
+    /// [`inline_formatting`](Self::inline_formatting)).
+    pub fn fonts(mut self, fonts: crate::RenderFonts) -> Self {
+        self.font_collection_bundled_only = fonts.is_bundled_only();
+        let (context, collection) = fonts.into_parts();
+        self.font_context = context;
+        self.font_collection = Some(collection);
+        self.font_context_explicit = false;
+        self
+    }
+
+    /// Switch the inline engine on or off. It is on by default; off lays every
+    /// paragraph out with the parley path.
+    pub fn inline_formatting(mut self, enabled: bool) -> Self {
+        self.inline_formatting = enabled;
+        self
+    }
+
+    /// The font layer the inline engine will use, or `None` when the engine
+    /// is off.
+    ///
+    /// The engine is off when it was switched off, or when only a parley
+    /// font context was supplied (see [`font_context`](Self::font_context)).
+    /// Otherwise it uses the layer of the font set given to
+    /// [`fonts`](Self::fonts), or the process-wide layer of the installed
+    /// fonts ([`raikiri_dom::system_font_collection`]).
+    pub fn inline_engine_fonts(&self) -> Option<shodo::font::FontCollection> {
+        if !self.inline_formatting || self.font_context_explicit {
+            return None;
+        }
+        Some(
+            self.font_collection
+                .clone()
+                .unwrap_or_else(raikiri_dom::system_font_collection),
+        )
+    }
+
+    /// Whether the inline engine may build paragraphs on several threads: it
+    /// is on, and its font layer was built from bundled fonts only.
+    ///
+    /// The layer of the installed fonts loads a face the first time a lookup
+    /// selects it, so which face a fallback lands on could depend on the order
+    /// in which threads ask; with bundled fonts only, every face is loaded
+    /// up front.
+    pub fn inline_engine_parallel_build(&self) -> bool {
+        self.inline_formatting && !self.font_context_explicit && self.font_collection_bundled_only
     }
 
     /// Set the limits used when parsing HTML.

@@ -1430,3 +1430,106 @@ fn svg_raster_zero_timeout_via_direct_cache_returns_none() {
     );
     assert!(ok.is_some(), "without a zero timeout SVG rasterizes");
 }
+
+const AHEM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+));
+
+fn ahem_fonts(system_fonts: bool) -> crate::RenderFonts {
+    crate::FontContextBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .system_fonts(system_fonts)
+        .build_fonts()
+        .expect("fonts")
+}
+
+#[test]
+fn the_default_resources_use_the_system_layer_for_the_inline_engine() {
+    let resources = RenderResources::new();
+    let layer = resources.inline_engine_fonts().expect("engine on");
+    assert_eq!(
+        layer.layer_handle().id(),
+        raikiri_dom::system_font_collection().layer_handle().id()
+    );
+}
+
+#[test]
+fn a_caller_built_font_context_alone_is_an_escape_hatch() {
+    let resources = RenderResources::new().font_context(FontContext::new());
+    assert!(resources.inline_engine_fonts().is_none());
+    assert!(!resources.inline_engine_parallel_build());
+}
+
+#[test]
+fn only_a_bundled_font_set_allows_parallel_builds() {
+    // The shared system layer loads installed faces lazily, so threads would
+    // race to decide which face is a fallback.
+    assert!(!RenderResources::new().inline_engine_parallel_build());
+    assert!(
+        RenderResources::new()
+            .fonts(ahem_fonts(false))
+            .inline_engine_parallel_build()
+    );
+    assert!(
+        !RenderResources::new()
+            .fonts(ahem_fonts(true))
+            .inline_engine_parallel_build()
+    );
+}
+
+#[test]
+fn switching_the_engine_off_disallows_parallel_builds() {
+    let resources = RenderResources::new()
+        .fonts(ahem_fonts(false))
+        .inline_formatting(false);
+    assert!(!resources.inline_engine_parallel_build());
+}
+
+#[test]
+fn a_font_set_gives_both_engines_the_same_bundle() {
+    let fonts = ahem_fonts(false);
+    let expected = fonts.collection().layer_handle().id();
+    let resources = RenderResources::new().fonts(fonts);
+    let layer = resources.inline_engine_fonts().expect("engine on");
+    assert_eq!(layer.layer_handle().id(), expected);
+    // The parley half is the context `font_context_ref` reports.
+    let mut context = resources.font_context_ref().clone();
+    assert!(context.collection.family_id("Ahem").is_some());
+}
+
+#[test]
+fn switching_the_engine_off_wins_over_a_font_set() {
+    let resources = RenderResources::new()
+        .fonts(ahem_fonts(false))
+        .inline_formatting(false);
+    assert!(resources.inline_engine_fonts().is_none());
+}
+
+#[test]
+fn switching_the_engine_off_and_on_again_restores_it() {
+    let resources = RenderResources::new()
+        .inline_formatting(false)
+        .inline_formatting(true);
+    assert!(resources.inline_engine_fonts().is_some());
+}
+
+#[test]
+fn a_font_context_set_after_a_font_set_turns_the_engine_off() {
+    let resources = RenderResources::new()
+        .fonts(ahem_fonts(false))
+        .font_context(FontContext::new());
+    assert!(resources.inline_engine_fonts().is_none());
+    assert!(!resources.inline_engine_parallel_build());
+}
+
+#[test]
+fn a_font_set_set_after_a_font_context_turns_the_engine_back_on() {
+    let fonts = ahem_fonts(false);
+    let expected = fonts.collection().layer_handle().id();
+    let resources = RenderResources::new()
+        .font_context(FontContext::new())
+        .fonts(fonts);
+    let layer = resources.inline_engine_fonts().expect("engine on");
+    assert_eq!(layer.layer_handle().id(), expected);
+}
