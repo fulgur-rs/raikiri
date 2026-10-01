@@ -43,6 +43,8 @@ raikiri-vrt = { path = "../raikiri-vrt" }
 tempfile    = { workspace = true }
 # Decode the output PNG and verify pixel values in img_element_basic.
 png         = { workspace = true }
+# Build the inline engine's font layer for the page scene tests.
+shodo       = { workspace = true }
 
 [lints]
 workspace = true

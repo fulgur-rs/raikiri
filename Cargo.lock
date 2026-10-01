@@ -2545,6 +2545,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-traits",
  "raikiri-vrt",
+ "shodo",
  "tempfile",
  "tiny-skia",
  "url",

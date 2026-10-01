@@ -670,6 +670,14 @@ impl Node {
         self.flags.contains(NodeFlags::IS_IFC_ROOT)
     }
 
+    /// Whether this node is inside a paragraph laid out by the shodo inline
+    /// engine (a descendant of an ifc root that is not one of its boxes).
+    #[doc(hidden)]
+    #[inline]
+    pub fn in_ifc_subtree(&self) -> bool {
+        self.flags.contains(NodeFlags::IN_IFC_SUBTREE)
+    }
+
     /// Lines of the last performed layout of an ifc root, if any.
     #[doc(hidden)]
     pub fn ifc_lines(&self) -> Option<&[shodo::Line]> {
