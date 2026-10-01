@@ -267,9 +267,8 @@ fn has_visible_text(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool
     false
 }
 
-/// Clear every IFC mark, then mark the eligible roots and their subtrees.
-/// A box that pagination may break before or after on its own: one with a
-/// forced page break or a page name.
+/// An element that pagination may break before or after on its own: one
+/// with a forced page break or a page name.
 fn starts_a_page_of_its_own(cascade: &CascadeResult, id: usize) -> bool {
     let computed = &cascade.computed[id];
     page_break_is_forced(computed.break_before)
@@ -277,6 +276,27 @@ fn starts_a_page_of_its_own(cascade: &CascadeResult, id: usize) -> bool {
         || selected_page_name(cascade, id).is_some()
 }
 
+/// The box `idx` of a paragraph, or an element inside it, starts a page of
+/// its own. Pagination would move it alone, and the lines around the box
+/// would not follow. Inline elements of the paragraph are not page break
+/// candidates (break-before and break-after apply to block-level boxes), so
+/// they are not looked at.
+fn box_has_a_page_break(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let mut stack = vec![idx];
+    while let Some(id) = stack.pop() {
+        let node = &doc.nodes[id];
+        if node.kind() != NodeKind::Element {
+            continue;
+        }
+        if starts_a_page_of_its_own(cascade, id) {
+            return true;
+        }
+        stack.extend(node.children.iter().copied());
+    }
+    false
+}
+
+/// Clear every IFC mark, then mark the eligible roots and their subtrees.
 pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
     for node in &mut doc.nodes {
         node.flags
@@ -344,12 +364,10 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
         if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
             continue;
         }
-        // Pagination may move a box with a forced page break or a page name
-        // on its own, and the lines around it would not follow.
         if projected
             .boxes
             .iter()
-            .any(|b| starts_a_page_of_its_own(cascade, b.node))
+            .any(|b| box_has_a_page_break(doc, cascade, b.node))
         {
             continue;
         }
