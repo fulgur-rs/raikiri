@@ -515,6 +515,7 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
     }
 
     let mut nodes = Vec::new();
+    let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
     while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
         let Some(node) = document.get_node(node_id) else {
@@ -547,18 +548,64 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
             NodeKind::Element => true,
             _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
+        if node.is_ifc_root() {
+            // The content-box origin of a paragraph laid out by the inline
+            // engine: its text nodes have no layout of their own, and their
+            // lines are measured from here. A root is visited before its text.
+            ifc_origin.insert(
+                node_id,
+                (
+                    abs_x + layout.border.left + layout.padding.left,
+                    abs_y + layout.border.top + layout.padding.top,
+                ),
+            );
+        }
         if include && abs_x.is_finite() && abs_y.is_finite() {
-            let line_metrics = (node.kind() == NodeKind::Text).then(|| {
-                node.text_layout()
-                    .into_iter()
-                    .flat_map(|layout| {
-                        layout.lines().map(|line| {
-                            let metrics = line.metrics();
-                            (metrics.block_min_coord, metrics.block_max_coord)
-                        })
-                    })
-                    .collect()
-            });
+            let ifc_lines = (node.kind() == NodeKind::Text)
+                .then(|| document.ifc_text_lines(node_id))
+                .flatten();
+            let (abs_x, abs_y, width, height, line_metrics) = match ifc_lines {
+                // A text node of an ifc paragraph starts at the first line it
+                // owns, in the root's content box; its line metrics are
+                // measured from that line.
+                Some(owned) => {
+                    let (root_x, root_y) = ifc_origin
+                        .get(&owned.root)
+                        .copied()
+                        .unwrap_or((abs_x, abs_y));
+                    let first_top = owned.lines.first().map_or(0.0, |l| l.top);
+                    let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
+                    let metrics: Vec<(f32, f32)> = owned
+                        .lines
+                        .iter()
+                        .map(|l| (l.top - first_top, l.bottom - first_top))
+                        .collect();
+                    (
+                        root_x,
+                        root_y + first_top,
+                        finite_nonnegative(owned.width),
+                        finite_nonnegative(last_bottom - first_top),
+                        Some(metrics),
+                    )
+                }
+                None => (
+                    abs_x,
+                    abs_y,
+                    width,
+                    height,
+                    (node.kind() == NodeKind::Text).then(|| {
+                        node.text_layout()
+                            .into_iter()
+                            .flat_map(|layout| {
+                                layout.lines().map(|line| {
+                                    let metrics = line.metrics();
+                                    (metrics.block_min_coord, metrics.block_max_coord)
+                                })
+                            })
+                            .collect()
+                    }),
+                ),
+            };
             nodes.push(PageFragmentSource {
                 node_id: NodeId::new(node_id as u64),
                 node_kind: node.kind(),

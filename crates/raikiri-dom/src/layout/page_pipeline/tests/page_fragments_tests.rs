@@ -504,3 +504,120 @@ fn named_page_propagation_skips_out_of_flow_children() {
         .expect("layout named-page fixture");
     assert!(!pages.is_empty());
 }
+
+fn text_fragments(
+    doc: &Document,
+    cascade: &raikiri_style::CascadeResult,
+    page: PageBox,
+    slices: &[PageSlice],
+    text: usize,
+) -> Vec<(u32, Option<PageFragmentLineRange>)> {
+    page_fragments_from_slices(doc, cascade, page, slices)
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .filter(|item| item.node_id == NodeId::new(text as u64))
+        .map(|item| (item.page_index, item.line_range))
+        .collect()
+}
+
+#[test]
+fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    let mut ranges = Vec::new();
+    for ifc in [false, true] {
+        // Ahem at 10px, width 40: five lines of 10px; a 30px page holds three.
+        let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc dddd eeee", "width:40px");
+        if ifc {
+            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 30.0;
+        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        let text = doc.nodes[root].children[0];
+        ranges.push(text_fragments(&doc, &cascade, page, &slices, text));
+    }
+    assert_eq!(
+        ranges[0],
+        [
+            (0, Some(PageFragmentLineRange::new(0, 3))),
+            (1, Some(PageFragmentLineRange::new(3, 5))),
+        ],
+        "the parley path is the oracle"
+    );
+    assert_eq!(ranges[1], ranges[0]);
+}
+
+#[test]
+fn a_text_inside_a_span_starts_at_the_root_content_origin() {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    let (mut doc, _cascade, root) =
+        ahem_paragraph("", "width:40px;padding:5px;box-sizing:content-box");
+    doc.append_text(root, "aa ");
+    let span = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline;padding-left:3px"),
+    );
+    let text = doc.append_text(span, "bbbb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+    assert!(
+        doc.nodes[root].is_ifc_root(),
+        "the paragraph is laid out by the engine"
+    );
+    let item = page_fragments_from_slices(&doc, &cascade, page, &slices)
+        .iter()
+        .flat_map(|p| p.items.iter().cloned())
+        .find(|item| item.node_id == NodeId::new(text as u64))
+        .expect("the text has a fragment");
+    // The root is the first child of html > body (no margins): its content
+    // box starts at (5, 5). "bbbb" wraps to the second line (top 10), and the
+    // span's own box on that line must not be added a second time.
+    assert_eq!((item.rect.x, item.rect.y), (5.0, 15.0));
+    assert_eq!(item.line_range, Some(PageFragmentLineRange::new(0, 1)));
+}
+
+#[test]
+fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    // Lines (Ahem 10px, width 40): "aa", "bbbb", "cccc", "dddd". The span's
+    // text owns lines 1-3 (tops 10, 20, 30); a 30px page holds the first
+    // three lines, so the span's text has two lines on page 0 and one on
+    // page 1, counted from its own first line.
+    let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
+    doc.append_text(root, "aa ");
+    let span = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline"),
+    );
+    let text = doc.append_text(span, "bbbb cccc dddd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 30.0;
+    let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+    assert!(
+        doc.nodes[root].is_ifc_root(),
+        "the paragraph is laid out by the engine"
+    );
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        [
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+}
