@@ -8,6 +8,10 @@
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
 //! - Layout layer: [`layout`] returns an owned [`DocumentLayout`] with
 //!   borrowed [`Page`] and [`Fragment`] views for drawing consumers.
+//! - Inline layout: paragraphs are laid out by the shodo inline engine
+//!   unless [`RenderResources::inline_formatting`] switches it off; a font set
+//!   both engines share comes from [`FontContextBuilder::build_fonts`] and is
+//!   passed with [`RenderResources::fonts`].
 
 mod cascade;
 mod document;

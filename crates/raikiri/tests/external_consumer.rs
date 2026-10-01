@@ -384,3 +384,21 @@ fn external_consumer_can_reference_vrt_font_pin_api() {
     let font_ctx = FontContext::new();
     let _ = html_to_png_with_fonts(&b"<p>x</p>"[..], font_ctx);
 }
+
+/// The render font set (`FontContextBuilder::build_fonts`, `RenderFonts`,
+/// `html_to_png_with_render_fonts`, `RenderResources::fonts`) and the
+/// inline-engine switch are nameable with only a `raikiri` dependency.
+#[test]
+fn render_fonts_are_reachable_from_the_facade() {
+    let _ = std::marker::PhantomData::<RenderFonts>;
+    let built: Result<RenderFonts, FontContextBuildError> = FontContextBuilder::new().build_fonts();
+    assert!(matches!(built, Err(FontContextBuildError::NoFonts)));
+    type Input = std::io::Cursor<&'static [u8]>;
+    type RenderWithFonts = fn(Input, RenderFonts) -> Result<Vec<u8>, RenderError>;
+    let _: RenderWithFonts = html_to_png_with_render_fonts::<Input>;
+    let _: fn(RenderResources<'static>, RenderFonts) -> RenderResources<'static> =
+        RenderResources::fonts;
+    let resources = RenderResources::new().inline_formatting(false);
+    assert!(!resources.inline_engine_parallel_build());
+    assert!(resources.inline_engine_fonts().is_none());
+}

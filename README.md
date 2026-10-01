@@ -70,7 +70,23 @@ std::fs::write("output.png", png)?;
 ```
 
 `html_to_png` renders the first page only. It uses A4 when no `@page` size is specified.
-Use `html_to_png_with_fonts` when reproducible fonts are required for VRT.
+`html_to_png` and `html_to_png_with_resolver` lay paragraphs out with the shodo inline
+engine over the installed fonts; a paragraph the engine does not support falls back to
+parley. `html_to_png_with_fonts` keeps every paragraph on parley with the given
+`FontContext` (the reproducible-fonts path used by the VRT). To use the inline engine
+with fixed fonts, build both engines' fonts from the same bytes:
+
+```rust,no_run
+use std::io::Cursor;
+use raikiri::{html_to_png_with_render_fonts, FontContextBuilder};
+
+let font_bytes = std::fs::read("MyFont.ttf")?;
+let fonts = FontContextBuilder::new()
+    .font_bytes("My Font", font_bytes)
+    .build_fonts()?;
+let png = html_to_png_with_render_fonts(Cursor::new(b"<p>Hello</p>"), fonts)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## For developers
 

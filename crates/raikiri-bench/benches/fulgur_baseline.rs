@@ -176,7 +176,10 @@
 //! measurement instead.
 
 use criterion::{Criterion, Throughput};
-use raikiri::{FontContext, ParseOptions, html_to_png_with_fonts, parse_html};
+use raikiri::{
+    FontContext, FontContextBuilder, ParseOptions, RenderFonts, html_to_png,
+    html_to_png_with_fonts, html_to_png_with_render_fonts, parse_html,
+};
 use std::fmt::Write as _;
 
 // Rows/cols per generated `<table>`. Kept small (relative to a real-world
@@ -325,6 +328,70 @@ fn bench_pages(c: &mut Criterion) {
     group.finish();
 }
 
+/// Ahem, a bundled font for the variants that compare the two inline
+/// layout engines on one font set.
+const AHEM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+));
+
+/// The same workload laid out by each inline layout engine.
+///
+/// [`bench_pages`] measures `html_to_png_with_fonts`, which keeps every
+/// paragraph on the parley path. Here:
+///
+/// - `page_tables_N_inline_engine` is [`html_to_png`], what a consumer gets
+///   by default: the inline engine over the installed fonts (one shared font
+///   layer per process, paragraphs built in sequence). Like every
+///   `html_to_png` call it also builds a parley `FontContext::new()` for the
+///   paragraphs the engine leaves to parley, which re-enumerates the system
+///   fonts, so it is not directly comparable with `page_tables_N`.
+/// - `page_tables_N_bundled_parley` and `page_tables_N_bundled_inline_engine`
+///   lay the page out with one bundled font (Ahem) through
+///   `html_to_png_with_fonts` (parley) and `html_to_png_with_render_fonts`
+///   (the inline engine, which may build paragraphs on several threads with a
+///   bundled font set). Both clone a prepared font set per iteration, so the
+///   pair isolates the engine.
+fn bench_inline_engine(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fulgur_baseline_pages");
+    group.sample_size(20);
+
+    let fonts: RenderFonts = FontContextBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build_fonts()
+        .expect("Ahem builds a font set");
+
+    for n_tables in [10usize, 100usize] {
+        let html = build_page_html(n_tables);
+        group.throughput(Throughput::Elements(n_tables as u64));
+        group.bench_function(format!("page_tables_{n_tables}_inline_engine"), |b| {
+            b.iter(|| {
+                let png = html_to_png(html.as_bytes()).expect("html_to_png must succeed");
+                assert!(!png.is_empty());
+            });
+        });
+        group.bench_function(format!("page_tables_{n_tables}_bundled_parley"), |b| {
+            b.iter(|| {
+                let png = html_to_png_with_fonts(html.as_bytes(), fonts.context().clone())
+                    .expect("html_to_png_with_fonts must succeed");
+                assert!(!png.is_empty());
+            });
+        });
+        group.bench_function(
+            format!("page_tables_{n_tables}_bundled_inline_engine"),
+            |b| {
+                b.iter(|| {
+                    let png = html_to_png_with_render_fonts(html.as_bytes(), fonts.clone())
+                        .expect("html_to_png_with_render_fonts must succeed");
+                    assert!(!png.is_empty());
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 // Inlined `criterion_main!`/`criterion_group!` body — mirrors
 // `crates/raikiri-style/benches/cascade.rs`'s rationale: the macro-generated
 // `pub fn` trips the workspace's `missing_docs = "warn"` (a hard error under
@@ -332,5 +399,6 @@ fn bench_pages(c: &mut Criterion) {
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     bench_pages(&mut criterion);
+    bench_inline_engine(&mut criterion);
     criterion.final_summary();
 }

@@ -428,10 +428,24 @@ impl ResourceLimits {
 /// cache and policy isolation; the process-wide decode and retained budgets
 /// stay shared because they bound the process, not one security context.
 ///
-/// `FontContext::new()` is retained as the default for compatibility with the
-/// existing consumer behavior. For deterministic rendering, supply a context
-/// built with [`crate::FontContextBuilder`], which disables system font discovery
-/// by default and applies bundled fonts in a stable fallback order.
+/// # Fonts and the inline layout engine
+///
+/// Paragraphs are laid out by the shodo inline engine by default; a paragraph
+/// the engine does not support falls back to the parley path. Which fonts the
+/// two use depends on how the fonts were supplied:
+///
+/// | Configuration | Inline engine | parley path |
+/// |---|---|---|
+/// | nothing (the default) | on, installed fonts ([`raikiri_dom::system_font_collection`]) | `FontContext::new()` |
+/// | [`fonts`](Self::fonts) | on, the set's shodo layer | the set's context |
+/// | [`font_context`](Self::font_context) only | off | the given context |
+/// | [`inline_formatting(false)`](Self::inline_formatting) | off | as above |
+///
+/// The engine only builds paragraphs on several threads with a font set built
+/// from bundled fonts only. For deterministic rendering, build the fonts with
+/// [`crate::FontContextBuilder::build_fonts`], which disables system font
+/// discovery by default and applies bundled fonts in a stable fallback order
+/// on both engines.
 #[derive(Clone)]
 pub struct RenderResources<'a> {
     extra_stylesheets: Vec<String>,

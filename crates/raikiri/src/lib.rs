@@ -10,6 +10,11 @@
 //! contract for external page-output consumers lives in `raikiri-html` and
 //! `raikiri-dom`.
 //!
+//! Paragraphs are laid out by the shodo inline engine by default, in
+//! [`html_to_png()`] and through [`RenderResources`]; [`html_to_png_with_fonts`]
+//! and [`RenderResources::font_context`] keep the parley path, and
+//! [`html_to_png_with_render_fonts`] uses the engine with fixed fonts.
+//!
 //! # Example
 //!
 //! ```

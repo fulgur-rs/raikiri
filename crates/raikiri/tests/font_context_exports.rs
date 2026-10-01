@@ -23,3 +23,15 @@ fn umbrella_font_exports_are_identical_types() {
         raikiri_html::MAX_BUNDLED_FONT_BYTES,
     );
 }
+
+#[test]
+fn umbrella_render_fonts_are_the_html_type() {
+    let error = match raikiri::FontContextBuilder::new().build_fonts() {
+        Err(error) => error,
+        Ok(_) => panic!("expected an empty bundle error"),
+    };
+    assert_eq!(error, raikiri::FontContextBuildError::NoFonts);
+    let identity: fn(raikiri::RenderFonts) -> raikiri_html::RenderFonts = |fonts| fonts;
+    let back: fn(raikiri_html::RenderFonts) -> raikiri::RenderFonts = |fonts| fonts;
+    let _ = (identity, back);
+}

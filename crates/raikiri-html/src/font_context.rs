@@ -212,7 +212,9 @@ impl FontContextBuilder {
 ///
 /// Both resolve a family name to the same face, and every generic family to
 /// the bundle in registration order, so a document laid out partly by one
-/// engine and partly by the other draws from one font set.
+/// engine and partly by the other draws from one font set. Cloning shares
+/// both halves.
+#[derive(Clone)]
 pub struct RenderFonts {
     context: FontContext,
     collection: shodo::font::FontCollection,
