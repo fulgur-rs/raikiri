@@ -18,8 +18,42 @@ use raikiri_traits::NodeKind;
 use rayon::prelude::*;
 use shodo::LayoutContext;
 
-fn is_block_container(display: DisplayValue) -> bool {
-    matches!(display, DisplayValue::Block | DisplayValue::FlowRoot)
+/// Whether `idx` generates a box of its own: any display other than `inline`,
+/// `contents` and `none`, and an inline element that a flex or grid container
+/// blockifies as its item (CSS Display 3, 2.7). The cascade leaves such an
+/// item `inline`; only the taffy bridge maps it to a block.
+pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    match cascade.computed[idx].display {
+        DisplayValue::Contents | DisplayValue::None => false,
+        DisplayValue::Inline => doc.parent_of(idx).is_some_and(|parent| {
+            doc.nodes[parent].kind() == NodeKind::Element
+                && matches!(
+                    cascade.computed[parent].display,
+                    DisplayValue::Flex
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::Grid
+                        | DisplayValue::InlineGrid
+                )
+        }),
+        _ => true,
+    }
+}
+
+/// Whether `idx` is a box that lays its own inline content out in lines: a
+/// block container (`block`, `flow-root`, `inline-block`, `list-item`) or a
+/// blockified inline flex or grid item. Flex, grid and table boxes lay their
+/// children out by algorithms of their own, and a multicol container is
+/// refused by the caller.
+pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    generates_own_box(doc, cascade, idx)
+        && matches!(
+            cascade.computed[idx].display,
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::InlineBlock
+                | DisplayValue::ListItem
+                | DisplayValue::Inline
+        )
 }
 
 fn is_horizontal(cascade: &CascadeResult, idx: usize) -> bool {
@@ -30,37 +64,6 @@ fn is_multicol(cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
     !matches!(cv.column_count, ColumnCountValue::Auto)
         || !matches!(cv.column_width, ComputedColumnWidth::Auto)
-}
-
-/// Every in-flow child of `parent` other than `idx` is block-level, so the
-/// parent does not lay `idx` out inside an inline line box.
-fn parent_holds_only_blocks(doc: &Document, cascade: &CascadeResult, parent: usize) -> bool {
-    doc.nodes[parent].children.iter().all(|&child| {
-        let node = &doc.nodes[child];
-        if !node.is_in_document() {
-            return true;
-        }
-        match node.kind() {
-            NodeKind::Text => node
-                .text_content()
-                .is_none_or(|text| text.chars().all(|c| c.is_ascii_whitespace())),
-            NodeKind::Element => {
-                // Only an inline-level sibling puts the paragraph inside an
-                // inline formatting context of its parent; a block-level box
-                // of any inner display type does not.
-                !matches!(
-                    cascade.computed[child].display,
-                    DisplayValue::Inline
-                        | DisplayValue::InlineBlock
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::InlineGrid
-                        | DisplayValue::InlineTable
-                        | DisplayValue::Contents
-                )
-            }
-            _ => true,
-        }
-    })
 }
 
 /// Whether a `text-transform` value includes `full-width`. shodo's mapping
@@ -240,9 +243,19 @@ fn has_block_child_under_a_decoration(
     false
 }
 
-/// Whether the paragraph itself holds text other than white space; text inside
-/// its boxes (floats, atomic inlines, blocks) does not count.
-fn has_visible_text(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+/// Whether the paragraph has inline content that makes a line: text other
+/// than white space, an atomic inline, a `<br>`, or an inline element with a
+/// margin, border or padding on an inline side (CSS 2.1, 9.4.2: a line box
+/// without any of these is treated as zero-height). The content of its boxes
+/// does not count, and neither do floats and block children alone: they are
+/// not inline content, so a block that holds only those is laid out by the
+/// block algorithm.
+fn has_inline_content(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    fonts: &shodo::font::FontCollection,
+) -> bool {
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
@@ -258,11 +271,31 @@ fn has_visible_text(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool
                     return true;
                 }
             }
-            NodeKind::Element => {
-                if box_kind(cascade, doc, id).is_none() {
+            NodeKind::Element => match box_kind(cascade, doc, id) {
+                Some(IfcBoxKind::Atomic) => return true,
+                Some(_) => {}
+                None => {
+                    let cv = &cascade.computed[id];
+                    if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
+                        continue;
+                    }
+                    if cv.display == DisplayValue::Inline {
+                        if node.tag_name() == Some("br") {
+                            return true;
+                        }
+                        // An edge the engine cannot map yet keeps the
+                        // paragraph out at projection; counting it here only
+                        // lets projection decide.
+                        let edged = style::inline_edges(cv, id, fonts).map_or(true, |e| {
+                            e.inline_start_total() + e.inline_end_total() != 0.0
+                        });
+                        if edged {
+                            return true;
+                        }
+                    }
                     stack.extend(node.children.iter().copied());
                 }
-            }
+            },
             _ => {}
         }
     }
@@ -342,20 +375,15 @@ fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState)
     let mut taken = vec![false; doc.nodes.len()];
     for idx in 0..doc.nodes.len() {
         let node = &doc.nodes[idx];
+        // A root is any box that lays its own inline content out, whatever
+        // its parent's layout: a block child of another paragraph is a box of
+        // that paragraph and the root of its own content. Inline content of a
+        // paragraph never qualifies, so `taken` only saves the work.
         if node.kind() != NodeKind::Element
             || !node.is_in_document()
-            || cascade.computed[idx].display != DisplayValue::Block
-            || !is_horizontal(cascade, idx)
             || taken[idx]
-        {
-            continue;
-        }
-        let Some(parent) = doc.parent_of(idx) else {
-            continue;
-        };
-        if doc.nodes[parent].kind() != NodeKind::Element
-            || !is_block_container(cascade.computed[parent].display)
-            || !parent_holds_only_blocks(doc, cascade, parent)
+            || !can_be_ifc_root(doc, cascade, idx)
+            || !is_horizontal(cascade, idx)
         {
             continue;
         }
@@ -373,7 +401,7 @@ fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState)
             ancestor = doc.parent_of(id);
         }
         if blocked
-            || !has_visible_text(doc, cascade, idx)
+            || !has_inline_content(doc, cascade, idx, &state.fonts)
             || !paragraph_is_paintable(doc, cascade, idx)
             || inside_unsized_fixed_box(doc, cascade, idx)
             || decoration_meets_a_line_relative_inline(doc, cascade, idx)

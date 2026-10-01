@@ -97,16 +97,22 @@ fn reassignment_clears_stale_marks() {
 }
 
 #[test]
-fn a_root_beside_inline_text_stays_on_the_parley_path() {
+fn a_root_beside_inline_text_is_still_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
-    // Put loose text next to the block under `body`.
+    // Put loose text next to the block under `body`: `body` becomes a
+    // paragraph with the block as a box, and the block stays the root of its
+    // own text.
     let body = fixture.doc.parent_of(fixture.root).expect("body");
     fixture.doc.append_text(body, "loose");
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, body));
 }
 
 #[test]
@@ -190,7 +196,7 @@ fn block_level_siblings_do_not_disqualify_a_paragraph() {
 }
 
 #[test]
-fn inline_level_siblings_still_disqualify_a_paragraph() {
+fn inline_level_siblings_do_not_disqualify_a_paragraph() {
     for display in [
         "inline",
         "inline-block",
@@ -205,7 +211,7 @@ fn inline_level_siblings_still_disqualify_a_paragraph() {
         });
         enable(&mut fixture);
         assign(&mut fixture);
-        assert!(!is_root(&fixture, fixture.root), "{display}");
+        assert!(is_root(&fixture, fixture.root), "{display}");
     }
 }
 
@@ -771,12 +777,9 @@ fn a_float_child_does_not_make_its_subtree_part_of_the_paragraph() {
             .flags
             .contains(NodeFlags::IN_IFC_SUBTREE)
     );
-    let text = fixture.doc.nodes[float].children[0];
-    assert!(
-        !fixture.doc.nodes[text]
-            .flags
-            .contains(NodeFlags::IN_IFC_SUBTREE)
-    );
+    // The float's text is the paragraph of the float itself, a root of its
+    // own, not part of the outer paragraph.
+    assert!(is_root(&fixture, float));
     assert_eq!(fixture.doc.nodes[fixture.root].ifc_boxes(), vec![float]);
 }
 
@@ -858,13 +861,11 @@ fn an_atomic_inline_does_not_make_its_subtree_part_of_the_paragraph() {
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
+    // The atomic's text is the paragraph of the atomic itself, a root of its
+    // own, not part of the outer paragraph.
     let atomic = fixture.doc.nodes[fixture.root].children[1];
-    let text = fixture.doc.nodes[atomic].children[0];
-    assert!(
-        !fixture.doc.nodes[text]
-            .flags
-            .contains(NodeFlags::IN_IFC_SUBTREE)
-    );
+    assert!(is_root(&fixture, atomic));
+    assert_eq!(fixture.doc.nodes[fixture.root].ifc_boxes(), vec![atomic]);
 }
 
 #[test]
@@ -892,7 +893,8 @@ fn a_paragraph_inside_an_atomic_inline_is_a_root_of_its_own() {
 }
 
 #[test]
-fn a_paragraph_with_only_an_image_is_not_a_root() {
+fn a_paragraph_with_only_an_image_is_a_root() {
+    // An atomic inline makes a line on its own (CSS 2.1, 9.4.2).
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_element(
             Some(root),
@@ -903,7 +905,7 @@ fn a_paragraph_with_only_an_image_is_not_a_root() {
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]

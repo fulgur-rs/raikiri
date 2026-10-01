@@ -291,3 +291,189 @@ pub(crate) fn ahem_paragraph_with_atomic(
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     (doc, cascade, atomic, root)
 }
+
+/// `html > body` with `display:block` on both, ready for a test's own content.
+/// Returns `(doc, body)`.
+fn html_body() -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    (doc, body)
+}
+
+/// Mark the flags of `doc` and cascade it.
+fn cascaded(doc: &Document) -> CascadeResult {
+    let rules = raikiri_style::build_rule_tree(doc);
+    raikiri_style::cascade(doc, &rules).expect("cascade")
+}
+
+/// `html > body > div(parent_css) > div(css) > text`: an Ahem paragraph with a
+/// 10px line height under a parent of any display. The inner div is a block
+/// unless `css` says otherwise. Returns the inner div.
+pub(crate) fn ahem_paragraph_in(
+    parent_css: &str,
+    css: &str,
+    text: &str,
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:block;{AHEM_FAMILY_CSS}{parent_css}")),
+    );
+    let root = doc.append_element(
+        Some(parent),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:block;line-height:10px;{css}")),
+    );
+    doc.append_text(root, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, root)
+}
+
+/// `html > body > div(display:flex) > span > text`: the span keeps its
+/// initial `display:inline` and is a flex item only through taffy's
+/// blockification. Returns the span.
+pub(crate) fn flex_container_with_inline_item(text: &str) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:flex;align-items:flex-start;{AHEM_FAMILY_CSS}line-height:10px"
+        )),
+    );
+    let item = doc.append_element(Some(flex), "span", taffy::Style::default(), None::<&str>);
+    doc.append_text(item, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, item)
+}
+
+/// `html > body > [text, div(display:block) > inner]`: body holds inline text
+/// and a block child. Returns `(doc, cascade, body, div)`.
+pub(crate) fn body_with_text_and_block_child(
+    text: &str,
+    inner: &str,
+) -> (Document, CascadeResult, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some(&format!("display:block;{AHEM_FAMILY_CSS}line-height:10px")),
+    );
+    doc.append_text(body, text);
+    let div = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    doc.append_text(div, inner);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, body, div)
+}
+
+/// `html > body > div(root)` whose content is built by `build`; the root is an
+/// Ahem block with a 10px line height and `root_css`.
+fn ahem_root_with(
+    root_css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:block;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
+        )),
+    );
+    build(&mut doc, root);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, root)
+}
+
+/// A paragraph whose only content is one inline-block span (`atomic_css`)
+/// without text.
+pub(crate) fn paragraph_with_only_atomic(atomic_css: &str) -> (Document, CascadeResult, usize) {
+    ahem_root_with("", |doc, root| {
+        doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some(atomic_css),
+        );
+    })
+}
+
+/// A paragraph whose only content is `count` `<br>` elements.
+pub(crate) fn paragraph_with_only_br(count: usize) -> (Document, CascadeResult, usize) {
+    ahem_root_with("", |doc, root| {
+        for _ in 0..count {
+            doc.append_element(
+                Some(root),
+                "br",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+        }
+    })
+}
+
+/// A paragraph whose only content is one empty inline span (`span_css`).
+pub(crate) fn paragraph_with_only_an_empty_span(
+    span_css: &str,
+) -> (Document, CascadeResult, usize) {
+    ahem_root_with("", |doc, root| {
+        doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some(&format!("display:inline;{span_css}")),
+        );
+    })
+}
+
+/// `html > body > div(root, width:200px) > ["x", span(inline-block, width) > text]`.
+/// Returns `(doc, cascade, root, inline_block)`.
+pub(crate) fn paragraph_with_inline_block(
+    text: &str,
+    width: f32,
+) -> (Document, CascadeResult, usize, usize) {
+    let mut inline_block = 0;
+    let (doc, cascade, root) = ahem_root_with("width:200px", |doc, root| {
+        doc.append_text(root, "x");
+        inline_block = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some(&format!("display:inline-block;width:{width}px")),
+        );
+        doc.append_text(inline_block, text);
+    });
+    (doc, cascade, root, inline_block)
+}

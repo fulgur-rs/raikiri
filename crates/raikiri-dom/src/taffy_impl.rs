@@ -368,40 +368,7 @@ impl Document {
                 );
             }
             if tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) {
-                let style = tree.nodes[idx].style.clone();
-                // Border-box top inset, resolved here: the parent has not
-                // stored this node's layout yet.
-                let top_inset = ifc_top_inset(&style, inputs.parent_size.width);
-                // A known width on the input means the parent stretched or
-                // fixed the box, and a definite `width` of its own fixes it
-                // too (taffy passes it as the available width); otherwise the
-                // box shrinks to fit.
-                let stretched = inputs.known_dimensions.width.is_some()
-                    || (inputs.sizing_mode == taffy::SizingMode::InherentSize
-                        && ifc_has_definite_width(&style, inputs.parent_size.width));
-                let measure = IfcMeasure {
-                    run_mode: inputs.run_mode,
-                    stretched,
-                    width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
-                    edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
-                    top_inset,
-                };
-                let mut content_baseline = None;
-                let mut output =
-                    compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
-                        let (size, baseline) = measure_ifc_root(
-                            tree,
-                            idx,
-                            known.height,
-                            available,
-                            measure,
-                            block_ctx,
-                        );
-                        content_baseline = baseline;
-                        size
-                    });
-                output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
-                return output;
+                return compute_ifc_root(tree, node_id, inputs, block_ctx);
             }
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
@@ -481,6 +448,44 @@ impl Document {
         }
         output
     }
+}
+
+/// Lay out an ifc root: its paragraph is measured and broken into lines by
+/// the inline engine, and taffy sees it as a leaf.
+fn compute_ifc_root(
+    tree: &mut Document,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    block_ctx: Option<&mut BlockContext<'_>>,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let style = tree.nodes[idx].style.clone();
+    // Border-box top inset, resolved here: the parent has not
+    // stored this node's layout yet.
+    let top_inset = ifc_top_inset(&style, inputs.parent_size.width);
+    // A known width on the input means the parent stretched or
+    // fixed the box, and a definite `width` of its own fixes it
+    // too (taffy passes it as the available width); otherwise the
+    // box shrinks to fit.
+    let stretched = inputs.known_dimensions.width.is_some()
+        || (inputs.sizing_mode == taffy::SizingMode::InherentSize
+            && ifc_has_definite_width(&style, inputs.parent_size.width));
+    let measure = IfcMeasure {
+        run_mode: inputs.run_mode,
+        stretched,
+        width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
+        edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
+        top_inset,
+    };
+    let mut content_baseline = None;
+    let mut output = compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
+        let (size, baseline) =
+            measure_ifc_root(tree, idx, known.height, available, measure, block_ctx);
+        content_baseline = baseline;
+        size
+    });
+    output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
+    output
 }
 
 /// The node's own `min-width` and `max-width`, as content-box widths.
@@ -637,7 +642,14 @@ fn measure_ifc_root(
         width,
         height: known_height.unwrap_or(lines.height),
     };
-    let baseline = flow::first_baseline(&lines);
+    // An inline-block's baseline is that of its last line box (CSS 2.1
+    // 10.8.1); every other box exposes its first.
+    let baseline = if tree.nodes[idx].display == raikiri_style::property::DisplayValue::InlineBlock
+    {
+        flow::last_baseline(&lines)
+    } else {
+        flow::first_baseline(&lines)
+    };
     if measure.run_mode == RunMode::PerformLayout
         && let Some(root) = tree.nodes[idx].ifc.as_mut()
     {
@@ -667,7 +679,11 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
             .baseline;
         return baseline.is_finite().then_some(baseline);
     }
-    if root_node.display != DisplayValue::InlineBlock {
+    // An ifc root has measured its own baseline from its lines; its children
+    // carry no lines of their own.
+    if root_node.display != DisplayValue::InlineBlock
+        || root_node.flags.contains(NodeFlags::IS_IFC_ROOT)
+    {
         return None;
     }
 
@@ -684,12 +700,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     while let Some((idx, offset_y)) = stack.pop() {
         let node = &doc.nodes[idx];
         if node.flags.contains(NodeFlags::IS_IFC_ROOT) {
-            if let Some(line_baseline) = node
-                .ifc
-                .as_ref()
-                .and_then(|root| root.lines.as_ref())
-                .and_then(crate::layout::ifc::flow::last_baseline)
-            {
+            if let Some(line_baseline) = node.ifc.as_ref().and_then(|root| root.last_baseline()) {
                 let layout = &node.unrounded_layout;
                 let baseline = offset_y + layout.padding.top + layout.border.top + line_baseline;
                 if baseline.is_finite() {
@@ -756,6 +767,19 @@ fn compute_inline_block_shrink_wrap(
     block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    // The inline engine measures an ifc root at its fit-content width itself;
+    // the block algorithm below would see none of its children. A width the
+    // parent passes is not the box's own, as for the block path below.
+    if tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) {
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: None,
+                height: inputs.known_dimensions.height,
+            },
+            ..inputs
+        };
+        return compute_ifc_root(tree, node_id, inputs, block_ctx);
+    }
     let display = tree.nodes[idx].display;
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.

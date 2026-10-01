@@ -1520,3 +1520,22 @@ fn a_contents_element_is_transparent_in_the_paragraph() {
         .collect();
     assert_eq!(blue, [px(20), px(30)]);
 }
+
+#[test]
+fn a_block_child_of_a_paragraph_paints_its_text() {
+    // The block is a box of the paragraph and the root of its own text: its
+    // text is laid out and painted by the inline engine, once.
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let block = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+        doc.append_text(block, "bbbb");
+    };
+    let (off, on) = off_and_on("", build);
+    let (mut doc, cascade, root) = paragraph("", build);
+    lay_out(&mut doc, &cascade, true);
+    let block = doc.get_node(root).expect("root").children[1];
+    assert!(doc.get_node(block).is_some_and(|n| n.is_ifc_root()));
+    assert_eq!(ink(&on), ink(&off));
+    // Hand-computed: "aa" on line 1 and "bbbb" in the block below it.
+    assert_eq!(ink(&on).len(), 6);
+}

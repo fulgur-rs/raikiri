@@ -321,7 +321,7 @@ pub(crate) fn project_ifc(
     project_ifc_builder(doc, cascade, root, fonts, limits)?.build(cx, fonts)
 }
 
-/// Walk the in-flow block `root` and fill a paragraph builder, without
+/// Walk the box `root` and fill a paragraph builder, without
 /// shaping. `fonts` is read for font-relative lengths (`ch`).
 ///
 /// # Errors
@@ -343,11 +343,11 @@ pub(crate) fn project_ifc_builder(
         .ok_or(IfcError::InvalidNode(root))?;
     if !root_node.is_in_document()
         || root_node.kind() != NodeKind::Element
-        || root_cv.display != DisplayValue::Block
+        || !super::assign::can_be_ifc_root(doc, cascade, root)
     {
         return Err(IfcError::Unsupported {
             node: root,
-            reason: "root must be an in-flow block",
+            reason: "root must be a box that lays out its own inline content",
         });
     }
     reject_generated_content(cascade, root)?;
