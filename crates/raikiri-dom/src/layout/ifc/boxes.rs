@@ -72,12 +72,12 @@ pub(crate) fn layout_with_boxes(
     // context and a local one cannot share a lifetime, because the pointee of
     // `&mut BlockContext<'_>` is invariant.
     match block_ctx {
-        Some(ctx) => run_boxes(tree, &root, geometry, ctx, perform, false),
+        Some(ctx) => run_boxes(tree, idx, &root, geometry, ctx, perform, false),
         None => {
             let mut bfc = BlockFormattingContext::new();
             let mut ctx = bfc.root_block_context();
             ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
-            run_boxes(tree, &root, geometry, &mut ctx, perform, true)
+            run_boxes(tree, idx, &root, geometry, &mut ctx, perform, true)
         }
     }
 }
@@ -87,6 +87,7 @@ pub(crate) fn layout_with_boxes(
 /// floats.
 fn run_boxes(
     tree: &mut Document,
+    idx: usize,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -304,6 +305,7 @@ fn run_boxes(
     }
     if perform {
         place_atomics(tree, &lines, &atomics.outputs, geometry);
+        super::records::record_inline_boxes(tree, idx, root, &lines, &geometry);
     }
     // A paragraph that is its own formatting context contains its floats; one
     // that is not leaves them hanging below, and the parent collects them.

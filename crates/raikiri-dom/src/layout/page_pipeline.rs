@@ -1369,6 +1369,13 @@ pub fn layout_pages_with_page_geometry(
                 if node.is_display_none() {
                     return;
                 }
+                // An element inside a paragraph laid out by the inline engine
+                // moves with the paragraph's lines; breaking at it on its own
+                // would leave the lines where they are. The flag is set only
+                // when the inline engine is switched on.
+                if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+                    return;
+                }
                 let raw_y = parent_abs_y + node.unrounded_layout.location.y;
                 let computed = &cascade.computed[node_id];
                 // A floated box does not establish a page transition merely

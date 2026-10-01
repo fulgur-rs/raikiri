@@ -4441,3 +4441,327 @@ fn a_float_root_without_a_width_still_shrinks_to_fit() {
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 70.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
 }
+
+// ── boxes of inline elements in ifc roots ────────────────────
+
+const SPAN_EDGES: &str = "padding:0 3px;border-width:0 2px;border-style:solid;margin:0 4px";
+
+#[test]
+fn an_inline_element_has_the_same_border_box_with_and_without_the_switch() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let make = || {
+        let mut span_id = 0;
+        let (doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some(format!("display:inline;{SPAN_EDGES}").as_str()),
+            );
+            doc.append_text(inner, "bb");
+            doc.append_text(root, "cc");
+            span_id = inner;
+        });
+        (doc, cascade, span_id)
+    };
+    let (mut off_doc, off_cascade, off_span) = make();
+    layout_single_page(
+        &mut off_doc,
+        &off_cascade,
+        page_box_800x600(),
+        ahem_font_context(),
+    )
+    .expect("layout");
+    let (mut on_doc, on_cascade, on_span) = make();
+    lay_out_with_switch(&mut on_doc, &on_cascade);
+    assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
+
+    let off = absolute_rect(&off_doc, off_span);
+    assert_eq!(
+        off,
+        (24.0, 0.0, 30.0, 10.0),
+        "the parley path boxes the span like F"
+    );
+    assert_eq!(absolute_rect(&on_doc, on_span), off);
+}
+
+#[test]
+fn a_padded_root_places_the_inline_element_inside_its_content_box() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let make = || {
+        let mut span_id = 0;
+        let (doc, cascade, _root) = ahem_paragraph_with(
+            "width:200px;padding:0 5px 0 7px;box-sizing:content-box",
+            |doc, root| {
+                doc.append_text(root, "aa");
+                let inner = doc.append_element(
+                    Some(root),
+                    "span",
+                    taffy::Style::default(),
+                    Some("display:inline;padding:0 3px"),
+                );
+                doc.append_text(inner, "bb");
+                span_id = inner;
+            },
+        );
+        (doc, cascade, span_id)
+    };
+    let (mut off_doc, off_cascade, off_span) = make();
+    layout_single_page(
+        &mut off_doc,
+        &off_cascade,
+        page_box_800x600(),
+        ahem_font_context(),
+    )
+    .expect("layout");
+    let (mut on_doc, on_cascade, on_span) = make();
+    lay_out_with_switch(&mut on_doc, &on_cascade);
+    assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
+    // 7px left padding, "aa" 20px, then the span's box.
+    assert_eq!(absolute_rect(&on_doc, on_span), (27.0, 0.0, 26.0, 10.0));
+    assert_eq!(
+        absolute_rect(&on_doc, on_span),
+        absolute_rect(&off_doc, off_span)
+    );
+}
+
+#[test]
+fn a_root_with_a_top_border_places_the_inline_element_below_it() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let mut span_id = 0;
+    let (mut doc, cascade, root) = ahem_paragraph_with(
+        "width:200px;border-width:6px 0 0 0;border-style:solid;padding-top:1px",
+        |doc, root| {
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(inner, "bb");
+            span_id = inner;
+        },
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // The content box starts 7px below the root's border-box top.
+    let (_, root_y, _, _) = absolute_rect(&doc, root);
+    assert_eq!(
+        absolute_rect(&doc, span_id),
+        (0.0, root_y + 7.0, 20.0, 10.0)
+    );
+}
+
+#[test]
+fn a_wrapping_inline_element_has_the_bounding_box_of_its_pieces() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let mut span_id = 0;
+    let (mut doc, cascade, _root) = ahem_paragraph_with("width:60px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some(format!("display:inline;{SPAN_EDGES}").as_str()),
+        );
+        doc.append_text(inner, "aaaa bbbb");
+        span_id = inner;
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    // `W` in the hand-computed basis: pieces x 4..49 (line 1) and x 0..45
+    // (line 2); the bounding box is x 0..49, y 0..20.
+    assert_eq!(absolute_rect(&doc, span_id), (0.0, 0.0, 49.0, 20.0));
+}
+
+#[test]
+fn nested_inline_elements_accumulate_to_their_own_boxes() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let (mut outer_id, mut inner_id) = (0, 0);
+    let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
+        doc.append_text(root, "a");
+        let outer = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;padding:0 1px"),
+        );
+        doc.append_text(outer, "b");
+        let inner = doc.append_element(
+            Some(outer),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;padding:0 2px"),
+        );
+        doc.append_text(inner, "c");
+        outer_id = outer;
+        inner_id = inner;
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(absolute_rect(&doc, outer_id), (10.0, 0.0, 26.0, 10.0));
+    assert_eq!(absolute_rect(&doc, inner_id), (21.0, 0.0, 14.0, 10.0));
+}
+
+#[test]
+fn an_empty_inline_element_has_a_zero_width_box_on_its_line() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    // An inline element without content still has a content area on the
+    // line: 0 wide, ascent + descent (10px) tall, after "aa".
+    let mut span_id = 0;
+    let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        span_id = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(absolute_rect(&doc, span_id), (20.0, 0.0, 0.0, 10.0));
+}
+
+#[test]
+fn an_inline_element_without_a_piece_gets_an_empty_layout() {
+    use crate::layout::test_support::ahem_paragraph_with;
+    let mut span_id = 0;
+    let (mut doc, cascade, root) = ahem_paragraph_with("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        span_id = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:none;padding:0 3px"),
+        );
+        doc.append_text(span_id, "bb");
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let layout = doc.nodes[span_id].unrounded_layout;
+    assert_eq!(
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height
+        ),
+        (0.0, 0.0, 0.0, 0.0)
+    );
+}
+
+#[test]
+fn a_second_layout_does_not_keep_the_stale_box_of_a_removed_element() {
+    use crate::layout::test_support::ahem_paragraph_with;
+    let mut span_id = 0;
+    let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;padding:0 3px"),
+        );
+        doc.append_text(inner, "bb");
+        span_id = inner;
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[span_id].unrounded_layout.size.width > 0.0);
+    // Hide the element and lay out again: it has no piece any more.
+    doc.set_element_inline_style(span_id, Some("display:none".into()));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(doc.nodes[span_id].unrounded_layout.size.width, 0.0);
+}
+
+#[test]
+fn a_wide_padding_does_not_make_the_layout_check_zero_the_element() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    // The padding (2 x 40) is wider than the bounding box of the pieces,
+    // which carry one edge each; the layout check must not read that as a
+    // negative content box and zero the element.
+    let mut span_id = 0;
+    let (mut doc, cascade, _root) = ahem_paragraph_with("width:60px", |doc, root| {
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;padding:0 40px"),
+        );
+        doc.append_text(inner, "a b");
+        span_id = inner;
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(
+        absolute_rect(&doc, span_id).2 > 0.0,
+        "the element kept its box"
+    );
+}
+
+#[test]
+fn relayout_records_the_boxes_again_for_the_new_lines() {
+    use crate::layout::relayout_text_for_width;
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let mut span_id = 0;
+    // No authored width: relayout follows the page width. The content box
+    // starts 7px right of and 3px below the root's border-box corner.
+    let (mut doc, cascade, root) = ahem_paragraph_with(
+        "padding-left:7px;border-width:3px 0 0 0;border-style:solid",
+        |doc, root| {
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(inner, "aaaa bbbb");
+            span_id = inner;
+        },
+    );
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(
+        absolute_rect(&doc, span_id),
+        (7.0, 3.0, 90.0, 10.0),
+        "one line"
+    );
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    assert_eq!(
+        absolute_rect(&doc, span_id),
+        (7.0, 3.0, 40.0, 20.0),
+        "two lines at 50px"
+    );
+}
+
+/// Pages of a paragraph whose inline element asks for a page break before it,
+/// with the switch on or off.
+fn pages_with_a_breaking_inline(switch: bool) -> (usize, bool) {
+    use crate::layout::test_support::ahem_paragraph_with;
+    // At 30px the span lands on the third line, 20px down the page.
+    let (mut doc, cascade, root) = ahem_paragraph_with("width:30px", |doc, root| {
+        doc.append_text(root, "aa aa ");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;break-before:page"),
+        );
+        doc.append_text(inner, "bb");
+        doc.append_text(root, " cc");
+    });
+    if switch {
+        doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    }
+    let slices =
+        layout_pages(&mut doc, &cascade, page_box_800x600(), ahem_font_context()).expect("pages");
+    (slices.len(), doc.nodes[root].is_ifc_root())
+}
+
+#[test]
+fn an_inline_element_in_an_ifc_paragraph_is_not_a_page_break_candidate() {
+    // `break-before` applies to block-level boxes (CSS Fragmentation 3 3.1);
+    // the paragraph's lines are not split around an inline element, as on
+    // the parley path.
+    assert_eq!(pages_with_a_breaking_inline(false), (1, false));
+    assert_eq!(pages_with_a_breaking_inline(true), (1, true));
+}

@@ -22,7 +22,7 @@ pub(crate) struct LineSpace {
 pub(crate) struct FlowGeometry {
     /// Content-box width the lines are broken at.
     pub(crate) width: f32,
-    /// Border plus padding on the start and end side.
+    /// Border plus padding on the physical left and right side.
     pub(crate) edges: (f32, f32),
     /// Border plus padding above the content box. A `BlockContext` measures
     /// block offsets from the block's border-box top, so a block offset inside
@@ -231,7 +231,23 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         if !root.boxes.is_empty() || root.lines.as_ref().is_some_and(|lines| lines.beside_floats) {
             continue;
         }
-        root.lines = Some(break_lines(root, &mut state.layout_cx, width));
+        let lines = break_lines(root, &mut state.layout_cx, width);
+        let ifc = root.without_lines();
+        root.lines = Some(lines);
+        // The inline elements follow the new lines; the root's box keeps the
+        // border and padding it was laid out with.
+        let layout = doc.nodes[id].unrounded_layout;
+        let geometry = FlowGeometry {
+            width,
+            edges: (
+                layout.padding.left + layout.border.left,
+                layout.padding.right + layout.border.right,
+            ),
+            top_edge: layout.padding.top + layout.border.top,
+        };
+        if let Some(lines) = doc.nodes[id].ifc_lines().map(<[shodo::Line]>::to_vec) {
+            super::records::record_inline_boxes(doc, id, &ifc, &lines, &geometry);
+        }
     }
     doc.ifc = Some(state);
 }

@@ -866,6 +866,17 @@ pub(crate) fn enforce_layout_invariants(document: &mut Document, root_idx: usize
     let mut containment_violations = 0usize;
     let mut stack = vec![root_idx];
     while let Some(idx) = stack.pop() {
+        // An element laid out by the inline engine carries the bounding box
+        // of its line pieces; a piece that does not end the element leaves
+        // out that side's padding and border, so the box can be narrower
+        // than the element's paddings without being broken. The flag is set
+        // only when the inline engine is switched on.
+        if document.nodes[idx]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
+        {
+            continue;
+        }
         let layout = document.nodes[idx].unrounded_layout;
         if layout.content_box_width() < 0.0 || layout.content_box_height() < 0.0 {
             zero_layout_subtree(document, idx);

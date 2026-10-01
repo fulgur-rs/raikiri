@@ -31,6 +31,31 @@ pub(crate) fn ahem_paragraph(text: &str, css: &str) -> (Document, CascadeResult,
     (doc, cascade, root)
 }
 
+/// `block_fixture` with the paragraph's line height set; `build` fills the
+/// root. Returns the document, its cascade and the root.
+pub(crate) fn ahem_paragraph_with(
+    css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, usize) {
+    let Fixture { doc, cascade, root } = block_fixture(&format!("line-height:10px;{css}"), build);
+    (doc, cascade, root)
+}
+
+/// The border box of `node` in page coordinates, accumulated from the layout
+/// locations of its ancestors.
+pub(crate) fn absolute_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32) {
+    let (mut x, mut y) = (0.0, 0.0);
+    let mut current = Some(node);
+    while let Some(id) = current {
+        let layout = doc.nodes[id].unrounded_layout;
+        x += layout.location.x;
+        y += layout.location.y;
+        current = doc.parent_of(id);
+    }
+    let size = doc.nodes[node].unrounded_layout.size;
+    (x, y, size.width, size.height)
+}
+
 /// Font declarations shared by the Ahem paragraph fixtures.
 const AHEM_FAMILY_CSS: &str = "font-family:Ahem;font-size:10px;";
 
