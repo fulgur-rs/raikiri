@@ -150,3 +150,27 @@ fn a_paragraph_the_engine_cannot_project_is_an_error() {
         "{result:?}"
     );
 }
+
+#[test]
+fn a_huge_font_size_or_line_height_lays_out_in_bounded_time() {
+    // Untrusted CSS can ask for sizes that overflow to infinity on the way
+    // in; the layout must still finish, without an error.
+    for css in [
+        "font-size:1e40px",
+        "font-size:1e9px;line-height:1e30",
+        "font-size:1e20px;letter-spacing:1e30px",
+    ] {
+        let css = css.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut doc, cascade, _) = ahem_paragraph("aaaa bbbb", &css);
+            let laid_out =
+                layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).is_ok();
+            let _ = tx.send(laid_out);
+        });
+        let laid_out = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the layout finishes");
+        assert!(laid_out);
+    }
+}
