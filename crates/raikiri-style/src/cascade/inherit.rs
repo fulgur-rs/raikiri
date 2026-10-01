@@ -9,8 +9,9 @@ use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
     LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize, Sides, TextIndentLength,
-    WordSpacingValue, WritingMode, initial_grid_auto_track_list,
-    resolve_text_align_internal_center, resolve_text_align_match_parent,
+    TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue, WritingMode,
+    initial_grid_auto_track_list, resolve_text_align_internal_center,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
@@ -654,6 +655,10 @@ pub(crate) fn apply_winners(
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
 ) {
     pick_winners(candidates, winners);
+    // The drain below takes every slot, so the white-space winners are read
+    // first; their applied values are collected during the drain.
+    let white_space_winners = WhiteSpaceWinners::read(winners);
+    let mut white_space_applied = WhiteSpaceApplied::default();
     for slot in winners.iter_mut() {
         if let Some(winner) = slot.take() {
             let value = &candidates[winner.idx].0;
@@ -775,9 +780,103 @@ pub(crate) fn apply_winners(
                 {
                     *page_slot = page.clone();
                 }
+                white_space_applied.note(&value);
                 apply_value(value, specified);
             }
         }
+    }
+    let (collapse, wrap) = white_space_winners.settle(&white_space_applied);
+    // A half no declaration on this element decides keeps the value
+    // `inherit_from` seeded, which is the parent's effective value.
+    if let Some(collapse) = collapse {
+        specified.effective_white_space_collapse = collapse;
+    }
+    if let Some(wrap) = wrap {
+        specified.effective_text_wrap_mode = wrap;
+    }
+}
+
+/// Whether `a` comes after `b` in cascade order: rank, specificity and source
+/// order first, then the position in the candidate list. Declarations of one
+/// rule (and of one inline style) share a source order, so the candidate
+/// position is what orders them.
+fn declared_later(a: RankedDecl, b: RankedDecl) -> bool {
+    (a.rank, a.specificity, a.source_order, a.idx) > (b.rank, b.specificity, b.source_order, b.idx)
+}
+
+/// The cascade winners of the legacy `white-space` shorthand and of the
+/// longhands it expands to.
+///
+/// The cascade keeps one winner per property and applies them in property
+/// order, so the order in which the shorthand and a longhand were declared is
+/// not visible to `apply_value`. CSS Text 4 §3 makes `white-space` a shorthand
+/// of `white-space-collapse` and `text-wrap-mode`, so each longhand takes the
+/// value of whichever of the two declarations comes later in cascade order.
+struct WhiteSpaceWinners {
+    legacy: Option<RankedDecl>,
+    collapse: Option<RankedDecl>,
+    wrap: Option<RankedDecl>,
+}
+
+/// The values the white-space winners resolved to (after `var()`
+/// substitution), or `None` when a winner was invalid at computed-value time.
+#[derive(Default)]
+struct WhiteSpaceApplied {
+    legacy: Option<WhiteSpace>,
+    collapse: Option<WhiteSpaceCollapse>,
+    wrap: Option<TextWrapMode>,
+}
+
+impl WhiteSpaceApplied {
+    fn note(&mut self, value: &PropertyValue) {
+        match value {
+            PropertyValue::WhiteSpace(keyword) => self.legacy = Some(*keyword),
+            PropertyValue::WhiteSpaceCollapse(collapse) => self.collapse = Some(*collapse),
+            PropertyValue::TextWrap(wrap) => self.wrap = Some(*wrap),
+            PropertyValue::TextWrapShorthand(shorthand) => self.wrap = Some(shorthand.mode),
+            _ => {}
+        }
+    }
+}
+
+impl WhiteSpaceWinners {
+    fn read(winners: &[Option<RankedDecl>]) -> Self {
+        use crate::property::PropertyKey as K;
+        let at = |key: K| winners.get(key as usize).copied().flatten();
+        Self {
+            legacy: at(K::WhiteSpace),
+            collapse: at(K::WhiteSpaceCollapse),
+            // A `text-wrap` shorthand kept as a `var()` value shares this key.
+            wrap: at(K::TextWrap),
+        }
+    }
+
+    /// The effective `white-space-collapse` and `text-wrap-mode` this
+    /// element declares, each `None` when no declaration decides that half
+    /// (or the deciding one was invalid at computed-value time, which makes
+    /// the half inherit).
+    fn settle(
+        &self,
+        applied: &WhiteSpaceApplied,
+    ) -> (Option<WhiteSpaceCollapse>, Option<TextWrapMode>) {
+        let legacy_pair = applied.legacy.and_then(WhiteSpace::collapse_and_wrap);
+        let collapse = match (self.collapse, self.legacy) {
+            (Some(longhand), Some(legacy)) if !declared_later(longhand, legacy) => {
+                legacy_pair.map(|pair| pair.0)
+            }
+            (Some(_), _) => applied.collapse,
+            (None, Some(_)) => legacy_pair.map(|pair| pair.0),
+            (None, None) => None,
+        };
+        let wrap = match (self.wrap, self.legacy) {
+            (Some(longhand), Some(legacy)) if !declared_later(longhand, legacy) => {
+                legacy_pair.map(|pair| pair.1)
+            }
+            (Some(_), _) => applied.wrap,
+            (None, Some(_)) => legacy_pair.map(|pair| pair.1),
+            (None, None) => None,
+        };
+        (collapse, wrap)
     }
 }
 

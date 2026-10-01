@@ -653,6 +653,9 @@ pub(crate) fn prepare_text_indent_before_taffy(
         text.text_indent_hanging = false;
         text.text_indent_each_line = false;
         text.text_indent_rebreak = false;
+        if doc.nodes[idx].flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+            continue;
+        }
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
@@ -1320,6 +1323,9 @@ pub(crate) fn realign_text_after_layout(
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
+        if doc.nodes[idx].flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+            continue;
+        }
         // cov:ignore: multicol fragment detection is exercised by the ignored foundation WPT run.
         let mut ancestor = *parent;
         // cov:ignore: multicol fragment detection is exercised by the ignored foundation WPT run.
@@ -1894,6 +1900,13 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
         }
+        if doc.nodes[idx]
+            .flags
+            .intersects(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE)
+        {
+            // Laid out by the shodo inline engine, not as a parley line box.
+            continue;
+        }
         // A multicolumn container establishes fragmentainers rather than the
         // synthetic single flex line used by ordinary inline roots.
         // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
@@ -1923,6 +1936,14 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
     }
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        if doc.nodes[idx]
+            .flags
+            .intersects(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE)
+        {
+            // Laid out by the shodo inline engine, not as a parley line box.
+            doc.nodes[idx].flags.remove(NodeFlags::IS_INLINE_ROOT);
             continue;
         }
         if multicol_roots[idx] {
@@ -5561,6 +5582,9 @@ pub(crate) fn preshape_text(
             continue;
         }
         if !doc.nodes[idx].is_in_document() || doc.nodes[idx].is_inline_svg_content() {
+            continue;
+        }
+        if doc.nodes[idx].flags.contains(NodeFlags::IN_IFC_SUBTREE) {
             continue;
         }
         let raw: String = match &doc.nodes[idx].data {

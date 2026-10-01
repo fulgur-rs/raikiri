@@ -471,6 +471,8 @@ fn non_initial_parent() -> ComputedValues {
         white_space_collapse: WhiteSpaceCollapse::PreserveBreaks,
         text_wrap: TextWrapMode::Nowrap,
         text_wrap_style: TextWrapStyle::Stable,
+        effective_white_space_collapse: WhiteSpaceCollapse::PreserveBreaks,
+        effective_text_wrap_mode: TextWrapMode::Nowrap,
         // CSS Text 3 §5.3: `None` differs from the initial `Manual`
         // (as required for every field of non_initial_parent).
         hyphens: Hyphens::None,
@@ -733,6 +735,14 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.white_space, parent.white_space);
     // CSS Text 4: white-space-collapse is inherited.
     assert_eq!(child.white_space_collapse, parent.white_space_collapse);
+    assert_eq!(
+        child.effective_white_space_collapse,
+        parent.effective_white_space_collapse
+    );
+    assert_eq!(
+        child.effective_text_wrap_mode,
+        parent.effective_text_wrap_mode
+    );
     // CSS Text 3 §5.3: hyphens is inherited.
     assert_eq!(child.hyphens, parent.hyphens);
     // CSS Text 4: hyphenate-character is inherited.

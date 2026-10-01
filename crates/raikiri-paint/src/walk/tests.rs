@@ -1463,6 +1463,7 @@ fn paint_margin_row(
     let mut warnings = Vec::new();
     paint_horizontal_margin_boxes(
         &mut scene,
+        None,
         specs,
         top,
         PageBox::A4.width,
@@ -3132,6 +3133,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut warnings = Vec::new();
     paint_margin_box(
         &mut scene,
+        None,
         &spec,
         0.0,
         0.0,
@@ -3149,6 +3151,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut unsupported_warnings = Vec::new();
     paint_margin_box(
         &mut unsupported_scene,
+        None,
         &unsupported,
         0.0,
         0.0,
@@ -3374,6 +3377,179 @@ fn overflow_hidden_clip_min_edges_floor_outward() {
         (bounds.y1 - 70.6).abs() < 1e-5,
         "max y keeps exact extent {bounds:?}"
     );
+}
+
+fn engine_document() -> Document {
+    let mut doc = Document::new();
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    ));
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
+    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    doc
+}
+
+#[test]
+fn a_margin_box_width_follows_the_document_font() {
+    // "serif" resolves to Ahem in the document layer (30px for "abc" at 10px);
+    // the system serif font is nowhere near that.
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.font_family = "serif".to_owned();
+    spec.font_size = 10.0;
+    assert_eq!(margin_box_text_width(Some(&doc), &spec), 30.0);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    // A vertical box is measured by the old path, never by the engine.
+    spec.vertical_writing = true;
+    let _ = margin_box_text_width(Some(&doc), &spec);
+    assert_eq!(doc.standalone_text_calls(), 1);
+}
+
+struct NoImages;
+impl raikiri_traits::ImagePixelSource for NoImages {
+    fn get_decoded(&self, _url: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        None
+    }
+}
+
+/// `(x, y)` of the first glyph of each margin box text, left to right, and
+/// the number of engine results.
+fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    document.append_text(
+        style,
+        "@page { margin: 50px; \
+           @top-left { content: 'a'; font-family: Ahem; font-size: 10px } \
+           @top-right { content: 'a'; font-family: serif; font-size: 10px } }",
+    );
+    document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    ));
+    if inline_formatting {
+        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    }
+    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages);
+    let mut out = Vec::new();
+    for command in &scene.commands {
+        if let RenderCommand::GlyphRun(run) = command {
+            let origin = run.transform.translation();
+            if let Some(glyph) = run.glyphs.first() {
+                out.push((origin.x + f64::from(glyph.x), origin.y + f64::from(glyph.y)));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    (out, document.standalone_text_calls())
+}
+
+#[test]
+fn engine_margin_boxes_do_not_add_the_ahem_baseline_correction() {
+    let (boxes, _) = margin_box_glyph_ys(true);
+    assert_eq!(boxes.len(), 2, "one glyph run per margin box: {boxes:?}");
+    // Both boxes have the same height and the same resolved font, so the text
+    // sits at the same y whatever the family was called.
+    assert_eq!(boxes[0].1, boxes[1].1);
+    // The boxes are 10px tall at the top of the page: the baseline is the
+    // Ahem ascent, 8.
+    assert_eq!(boxes[0].1, 8.0);
+}
+
+#[test]
+fn margin_boxes_are_measured_and_drawn_by_the_engine() {
+    // Two boxes, each measured once for its width (`margin_box_text_width`)
+    // and drawn once: four results. The Ahem correction is decided with
+    // `standalone_text_eligible`, which shapes nothing.
+    let (_, calls) = margin_box_glyph_ys(true);
+    assert_eq!(calls, 4);
+    let (_, off_calls) = margin_box_glyph_ys(false);
+    assert_eq!(off_calls, 0);
+}
+
+#[test]
+fn a_vertical_writing_margin_box_stays_on_the_parley_path() {
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.font_family = "Ahem".to_owned();
+    spec.font_size = 10.0;
+    let draw = |spec: &MarginBoxPaintSpec| {
+        let mut scene = Scene::new();
+        paint_margin_box(
+            &mut scene,
+            Some(&doc),
+            spec,
+            0.0,
+            0.0,
+            200.0,
+            40.0,
+            None,
+            &mut Vec::new(),
+        );
+        scene
+    };
+    // Control: the same box in horizontal writing is drawn by the engine, once.
+    let _ = draw(&spec);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    spec.vertical_writing = true;
+    let scene = draw(&spec);
+    assert_eq!(doc.standalone_text_calls(), 1, "no new engine result");
+    assert!(
+        scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
+        "parley still draws it"
+    );
+}
+
+#[test]
+fn a_vertical_ahem_margin_box_keeps_the_baseline_correction_of_the_parley_path() {
+    // The vertical box is drawn by parley even when the document has the
+    // engine, so it keeps the correction that path applies to Ahem.
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.font_family = "Ahem".to_owned();
+    spec.font_size = 10.0;
+    spec.vertical_writing = true;
+    let glyph_ys = |document: Option<&Document>| -> Vec<f64> {
+        let mut scene = Scene::new();
+        paint_margin_box(
+            &mut scene,
+            document,
+            &spec,
+            0.0,
+            0.0,
+            200.0,
+            40.0,
+            None,
+            &mut Vec::new(),
+        );
+        scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::GlyphRun(run) => Some(run.transform.translation().y),
+                _ => None,
+            })
+            .collect()
+    };
+    let without = glyph_ys(None);
+    assert!(!without.is_empty());
+    assert_eq!(glyph_ys(Some(&doc)), without);
 }
 
 #[test]
@@ -4050,4 +4226,126 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &mut transparent_warnings,
     );
     assert!(!transparent_scene.commands.is_empty());
+}
+
+const FONT_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace"
+);
+
+/// Lay out and record a document with generated content, with the inline
+/// engine on or off. Both the parley context and the engine's layer hold Ahem.
+fn generated_scene(
+    css: &str,
+    build: impl FnOnce(&mut Document, usize),
+    inline_formatting: bool,
+) -> (Document, CascadeResult, Scene, usize) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    document.append_text(style, css);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let div = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    build(&mut document, div);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let dir = std::path::Path::new(FONT_DIR);
+    if inline_formatting {
+        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    }
+    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    (document, cascade, scene, div)
+}
+
+fn glyph_xs(scene: &Scene) -> Vec<f64> {
+    let mut xs = Vec::new();
+    for command in &scene.commands {
+        if let RenderCommand::GlyphRun(run) = command {
+            let origin = run.transform.translation();
+            xs.extend(run.glyphs.iter().map(|g| origin.x + f64::from(g.x)));
+        }
+    }
+    xs.sort_by(f64::total_cmp);
+    xs
+}
+
+#[test]
+fn the_text_after_a_generated_before_starts_after_its_advance() {
+    // "AB " is 30px with its trailing space, so BODY starts at x = 30.
+    let (document, _, scene, _) = generated_scene(
+        r#"div::before { content: "AB " }"#,
+        |doc, div| {
+            doc.append_text(div, "BODY");
+        },
+        true,
+    );
+    assert_eq!(glyph_xs(&scene), [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
+    assert!(document.standalone_text_calls() > 0);
+}
+
+#[test]
+fn a_generated_run_is_measured_with_the_document_font() {
+    let (document, cascade, _, div) = generated_scene(
+        r#"div::before { content: "A" } div::after { content: "B " }"#,
+        |doc, div| {
+            doc.append_text(div, "x");
+        },
+        true,
+    );
+    let snapshots: Vec<CounterSnapshot> = Vec::new();
+    let height = generated_pseudo_text_height(
+        &document,
+        &cascade,
+        div,
+        raikiri_style::PseudoElem::Before,
+        &snapshots,
+    );
+    let advance = generated_pseudo_text_advance(
+        &document,
+        &cascade,
+        div,
+        raikiri_style::PseudoElem::After,
+        &snapshots,
+    );
+    assert_eq!(height, 10.0);
+    assert_eq!(advance, 20.0);
+}
+
+fn list_fixture_with_engine() -> (Document, CascadeResult, usize) {
+    let (mut document, cascade, first, _) = list_fixture(
+        "display:list-item;list-style-type:decimal;list-style-position:outside;\
+         font-family:Ahem;font-size:10px",
+        "display:list-item",
+        None,
+    );
+    let dir = std::path::Path::new(FONT_DIR);
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+    document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    (document, cascade, first)
+}
+
+#[test]
+fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
+    // The marker text is "1. " (three glyphs, the last one a space). Its width
+    // is 20 (the trailing space is left out, as parley does), so an outside
+    // marker starts at 0 + 0 - 20 - 4 = -24: glyphs at -24, -14 and -4.
+    let (document, cascade, first) = list_fixture_with_engine();
+    let mut scene = Scene::new();
+    paint_list_marker(
+        &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+    );
+    assert_eq!(glyph_xs(&scene), [-24.0, -14.0, -4.0]);
+    // One engine result for the measurement, one for the drawing.
+    assert_eq!(document.standalone_text_calls(), 2);
 }

@@ -378,6 +378,8 @@ fn parent_fixture() -> ComputedValues {
         white_space_collapse: WhiteSpaceCollapse::PreserveBreaks,
         text_wrap: TextWrapMode::Nowrap,
         text_wrap_style: TextWrapStyle::Stable,
+        effective_white_space_collapse: WhiteSpaceCollapse::PreserveBreaks,
+        effective_text_wrap_mode: TextWrapMode::Nowrap,
         hyphens: Hyphens::None,
         hyphenate_character: HyphenateCharacter::String("—".into()),
         hyphenate_limit_chars: HyphenateLimitChars {
@@ -673,6 +675,11 @@ fn inherit_from_copies_inherited_fields() {
         child.white_space_collapse,
         WhiteSpaceCollapse::PreserveBreaks
     );
+    assert_eq!(
+        child.effective_white_space_collapse,
+        WhiteSpaceCollapse::PreserveBreaks
+    );
+    assert_eq!(child.effective_text_wrap_mode, TextWrapMode::Nowrap);
     // CSS Text 3 §5.3: hyphens is inherited.
     assert_eq!(child.hyphens, Hyphens::None);
     // CSS Text 4: hyphenate-character is inherited as the decoded string.

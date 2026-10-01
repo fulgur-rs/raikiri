@@ -65,20 +65,19 @@ fn style_dimension_length(value: Dimension) -> Option<f32> {
 }
 
 mod bridge;
-#[allow(
-    dead_code,
-    reason = "the inline formatting context path is wired into layout in a later step"
-)]
-mod ifc;
+pub(crate) mod ifc;
 mod inline_text;
 mod multicol;
 mod page;
 mod page_pipeline;
 pub(crate) mod sanitize;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use bridge::*;
 use inline_text::*;
 use multicol::*;
+pub(crate) use page::used_style_length_percentage;
 use page::*;
 use page_pipeline::*;
 use sanitize::*;
@@ -93,6 +92,14 @@ pub(crate) use inline_text::preshape_text;
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 
+/// Boxes of the inline elements of a paragraph laid out by the inline engine.
+#[doc(hidden)]
+pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
+/// Text outside paragraphs shaped by the inline engine.
+#[doc(hidden)]
+pub use ifc::standalone::{StandaloneAlign, StandaloneStyle, StandaloneText};
+#[doc(hidden)]
+pub use ifc::style::relative_offset;
 pub use page::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
     PageMargins, first_page_name, page_content_insets, page_margins, resolve_initial_page_context,

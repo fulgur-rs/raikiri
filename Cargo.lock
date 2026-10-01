@@ -2676,6 +2676,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-svg",
  "raikiri-traits",
+ "shodo",
  "taffy",
  "url",
 ]
@@ -2760,6 +2761,7 @@ dependencies = [
  "raikiri-traits",
  "serde",
  "serde_json",
+ "shodo",
  "tempfile",
  "time",
  "tiny-skia",

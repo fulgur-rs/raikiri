@@ -8,6 +8,11 @@ use super::*;
 /// the page it is about to paint. It is intentionally separate from
 /// [`layout_single_page`] because callers must opt into this narrow
 /// post-pagination operation.
+///
+/// Paragraphs laid out by the shodo inline engine are broken again at the
+/// width the parley path would re-shape their text at: the content width of
+/// the nearest ancestor with an authored width, otherwise `max_advance`. Their
+/// box geometry is left as laid out.
 pub fn relayout_text_for_width(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -42,6 +47,7 @@ pub fn relayout_text_for_width(
         &mut layout_cx,
         max_advance,
     );
+    crate::layout::ifc::flow::rebreak_roots(document, cascade, max_advance);
 }
 
 /// Correct the static position of grid abspos items whose placement is `auto`.
@@ -1361,6 +1367,13 @@ pub fn layout_pages_with_page_geometry(
             }
             NodeKind::Element => {
                 if node.is_display_none() {
+                    return;
+                }
+                // An element inside a paragraph laid out by the inline engine
+                // moves with the paragraph's lines; breaking at it on its own
+                // would leave the lines where they are. The flag is set only
+                // when the inline engine is switched on.
+                if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
                     return;
                 }
                 let raw_y = parent_abs_y + node.unrounded_layout.location.y;

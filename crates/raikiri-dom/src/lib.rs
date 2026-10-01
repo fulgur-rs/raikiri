@@ -61,9 +61,12 @@ pub mod taffy_impl;
 pub use document::{Document, DomMutationError};
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{
-    FontError, FontFaceApplyReport, FontFaceLoader, FontWarn, apply_font_faces, build_wpt_font_ctx,
+    FontError, FontFaceApplyReport, FontFaceLoader, FontWarn, apply_font_faces,
+    build_inline_document_fonts, build_wpt_font_collection, build_wpt_font_ctx,
     build_wpt_font_ctx_with_observer, expand_font_face_aliases, register_font_face_sources,
 };
+#[doc(hidden)]
+pub use layout::{BoxRect, InlineBoxPiece, relative_offset};
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
     PageMargins, PageSlice, first_page_name, layout_pages, layout_pages_with_page_geometry,
@@ -73,6 +76,8 @@ pub use layout::{
     layout_single_page_with_resolver, layout_single_page_with_resolver_and_base_url,
     page_content_insets, page_margins, relayout_text_for_width, resolve_initial_page_context,
 };
+#[doc(hidden)]
+pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use node::{CanvasBitmap, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
 pub use raikiri_traits::{NodeKind, QuirksMode};

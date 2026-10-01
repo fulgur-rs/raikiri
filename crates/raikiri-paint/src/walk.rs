@@ -1760,7 +1760,7 @@ fn generated_pseudo_text_advance(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_advance(&content, computed.font_size.px(), &family)
+    text::measure_margin_text_advance(Some(document), &content, computed.font_size.px(), &family)
 }
 
 fn generated_flow_height(
@@ -1874,7 +1874,7 @@ fn generated_pseudo_text_height(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_height(&content, computed.font_size.px(), &family)
+    text::measure_margin_text_height(Some(document), &content, computed.font_size.px(), &family)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1903,8 +1903,14 @@ fn paint_generated_pseudo(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    let advance = text::measure_margin_text_advance(&content, computed.font_size.px(), &family);
+    let advance = text::measure_margin_text_advance(
+        Some(document),
+        &content,
+        computed.font_size.px(),
+        &family,
+    );
     text::draw_margin_text(
+        Some(document),
         scene,
         &content,
         x,
@@ -2013,7 +2019,8 @@ fn paint_list_marker_with_snapshots(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    let marker_width = text::measure_margin_text(&content, computed.font_size.px(), &family);
+    let marker_width =
+        text::measure_margin_text(Some(document), &content, computed.font_size.px(), &family);
     if marker_width <= 0.0 {
         return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
     }
@@ -2031,6 +2038,7 @@ fn paint_list_marker_with_snapshots(
         _ => paint_x + padding_left - marker_width - MARKER_GAP,
     };
     text::draw_margin_text(
+        Some(document),
         scene,
         &content,
         marker_x, // cov:ignore: argument mapping has no executable location
@@ -2442,6 +2450,7 @@ fn margin_box_spec(
 #[allow(clippy::too_many_arguments)]
 fn paint_margin_box(
     scene: &mut impl PaintScene,
+    document: Option<&Document>,
     spec: &MarginBoxPaintSpec,
     x: f32,
     y: f32,
@@ -2565,10 +2574,13 @@ fn paint_margin_box(
         let border_top = spec.border_top.map(|(width, _)| width).unwrap_or(0.0);
         let border_bottom = spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
         let content_x = x + border_left + spec.padding[3];
-        let ahem_baseline_adjust = if spec
-            .font_family
-            .split(',')
-            .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
+        // The correction aligns the parley path's fallback fonts with Ahem;
+        // the engine shapes with the document's Ahem itself.
+        let ahem_baseline_adjust = if !margin_box_uses_engine(document, spec)
+            && spec
+                .font_family
+                .split(',')
+                .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
         {
             -1.0
         } else {
@@ -2581,6 +2593,7 @@ fn paint_margin_box(
             spec.content.clone()
         };
         text::draw_margin_text(
+            margin_box_document(document, spec),
             scene,
             &content,
             content_x,
@@ -2599,7 +2612,12 @@ fn paint_margin_box(
         let image_x = (x
             + spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
             + spec.padding[3]
-            + text::measure_margin_text(&spec.content, spec.font_size, &spec.font_family))
+            + text::measure_margin_text(
+                margin_box_document(document, spec),
+                &spec.content,
+                spec.font_size,
+                &spec.font_family,
+            ))
         .round();
         let image_rect = Rect::new(
             image_x as f64,
@@ -2670,8 +2688,38 @@ fn margin_box_margin_height(spec: &MarginBoxPaintSpec) -> f32 {
     spec.margin[0] + spec.margin[2]
 }
 
-fn margin_box_text_width(spec: &MarginBoxPaintSpec) -> f32 {
-    let measured = text::measure_margin_text(&spec.content, spec.font_size, &spec.font_family);
+/// `document` unless the box is vertical (the engine has no writing-mode
+/// mapping), in which case `None`: both its measurement and its drawing then
+/// stay on the parley path.
+fn margin_box_document<'a>(
+    document: Option<&'a Document>,
+    spec: &MarginBoxPaintSpec,
+) -> Option<&'a Document> {
+    if spec.vertical_writing {
+        None
+    } else {
+        document
+    }
+}
+
+/// Whether the inline engine will shape this margin box's text. The Ahem
+/// baseline correction exists for the parley path's fallback fonts only.
+fn margin_box_uses_engine(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> bool {
+    margin_box_document(document, spec).is_some_and(|document| {
+        document.standalone_text_eligible(
+            &spec.content,
+            crate::standalone_text::usable_size(spec.font_size),
+        )
+    })
+}
+
+fn margin_box_text_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
+    let measured = text::measure_margin_text(
+        margin_box_document(document, spec),
+        &spec.content,
+        spec.font_size,
+        &spec.font_family,
+    );
     // The bundled WPT Ahem face is loaded by the document shaping pass, but
     // the small intrinsic-measure helper owns a separate font context.  Use
     // Ahem's one-em-per-glyph advance as a deterministic fallback there.
@@ -2701,8 +2749,8 @@ fn margin_box_text_width(spec: &MarginBoxPaintSpec) -> f32 {
         .max(0.0)
 }
 
-fn margin_box_intrinsic_width(spec: &MarginBoxPaintSpec) -> f32 {
-    (margin_box_text_width(spec)
+fn margin_box_intrinsic_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
+    (margin_box_text_width(document, spec)
         + margin_box_border_width(spec)
         + margin_box_padding_width(spec)
         + margin_box_margin_width(spec))
@@ -2753,6 +2801,7 @@ fn margin_box_outer_height(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn paint_horizontal_margin_boxes(
     scene: &mut impl PaintScene,
+    document: Option<&Document>,
     specs: &[MarginBoxPaintSpec],
     top: bool,
     page_width: f32,
@@ -2801,7 +2850,7 @@ fn paint_horizontal_margin_boxes(
             if spec.width.is_some() {
                 0.0
             } else {
-                margin_box_intrinsic_width(spec)
+                margin_box_intrinsic_width(document, spec)
             }
         })
         .collect();
@@ -2897,6 +2946,7 @@ fn paint_horizontal_margin_boxes(
         };
         paint_margin_box(
             scene,
+            document,
             spec,
             paint_x,
             y,
@@ -2912,6 +2962,7 @@ fn paint_horizontal_margin_boxes(
 #[allow(clippy::too_many_arguments)]
 fn paint_vertical_margin_boxes(
     scene: &mut impl PaintScene,
+    document: Option<&Document>,
     specs: &[MarginBoxPaintSpec],
     left: bool,
     page_width: f32,
@@ -3053,6 +3104,7 @@ fn paint_vertical_margin_boxes(
         };
         paint_margin_box(
             scene,
+            document,
             spec,
             paint_x,
             paint_y,
@@ -3157,6 +3209,7 @@ pub(crate) fn paint_page_margin_boxes(
 
     paint_horizontal_margin_boxes(
         scene,
+        Some(document),
         &specs,
         true,
         page_box.width,
@@ -3167,6 +3220,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_horizontal_margin_boxes(
         scene,
+        Some(document),
         &specs,
         false,
         page_box.width,
@@ -3177,6 +3231,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
+        Some(document),
         &specs,
         true,
         page_box.width,
@@ -3187,6 +3242,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
+        Some(document),
         &specs,
         false,
         page_box.width,
@@ -3245,7 +3301,17 @@ pub(crate) fn paint_page_margin_boxes(
                 _ => y,
             }
         };
-        paint_margin_box(scene, spec, x, y, width, height, pixel_source, warnings);
+        paint_margin_box(
+            scene,
+            Some(document),
+            spec,
+            x,
+            y,
+            width,
+            height,
+            pixel_source,
+            warnings,
+        );
     }
 }
 
@@ -3406,11 +3472,14 @@ fn paint_document_impl(
         body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
     };
     let body_has_direct_text = document.get_node(body_id).is_some_and(|body| {
-        body.children.iter().any(|&child_id| {
-            document.get_node(child_id).is_some_and(|child| {
-                child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
+        // An ifc body root hides its text children from layout, so their
+        // heights stay 0; the root's own box stands in for them.
+        (body.is_ifc_root() && body.unrounded_layout.size.height > 0.0)
+            || body.children.iter().any(|&child_id| {
+                document.get_node(child_id).is_some_and(|child| {
+                    child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
+                })
             })
-        })
     });
     let body_has_non_ua_margin = cascade
         .non_ua_margin_sides
@@ -3603,6 +3672,24 @@ fn paint_document_impl(
         inside_fixed_containing_block: false,
         decorations: root_decorations,
     }];
+    // Flowed text is clipped to the page content box when the page is at
+    // least twice as wide as its content; fixed boxes repeat on every page
+    // and are not clipped.
+    let text_page_clip = |inside_fixed: bool| -> Option<Rect> {
+        (!inside_fixed
+            && content_width.is_finite()
+            && content_width > 0.0
+            && page_box.width >= content_width * 2.0
+            && cascade.page.margin_boxes().is_empty())
+        .then(|| {
+            Rect::new(
+                page_offset_x as f64,
+                (margins.top + insets.top) as f64,
+                (page_box.width - margins.right - insets.right) as f64,
+                (margins.top + insets.top + content_height) as f64,
+            )
+        })
+    };
     while let Some(frame) = stack.pop() {
         let (
             node_id,
@@ -4380,6 +4467,11 @@ fn paint_document_impl(
                 // minimal painter.
                 let mut children = if node.is_inline_svg_root() {
                     Vec::new()
+                } else if node.is_ifc_root() {
+                    // The paragraph's own text and inline elements are drawn
+                    // from the lines; only the boxes laid out beside them are
+                    // visited like ordinary children.
+                    node.ifc_boxes()
                 } else {
                     node.children.clone()
                 };
@@ -4431,8 +4523,12 @@ fn paint_document_impl(
                         .first()
                         .map(|family| family.as_str().to_string())
                         .unwrap_or_else(|| "serif".to_string());
-                    let collapsed_space =
-                        text::measure_margin_text_advance(" ", cv.font_size.px(), &family);
+                    let collapsed_space = text::measure_margin_text_advance(
+                        Some(document),
+                        " ",
+                        cv.font_size.px(),
+                        &family,
+                    );
                     let mut flow_advance = 0.0;
                     let mut saw_generated_inline = false;
                     let mut offsets = Vec::new();
@@ -4497,6 +4593,69 @@ fn paint_document_impl(
                 // other supported relative boxes retain the paint-side offset.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
+                // A paragraph inside a fixed box repeats on every page and is
+                // not clipped like flowed text, as the text branch below does.
+                // (A fixed block is never an ifc root itself: see the
+                // eligibility rules.)
+                let ifc_inside_fixed = inside_fixed;
+                // The page a text node belongs to is looked up on the text node
+                // itself; the block's own page value can differ (an absolutely
+                // positioned box named for a page), so ask as the first text
+                // child would.
+                let ifc_page_probe = if node.is_ifc_root() {
+                    first_text_descendant(document, node_id).unwrap_or(node_id)
+                } else {
+                    node_id
+                };
+                if node.is_ifc_root()
+                    && named_page_matches(ifc_page_probe)
+                    && (ifc_inside_fixed
+                        || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
+                {
+                    // The block's own background and border were painted
+                    // above; its lines are drawn at the content-box origin,
+                    // where a child text node would have been placed. That
+                    // origin comes from the taffy layout's border and padding
+                    // (the text child's `location`), not from
+                    // `used_padding_for_paint`, which places the element's own
+                    // generated content. `<body>` shifts its direct text by the
+                    // body's left margin, so a body root shifts its lines too.
+                    let body_shift = if node_id == body_id {
+                        body_margin_left
+                    } else {
+                        0.0
+                    };
+                    let content_x = child_parent_x
+                        + page_offset_x
+                        + child_transform_x
+                        + body_shift
+                        + layout.border.left
+                        + layout.padding.left;
+                    let content_y = child_parent_y
+                        + page_offset_y
+                        + child_transform_y
+                        + layout.border.top
+                        + layout.padding.top;
+                    let text_clip = text_page_clip(ifc_inside_fixed);
+                    if let Some(clip) = &text_clip {
+                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    }
+                    crate::ifc_text::draw_ifc_lines(
+                        scene,
+                        document,
+                        cascade,
+                        node_id,
+                        crate::ifc_text::IfcPosition {
+                            x: content_x,
+                            y: content_y,
+                            shift_y: child_shift_y,
+                        },
+                        &child_decorations,
+                    );
+                    if text_clip.is_some() {
+                        scene.pop_layer();
+                    }
+                }
                 let own_multicol_clip_height = match cv.column_count {
                     ColumnCountValue::Count(count) if count > 1 && layout.size.height > 0.0 => {
                         Some(layout.size.height)
@@ -4589,19 +4748,9 @@ fn paint_document_impl(
                     && (inside_fixed
                         || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
                 {
-                    let clip_text_to_page_content = !inside_fixed
-                        && content_width.is_finite()
-                        && content_width > 0.0
-                        && page_box.width >= content_width * 2.0
-                        && cascade.page.margin_boxes().is_empty();
-                    if clip_text_to_page_content {
-                        let clip = Rect::new(
-                            page_offset_x as f64,
-                            (margins.top + insets.top) as f64,
-                            (page_box.width - margins.right - insets.right) as f64,
-                            (margins.top + insets.top + content_height) as f64,
-                        );
-                        scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    let text_clip = text_page_clip(inside_fixed);
+                    if let Some(clip) = &text_clip {
+                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                     }
                     text::draw_text_node(
                         scene,
@@ -4615,7 +4764,7 @@ fn paint_document_impl(
                         },
                         &decorations,
                     );
-                    if clip_text_to_page_content {
+                    if text_clip.is_some() {
                         scene.pop_layer();
                     }
                 }
@@ -4637,6 +4786,29 @@ fn paint_document_impl(
             }
         }
     }
+}
+
+/// The first in-document text node below `root`, in document order.
+fn first_text_descendant(document: &Document, root: usize) -> Option<usize> {
+    let mut stack: Vec<usize> = document
+        .get_node(root)?
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = stack.pop() {
+        let node = document.get_node(id)?;
+        if !node.is_in_document() {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => return Some(id),
+            NodeKind::Element => stack.extend(node.children.iter().rev().copied()),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Reads the `src` attribute of `node_id` as an absolute URL, if the node
@@ -5195,7 +5367,7 @@ fn vertical_table_cell_background_width(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_element_background(
+pub(crate) fn paint_element_background(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -6011,7 +6183,10 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: RoundedRectRadii
     path
 }
 
-fn paintable_border_radius(radius: &ComputedBorderRadius, enabled: bool) -> ComputedBorderRadius {
+pub(crate) fn paintable_border_radius(
+    radius: &ComputedBorderRadius,
+    enabled: bool,
+) -> ComputedBorderRadius {
     if !enabled {
         return ComputedBorderRadius::all(ComputedLength(0.0));
     }
@@ -6028,6 +6203,121 @@ fn paintable_border_radius(radius: &ComputedBorderRadius, enabled: bool) -> Comp
         zero_percent(radius.bottom_right),
         zero_percent(radius.bottom_left),
     )
+}
+
+/// Paint the shadows, background, borders and outline of one piece of an
+/// inline element, the way the element visit paints a box. `x` and `y` are
+/// the page position of the paragraph's content box.
+///
+/// A side whose edge the piece does not carry (the element continues on
+/// another line there) has no border, padding or corner radius: the box is
+/// sliced (CSS Fragmentation 3 `box-decoration-break: slice`). The padding is
+/// what the piece leaves around its content box once the border is taken off.
+pub(crate) fn paint_inline_box(
+    scene: &mut impl PaintScene,
+    cv: &ComputedValues,
+    piece: &raikiri_dom::InlineBoxPiece,
+    x: f32,
+    y: f32,
+) {
+    let outer = piece.border_box;
+    let content = piece.content_box;
+    // The start edge is on the physical left when the element's own direction
+    // is left to right, whatever the paragraph's direction.
+    let (left_edge, right_edge) = if cv.direction == raikiri_style::property::Direction::Rtl {
+        (piece.has_end_edge, piece.has_start_edge)
+    } else {
+        (piece.has_start_edge, piece.has_end_edge)
+    };
+    let mut border = cv.border;
+    if !left_edge {
+        border.left = border.left.without_line();
+    }
+    if !right_edge {
+        border.right = border.right.without_line();
+    }
+    let padding = taffy::Rect {
+        left: (content.x - outer.x - border.left.width().px()).max(0.0),
+        right: ((outer.x + outer.width) - (content.x + content.width) - border.right.width().px())
+            .max(0.0),
+        top: (content.y - outer.y - border.top.width().px()).max(0.0),
+        bottom: ((outer.y + outer.height)
+            - (content.y + content.height)
+            - border.bottom.width().px())
+        .max(0.0),
+    };
+    // The same rule as the element visit: radii only for a box that draws a
+    // border or a background, and never under a transform or a filter.
+    let has_border = [&border.top, &border.right, &border.bottom, &border.left]
+        .iter()
+        .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
+    let mut radius = paintable_border_radius(
+        &cv.border_radius,
+        (has_border || cv.background_color.a > 0)
+            && cv.transform.is_empty()
+            && cv.filter.is_empty(),
+    );
+    let square = ComputedLengthPercentage::Px(0.0);
+    if !left_edge {
+        radius.top_left = square;
+        radius.bottom_left = square;
+    }
+    if !right_edge {
+        radius.top_right = square;
+        radius.bottom_right = square;
+    }
+    let abs_x = x + outer.x;
+    let abs_y = y + outer.y;
+    paint_element_box_shadows(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        &radius,
+        &cv.box_shadow,
+        cv.color,
+    );
+    paint_element_background(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        cv.background_color,
+        &BackgroundImage::None,
+        cv.color,
+        cv.background_clip,
+        cv.background_origin,
+        &radius,
+        &border,
+        &padding,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        None,
+        &mut Vec::new(),
+    );
+    paint_element_border_rounded(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        &border,
+        cv.color,
+        &radius,
+    );
+    paint_element_outline(
+        scene,
+        outer.width,
+        outer.height,
+        abs_x,
+        abs_y,
+        &cv.outline,
+        cv.outline_offset,
+        cv.color,
+    );
 }
 
 /// Fill a background using the computed circular corner radii.  The shape is
@@ -6077,7 +6367,7 @@ fn fill_rounded_background(
 /// geometry for the initial outer-shadow slice. Inset shadows and fully
 /// per-corner radii remain follow-up work.
 #[allow(clippy::too_many_arguments)]
-fn paint_element_box_shadows(
+pub(crate) fn paint_element_box_shadows(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -6138,7 +6428,7 @@ fn paint_element_box_shadows(
 /// sides share one solid width and color.  The existing strip painter remains
 /// the conservative fallback for mixed side styles and widths.
 #[allow(clippy::too_many_arguments)]
-fn paint_element_border_rounded(
+pub(crate) fn paint_element_border_rounded(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -6261,7 +6551,7 @@ fn paint_element_border_rounded(
 /// Inset/negative-offset edge cases, non-solid styles, and rounded outlines
 /// remain outside this focused slice.
 #[allow(clippy::too_many_arguments)]
-fn paint_element_outline(
+pub(crate) fn paint_element_outline(
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -6992,7 +7282,7 @@ fn fixed_position_px(
     ))
 }
 
-fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
+pub(crate) fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
     // Only position:relative contributes paint offset. static/absolute/fixed/sticky produce no shift here.
     // Inset properties are <length-percentage> | auto. Percentages are resolved to px earlier (or auto -> 0).
     // For relative, left vs right: if left != auto, dx = left, else if right != auto, dx = -right, else 0.

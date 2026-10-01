@@ -336,3 +336,21 @@ fn a_reftest_that_only_passes_without_local_images_carries_the_note() {
     assert_eq!(row.status, Status::Pass, "{}", row.detail);
     assert_eq!(row.detail, FALLBACK_NOTE);
 }
+
+#[test]
+fn the_ifc_flag_is_parsed() {
+    let options = parse_report_args(&["--ifc".to_owned()]).expect("args");
+    assert!(options.inline_formatting);
+    let options = parse_report_args(&[]).expect("args");
+    assert!(!options.inline_formatting);
+}
+
+#[test]
+fn the_wpt_fonts_flag_is_parsed_independently_of_the_ifc_flag() {
+    let options = parse_report_args(&["--wpt-fonts".to_owned()]).expect("args");
+    assert!(options.wpt_fonts);
+    assert!(!options.inline_formatting);
+    let options = parse_report_args(&["--ifc".to_owned()]).expect("args");
+    assert!(!options.wpt_fonts);
+    assert!(options.inline_formatting);
+}

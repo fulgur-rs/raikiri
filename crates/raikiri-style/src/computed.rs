@@ -1247,6 +1247,14 @@ pub struct ComputedValues {
     /// computed value is the specified keyword; this field does not affect
     /// line wrapping or text layout.
     pub text_wrap_style: TextWrapStyle,
+    /// `white-space-collapse` after the legacy `white-space` keyword and the
+    /// longhand are settled by cascade order. Inherited. The CSSOM does not
+    /// read it; it serializes the declared fields above.
+    pub effective_white_space_collapse: WhiteSpaceCollapse,
+    /// `text-wrap-mode` after the legacy `white-space` keyword and the
+    /// longhands are settled by cascade order. Inherited. The CSSOM does not
+    /// read it.
+    pub effective_text_wrap_mode: TextWrapMode,
     /// `hyphens`. **inherited**, initial: [`Hyphens::Manual`] (CSS Text
     /// Module Level 3 §5.3 "Hyphenation: the hyphens property"
     /// <https://www.w3.org/TR/css-text-3/#hyphens-property>, "Initial:
@@ -1963,6 +1971,8 @@ impl ComputedValues {
             white_space_collapse: WhiteSpaceCollapse::Collapse,
             text_wrap: TextWrapMode::Wrap,
             text_wrap_style: TextWrapStyle::Auto,
+            effective_white_space_collapse: WhiteSpaceCollapse::Collapse,
+            effective_text_wrap_mode: TextWrapMode::Wrap,
             // CSS Text 3 §5.3: initial hyphens is `manual`.
             hyphens: Hyphens::Manual,
             // CSS Text 4: hyphenate-character initial is `auto`.

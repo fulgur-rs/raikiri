@@ -7,27 +7,29 @@ use shodo::font::FontCollection;
 use shodo::limits::Limits;
 use taffy::Style;
 
-pub(super) const AHEM: &[u8] = include_bytes!(concat!(
+pub(crate) const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/data/text-autospace/Ahem.ttf"
 ));
 
 /// A cascaded document with one block under `<html><body>`.
-pub(super) struct Fixture {
-    pub(super) doc: Document,
-    pub(super) cascade: CascadeResult,
-    pub(super) root: usize,
+pub(crate) struct Fixture {
+    pub(crate) doc: Document,
+    pub(crate) cascade: CascadeResult,
+    pub(crate) root: usize,
 }
 
 /// Build `<div style="display:block;font-family:Ahem;font-size:10px;{extra}">`,
 /// let `build` add its children, and cascade the result.
-pub(super) fn block_fixture(
+pub(crate) fn block_fixture(
     extra_style: &str,
     build: impl FnOnce(&mut Document, usize),
 ) -> Fixture {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    // No UA sheet is applied here, so the ancestors are made block containers
+    // explicitly (the initial `display` is `inline`).
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let style = format!("display:block;font-family:Ahem;font-size:10px;{extra_style}");
     let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
     build(&mut doc, root);
@@ -38,12 +40,12 @@ pub(super) fn block_fixture(
 }
 
 /// `<span style="{style}">` under `parent`.
-pub(super) fn span(doc: &mut Document, parent: usize, style: &str) -> usize {
+pub(crate) fn span(doc: &mut Document, parent: usize, style: &str) -> usize {
     doc.append_element(Some(parent), "span", Style::default(), Some(style))
 }
 
 /// A shared layer holding only Ahem: every glyph is exactly one em wide.
-pub(super) fn ahem_fonts() -> FontCollection {
+pub(crate) fn ahem_fonts() -> FontCollection {
     bundled_collection(
         &Limits::default(),
         vec![BundledFace {

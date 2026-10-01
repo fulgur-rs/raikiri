@@ -2838,3 +2838,31 @@ fn text_autospace_boxes_skip_default_ignorables_for_boundaries() {
     let disabled = text_autospace_boxes("国A", TextAutospace::NoAutospace, "", 40.0);
     assert!(disabled.is_empty());
 }
+
+/// An element below an ifc root carries the bounding box of its line pieces,
+/// and a piece that does not end the element has no padding or border on that
+/// side: the box can be narrower than the element's two paddings. The check
+/// leaves such elements alone instead of zeroing them as broken.
+#[test]
+fn an_element_of_an_ifc_subtree_is_not_zeroed_for_a_narrow_content_box() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let inner = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+    doc.nodes[inner].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+    let mut layout = TaffyLayout::with_order(0);
+    layout.size = Size {
+        width: 10.0,
+        height: 10.0,
+    };
+    layout.padding = Rect {
+        left: 30.0,
+        right: 30.0,
+        top: 0.0,
+        bottom: 0.0,
+    };
+    doc.nodes[inner].unrounded_layout = layout;
+    enforce_layout_invariants(&mut doc, body);
+    assert_eq!(doc.nodes[inner].unrounded_layout.size.width, 10.0);
+    assert!(doc.layout_warnings.is_empty());
+}

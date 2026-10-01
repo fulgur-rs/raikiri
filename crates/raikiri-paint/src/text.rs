@@ -21,7 +21,7 @@ use parley::{
     Glyph as ParleyGlyph, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
 };
 use peniko::{Color, Fill, Mix};
-use raikiri_dom::Node;
+use raikiri_dom::{Document, Node, StandaloneAlign};
 use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, HangingPunctuation, PositionValue, TextAlign,
     TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
@@ -126,6 +126,11 @@ struct DecorationLink {
 impl DecorationContext {
     fn is_empty(&self) -> bool {
         self.0.is_none()
+    }
+
+    /// The specifications in paint order (ancestor to descendant).
+    pub(crate) fn specs(&self) -> Vec<&DecorationSpec> {
+        self.iter().collect()
     }
 
     fn push(&self, spec: DecorationSpec) -> Self {
@@ -263,7 +268,7 @@ pub(crate) struct TextPosition {
     pub(crate) shift_y: f32,
 }
 
-fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
+pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     if enabled {
         let size = font_size as f64;
         Vec2::new((0.015125 * size).min(0.3), (0.0121 * size).min(0.3))
@@ -622,6 +627,53 @@ pub(crate) enum MarginTextVerticalAlign {
     Bottom,
 }
 
+#[cfg(test)]
+thread_local! {
+    // Per thread, like the context itself: `cargo test` runs tests on several
+    // threads, and a process-wide counter would count their contexts too.
+    static PARLEY_CONTEXT_CREATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn parley_context_creations() -> usize {
+    PARLEY_CONTEXT_CREATIONS.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    static PARLEY_FONTS: std::cell::RefCell<Option<FontContext>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `body` with this thread's parley font context, created on first use.
+///
+/// System fonts are scanned when a context is created, so building one per
+/// call made every margin-box and generated-text measurement pay for the scan.
+/// The context registers no fonts and changes no generic family, so reusing it
+/// does not change what it resolves.
+fn with_parley_fonts<R>(body: impl FnOnce(&mut FontContext) -> R) -> R {
+    PARLEY_FONTS.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let fonts = slot.get_or_insert_with(|| {
+            #[cfg(test)]
+            PARLEY_CONTEXT_CREATIONS.with(|count| count.set(count.get() + 1));
+            FontContext::new()
+        });
+        body(fonts)
+    })
+}
+
+/// The engine's alignment for a parley alignment.
+fn standalone_align(alignment: Alignment) -> StandaloneAlign {
+    match alignment {
+        Alignment::Start => StandaloneAlign::Start,
+        Alignment::End => StandaloneAlign::End,
+        Alignment::Left => StandaloneAlign::Left,
+        Alignment::Right => StandaloneAlign::Right,
+        Alignment::Center => StandaloneAlign::Center,
+        Alignment::Justify => StandaloneAlign::Justify,
+    }
+}
+
 /// Draw generated text in a page-margin box.
 ///
 /// Margin-box content is not a DOM text node, so it has no pre-shaped layout
@@ -630,6 +682,7 @@ pub(crate) enum MarginTextVerticalAlign {
 /// the style data needed by the page-context caller.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_margin_text(
+    document: Option<&Document>,
     scene: &mut impl PaintScene,
     content: &str,
     x: f32,
@@ -645,20 +698,38 @@ pub(crate) fn draw_margin_text(
     if content.is_empty() || width <= 0.0 || height <= 0.0 {
         return;
     }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        Some(width),
+        standalone_align(alignment),
+    ) {
+        let free_y = (height - shaped.height()).max(0.0);
+        let offset_y = match vertical_align {
+            MarginTextVerticalAlign::Top => 0.0,
+            MarginTextVerticalAlign::Middle => free_y * 0.5,
+            MarginTextVerticalAlign::Bottom => free_y,
+        };
+        crate::standalone_text::draw(scene, &shaped, x, y + offset_y, color);
+        return;
+    }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
         font_size
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(Some(width));
     layout.align(alignment, parley::AlignmentOptions::default());
 
@@ -700,24 +771,40 @@ pub(crate) fn draw_margin_text(
 /// Measure one-line generated margin text using the same font defaults as
 /// [`draw_margin_text`].  Replaced content such as an image can use the result
 /// as its inline origin without leaking URL syntax into the painted text.
-pub(crate) fn measure_margin_text(content: &str, font_size: f32, font_family: &str) -> f32 {
+pub(crate) fn measure_margin_text(
+    document: Option<&Document>,
+    content: &str,
+    font_size: f32,
+    font_family: &str,
+) -> f32 {
     if content.is_empty() {
         return 0.0;
+    }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        None,
+        StandaloneAlign::Start,
+    ) {
+        return shaped.width();
     }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
         font_size
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(None);
     layout.width().max(0.0)
 }
@@ -729,24 +816,40 @@ pub(crate) fn measure_margin_text(content: &str, font_size: f32, font_family: &s
 /// A generated `::before` run is different: its trailing spaces are part of
 /// the inline advance consumed before `::after`, so use the line metrics'
 /// advance (which retains [`parley::LineMetrics::trailing_whitespace`]).
-pub(crate) fn measure_margin_text_advance(content: &str, font_size: f32, font_family: &str) -> f32 {
+pub(crate) fn measure_margin_text_advance(
+    document: Option<&Document>,
+    content: &str,
+    font_size: f32,
+    font_family: &str,
+) -> f32 {
     if content.is_empty() {
         return 0.0;
+    }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        None,
+        StandaloneAlign::Start,
+    ) {
+        return shaped.advance();
     }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
         font_size
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(None);
     layout
         .lines()
@@ -759,24 +862,40 @@ pub(crate) fn measure_margin_text_advance(content: &str, font_size: f32, font_fa
 /// [`draw_margin_text`].  This is needed before an originating auto-height box
 /// is painted: generated content contributes to that box's used height even
 /// though the current arena has no synthetic child node for it.
-pub(crate) fn measure_margin_text_height(content: &str, font_size: f32, font_family: &str) -> f32 {
+pub(crate) fn measure_margin_text_height(
+    document: Option<&Document>,
+    content: &str,
+    font_size: f32,
+    font_family: &str,
+) -> f32 {
     if content.is_empty() {
         return 0.0;
+    }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        None,
+        StandaloneAlign::Start,
+    ) {
+        return shaped.height();
     }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
         font_size
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(None);
     layout.height().max(0.0)
 }
@@ -815,11 +934,15 @@ fn decoration_line_width(metrics: &parley::LineMetrics, leading_whitespace: f32)
 }
 
 #[derive(Clone, Copy, Debug)]
-struct DecorationGeometry {
-    x0: f64,
-    x1: f64,
-    abs_y: f64,
-    line_top: f32,
+pub(crate) struct DecorationGeometry {
+    pub(crate) x0: f64,
+    pub(crate) x1: f64,
+    pub(crate) abs_y: f64,
+    pub(crate) line_top: f32,
+    /// The line's baseline in page coordinates, when the layout engine
+    /// supplies it; each decoration adds its element's `origin_shift_y`.
+    /// `None` derives the baseline from the decorating element's metrics.
+    pub(crate) baseline: Option<f64>,
 }
 
 fn decoration_geometry(
@@ -862,11 +985,12 @@ fn decoration_geometry(
         // Keep the line's block origin from the current layout, but derive
         // the baseline within it from the originating decoration metrics.
         line_top: metrics.block_min_coord,
+        baseline: None,
     })
 }
 
 #[derive(Clone, Copy, Debug)]
-enum DecorationPhase {
+pub(crate) enum DecorationPhase {
     BeforeGlyphs,
     AfterGlyphs,
 }
@@ -878,7 +1002,7 @@ enum DecorationLineKind {
     LineThrough,
 }
 
-fn draw_decoration_phase(
+pub(crate) fn draw_decoration_phase(
     scene: &mut impl PaintScene,
     decorations: &[&DecorationSpec],
     geometry: DecorationGeometry,
@@ -967,6 +1091,7 @@ fn paint_decoration_line(
         x1,
         abs_y,
         line_top,
+        baseline: baseline_override,
     } = geometry;
     for decoration in decorations {
         let enabled = match kind {
@@ -981,8 +1106,17 @@ fn paint_decoration_line(
             continue;
         };
         let color = css_color_to_peniko(decoration.color);
-        let baseline =
-            abs_y + line_top as f64 + decoration.origin_ascent + decoration.origin_shift_y as f64;
+        let baseline = match baseline_override {
+            // The layout engine gave the line's baseline; the decorating
+            // element's baseline lies `origin_shift_y` below it.
+            Some(line_baseline) => line_baseline + decoration.origin_shift_y as f64,
+            None => {
+                abs_y
+                    + line_top as f64
+                    + decoration.origin_ascent
+                    + decoration.origin_shift_y as f64
+            }
+        };
         let thickness = decoration.origin_thickness;
         let center = match kind {
             DecorationLineKind::Underline => {
@@ -1181,16 +1315,17 @@ fn to_anyrender_glyph(g: ParleyGlyph) -> AnyrenderGlyph {
 ///
 /// Keep this helper separate for a future move to `peniko::AlphaColor`
 /// (it is one line today but easier to find this way).
-fn css_color_to_peniko(c: CssColor) -> Color {
+pub(crate) fn css_color_to_peniko(c: CssColor) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationSpec, MAX_DECORATION_SEGMENTS,
-        dashed_lengths, decoration_line_width, decoration_span, decoration_spans,
-        decorations_for_element, is_autospace_inline_box, measure_margin_text_advance,
+        AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationGeometry, DecorationPhase,
+        DecorationSpec, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
+        decoration_span, decoration_spans, decorations_for_element, draw_decoration_phase,
+        is_autospace_inline_box, measure_margin_text, measure_margin_text_advance,
         measure_margin_text_height, paint_decoration_style, run_baseline_delta,
         standalone_run_baseline, synthetic_embolden, text_align_last_delta,
     };
@@ -1273,6 +1408,59 @@ mod tests {
     }
 
     #[test]
+    fn parley_decorations_are_unchanged_by_the_geometry_field() {
+        // A geometry without an explicit baseline derives it from the
+        // decorating element, exactly as before the field existed. An
+        // explicit baseline is the line's; the decorating element's shift is
+        // added to it, so the line's baseline without the shift draws the
+        // same line.
+        let spec = DecorationSpec {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Solid,
+            color: CssColor::BLACK,
+            origin_thickness: 1.0,
+            origin_ascent: 8.0,
+            origin_descent: 2.0,
+            origin_shift_y: 1.5,
+            inset_start: 0.0,
+            inset_end: 0.0,
+            underline_offset: 0.0,
+            origin_rtl: false,
+        };
+        let (abs_y, line_top) = (100.0_f64, 2.0_f32);
+        let derived = abs_y + f64::from(line_top) + spec.origin_ascent;
+        let draw = |baseline: Option<f64>| {
+            let mut scene = anyrender::recording::Scene::new();
+            let geometry = DecorationGeometry {
+                x0: 0.0,
+                x1: 10.0,
+                abs_y,
+                line_top,
+                baseline,
+            };
+            draw_decoration_phase(
+                &mut scene,
+                &[&spec],
+                geometry,
+                DecorationPhase::BeforeGlyphs,
+            );
+            scene
+        };
+        let (implicit, explicit) = (draw(None), draw(Some(derived)));
+        assert!(!implicit.commands.is_empty());
+        assert_eq!(
+            format!("{:?}", implicit.commands),
+            format!("{:?}", explicit.commands)
+        );
+        // A different explicit baseline moves the line.
+        let moved = draw(Some(derived + 3.0));
+        assert_ne!(
+            format!("{:?}", implicit.commands),
+            format!("{:?}", moved.commands)
+        );
+    }
+
+    #[test]
     fn decoration_span_rejects_empty_or_nonfinite_ranges() {
         let spec = DecorationSpec {
             line: TextDecorationLine::UNDERLINE,
@@ -1337,10 +1525,13 @@ mod tests {
 
     #[test]
     fn generated_text_measurements_handle_empty_and_nonfinite_inputs() {
-        assert_eq!(measure_margin_text_advance("", f32::NAN, "serif"), 0.0);
-        assert!(measure_margin_text_advance("A", f32::NAN, "serif") > 0.0);
-        assert_eq!(measure_margin_text_height("", f32::NAN, "serif"), 0.0);
-        assert!(measure_margin_text_height("A", f32::NAN, "serif") > 0.0);
+        assert_eq!(
+            measure_margin_text_advance(None, "", f32::NAN, "serif"),
+            0.0
+        );
+        assert!(measure_margin_text_advance(None, "A", f32::NAN, "serif") > 0.0);
+        assert_eq!(measure_margin_text_height(None, "", f32::NAN, "serif"), 0.0);
+        assert!(measure_margin_text_height(None, "A", f32::NAN, "serif") > 0.0);
     }
 
     #[test]
@@ -1663,5 +1854,30 @@ mod tests {
     fn synthetic_embolden_scales_and_caps_stroke_offset() {
         assert_eq!(synthetic_embolden(true, 10.0), Vec2::new(0.15125, 0.121));
         assert_eq!(synthetic_embolden(true, 100.0), Vec2::new(0.3, 0.3));
+    }
+
+    #[test]
+    fn the_parley_context_is_created_once_per_thread() {
+        // The counter is per thread (see `parley_context_creations`), so other
+        // tests running in parallel on other threads cannot disturb it.
+        let before = super::parley_context_creations();
+        for _ in 0..5 {
+            let _ = measure_margin_text(None, "abc", 16.0, "serif");
+            let _ = measure_margin_text_advance(None, "abc", 16.0, "serif");
+            let _ = measure_margin_text_height(None, "abc", 16.0, "serif");
+        }
+        // At most one creation (this thread may already have created it).
+        assert!(super::parley_context_creations() - before <= 1);
+    }
+
+    #[test]
+    fn a_reused_context_gives_the_same_measurements() {
+        let first = measure_margin_text(None, "abc def", 16.0, "serif");
+        let second = measure_margin_text(None, "abc def", 16.0, "serif");
+        assert_eq!(first, second);
+        assert_eq!(
+            measure_margin_text_advance(None, "abc ", 16.0, "serif"),
+            measure_margin_text_advance(None, "abc ", 16.0, "serif")
+        );
     }
 }

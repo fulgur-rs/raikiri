@@ -246,3 +246,37 @@ mod attribute_ns_tests {
         assert_eq!(doc.attribute_ns(XLINK_NS, "href"), None);
     }
 }
+
+#[test]
+fn an_ifc_root_exposes_no_layout_children() {
+    use crate::Document;
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let root = doc.append_element(Some(html), "div", taffy::Style::default(), None::<&str>);
+    doc.append_text(root, "aa");
+    assert_eq!(doc.nodes[root].layout_children().len(), 1);
+    doc.nodes[root].flags.insert(NodeFlags::IS_IFC_ROOT);
+    assert!(doc.nodes[root].layout_children().is_empty());
+    // The DOM children are untouched: only the taffy view changes.
+    assert_eq!(doc.nodes[root].children.len(), 1);
+}
+
+#[test]
+fn a_laid_out_ifc_root_exposes_its_lines() {
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{
+        ahem_font_context, ahem_paragraph, ifc_ahem_fonts, page_box_800x600,
+    };
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
+    // Off: the block is not an ifc root and holds no lines.
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert!(!doc.nodes[root].is_ifc_root());
+    assert!(doc.nodes[root].ifc_lines().is_none());
+    // On: three 10px lines.
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        .expect("layout");
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].ifc_lines().map(<[_]>::len), Some(3));
+}
