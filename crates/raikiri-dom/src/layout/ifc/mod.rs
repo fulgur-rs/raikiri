@@ -7,6 +7,11 @@ pub(crate) mod ch;
 pub(crate) mod error;
 pub(crate) mod flow;
 pub(crate) mod font;
+#[allow(
+    dead_code,
+    reason = "no caller until the layout records the boxes of inline elements"
+)]
+pub(crate) mod inline_boxes;
 pub(crate) mod projection;
 pub(crate) mod root;
 pub(crate) mod style;
