@@ -100,7 +100,32 @@ pub(crate) struct IfcState {
     /// Results produced by `Document::shape_standalone_text` for this
     /// document. Atomic because shaping takes `&Document`.
     pub(crate) standalone_calls: AtomicUsize,
+    /// Paragraphs are built on several threads when there are at least this
+    /// many roots and `parallel_build` is set.
+    pub(crate) parallel_threshold: usize,
+    /// The font collection is known to hold no system faces that are loaded
+    /// on first use. Only then does building on several threads give the same
+    /// paragraphs as building in sequence: the face chosen when no family
+    /// covers a character depends on the order in which such faces were
+    /// loaded. Off by default.
+    pub(crate) parallel_build: bool,
+    /// How the roots of the last layout pass were built.
+    pub(crate) last_build: Option<IfcBuildMode>,
 }
+
+/// How a layout pass built its paragraphs.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IfcBuildMode {
+    /// One after the other, on the calling thread.
+    Sequential,
+    /// On several threads, one layout context per worker.
+    Parallel,
+}
+
+/// The same threshold as the parley text pass: below it the thread overhead
+/// outweighs the gain.
+pub(crate) const DEFAULT_PARALLEL_THRESHOLD: usize = 32;
 
 impl IfcState {
     pub(crate) fn new(fonts: FontCollection, limits: Limits) -> Self {
@@ -109,6 +134,9 @@ impl IfcState {
             limits,
             layout_cx: LayoutContext::new(),
             standalone_calls: AtomicUsize::new(0),
+            parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
+            parallel_build: false,
+            last_build: None,
         }
     }
 }
@@ -146,11 +174,16 @@ impl fmt::Debug for IfcState {
     }
 }
 
-// The layout context is per-owner scratch space and the call count belongs
-// to its document, so a clone starts fresh.
+// The layout context is per-owner scratch space and the call count and the
+// last build belong to its document, so a clone starts fresh. The build
+// policy is kept: a clone holds the same font collection.
 impl Clone for IfcState {
     fn clone(&self) -> Self {
-        Self::new(self.fonts.clone(), self.limits.clone())
+        Self {
+            parallel_threshold: self.parallel_threshold,
+            parallel_build: self.parallel_build,
+            ..Self::new(self.fonts.clone(), self.limits.clone())
+        }
     }
 }
 

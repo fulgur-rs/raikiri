@@ -1985,6 +1985,11 @@ pub(crate) fn render_raikiri_pages_with_resources(
         uncascaded
             .dom
             .enable_inline_formatting(fonts, shodo::limits::Limits::default());
+        // The WPT collection is built with system fonts off, and the
+        // `@font-face` layer above it only holds the document's own faces, so
+        // no face is loaded on first use: building paragraphs on several
+        // threads gives the same result as building them in sequence.
+        uncascaded.dom.set_ifc_parallel_build(true);
     }
     if let Some(loader) = resources.font_loader {
         raikiri_dom::register_font_face_sources(&mut font_ctx, font_face_tree.font_faces(), loader);

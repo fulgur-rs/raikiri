@@ -396,6 +396,41 @@ impl Document {
         self.ifc.is_some()
     }
 
+    /// Paragraphs are built on several threads when a layout pass has at
+    /// least `threshold` of them and [`Document::set_ifc_parallel_build`]
+    /// allowed it. No effect without the inline engine.
+    #[doc(hidden)]
+    pub fn set_ifc_parallel_threshold(&mut self, threshold: usize) {
+        if let Some(state) = self.ifc.as_mut() {
+            state.parallel_threshold = threshold;
+        }
+    }
+
+    /// Allow building paragraphs on several threads. Only safe when the font
+    /// collection has no system faces that are loaded on first use: the face
+    /// chosen for text no family covers would then depend on thread
+    /// scheduling. Off by default; no effect without the inline engine.
+    #[doc(hidden)]
+    pub fn set_ifc_parallel_build(&mut self, allowed: bool) {
+        if let Some(state) = self.ifc.as_mut() {
+            state.parallel_build = allowed;
+        }
+    }
+
+    /// Whether paragraphs may be built on several threads (`false` without
+    /// the inline engine).
+    #[doc(hidden)]
+    pub fn ifc_parallel_build(&self) -> bool {
+        self.ifc.as_ref().is_some_and(|state| state.parallel_build)
+    }
+
+    /// How the paragraphs of the last layout pass were built; `None` before
+    /// the first pass or without the inline engine.
+    #[doc(hidden)]
+    pub fn ifc_last_build(&self) -> Option<crate::IfcBuildMode> {
+        self.ifc.as_ref().and_then(|state| state.last_build)
+    }
+
     /// Construct a new Document with a Document node at arena index 0.
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(16);

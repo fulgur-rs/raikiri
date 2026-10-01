@@ -2,7 +2,7 @@
 
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::projection::{ProjectedBuilder, ProjectedIfc, box_kind, project_ifc_builder};
-use super::root::{IfcRoot, IfcState};
+use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
 use crate::Document;
 use crate::layout::page_pipeline::{page_break_is_forced, selected_page_name};
@@ -15,6 +15,8 @@ use raikiri_style::property::{
     PositionValue, TextDecorationLine, TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
 };
 use raikiri_traits::NodeKind;
+use rayon::prelude::*;
+use shodo::LayoutContext;
 
 fn is_block_container(display: DisplayValue) -> bool {
     matches!(display, DisplayValue::Block | DisplayValue::FlowRoot)
@@ -412,16 +414,39 @@ fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState)
 
 /// Shape every candidate. A candidate that fails to shape is dropped and
 /// stays on the parley path.
+///
+/// With enough candidates, and when the document allowed it, the candidates
+/// are shaped on several threads: each worker owns a layout context (it is
+/// `Send` but not `Sync`) and the font collection is shared by reference.
+/// The result keeps the candidates' order either way.
 fn build_all(state: &mut IfcState, candidates: Vec<Candidate>) -> Vec<(usize, ProjectedIfc)> {
+    if !state.parallel_build || candidates.len() < state.parallel_threshold {
+        state.last_build = Some(IfcBuildMode::Sequential);
+        return candidates
+            .into_iter()
+            .filter_map(|candidate| {
+                candidate
+                    .projected
+                    .build(&mut state.layout_cx, &state.fonts)
+                    .ok()
+                    .map(|projected| (candidate.idx, projected))
+            })
+            .collect();
+    }
+    state.last_build = Some(IfcBuildMode::Parallel);
+    let fonts = &state.fonts;
     candidates
-        .into_iter()
-        .filter_map(|candidate| {
+        .into_par_iter()
+        .map_init(LayoutContext::new, |cx, candidate| {
             candidate
                 .projected
-                .build(&mut state.layout_cx, &state.fonts)
+                .build(cx, fonts)
                 .ok()
                 .map(|projected| (candidate.idx, projected))
         })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .flatten()
         .collect()
 }
 

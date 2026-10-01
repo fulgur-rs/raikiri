@@ -1,5 +1,7 @@
 use super::*;
-use crate::layout::ifc::test_support::{ahem_fonts, block_fixture, span};
+use crate::IfcBuildMode;
+use crate::layout::ifc::font::{BundledFace, bundled_collection};
+use crate::layout::ifc::test_support::{AHEM, Fixture, ahem_fonts, block_fixture, span};
 use shodo::limits::Limits;
 
 /// A paragraph builder for table-driven cases.
@@ -1122,4 +1124,250 @@ fn a_paragraph_inside_a_float_of_a_root_is_still_a_root() {
     let float = fixture.doc.nodes[fixture.root].children[1];
     let inner = fixture.doc.nodes[float].children[0];
     assert!(is_root(&fixture, inner));
+}
+
+/// A face that covers U+0E70 and U+0E71, which Ahem does not.
+const NOTO_SANS_TEST: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/noto-sans-test/NotoSansTest-Regular.ttf"
+));
+
+/// Ahem first, then NotoSansTest: a bundled collection without system faces
+/// in which some text needs the second family.
+fn ahem_and_noto_fonts() -> shodo::font::FontCollection {
+    bundled_collection(
+        &Limits::default(),
+        vec![
+            BundledFace {
+                family: "Ahem".to_owned(),
+                bytes: AHEM.to_vec(),
+            },
+            BundledFace {
+                family: "NotoSansTest".to_owned(),
+                bytes: NOTO_SANS_TEST.to_vec(),
+            },
+        ],
+        false,
+    )
+    .expect("bundled Ahem and NotoSansTest")
+}
+
+/// `n` paragraphs of Ahem text side by side under the body.
+fn many_paragraphs(n: usize) -> Fixture {
+    block_fixture("", |doc, root| {
+        // `root` is the first paragraph; the rest follow it under the body.
+        doc.append_text(root, "aa bb cc dd ee ff");
+        let body = doc.parent_of(root).expect("body");
+        for i in 1..n {
+            let p = doc.append_element(
+                Some(body),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+            );
+            doc.append_text(p, format!("aa bb cc dd ee ff {i}"));
+        }
+    })
+}
+
+/// `n` paragraphs whose text needs the second family: Ahem has no glyph for
+/// U+0E70, NotoSansTest has one.
+fn many_fallback_paragraphs(n: usize) -> Fixture {
+    block_fixture("font-family:Ahem,NotoSansTest", |doc, root| {
+        doc.append_text(root, "aa \u{0E70} bb cc dd");
+        let body = doc.parent_of(root).expect("body");
+        for i in 1..n {
+            let p = doc.append_element(
+                Some(body),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;font-family:Ahem,NotoSansTest;font-size:10px;line-height:10px"),
+            );
+            doc.append_text(p, format!("aa \u{0E70} bb cc {i}"));
+        }
+    })
+}
+
+#[test]
+fn roots_at_or_above_the_threshold_are_built_in_parallel() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_build(true);
+    fixture.doc.set_ifc_parallel_threshold(8);
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Parallel));
+}
+
+#[test]
+fn roots_below_the_threshold_are_built_in_sequence() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_build(true);
+    fixture.doc.set_ifc_parallel_threshold(9);
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Sequential));
+}
+
+#[test]
+fn a_document_that_did_not_allow_it_is_built_in_sequence() {
+    // Many roots, threshold 0, but nothing said the collection is safe.
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_threshold(0);
+    assert!(!fixture.doc.ifc_parallel_build());
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Sequential));
+}
+
+#[test]
+fn a_document_without_the_switch_records_no_build() {
+    let mut fixture = many_paragraphs(8);
+    fixture.doc.set_ifc_parallel_build(true);
+    assert!(!fixture.doc.ifc_parallel_build());
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), None);
+}
+
+/// Everything a paint pass reads from the roots: per line the text, its range
+/// and both sizes, per glyph run a hash of the font bytes, the face index,
+/// the glyph ids and the advances.
+fn signature(mut fixture: Fixture, parallel: bool) -> Vec<(usize, Vec<String>)> {
+    fixture.doc.set_ifc_parallel_build(parallel);
+    fixture.doc.set_ifc_parallel_threshold(0);
+    assign(&mut fixture);
+    let expected = if parallel {
+        IfcBuildMode::Parallel
+    } else {
+        IfcBuildMode::Sequential
+    };
+    assert_eq!(fixture.doc.ifc_last_build(), Some(expected));
+    let mut out = Vec::new();
+    for idx in 0..fixture.doc.nodes.len() {
+        if !fixture.doc.nodes[idx].is_ifc_root() {
+            continue;
+        }
+        let root = fixture.doc.nodes[idx].ifc.as_ref().expect("root state");
+        let mut cx = shodo::LayoutContext::new();
+        let lines =
+            root.paragraph
+                .break_all(&mut cx, &root.options, 50.0, &shodo::AtomicSizes::EMPTY);
+        let mut rows = Vec::new();
+        for line in &lines {
+            let mut row = format!(
+                "{:?}|{:?}|{:x}|{:x}",
+                line.text()[line.text_range()].trim_end(),
+                line.text_range(),
+                line.inline_size().to_bits(),
+                line.block_size().to_bits(),
+            );
+            for fragment in line.fragments() {
+                let shodo::Fragment::GlyphRun(run) = fragment else {
+                    continue;
+                };
+                let font = run.font_data().expect("font of a run");
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(font.data.data(), &mut hasher);
+                row.push_str(&format!(
+                    "|font={:x}/{}",
+                    std::hash::Hasher::finish(&hasher),
+                    font.index
+                ));
+                for glyph in run.glyphs() {
+                    row.push_str(&format!(",{}:{:x}", glyph.id, glyph.advance.to_bits()));
+                }
+            }
+            rows.push(row);
+        }
+        out.push((idx, rows));
+    }
+    out
+}
+
+/// The distinct `font=` entries of a signature.
+fn fonts_of(signature: &[(usize, Vec<String>)]) -> std::collections::BTreeSet<String> {
+    signature
+        .iter()
+        .flat_map(|(_, rows)| rows.iter())
+        .flat_map(|row| row.split('|'))
+        .filter(|part| part.starts_with("font="))
+        .map(|part| part.split(',').next().unwrap_or(part).to_owned())
+        .collect()
+}
+
+#[test]
+fn parallel_and_sequential_builds_give_the_same_roots() {
+    let build = |parallel| {
+        let mut fixture = many_paragraphs(40);
+        enable(&mut fixture);
+        signature(fixture, parallel)
+    };
+    let sequential = build(false);
+    let parallel = build(true);
+    assert_eq!(sequential.len(), 40);
+    assert_eq!(parallel, sequential);
+}
+
+#[test]
+fn parallel_and_sequential_builds_agree_when_a_fallback_family_is_needed() {
+    // Ahem lacks U+0E70, so every paragraph takes the fallback branch of the
+    // font matcher. The collection has no system faces, so the result cannot
+    // depend on which worker asks first.
+    let build = |parallel| {
+        let mut fixture = many_fallback_paragraphs(40);
+        fixture
+            .doc
+            .enable_inline_formatting(ahem_and_noto_fonts(), Limits::default());
+        signature(fixture, parallel)
+    };
+    let sequential = build(false);
+    let parallel = build(true);
+    assert_eq!(sequential.len(), 40);
+    // Both faces shape runs, so the fallback branch was taken.
+    assert_eq!(
+        fonts_of(&sequential).len(),
+        2,
+        "{:?}",
+        fonts_of(&sequential)
+    );
+    assert_eq!(parallel, sequential);
+}
+
+#[test]
+fn what_crosses_threads_is_send() {
+    fn assert_send<T: Send>() {}
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send::<Candidate>();
+    assert_send::<ProjectedIfc>();
+    assert_send_sync::<shodo::font::FontCollection>();
+    assert_send_sync::<shodo::Paragraph>();
+}
+
+#[test]
+fn a_cloned_document_keeps_the_build_policy() {
+    // A probe layout runs on a clone of the document; it holds the same font
+    // collection, so it may build the same way.
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_build(true);
+    fixture.doc.set_ifc_parallel_threshold(8);
+    assign(&mut fixture);
+    let mut clone = fixture.doc.clone();
+    // The record of the last build belongs to the original.
+    assert_eq!(clone.ifc_last_build(), None);
+    assert!(clone.ifc_parallel_build());
+    assign_ifc_roots(&mut clone, &fixture.cascade);
+    assert_eq!(clone.ifc_last_build(), Some(IfcBuildMode::Parallel));
+}
+
+#[test]
+fn without_a_threshold_set_32_roots_are_needed_for_a_parallel_build() {
+    let build = |n| {
+        let mut fixture = many_paragraphs(n);
+        enable(&mut fixture);
+        fixture.doc.set_ifc_parallel_build(true);
+        assign(&mut fixture);
+        fixture.doc.ifc_last_build()
+    };
+    assert_eq!(build(31), Some(IfcBuildMode::Sequential));
+    assert_eq!(build(32), Some(IfcBuildMode::Parallel));
 }
