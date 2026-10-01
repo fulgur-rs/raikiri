@@ -64,8 +64,66 @@ fn bench_layout(c: &mut Criterion) {
     group.finish();
 }
 
+/// A page of `n` paragraphs, each long enough to wrap and holding one inline
+/// element. The block displays are authored: the cascade used here does not
+/// apply the user-agent sheet, and an inline `<p>` is not a paragraph root.
+fn build_paragraph_html(n: usize) -> Vec<u8> {
+    let mut html =
+        String::from("<html><head><style>html,body,p{display:block}</style></head><body>");
+    for i in 0..n {
+        html.push_str(&format!(
+            "<p>paragraph {i} of the benchmark document with enough words to wrap across \
+             several lines when the page is narrow, followed by <span>an inline span</span> \
+             and some closing text.</p>"
+        ));
+    }
+    html.push_str("</body></html>");
+    html.into_bytes()
+}
+
+/// `layout_single_page` with the shodo inline engine on, over a bundled-only
+/// (Ahem) font collection. The parley side still gets a system font context,
+/// so compare these numbers only with each other, not with `layout`.
+fn bench_layout_ifc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("layout_ifc");
+    let fonts_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/text-autospace");
+    let shared = raikiri_dom::build_wpt_font_collection(&fonts_dir).expect("font collection");
+    let font_ctx = FontContext::new();
+    for (name, n) in [("paragraphs_100", 100usize), ("paragraphs_1000", 1000usize)] {
+        let html = build_paragraph_html(n);
+        let page_box = PageBox::A4;
+        group.throughput(criterion::Throughput::Elements(n as u64));
+        group.bench_function(name, |b| {
+            b.iter_batched(
+                || {
+                    let opts = ParseOptions {
+                        extra_stylesheets: &[],
+                        network: None,
+                        base_url: None,
+                    };
+                    let uncascaded = parse(html.as_slice(), &opts).expect("parse");
+                    let rule_tree = build_rule_tree(&uncascaded.dom);
+                    let cascade_result = cascade(&uncascaded.dom, &rule_tree).expect("cascade");
+                    let mut dom = uncascaded.dom;
+                    dom.enable_inline_formatting(shared.clone(), shodo::limits::Limits::default());
+                    (dom, cascade_result)
+                },
+                |(mut doc, cascade_result)| {
+                    let r =
+                        layout_single_page(&mut doc, &cascade_result, page_box, font_ctx.clone());
+                    let _ = std::hint::black_box(r);
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 fn main() {
     let mut criterion = criterion::Criterion::default().configure_from_args();
     bench_layout(&mut criterion);
+    bench_layout_ifc(&mut criterion);
     criterion.final_summary();
 }
