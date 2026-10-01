@@ -1997,7 +1997,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut font_ctx = resolve_font_ctx_for(resources.inline_formatting || resources.wpt_fonts);
     // Without the WPT fonts the engine falls back to the installed fonts, as
     // the parley path does above, unless the caller requires the WPT fonts.
-    if resources.inline_formatting {
+    let inline_engine = if resources.inline_formatting {
         let (shared, bundled_only) = inline_engine_collection_from(
             &inline_engine_font_candidates(),
             resources.require_inline_fonts,
@@ -2015,17 +2015,25 @@ pub(crate) fn render_raikiri_pages_with_resources(
             };
             raikiri_dom::build_inline_document_fonts(&shared, faces, loader).0
         };
-        uncascaded
-            .dom
-            .enable_inline_formatting(fonts, shodo::limits::Limits::default());
-        // The WPT collection is built with system fonts off, and the
-        // `@font-face` layer above it only holds the document's own faces, so
-        // no face is loaded on first use: building paragraphs on several
-        // threads gives the same result as building them in sequence. The
-        // installed fonts load faces on first use, so the fallback builds in
-        // sequence.
-        uncascaded.dom.set_ifc_parallel_build(bundled_only);
-    }
+        Some((fonts, bundled_only))
+    } else {
+        None
+    };
+    // Every document this rendering lays out (this one, and the reparse below
+    // when the page geometry varies) takes the same engine and fonts.
+    let enable_inline_engine = |dom: &mut raikiri_dom::Document| {
+        if let Some((fonts, bundled_only)) = &inline_engine {
+            dom.enable_inline_formatting(fonts.clone(), shodo::limits::Limits::default());
+            // The WPT collection is built with system fonts off, and the
+            // `@font-face` layer above it only holds the document's own
+            // faces, so no face is loaded on first use: building paragraphs
+            // on several threads gives the same result as building them in
+            // sequence. The installed fonts load faces on first use, so the
+            // fallback builds in sequence.
+            dom.set_ifc_parallel_build(*bundled_only);
+        }
+    };
+    enable_inline_engine(&mut uncascaded.dom);
     if let Some(loader) = resources.font_loader {
         raikiri_dom::register_font_face_sources(&mut font_ctx, font_face_tree.font_faces(), loader);
     }
@@ -2221,6 +2229,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(base_url) = base_url {
             crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
         }
+        enable_inline_engine(&mut fresh.dom);
         let mut fresh_cascade =
             build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
         if let Some(prepare) = prepare_cascade_images {

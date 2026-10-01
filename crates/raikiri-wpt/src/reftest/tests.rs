@@ -1219,3 +1219,57 @@ fn no_wait_canvas_paints_and_compares_pixels() {
         result_diff.outcome
     );
 }
+
+/// Two consecutive `<br>` leave an empty line on the inline engine and none
+/// on the parley path, so "bbbb" lands on the third line (y 20..30) only
+/// with the engine. `pages` gives the `@page` rules.
+fn breaks_document(pages: &str) -> String {
+    format!(
+        "<html><head><style>{pages} html,body{{margin:0}}</style></head><body><div style=\"font-size:10px;line-height:10px;width:200px\">aaaa<br><br>bbbb</div></body></html>"
+    )
+}
+
+/// Whether a row of `top..bottom` on `page` holds a dark pixel. The text is
+/// black on white in whatever font the host provides.
+fn page_has_ink(page: &RenderedImage, top: u32, bottom: u32) -> bool {
+    (top..bottom)
+        .any(|y| (0..page.width).any(|x| page.rgba[((y * page.width + x) * 4) as usize] < 128))
+}
+
+fn render_with_engine(html: &str, inline_formatting: bool) -> RenderedDocument {
+    render_raikiri_pages_inner_with_canvases(
+        html,
+        800,
+        600,
+        None,
+        None,
+        InlineEngineChoice {
+            inline_formatting,
+            wpt_fonts: false,
+            require_inline_fonts: false,
+        },
+        None,
+    )
+    .expect("render")
+}
+
+#[test]
+fn a_uniform_page_geometry_lays_out_with_the_inline_engine() {
+    let html = breaks_document("@page{size:300px 300px;margin:0}");
+    let engine = render_with_engine(&html, true);
+    assert!(page_has_ink(&engine.pages[0], 20, 30));
+    assert!(!page_has_ink(&engine.pages[0], 10, 20));
+    let parley = render_with_engine(&html, false);
+    assert!(page_has_ink(&parley.pages[0], 10, 20));
+}
+
+#[test]
+fn a_page_geometry_that_varies_keeps_the_inline_engine() {
+    // The first page is shorter than the others, so the harness lays the
+    // document out again with per-page heights.
+    let html = breaks_document("@page{size:300px 300px;margin:0} @page :first{size:300px 200px}");
+    let engine = render_with_engine(&html, true);
+    assert!(!engine.pages.is_empty());
+    assert!(page_has_ink(&engine.pages[0], 20, 30), "bbbb on line 3");
+    assert!(!page_has_ink(&engine.pages[0], 10, 20), "line 2 is empty");
+}
