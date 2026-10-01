@@ -141,3 +141,18 @@ fn a_text_node_whose_spaces_collapse_away_has_no_lines() {
     assert_eq!(doc.ifc_text_lines(word).map(|l| l.lines.len()), Some(1));
     assert_eq!(doc.ifc_text_lines(leading), None);
 }
+
+#[test]
+fn the_lines_follow_a_rebreak_for_another_width() {
+    use crate::layout::relayout_text_for_width;
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[root].children[0];
+    assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(1));
+    // No authored width anywhere: parley re-shapes at max_advance, and so does
+    // the inline engine.
+    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(3));
+    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(1));
+}

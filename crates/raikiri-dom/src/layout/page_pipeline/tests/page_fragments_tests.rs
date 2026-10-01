@@ -881,3 +881,42 @@ fn a_paragraph_whose_text_changes_the_page_name_moves_like_the_parley_one() {
     );
     assert_eq!(results[1], results[0]);
 }
+
+#[test]
+fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    // The paragraph is moved to page 1 (orphans) on every pass; a second pass
+    // must start again from the laid-out positions, not add a second move.
+    let (mut doc, _cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
+    let body = doc.parent_of(root).expect("body");
+    let spacer = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;height:25px"),
+    );
+    doc.nodes[body].children.retain(|&c| c != spacer);
+    doc.nodes[body].children.insert(0, spacer);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let text = doc.nodes[root].children[0];
+    let mut passes = Vec::new();
+    for _ in 0..2 {
+        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        let items: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
+            .iter()
+            .flat_map(|p| p.items.iter())
+            .filter(|item| item.node_id == NodeId::new(text as u64))
+            .map(|item| (item.page_index, item.line_range, item.rect))
+            .collect();
+        passes.push(items);
+    }
+    assert_eq!(passes[0].len(), 1, "{:?}", passes[0]);
+    assert_eq!(passes[0][0].0, 1, "the paragraph is on page 1");
+    assert_eq!(passes[1], passes[0]);
+}
