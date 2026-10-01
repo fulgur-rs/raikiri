@@ -738,14 +738,44 @@ fn place_atomics(
                 continue;
             };
             // The fragment is relative to the line's top and the content-box
-            // start; the layout is relative to the root's border box.
+            // start; the layout is relative to the root's border box. A
+            // relatively positioned atomic is drawn offset from that place,
+            // which taffy's layout location carries for inline-level boxes.
+            let (dx, dy) = relative_inset(tree, node, geometry.width);
             let location = taffy::Point {
-                x: geometry.edges.0 + atomic.border_rect.inline_start,
-                y: geometry.top_edge + line.block_offset() + atomic.border_rect.block_start,
+                x: geometry.edges.0 + atomic.border_rect.inline_start + dx,
+                y: geometry.top_edge + line.block_offset() + atomic.border_rect.block_start + dy,
             };
             commit_child_layout(tree, node, output, location, geometry.width);
         }
     }
+}
+
+/// The offset of a relatively positioned box (CSS 2.1 9.4.3): `left` over
+/// `-right`, `top` over `-bottom`, percentages of the root's content width
+/// (a vertical percentage has no definite basis here and is taken as zero).
+/// `(0, 0)` for a box in normal position.
+fn relative_inset(tree: &Document, node: usize, basis: f32) -> (f32, f32) {
+    use taffy::util::MaybeResolve;
+    let style = &tree.nodes[node].style;
+    if style.position != taffy::Position::Relative
+        || style.inset.left.is_auto()
+            && style.inset.right.is_auto()
+            && style.inset.top.is_auto()
+            && style.inset.bottom.is_auto()
+    {
+        return (0.0, 0.0);
+    }
+    let horizontal =
+        |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(basis), resolve_calc);
+    let vertical = |value: taffy::LengthPercentageAuto| value.maybe_resolve(None, resolve_calc);
+    let dx = horizontal(style.inset.left)
+        .or(horizontal(style.inset.right).map(|right| -right))
+        .unwrap_or(0.0);
+    let dy = vertical(style.inset.top)
+        .or(vertical(style.inset.bottom).map(|bottom| -bottom))
+        .unwrap_or(0.0);
+    (dx, dy)
 }
 
 /// The baseline of an atomic inline from its border-box top, if it has one.

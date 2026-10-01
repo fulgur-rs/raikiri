@@ -177,12 +177,11 @@ fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
 #[test]
 fn atomics_that_are_not_placed_yet_stay_unsupported() {
     for (tag, css) in [
-        ("span", "display:inline-block;position:relative"),
         (
             "span",
             "display:inline-block;vertical-align:middle;position:absolute",
         ),
-        ("img", "display:inline;position:relative"),
+        ("img", "display:inline;position:fixed"),
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
@@ -400,7 +399,7 @@ fn unsupported_floats_stay_unsupported() {
     for css in [
         "display:block;float:inline-start",
         "display:block;float:left;clear:inline-start",
-        "display:block;float:left;position:relative",
+        "display:block;float:left;position:absolute",
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");

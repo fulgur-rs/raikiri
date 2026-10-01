@@ -193,7 +193,7 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
 }
 
 /// A float the inline engine can place: left or right, cleared by physical
-/// sides only, in normal position.
+/// sides only, in normal position or relatively positioned.
 fn supported_float(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
     if !matches!(cv.float, FloatValue::Left | FloatValue::Right) {
@@ -205,15 +205,19 @@ fn supported_float(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     ) {
         return Err(unsupported("logical clear sides are not placed yet"));
     }
-    if cv.position != PositionValue::Static {
+    // A relatively positioned float is placed as a float and drawn offset
+    // from that place by the painter, as a block box is.
+    if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
         return Err(unsupported("positioned floats are not placed yet"));
     }
     Ok(())
 }
 
-/// An atomic inline the inline engine can place: in normal position.
+/// An atomic inline the inline engine can place: in normal position, or
+/// relatively positioned (it keeps its place on the line and is drawn offset
+/// from it).
 fn supported_atomic(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
-    if cv.position != PositionValue::Static {
+    if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
         return Err(IfcError::Unsupported {
             node,
             reason: "positioned atomic inlines are not placed yet",

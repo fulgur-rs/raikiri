@@ -6125,3 +6125,62 @@ fn an_inline_table_sits_on_the_line_like_an_inline_block() {
     // box at the start of the paragraph, over "aa".
     assert_eq!(place(false), (0.0, 20.0, 10.0));
 }
+
+#[test]
+fn a_relatively_positioned_inline_block_is_offset_from_its_place_on_the_line() {
+    // "aa" then a 10x10 inline-block moved by left:5px and top:3px: it keeps
+    // its place on the line (x = 20) and is drawn 5px right and 3px down
+    // (CSS 2.1 9.4.3), as the parley path moves it.
+    let place = |css: &str, ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+        let block = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(&format!(
+                "display:inline-block;width:10px;height:10px;{css}"
+            )),
+        );
+        doc.append_text(root, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+        let l = doc.nodes[block].unrounded_layout.location;
+        (l.x, l.y)
+    };
+    let still = place("", true);
+    assert_eq!(still.0, 20.0);
+    let moved = place("position:relative;left:5px;top:3px", true);
+    assert_eq!(moved, (still.0 + 5.0, still.1 + 3.0));
+    assert_eq!(moved, place("position:relative;left:5px;top:3px", false));
+    let moved = place("position:relative;right:5px;bottom:3px", true);
+    assert_eq!(moved, (still.0 - 5.0, still.1 - 3.0));
+}
+
+#[test]
+fn a_relatively_positioned_float_is_placed_like_a_float() {
+    // A 10x10 left float with left:5px: placed at the line start like any
+    // float; the offset is applied by the painter.
+    let place = |ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+        let float = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:block;float:left;width:10px;height:10px;position:relative;left:5px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let l = doc.nodes[float].unrounded_layout.location;
+        (l.x, l.y)
+    };
+    assert_eq!(place(true), (0.0, 0.0));
+    // The parley path's block algorithm puts the float below the line of
+    // "aa" (CSS 2.1 9.5.1 lets it share that line when it fits).
+    assert_eq!(place(false), (0.0, 10.0));
+}
