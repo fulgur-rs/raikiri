@@ -7243,3 +7243,47 @@ fn a_relatively_positioned_block_child_is_offset_like_parley() {
         );
     }
 }
+
+// ── `ch` on box properties through the inline engine's fonts ──
+
+/// The border box of an Ahem block styled `css` (10px font), on either path.
+fn ch_box_size(css: &str, ifc: bool) -> (f32, f32, f32, f32) {
+    let (mut doc, cascade, root) = ahem_paragraph("aa", css);
+    lay_out(&mut doc, &cascade, ifc);
+    let layout = doc.nodes[root].unrounded_layout;
+    (
+        layout.size.width,
+        layout.size.height,
+        layout.padding.left,
+        layout.margin.left,
+    )
+}
+
+#[test]
+fn ch_box_values_resolve_through_the_engine_like_the_parley_probe() {
+    for css in [
+        "width:10ch",
+        "height:3ch",
+        "padding-left:2ch",
+        "margin-left:4ch",
+    ] {
+        assert_eq!(ch_box_size(css, true), ch_box_size(css, false), "{css}");
+    }
+    // Hand-computed: Ahem's "0" advance is 1 em, so 10ch at 10px is 100px.
+    assert_eq!(ch_box_size("width:10ch", true).0, 100.0);
+    assert_eq!(ch_box_size("padding-left:2ch", true).2, 20.0);
+}
+
+#[test]
+fn measure_ch_advance_uses_the_engine_fonts() {
+    let key = raikiri_style::ChFontKey {
+        family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        size: raikiri_style::ComputedLength(16.0),
+        weight: 400.0,
+        style: raikiri_style::property::FontStyle::Normal,
+    };
+    assert_eq!(
+        crate::layout::measure_ch_advance(&ifc_ahem_fonts(), &key),
+        16.0
+    );
+}

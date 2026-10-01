@@ -89,6 +89,7 @@ pub(crate) use multicol::{
 pub(crate) use page::find_body;
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
+pub use ifc::ch::measure_ch_advance;
 pub use inline_text::measure_ch_advance_for_font_key;
 pub(crate) use inline_text::preshape_text;
 pub(crate) use sanitize::sanitize_taffy;

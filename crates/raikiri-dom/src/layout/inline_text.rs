@@ -764,6 +764,9 @@ pub(crate) fn prepare_ch_box_values_before_taffy(
     layout_cx: &mut LayoutContext<()>,
 ) {
     let mut ch_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
+    // With the inline engine, `ch` is measured with its fonts, the ones the
+    // text is laid out with.
+    let engine_fonts = doc.ifc.as_ref().map(|state| state.fonts.clone());
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
@@ -771,6 +774,15 @@ pub(crate) fn prepare_ch_box_values_before_taffy(
         let cv = &cascade.computed[idx];
         let mut measure = |provenance: &Option<ChLengthProvenance>| {
             provenance.as_ref().map(|provenance| {
+                if let Some(fonts) = &engine_fonts {
+                    let used = provenance.factor
+                        * crate::layout::ifc::ch::ch_advance(fonts, &provenance.font);
+                    return if used.is_nan() {
+                        0.0
+                    } else {
+                        used.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+                    };
+                }
                 measured_ch_length_px(
                     provenance.factor,
                     Some(&provenance.font),

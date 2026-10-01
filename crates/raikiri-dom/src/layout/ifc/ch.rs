@@ -32,5 +32,11 @@ pub(crate) fn ch_advance(fonts: &FontCollection, key: &ChFontKey) -> f32 {
     fonts.resolve_ch(&query, size).advance
 }
 
+/// Advance of U+0030 in the font `key` selects from `fonts`, in px: the
+/// `ch` unit as the inline engine measures it.
+pub fn measure_ch_advance(fonts: &FontCollection, key: &ChFontKey) -> f32 {
+    ch_advance(fonts, key)
+}
+
 #[cfg(test)]
 mod tests;
