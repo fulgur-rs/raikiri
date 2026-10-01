@@ -27,19 +27,11 @@ bitflags::bitflags! {
     /// const IS_IN_DOCUMENT = 0b00000100;   // = 1 << 2
     /// ```
     ///
-    /// `IS_IN_DOCUMENT` and `IS_INLINE_ROOT` are in use. `IS_TABLE_ROOT` is
-    /// reserved for future table formatting roots at the same bit position as
-    /// blitz. Nothing sets or clears it yet; reserving the bit ensures that the
-    /// raw-bit conversion `NodeFlags::from_bits(blitz_flags.bits())` works for
-    /// future blitz compatibility.
+    /// Bit 0 (blitz's `IS_INLINE_ROOT`) is unused: paragraphs are marked by
+    /// [`IS_IFC_ROOT`](Self::IS_IFC_ROOT) instead. `IS_TABLE_ROOT` keeps
+    /// blitz's bit position.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct NodeFlags: u32 {
-        /// Inline formatting context root. `establish_minimal_line_boxes` in
-        /// [`mod@crate::layout`] sets or clears this according to whether the
-        /// node is a block container meeting its minimal-line-box conditions.
-        /// It is recomputed on every `layout_single_page` call and may remain
-        /// either set or clear; it is not write-only. Its bit position matches blitz.
-        const IS_INLINE_ROOT = 1 << 0;
         /// Table formatting context root, reserved for future use at the same
         /// bit position as blitz.
         const IS_TABLE_ROOT = 1 << 1;
@@ -68,8 +60,8 @@ bitflags::bitflags! {
         /// are hidden from taffy (see [`Node::layout_children`]): the root is
         /// measured as a leaf from its paragraph.
         const IS_IFC_ROOT = 1 << 5;
-        /// Descendant of an [`IS_IFC_ROOT`](Self::IS_IFC_ROOT) node. The
-        /// parley text passes skip these nodes.
+        /// Descendant of an [`IS_IFC_ROOT`](Self::IS_IFC_ROOT) node, laid out
+        /// as part of that root's paragraph.
         const IN_IFC_SUBTREE = 1 << 6;
     }
 }
@@ -90,21 +82,8 @@ pub(crate) struct Attr {
 /// (`match data { NodeData::Element(e) => BlitzElement { ... }, ... }`). As in blitz,
 /// only the `Element` variant is boxed: its many fields therefore do not increase
 /// the size of the Text and Document variants.
-///
-/// Note: this box does not reduce `size_of::<NodeData>()`. Because `TextData`
-/// holds `parley::Layout<()>` directly, it is larger than the pointer-sized
-/// boxed `Element` variant and determines the enum's size (hence the
-/// `clippy::large_enum_variant` lint). Leaving `Text` unboxed is intentional:
-/// `text_layout()` is called on the paint hot path, where another indirection
-/// would be undesirable.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "Element only is boxed by design (blitz-compat shape, see doc comment); \
-              Text carries parley::Layout<()> inline to avoid extra indirection on \
-              the paint hot path"
-)]
 pub enum NodeData {
     /// HTML / XML element (tag_name + attributes + namespace + inline_style +
     /// template_contents slot).
@@ -146,15 +125,6 @@ impl NodeData {
     pub(crate) fn as_element_mut(&mut self) -> Option<&mut ElementData> {
         match self {
             NodeData::Element(e) => Some(e.as_mut()),
-            _ => None,
-        }
-    }
-
-    /// Mutably borrow the Text variant within the crate for layout::preshape_text.
-    #[inline]
-    pub(crate) fn as_text_mut(&mut self) -> Option<&mut TextData> {
-        match self {
-            NodeData::Text(t) => Some(t),
             _ => None,
         }
     }
@@ -205,8 +175,7 @@ pub struct ElementData {
     pub(crate) template_contents: Option<usize>,
     /// Resolved intrinsic size (px) for a replaced element (`<img>` only, in
     /// this scope), populated by [`crate::image_resolve::resolve_images`]
-    /// before layout runs — mirrors how [`TextData::text_layout`] is populated
-    /// by `preshape_text` ahead of the same taffy compute pass. `None` means
+    /// before the taffy compute pass. `None` means
     /// either this element is not a resolvable replaced element, or
     /// resolution was not attempted — a missing/relative `src`, or an inert
     /// subtree the pre-pass skips. It never means "resolution failed": a
@@ -274,47 +243,15 @@ pub struct MulticolTextFragment {
 pub struct TextData {
     /// Character data.
     pub(crate) text_content: SmolStr,
-    /// Pre-shaped parley Layout for a text node.
-    ///
-    /// - Populated by `preshape_text` in [`crate::layout`].
-    /// - Consumed by the taffy leaf measure closure (intrinsic size) and paint
-    ///   (glyph positions).
-    /// - Brush type `()` is deliberate: it carries no color or decoration.
-    /// - Invalidation: cleared to None and recomputed on every
-    ///   `layout_single_page` call.
-    pub text_layout: Option<parley::Layout<()>>,
-    /// Whether paint should normalize horizontal glyph positions for a
-    /// single-run `white-space: pre` block.
-    pub(crate) snap_glyph_x_to_1_64: bool,
-    /// Optional per-line horizontal offsets for inline continuation lines.
-    ///
-    /// The inline bridge shapes each text node independently, but a wrapped
-    /// descendant continues at its inline root's line start. Layout records
-    /// that small paint-time correction here instead of changing the node's
-    /// box position.
-    pub(crate) text_line_offsets: Option<Vec<f32>>,
-    /// Optional line-range fragments generated for a multicolumn container.
-    pub(crate) multicol_fragments: Option<Vec<MulticolTextFragment>>,
-    /// Font-metric `text-indent: ch` used value prepared before Taffy layout.
-    pub(crate) text_indent_px: Option<f32>,
-    /// Effective hanging flag for the pre-Taffy indent measurement.
-    pub(crate) text_indent_hanging: bool,
-    /// Effective each-line flag for the pre-Taffy indent measurement.
-    pub(crate) text_indent_each_line: bool,
-    /// Whether Taffy width probes may rebreak this text layout.
-    pub(crate) text_indent_rebreak: bool,
 }
 
 /// Arena node implemented with a NodeData tagged union.
 ///
 /// Kind-independent fields needed by paint, cascade, and layout (children and
 /// unrounded_layout) remain on Node; kind-specific fields reside in [`NodeData`]
-/// variants. Of the five formerly public fields, `kind`, `tag_name`, and
-/// `text_layout` now use accessors (`node.kind()`, `node.tag_name()`, and
-/// `node.text_layout()`); `children` and `unrounded_layout` remain public.
-/// The external contract is unaffected because it accesses no Node/Element
-/// fields; only raikiri-dom's internal pub_surface check was updated to use
-/// the accessors.
+/// variants. `kind` and `tag_name` are read through accessors
+/// (`node.kind()`, `node.tag_name()`); `children` and `unrounded_layout`
+/// remain public.
 #[derive(Debug, Clone)]
 pub struct Node {
     /// Taffy layout style.
@@ -530,17 +467,7 @@ impl Node {
             ifc: None,
             unrounded_layout: Layout::with_order(0),
             flags: NodeFlags::IS_IN_DOCUMENT,
-            data: NodeData::Text(TextData {
-                text_content: text,
-                text_layout: None,
-                snap_glyph_x_to_1_64: false,
-                text_line_offsets: None,
-                multicol_fragments: None,
-                text_indent_px: None,
-                text_indent_hanging: false,
-                text_indent_each_line: false,
-                text_indent_rebreak: false,
-            }),
+            data: NodeData::Text(TextData { text_content: text }),
         }
     }
 
@@ -874,81 +801,6 @@ impl Node {
             NodeData::Text(text) => Some(text.text_content.as_str()),
             _ => None,
         }
-    }
-
-    /// Return text_layout for Text, or `None` otherwise.
-    ///
-    /// Accessor replacement for the former
-    /// `pub text_layout: Option<parley::Layout<()>>` field. It is `#[inline]`
-    /// because it is called on the paint hot path.
-    #[inline]
-    pub fn text_layout(&self) -> Option<&parley::Layout<()>> {
-        match &self.data {
-            NodeData::Text(t) => t.text_layout.as_ref(),
-            _ => None,
-        }
-    }
-
-    /// Whether paint should normalize this text node's glyph x coordinates.
-    #[inline]
-    pub fn snap_glyph_x_to_1_64(&self) -> bool {
-        matches!(&self.data, NodeData::Text(t) if t.snap_glyph_x_to_1_64)
-    }
-
-    /// Return per-line horizontal offsets for inline continuation lines.
-    #[inline]
-    pub fn text_line_offsets(&self) -> Option<&[f32]> {
-        match &self.data {
-            NodeData::Text(t) => t.text_line_offsets.as_deref(),
-            _ => None,
-        }
-    }
-
-    /// Return paint fragments generated by the multicolumn layout pass.
-    #[inline]
-    // cov:ignore: non-text nodes use this defensive accessor fallback; WPT layout covers text nodes.
-    pub fn multicol_fragments(&self) -> Option<&[MulticolTextFragment]> {
-        match &self.data {
-            NodeData::Text(t) => t.multicol_fragments.as_deref(),
-            _ => None,
-        }
-    }
-
-    /// Rebreak a text layout with its prepared indent for a Taffy width probe.
-    ///
-    /// The font metric is resolved before Taffy enters the tree walk. Taffy can
-    /// still ask the leaf for a narrower available width, so the existing
-    /// Parley layout is rebroken here rather than relying on the page-width
-    /// preshape result.
-    pub(crate) fn text_layout_size_for_width(&mut self, width: Option<f32>) -> Option<(f32, f32)> {
-        let NodeData::Text(text) = &mut self.data else {
-            return None;
-        };
-        let layout = text.text_layout.as_mut()?;
-        if let Some(indent) = text.text_indent_px {
-            layout.set_text_indent(
-                indent,
-                parley::IndentOptions {
-                    hanging: text.text_indent_hanging,
-                    each_line: text.text_indent_each_line,
-                },
-            );
-        }
-        // A nested fragmentainer can provide a narrower used width than the
-        // page-level preshape pass. Rebreak narrower probes, not only the
-        // text-indent path, so recursive multicol leaves measure their real
-        // line count before the parent places them.
-        if let Some(width) = width.filter(|width| width.is_finite() && *width > 0.0)
-            && (text.text_indent_rebreak || width < layout.width() - f32::EPSILON)
-        {
-            layout.break_all_lines(Some(width));
-        }
-        Some((layout.width(), layout.height()))
-    }
-
-    /// Whether this text node carries a font-metric indent prepared before Taffy.
-    pub(crate) fn has_pre_taffy_text_indent(&self) -> bool {
-        matches!(&self.data, NodeData::Text(text) if text.text_indent_px.is_some())
     }
 
     /// Resolved intrinsic size (px) for a replaced element, if

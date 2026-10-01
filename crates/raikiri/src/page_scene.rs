@@ -734,10 +734,8 @@ pub fn build_page_scene_for_page_named(
                         drawables.block_styles.insert(node_id, entry);
                     }
                     NodeKind::Text => {
-                        let line_count = match &ifc_lines {
-                            Some(owned) => owned.lines.len(),
-                            None => node.text_layout().map_or(0, |l| l.lines().count()),
-                        };
+                        // A text node outside every paragraph has no lines.
+                        let line_count = ifc_lines.as_ref().map_or(0, |owned| owned.lines.len());
                         let entry = ParagraphEntry {
                             line_count,
                             ..ParagraphEntry::default()

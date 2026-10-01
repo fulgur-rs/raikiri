@@ -531,11 +531,10 @@ fn many_mutations_still_yield_correct_layout() {
 }
 
 #[test]
-fn taffy_leaf_measure_reads_pre_populated_text_layout() {
-    // Set a parley Layout manually on Node.text_layout and directly verify
-    // that the taffy leaf closure returns its intrinsic size (checking
-    // the leaf closure rather than going through layout_single_page).
-    use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext};
+fn a_text_leaf_outside_every_paragraph_measures_zero() {
+    // A text node that no paragraph lays out (here: no paragraph roots were
+    // assigned at all) is a taffy leaf with no size, so it adds nothing to
+    // its parent's height.
     use taffy::{AvailableSpace, NodeId as TaffyNodeId, Size};
 
     let mut doc = Document::new();
@@ -554,20 +553,6 @@ fn taffy_leaf_measure_reads_pre_populated_text_layout() {
     );
     let text = doc.append_text(root, "Hi");
 
-    // Manually pre-shape.
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let builder = layout_cx.ranged_builder(&mut fonts, "Hi", 1.0, true);
-    let mut layout = builder.build("Hi");
-    layout.break_all_lines(Some(400.0));
-    layout.align(Alignment::Start, AlignmentOptions::default());
-    let expected_h = layout.height();
-    doc.nodes[text]
-        .data
-        .as_text_mut()
-        .expect("text node")
-        .text_layout = Some(layout);
-
     compute_root_layout(
         &mut doc,
         TaffyNodeId::from(root),
@@ -577,19 +562,8 @@ fn taffy_leaf_measure_reads_pre_populated_text_layout() {
         },
     );
 
-    let text_size = doc.nodes[text].unrounded_layout.size;
-    assert!(
-        text_size.width > 0.0,
-        "text leaf must have non-zero width from parley layout (got {})",
-        text_size.width
-    );
-    // Text leaf height should flow through the root block layout.
-    let root_size = doc.nodes[root].unrounded_layout.size;
-    assert!(
-        (root_size.height - expected_h).abs() < 0.5,
-        "root block should stack single text child at parley height {expected_h} (got {})",
-        root_size.height
-    );
+    assert_eq!(doc.nodes[text].unrounded_layout.size.height, 0.0);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 0.0);
 }
 
 // ── Public-surface smoke test ─────────────
@@ -627,8 +601,8 @@ fn document_root_index_is_zero_and_matches_get_node_kind() {
 #[test]
 fn node_accessors_are_callable_from_external_call_site() {
     // Pin the public surface after refactoring Node into a NodeData tagged union.
-    // Check from super::* that the old public fields
-    // (kind / tag_name / text_layout) are now accessible through methods.
+    // Check from super::* that the node fields are accessible through
+    // methods (kind / tag_name).
     // This leaves the external consumer contract unchanged:
     // crates/raikiri/tests/external_consumer.rs accesses zero Node/Element fields;
     // this test checks the raikiri-dom internal public surface.
@@ -640,7 +614,6 @@ fn node_accessors_are_callable_from_external_call_site() {
     let _ = &node.unrounded_layout;
     let _ = node.kind();
     let _ = node.tag_name();
-    let _ = node.text_layout();
     let _ = node.is_in_document();
     let tn = doc.get_node(t).unwrap();
     assert_eq!(tn.kind(), NodeKind::Text);

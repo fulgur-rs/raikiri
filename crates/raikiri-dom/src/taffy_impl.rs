@@ -22,23 +22,11 @@ use crate::document::Document;
 use crate::node::{NodeData, NodeFlags};
 use raikiri_style::property::DisplayValue;
 
-/// Combines an `<img>`'s resolved intrinsic size (if any) with a text
-/// node's shaped intrinsic size (if any) into the single `Option<Size<f32>>`
-/// the leaf-measure closures fall back to when CSS gives no explicit size.
-/// A given `Node` is either an element or a text node
-/// ([`crate::node::NodeData`]), so at most one of
-/// [`crate::node::Node::image_intrinsic_size`] /
-/// [`crate::node::Node::text_layout`] ever returns `Some` here.
-fn leaf_intrinsic_size(
-    node: &mut crate::node::Node,
-    available_width: Option<f32>,
-) -> Option<Size<f32>> {
+/// The intrinsic size of a leaf: an `<img>`'s resolved size, `None` for any
+/// other leaf (a text node outside every paragraph has no size).
+fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
     node.image_intrinsic_size()
         .map(|(width, height)| Size { width, height })
-        .or_else(|| {
-            node.text_layout_size_for_width(available_width)
-                .map(|(width, height)| Size { width, height })
-        })
 }
 
 /// Resolve a `calc()` payload handle against `basis`.
@@ -110,13 +98,8 @@ impl TaffyChildIter<'_> {
         // CSS Flexbox §4: anonymous flex items are not generated for
         // whitespace-only text nodes. The same filtering is needed for Grid,
         // whose item collection also excludes inter-element source whitespace.
-        // A synthetic inline root is the one exception: its whitespace nodes
-        // are explicit zero-content inline items whose collapsed advance was
-        // measured by `preshape_text` and stored in their style.
         let parent_node = &doc.nodes[usize::from(parent)];
-        if !matches!(parent_node.style.display, Display::Flex | Display::Grid)
-            || parent_node.flags.contains(NodeFlags::IS_INLINE_ROOT)
-        {
+        if !matches!(parent_node.style.display, Display::Flex | Display::Grid) {
             return true;
         }
         !matches!(
@@ -284,18 +267,10 @@ impl Document {
                 use crate::node::NodeFlags;
                 use raikiri_style::property::DisplayValue;
                 let dv = tree.nodes[idx].display;
-                // Pure-inline table boxes carry IS_INLINE_ROOT (set by
-                // establish_minimal_line_boxes for all-inline children) and
-                // flow as flex instead: they are exactly one anonymous
-                // cell's content, which the grid collector cannot represent.
-                let inline_flow = tree.nodes[idx].flags.contains(NodeFlags::IS_INLINE_ROOT);
                 // A table box that is an ifc root holds only inline content:
                 // the ifc branch below lays it out.
                 let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
-                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable)
-                    && !inline_flow
-                    && !ifc_root
-                {
+                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable) && !ifc_root {
                     return crate::layout::table::compute_table_layout(tree, node_id, inputs);
                 }
             }
@@ -408,66 +383,27 @@ impl Document {
             }
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
-                if tree.nodes[idx].has_pre_taffy_text_indent() {
-                    compute_leaf_layout(
-                        inputs,
-                        &style,
-                        |_val, _basis| 0.0,
-                        |known, available| {
-                            // Rebreak ch-aware text at the width Taffy
-                            // passes to this measure callback, so its
-                            // intrinsic height participates in the current
-                            // pass.
-                            let leaf_intrinsic = leaf_intrinsic_size(
-                                &mut tree.nodes[idx],
-                                available.width.into_option(),
-                            );
-                            Size {
-                                width: known
-                                    .width
-                                    .or(leaf_intrinsic.map(|s| s.width))
-                                    .unwrap_or(0.0),
-                                height: known
-                                    .height
-                                    .or(leaf_intrinsic.map(|s| s.height))
-                                    .unwrap_or(0.0),
-                            }
-                        },
-                    )
-                } else {
-                    compute_leaf_layout(
-                        inputs,
-                        &style,
-                        |_val, _basis| 0.0,
-                        |known, available| {
-                            // Nested fragmentainers may probe a narrower width
-                            // than the page-level preshape pass. Keep ordinary
-                            // text behavior unchanged, but rebreak text while
-                            // a recursive multicol context is active.
-                            // cov:ignore: exercised by ignored nested multicol WPT reftests
-                            let probe_width = if !tree.fragmentation_stack.is_empty() {
-                                available.width.into_option()
-                            } else {
-                                None
-                            };
-                            let leaf_intrinsic =
-                                leaf_intrinsic_size(&mut tree.nodes[idx], probe_width);
-                            // If taffy derives Some known.width / .height from style, prefer
-                            // that explicit size; otherwise use parley or image intrinsic sizes;
-                            // if neither is available, use zero.
-                            Size {
-                                width: known
-                                    .width
-                                    .or(leaf_intrinsic.map(|s| s.width))
-                                    .unwrap_or(0.0),
-                                height: known
-                                    .height
-                                    .or(leaf_intrinsic.map(|s| s.height))
-                                    .unwrap_or(0.0),
-                            }
-                        },
-                    )
-                }
+                let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
+                compute_leaf_layout(
+                    inputs,
+                    &style,
+                    |_val, _basis| 0.0,
+                    |known, _available| {
+                        // An explicit size from the style wins; otherwise an
+                        // image's intrinsic size; a text node outside every
+                        // paragraph and any other leaf measure zero.
+                        Size {
+                            width: known
+                                .width
+                                .or(leaf_intrinsic.map(|s| s.width))
+                                .unwrap_or(0.0),
+                            height: known
+                                .height
+                                .or(leaf_intrinsic.map(|s| s.height))
+                                .unwrap_or(0.0),
+                        }
+                    },
+                )
             } else {
                 match display {
                     Display::Block | Display::FlowRoot => {
@@ -753,7 +689,8 @@ fn measure_ifc_root(
             })
     };
     // An auto-height container whose lines end in `<br>` children keeps them
-    // all in its first column, as the parley path places such direct lines.
+    // all in its first column: without a definite column height there is no
+    // height at which to break them over columns.
     let in_one_column = measure.column_height.is_none()
         && tree.nodes[idx].children.iter().any(|&child| {
             tree.nodes[child].is_in_document() && tree.nodes[child].tag_name() == Some("br")
@@ -805,9 +742,8 @@ fn measure_ifc_root(
     (size, baseline, escaping_margin)
 }
 
-/// Return the first baseline for text leaves from Parley's first line. Taffy's
-/// block algorithm propagates that baseline through ordinary inline wrappers;
-/// inline-blocks use the baseline of their last in-flow line box, so recover
+/// Return the first baseline of an inline-block from the descendant layout
+/// tree: inline-blocks use the baseline of their last in-flow line box, so recover
 /// the last in-flow text line from the descendant layout tree. See CSS 2.1
 /// §10.8.1: <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
 fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
@@ -816,15 +752,9 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     if root_node.style.display == Display::None {
         return None;
     }
-    if let NodeData::Text(text) = &root_node.data {
-        let baseline = text
-            .text_layout
-            .as_ref()?
-            .lines()
-            .next()?
-            .metrics()
-            .baseline;
-        return baseline.is_finite().then_some(baseline);
+    // A text node outside every paragraph has no line, so no baseline.
+    if root_node.kind() == raikiri_traits::NodeKind::Text {
+        return None;
     }
     // An ifc root has measured its own baseline from its lines; its children
     // carry no lines of their own.
@@ -856,17 +786,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
             }
             continue;
         }
-        if let NodeData::Text(text) = &node.data {
-            if let Some(line) = text
-                .text_layout
-                .as_ref()
-                .and_then(|layout| layout.lines().last())
-            {
-                let baseline = offset_y + line.metrics().baseline;
-                if baseline.is_finite() {
-                    last_baseline = Some(baseline);
-                }
-            }
+        if node.kind() == raikiri_traits::NodeKind::Text {
             continue;
         }
         for &child in node.children.iter().rev() {
@@ -921,7 +841,7 @@ fn compute_inline_block_shrink_wrap(
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.
     let leaf_style = tree.nodes[idx].style.clone();
-    let leaf_intrinsic = leaf_intrinsic_size(&mut tree.nodes[idx], None);
+    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
     // Scalar copies so the measure closure below captures no large state.
     let sizing_mode = inputs.sizing_mode;
     let known_height = inputs.known_dimensions.height;

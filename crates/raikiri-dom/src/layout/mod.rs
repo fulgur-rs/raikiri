@@ -1,9 +1,9 @@
 //! Single-page layout driver — publicly provides `layout_single_page`.
 //!
 //! Pipeline: uses the cascade (raikiri-style) output, Document arena, and PageBox
-//! to drive taffy compute_root_layout; pre-shapes intrinsic text size through a
-//! minimal integration with parley 0.10. Current scope: one A4 page, ASCII Latin,
-//! and the parley system-font default (cross-machine byte identity requires future font pinning).
+//! to drive taffy compute_root_layout. Paragraphs are laid out by the shodo
+//! inline engine, which taffy measures as leaves; without fonts set on the
+//! Document, the installed system fonts are used.
 //!
 //! Single-page and paged-layout entry points are public;
 //! implementation helpers remain crate-private.
@@ -15,30 +15,25 @@ use std::collections::{HashMap, HashSet};
 use crate::document::Document;
 use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
-use parley::{
-    FontContext, FontFamily, FontStyle, FontWeight, InlineBox, InlineBoxKind, Layout,
-    LayoutContext, PositionedLayoutItem, StyleProperty,
-};
 use raikiri_style::property::{
     AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
     CalcLengthPercentage, ClearValue, ColumnCountValue, ContentAlignmentValue, Direction,
-    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
-    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Length,
-    LengthOrAuto, OverflowValue, PositionValue, PropertyKey, PropertyValue, RubyPosition,
-    SelfAlignmentValue, TextAlign, TextAutospace, VerticalAlign, WhiteSpace, WritingMode,
+    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue, GridLineValue,
+    GridRepeatCount, GridTemplateAreasValue, Length, LengthOrAuto, OverflowValue, PositionValue,
+    PropertyKey, PropertyValue, RubyPosition, SelfAlignmentValue, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackListComponent,
     ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedTextIndent, ComputedValues,
+    ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
-    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AlignSelf as TaffyAlignSelf,
-    AvailableSpace, BlockContext, BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength,
-    Dimension, Direction as TaffyDirection, Display, ExpandedDimension, ExpandedLengthPercentage,
+    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace, BlockContext,
+    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength, Dimension,
+    Direction as TaffyDirection, Display, ExpandedDimension, ExpandedLengthPercentage,
     FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
     GridAutoFlow as TaffyGridAutoFlow, GridPlacement, GridTemplateArea as TaffyGridTemplateArea,
     GridTemplateComponent, GridTemplateRepetition, Layout as TaffyLayout, LayoutInput,
@@ -61,7 +56,6 @@ fn style_dimension_length(value: Dimension) -> Option<f32> {
 
 mod bridge;
 pub(crate) mod ifc;
-mod inline_text;
 mod multicol;
 mod page;
 mod page_pipeline;
@@ -69,8 +63,6 @@ pub(crate) mod sanitize;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use bridge::*;
-use inline_text::*;
 use multicol::*;
 pub(crate) use page::used_style_length_percentage;
 use page::*;
@@ -85,7 +77,6 @@ pub(crate) use page::find_body;
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::measure_ch_advance;
-pub use inline_text::measure_ch_advance_for_font_key;
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 

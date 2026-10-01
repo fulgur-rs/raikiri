@@ -1,4 +1,4 @@
-//! raikiri-dom — DOM data model + layout engine (taffy + parley) + GCPM runtime side.
+//! raikiri-dom — DOM data model + layout engine (taffy + the shodo inline engine) + GCPM runtime side.
 //!
 //! Implements the node arena, taffy 6 trait implementations, and raikiri_traits::Dom co-design.
 //! For details, see §4, raikiri-dom scope, in the original design.
@@ -62,10 +62,9 @@ pub mod taffy_impl;
 pub use document::{Document, DomMutationError};
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{
-    BundledFace, FontError, FontFaceApplyReport, FontFaceLoader, FontWarn, apply_font_faces,
+    BundledFace, FontError, FontFaceApplyReport, FontFaceLoader, FontWarn,
     build_bundled_font_collection, build_inline_document_fonts, build_wpt_font_collection,
-    build_wpt_font_ctx, build_wpt_font_ctx_with_observer, expand_font_face_aliases,
-    register_font_face_sources, system_font_collection,
+    system_font_collection,
 };
 #[doc(hidden)]
 pub use layout::{

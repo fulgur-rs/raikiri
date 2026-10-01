@@ -1844,22 +1844,6 @@ fn nested_absolute_auto_width_matches_direct_body_shrink() {
 
 mod page_fragments_tests;
 
-// ── ifc roots stay off the parley passes ─────────────────────
-
-#[test]
-fn ifc_root_text_is_not_shaped_by_parley_and_the_root_is_not_a_flex_line() {
-    use crate::layout::ifc::test_support::ahem_fonts;
-    use crate::layout::test_support::{ahem_paragraph, page_box_800x600};
-    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
-    doc.enable_inline_formatting(ahem_fonts(), shodo::limits::Limits::default());
-    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    let text = doc.nodes[root].children[0];
-    assert!(doc.nodes[root].flags.contains(NodeFlags::IS_IFC_ROOT));
-    assert!(!doc.nodes[root].flags.contains(NodeFlags::IS_INLINE_ROOT));
-    // Parley cannot satisfy this: the text node was never shaped.
-    assert!(doc.nodes[text].text_layout().is_none());
-}
-
 // ── ifc roots in taffy ───────────────────────────────────────
 
 use crate::layout::test_support::{
@@ -1887,13 +1871,8 @@ fn ifc_root_height_is_lines_times_line_height() {
     lay_out_with_switch(&mut doc, &cascade);
     let layout = doc.nodes[root].unrounded_layout;
     assert_eq!(layout.size.width, 50.0);
-    // Three 10px lines, and the text node was never shaped by parley.
+    // Three 10px lines.
     assert_eq!(layout.size.height, 30.0);
-    assert!(
-        doc.nodes[doc.nodes[root].children[0]]
-            .text_layout()
-            .is_none()
-    );
     assert_eq!(stored_lines(&doc, root).lines.len(), 3);
 }
 
@@ -3998,7 +3977,6 @@ fn bare_text_next_to_an_element_item_gets_its_own_root() {
     assert!(doc.nodes[item].is_ifc_root());
     // The bare text is an anonymous item and the root of its own paragraph.
     assert!(doc.nodes[bare].is_ifc_root());
-    assert!(doc.nodes[bare].text_layout().is_none());
     // Hand-computed: the item follows the 20px anonymous item.
     assert_eq!(doc.nodes[item].unrounded_layout.location.x, 20.0);
     assert_eq!(doc.nodes[item].unrounded_layout.size.width, 40.0);

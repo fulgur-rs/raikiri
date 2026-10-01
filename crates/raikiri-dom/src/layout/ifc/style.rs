@@ -57,8 +57,8 @@ pub(crate) fn map_text_combine_upright(
 /// The paint offset of a `position: relative` box whose insets are all
 /// lengths: `left` over `-right`, `top` over `-bottom` (CSS 2.1 9.4.3). `None`
 /// when an inset is a percentage or `calc()`, or the box has a `z-index`
-/// (which makes a stacking context); such a box keeps its paragraph on the
-/// parley path. A box that is not relative has no offset.
+/// (which makes a stacking context); the projection refuses such a box. A
+/// box that is not relative has no offset.
 #[doc(hidden)]
 pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
     if cv.position != p::PositionValue::Relative {
@@ -160,8 +160,8 @@ pub(crate) fn inline_style(
 ) -> Result<InlineStyle, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
     // A percentage or calc() spacing would resolve against the font size at
-    // used-value time; the parley path takes the computed length's absolute
-    // part (`px()`), and so does this projection.
+    // used-value time; this projection takes the computed length's absolute
+    // part (`px()`).
     let absolute_spacing = |value: &ComputedLetterSpacing, fallback: f32| match value {
         ComputedLetterSpacing::Px(value) => Ok::<f32, IfcError>(*value),
         _ => Ok(fallback),
@@ -392,8 +392,8 @@ pub(crate) fn inline_style(
             };
             s::VerticalAlign::Length(calc.px + calc.percent / 100.0 * line_height)
         }
-        // Other units are absolutized by the cascade; one that is not is
-        // treated like the parley path, which shifts by nothing.
+        // Other units are absolutized by the cascade; one that is not
+        // shifts by nothing.
         p::VerticalAlign::Length(_) => s::VerticalAlign::Baseline,
         _ => return Err(unsupported("vertical-align is not represented by shodo")),
     };
@@ -401,9 +401,9 @@ pub(crate) fn inline_style(
         same_enum!(LineBreak, cv.line_break, node; Auto, Loose, Normal, Strict, Anywhere)?;
     let (word_break, overflow_wrap) = match cv.word_break {
         // The deprecated keyword: normal breaking plus `overflow-wrap:
-        // break-word`, whatever the authored `overflow-wrap` is. The parley
-        // path maps it the same way, so min-content sizing agrees too (CSS
-        // Text 3 §5.2 would give it the `anywhere` sizing instead).
+        // break-word`, whatever the authored `overflow-wrap` is, for both
+        // line breaking and min-content sizing (CSS Text 3 §5.2 would give
+        // it the `anywhere` sizing instead).
         p::WordBreak::BreakWord => (s::WordBreak::Normal, s::OverflowWrap::BreakWord),
         word_break => (
             same_enum!(WordBreak, word_break, node; Normal, BreakAll, KeepAll, Manual, AutoPhrase)?,
@@ -425,7 +425,7 @@ pub(crate) fn inline_style(
         ComputedTabSize::Length(value) => s::TabSize::Px(value.0),
     };
     let text_autospace = match cv.text_autospace {
-        // `auto` behaves like `normal`, as on the parley path.
+        // `auto` behaves like `normal`.
         p::TextAutospace::Normal | p::TextAutospace::Auto => s::TextAutospace::Normal,
         p::TextAutospace::NoAutospace => s::TextAutospace::NoAutospace,
         // shodo has no per-class switches: a custom set that spaces
@@ -493,8 +493,8 @@ pub(crate) fn inline_style(
 
 /// Paragraph-level style for a block root.
 ///
-/// Vertical writing modes are laid out as horizontal text, as the parley path
-/// lays them out: the paragraph is always `horizontal-tb`.
+/// Vertical writing modes are laid out as horizontal text (real vertical
+/// writing is not supported): the paragraph is always `horizontal-tb`.
 pub(crate) fn paragraph_style(
     _cv: &ComputedValues,
     _node: usize,

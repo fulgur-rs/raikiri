@@ -178,8 +178,7 @@ pub enum IfcBuildMode {
     Parallel,
 }
 
-/// The same threshold as the parley text pass: below it the thread overhead
-/// outweighs the gain.
+/// Below this many paragraphs the thread overhead outweighs the gain.
 pub(crate) const DEFAULT_PARALLEL_THRESHOLD: usize = 32;
 
 impl IfcState {

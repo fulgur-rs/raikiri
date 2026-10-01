@@ -191,7 +191,6 @@ pub(crate) fn apply_computed_to_style(
     }
     refresh_order_modified_children(doc);
     crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;
-    establish_minimal_line_boxes(doc, cascade);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -213,8 +212,8 @@ pub(crate) fn apply_computed_to_style(
 /// [`Direction`] → [`taffy::Direction`] mapping.
 ///
 /// Taffy uses this field for horizontal block alignment, table/grid ordering,
-/// and overflow direction.  Keep it separate from text shaping: parley does
-/// not expose the CSS base direction through the bridge used by this crate.
+/// and overflow direction.  Text direction is mapped separately, into the
+/// paragraph style of the inline engine.
 fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
     style.direction = match cv.direction {
         Direction::Ltr => TaffyDirection::Ltr,

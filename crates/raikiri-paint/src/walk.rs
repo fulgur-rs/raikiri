@@ -4610,20 +4610,9 @@ fn paint_document_impl(
                             },
                             &decorations,
                         );
-                    } else {
-                        text::draw_text_node(
-                            scene,
-                            node,
-                            cascade,
-                            node_id,
-                            text::TextPosition {
-                                abs_x: abs_x + page_offset_x + transform_x,
-                                abs_y: abs_y + page_offset_y + transform_y,
-                                shift_y,
-                            },
-                            &decorations,
-                        );
                     }
+                    // Any other text node lies outside every paragraph and
+                    // has no lines to draw.
                     if text_clip.is_some() {
                         scene.pop_layer();
                     }

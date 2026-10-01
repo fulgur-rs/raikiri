@@ -20,58 +20,6 @@ fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
     );
 }
 
-#[test]
-fn text_indent_amount_bounds_nonfinite_values() {
-    assert_eq!(
-        bounded_text_indent_amount(ComputedTextIndent::Px(f32::INFINITY), 100.0, None,),
-        MAX_TAFFY_MAGNITUDE
-    );
-    assert_eq!(
-        bounded_text_indent_amount(ComputedTextIndent::Px(f32::NEG_INFINITY), 100.0, None,),
-        -MAX_TAFFY_MAGNITUDE
-    );
-    assert_eq!(
-        bounded_text_indent_amount(ComputedTextIndent::Px(f32::NAN), 100.0, None),
-        0.0
-    );
-    assert_eq!(
-        bounded_text_indent_amount(
-            ComputedTextIndent::Px(1.0),
-            100.0,
-            Some(MAX_TAFFY_MAGNITUDE * 2.0),
-        ),
-        MAX_TAFFY_MAGNITUDE
-    );
-    assert_eq!(
-        bounded_text_indent_amount(
-            ComputedTextIndent::Calc(CalcLengthPercentage {
-                percent: 25.0,
-                px: 10.0,
-            }),
-            200.0,
-            None,
-        ),
-        60.0
-    );
-}
-
-#[test]
-#[ignore] // Explicitly run with cargo test -- --ignored
-fn font_context_new_cost_is_reasonable() {
-    let start = std::time::Instant::now();
-    for _ in 0..10 {
-        let _ = parley::FontContext::new();
-    }
-    let elapsed = start.elapsed();
-    // If 10 total calls take less than 5 seconds, the current per-call new() implementation is acceptable (to
-    // prevent the 10-run determinism test from timing out).
-    assert!(
-        elapsed.as_secs() < 5,
-        "FontContext::new() too slow: 10x = {:?}",
-        elapsed
-    );
-}
-
 // ── Non-finite f32 guard ────────
 //
 // Check that +Inf / NaN from untrusted author CSS does not reach taffy / parley on **all 5 sites**. The
@@ -200,143 +148,9 @@ fn nonfinite_border_width_is_clamped_before_taffy() {
     );
 }
 
-/// Shapes `"Hi"` via parley **directly**
-/// (bypassing `preshape_text` / `sanitize_finite` entirely, not just
-/// disabling them) with a raw `font_size`, bounded via worker-thread +
-/// `recv_timeout`. Shared by the two `#[test]` fns below it: one pins the
-/// (fast, cheap) "does not hang" cases, the other — `#[ignore]`d, see its
-/// own doc — pins the one case that does.
-fn shape_raw_bounded(font_size: f32, bound: std::time::Duration) -> Result<(), &'static str> {
-    use std::sync::mpsc::RecvTimeoutError;
-
-    fn shape_raw(font_size: f32) {
-        let mut fonts = FontContext::new();
-        let mut layout_cx = LayoutContext::<()>::new();
-        let mut builder = layout_cx.ranged_builder(&mut fonts, "Hi", 1.0, true);
-        builder.push_default(StyleProperty::FontSize(font_size));
-        let mut layout: Layout<()> = builder.build("Hi");
-        // A4 width in px, matching `PageBox::A4.width` — the same
-        // `max_advance` `preshape_text` would pass in production.
-        layout.break_all_lines(Some(793.7008_f32));
-    }
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(move || shape_raw(font_size));
-        let _ = tx.send(result.is_ok());
-    });
-    // cov:ignore: every call site of this helper (both this file's
-    // tests) completes normally within its bound — the Err arms are
-    // diagnostics for failure modes (panic, timeout, worker-disconnect)
-    // this module's tests don't hit.
-    match rx.recv_timeout(bound) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err("panicked"),
-        Err(RecvTimeoutError::Timeout) => Err("timeout"),
-        Err(RecvTimeoutError::Disconnected) => Err("panicked"),
-    }
-}
-
-/// Narrower half of a paired characterization — pins that `NaN`,
-/// `-Inf`, and a merely-huge finite `font_size` (`1e9`) **do not** hang
-/// parley's `break_all_lines`, at the same raw (guard-bypassing) call
-/// site the `#[ignore]`d `+Inf` test below uses. Cheap (each sub-case
-/// resolves in well under the 5s bound; no leaked spinning thread since
-/// none of them hang), so — unlike the `+Inf` case — this runs in every
-/// default `cargo test`.
-///
-/// # Why this exists as assertions, not just prose
-///
-/// The doc comment on `MAX_FONT_SIZE_PX` ("removing the guard... does not terminate even after 25
-/// seconds") reads as "non-finite font-size ⇒ hang" in general —
-/// but that claim was written from a manual repro that only ever
-/// exercised `+Inf` (the first sub-case its guarded test tries) before
-/// hanging; it never got to see whether `NaN` or `-Inf` behave the same
-/// way. They do not: only `+Inf` hangs, via the specific mechanism
-/// documented on `MAX_FONT_SIZE_PX`
-/// (`parley-0.10.0/src/layout/line_break.rs`'s `if next_x <= max_advance`
-/// becoming permanently false once `next_x = +Inf`, so
-/// `while self.break_next().is_some() {}` never terminates — for `NaN`
-/// and `-Inf`, `next_x` does not end up stuck the same way). This test
-/// turns "narrower than the prose it formalizes" from an unverified
-/// assertion in a code comment into something a future `cargo test` run
-/// keeps honest.
-#[test]
-fn parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size() {
-    for (label, font_size) in [
-        ("NaN", f32::NAN),
-        ("-Inf", f32::NEG_INFINITY),
-        ("1e9 (finite, 3 decades past MAX_FONT_SIZE_PX)", 1e9_f32),
-    ] {
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(
-            shape_raw_bounded(font_size, std::time::Duration::from_secs(5)),
-            Ok(()),
-            "parley::Layout::break_all_lines(font_size = {label}) did not complete within 5s (bypassing raikiri's guard, same as the +Inf case) — this module's characterization that only +Inf hangs no longer holds for {label}; re-characterize rather than deleting this case"
-        );
-    }
-}
-
-/// `+Inf` half of the paired characterization — formalizes into an
-/// automated regression test the manual measurement recorded in
-/// `MAX_FONT_SIZE_PX`'s doc comment ("removing the guard... does not terminate even after 25 seconds"):
-/// `font_size = +Inf` reaching parley directly (bypassing
-/// `preshape_text` / `sanitize_finite`, not just disabling them)
-/// reproducibly hangs `break_all_lines`. See
-/// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`
-/// for why `NaN`/`-Inf`/huge-finite do *not* share this behavior (this is
-/// the one case that does, and it's the one this module's own
-/// repro — `1e40px`, `1e40em` compounding — actually produces).
-///
-/// # Why `#[ignore]` (unlike every other test added alongside it)
-///
-/// Every other characterization test in this pair resolves in
-/// well under a second because the sink under test either doesn't hang
-/// or fails fast. This one is different **in the passing case**: parley
-/// has no shaping-cancellation mechanism (documented on `MAX_FONT_SIZE_PX`
-/// and above), so confirming the hang costs the full `bound` below on
-/// every run, *and* the spawned worker thread is never joined — it spins
-/// at ~100% CPU on one core for the rest of this test binary's process
-/// lifetime, degrading every test that runs after it in the same binary.
-/// That's an acceptable one-time characterization cost but not a
-/// standing tax worth imposing on every `cargo test --workspace` from
-/// every future session — hence `#[ignore]`, matching this repo's
-/// existing convention for exactly this trade-off
-/// (`crates/raikiri/tests/hello_world_vrt.rs`'s doc comment). Run
-/// explicitly with:
-///
-/// ```text
-/// cargo test -p raikiri-dom --lib \
-///   layout::tests::parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard \
-///   -- --ignored
-/// ```
-// cov:ignore: this whole test body never runs under default `cargo
-// test` (it's `#[ignore]`d — a genuine ~10s hang + leaked thread, see
-// the doc comment above); it's exercised explicitly via `-- --ignored`
-// (verified separately to run and pass), which
-// llvm-cov's default `cargo test` invocation doesn't capture.
-#[test]
-#[ignore = "confirms a genuine ~10s hang + leaks a spinning worker thread for the rest \
-                of the process; run explicitly, see doc comment"]
-fn parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard() {
-    assert_eq!(
-        shape_raw_bounded(f32::INFINITY, std::time::Duration::from_secs(10)),
-        Err("timeout"),
-        "parley::Layout::break_all_lines(font_size = +Inf) did not hang within 10s \
-             — the line_break.rs livelock this test pins no longer reproduces in parley 0.10.0; \
-             re-characterize rather than deleting this test (and consider whether \
-             raikiri-dom's own MAX_FONT_SIZE_PX guard is still load-bearing for this \
-             specific sink if parley itself now handles it). If this instead reports \
-             \"panicked\", the worker thread panicked rather than hanging — that's a \
-             different (and likely worse, since panics propagate less predictably than \
-             a bounded hang) finding, not a pass"
-    );
-}
-
 // ── Unit test for the guard function itself ───────────────────────────────────
 //
-// E2E tests can cause site 5 to hang, and each test involves FontContext construction. The guard's
+// E2E tests can cause site 5 to hang. The guard's
 // arithmetic is a pure function, so it's called directly (a few ms, cannot hang).
 
 #[test]
@@ -610,11 +424,8 @@ fn layout_all_finite(l: &TaffyLayout) -> bool {
 /// [`layout_single_page`], and return the `unrounded_layout` for **each level** in order from shallowest
 /// to deepest.
 ///
-/// The starting point is the depth range test setup for the probe material, but **we do not recreate the
-/// document for each depth** — the chain for depth `N` already contains nodes for each depth from 1 to
-/// `N`, and there is no reason to pay the `FontContext::new()` (checking
-/// `font_context_new_cost_is_reasonable` 10 times in less than 5 seconds = not cheap at all) for each
-/// depth, which the probe used to pay.
+/// The document is not recreated for each depth: the chain for depth `N`
+/// already contains nodes for each depth from 1 to `N`.
 fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
@@ -2035,76 +1846,6 @@ fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
         paragraph_y >= 50.0 - 0.001,
         "widows:2 should also move a 3-line fitting paragraph when only one line would remain, got y={paragraph_y}"
     );
-}
-
-#[test]
-fn autospace_edges_cross_plain_inline_elements() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let left = doc.append_text(div, "国");
-    let span = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
-    let right = doc.append_text(span, "A");
-    // An atomic inline nested at the neighbor's edge stops the search
-    // instead of being looked past.
-    let atomic_div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let atomic_left = doc.append_text(atomic_div, "国");
-    let outer = doc.append_element(
-        Some(atomic_div),
-        "span",
-        Style::default(),
-        Some("display:inline"),
-    );
-    let atomic = doc.append_element(
-        Some(outer),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
-    let _ = doc.append_text(atomic, "B");
-    let _ = doc.append_text(outer, "A");
-    doc.mark_in_document_flags();
-
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            parent_of[child] = Some(parent);
-        }
-    }
-    assert_eq!(
-        autospace_adjacent_edge_char(&doc, &cascade, &parent_of, right, -1),
-        Some('国')
-    );
-    assert_eq!(
-        autospace_adjacent_edge_char(&doc, &cascade, &parent_of, left, 1),
-        Some('A')
-    );
-    assert_eq!(
-        autospace_adjacent_edge_char(&doc, &cascade, &parent_of, atomic_left, 1),
-        None
-    );
-}
-
-#[test]
-fn text_autospace_boxes_skip_default_ignorables_for_boundaries() {
-    use raikiri_style::property::TextAutospace;
-
-    let variation_selector = text_autospace_boxes("国\u{fe00}A", TextAutospace::Normal, "", 40.0);
-    assert_eq!(
-        variation_selector
-            .iter()
-            .map(|inline_box| inline_box.index)
-            .collect::<Vec<_>>(),
-        vec![6]
-    );
-
-    let disabled = text_autospace_boxes("国A", TextAutospace::NoAutospace, "", 40.0);
-    assert!(disabled.is_empty());
 }
 
 /// An element below an ifc root carries the bounding box of its line pieces,

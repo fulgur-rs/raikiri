@@ -1,66 +1,22 @@
-//! Draw text glyphs and decorations: pass parley Layout GlyphRuns to
-//! anyrender::draw_glyphs, then draw CSS Text Decoration Level 3
-//! line/style/color in CSS painting order.
-//!
-//! Relies on pre-shaped `parley::Layout<()>` from the `Node::text_layout()` accessor
-//! (via `NodeData::Text(TextData)`). Paint iterates lines, calls
-//! GlyphRun.positioned_glyphs(), and converts glyphs per run
-//! (parley::Glyph → anyrender::Glyph) before adding them to the scene.
-//!
-//! Coordinates: the parley Layout origin (0,0) is top-left; positioned_glyphs()
-//! stores the line offset and baseline directly. The anyrender transform only
-//! translates to the text node's absolute coordinates (no baseline/offset addition).
+//! Text decorations (CSS Text Decoration Level 3 line, style and color, in
+//! CSS painting order) and the text of page-margin boxes and generated
+//! content, which lies outside the paragraphs of the document.
 
 use std::sync::Arc;
 
-use anyrender::filters::{Filter, FilterEffect};
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use parley::{
     Alignment, FontContext, FontFamily, FontStyle as ParleyFontStyle, FontWeight,
     Glyph as ParleyGlyph, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
 };
-use peniko::{Color, Fill, Mix};
-use raikiri_dom::{Document, Node, StandaloneAlign};
+use peniko::{Color, Fill};
+use raikiri_dom::{Document, StandaloneAlign};
 use raikiri_style::property::{
-    CssColor, Direction, DisplayValue, FloatValue, HangingPunctuation, PositionValue, TextAlign,
-    TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
+    CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle,
 };
-use raikiri_style::{
-    CascadeResult, ComputedTextDecorationInset, ComputedTextUnderlineOffset, ComputedValues,
-};
-
-const AUTOSPACE_INLINE_BOX_ID_MIN: u64 = 1 << 63;
-
-fn is_autospace_inline_box(item: &PositionedLayoutItem<'_, ()>) -> bool {
-    matches!(
-        item,
-        PositionedLayoutItem::InlineBox(inline_box)
-            if inline_box.id >= AUTOSPACE_INLINE_BOX_ID_MIN
-    )
-}
-
-/// Return the baseline a run would receive if it were laid out as its own
-/// inline text box. Fulgur's inline child layout uses that baseline rather
-/// than the parent line's maximum-font baseline.
-fn standalone_run_baseline(ascent: f32, descent: f32, line_height: f32) -> f32 {
-    let ascent = ascent.round();
-    let descent = descent.round();
-    let leading = line_height - (ascent + descent);
-    ascent + (leading * 0.5).floor()
-}
-
-fn run_baseline_delta(line_metrics: &parley::LineMetrics, run_metrics: &parley::RunMetrics) -> f32 {
-    standalone_run_baseline(
-        run_metrics.ascent,
-        run_metrics.descent,
-        run_metrics.line_height,
-    ) - standalone_run_baseline(
-        line_metrics.ascent,
-        line_metrics.descent,
-        line_metrics.line_height,
-    )
-}
+use raikiri_style::{ComputedTextDecorationInset, ComputedTextUnderlineOffset, ComputedValues};
 
 /// A decoration line carried from the element that originated it.
 ///
@@ -124,10 +80,6 @@ struct DecorationLink {
 }
 
 impl DecorationContext {
-    fn is_empty(&self) -> bool {
-        self.0.is_none()
-    }
-
     /// The specifications in paint order (ancestor to descendant).
     pub(crate) fn specs(&self) -> Vec<&DecorationSpec> {
         self.iter().collect()
@@ -261,361 +213,12 @@ fn has_paintable_line(line: TextDecorationLine) -> bool {
     line.underline || line.overline || line.line_through
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct TextPosition {
-    pub(crate) abs_x: f32,
-    pub(crate) abs_y: f32,
-    pub(crate) shift_y: f32,
-}
-
 pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     if enabled {
         let size = font_size as f64;
         Vec2::new((0.015125 * size).min(0.3), (0.0121 * size).min(0.3))
     } else {
         Vec2::ZERO
-    }
-}
-
-/// Return the paint-time baseline correction needed when the leading hanging
-/// glyph would otherwise contribute a larger font metric to the line box.
-///
-/// The layout builders currently request quantized line metrics. The
-/// unquantized branch keeps this helper correct for a layout supplied by a
-/// future caller with different shaping settings.
-fn hanging_baseline_delta(
-    line: parley::Line<'_, ()>,
-    metrics: &parley::LineMetrics,
-    hanging_glyph_count: usize,
-) -> f32 {
-    let mut first_glyph_run = true;
-    let mut remaining_ascent = 0.0_f32;
-    let mut remaining_descent = 0.0_f32;
-    let mut has_remaining_metrics = false;
-
-    for item in line.items() {
-        let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-            continue;
-        };
-        let glyph_count = glyph_run.positioned_glyphs().count();
-        if glyph_count == 0 {
-            continue;
-        }
-        let is_hanging_run = first_glyph_run && glyph_count <= hanging_glyph_count;
-        first_glyph_run = false;
-        if is_hanging_run {
-            continue;
-        }
-        let run_metrics = glyph_run.run().metrics();
-        remaining_ascent = remaining_ascent.max(run_metrics.ascent);
-        remaining_descent = remaining_descent.max(run_metrics.descent);
-        has_remaining_metrics = true;
-    }
-
-    if !has_remaining_metrics {
-        return 0.0;
-    }
-
-    let quantized_baseline = |ascent: f32, descent: f32| {
-        let ascent = ascent.round();
-        let descent = descent.round();
-        let leading = metrics.line_height - ascent - descent;
-        ascent + (leading * 0.5).floor()
-    };
-    let unquantized_baseline =
-        |ascent: f32, descent: f32| ascent + (metrics.line_height - ascent - descent) * 0.5;
-    let current_quantized = quantized_baseline(metrics.ascent, metrics.descent);
-    let current_unquantized = unquantized_baseline(metrics.ascent, metrics.descent);
-    let quantize = (metrics.baseline - current_quantized).abs()
-        <= (metrics.baseline - current_unquantized).abs();
-    let remaining_baseline = if quantize {
-        quantized_baseline(remaining_ascent, remaining_descent)
-    } else {
-        unquantized_baseline(remaining_ascent, remaining_descent)
-    };
-    let delta = remaining_baseline - metrics.baseline;
-    if delta.is_finite() { delta } else { 0.0 }
-}
-
-pub(crate) fn draw_text_node(
-    scene: &mut impl PaintScene,
-    node: &Node,
-    cascade: &CascadeResult,
-    node_id: usize,
-    position: TextPosition,
-    decorations: &DecorationContext,
-) {
-    let TextPosition {
-        abs_x,
-        abs_y,
-        shift_y,
-    } = position;
-    // Get the text node's pre-shaped result. preshape_text returns None for empty text,
-    // so None signals "empty text"; return silently.
-    let Some(text_layout) = node.text_layout() else {
-        return;
-    };
-
-    // Text node brush = color inherited from its parent by cascading (only color is supported).
-    // ComputedValues.color is populated at text nodes too (via the inheritance walk).
-    let cv = &cascade.computed[node_id];
-    let brush = css_color_to_peniko(cv.color);
-
-    // parley positioned_glyphs() stores the line offset and baseline directly, so
-    // the scene transform only translates to the text node's absolute coordinates. Multicolumn
-    // fragments normalize the first selected line back to the fragmentainer top.
-    // cov:ignore: fragment collection is exercised by the ignored foundation WPT run.
-    let has_multicol_fragments = node.multicol_fragments().is_some();
-    let fragments = node
-        .multicol_fragments()
-        // cov:ignore: fragment collection is exercised by the ignored foundation WPT run.
-        .map(|items| {
-            items
-                .iter()
-                .map(|item| (item.line_start, item.line_end, item.x, item.y))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| vec![(0, text_layout.len(), 0.0, 0.0)]);
-    // Parley applies one alignment to every line. CSS `text-align-last` can
-    // override the final line, so compute the physical delta here while
-    // keeping the shaped layout (and its line breaks) unchanged.
-    let last_line_index = text_layout.len().saturating_sub(1);
-    let rtl = text_layout.is_rtl();
-    // The first milestone of `hanging-punctuation` is deliberately narrow:
-    // only an authored leading U+3000 in an LTR text node hangs. Keep the
-    // shaped glyphs and move the first line left by that glyph's advance;
-    // this preserves the glyph while making the following content start at
-    // the line origin. Other punctuation, `last`, and bidi remain deferred.
-    let hanging_glyph_count =
-        if cv.hanging_punctuation == HangingPunctuation::First && cv.direction == Direction::Ltr {
-            node.text_content()
-                .and_then(|text| text.starts_with('\u{3000}').then_some(1))
-        } else {
-            None
-        };
-
-    for (line_start, line_end, fragment_x, fragment_y) in fragments {
-        let first_block_min = text_layout
-            .lines()
-            .nth(line_start)
-            .map(|line| line.metrics().block_min_coord)
-            .unwrap_or(0.0);
-        let fragment_abs_x = abs_x + fragment_x;
-        // The ordinary (non-multicol) path must retain its historical
-        // absolute baseline. Only fragmentainer ranges need block-min
-        // normalization; otherwise font-dependent metrics can shift a normal
-        // glyph by a pixel.
-        let line_abs_y = abs_y + fragment_y
-            - if has_multicol_fragments {
-                // cov:ignore: multicol block-min normalization is covered by the ignored foundation WPT run.
-                first_block_min
-            } else {
-                0.0
-            };
-        for (line_index, line) in text_layout.lines().enumerate() {
-            if line_index < line_start || line_index >= line_end {
-                continue; // cov:ignore: fragment range filtering is covered by the ignored foundation WPT run.
-            }
-            let metrics = line.metrics();
-            let line_offset = node
-                .text_line_offsets()
-                .and_then(|offsets| offsets.get(line_index))
-                .copied()
-                .unwrap_or(0.0);
-            let line_abs_x = fragment_abs_x + line_offset;
-            let last_line_delta = if line_index == last_line_index {
-                text_align_last_delta(metrics, cv.text_align, cv.text_align_last, cv.direction)
-            } else {
-                0.0
-            };
-            let baseline_delta = if line_index == 0 {
-                hanging_glyph_count
-                    .map(|count| hanging_baseline_delta(line, metrics, count))
-                    .unwrap_or(0.0)
-            } else {
-                0.0
-            };
-            let paint_line_abs_y = line_abs_y + baseline_delta;
-            let base_transform =
-                Affine::translate((line_abs_x as f64, (paint_line_abs_y + shift_y) as f64));
-            let leading_whitespace = leading_whitespace_advance(line, rtl);
-            let geometry = decoration_geometry(
-                decorations,
-                metrics,
-                line_abs_x,
-                paint_line_abs_y,
-                last_line_delta,
-                leading_whitespace,
-                rtl,
-            );
-
-            // CSS paints underline/overline before the glyphs and line-through
-            // after them. Flatten the persistent context once for both phases so
-            // nested origins keep their global line order without two allocations.
-            let decoration_specs: Vec<_> = if geometry.is_some() {
-                decorations.iter().collect()
-            } else {
-                Vec::new()
-            };
-            if let Some(geometry) = geometry {
-                draw_decoration_phase(
-                    scene,
-                    &decoration_specs,
-                    geometry,
-                    DecorationPhase::BeforeGlyphs,
-                );
-            }
-
-            // The offset is discovered from the first shaped glyph because
-            // fallback fonts may give U+3000 a different advance from the
-            // element's nominal font metrics. It then applies to every glyph
-            // in this first line, including the U+3000 glyph itself.
-            let mut hanging_offset = 0.0_f32;
-            let mut find_hanging_offset = hanging_glyph_count.is_some() && line_index == 0;
-            // Autospace inline boxes already require per-run baselines. A line
-            // with multiple glyph runs needs the same correction for fallback
-            // fonts, even when it has no autospace boundary.
-            let line_has_autospace = line.items().any(|item| is_autospace_inline_box(&item));
-            let has_multiple_glyph_runs = line
-                .items()
-                .filter(|item| matches!(item, PositionedLayoutItem::GlyphRun(_)))
-                .nth(1)
-                .is_some();
-            let is_hanging_line = hanging_glyph_count.is_some() && line_index == 0;
-            let adjust_run_baselines =
-                line_has_autospace || (!is_hanging_line && has_multiple_glyph_runs);
-            for item in line.items() {
-                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                    // Inline boxes are non-painting layout advances.
-                    continue;
-                };
-                let baseline_delta = if adjust_run_baselines {
-                    run_baseline_delta(metrics, glyph_run.run().metrics())
-                } else {
-                    0.0
-                };
-
-                let run = glyph_run.run();
-                let font = run.font(); // &peniko::FontData (parley re-export)
-                let font_size = run.font_size();
-                let coords = run.normalized_coords(); // &[i16] (anyrender::NormalizedCoord alias)
-                let synthesis = run.synthesis();
-                let embolden = synthetic_embolden(synthesis.embolden(), font_size);
-                let glyph_transform = synthesis
-                    .skew()
-                    .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
-
-                let positioned_glyphs = glyph_run.positioned_glyphs().collect::<Vec<_>>();
-                if find_hanging_offset {
-                    find_hanging_offset = false;
-                    let count = hanging_glyph_count.unwrap_or(0);
-                    hanging_offset = positioned_glyphs
-                        .iter()
-                        .take(count)
-                        .map(|glyph| glyph.advance.max(0.0))
-                        .sum();
-                }
-                let glyphs = positioned_glyphs
-                    .into_iter()
-                    .map(|mut glyph| {
-                        glyph.x -= hanging_offset;
-                        glyph.x += last_line_delta;
-                        if node.snap_glyph_x_to_1_64() {
-                            // Reftests with spaces and equivalent tabs can build the
-                            // same CSS position through different f32 sums. Normalize
-                            // that tiny accumulation error while keeping subpixel glyph
-                            // positioning at 1/64 CSS-pixel resolution.
-                            glyph.x = (glyph.x * 64.0).round() / 64.0;
-                        }
-                        glyph.y += baseline_delta; // cov:ignore: baseline correction is exercised by ignored resource-backed WPT runs.
-                        to_anyrender_glyph(glyph)
-                    })
-                    .collect::<Vec<_>>();
-
-                // CSS Text Decoration 3 §4 paints text shadows behind the
-                // glyphs. Keep the first shadow on top of later shadows by
-                // drawing the comma-separated list in reverse order. A
-                // non-zero blur is isolated in a filtered scene layer so the
-                // renderer applies Gaussian blur to the glyph mask without
-                // changing the regular glyph pass.
-                for shadow in cv.text_shadow.iter().rev() {
-                    let color = match shadow.color {
-                        TextShadowColor::CurrentColor => cv.color,
-                        TextShadowColor::Resolved(color) => color,
-                        _ => cv.color, // cov:ignore: defensive fallback
-                    };
-                    let shadow_transform = base_transform
-                        * Affine::translate((
-                            shadow.offset_x.px() as f64,
-                            shadow.offset_y.px() as f64,
-                        ));
-                    let blur = shadow.blur_radius.px();
-                    let use_blur_layer = blur.is_finite() && blur > 0.0;
-                    if use_blur_layer {
-                        let extent = (blur * 3.0).max(1.0) as f64;
-                        let clip = Rect::new(
-                            abs_x as f64 + shadow.offset_x.px() as f64 - extent,
-                            abs_y as f64 + shadow.offset_y.px() as f64 - extent,
-                            abs_x as f64
-                                + text_layout.width() as f64
-                                + shadow.offset_x.px() as f64
-                                + extent,
-                            abs_y as f64
-                                + text_layout.height() as f64
-                                + shadow.offset_y.px() as f64
-                                + extent,
-                        );
-                        scene.push_layer(
-                            Mix::Normal,
-                            1.0,
-                            Affine::IDENTITY,
-                            &clip,
-                            Some(Arc::new(Filter::single(FilterEffect::blur(blur)))),
-                            None,
-                        );
-                    }
-                    scene.draw_glyphs(
-                        font,
-                        font_size,
-                        true,
-                        coords,
-                        embolden,
-                        Fill::NonZero,
-                        css_color_to_peniko(color),
-                        1.0,
-                        shadow_transform,
-                        glyph_transform,
-                        glyphs.iter().cloned(),
-                    );
-                    if use_blur_layer {
-                        scene.pop_layer();
-                    }
-                }
-
-                scene.draw_glyphs(
-                    font,
-                    font_size,
-                    true,
-                    coords,
-                    embolden,
-                    Fill::NonZero,
-                    brush,
-                    1.0,
-                    base_transform,
-                    glyph_transform,
-                    glyphs.into_iter(),
-                );
-            }
-
-            if let Some(geometry) = geometry {
-                draw_decoration_phase(
-                    scene,
-                    &decoration_specs,
-                    geometry,
-                    DecorationPhase::AfterGlyphs,
-                );
-            }
-        }
     }
 }
 
@@ -900,39 +503,6 @@ pub(crate) fn measure_margin_text_height(
     layout.height().max(0.0)
 }
 
-fn leading_whitespace_advance(line: parley::Line<'_, ()>, rtl: bool) -> f32 {
-    // Parley exposes trailing whitespace in LineMetrics but not leading
-    // whitespace. Cluster source characters let the paint layer recover the
-    // logical line edge without changing shaping or layout.
-    let mut clusters = Vec::new();
-    for run in line.runs() {
-        for cluster in run.clusters() {
-            clusters.push((cluster.source_char(), cluster.advance()));
-        }
-    }
-    let mut leading = 0.0;
-    if rtl {
-        for (character, advance) in clusters.iter().rev() {
-            if !character.is_whitespace() {
-                break;
-            }
-            leading += *advance;
-        }
-    } else {
-        for (character, advance) in &clusters {
-            if !character.is_whitespace() {
-                break;
-            }
-            leading += *advance;
-        }
-    }
-    leading.max(0.0)
-}
-
-fn decoration_line_width(metrics: &parley::LineMetrics, leading_whitespace: f32) -> f32 {
-    (metrics.advance - metrics.trailing_whitespace - leading_whitespace).max(0.0)
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DecorationGeometry {
     pub(crate) x0: f64,
@@ -943,50 +513,6 @@ pub(crate) struct DecorationGeometry {
     /// supplies it; each decoration adds its element's `origin_shift_y`.
     /// `None` derives the baseline from the decorating element's metrics.
     pub(crate) baseline: Option<f64>,
-}
-
-fn decoration_geometry(
-    decorations: &DecorationContext,
-    metrics: &parley::LineMetrics,
-    abs_x: f32,
-    abs_y: f32,
-    last_line_delta: f32,
-    leading_whitespace: f32,
-    rtl: bool,
-) -> Option<DecorationGeometry> {
-    if decorations.is_empty() {
-        return None;
-    }
-    let line_width = decoration_line_width(metrics, leading_whitespace);
-    if !line_width.is_finite() || line_width <= 0.0 {
-        // cov:ignore: shaped text lines in the current layout always have a
-        // finite positive advance; retain the guard for empty/future metrics.
-        return None;
-    }
-    let line_start = metrics.inline_min_coord + metrics.offset + last_line_delta;
-    let leading = leading_whitespace.max(0.0);
-    let trailing = metrics.trailing_whitespace.max(0.0);
-    let (left_trim, right_trim) = if rtl {
-        (trailing, leading)
-    } else {
-        (leading, trailing)
-    };
-    let x0 = abs_x as f64 + (line_start + left_trim) as f64;
-    let x1 = abs_x as f64 + (line_start + metrics.advance - right_trim) as f64;
-    if !x0.is_finite() || !x1.is_finite() || !(abs_y as f64).is_finite() || x1 <= x0 {
-        // cov:ignore: finite layout sanitization handles production values;
-        // this keeps malformed/future metrics from reaching a draw loop.
-        return None;
-    }
-    Some(DecorationGeometry {
-        x0,
-        x1,
-        abs_y: abs_y as f64,
-        // Keep the line's block origin from the current layout, but derive
-        // the baseline within it from the originating decoration metrics.
-        line_top: metrics.block_min_coord,
-        baseline: None,
-    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1251,57 +777,6 @@ fn fill_decoration_rect(
     scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
 }
 
-/// Return the horizontal adjustment required by `text-align-last`.
-///
-/// Parley exposes line metrics but not a per-line alignment mutator. The
-/// glyph positions are therefore shifted at paint time. Justification is
-/// intentionally left to Parley: its public API cannot distribute spaces on
-/// only the final line without rebuilding the layout.
-fn text_align_last_delta(
-    metrics: &parley::LineMetrics,
-    text_align: TextAlign,
-    text_align_last: TextAlignLast,
-    direction: Direction,
-) -> f32 {
-    let requested = match text_align_last {
-        TextAlignLast::Auto => match text_align {
-            TextAlign::Justify | TextAlign::JustifyAll => return 0.0,
-            value => value,
-        },
-        TextAlignLast::Start => TextAlign::Start,
-        TextAlignLast::End => TextAlign::End,
-        TextAlignLast::Left => TextAlign::Left,
-        TextAlignLast::Right => TextAlign::Right,
-        TextAlignLast::Center => TextAlign::Center,
-        TextAlignLast::Justify => return 0.0,
-        TextAlignLast::MatchParent => TextAlign::Start,
-        _ => TextAlign::Start,
-    };
-    let desired = match requested {
-        TextAlign::Start => match direction {
-            Direction::Rtl => Alignment::Right,
-            _ => Alignment::Left,
-        },
-        TextAlign::End => match direction {
-            Direction::Rtl => Alignment::Left,
-            _ => Alignment::Right,
-        },
-        TextAlign::Left => Alignment::Left,
-        TextAlign::Right => Alignment::Right,
-        TextAlign::Center => Alignment::Center,
-        _ => Alignment::Left,
-    };
-    let free_space = (metrics.inline_max_coord - metrics.inline_min_coord - metrics.advance
-        + metrics.trailing_whitespace)
-        .max(0.0);
-    let desired_offset = match desired {
-        Alignment::Right => free_space,
-        Alignment::Center => free_space * 0.5,
-        _ => 0.0,
-    };
-    desired_offset - metrics.offset
-}
-
 /// Convert parley::Glyph to anyrender::Glyph (copying across crate type boundaries).
 fn to_anyrender_glyph(g: ParleyGlyph) -> AnyrenderGlyph {
     AnyrenderGlyph {
@@ -1322,69 +797,18 @@ pub(crate) fn css_color_to_peniko(c: CssColor) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationGeometry, DecorationPhase,
-        DecorationSpec, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
-        decoration_span, decoration_spans, decorations_for_element, draw_decoration_phase,
-        is_autospace_inline_box, measure_margin_text, measure_margin_text_advance,
-        measure_margin_text_height, paint_decoration_style, run_baseline_delta,
-        standalone_run_baseline, synthetic_embolden, text_align_last_delta,
+        DecorationContext, DecorationGeometry, DecorationPhase, DecorationSpec,
+        MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_span, decoration_spans,
+        decorations_for_element, draw_decoration_phase, measure_margin_text,
+        measure_margin_text_advance, measure_margin_text_height, paint_decoration_style,
+        synthetic_embolden,
     };
     use anyrender::{Scene, recording::RenderCommand};
     use kurbo::Vec2;
-    use parley::{
-        InlineBoxKind, LineMetrics, PositionedInlineBox, PositionedLayoutItem, RunMetrics,
-    };
     use raikiri_style::ComputedValues;
     use raikiri_style::property::{
-        CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
-        TextDecorationLine, TextDecorationStyle,
+        CssColor, DisplayValue, FloatValue, PositionValue, TextDecorationLine, TextDecorationStyle,
     };
-
-    fn metrics(offset: f32) -> LineMetrics {
-        LineMetrics {
-            offset,
-            advance: 40.0,
-            inline_max_coord: 100.0,
-            ..LineMetrics::default()
-        }
-    }
-
-    #[test]
-    fn baseline_helpers_cover_inline_box_detection_and_baselines() {
-        let high_id = PositionedLayoutItem::InlineBox(PositionedInlineBox {
-            x: 0.0,
-            y: 0.0,
-            width: 5.0,
-            height: 0.0,
-            id: AUTOSPACE_INLINE_BOX_ID_MIN,
-            kind: InlineBoxKind::InFlow,
-        });
-        let ordinary_id = PositionedLayoutItem::InlineBox(PositionedInlineBox {
-            x: 0.0,
-            y: 0.0,
-            width: 5.0,
-            height: 0.0,
-            id: AUTOSPACE_INLINE_BOX_ID_MIN - 1,
-            kind: InlineBoxKind::InFlow,
-        });
-        assert!(is_autospace_inline_box(&high_id));
-        assert!(!is_autospace_inline_box(&ordinary_id));
-
-        assert_eq!(standalone_run_baseline(10.4, 2.6, 16.0), 11.0);
-        let line = LineMetrics {
-            ascent: 10.4,
-            descent: 2.6,
-            line_height: 16.0,
-            ..LineMetrics::default()
-        };
-        let run = RunMetrics {
-            ascent: 8.4,
-            descent: 1.6,
-            line_height: 14.0,
-            ..RunMetrics::default()
-        };
-        assert_eq!(run_baseline_delta(&line, &run), -1.0);
-    }
 
     #[test]
     fn decoration_span_applies_logical_insets_from_origin_direction() {
@@ -1534,131 +958,10 @@ mod tests {
         assert!(measure_margin_text_height(None, "A", f32::NAN, "serif") > 0.0);
     }
 
-    #[test]
-    fn final_line_start_reverses_center_alignment() {
-        let delta = text_align_last_delta(
-            &metrics(30.0),
-            TextAlign::Center,
-            TextAlignLast::Start,
-            Direction::Ltr,
-        );
-        assert_eq!(delta, -30.0);
-    }
-
-    #[test]
-    fn final_line_end_and_center_use_remaining_space() {
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(0.0),
-                TextAlign::Start,
-                TextAlignLast::End,
-                Direction::Ltr,
-            ),
-            60.0
-        );
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(60.0),
-                TextAlign::End,
-                TextAlignLast::Center,
-                Direction::Ltr,
-            ),
-            -30.0
-        );
-    }
-
-    #[test]
-    fn final_line_logical_edges_flip_in_rtl() {
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(60.0),
-                TextAlign::Start,
-                TextAlignLast::End,
-                Direction::Rtl,
-            ),
-            -60.0
-        );
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(0.0),
-                TextAlign::End,
-                TextAlignLast::Start,
-                Direction::Rtl,
-            ),
-            60.0
-        );
-    }
-
-    #[test]
-    fn physical_edges_and_match_parent_are_supported() {
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(60.0),
-                TextAlign::Start,
-                TextAlignLast::Left,
-                Direction::Ltr,
-            ),
-            -60.0
-        );
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(0.0),
-                TextAlign::Start,
-                TextAlignLast::Right,
-                Direction::Ltr,
-            ),
-            60.0
-        );
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(60.0),
-                TextAlign::Start,
-                TextAlignLast::MatchParent,
-                Direction::Ltr,
-            ),
-            -60.0
-        );
-    }
-
-    #[test]
-    fn auto_justify_and_explicit_justify_keep_parley_last_line() {
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(0.0),
-                TextAlign::Justify,
-                TextAlignLast::Auto,
-                Direction::Ltr,
-            ),
-            0.0
-        );
-        assert_eq!(
-            text_align_last_delta(
-                &metrics(0.0),
-                TextAlign::Start,
-                TextAlignLast::Justify,
-                Direction::Ltr,
-            ),
-            0.0
-        );
-    }
-
     fn ancestor_context() -> DecorationContext {
         let mut cv = ComputedValues::initial();
         cv.text_decoration_line = TextDecorationLine::UNDERLINE;
         decorations_for_element(&DecorationContext::default(), &cv, 0.0)
-    }
-
-    #[test]
-    fn decoration_width_skips_line_edge_whitespace_at_every_white_space_mode() {
-        let metrics = LineMetrics {
-            advance: 40.0,
-            trailing_whitespace: 10.0,
-            ..LineMetrics::default()
-        };
-        // Level 3 skips spacing at both line edges. The white-space property
-        // controls shaping/collapsing, not this decoration edge rule.
-        assert_eq!(decoration_line_width(&metrics, 0.0), 30.0);
-        assert_eq!(decoration_line_width(&metrics, 5.0), 25.0);
     }
 
     #[test]

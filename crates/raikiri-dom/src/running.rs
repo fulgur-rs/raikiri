@@ -1206,7 +1206,7 @@ pub(crate) struct MarginBoxLayoutResult {
 /// **Not implemented for this path** — the return type is
 /// [`MarginBoxLayoutResult`] rather than a paint fragment tree so the shape
 /// stays dom-internal (see [`MarginBoxLayoutResult`] doc). Wiring to the
-/// actual taffy/parley layout of the template subtree lands with the paint
+/// actual taffy and inline-engine layout of the template subtree lands with the paint
 /// integration.
 #[allow(
     dead_code,

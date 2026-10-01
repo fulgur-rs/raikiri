@@ -66,8 +66,8 @@ pub(crate) struct ProjectedIfc {
 }
 
 /// Whether `node` or one of its ancestors has an authored vertical writing
-/// mode. Such text is laid out horizontally, without autospacing, as on the
-/// parley path.
+/// mode. Such text is laid out horizontally, without autospacing: real
+/// vertical writing is not supported.
 fn under_vertical_writing(doc: &Document, cascade: &CascadeResult, node: usize) -> bool {
     use raikiri_style::property::WritingMode;
     let mut current = Some(node);
@@ -243,7 +243,7 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     // as taffy's block algorithm does. A table-internal box directly in a
     // paragraph would be wrapped in an anonymous table (CSS 2.1 17.2.1),
     // which raikiri does not create; it is laid out as a block between the
-    // lines, as the block algorithm lays it out on the parley path.
+    // lines, as taffy's block algorithm lays a block child out.
     if matches!(
         cv.display,
         DisplayValue::Block
@@ -414,8 +414,8 @@ pub(crate) fn project_ifc_text_builder(
         return Err(IfcError::InvalidNode(text));
     }
     let content = node.text_content().ok_or(IfcError::InvalidNode(text))?;
-    // As for an element root: with right-to-left content, the parley path
-    // orders the text without reading `unicode-bidi`.
+    // As for an element root: right-to-left content is ordered without
+    // reading `unicode-bidi`.
     let (options, indent) = style::line_options(cv, text, fonts)?;
     let root_style = styled(doc, cascade, cv, text, fonts)?;
     let paragraph_style = style::paragraph_style(cv, text, root_style)?;

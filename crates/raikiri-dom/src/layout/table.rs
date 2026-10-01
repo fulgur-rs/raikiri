@@ -264,15 +264,6 @@ pub fn compute_table_layout(
     };
 
     if grid.n_cols == 0 || grid.rows.is_empty() {
-        // A table with ordinary flow content generates anonymous row/cell
-        // boxes (CSS 2.1 §17.2.1). This is especially important when a table
-        // is used as a flex item: its direct text must still contribute an
-        // intrinsic block size even though it is not an explicit table row.
-        let direct_content_height = doc.nodes[table_idx]
-            .children
-            .iter()
-            .filter_map(|&child| doc.nodes[child].text_layout().map(|layout| layout.height()))
-            .sum::<f32>();
         // Empty tables shrink-wrap like the main path below: a specified
         // width wins; otherwise the container width is only a cap over the
         // padding/border extents (never stretch-to-fill).
@@ -328,7 +319,7 @@ pub fn compute_table_layout(
             effective_known
                 .height
                 .unwrap_or(0.0)
-                .max(direct_content_height + padding_border_size.height)
+                .max(padding_border_size.height)
                 .max(
                     caption_size.map(|size| size.height).unwrap_or(0.0)
                         + padding_border_size.height,

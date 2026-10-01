@@ -37,8 +37,8 @@ pub struct BundledFace {
 }
 
 /// The CSS descriptor of the first face of `bytes`, registered under
-/// `family`: the face's own weight, width and style, as the parley builder
-/// keeps them when it overrides only the family name. Bytes that do not parse
+/// `family`: the face's own weight, width and style, only the family name
+/// being overridden. Bytes that do not parse
 /// keep the defaults; registering them fails later with shodo's own error.
 fn bundled_descriptor(family: String, bytes: &[u8]) -> shodo::font::FontFaceDescriptor {
     let defaults = shodo::font::FontFaceDescriptor {
@@ -50,9 +50,8 @@ fn bundled_descriptor(family: String, bytes: &[u8]) -> shodo::font::FontFaceDesc
     };
     let attributes = font.attributes();
     // A face may state values outside the ranges a CSS descriptor accepts
-    // (a weight class above 1000, a zero width class); parley takes such a
-    // face as it is, so the values are brought into range instead of
-    // refusing the face.
+    // (a weight class above 1000, a zero width class); the values are
+    // brought into range instead of refusing the face.
     let weight = finite_or(attributes.weight.value(), 400.0).clamp(1.0, 1000.0);
     let width = finite_or(attributes.stretch.ratio() * 100.0, 100.0);
     let width = if width > 0.0 { width } else { 100.0 };
@@ -109,7 +108,7 @@ fn map_generics(collection: &FontCollection, families: &[String]) {
 ///
 /// Each face is registered with a CSS descriptor under the given family name,
 /// carrying the face's own weight, width and style, so the faces of one
-/// family are told apart by weight and style as on the parley path.
+/// family are told apart by weight and style.
 /// `local()` only resolves installed faces (by full or PostScript name), so a
 /// face registered here is not visible to a `local()` source. [`wpt_collection`]
 /// registers installed faces and is visible to `local()`.
@@ -149,7 +148,7 @@ pub(crate) fn bundled_collection(
 /// Build a shared layer from the WPT bundled fonts directory.
 ///
 /// System fonts are disabled. Fonts are read with the same bounds and
-/// warn-and-skip policy as the parley builder, registered as installed faces
+/// warn-and-skip policy as the directory walk ([`crate::fonts`]), registered as installed faces
 /// (so `local()` can find them), and `Ahem.ttf` must be among them.
 ///
 /// # Errors

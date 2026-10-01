@@ -327,8 +327,7 @@ pub struct Document {
     /// diagnostics use, once per pass, after the taffy compute step returns.
     ///
     /// Cleared at the start of each `layout_single_page` call (re-entrance
-    /// safety, mirrors the `Node.text_layout` clear in the same function) and
-    /// drained near its end.
+    /// safety) and drained near its end.
     ///
     /// # Scope boundary: only `layout_single_page` clears/drains this
     ///

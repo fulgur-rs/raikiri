@@ -14,16 +14,6 @@ use super::*;
 /// with an authored width, otherwise at `max_advance`.
 pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult, max_advance: f32) {
     document.page_projection.clear();
-    for node in document.nodes.iter_mut() {
-        if let Some(text) = node.data.as_text_mut() {
-            text.text_layout = None;
-            text.text_line_offsets = None;
-            text.text_indent_px = None;
-            text.text_indent_hanging = false;
-            text.text_indent_each_line = false;
-            text.text_indent_rebreak = false;
-        }
-    }
     crate::layout::ifc::flow::rebreak_roots(document, cascade, max_advance);
 }
 
@@ -168,20 +158,7 @@ pub fn layout_single_page(
         document.set_font_collection(crate::fonts::system_font_collection());
     }
 
-    // Step 0: text_layout re-entrance clear
-    for node in document.nodes.iter_mut() {
-        if let Some(t) = node.data.as_text_mut() {
-            t.text_layout = None;
-            t.text_line_offsets = None;
-            t.multicol_fragments = None; // cov:ignore: reset is exercised by repeated ignored WPT layouts.
-            t.text_indent_px = None;
-            t.text_indent_hanging = false;
-            t.text_indent_each_line = false;
-            t.text_indent_rebreak = false;
-        }
-    }
-    // Step 0b: layout_warnings re-entrance clear —
-    // same rationale as the text_layout clear above: this Vec is populated
+    // Step 0: layout_warnings re-entrance clear: this Vec is populated
     // over the course of a pass (bridges below, then the taffy compute step
     // via `set_unrounded_layout`) and drained near the end of this function,
     // but an early `?` return (Step 3) would otherwise leave a previous call's
@@ -262,8 +239,6 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(content_height),
         },
     );
-    realign_inline_replaced_children(document, cascade); // cov:ignore: resource-enabled ignored WPT path.
-    realign_single_empty_inline_block_indent(document, cascade);
     // Step 5a: post-layout corrections taffy does not make: the static
     // position of auto-placed grid abspos items, and auto-height ancestors of
     // floats.
@@ -338,6 +313,127 @@ pub struct PageSlice {
 /// without corresponding pagination support. The projection is deterministic
 /// and keeps source-node identity stable, so a consumer can select
 /// continuation lines without re-running pagination.
+/// Resolve `ch` lengths on box properties to px in the taffy style, with
+/// the fonts the inline engine lays the text out with.
+pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &CascadeResult) {
+    // `ch` is measured with the inline engine's fonts, the ones the text is
+    // laid out with.
+    let Some(fonts) = doc.ifc.as_ref().map(|state| state.fonts.clone()) else {
+        return;
+    };
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        let cv = &cascade.computed[idx];
+        let measure = |provenance: &Option<ChLengthProvenance>| {
+            provenance.as_ref().map(|provenance| {
+                let used = provenance.factor
+                    * crate::layout::ifc::ch::ch_advance(&fonts, &provenance.font);
+                if used.is_nan() {
+                    0.0
+                } else {
+                    used.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+                }
+            })
+        };
+        let width = measure(&cv.width_ch).map(|value| value.max(0.0));
+        let height = measure(&cv.height_ch).map(|value| value.max(0.0));
+        let padding = (
+            measure(&cv.padding_ch.top).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.right).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.bottom).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.left).map(|value| value.max(0.0)),
+        );
+        let margin = (
+            measure(&cv.margin_ch.top),
+            measure(&cv.margin_ch.right),
+            measure(&cv.margin_ch.bottom),
+            measure(&cv.margin_ch.left),
+        );
+        let style = &mut doc.nodes[idx].style;
+        if let Some(width) = width {
+            style.size.width = Dimension::length(width);
+        }
+        if let Some(height) = height {
+            style.size.height = Dimension::length(height);
+        }
+        if let Some(top) = padding.0 {
+            style.padding.top = LengthPercentage::length(top);
+        }
+        if let Some(right) = padding.1 {
+            style.padding.right = LengthPercentage::length(right);
+        }
+        if let Some(bottom) = padding.2 {
+            style.padding.bottom = LengthPercentage::length(bottom);
+        }
+        if let Some(left) = padding.3 {
+            style.padding.left = LengthPercentage::length(left);
+        }
+        if let Some(top) = margin.0 {
+            style.margin.top = LengthPercentageAuto::length(top);
+        }
+        if let Some(right) = margin.1 {
+            style.margin.right = LengthPercentageAuto::length(right);
+        }
+        if let Some(bottom) = margin.2 {
+            style.margin.bottom = LengthPercentageAuto::length(bottom);
+        }
+        if let Some(left) = margin.3 {
+            style.margin.left = LengthPercentageAuto::length(left);
+        }
+    }
+}
+
+/// Grow every auto-height ancestor of a left or right float to the float's
+/// bottom edge, including the ancestor's bottom border.
+///
+/// Taffy does not include floated descendants in an auto-height containing
+/// block's used height. This keeps following flow from moving upward after a
+/// fragmented flex item with a float descendant.
+pub(crate) fn propagate_float_bottoms_to_auto_height_ancestors(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+) {
+    // Parent map: the arena has no parent pointers, so derive them from children.
+    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+    for idx in 0..doc.nodes.len() {
+        for &c in &doc.nodes[idx].children {
+            if c < parent_of.len() {
+                parent_of[c] = Some(idx);
+            }
+        }
+    }
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element
+            || !doc.nodes[idx].is_in_document()
+            || !matches!(
+                cascade.computed[idx].float,
+                FloatValue::Left | FloatValue::Right
+            )
+        {
+            continue;
+        }
+        let mut child = idx;
+        while let Some(parent) = parent_of[child] {
+            if matches!(
+                cascade.computed[parent].height,
+                ComputedLengthPercentageOrAuto::Auto
+            ) {
+                let child_bottom = doc.nodes[child].unrounded_layout.location.y
+                    + doc.nodes[child].unrounded_layout.size.height
+                    + cascade.computed[parent].border.bottom.width().px();
+                doc.nodes[parent].unrounded_layout.size.height = doc.nodes[parent]
+                    .unrounded_layout
+                    .size
+                    .height
+                    .max(child_bottom);
+            }
+            child = parent;
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn layout_page_fragments(
     document: &mut Document,
@@ -395,7 +491,8 @@ pub(crate) fn resolve_page_fragment_geometry(
 
 /// Block-start and block-end edges of the lines of a text node, from its own
 /// block-start. A text node of an ifc paragraph has no layout of its own, so
-/// its lines come from the paragraph root, measured from its first line.
+/// its lines come from the paragraph root, measured from its first line; any
+/// other text node has none.
 fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
     if let Some(owned) = document.ifc_text_lines(node_id) {
         let first_top = owned.lines.first().map_or(0.0, |l| l.top);
@@ -407,15 +504,7 @@ fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32
                 .collect(),
         );
     }
-    document.nodes[node_id].text_layout().map(|layout| {
-        layout
-            .lines()
-            .map(|line| {
-                let metrics = line.metrics();
-                (metrics.block_min_coord, metrics.block_max_coord)
-            })
-            .collect()
-    })
+    None
 }
 
 /// Project an already-paginated document using one fixed geometry for all pages.
@@ -613,17 +702,8 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
                     abs_y,
                     width,
                     height,
-                    (node.kind() == NodeKind::Text).then(|| {
-                        node.text_layout()
-                            .into_iter()
-                            .flat_map(|layout| {
-                                layout.lines().map(|line| {
-                                    let metrics = line.metrics();
-                                    (metrics.block_min_coord, metrics.block_max_coord)
-                                })
-                            })
-                            .collect()
-                    }),
+                    // A text node outside every paragraph has no lines.
+                    (node.kind() == NodeKind::Text).then(Vec::new),
                 ),
             };
             nodes.push(PageFragmentSource {
@@ -1889,7 +1969,7 @@ pub fn layout_pages_with_page_geometry(
             }
             // `orphans` and `widows` constrain breaks between line boxes, not
             // breaks between block-level children.  The current paginator keeps
-            // a text run in one `parley::Layout`, so the safe first step is to
+            // a paragraph in one piece, so the safe first step is to
             // move a fitting direct block as a unit when its natural split would
             // violate either constraint.  Oversized blocks stay on the
             // existing whole-box path; their line-level fragment map is a
