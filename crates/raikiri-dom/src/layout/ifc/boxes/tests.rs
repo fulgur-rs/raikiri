@@ -9,7 +9,7 @@ use crate::layout::test_support::{
 fn a_probe_stores_nothing_and_a_performed_layout_does() {
     let (mut doc, cascade, float, root) =
         ahem_paragraph_with_float("aa", "float:left;width:30px;height:20px", " bbbb", "");
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     crate::layout::layout_single_page(
         with_ahem(&mut doc),
         &cascade,
@@ -42,7 +42,7 @@ fn a_probe_stores_nothing_and_a_performed_layout_does() {
 fn a_probe_does_not_place_an_atomic_and_a_performed_layout_does() {
     let (mut doc, cascade, atomic, root) =
         ahem_paragraph_with_atomic("aa ", "width:30px;height:10px", " bb", "");
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     crate::layout::layout_single_page(
         with_ahem(&mut doc),
         &cascade,
@@ -82,7 +82,7 @@ fn a_probe_does_not_record_an_inline_element_and_a_performed_layout_does() {
             );
             doc.append_text(span_id, "bb");
         });
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     crate::layout::layout_single_page(
         with_ahem(&mut doc),
         &cascade,

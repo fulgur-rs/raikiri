@@ -67,7 +67,7 @@ fn a_document_layer_face_supplies_the_glyphs_of_the_paragraph() {
 
     let (mut doc, cascade, root) =
         ahem_paragraph("ABC", "font-family:Face;font-size:20px;line-height:20px");
-    doc.enable_inline_formatting(layer, shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(layer, shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
     let layers = run_layers(&doc, root);
@@ -90,7 +90,7 @@ fn a_family_the_document_does_not_declare_still_resolves_in_the_shared_layer() {
     // `Ahem` is not declared by the document, so the layer hands it to the
     // shared layer it sits on.
     let (mut doc, cascade, root) = ahem_paragraph("ABC", "font-size:20px;line-height:20px");
-    doc.enable_inline_formatting(layer, shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(layer, shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
     let layers = run_layers(&doc, root);
@@ -116,7 +116,7 @@ fn a_document_layer_face_is_invisible_to_the_shared_layer() {
         "ABC",
         "font-family:Face, Ahem;font-size:20px;line-height:20px",
     );
-    doc.enable_inline_formatting(other, shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(other, shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     let layers = run_layers(&doc, root);
     assert!(!layers.is_empty());
@@ -130,14 +130,14 @@ fn a_document_without_an_explicit_switch_uses_the_engine() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
-    assert!(doc.inline_formatting_enabled());
+    assert!(doc.has_font_collection());
 }
 
 #[test]
 fn a_paragraph_the_engine_cannot_project_is_an_error_not_a_parley_fallback() {
     // Four text bytes are allowed per paragraph; "aaaa bbbb" has nine.
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "");
-    doc.enable_inline_formatting(
+    doc.set_font_collection_with_limits(
         ifc_ahem_fonts(),
         shodo::limits::Limits {
             max_text_bytes: Some(4),

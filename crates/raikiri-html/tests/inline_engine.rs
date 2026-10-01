@@ -82,15 +82,6 @@ fn the_engine_lays_out_consecutive_breaks_with_the_empty_line() {
 }
 
 #[test]
-#[allow(deprecated)]
-fn the_inline_formatting_switch_no_longer_turns_the_engine_off() {
-    let resources = RenderResources::new()
-        .fonts(ahem_fonts())
-        .inline_formatting(false);
-    assert_eq!(box_height(BREAKS, &resources, "box"), 30.0);
-}
-
-#[test]
 fn the_default_resources_use_the_engine() {
     // The installed fonts give the line its height from `line-height`, so
     // the empty line shows whichever face is chosen.

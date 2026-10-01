@@ -156,11 +156,11 @@ fn ahem_fonts() -> raikiri_html::RenderFonts {
 fn a_bundled_font_set_builds_in_parallel_and_the_installed_fonts_do_not() {
     let mut dom = raikiri_dom::Document::new();
     use_fonts(&mut dom, None);
-    assert!(!dom.inline_formatting_enabled());
+    assert!(!dom.has_font_collection());
     assert!(!dom.ifc_parallel_build());
     let mut dom = raikiri_dom::Document::new();
     use_fonts(&mut dom, Some(ahem_fonts()));
-    assert!(dom.inline_formatting_enabled());
+    assert!(dom.has_font_collection());
     assert!(dom.ifc_parallel_build());
 }
 

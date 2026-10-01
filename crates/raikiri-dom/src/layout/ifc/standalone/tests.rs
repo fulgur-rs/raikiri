@@ -5,7 +5,7 @@ use shodo::limits::Limits;
 
 fn enabled() -> Document {
     let mut doc = Document::new();
-    doc.enable_inline_formatting(ifc_ahem_fonts(), Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), Limits::default());
     doc
 }
 
@@ -281,7 +281,7 @@ fn a_generic_keyword_matches_in_any_case_and_a_quoted_one_names_a_family() {
     )
     .expect("two faces");
     let mut doc = Document::new();
-    doc.enable_inline_formatting(fonts, Limits::default());
+    doc.set_font_collection_with_limits(fonts, Limits::default());
     let font_of = |family: &str| {
         let style = StandaloneStyle {
             families: vec![family.to_owned()],

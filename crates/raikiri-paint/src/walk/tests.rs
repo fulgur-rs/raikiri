@@ -3365,7 +3365,7 @@ fn engine_document() -> Document {
         "/../raikiri-dom/tests/data/text-autospace"
     ));
     let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
-    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(collection, shodo::limits::Limits::default());
     doc
 }
 
@@ -3395,7 +3395,7 @@ impl raikiri_traits::ImagePixelSource for NoImages {
 
 /// `(x, y)` of the first glyph of each margin box text, left to right, and
 /// the number of engine results.
-fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
+fn margin_box_glyph_ys() -> (Vec<(f64, f64)>, usize) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
@@ -3413,14 +3413,7 @@ fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
         env!("CARGO_MANIFEST_DIR"),
         "/../raikiri-dom/tests/data/text-autospace"
     ));
-    if inline_formatting {
-        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    }
-    if !document.inline_formatting_enabled() {
-        document
-            .set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("font ctx"));
-    }
+    document.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
     crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages);
@@ -3439,7 +3432,7 @@ fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
 
 #[test]
 fn engine_margin_boxes_do_not_add_the_ahem_baseline_correction() {
-    let (boxes, _) = margin_box_glyph_ys(true);
+    let (boxes, _) = margin_box_glyph_ys();
     assert_eq!(boxes.len(), 2, "one glyph run per margin box: {boxes:?}");
     // Both boxes have the same height and the same resolved font, so the text
     // sits at the same y whatever the family was called.
@@ -3454,7 +3447,7 @@ fn margin_boxes_are_measured_and_drawn_by_the_engine() {
     // Two boxes, each measured once for its width (`margin_box_text_width`)
     // and drawn once: four results. The Ahem correction is decided with
     // `standalone_text_eligible`, which shapes nothing.
-    let (_, calls) = margin_box_glyph_ys(true);
+    let (_, calls) = margin_box_glyph_ys();
     assert_eq!(calls, 4);
 }
 
@@ -4173,12 +4166,11 @@ const FONT_DIR: &str = concat!(
     "/../raikiri-dom/tests/data/text-autospace"
 );
 
-/// Lay out and record a document with generated content, with the inline
-/// engine on or off. The engine's layer holds Ahem.
+/// Lay out and record a document with generated content. The engine's
+/// layer holds Ahem.
 fn generated_scene(
     css: &str,
     build: impl FnOnce(&mut Document, usize),
-    inline_formatting: bool,
 ) -> (Document, CascadeResult, Scene, usize) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -4197,14 +4189,7 @@ fn generated_scene(
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let dir = std::path::Path::new(FONT_DIR);
-    if inline_formatting {
-        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    }
-    if !document.inline_formatting_enabled() {
-        document
-            .set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("font ctx"));
-    }
+    document.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -4226,13 +4211,10 @@ fn glyph_xs(scene: &Scene) -> Vec<f64> {
 #[test]
 fn the_text_after_a_generated_before_starts_after_its_advance() {
     // "AB " is 30px with its trailing space, so BODY starts at x = 30.
-    let (document, _, scene, _) = generated_scene(
-        r#"div::before { content: "AB " }"#,
-        |doc, div| {
+    let (document, _, scene, _) =
+        generated_scene(r#"div::before { content: "AB " }"#, |doc, div| {
             doc.append_text(div, "BODY");
-        },
-        true,
-    );
+        });
     assert_eq!(glyph_xs(&scene), [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
     // The generated text is laid out in the div's paragraph, not drawn as a
     // separately shaped overlay.
@@ -4247,7 +4229,6 @@ fn a_generated_run_is_measured_with_the_document_font() {
         |doc, div| {
             doc.append_text(div, "x");
         },
-        true,
     );
     let snapshots: Vec<CounterSnapshot> = Vec::new();
     let height = generated_pseudo_text_height(
@@ -4277,7 +4258,7 @@ fn list_fixture_with_engine() -> (Document, CascadeResult, usize) {
     );
     let dir = std::path::Path::new(FONT_DIR);
     let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-    document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    document.set_font_collection_with_limits(collection, shodo::limits::Limits::default());
     (document, cascade, first)
 }
 

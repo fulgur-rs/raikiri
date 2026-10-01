@@ -539,12 +539,10 @@ fn text_fragments(
 fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut ranges = Vec::new();
-    for ifc in [false, true] {
+    {
         // Ahem at 10px, width 40: five lines of 10px; a 30px page holds three.
         let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc dddd eeee", "width:40px");
-        if ifc {
-            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-        }
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 30.0;
@@ -560,7 +558,6 @@ fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
         ],
         "the parley path is the oracle"
     );
-    assert_eq!(ranges[1], ranges[0]);
 }
 
 #[test]
@@ -579,7 +576,7 @@ fn a_text_inside_a_span_starts_at_the_root_content_origin() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
@@ -619,7 +616,7 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 30.0;
@@ -641,7 +638,7 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
 fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one() {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut moved = Vec::new();
-    for ifc in [false, true] {
+    {
         let (mut doc, _cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
         let body = doc.parent_of(root).expect("body");
         let spacer = doc.append_element(
@@ -655,9 +652,7 @@ fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one()
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-        }
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 40.0;
@@ -677,7 +672,6 @@ fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one()
         [(1, 3)],
         "orphans:2 moves the whole paragraph to page 2 (parley oracle)"
     );
-    assert_eq!(moved[1], moved[0]);
 }
 
 /// Lay out `html > body > (spacer, root)` with a fixed-height root of Ahem
@@ -691,7 +685,7 @@ fn pages_of_a_fixed_height_paragraph(
 ) -> Vec<(usize, Vec<u32>)> {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut results = Vec::new();
-    for ifc in [false, true] {
+    {
         let (mut doc, _cascade, root) = ahem_paragraph(text, root_css);
         let body = doc.parent_of(root).expect("body");
         let spacer = doc.append_element(
@@ -705,9 +699,7 @@ fn pages_of_a_fixed_height_paragraph(
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-        }
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = page_height;
@@ -733,7 +725,6 @@ fn a_paragraph_whose_first_line_overflows_the_page_moves_like_the_parley_one() {
         25.0,
     );
     assert_eq!(results[0], (2, vec![1]), "the parley path is the oracle");
-    assert_eq!(results[1], results[0]);
 }
 
 #[test]
@@ -748,7 +739,6 @@ fn a_padded_paragraph_whose_first_line_overflows_moves_like_the_parley_one() {
         26.0,
     );
     assert_eq!(results[0], (2, vec![1]), "the parley path is the oracle");
-    assert_eq!(results[1], results[0]);
 }
 
 /// `html > body > (15px spacer, root)`: the root holds `<span>aa </span>`
@@ -760,7 +750,7 @@ fn ranges_of_a_text_below_a_span(
 ) -> Vec<Vec<(u32, Option<PageFragmentLineRange>)>> {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut results = Vec::new();
-    for ifc in [false, true] {
+    {
         let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
         let span = doc.append_element(
             Some(root),
@@ -782,9 +772,7 @@ fn ranges_of_a_text_below_a_span(
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-        }
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = page_height;
@@ -801,7 +789,7 @@ fn a_text_that_starts_on_a_later_line_is_checked_for_orphans_from_that_line() {
     // left behind, so orphans:2 moves the paragraph to page 1.
     let results = ranges_of_a_text_below_a_span(40.0);
     assert_eq!(
-        results[1],
+        results[0],
         [(1, Some(PageFragmentLineRange::new(0, 2)))],
         "the ifc text moves with its paragraph"
     );
@@ -812,7 +800,7 @@ fn a_text_that_starts_on_a_later_line_stays_when_its_lines_fit() {
     // The text's lines end at 35 and 45 on a 46px page: both fit.
     let results = ranges_of_a_text_below_a_span(46.0);
     assert_eq!(
-        results[1],
+        results[0],
         [(0, Some(PageFragmentLineRange::new(0, 2)))],
         "the ifc text stays on page 0"
     );
@@ -827,7 +815,7 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
     use crate::layout::ifc::test_support::{Fixture, block_fixture};
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut results = Vec::new();
-    for ifc in [false, true] {
+    {
         let Fixture { mut doc, root, .. } =
             block_fixture("line-height:10px;width:40px", |doc, root| {
                 doc.append_text(root, "aaaa");
@@ -858,9 +846,7 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-        }
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 100.0;
@@ -894,7 +880,6 @@ fn a_paragraph_whose_text_changes_the_page_name_moves_like_the_parley_one() {
         ),
         "the parley path is the oracle"
     );
-    assert_eq!(results[1], results[0]);
 }
 
 #[test]
@@ -915,7 +900,7 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 40.0;
@@ -943,7 +928,7 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
     // ends at 30 > 25, so the block moves to page 1 as a unit; the text after
     // it comes later in the same paragraph.
     let mut results = Vec::new();
-    for ifc in [false, true] {
+    {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
         let body = doc.append_element(
@@ -964,9 +949,7 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-        }
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 25.0;
@@ -981,7 +964,6 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
         results.push(rects);
     }
     assert_eq!(results[0], [(1, 0.0)], "the parley path is the oracle");
-    assert_eq!(results[1], results[0]);
 }
 
 #[test]
@@ -1008,7 +990,7 @@ fn pagination_keeps_an_atomic_inside_a_span_on_its_line() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    doc.enable_inline_formatting(
+    doc.set_font_collection_with_limits(
         crate::layout::test_support::ifc_ahem_fonts(),
         shodo::limits::Limits::default(),
     );
@@ -1059,7 +1041,7 @@ fn a_block_inside_a_span_of_a_body_paragraph_moves_to_the_next_page_like_a_direc
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade");
-        doc.enable_inline_formatting(
+        doc.set_font_collection_with_limits(
             crate::layout::test_support::ifc_ahem_fonts(),
             shodo::limits::Limits::default(),
         );
@@ -1109,7 +1091,7 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    doc.enable_inline_formatting(
+    doc.set_font_collection_with_limits(
         crate::layout::test_support::ifc_ahem_fonts(),
         shodo::limits::Limits::default(),
     );
@@ -1130,7 +1112,7 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
 /// `body > ["aa", div(css) > "bb", " cc"]` in a 100x50 page; returns the page
 /// index and y of the div's text, the page index and y of " cc", and the page
 /// count.
-fn forced_break_in_a_body_paragraph(css: &str, ifc: bool) -> ((u32, f32), (u32, f32), usize) {
+fn forced_break_in_a_body_paragraph(css: &str) -> ((u32, f32), (u32, f32), usize) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(
@@ -1151,12 +1133,10 @@ fn forced_break_in_a_body_paragraph(css: &str, ifc: bool) -> ((u32, f32), (u32, 
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    if ifc {
-        doc.enable_inline_formatting(
-            crate::layout::test_support::ifc_ahem_fonts(),
-            shodo::limits::Limits::default(),
-        );
-    }
+    doc.set_font_collection_with_limits(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
@@ -1184,7 +1164,7 @@ fn a_forced_break_before_a_block_of_a_body_paragraph_starts_a_page() {
     .into_iter();
     for css in ["break-before:page", "break-after:page", "page:chapter"] {
         assert_eq!(
-            forced_break_in_a_body_paragraph(css, true),
+            forced_break_in_a_body_paragraph(css),
             expected_1167.next().expect("a value per case"),
             "{css}"
         );
@@ -1192,12 +1172,12 @@ fn a_forced_break_before_a_block_of_a_body_paragraph_starts_a_page() {
     // Hand-computed: "aa" on the first page; the block's "bb" starts the
     // second page and " cc" follows it there.
     assert_eq!(
-        forced_break_in_a_body_paragraph("break-before:page", true),
+        forced_break_in_a_body_paragraph("break-before:page"),
         ((1, 0.0), (1, 10.0), 2)
     );
     // After the block: "aa" and "bb" on the first page, " cc" on the second.
     assert_eq!(
-        forced_break_in_a_body_paragraph("break-after:page", true),
+        forced_break_in_a_body_paragraph("break-after:page"),
         ((0, 10.0), (1, 0.0), 2)
     );
 }
@@ -1226,7 +1206,7 @@ fn a_forced_break_after_text_inside_a_span_starts_a_page() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    doc.enable_inline_formatting(
+    doc.set_font_collection_with_limits(
         crate::layout::test_support::ifc_ahem_fonts(),
         shodo::limits::Limits::default(),
     );
@@ -1247,7 +1227,7 @@ fn a_forced_break_after_text_inside_a_span_starts_a_page() {
 
 #[test]
 fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
-    let run = |ifc: bool| {
+    let run = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
         let body = doc.append_element(
@@ -1271,12 +1251,10 @@ fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(
-                crate::layout::test_support::ifc_ahem_fonts(),
-                shodo::limits::Limits::default(),
-            );
-        }
+        doc.set_font_collection_with_limits(
+            crate::layout::test_support::ifc_ahem_fonts(),
+            shodo::limits::Limits::default(),
+        );
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 50.0;
@@ -1297,8 +1275,8 @@ fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
     };
     // Hand-computed: "bb" and " cc" on the second page, "dd" and " ee" on
     // the third.
-    assert_eq!(run(true), [(1, 0.0), (1, 10.0), (2, 0.0), (2, 10.0)]);
-    assert_eq!(run(true), [(1, 0.0), (1, 10.0), (2, 0.0), (2, 10.0)]);
+    assert_eq!(run(), [(1, 0.0), (1, 10.0), (2, 0.0), (2, 10.0)]);
+    assert_eq!(run(), [(1, 0.0), (1, 10.0), (2, 0.0), (2, 10.0)]);
 }
 
 #[test]
@@ -1306,7 +1284,7 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
     // "aa", a 20px block holding "bb" that would straddle the 25px page,
     // then " cc": the block moves to the second page as a unit and " cc"
     // follows it there (on both paths).
-    let run = |ifc: bool| {
+    let run = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
         let body = doc.append_element(
@@ -1327,12 +1305,10 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(
-                crate::layout::test_support::ifc_ahem_fonts(),
-                shodo::limits::Limits::default(),
-            );
-        }
+        doc.set_font_collection_with_limits(
+            crate::layout::test_support::ifc_ahem_fonts(),
+            shodo::limits::Limits::default(),
+        );
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 25.0;
@@ -1350,15 +1326,15 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
     };
     // Hand-computed: the block's two lines start the second page; " dd"
     // follows the 20px block.
-    assert_eq!(run(true), [(1, 0.0), (1, 20.0)]);
-    assert_eq!(run(true), [(1, 0.0), (1, 20.0)]);
+    assert_eq!(run(), [(1, 0.0), (1, 20.0)]);
+    assert_eq!(run(), [(1, 0.0), (1, 20.0)]);
 }
 
 #[test]
 fn nested_named_pages_inside_paragraphs_start_their_pages() {
     // The page-name-002 shape: named boxes inside paragraphs, and text after
     // them that returns to the outer page name.
-    let run = |ifc: bool| {
+    let run = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
         let body = doc.append_element(
@@ -1397,12 +1373,10 @@ fn nested_named_pages_inside_paragraphs_start_their_pages() {
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade");
-        if ifc {
-            doc.enable_inline_formatting(
-                crate::layout::test_support::ifc_ahem_fonts(),
-                shodo::limits::Limits::default(),
-            );
-        }
+        doc.set_font_collection_with_limits(
+            crate::layout::test_support::ifc_ahem_fonts(),
+            shodo::limits::Limits::default(),
+        );
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 50.0;
@@ -1424,7 +1398,7 @@ fn nested_named_pages_inside_paragraphs_start_their_pages() {
     // Hand-computed: a page per change of page name, the text that returns
     // to `a` after a `b` box on a page of its own below it.
     assert_eq!(
-        run(true),
+        run(),
         (
             8,
             vec![
@@ -1442,7 +1416,7 @@ fn nested_named_pages_inside_paragraphs_start_their_pages() {
         )
     );
     assert_eq!(
-        run(true),
+        run(),
         (
             8,
             vec![
@@ -1478,7 +1452,7 @@ fn engine_fragments_of(
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    doc.enable_inline_formatting(
+    doc.set_font_collection_with_limits(
         crate::layout::test_support::ifc_ahem_fonts(),
         shodo::limits::Limits::default(),
     );

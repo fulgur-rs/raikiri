@@ -567,12 +567,6 @@ impl<'a> RenderResources<'a> {
         self
     }
 
-    /// No effect: text is always laid out by the inline engine.
-    #[deprecated(note = "the inline engine is the only text layout path; this setting is ignored")]
-    pub fn inline_formatting(self, _enabled: bool) -> Self {
-        self
-    }
-
     /// The font layer text is laid out with: the layer of the font set given
     /// to [`fonts`](Self::fonts), or the process-wide layer of the installed
     /// fonts ([`raikiri_dom::system_font_collection`]).

@@ -434,15 +434,9 @@ pub fn parse_report_args(args: &[String]) -> Result<ReportOptions, String> {
             "--wpt-root" => options.wpt_root = PathBuf::from(flag_value(args, index, flag)?),
             "--baseline" => options.baseline = PathBuf::from(flag_value(args, index, flag)?),
             "--output" => options.output = Some(PathBuf::from(flag_value(args, index, flag)?)),
-            // Text is always laid out by the inline engine with the WPT fonts;
-            // these flags are kept so older command lines still parse.
-            "--wpt-fonts" | "--ifc" => index -= 1,
-            "--no-ifc" => {
-                eprintln!(
-                    "warning: --no-ifc is ignored: the inline engine is the only text layout path"
-                );
-                index -= 1;
-            }
+            // Text is always laid out with the WPT fonts; the flag names that
+            // default.
+            "--wpt-fonts" => index -= 1,
             "--only" => options.only.push(flag_value(args, index, flag)?.to_owned()),
             "--jobs" => {
                 let jobs: usize = flag_value(args, index, flag)?

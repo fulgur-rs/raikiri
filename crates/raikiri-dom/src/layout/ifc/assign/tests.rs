@@ -10,7 +10,7 @@ type Build = fn(&mut crate::Document, usize);
 fn enable(fixture: &mut crate::layout::ifc::test_support::Fixture) {
     fixture
         .doc
-        .enable_inline_formatting(ahem_fonts(), Limits::default());
+        .set_font_collection_with_limits(ahem_fonts(), Limits::default());
 }
 
 fn assign(fixture: &mut crate::layout::ifc::test_support::Fixture) {
@@ -1113,7 +1113,9 @@ fn a_paragraph_that_fails_to_build_is_a_limit_error() {
             .build(&mut shodo::LayoutContext::new(), &fonts)
             .is_err()
     );
-    fixture.doc.enable_inline_formatting(ahem_fonts(), limits);
+    fixture
+        .doc
+        .set_font_collection_with_limits(ahem_fonts(), limits);
     let result = assign_ifc_roots(&mut fixture.doc, &fixture.cascade);
     assert!(
         matches!(result, Err(LayoutError::IfcLimitExceeded { node, .. }) if node == fixture.root),
@@ -1128,7 +1130,7 @@ fn a_paragraph_that_fails_to_build_is_a_limit_error() {
     );
     assert!(fixture.doc.nodes[fixture.root].ifc.is_none());
     // The engine state is kept for the next pass.
-    assert!(fixture.doc.inline_formatting_enabled());
+    assert!(fixture.doc.has_font_collection());
 }
 
 #[test]
@@ -1344,7 +1346,7 @@ fn parallel_and_sequential_builds_agree_when_a_fallback_family_is_needed() {
         let mut fixture = many_fallback_paragraphs(40);
         fixture
             .doc
-            .enable_inline_formatting(ahem_and_noto_fonts(), Limits::default());
+            .set_font_collection_with_limits(ahem_and_noto_fonts(), Limits::default());
         signature(fixture, parallel)
     };
     let sequential = build(false);

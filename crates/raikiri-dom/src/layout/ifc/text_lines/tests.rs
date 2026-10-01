@@ -3,7 +3,7 @@ use crate::layout::test_support::with_ahem;
 use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts, page_box_800x600};
 
 fn lay_out(doc: &mut crate::Document, cascade: &raikiri_style::CascadeResult) {
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     layout_single_page(with_ahem(doc), cascade, page_box_800x600()).expect("layout");
 }
 

@@ -374,13 +374,13 @@ impl Document {
     /// ([`crate::build_inline_document_fonts`]). Without this call, the first
     /// layout uses the installed fonts ([`crate::system_font_collection`]).
     pub fn set_font_collection(&mut self, fonts: shodo::font::FontCollection) {
-        self.enable_inline_formatting(fonts, shodo::limits::Limits::default());
+        self.set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
     }
 
     /// [`Document::set_font_collection`] with explicit resource limits for
     /// the inline engine.
     #[doc(hidden)]
-    pub fn enable_inline_formatting(
+    pub fn set_font_collection_with_limits(
         &mut self,
         fonts: shodo::font::FontCollection,
         limits: shodo::limits::Limits,
@@ -404,7 +404,7 @@ impl Document {
 
     /// Whether the document has fonts for the inline engine: they were set,
     /// or a layout took the installed fonts.
-    pub fn inline_formatting_enabled(&self) -> bool {
+    pub fn has_font_collection(&self) -> bool {
         self.ifc.is_some()
     }
 
@@ -428,12 +428,6 @@ impl Document {
             state.parallel_build = allowed;
         }
     }
-
-    /// No effect: every paragraph is laid out by the inline engine, and one
-    /// it refuses always fails the layout with
-    /// [`raikiri_traits::LayoutError::IfcUnsupported`].
-    #[doc(hidden)]
-    pub fn inline_formatting_engine_only(&mut self, _engine_only: bool) {}
 
     /// Whether paragraphs may be built on several threads (`false` without
     /// the inline engine).

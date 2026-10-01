@@ -46,7 +46,7 @@ fn a_bundled_font_set_enables_parallel_builds_and_the_system_layer_does_not() {
         &FontFaceRegistry::default(),
         &NoLoader,
     );
-    assert!(dom.inline_formatting_enabled());
+    assert!(dom.has_font_collection());
     assert!(!dom.ifc_parallel_build());
     let mut dom = raikiri_dom::Document::new();
     enable_inline_engine(
@@ -55,21 +55,8 @@ fn a_bundled_font_set_enables_parallel_builds_and_the_system_layer_does_not() {
         &FontFaceRegistry::default(),
         &NoLoader,
     );
-    assert!(dom.inline_formatting_enabled());
+    assert!(dom.has_font_collection());
     assert!(dom.ifc_parallel_build());
-}
-
-#[test]
-#[allow(deprecated)]
-fn the_inline_formatting_switch_no_longer_turns_the_engine_off() {
-    let mut dom = raikiri_dom::Document::new();
-    enable_inline_engine(
-        &mut dom,
-        &RenderResources::new().inline_formatting(false),
-        &FontFaceRegistry::default(),
-        &NoLoader,
-    );
-    assert!(dom.inline_formatting_enabled());
 }
 
 mod pipeline_tests;

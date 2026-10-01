@@ -266,7 +266,7 @@ fn a_laid_out_ifc_root_exposes_its_lines() {
     // Before a layout the block holds no lines.
     assert!(doc.nodes[root].ifc_lines().is_none());
     // After it: three 10px lines.
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].ifc_lines().map(<[_]>::len), Some(3));

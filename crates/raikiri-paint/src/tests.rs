@@ -1974,12 +1974,10 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
     doc.set_element_attributes(img, vec![("src".into(), "file:///ch-pad.png".into())]);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    if !doc.inline_formatting_enabled() {
-        doc.set_font_collection(
-            raikiri_dom::build_wpt_font_collection(&fonts_dir)
-                .expect("bundled WPT fonts should register"),
-        );
-    }
+    doc.set_font_collection(
+        raikiri_dom::build_wpt_font_collection(&fonts_dir)
+            .expect("bundled WPT fonts should register"),
+    );
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let url = url::Url::parse("file:///ch-pad.png").unwrap();

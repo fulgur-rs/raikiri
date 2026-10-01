@@ -11,7 +11,7 @@ fn engine_document() -> Document {
     let mut doc = Document::new();
     let collection = raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR))
         .expect("the Ahem layer");
-    doc.enable_inline_formatting(collection, Limits::default());
+    doc.set_font_collection_with_limits(collection, Limits::default());
     doc
 }
 

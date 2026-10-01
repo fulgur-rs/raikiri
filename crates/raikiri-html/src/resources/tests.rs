@@ -1472,19 +1472,6 @@ fn only_a_bundled_font_set_allows_parallel_builds() {
 }
 
 #[test]
-#[allow(deprecated)]
-fn the_inline_formatting_switch_is_ignored() {
-    let fonts = ahem_fonts(false);
-    let expected = fonts.collection().layer_handle().id();
-    let resources = RenderResources::new().fonts(fonts).inline_formatting(false);
-    assert_eq!(
-        resources.inline_engine_fonts().layer_handle().id(),
-        expected
-    );
-    assert!(resources.inline_engine_parallel_build());
-}
-
-#[test]
 fn a_font_set_is_the_layer_of_the_inline_engine() {
     let fonts = ahem_fonts(false);
     let expected = fonts.collection().layer_handle().id();

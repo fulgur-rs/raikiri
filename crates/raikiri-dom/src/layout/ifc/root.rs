@@ -144,7 +144,7 @@ pub(crate) fn with_state<R>(
     Some(result)
 }
 
-/// Document-level engine handles, present only when the switch is on.
+/// Document-level engine handles, present once the document has fonts.
 pub(crate) struct IfcState {
     pub(crate) fonts: FontCollection,
     pub(crate) limits: Limits,

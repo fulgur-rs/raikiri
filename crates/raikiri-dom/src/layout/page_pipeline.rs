@@ -1872,10 +1872,9 @@ pub fn layout_pages_with_page_geometry(
     // inside them. Only the first candidate of a paragraph may move its root:
     // a later one would move again what the earlier ones placed.
     let mut entered_ifc_roots = HashSet::new();
-    let inline_formatting = document.inline_formatting_enabled();
     for candidate in candidates {
         let node_id = candidate.node_id;
-        let moves_ifc_root = inline_formatting && {
+        let moves_ifc_root = {
             let mut first = true;
             let mut current = parent_of.get(node_id).copied().flatten();
             while let Some(id) = current {

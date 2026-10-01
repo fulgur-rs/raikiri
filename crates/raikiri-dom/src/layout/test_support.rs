@@ -58,7 +58,7 @@ const AHEM_FAMILY_CSS: &str = "font-family:Ahem;font-size:10px;";
 
 /// `doc` with the Ahem font layer, unless it already has fonts.
 pub(crate) fn with_ahem(doc: &mut Document) -> &mut Document {
-    if !doc.inline_formatting_enabled() {
+    if !doc.has_font_collection() {
         doc.set_font_collection(ifc_ahem_fonts());
     }
     doc

@@ -17,7 +17,7 @@ use raikiri_wpt::baseline_report::{
     write_tsv,
 };
 
-const USAGE: &str = "usage:\n  run-baseline-report [--wpt-root DIR] [--baseline FILE] [--output FILE] [--jobs N] [--only ID]... [--limit N] [--no-ifc] [--wpt-fonts]\n  (text is laid out by the inline engine with the WPT fonts; --ifc, --no-ifc and --wpt-fonts are accepted and change nothing)\n  run-baseline-report diff BEFORE.tsv AFTER.tsv";
+const USAGE: &str = "usage:\n  run-baseline-report [--wpt-root DIR] [--baseline FILE] [--output FILE] [--jobs N] [--only ID]... [--limit N] [--wpt-fonts]\n  (text is laid out with the WPT fonts; --wpt-fonts names that default)\n  run-baseline-report diff BEFORE.tsv AFTER.tsv";
 
 fn main() {
     if let Err(error) = run() {
