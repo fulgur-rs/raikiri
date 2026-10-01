@@ -1085,7 +1085,8 @@ fn an_inline_background_and_border_match_the_parley_path() {
         doc.append_text(root, "cc");
     };
     let (off, on) = off_and_on("width:200px", build);
-    // The span of `F`: border box x 24..54, y 0..10; borders 2px wide.
+    // After "aa" and the 4px margin: border box x 24..54, y 0..10; borders
+    // 2px wide.
     assert_eq!(
         fills_with(&off, &solid(255, 0, 0)),
         [[px(24), 0, px(54), px(10)]]
@@ -1110,7 +1111,8 @@ fn a_wrapping_inline_keeps_the_start_border_on_its_first_piece_only() {
     });
     lay_out(&mut doc, &cascade, true);
     let scene = painted(&doc, &cascade);
-    // `W`: line 1 piece x 4..49 (y 0..10), line 2 piece x 0..45 (y 10..20).
+    // The span wraps after "aaaa ": line 1 piece x 4..49 (y 0..10), line 2
+    // piece x 0..45 (y 10..20).
     assert_eq!(
         fills_with(&scene, &solid(255, 0, 0)),
         [[px(4), 0, px(49), px(10)], [0, px(10), px(45), px(20)]]
@@ -1175,7 +1177,8 @@ fn vertical_edges_grow_the_painted_box_but_not_the_line() {
     });
     lay_out(&mut doc, &cascade, true);
     let scene = painted(&doc, &cascade);
-    // `F-v`: border box x 0..20, y -3..13; the line stays 10px tall.
+    // 1px padding and 2px border above and below: border box x 0..20,
+    // y -3..13; the line stays 10px tall.
     assert_eq!(
         fills_with(&scene, &solid(255, 0, 0)),
         [[0, px(-3), px(20), px(13)]]
@@ -1329,7 +1332,7 @@ fn an_inline_background_clipped_to_its_content_box_matches_the_parley_path() {
         doc.append_text(inner, "bb");
     };
     let (off, on) = off_and_on("width:200px", build);
-    // The content box of `F`: x 29..49.
+    // The span's content box: x 29..49.
     assert_eq!(
         fills_with(&off, &solid(255, 0, 0)),
         [[px(29), 0, px(49), px(10)]]
@@ -1339,7 +1342,7 @@ fn an_inline_background_clipped_to_its_content_box_matches_the_parley_path() {
 
 #[test]
 fn a_wrapped_piece_has_no_padding_where_it_continues() {
-    // `W` with the background clipped to the content box: line 1's piece has
+    // The wrapping span with the background clipped to the content box: line 1's piece has
     // its padding on the left only (content x 9..49), line 2's on the right
     // only (content x 0..40).
     let (mut doc, cascade, _root) = paragraph("width:60px", |doc, root| {
@@ -1397,7 +1400,7 @@ fn a_right_to_left_element_has_its_start_border_on_the_right() {
 
 #[test]
 fn a_content_box_background_leaves_out_the_vertical_padding() {
-    // `F-v` with the background clipped to the content box: y 0..10, inside
+    // The vertically padded span with the background clipped to the content box: y 0..10, inside
     // the 1px padding and 2px border above and below.
     let (mut doc, cascade, _root) = paragraph("width:200px", |doc, root| {
         let inner = doc.append_element(

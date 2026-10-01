@@ -4568,7 +4568,7 @@ fn a_wrapping_inline_element_has_the_bounding_box_of_its_pieces() {
         span_id = inner;
     });
     lay_out_with_switch(&mut doc, &cascade);
-    // `W` in the hand-computed basis: pieces x 4..49 (line 1) and x 0..45
+    // The span wraps after "aaaa ": pieces x 4..49 (line 1) and x 0..45
     // (line 2); the bounding box is x 0..49, y 0..20.
     assert_eq!(absolute_rect(&doc, span_id), (0.0, 0.0, 49.0, 20.0));
 }
@@ -4624,16 +4624,17 @@ fn an_empty_inline_element_has_a_zero_width_box_on_its_line() {
 fn an_inline_element_without_a_piece_gets_an_empty_layout() {
     use crate::layout::test_support::ahem_paragraph_with;
     let mut span_id = 0;
-    let (mut doc, cascade, root) = ahem_paragraph_with("width:200px", |doc, root| {
-        doc.append_text(root, "aa");
-        span_id = doc.append_element(
-            Some(root),
-            "span",
-            taffy::Style::default(),
-            Some("display:none;padding:0 3px"),
-        );
-        doc.append_text(span_id, "bb");
-    });
+    let (mut doc, cascade, root) =
+        ahem_paragraph_with("width:200px;padding:5px 0 0 7px", |doc, root| {
+            doc.append_text(root, "aa");
+            span_id = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:none;padding:0 3px"),
+            );
+            doc.append_text(span_id, "bb");
+        });
     lay_out_with_switch(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[span_id].unrounded_layout;
@@ -4880,4 +4881,35 @@ fn an_element_inside_a_contents_element_is_located_from_the_nearest_box() {
     // The contents element has no box; the span after "aa" is x 20..46.
     assert_eq!(absolute_rect(&doc, wrapper_id), (0.0, 0.0, 0.0, 0.0));
     assert_eq!(absolute_rect(&doc, inner_id), (20.0, 0.0, 26.0, 10.0));
+}
+
+#[test]
+fn a_block_inside_a_contents_child_of_a_paragraph_still_breaks_the_page() {
+    use crate::layout::test_support::ahem_paragraph_with;
+    let pages = |switch: bool| {
+        let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
+            doc.append_text(root, "aa");
+            let wrapper = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:contents"),
+            );
+            let block = doc.append_element(
+                Some(wrapper),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;break-before:page"),
+            );
+            doc.append_text(block, "bb");
+        });
+        if switch {
+            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        }
+        layout_pages(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+            .expect("pages")
+            .len()
+    };
+    assert_eq!(pages(false), 2);
+    assert_eq!(pages(true), pages(false));
 }

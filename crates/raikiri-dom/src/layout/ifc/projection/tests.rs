@@ -637,16 +637,26 @@ fn a_contents_element_passes_nesting_on_to_its_children() {
 }
 
 #[test]
-fn a_box_inside_a_contents_child_of_the_root_is_placed_like_a_root_child() {
-    // The contents element has no box, so its inline-block child sits
-    // directly in the paragraph.
-    let fixture = block_fixture("", |doc, root| {
-        doc.append_text(root, "a");
-        let wrapper = span(doc, root, "display:contents");
-        span(doc, wrapper, "display:inline-block;width:10px;height:10px");
-    });
-    let projected = project(&fixture).expect("a box in a contents child of the root");
-    assert_eq!(projected.boxes.len(), 1);
+fn a_box_inside_a_contents_child_of_the_root_is_rejected() {
+    // The contents element is part of the paragraph's subtree while the box
+    // is not; the passes that skip the subtree (pagination candidates, the
+    // layout check) would then never reach the box.
+    for css in [
+        "display:inline-block;width:10px;height:10px",
+        "float:left;width:10px;height:10px",
+        "display:block",
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "a");
+            let wrapper = span(doc, root, "display:contents");
+            span(doc, wrapper, css);
+        });
+        let error = project(&fixture).expect_err(css);
+        assert!(
+            matches!(error, IfcError::Unsupported { .. }),
+            "{css}: {error}"
+        );
+    }
 }
 
 #[test]

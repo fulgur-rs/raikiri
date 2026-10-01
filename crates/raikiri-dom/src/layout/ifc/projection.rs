@@ -378,11 +378,14 @@ pub(crate) fn project_ifc(
                             "a display: contents element that is floated or positioned is not projected",
                         ));
                     }
+                    // Its children count as nested: a box among them would sit
+                    // below an element of the paragraph's subtree, which the
+                    // passes that skip that subtree never reach.
                     stack.extend(
                         node.children
                             .iter()
                             .rev()
-                            .map(|&child| Step::Enter(child, nested)),
+                            .map(|&child| Step::Enter(child, true)),
                     );
                     continue;
                 }
