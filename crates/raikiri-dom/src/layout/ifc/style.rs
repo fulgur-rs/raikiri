@@ -198,6 +198,9 @@ pub(crate) fn inline_style(
         p::WhiteSpaceCollapse::PreserveBreaks => WhiteSpaceCollapse::PreserveBreaks,
         p::WhiteSpaceCollapse::PreserveSpaces => WhiteSpaceCollapse::PreserveSpaces,
         p::WhiteSpaceCollapse::BreakSpaces => WhiteSpaceCollapse::BreakSpaces,
+        // `discard` (CSS Text 4) drops every white space character; shodo has
+        // no such mode, so its white space is collapsed as for `collapse`.
+        p::WhiteSpaceCollapse::Discard => WhiteSpaceCollapse::Collapse,
         _ => {
             return Err(unsupported(
                 "white-space-collapse is not represented by shodo",

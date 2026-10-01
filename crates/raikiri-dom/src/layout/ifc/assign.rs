@@ -11,9 +11,7 @@ use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
-use raikiri_style::ComputedLengthPercentageOrAuto;
 use raikiri_style::property::DisplayValue;
-use raikiri_style::property::PositionValue;
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
@@ -97,23 +95,6 @@ fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx
                 DisplayValue::Inline | DisplayValue::InlineBlock | DisplayValue::None
             )
     })
-}
-
-/// Whether the paragraph sits inside a fixed box without an authored width.
-/// taffy sizes such a box against its nearest positioned ancestor, which can
-/// be zero wide, and the paragraph would wrap at that width.
-fn inside_unsized_fixed_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    let mut current = doc.parent_of(idx);
-    while let Some(id) = current {
-        let cv = &cascade.computed[id];
-        if cv.position == PositionValue::Fixed
-            && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
-        {
-            return true;
-        }
-        current = doc.parent_of(id);
-    }
-    false
 }
 
 /// Whether the paragraph has inline content that makes a line: text other
@@ -285,22 +266,8 @@ fn collect_candidates(
             continue;
         }
         // From here on the box is a paragraph: anything that keeps it from
-        // the engine is a refusal.
-        let refusal = if cascade.computed[idx].position == PositionValue::Fixed {
-            // taffy sizes a fixed box against its nearest positioned
-            // ancestor, which can be zero wide; breaking lines at that width
-            // wraps every word. The parley path shapes at the page width
-            // beforehand and hides the error.
-            Some("a fixed root is not laid out")
-        } else if inside_unsized_fixed_box(doc, cascade, idx) {
-            Some("a paragraph in a fixed box without a width is not laid out")
-        } else {
-            None
-        };
-        if let Some(reason) = refusal {
-            refuse(engine_only, idx, reason)?;
-            continue;
-        }
+        // the engine is a refusal. A fixed box is a paragraph like any other:
+        // taffy sizes it against its parent on either path.
         let projected = match project_ifc_builder_with(
             doc,
             cascade,
@@ -369,15 +336,6 @@ fn collect_text_candidates(
     let mut candidates = Vec::new();
     for idx in 0..doc.nodes.len() {
         if !is_anonymous_item_text(doc, cascade, idx) {
-            continue;
-        }
-        let refusal = if inside_unsized_fixed_box(doc, cascade, idx) {
-            Some("a paragraph in a fixed box without a width is not laid out")
-        } else {
-            None
-        };
-        if let Some(reason) = refusal {
-            refuse(engine_only, idx, reason)?;
             continue;
         }
         match project_ifc_text_builder(doc, cascade, idx, &state.fonts, &state.limits) {

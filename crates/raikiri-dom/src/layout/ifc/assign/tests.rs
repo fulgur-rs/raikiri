@@ -220,15 +220,6 @@ fn assert_is_a_root(css: &str, build: impl FnOnce(&mut crate::Document, usize)) 
     assert!(is_root(&fixture, fixture.root));
 }
 
-/// Assert that the paragraph `build` fills under a root styled `css` stays on
-/// the parley path.
-fn assert_stays_on_parley(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
-    let mut fixture = block_fixture(css, build);
-    enable(&mut fixture);
-    assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
-}
-
 fn assert_is_root(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
     let mut fixture = block_fixture(css, build);
     enable(&mut fixture);
@@ -573,11 +564,10 @@ fn background_clip_text_on_an_inline_is_laid_out_by_the_engine() {
 }
 
 #[test]
-fn a_fixed_position_root_stays_on_the_parley_path() {
-    // taffy sizes a fixed box against its nearest positioned ancestor, which
-    // can be zero wide, and breaking at that width wraps every word. The
-    // parley path shapes at the page width in advance and hides the error.
-    assert_stays_on_parley("position:fixed;top:0", text_only("aa bb cc"));
+fn a_fixed_position_root_is_a_root() {
+    // taffy sizes a fixed box against its nearest positioned ancestor on
+    // either path; the engine breaks its lines at that width.
+    assert_is_a_root("position:fixed;top:0", text_only("aa bb cc"));
 }
 
 #[test]
@@ -626,9 +616,9 @@ fn a_float_beside_an_ancestor_leaves_the_paragraph_a_root() {
 }
 
 #[test]
-fn a_paragraph_inside_a_fixed_box_without_a_width_stays_on_the_parley_path() {
-    // taffy sizes the fixed box against its nearest positioned ancestor, which
-    // can be zero wide, and the paragraph inside would wrap at that width.
+fn a_paragraph_inside_a_fixed_box_without_a_width_is_a_root() {
+    // taffy sizes the fixed box against its nearest positioned ancestor on
+    // either path; the paragraph inside wraps at that width.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa bb cc");
     });
@@ -641,7 +631,7 @@ fn a_paragraph_inside_a_fixed_box_without_a_width_stays_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -1456,4 +1446,22 @@ fn replaced_and_svg_elements_are_never_roots() {
             fixture.doc.nodes[node].tag_name()
         );
     }
+}
+
+#[test]
+fn a_refusal_is_an_error_only_in_engine_only_mode() {
+    use raikiri_traits::LayoutError;
+    let refusal = || IfcError::Unsupported {
+        node: 3,
+        reason: "an internal inconsistency",
+    };
+    assert!(matches!(
+        super::projection_error(true, 1, refusal()),
+        Err(LayoutError::IfcUnsupported { node: 3, .. })
+    ));
+    assert!(super::projection_error(false, 1, refusal()).is_ok());
+    assert!(matches!(
+        super::projection_error(true, 1, IfcError::InvalidNode(5)),
+        Err(LayoutError::IfcUnsupported { node: 5, .. })
+    ));
 }

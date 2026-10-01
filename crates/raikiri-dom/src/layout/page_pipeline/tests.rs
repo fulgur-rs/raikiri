@@ -5907,28 +5907,35 @@ fn a_limit_overflow_is_an_error_even_when_the_switch_is_not_engine_only() {
     );
 }
 
-/// A paragraph the engine refuses: a fixed root.
-fn refused_paragraph() -> (Document, CascadeResult, usize) {
-    crate::layout::test_support::ahem_paragraph_with("position:fixed;width:100px", |doc, root| {
-        doc.append_text(root, "aa ");
-    })
-}
-
 #[test]
-fn engine_only_mode_reports_a_refused_paragraph_as_an_error() {
-    // A paragraph with a box inside an inline element is refused for now.
-    let (mut doc, cascade, _) = refused_paragraph();
+fn engine_only_mode_lays_out_every_authored_shape_without_an_error() {
+    // The shapes that were refused last (a fixed root, a block with a forced
+    // page break, generated content, a positioned box) are all laid out in
+    // engine-only mode; a refusal is now an internal inconsistency only (see
+    // the assignment's unit tests).
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph_with(
+        "position:fixed;width:100px",
+        |doc, root| {
+            doc.append_text(root, "aa ");
+            doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;break-before:page"),
+            );
+            doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px"),
+            );
+        },
+    );
     doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
     doc.inline_formatting_engine_only(true);
     let result = layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context());
-    assert!(
-        matches!(result, Err(LayoutError::IfcUnsupported { .. })),
-        "{result:?}"
-    );
-    // Without the mode the paragraph is left to the parley path.
-    let (mut doc, cascade, root) = refused_paragraph();
-    lay_out_with_switch(&mut doc, &cascade);
-    assert!(!doc.nodes[root].is_ifc_root());
+    assert!(result.is_ok(), "{result:?}");
+    assert!(doc.nodes[root].is_ifc_root());
 }
 
 #[test]
@@ -7286,4 +7293,28 @@ fn measure_ch_advance_uses_the_engine_fonts() {
         crate::layout::measure_ch_advance(&ifc_ahem_fonts(), &key),
         16.0
     );
+}
+
+#[test]
+fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engine() {
+    // taffy sizes a fixed box against its parent, on both paths; the
+    // engine breaks the lines at that width.
+    for (parent_css, css) in [
+        ("", "position:fixed"),
+        ("width:0;position:relative", "position:fixed"),
+        ("position:fixed", ""),
+    ] {
+        let (mut doc, cascade, root) = ahem_paragraph_in(parent_css, css, "aaaa bbbb cccc");
+        doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        doc.inline_formatting_engine_only(true);
+        layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+            .expect("layout");
+        assert!(doc.nodes[root].is_ifc_root(), "{parent_css} / {css}");
+        let (mut off, off_cascade, off_root) = ahem_paragraph_in(parent_css, css, "aaaa bbbb cccc");
+        lay_out(&mut off, &off_cascade, false);
+        assert_eq!(
+            doc.nodes[root].unrounded_layout.size, off.nodes[off_root].unrounded_layout.size,
+            "{parent_css} / {css}"
+        );
+    }
 }

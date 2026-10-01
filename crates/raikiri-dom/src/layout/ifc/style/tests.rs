@@ -184,9 +184,10 @@ fn a_later_legacy_keyword_wins_over_an_earlier_longhand() {
 }
 
 #[test]
-fn white_space_collapse_discard_is_still_unsupported() {
-    let error = root_style("white-space-collapse:discard").expect_err("discard");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+fn white_space_collapse_discard_collapses_white_space() {
+    // shodo has no `discard`; its white space is collapsed.
+    let style = root_style("white-space-collapse:discard").expect("discard");
+    assert_eq!(style.white_space_collapse, WhiteSpaceCollapse::Collapse);
 }
 
 #[test]

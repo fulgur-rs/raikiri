@@ -1937,3 +1937,25 @@ fn a_positioned_box_inside_the_paragraph_is_painted_once_where_it_was_placed() {
     let max_x = glyphs(&scene).iter().map(|g| g.1).fold(0.0_f64, f64::max);
     assert_eq!(max_x, 110.0);
 }
+
+#[test]
+fn a_fixed_root_is_painted_like_fixed_text() {
+    // As a_paragraph_inside_a_fixed_box_is_painted_like_fixed_text, with the
+    // fixed box itself the paragraph's root: its lines repeat on every page,
+    // even below the laid-out box.
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "abcde");
+    };
+    let css = "position:fixed;top:1200px;left:0;width:100px;word-break:break-all";
+    let (mut off_doc, cascade, _) = paragraph(css, build);
+    lay_out(&mut off_doc, &cascade, false);
+    let off = ink(&painted(&off_doc, &cascade));
+
+    let (mut on_doc, cascade, root) = paragraph(css, build);
+    lay_out(&mut on_doc, &cascade, true);
+    assert!(on_doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let on = ink(&painted(&on_doc, &cascade));
+
+    assert!(!off.is_empty(), "the parley path draws fixed text");
+    assert_eq!(on, off);
+}
