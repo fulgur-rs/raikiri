@@ -694,12 +694,19 @@ impl Node {
     pub fn ifc_inline_boxes(&self) -> Option<Vec<crate::layout::InlineBoxPiece>> {
         let root = self.ifc.as_ref()?;
         let lines = root.lines.as_ref()?;
-        Some(crate::layout::ifc::inline_boxes::inline_box_pieces(
+        let mut pieces = crate::layout::ifc::inline_boxes::inline_box_pieces(
             &lines.lines,
             lines.width,
             root.rtl,
             &root.preserved_spaces,
-        ))
+        );
+        // Lines moved by pagination carry their pieces with them.
+        for piece in &mut pieces {
+            let shift = lines.shift_of(piece.line);
+            piece.border_box.y += shift;
+            piece.content_box.y += shift;
+        }
+        Some(pieces)
     }
 
     /// Paint offsets of the relatively positioned inline elements of an ifc
@@ -725,7 +732,23 @@ impl Node {
     #[doc(hidden)]
     pub fn ifc_size(&self) -> Option<(f32, f32)> {
         let lines = self.ifc.as_ref()?.lines.as_ref()?;
-        Some((lines.width, lines.height))
+        let moved: f32 = lines.shifts.iter().map(|(_, delta)| delta).sum();
+        Some((lines.width, lines.height + moved))
+    }
+
+    /// How far pagination moved each line of an ifc root down, by line
+    /// index: the lines after a block child that was moved to a later page.
+    #[doc(hidden)]
+    pub fn ifc_line_shifts(&self) -> Vec<f32> {
+        self.ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .map(|lines| {
+                (0..lines.lines.len())
+                    .map(|index| lines.shift_of(index))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Children of an ifc root that it lays out as boxes of their own

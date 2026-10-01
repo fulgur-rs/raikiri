@@ -66,7 +66,7 @@ pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
             })
         })
         .map(|(index, line)| {
-            let top = line.block_offset();
+            let top = lines.line_top(index);
             IfcTextLine {
                 line: index,
                 top,

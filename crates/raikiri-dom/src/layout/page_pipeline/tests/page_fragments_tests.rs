@@ -1129,3 +1129,248 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
         .collect();
     assert_eq!(rects, [(0, 20.0)]);
 }
+
+/// `body > ["aa", div(css) > "bb", " cc"]` in a 100x50 page; returns the page
+/// index and y of the div's text, the page index and y of " cc", and the page
+/// count.
+fn forced_break_in_a_body_paragraph(css: &str, ifc: bool) -> ((u32, f32), (u32, f32), usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(body, "aa");
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{css}")),
+    );
+    let inner = doc.append_text(block, "bb");
+    let tail = doc.append_text(body, " cc");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    if ifc {
+        doc.enable_inline_formatting(
+            crate::layout::test_support::ifc_ahem_fonts(),
+            shodo::limits::Limits::default(),
+        );
+    }
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(
+        &mut doc,
+        &cascade,
+        page,
+        crate::layout::test_support::ahem_font_context(),
+    )
+    .expect("pages");
+    assert_eq!(doc.nodes[body].is_ifc_root(), ifc, "{css}");
+    let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+    let first = |node: usize| {
+        fragments
+            .iter()
+            .flat_map(|p| p.items.iter())
+            .find(|item| item.node_id == NodeId::new(node as u64))
+            .map(|item| (item.page_index, item.rect.y))
+            .expect("fragment")
+    };
+    (first(inner), first(tail), slices.len())
+}
+
+#[test]
+fn a_forced_break_before_a_block_of_a_body_paragraph_starts_a_page() {
+    for css in ["break-before:page", "break-after:page", "page:chapter"] {
+        assert_eq!(
+            forced_break_in_a_body_paragraph(css, true),
+            forced_break_in_a_body_paragraph(css, false),
+            "{css}"
+        );
+    }
+    // Hand-computed: "aa" on the first page; the block's "bb" starts the
+    // second page and " cc" follows it there.
+    assert_eq!(
+        forced_break_in_a_body_paragraph("break-before:page", true),
+        ((1, 0.0), (1, 10.0), 2)
+    );
+    // After the block: "aa" and "bb" on the first page, " cc" on the second.
+    assert_eq!(
+        forced_break_in_a_body_paragraph("break-after:page", true),
+        ((0, 10.0), (1, 0.0), 2)
+    );
+}
+
+#[test]
+fn a_forced_break_after_text_inside_a_span_starts_a_page() {
+    // The body paragraph's only text is inside a link: the break before the
+    // block is still not the first thing on the page.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let link = doc.append_element(Some(body), "a", Style::default(), None::<&str>);
+    doc.append_text(link, "aa");
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;break-before:page"),
+    );
+    let inner = doc.append_text(block, "bb");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.enable_inline_formatting(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(
+        &mut doc,
+        &cascade,
+        page,
+        crate::layout::test_support::ahem_font_context(),
+    )
+    .expect("pages");
+    assert!(doc.nodes[body].is_ifc_root());
+    assert_eq!(slices.len(), 2);
+    let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .filter(|item| item.node_id == NodeId::new(inner as u64))
+        .map(|item| (item.page_index, item.rect.y))
+        .collect();
+    assert_eq!(rects, [(1, 0.0)]);
+}
+
+#[test]
+fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
+    let run = |ifc: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        doc.append_text(body, "aa");
+        let mut texts = Vec::new();
+        for (inner, tail) in [("bb", " cc"), ("dd", " ee")] {
+            let block = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;break-before:page"),
+            );
+            texts.push(doc.append_text(block, inner));
+            texts.push(doc.append_text(body, tail));
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(
+                crate::layout::test_support::ifc_ahem_fonts(),
+                shodo::limits::Limits::default(),
+            );
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices = layout_pages(
+            &mut doc,
+            &cascade,
+            page,
+            crate::layout::test_support::ahem_font_context(),
+        )
+        .expect("pages");
+        assert_eq!(doc.nodes[body].is_ifc_root(), ifc);
+        let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+        texts
+            .iter()
+            .map(|&text| {
+                fragments
+                    .iter()
+                    .flat_map(|p| p.items.iter())
+                    .find(|item| item.node_id == NodeId::new(text as u64))
+                    .map(|item| (item.page_index, item.rect.y))
+                    .expect("fragment")
+            })
+            .collect::<Vec<_>>()
+    };
+    // Hand-computed: "bb" and " cc" on the second page, "dd" and " ee" on
+    // the third.
+    assert_eq!(run(true), [(1, 0.0), (1, 10.0), (2, 0.0), (2, 10.0)]);
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
+    // "aa", a 20px block holding "bb" that would straddle the 25px page,
+    // then " cc": the block moves to the second page as a unit and " cc"
+    // follows it there (on both paths).
+    let run = |ifc: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
+        );
+        doc.append_text(body, "aa");
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px;orphans:1;widows:1"),
+        );
+        let inner = doc.append_text(block, "bbbb cccc");
+        let tail = doc.append_text(body, " dd");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(
+                crate::layout::test_support::ifc_ahem_fonts(),
+                shodo::limits::Limits::default(),
+            );
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 25.0;
+        let slices = layout_pages(
+            &mut doc,
+            &cascade,
+            page,
+            crate::layout::test_support::ahem_font_context(),
+        )
+        .expect("pages");
+        assert_eq!(doc.nodes[body].is_ifc_root(), ifc);
+        let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+        [inner, tail].map(|text| {
+            fragments
+                .iter()
+                .flat_map(|p| p.items.iter())
+                .find(|item| item.node_id == NodeId::new(text as u64))
+                .map(|item| (item.page_index, item.rect.y))
+                .expect("fragment")
+        })
+    };
+    // Hand-computed: the block's two lines start the second page; " dd"
+    // follows the 20px block.
+    assert_eq!(run(true), [(1, 0.0), (1, 20.0)]);
+    assert_eq!(run(true), run(false));
+}

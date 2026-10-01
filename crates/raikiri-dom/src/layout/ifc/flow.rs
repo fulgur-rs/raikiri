@@ -178,6 +178,8 @@ pub(crate) fn place_lines(
         lines: std::sync::Arc::new(lines),
         beside_floats: false,
         escaping_margin: taffy::CollapsibleMarginSet::ZERO,
+        block_line_starts: Vec::new(),
+        shifts: Vec::new(),
     }
 }
 

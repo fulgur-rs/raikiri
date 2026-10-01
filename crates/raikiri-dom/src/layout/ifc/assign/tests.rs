@@ -211,6 +211,15 @@ fn inline_level_siblings_do_not_disqualify_a_paragraph() {
     }
 }
 
+/// Assert that the paragraph `build` fills under a root styled `css` is laid
+/// out by the engine.
+fn assert_is_a_root(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
+    let mut fixture = block_fixture(css, build);
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
 /// Assert that the paragraph `build` fills under a root styled `css` stays on
 /// the parley path.
 fn assert_stays_on_parley(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
@@ -1046,14 +1055,14 @@ fn with_block_child(css: &'static str) -> impl FnOnce(&mut crate::Document, usiz
 }
 
 #[test]
-fn a_block_child_with_a_forced_page_break_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", with_block_child("display:block;break-before:page"));
-    assert_stays_on_parley("", with_block_child("display:block;break-after:page"));
+fn a_block_child_with_a_forced_page_break_is_still_a_root() {
+    assert_is_a_root("", with_block_child("display:block;break-before:page"));
+    assert_is_a_root("", with_block_child("display:block;break-after:page"));
 }
 
 #[test]
-fn a_box_with_a_named_page_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", with_block_child("display:block;page:chapter"));
+fn a_box_with_a_named_page_is_still_a_root() {
+    assert_is_a_root("", with_block_child("display:block;page:chapter"));
 }
 
 #[test]
@@ -1065,14 +1074,14 @@ fn a_block_child_without_a_page_break_is_still_a_root() {
 }
 
 #[test]
-fn a_page_break_inside_a_box_of_the_paragraph_keeps_it_on_the_parley_path() {
+fn a_page_break_inside_a_box_of_the_paragraph_is_still_a_root() {
     // Pagination breaks at the inner block on its own; the lines after the
     // box would not follow it.
     for css in [
         "display:block;break-before:page",
         "display:block;page:chapter",
     ] {
-        assert_stays_on_parley("", move |doc, root| {
+        assert_is_a_root("", move |doc, root| {
             doc.append_text(root, "aa ");
             let block = doc.append_element(
                 Some(root),

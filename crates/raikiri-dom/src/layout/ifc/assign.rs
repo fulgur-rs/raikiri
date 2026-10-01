@@ -9,7 +9,6 @@ use super::projection::{
 use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
 use crate::Document;
-use crate::layout::page_pipeline::{page_break_is_forced, selected_page_name};
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedLengthPercentageOrAuto;
@@ -185,35 +184,6 @@ fn has_inline_content(
     false
 }
 
-/// An element that pagination may break before or after on its own: one
-/// with a forced page break or a page name.
-fn starts_a_page_of_its_own(cascade: &CascadeResult, id: usize) -> bool {
-    let computed = &cascade.computed[id];
-    page_break_is_forced(computed.break_before)
-        || page_break_is_forced(computed.break_after)
-        || selected_page_name(cascade, id).is_some()
-}
-
-/// The box `idx` of a paragraph, or an element inside it, starts a page of
-/// its own. Pagination would move it alone, and the lines around the box
-/// would not follow. Inline elements of the paragraph are not page break
-/// candidates (break-before and break-after apply to block-level boxes), so
-/// they are not looked at.
-fn box_has_a_page_break(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    let mut stack = vec![idx];
-    while let Some(id) = stack.pop() {
-        let node = &doc.nodes[id];
-        if node.kind() != NodeKind::Element {
-            continue;
-        }
-        if starts_a_page_of_its_own(cascade, id) {
-            return true;
-        }
-        stack.extend(node.children.iter().copied());
-    }
-    false
-}
-
 /// A paragraph the walk accepted, waiting to be shaped.
 struct Candidate {
     idx: usize,
@@ -345,18 +315,6 @@ fn collect_candidates(
                 continue;
             }
         };
-        if projected
-            .boxes
-            .iter()
-            .any(|b| box_has_a_page_break(doc, cascade, b.node))
-        {
-            refuse(
-                engine_only,
-                idx,
-                "a box with a forced page break inside a paragraph is not laid out",
-            )?;
-            continue;
-        }
         let mut stack = doc.nodes[idx].children.clone();
         while let Some(id) = stack.pop() {
             if projected.boxes.iter().any(|b| b.node == id) {

@@ -169,6 +169,16 @@ pub(crate) fn draw_ifc_lines(
         }
         None => line_offsets.fill(Some((0.0, 0.0))),
     }
+    // Lines that pagination moved down with a block before them.
+    let shifts = document
+        .get_node(root_id)
+        .map(|n| n.ifc_line_shifts())
+        .unwrap_or_default();
+    for (offset, shift) in line_offsets.iter_mut().zip(shifts) {
+        if let Some((_, dy)) = offset {
+            *dy += shift;
+        }
+    }
     let base = position;
     let size = document
         .get_node(root_id)

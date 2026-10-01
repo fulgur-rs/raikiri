@@ -86,6 +86,8 @@ pub(crate) fn layout_with_boxes_in(
             height: 0.0,
             beside_floats: false,
             escaping_margin: CollapsibleMarginSet::ZERO,
+            block_line_starts: Vec::new(),
+            shifts: Vec::new(),
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -165,6 +167,7 @@ fn run_boxes(
     // full before a line (margins never collapse with a line box; CSS 2.1
     // 8.3.1).
     let mut pending = CollapsibleMarginSet::ZERO;
+    let mut block_line_starts = Vec::new();
 
     loop {
         calls += 1;
@@ -331,6 +334,7 @@ fn run_boxes(
                     ceiling =
                         ceiling.max(commit_float(tree, ctx, float, line_y, geometry, perform));
                 }
+                block_line_starts.push((node.0 as usize, lines.len()));
                 let block =
                     layout_block_child(tree, ctx, node.0 as usize, y, pending, geometry, perform);
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
@@ -393,6 +397,8 @@ fn run_boxes(
         lines: std::sync::Arc::new(lines),
         beside_floats: beside,
         escaping_margin,
+        block_line_starts,
+        shifts: Vec::new(),
     }
 }
 

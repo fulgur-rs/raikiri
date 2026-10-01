@@ -57,6 +57,33 @@ pub(crate) struct IfcLines {
     /// Bottom margins of a last block child that collapse through the root's
     /// bottom edge with the root's own (CSS 2.1 8.3.1); not in `height`.
     pub(crate) escaping_margin: taffy::CollapsibleMarginSet,
+    /// Each block child of the root with the index of the first line after
+    /// it.
+    pub(crate) block_line_starts: Vec<(usize, usize)>,
+    /// Block offsets added to the lines by pagination: `(first line, delta)`
+    /// moves that line and every later one down by `delta`, when a box of the
+    /// paragraph was moved to a later page.
+    pub(crate) shifts: Vec<(usize, f32)>,
+}
+
+impl IfcLines {
+    /// How far pagination moved line `index` down.
+    pub(crate) fn shift_of(&self, index: usize) -> f32 {
+        self.shifts
+            .iter()
+            .filter(|(first, _)| *first <= index)
+            .map(|(_, delta)| delta)
+            .sum()
+    }
+
+    /// The block offset of line `index` from the content-box top, with the
+    /// pagination shift.
+    pub(crate) fn line_top(&self, index: usize) -> f32 {
+        self.lines
+            .get(index)
+            .map_or(0.0, |line| line.block_offset())
+            + self.shift_of(index)
+    }
 }
 
 impl IfcRoot {
@@ -188,6 +215,7 @@ impl fmt::Debug for IfcLines {
             .field("height", &self.height)
             .field("beside_floats", &self.beside_floats)
             .field("escaping_margin", &self.escaping_margin.resolve())
+            .field("shifts", &self.shifts)
             .finish()
     }
 }

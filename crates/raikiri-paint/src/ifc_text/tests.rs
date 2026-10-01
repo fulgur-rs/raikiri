@@ -1847,3 +1847,40 @@ fn a_raised_inline_block_inside_a_span_is_painted_where_the_engine_placed_it() {
     ys.sort_unstable();
     assert_eq!(ys, [px(8), px(8), px(18), px(18)]);
 }
+
+#[test]
+fn lines_after_a_block_moved_to_the_next_page_are_painted_there() {
+    // "aa", a block with `break-before: page` holding "bb", then " cc": the
+    // block starts the second 50px page and the line after it follows.
+    let (mut doc, cascade, root) = paragraph("width:100px", |doc, root| {
+        doc.append_text(root, "aa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;break-before:page"),
+        );
+        doc.append_text(block, "bb");
+        doc.append_text(root, " cc");
+    });
+    let dir = std::path::Path::new(FONT_DIR);
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    raikiri_dom::layout_pages(&mut doc, &cascade, page, fonts).expect("pages");
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0);
+    // Glyphs above the page (the first page's "aa") are outside it.
+    let ys: std::collections::BTreeSet<i64> = ink(&scene)
+        .iter()
+        .map(|g| g.2)
+        .filter(|y| (0..px(50)).contains(y))
+        .collect();
+    // Hand-computed: "bb" on the second page's first line (baseline 8) and
+    // "cc" on its second (baseline 18).
+    assert_eq!(ys.into_iter().collect::<Vec<_>>(), [px(8), px(18)]);
+}

@@ -1285,6 +1285,80 @@ pub fn layout_pages_with_page_geometry(
         let delta = desired_y - actual_y;
         if delta.is_finite() {
             document.nodes[node_id].unrounded_layout.location.y += delta;
+            follow_moved_ifc_block(document, node_id, delta);
+        }
+    }
+
+    /// The lines of the text `text` of the paragraph `root` start a later
+    /// page: they, the lines after them and the paragraph's boxes below their
+    /// top move down by `delta`.
+    fn follow_moved_ifc_text(document: &mut Document, root: usize, text: usize, delta: f32) {
+        if delta == 0.0 || !delta.is_finite() {
+            return;
+        }
+        let Some(first) = document
+            .ifc_text_lines(text)
+            .and_then(|owned| owned.lines.first().copied())
+        else {
+            return;
+        };
+        let layout = document.nodes[root].unrounded_layout;
+        let old_top = layout.border.top + layout.padding.top + first.top;
+        let Some(ifc) = document.nodes[root].ifc.as_mut() else {
+            return;
+        };
+        let Some(lines) = ifc.lines.as_mut() else {
+            return;
+        };
+        lines.shifts.push((first.line, delta));
+        let boxes: Vec<usize> = ifc.boxes.iter().map(|b| b.node).collect();
+        for b in boxes {
+            let location = &mut document.nodes[b].unrounded_layout.location;
+            if location.y >= old_top - 0.01 {
+                location.y += delta;
+            }
+        }
+    }
+
+    /// A block child of a paragraph laid out by the inline engine was moved
+    /// by `delta` (to a later page): the lines after it and the paragraph's
+    /// boxes below it move with it, as the content that follows a block
+    /// follows it in the block's formatting context. Lines and boxes above
+    /// it stay where they are.
+    fn follow_moved_ifc_block(document: &mut Document, node_id: usize, delta: f32) {
+        if delta == 0.0 || !delta.is_finite() || document.nodes[node_id].in_ifc_subtree() {
+            return;
+        }
+        let Some(root) = document.layout_parent_of(node_id) else {
+            return;
+        };
+        let old_bottom = document.nodes[node_id].unrounded_layout.location.y - delta
+            + document.nodes[node_id].unrounded_layout.size.height;
+        let Some(ifc) = document.nodes[root].ifc.as_mut() else {
+            return;
+        };
+        let Some(lines) = ifc.lines.as_mut() else {
+            return;
+        };
+        let Some(&(_, first_after)) = lines
+            .block_line_starts
+            .iter()
+            .find(|(block, _)| *block == node_id)
+        else {
+            return;
+        };
+        lines.shifts.push((first_after, delta));
+        let boxes: Vec<usize> = ifc
+            .boxes
+            .iter()
+            .map(|b| b.node)
+            .filter(|&b| b != node_id)
+            .collect();
+        for b in boxes {
+            let location = &mut document.nodes[b].unrounded_layout.location;
+            if location.y >= old_bottom - 0.01 {
+                location.y += delta;
+            }
         }
     }
 
@@ -1434,11 +1508,11 @@ pub fn layout_pages_with_page_geometry(
                 {
                     // A text node of an ifc paragraph has no layout of its own:
                     // it stands for the lines it owns, measured from the root's
-                    // content box. Only a direct child of the root gets here
-                    // (inline elements below the root return before their
-                    // children), so `parent_abs_y` is the root's border-box y.
+                    // content box. The inline elements between the root and
+                    // the text pass the root's border-box y down unchanged, so
+                    // `parent_abs_y` is the root's.
                     let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
-                        Some(owned) if document.parent_of(node_id) == Some(owned.root) => {
+                        Some(owned) => {
                             let root_layout = document.nodes[owned.root].unrounded_layout;
                             let first_top = owned.lines.first().map_or(0.0, |l| l.top);
                             let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
@@ -1481,13 +1555,17 @@ pub fn layout_pages_with_page_geometry(
                 }
                 // An element inside a paragraph laid out by the inline engine
                 // moves with the paragraph's lines; breaking at it on its own
-                // would leave the lines where they are. The boxes inside it
-                // are located from the paragraph's root, like the root's own
-                // children, so they are collected as if they were. The flag
-                // is set only when the inline engine is switched on.
+                // would leave the lines where they are. Its text stands for
+                // lines of the root and the boxes inside it are located from
+                // the root, like the root's own children, so both are
+                // collected as if they were. The flag is set only when the
+                // inline engine is switched on.
                 if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
                     for &child_id in &node.children {
-                        if document.nodes[child_id].kind() == NodeKind::Element {
+                        if matches!(
+                            document.nodes[child_id].kind(),
+                            NodeKind::Element | NodeKind::Text
+                        ) {
                             collect_candidates(
                                 document,
                                 cascade,
@@ -1902,6 +1980,13 @@ pub fn layout_pages_with_page_geometry(
                         // root, so the root carries the movement.
                         let moved = ifc_root.map_or(node_id, |(root, _)| root);
                         document.nodes[moved].unrounded_layout.location.y += node_delta;
+                        // A later text of a paragraph whose root already
+                        // moved: its lines, and the ones after, move alone.
+                        if ifc_root.is_none()
+                            && let Some((root, _)) = candidate.ifc_root
+                        {
+                            follow_moved_ifc_text(document, root, node_id, node_delta);
+                        }
                         flow_shift += shift_delta;
                         effective_y += shift_delta;
                     }
@@ -2139,6 +2224,7 @@ pub fn layout_pages_with_page_geometry(
                     });
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
+                    follow_moved_ifc_block(document, node_id, node_delta);
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
