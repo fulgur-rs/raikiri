@@ -250,8 +250,9 @@ fn an_rtl_paragraph_is_an_ifc_root() {
 }
 
 #[test]
-fn an_rtl_paragraph_with_a_box_stays_on_the_parley_path() {
-    // Float, atomic and block-child placement is written for left-to-right lines.
+fn an_rtl_paragraph_with_a_box_is_laid_out_by_the_engine() {
+    // An accepted degradation: boxes in a right-to-left paragraph are placed
+    // where the engine puts them, not checked against the parley path.
     let cases: [(&str, Build); 3] = [
         ("float", |doc, root| {
             doc.append_text(root, "aa ");
@@ -273,12 +274,12 @@ fn an_rtl_paragraph_with_a_box_stays_on_the_parley_path() {
         let mut fixture = block_fixture("direction:rtl", build);
         enable(&mut fixture);
         assign(&mut fixture);
-        assert!(!is_root(&fixture, fixture.root), "{name}");
+        assert!(is_root(&fixture, fixture.root), "{name}");
     }
 }
 
 #[test]
-fn a_box_in_a_paragraph_with_rtl_characters_stays_on_the_parley_path() {
+fn a_box_in_a_paragraph_with_rtl_characters_is_laid_out_by_the_engine() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "\u{05d0} ");
         let b = span(doc, root, "display:inline-block;width:20px;height:10px");
@@ -286,7 +287,7 @@ fn a_box_in_a_paragraph_with_rtl_characters_stays_on_the_parley_path() {
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -318,9 +319,10 @@ fn right_to_left_content_inside_a_box_does_not_make_the_paragraph_rtl() {
 }
 
 #[test]
-fn an_rtl_paragraph_with_a_unicode_bidi_value_stays_on_the_parley_path() {
-    // The parley path does not read `unicode-bidi`, so its order differs from
-    // the inline engine's for every value but `normal`.
+fn an_rtl_paragraph_with_a_unicode_bidi_value_is_laid_out_by_the_engine() {
+    // An accepted difference: the parley path does not read `unicode-bidi`;
+    // the engine orders the text by it (UAX #9), as CSS Writing Modes 3
+    // requires.
     for value in [
         "bidi-override",
         "isolate-override",
@@ -329,9 +331,9 @@ fn an_rtl_paragraph_with_a_unicode_bidi_value_stays_on_the_parley_path() {
         "plaintext",
     ] {
         let css = format!("direction:rtl;unicode-bidi:{value}");
-        assert_stays_on_parley(&css, text_only("aa"));
+        assert_is_root(&css, text_only("aa"));
         // On a descendant of a right-to-left paragraph too.
-        assert_stays_on_parley("direction:rtl", |doc, root| {
+        assert_is_root("direction:rtl", |doc, root| {
             doc.append_text(root, "aa ");
             let inner = span(doc, root, &format!("display:inline;unicode-bidi:{value}"));
             doc.append_text(inner, "bb");
@@ -842,9 +844,10 @@ fn a_shifted_inline_inside_a_float_does_not_keep_a_decorated_paragraph_off() {
 }
 
 #[test]
-fn a_paragraph_with_a_float_child_beside_an_outer_float_stays_on_the_parley_path() {
-    // An outer float can keep the paragraph's own floats lower than the line
-    // they are anchored in, which the line layout cannot see.
+fn a_paragraph_with_a_float_child_beside_an_outer_float_is_laid_out_by_the_engine() {
+    // A documented approximation: an outer float can keep the paragraph's
+    // own floats lower than the line they are anchored in, which the line
+    // layout does not see.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
         span(doc, root, "display:block;float:left;width:30px;height:20px");
@@ -852,7 +855,7 @@ fn a_paragraph_with_a_float_child_beside_an_outer_float_stays_on_the_parley_path
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -1046,14 +1049,18 @@ fn with_block_child(css: &'static str) -> impl FnOnce(&mut crate::Document, usiz
 }
 
 #[test]
-fn a_block_child_with_a_forced_page_break_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", with_block_child("display:block;break-before:page"));
-    assert_stays_on_parley("", with_block_child("display:block;break-after:page"));
+fn a_block_child_with_a_forced_page_break_is_laid_out_by_the_engine() {
+    // An accepted degradation: pagination moves the box alone and the lines
+    // after it do not follow.
+    assert_is_root("", with_block_child("display:block;break-before:page"));
+    assert_is_root("", with_block_child("display:block;break-after:page"));
 }
 
 #[test]
-fn a_box_with_a_named_page_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", with_block_child("display:block;page:chapter"));
+fn a_box_with_a_named_page_is_laid_out_by_the_engine() {
+    // An accepted degradation: pagination moves the box alone and the lines
+    // after it do not follow.
+    assert_is_root("", with_block_child("display:block;page:chapter"));
 }
 
 #[test]
@@ -1065,14 +1072,14 @@ fn a_block_child_without_a_page_break_is_still_a_root() {
 }
 
 #[test]
-fn a_page_break_inside_a_box_of_the_paragraph_keeps_it_on_the_parley_path() {
-    // Pagination breaks at the inner block on its own; the lines after the
-    // box would not follow it.
+fn a_page_break_inside_a_box_of_the_paragraph_is_laid_out_by_the_engine() {
+    // An accepted degradation: pagination breaks at the inner block on its
+    // own and the lines after the box do not follow it.
     for css in [
         "display:block;break-before:page",
         "display:block;page:chapter",
     ] {
-        assert_stays_on_parley("", move |doc, root| {
+        assert_is_root("", move |doc, root| {
             doc.append_text(root, "aa ");
             let block = doc.append_element(
                 Some(root),

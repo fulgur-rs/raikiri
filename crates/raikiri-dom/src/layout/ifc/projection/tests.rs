@@ -177,7 +177,6 @@ fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
 #[test]
 fn atomics_that_are_not_placed_yet_stay_unsupported() {
     for (tag, css) in [
-        ("span", "display:inline-table"),
         ("span", "display:inline-block;position:relative"),
         (
             "span",
@@ -453,7 +452,6 @@ fn a_block_child_with_vertical_margins_is_a_box_of_the_paragraph() {
 #[test]
 fn blocks_that_are_not_placed_yet_stay_unsupported() {
     for (name, css, nested) in [
-        ("auto side margin", "display:block;margin-left:auto", false),
         (
             "positioned",
             "display:block;position:relative;top:3px",
@@ -638,7 +636,9 @@ fn a_contents_element_with_generated_content_is_rejected() {
 }
 
 #[test]
-fn a_contents_element_that_is_floated_or_positioned_is_rejected() {
+fn a_contents_element_that_is_floated_or_positioned_is_still_transparent() {
+    // `float` and `position` apply to a box; a contents element has none, so
+    // its children are part of the paragraph as for any contents element.
     for css in [
         "display:contents;float:left",
         "display:contents;position:absolute",
@@ -648,11 +648,9 @@ fn a_contents_element_that_is_floated_or_positioned_is_rejected() {
             let wrapper = span(doc, root, css);
             doc.append_text(wrapper, "bb");
         });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
+        let projected = project(&fixture).expect(css);
+        assert!(projected.boxes.is_empty(), "{css}");
+        assert_eq!(line_texts(&projected, 500.0), ["aabb"], "{css}");
     }
 }
 
@@ -801,4 +799,24 @@ fn a_text_node_projects_as_a_paragraph_of_its_own() {
         ),
         Err(IfcError::InvalidNode(_))
     ));
+}
+
+#[test]
+fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
+    for (css, kind) in [
+        ("display:inline-table", Some(IfcBoxKind::Atomic)),
+        ("display:table-row", Some(IfcBoxKind::Block)),
+        ("display:table-cell", Some(IfcBoxKind::Block)),
+        ("display:table-caption", Some(IfcBoxKind::Block)),
+        ("display:table-row-group", Some(IfcBoxKind::Block)),
+        ("display:table-column", None),
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let child = span(doc, root, css);
+            doc.append_text(child, "bb");
+        });
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.first().map(|b| b.kind), kind, "{css}");
+    }
 }

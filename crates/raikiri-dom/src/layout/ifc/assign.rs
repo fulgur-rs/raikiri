@@ -8,12 +8,11 @@ use super::projection::{
 use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
 use crate::Document;
-use crate::layout::page_pipeline::{page_break_is_forced, selected_page_name};
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
-use raikiri_style::property::{ColumnCountValue, DisplayValue, FloatValue};
+use raikiri_style::property::{ColumnCountValue, DisplayValue};
 use raikiri_style::property::{PositionValue, TextDecorationLine, VerticalAlign};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
@@ -103,28 +102,6 @@ fn is_multicol(cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
     !matches!(cv.column_count, ColumnCountValue::Auto)
         || !matches!(cv.column_width, ComputedColumnWidth::Auto)
-}
-
-/// Whether a float next to the paragraph, or next to any of its ancestors,
-/// can reach its lines. The paragraph's own floats are placed against the
-/// lines they are anchored in; an outer float can hold them lower than that
-/// line (a float is never placed above an earlier one), which the line layout
-/// does not see.
-fn has_float_beside(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    let mut node = idx;
-    while let Some(parent) = doc.parent_of(node) {
-        let floats_beside = doc.nodes[parent].children.iter().any(|&sibling| {
-            sibling != node
-                && doc.nodes[sibling].is_in_document()
-                && doc.nodes[sibling].kind() == NodeKind::Element
-                && cascade.computed[sibling].float != FloatValue::None
-        });
-        if floats_beside {
-            return true;
-        }
-        node = parent;
-    }
-    false
 }
 
 /// Whether the paragraph sits inside a fixed box without an authored width.
@@ -271,35 +248,6 @@ fn has_inline_content(
     false
 }
 
-/// An element that pagination may break before or after on its own: one
-/// with a forced page break or a page name.
-fn starts_a_page_of_its_own(cascade: &CascadeResult, id: usize) -> bool {
-    let computed = &cascade.computed[id];
-    page_break_is_forced(computed.break_before)
-        || page_break_is_forced(computed.break_after)
-        || selected_page_name(cascade, id).is_some()
-}
-
-/// The box `idx` of a paragraph, or an element inside it, starts a page of
-/// its own. Pagination would move it alone, and the lines around the box
-/// would not follow. Inline elements of the paragraph are not page break
-/// candidates (break-before and break-after apply to block-level boxes), so
-/// they are not looked at.
-fn box_has_a_page_break(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    let mut stack = vec![idx];
-    while let Some(id) = stack.pop() {
-        let node = &doc.nodes[id];
-        if node.kind() != NodeKind::Element {
-            continue;
-        }
-        if starts_a_page_of_its_own(cascade, id) {
-            return true;
-        }
-        stack.extend(node.children.iter().copied());
-    }
-    false
-}
-
 /// A paragraph the walk accepted, waiting to be shaped.
 struct Candidate {
     idx: usize,
@@ -442,16 +390,6 @@ fn collect_candidates(
         };
         let refusal = if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
             Some("a block child under a decoration is not laid out")
-        } else if projected
-            .boxes
-            .iter()
-            .any(|b| box_has_a_page_break(doc, cascade, b.node))
-        {
-            Some("a box with a forced page break inside a paragraph is not laid out")
-        } else if projected.boxes.iter().any(|b| b.kind == IfcBoxKind::Float)
-            && has_float_beside(doc, cascade, idx)
-        {
-            Some("a paragraph with floats beside an outer float is not laid out")
         } else {
             None
         };

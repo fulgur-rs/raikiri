@@ -587,14 +587,24 @@ fn layout_block_child(
     perform: bool,
 ) -> BlockChild {
     use taffy::LayoutBlockContainer;
-    let margin = resolved_margins(tree, node, geometry.width);
+    let mut margin = resolved_margins(tree, node, geometry.width);
+    let stretch = (geometry.width - margin.left - margin.right).max(0.0);
+    let width = used_block_width(tree, node, geometry.width).unwrap_or(stretch);
+    let width = clamp_block_width(tree, node, geometry.width, width);
+    // `auto` side margins share the room the block leaves (CSS 2.1 10.3.3),
+    // as in taffy's block algorithm: both auto centre the block, one auto
+    // takes all of it.
+    let style_margin = tree.nodes[node].style.margin;
+    let free = (geometry.width - width - margin.left - margin.right).max(0.0);
+    match (style_margin.left.is_auto(), style_margin.right.is_auto()) {
+        (true, true) => margin.left = free / 2.0,
+        (true, false) => margin.left = free,
+        _ => {}
+    }
     // Placed where its own top margin alone puts it. Margins that leave the
     // block through its first child are known only after it is laid out; they
     // move its box below, not the floats it placed inside.
     let guess = y + pending.collapse_with_margin(margin.top).resolve();
-    let stretch = (geometry.width - margin.left - margin.right).max(0.0);
-    let width = used_block_width(tree, node, geometry.width).unwrap_or(stretch);
-    let width = clamp_block_width(tree, node, geometry.width, width);
     // The context measures from the root's border box; the insets are added
     // to the root's own. The right inset follows the used width, as in
     // taffy's own in-flow loop.

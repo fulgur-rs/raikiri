@@ -6053,3 +6053,75 @@ fn vertical_align_middle_centres_the_box_on_half_the_parents_x_height() {
         10.0
     );
 }
+
+#[test]
+fn a_block_child_with_auto_side_margins_is_centred() {
+    // CSS 2.1 10.3.3: a 100px block in a 200px paragraph with both side
+    // margins auto takes 50px on each side; with only the left one auto it
+    // goes to the right edge.
+    let x = |css: &str, ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;width:100px;{css}")),
+        );
+        doc.append_text(block, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+        doc.nodes[block].unrounded_layout.location.x
+    };
+    assert_eq!(x("margin:0 auto", true), 50.0);
+    assert_eq!(x("margin-left:auto", true), 100.0);
+    assert_eq!(x("margin-left:auto;margin-right:20px", true), 80.0);
+    for css in [
+        "margin:0 auto",
+        "margin-left:auto",
+        "margin-left:auto;margin-right:20px",
+    ] {
+        assert_eq!(x(css, true), x(css, false), "{css}");
+    }
+}
+
+#[test]
+fn an_inline_table_sits_on_the_line_like_an_inline_block() {
+    // "aa" then an inline-table holding a cell with "bb": a 20px atomic at
+    // x = 20 on the first line (CSS 2.1 17.4: an inline-level table).
+    let place = |ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+        let table = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-table"),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "span",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "span",
+            Style::default(),
+            Some("display:table-cell"),
+        );
+        doc.append_text(cell, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let l = doc.nodes[table].unrounded_layout;
+        (l.location.x, l.size.width, l.size.height)
+    };
+    assert_eq!(place(true), (20.0, 20.0, 10.0));
+    // The parley path lays the inline-table out by the table algorithm as a
+    // box at the start of the paragraph, over "aa".
+    assert_eq!(place(false), (0.0, 20.0, 10.0));
+}

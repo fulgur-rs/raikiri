@@ -16,12 +16,9 @@ use super::style;
 use crate::Document;
 use raikiri_style::property::{
     ClearValue, ContentComponent, Direction, DisplayValue, FloatValue, OverflowValue,
-    PositionValue, UnicodeBidi, WhiteSpaceCollapse,
+    PositionValue, WhiteSpaceCollapse,
 };
-use raikiri_style::{
-    CascadeResult, ComputedLengthPercentageOrAuto, ComputedTextIndent, ComputedValues, PseudoElem,
-    StyleNodeId,
-};
+use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
@@ -155,9 +152,13 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     if cv.float != FloatValue::None {
         return Some(IfcBoxKind::Float);
     }
+    // An inline-level table is an atomic inline too (CSS 2.1 17.4).
     let inline_block = matches!(
         cv.display,
-        DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
+        DisplayValue::InlineBlock
+            | DisplayValue::InlineFlex
+            | DisplayValue::InlineGrid
+            | DisplayValue::InlineTable
     );
     let tag = node.tag_name().unwrap_or("");
     let replaced = cv.display == DisplayValue::Inline
@@ -171,6 +172,21 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     // A block-level image or SVG is sized by its replaced-element path, which
     // this path does not reproduce; it stays unsupported.
     if cv.display == DisplayValue::Block && !ATOMIC_TAGS.contains(&tag) {
+        return Some(IfcBoxKind::Block);
+    }
+    // A table-internal box directly in a paragraph would be wrapped in an
+    // anonymous table (CSS 2.1 17.2.1), which raikiri does not create; it is
+    // laid out as a block between the lines, as the block algorithm lays it
+    // out on the parley path.
+    if matches!(
+        cv.display,
+        DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableRow
+            | DisplayValue::TableCell
+            | DisplayValue::TableCaption
+    ) {
         return Some(IfcBoxKind::Block);
     }
     None
@@ -215,13 +231,6 @@ fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     if cv.position != PositionValue::Static && !style::is_inert_relative(cv) {
         return Err(unsupported("positioned blocks are not placed yet"));
     }
-    if matches!(cv.margin.left, ComputedLengthPercentageOrAuto::Auto)
-        || matches!(cv.margin.right, ComputedLengthPercentageOrAuto::Auto)
-    {
-        return Err(unsupported(
-            "auto side margins of a block child are not resolved yet",
-        ));
-    }
     if cv.overflow.x != OverflowValue::Visible || cv.overflow.y != OverflowValue::Visible {
         return Err(unsupported("a block child that clips is not placed yet"));
     }
@@ -247,49 +256,6 @@ pub(crate) fn has_rtl_char(text: &str) -> bool {
                 | 0x2066..=0x2069
         )
     })
-}
-
-/// Right-to-left content of a paragraph, outside its boxes (a box lays out
-/// its own content).
-#[derive(Clone, Copy, Default)]
-struct BidiContent {
-    /// The root or an inline element has `direction: rtl`, or some text holds
-    /// a right-to-left character or an explicit bidi control.
-    rtl: bool,
-    /// The root or an inline element has a `unicode-bidi` value other than
-    /// `normal`.
-    unicode_bidi: bool,
-}
-
-fn bidi_content(doc: &Document, cascade: &CascadeResult, root: usize) -> BidiContent {
-    let mut found = BidiContent::default();
-    let mut stack = vec![root];
-    while let Some(id) = stack.pop() {
-        let Some(node) = doc.get_node(id) else {
-            continue;
-        };
-        if !node.is_in_document() {
-            continue;
-        }
-        match node.kind() {
-            NodeKind::Text => {
-                found.rtl |= node.text_content().is_some_and(has_rtl_char);
-            }
-            NodeKind::Element => {
-                if id != root && box_kind(cascade, doc, id).is_some() {
-                    continue;
-                }
-                let Some(cv) = cascade.computed.get(id) else {
-                    continue;
-                };
-                found.rtl |= cv.direction != Direction::Ltr;
-                found.unicode_bidi |= cv.unicode_bidi != UnicodeBidi::Normal;
-                stack.extend(node.children.iter().copied());
-            }
-            _ => {}
-        }
-    }
-    found
 }
 
 enum Step {
@@ -406,13 +372,6 @@ pub(crate) fn project_ifc_text_builder(
     let content = node.text_content().ok_or(IfcError::InvalidNode(text))?;
     // As for an element root: with right-to-left content, the parley path
     // orders the text without reading `unicode-bidi`.
-    let rtl = has_rtl_char(content) || cv.direction != Direction::Ltr;
-    if rtl && cv.unicode_bidi != UnicodeBidi::Normal {
-        return Err(IfcError::Unsupported {
-            node: text,
-            reason: "unicode-bidi is not read by the parley path, which orders right-to-left text differently",
-        });
-    }
     let (options, indent) = style::line_options(cv, text, fonts)?;
     let root_style = styled(doc, cascade, cv, text, fonts)?;
     let paragraph_style = style::paragraph_style(cv, text, root_style)?;
@@ -476,17 +435,6 @@ pub(crate) fn project_ifc_builder(
         });
     }
     reject_generated_content(cascade, root)?;
-    let bidi = bidi_content(doc, cascade, root);
-    // Without right-to-left content nothing is reordered, so `unicode-bidi`
-    // changes nothing. With it, the parley path orders the text without
-    // reading `unicode-bidi` and so differs for every other value.
-    if bidi.rtl && bidi.unicode_bidi {
-        return Err(IfcError::Unsupported {
-            node: root,
-            reason: "unicode-bidi is not read by the parley path, which orders right-to-left text differently",
-        });
-    }
-
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
     let (options, indent) = style::line_options(root_cv, root, fonts)?;
@@ -539,29 +487,23 @@ pub(crate) fn project_ifc_builder(
                 let cv = cascade.computed.get(id).ok_or(IfcError::InvalidNode(id))?;
                 // `<style>`, `<script>` and friends render nothing even when
                 // an author rule gives them a display type.
-                if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
+                // Columns and column groups render nothing of their own
+                // outside a table either.
+                if matches!(
+                    cv.display,
+                    DisplayValue::None | DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+                ) || node.is_non_rendered_html_element()
+                {
                     continue;
                 }
                 let unsupported = |reason: &'static str| IfcError::Unsupported { node: id, reason };
                 let tag = node.tag_name().unwrap_or_default();
-                if bidi.rtl && box_kind(cascade, doc, id).is_some() {
-                    return Err(unsupported(
-                        "boxes in right-to-left paragraphs are not placed yet",
-                    ));
-                }
                 if cv.display == DisplayValue::Contents {
                     // A `display: contents` element generates no box: its
                     // children take part in the paragraph as if they were the
-                    // element's siblings. Anything that would give the element
-                    // a box of its own is left to the parley path.
+                    // element's siblings. `float` and `position` apply to a
+                    // box, so they change nothing here (CSS Display 3, 2.5).
                     reject_generated_content(cascade, id)?;
-                    if cv.float != FloatValue::None
-                        || !matches!(cv.position, PositionValue::Static | PositionValue::Relative)
-                    {
-                        return Err(unsupported(
-                            "a display: contents element that is floated or positioned is not projected",
-                        ));
-                    }
                     // Its children count as nested: a box among them would sit
                     // below an element of the paragraph's subtree, which the
                     // passes that skip that subtree never reach.
