@@ -15,8 +15,10 @@ use raikiri_style::{
 
 /// Marks a shodo node id that stands for a pseudo-element: the inline engine
 /// lays the text of `::before` and `::after` out under ids of their own,
-/// outside the range of document node ids.
-const GENERATED_ID_BIT: usize = 1 << 62;
+/// outside the range of document node ids. The bit is the second highest of
+/// `usize`, so the ids round-trip through `usize` on every target (a document
+/// would need more than `usize::MAX / 8` nodes to reach it).
+const GENERATED_ID_BIT: usize = 1 << (usize::BITS - 2);
 
 /// The node id the inline engine gives the `pseudo` of `element`.
 pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
@@ -321,5 +323,22 @@ pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleR
         CounterStyle::Named(name) => resolve_custom_counter(registry, name.as_str(), value)
             .unwrap_or_else(|| value.to_string()),
         _ => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_ids_round_trip_and_stay_above_document_ids() {
+        for element in [0, 1, 42, usize::MAX >> 3] {
+            for pseudo in [PseudoElem::Before, PseudoElem::After] {
+                let id = generated_node_id(element, pseudo);
+                assert!(id > usize::MAX >> 3, "{element} {pseudo:?}");
+                assert_eq!(generated_origin(id), Some((element, pseudo)));
+            }
+        }
+        assert_eq!(generated_origin(usize::MAX >> 3), None);
     }
 }
