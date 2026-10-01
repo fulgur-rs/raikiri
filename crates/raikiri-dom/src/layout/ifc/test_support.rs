@@ -1,0 +1,56 @@
+//! Shared fixtures for the inline path's unit tests.
+
+use super::font::{BundledFace, bundled_collection};
+use crate::Document;
+use raikiri_style::{CascadeResult, build_rule_tree, cascade};
+use shodo::font::FontCollection;
+use shodo::limits::Limits;
+use taffy::Style;
+
+pub(super) const AHEM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/text-autospace/Ahem.ttf"
+));
+
+/// A cascaded document with one block under `<html><body>`.
+pub(super) struct Fixture {
+    pub(super) doc: Document,
+    pub(super) cascade: CascadeResult,
+    pub(super) root: usize,
+}
+
+/// Build `<div style="display:block;font-family:Ahem;font-size:10px;{extra}">`,
+/// let `build` add its children, and cascade the result.
+pub(super) fn block_fixture(
+    extra_style: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> Fixture {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let style = format!("display:block;font-family:Ahem;font-size:10px;{extra_style}");
+    let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
+    build(&mut doc, root);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    Fixture { doc, cascade, root }
+}
+
+/// `<span style="{style}">` under `parent`.
+pub(super) fn span(doc: &mut Document, parent: usize, style: &str) -> usize {
+    doc.append_element(Some(parent), "span", Style::default(), Some(style))
+}
+
+/// A shared layer holding only Ahem: every glyph is exactly one em wide.
+pub(super) fn ahem_fonts() -> FontCollection {
+    bundled_collection(
+        &Limits::default(),
+        vec![BundledFace {
+            family: "Ahem".to_owned(),
+            bytes: AHEM.to_vec(),
+        }],
+        false,
+    )
+    .expect("bundled Ahem")
+}

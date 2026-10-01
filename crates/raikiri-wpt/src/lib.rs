@@ -4,6 +4,7 @@
 //! dispatch, and the blitz oracle delta. See `reftest`, `runner`, and
 //! `oracle` modules for the execution path (spec §12.4, §12.9, §12.10).
 
+pub mod baseline_report;
 pub mod expectations;
 mod http_resources;
 pub mod lint;
