@@ -621,3 +621,46 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
         ]
     );
 }
+
+#[test]
+fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one() {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    let mut moved = Vec::new();
+    for ifc in [false, true] {
+        let (mut doc, _cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
+        let body = doc.parent_of(root).expect("body");
+        let spacer = doc.append_element(
+            Some(body),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:25px"),
+        );
+        doc.nodes[body].children.retain(|&c| c != spacer);
+        doc.nodes[body].children.insert(0, spacer);
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 40.0;
+        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let text = doc.nodes[root].children[0];
+        let lines_per_page: Vec<(u32, usize)> = text_fragments(&doc, &cascade, page, &slices, text)
+            .iter()
+            .filter_map(|(page_index, range)| {
+                range.map(|r| (*page_index, (r.end - r.start) as usize))
+            })
+            .collect();
+        moved.push(lines_per_page);
+    }
+    assert_eq!(
+        moved[0],
+        [(1, 3)],
+        "orphans:2 moves the whole paragraph to page 2 (parley oracle)"
+    );
+    assert_eq!(moved[1], moved[0]);
+}

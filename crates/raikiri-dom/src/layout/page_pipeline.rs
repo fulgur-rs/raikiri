@@ -433,6 +433,31 @@ pub(crate) fn resolve_page_fragment_geometry(
     )
 }
 
+/// Block-start and block-end edges of the lines of a text node, from its own
+/// block-start. A text node of an ifc paragraph has no layout of its own, so
+/// its lines come from the paragraph root, measured from its first line.
+fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
+    if let Some(owned) = document.ifc_text_lines(node_id) {
+        let first_top = owned.lines.first().map_or(0.0, |l| l.top);
+        return Some(
+            owned
+                .lines
+                .iter()
+                .map(|l| (l.top - first_top, l.bottom - first_top))
+                .collect(),
+        );
+    }
+    document.nodes[node_id].text_layout().map(|layout| {
+        layout
+            .lines()
+            .map(|line| {
+                let metrics = line.metrics();
+                (metrics.block_min_coord, metrics.block_max_coord)
+            })
+            .collect()
+    })
+}
+
 /// Project an already-paginated document using one fixed geometry for all pages.
 ///
 /// This compatibility entry point remains valid for fixed-page callers. New
@@ -1728,17 +1753,10 @@ pub fn layout_pages_with_page_geometry(
             // separate concern.
             if let Some(block_id) = direct_block_parent
                 && checked_orphans_widows.insert(block_id)
-                && let Some(text_layout) = document.nodes[node_id].text_layout()
+                && let Some(line_metrics) = text_line_bounds(document, node_id)
             {
                 let page_start = page_origin(current_page);
                 let page_end = page_start + page_step_at(current_page);
-                let line_metrics: Vec<(f32, f32)> = text_layout
-                    .lines()
-                    .map(|line| {
-                        let metrics = line.metrics();
-                        (metrics.block_min_coord, metrics.block_max_coord)
-                    })
-                    .collect();
                 let total_lines = line_metrics.len();
                 let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
                     let top = effective_y + line_top;
