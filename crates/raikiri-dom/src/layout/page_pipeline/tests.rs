@@ -4765,3 +4765,90 @@ fn an_inline_element_in_an_ifc_paragraph_is_not_a_page_break_candidate() {
     assert_eq!(pages_with_a_breaking_inline(false), (1, false));
     assert_eq!(pages_with_a_breaking_inline(true), (1, true));
 }
+
+#[test]
+fn a_relative_inline_element_is_located_with_its_offset() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let mut span_id = 0;
+    let (mut doc, cascade, root) = ahem_paragraph_with("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;position:relative;left:5px;top:2px"),
+        );
+        doc.append_text(inner, "bb");
+        span_id = inner;
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // Unshifted "bb" box: x 20..40, y 0..10; shifted by (5, 2).
+    assert_eq!(absolute_rect(&doc, span_id), (25.0, 2.0, 20.0, 10.0));
+}
+
+#[test]
+fn a_relative_inline_is_located_like_the_parley_path() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let make = || {
+        let mut span_id = 0;
+        let (doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:inline;position:relative;right:4px;bottom:3px"),
+            );
+            doc.append_text(inner, "bb");
+            span_id = inner;
+        });
+        (doc, cascade, span_id)
+    };
+    let (mut off_doc, off_cascade, off_span) = make();
+    layout_single_page(
+        &mut off_doc,
+        &off_cascade,
+        page_box_800x600(),
+        ahem_font_context(),
+    )
+    .expect("layout");
+    let (mut on_doc, on_cascade, on_span) = make();
+    lay_out_with_switch(&mut on_doc, &on_cascade);
+    assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
+    let off = absolute_rect(&off_doc, off_span);
+    assert_eq!(
+        off,
+        (16.0, -3.0, 20.0, 10.0),
+        "the parley path shifts the span"
+    );
+    assert_eq!(absolute_rect(&on_doc, on_span), off);
+}
+
+#[test]
+fn a_child_of_a_relative_inline_moves_with_it() {
+    use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
+    let (mut outer_id, mut inner_id) = (0, 0);
+    let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
+        let outer = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;position:relative;left:5px"),
+        );
+        doc.append_text(outer, "a");
+        let inner = doc.append_element(
+            Some(outer),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_text(inner, "b");
+        outer_id = outer;
+        inner_id = inner;
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(absolute_rect(&doc, outer_id), (5.0, 0.0, 20.0, 10.0));
+    // The child is not itself relative, but sits inside the shifted parent.
+    assert_eq!(absolute_rect(&doc, inner_id), (15.0, 0.0, 10.0, 10.0));
+}

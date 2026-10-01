@@ -54,6 +54,9 @@ pub(crate) struct ProjectedIfc {
     pub(crate) boxes: Vec<IfcBox>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
+    /// Paint offsets of the relatively positioned inline elements, by DOM
+    /// node id.
+    pub(crate) offsets: Vec<(usize, (f32, f32))>,
 }
 
 /// The effective `lang` of `node`: the nearest ancestor-or-self `lang`
@@ -301,6 +304,7 @@ pub(crate) fn project_ifc(
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
+    let mut offsets = Vec::new();
 
     let mut stack: Vec<Step> = root_node
         .children
@@ -418,6 +422,13 @@ pub(crate) fn project_ifc(
                 let mut inline_style = style::inline_style(cv, id, fonts)?;
                 inline_style.lang = language_of(doc, id);
                 let edges = style::inline_edges(cv, id, fonts)?;
+                // The eligibility check keeps every offset that is not a plain
+                // length out of the paragraph.
+                if cv.position == PositionValue::Relative
+                    && let Some(offset) = style::relative_offset(cv)
+                {
+                    offsets.push((id, offset));
+                }
                 builder.open_inline(NodeId(id as u64), &inline_style, edges);
                 if tag == "br" {
                     builder.push_forced_break(NodeId(id as u64));
@@ -450,6 +461,7 @@ pub(crate) fn project_ifc(
         indent,
         boxes,
         rtl: root_cv.direction == Direction::Rtl,
+        offsets,
     })
 }
 

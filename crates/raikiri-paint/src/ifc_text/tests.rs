@@ -1418,3 +1418,70 @@ fn a_content_box_background_leaves_out_the_vertical_padding() {
         [[0, 0, px(20), px(10)]]
     );
 }
+
+#[test]
+fn a_relative_inline_is_painted_like_the_parley_path() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(
+                "display:inline;position:relative;left:5px;top:2px;\
+                 background-color:rgb(255,0,0);text-decoration:underline",
+            ),
+        );
+        doc.append_text(inner, "bb");
+    };
+    let (off, on) = off_and_on("width:200px", build);
+    assert_eq!(ink(&on), ink(&off));
+    assert!(!decoration_fills(&off).is_empty());
+    assert_eq!(decoration_fills(&on), decoration_fills(&off));
+    assert_eq!(
+        fills_with(&off, &solid(255, 0, 0)),
+        [[px(25), px(2), px(45), px(12)]]
+    );
+    assert_eq!(
+        fills_with(&on, &solid(255, 0, 0)),
+        fills_with(&off, &solid(255, 0, 0))
+    );
+}
+
+#[test]
+fn a_text_shadow_moves_with_a_relative_inline() {
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;position:relative;left:5px;top:2px;text-shadow:1px 1px rgb(0,255,0)"),
+        );
+        doc.append_text(inner, "bb");
+    };
+    let (off, on) = off_and_on("width:200px", build);
+    assert_eq!(runs_in_order(&on), runs_in_order(&off));
+}
+
+#[test]
+fn the_dom_and_the_paint_crate_agree_on_the_relative_offset() {
+    // `relative_offset` (layout) and the walk's `position_offset_px` (paint)
+    // are two implementations of one rule; pin that they agree.
+    for css in [
+        "left:5px;top:2px",
+        "right:4px;bottom:3px",
+        "left:1px;right:9px;top:-2px;bottom:7px",
+        "",
+    ] {
+        let (_doc, cascade, root) = paragraph(&format!("position:relative;{css}"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let cv = &cascade.computed[root];
+        assert_eq!(
+            raikiri_dom::relative_offset(cv),
+            Some(crate::walk::position_offset_px(cv)),
+            "{css}"
+        );
+    }
+}

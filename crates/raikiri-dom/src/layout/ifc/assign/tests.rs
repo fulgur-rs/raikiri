@@ -406,26 +406,63 @@ fn a_relative_inline_with_no_offset_keeps_a_paragraph_an_ifc_root() {
 }
 
 #[test]
-fn a_relative_inline_with_an_offset_or_a_stacking_context_stays_on_the_parley_path() {
+fn a_relative_inline_with_a_length_offset_is_a_root() {
     for css in [
-        "display:inline;position:relative;top:2px",
+        "display:inline;position:relative;left:5px;top:-2px",
         "display:inline;position:relative;right:-1px",
-        // A plain percentage offset is dropped by the parser (both paths see
-        // `auto`), so a mixed calc() stands in for the non-px forms.
-        "display:inline;position:relative;bottom:calc(1% + 1px)",
         "display:inline;position:relative;left:1em",
-        "display:inline;position:relative;z-index:1",
-        "display:inline;position:relative;z-index:0",
     ] {
         let mut fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "aa ");
+            doc.append_text(root, "aa");
             let inner = span(doc, root, css);
             doc.append_text(inner, "bb");
         });
         enable(&mut fixture);
         assign(&mut fixture);
-        assert!(!is_root(&fixture, fixture.root), "{css}");
+        assert!(is_root(&fixture, fixture.root), "{css}");
     }
+}
+
+#[test]
+fn a_relative_inline_with_a_calc_offset_stays_on_the_parley_path() {
+    // A plain percentage offset is dropped by the parser (both paths see
+    // `auto`), so a mixed calc() stands in for the non-px forms.
+    for css in [
+        "display:inline;position:relative;left:calc(1% + 1px)",
+        "display:inline;position:relative;bottom:calc(1% + 1px)",
+    ] {
+        assert_stays_on_parley("", |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = span(doc, root, css);
+            doc.append_text(inner, "bb");
+        });
+    }
+}
+
+#[test]
+fn a_relative_inline_with_a_z_index_stays_on_the_parley_path() {
+    for css in [
+        "display:inline;position:relative;left:2px;z-index:1",
+        "display:inline;position:relative;z-index:0",
+    ] {
+        assert_stays_on_parley("", |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = span(doc, root, css);
+            doc.append_text(inner, "bb");
+        });
+    }
+}
+
+#[test]
+fn a_relative_inline_that_holds_a_box_stays_on_the_parley_path() {
+    // A box inside an inline element is refused, so the shifted element never
+    // carries a box that the paragraph would place by itself.
+    assert_stays_on_parley("", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = span(doc, root, "display:inline;position:relative;left:5px");
+        doc.append_text(inner, "bb");
+        span(doc, inner, "display:inline-block;width:10px;height:10px");
+    });
 }
 
 #[test]

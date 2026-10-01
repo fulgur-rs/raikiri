@@ -83,6 +83,37 @@ pub(crate) fn is_inert_relative(cv: &ComputedValues) -> bool {
         && cv.z_index == p::ZIndexValue::Auto
 }
 
+/// The paint offset of a `position: relative` box whose insets are all
+/// lengths: `left` over `-right`, `top` over `-bottom` (CSS 2.1 9.4.3). `None`
+/// when an inset is a percentage or `calc()`, or the box has a `z-index`
+/// (which makes a stacking context); such a box keeps its paragraph on the
+/// parley path. A box that is not relative has no offset.
+#[doc(hidden)]
+pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
+    if cv.position != p::PositionValue::Relative {
+        return Some((0.0, 0.0));
+    }
+    if cv.z_index != p::ZIndexValue::Auto {
+        return None;
+    }
+    // `Ok(Some(px))` for a length, `Ok(None)` for `auto`, `Err` for a
+    // percentage or calc().
+    let inset = |value: LengthOrAuto| match value {
+        LengthOrAuto::Auto => Ok(None),
+        LengthOrAuto::Px(px) => Ok(Some(px)),
+        _ => Err(()),
+    };
+    let (left, right, top, bottom) = (
+        inset(cv.left).ok()?,
+        inset(cv.right).ok()?,
+        inset(cv.top).ok()?,
+        inset(cv.bottom).ok()?,
+    );
+    let dx = left.or(right.map(|r| -r)).unwrap_or(0.0);
+    let dy = top.or(bottom.map(|b| -b)).unwrap_or(0.0);
+    Some((dx, dy))
+}
+
 /// The key of this element's own font, which measures a `ch` value declared
 /// on it.
 fn own_ch_font(cv: &ComputedValues) -> ChFontKey {

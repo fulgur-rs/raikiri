@@ -24,6 +24,9 @@ pub(crate) struct IfcRoot {
     pub(crate) boxes: Vec<IfcBox>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
+    /// Paint offsets of the relatively positioned inline elements of the
+    /// paragraph, by DOM node id.
+    pub(crate) offsets: Vec<(usize, (f32, f32))>,
 }
 
 /// Lines broken for one content-box width.
@@ -48,6 +51,7 @@ impl IfcRoot {
             lines: None,
             boxes: projected.boxes,
             rtl: projected.rtl,
+            offsets: projected.offsets,
         }
     }
 
@@ -61,6 +65,7 @@ impl IfcRoot {
             lines: None,
             boxes: self.boxes.clone(),
             rtl: self.rtl,
+            offsets: self.offsets.clone(),
         }
     }
 }
@@ -106,6 +111,7 @@ impl fmt::Debug for IfcRoot {
             .field("lines", &self.lines)
             .field("boxes", &self.boxes)
             .field("rtl", &self.rtl)
+            .field("offsets", &self.offsets)
             .finish_non_exhaustive()
     }
 }

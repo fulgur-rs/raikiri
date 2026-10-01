@@ -87,16 +87,16 @@ fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
 }
 
 /// Whether the painter can draw an inline element of the paragraph with its
-/// box. A relative offset moves the element on the parley path (taffy applies
-/// it) and an opacity group wraps it (the walk pushes a layer per element),
-/// neither of which the lines carry; a relative box that moves nothing and
-/// makes no stacking context is drawn in place. A background image would have
-/// to be laid out across the pieces of the element on its lines, which the
-/// painter does not do.
+/// box. A relative offset in lengths moves the element and its content
+/// together; one that needs the containing block (a percentage or calc()) or
+/// a stacking context (`z-index`) is not modelled, and an opacity group wraps
+/// the element (the walk pushes a layer per element), which the lines do not
+/// carry. A background image would have to be laid out across the pieces of
+/// the element on its lines, which the painter does not do.
 fn is_paintable_descendant(cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
     is_paintable_element(cascade, id)
-        && (cv.position != PositionValue::Relative || style::is_inert_relative(cv))
+        && style::relative_offset(cv).is_some()
         && cv.opacity >= 1.0
         && matches!(cv.background_image, BackgroundImage::None)
 }

@@ -7212,7 +7212,7 @@ fn fixed_position_px(
     ))
 }
 
-fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
+pub(crate) fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
     // Only position:relative contributes paint offset. static/absolute/fixed/sticky produce no shift here.
     // Inset properties are <length-percentage> | auto. Percentages are resolved to px earlier (or auto -> 0).
     // For relative, left vs right: if left != auto, dx = left, else if right != auto, dx = -right, else 0.

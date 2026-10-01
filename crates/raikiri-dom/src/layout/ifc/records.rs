@@ -89,9 +89,16 @@ pub(crate) fn record_inline_boxes(
             width: rect.map_or(0.0, |r| r.width),
             height: rect.map_or(0.0, |r| r.height),
         });
+        // A relative offset moves the element and, through this location,
+        // everything inside it; a child does not add its parent's offset.
+        let own = ifc
+            .offsets
+            .iter()
+            .find(|(id, _)| *id == element)
+            .map_or((0.0, 0.0), |(_, offset)| *offset);
         let location = taffy::Point {
-            x: rect.map_or(0.0, |r| r.x - origin.0),
-            y: rect.map_or(0.0, |r| r.y - origin.1),
+            x: rect.map_or(0.0, |r| r.x - origin.0) + own.0,
+            y: rect.map_or(0.0, |r| r.y - origin.1) + own.1,
         };
         commit_child_layout(tree, element, &output, location, geometry.width);
     }

@@ -693,6 +693,15 @@ impl Node {
         ))
     }
 
+    /// Paint offsets of the relatively positioned inline elements of an ifc
+    /// root, by DOM node id; empty for any other node.
+    #[doc(hidden)]
+    pub fn ifc_relative_offsets(&self) -> &[(usize, (f32, f32))] {
+        self.ifc
+            .as_ref()
+            .map_or(&[], |root| root.offsets.as_slice())
+    }
+
     /// Content width the lines of an ifc root were broken at, and their total
     /// height.
     #[doc(hidden)]

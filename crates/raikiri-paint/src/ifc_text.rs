@@ -94,6 +94,32 @@ struct RunDraw<'a> {
     /// The line's baseline in page coordinates.
     baseline: f64,
     decorations: DecorationContext,
+    /// The relative offsets of the run's inline ancestors.
+    offset: (f32, f32),
+}
+
+/// The sum of the relative offsets of `node` and its ancestors up to the ifc
+/// root (the root excluded). An offset moves an inline element together with
+/// everything inside it.
+fn cumulative_offset(
+    document: &Document,
+    root_id: usize,
+    offsets: &[(usize, (f32, f32))],
+    node: usize,
+) -> (f32, f32) {
+    let (mut dx, mut dy) = (0.0, 0.0);
+    let mut current = Some(node);
+    while let Some(id) = current {
+        if id == root_id {
+            break;
+        }
+        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == id) {
+            dx += x;
+            dy += y;
+        }
+        current = document.parent_of(id);
+    }
+    (dx, dy)
 }
 
 /// Draw the glyph runs of an ifc root.
@@ -124,6 +150,10 @@ pub(crate) fn draw_ifc_lines(
         .get_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
+    let offsets = document
+        .get_node(root_id)
+        .map(|node| node.ifc_relative_offsets())
+        .unwrap_or_default();
     for (line_index, line) in lines.iter().enumerate() {
         // The boxes of the inline elements on this line go below its text
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
@@ -132,12 +162,13 @@ pub(crate) fn draw_ifc_lines(
             let Some(cv) = cascade.computed.get(piece.node) else {
                 continue;
             };
+            let (dx, dy) = cumulative_offset(document, root_id, offsets, piece.node);
             crate::walk::paint_inline_box(
                 scene,
                 cv,
                 piece,
-                position.x,
-                position.y + position.shift_y,
+                position.x + dx,
+                position.y + position.shift_y + dy,
             );
         }
         // An element's shift can differ from line to line, so the contexts
@@ -187,6 +218,7 @@ pub(crate) fn draw_ifc_lines(
                 first_x = first_x.min(f64::from(glyph.x));
                 last_x = last_x.max(f64::from(glyph.x) + f64::from(shaped.advance));
             }
+            let offset = cumulative_offset(document, root_id, offsets, owner);
             let decorations = contexts
                 .entry(owner)
                 .or_insert_with(|| {
@@ -204,9 +236,17 @@ pub(crate) fn draw_ifc_lines(
                     + f64::from(line.block_offset())
                     + f64::from(line.baseline(BaselineKind::Alphabetic)),
                 decorations,
+                offset,
             });
         }
         clip_runs_to_the_line_content(line, &mut runs);
+        // The line content is clipped in the line's own coordinates; the
+        // relative offsets move the runs afterwards.
+        for run in &mut runs {
+            run.x0 += f64::from(run.offset.0);
+            run.x1 += f64::from(run.offset.0);
+            run.baseline += f64::from(run.offset.1);
+        }
         draw_decorations(scene, &runs, DecorationPhase::BeforeGlyphs);
         for draw in &runs {
             let Some(font) = draw.run.font_data() else {
@@ -225,6 +265,8 @@ pub(crate) fn draw_ifc_lines(
                 .run
                 .skew()
                 .map(|degrees| Affine::skew(f64::from(degrees).to_radians().tan(), 0.0));
+            let run_transform =
+                transform * Affine::translate((f64::from(draw.offset.0), f64::from(draw.offset.1)));
             draw_shadows(
                 scene,
                 &ShadowRun {
@@ -234,8 +276,12 @@ pub(crate) fn draw_ifc_lines(
                     glyph_transform,
                 },
                 &cascade.computed[draw.owner],
-                transform,
-                position,
+                run_transform,
+                IfcPosition {
+                    x: position.x + draw.offset.0,
+                    y: position.y + draw.offset.1,
+                    shift_y: position.shift_y,
+                },
                 size,
             );
             scene.draw_glyphs(
@@ -247,7 +293,7 @@ pub(crate) fn draw_ifc_lines(
                 Fill::NonZero,
                 draw.color,
                 1.0,
-                transform,
+                run_transform,
                 glyph_transform,
                 draw.glyphs.clone().into_iter(),
             );
