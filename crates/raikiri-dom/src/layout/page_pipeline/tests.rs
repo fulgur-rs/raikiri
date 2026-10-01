@@ -6665,3 +6665,19 @@ fn multicol_with_a_forced_break_matches_parley() {
     );
     assert_eq!(own.container_height, 30.0);
 }
+
+#[test]
+fn a_definite_height_multicol_with_line_breaks_keeps_widows() {
+    // Hand-computed: a 40px column holds four 10px lines; nine lines fill
+    // 4 + 4 + 1, and `widows: 3` moves two lines of the second column into
+    // the third. The columns are 120px wide with a 20px gap.
+    let geometry = multicol_text_geometry_of(
+        "width:400px;column-count:3;column-gap:20px;height:40px;widows:3;orphans:1",
+        "1\n2\n3\n4\n5\n6\n7\n8\n9",
+        true,
+        true,
+    );
+    let xs: Vec<f32> = geometry.lines.iter().map(|line| line.0).collect();
+    assert_eq!(xs, [0.0, 0.0, 0.0, 0.0, 140.0, 140.0, 280.0, 280.0, 280.0]);
+    assert_eq!(geometry.container_height, 40.0);
+}

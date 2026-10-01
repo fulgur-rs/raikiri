@@ -83,7 +83,9 @@ use page_pipeline::*;
 use sanitize::*;
 
 pub(crate) use bridge::apply_computed_to_style;
-pub(crate) use multicol::{compute_multicol_layout, root_column_fragments};
+pub(crate) use multicol::{
+    compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
+};
 pub(crate) use page::find_body;
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code

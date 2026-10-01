@@ -512,9 +512,31 @@ fn compute_ifc_root(
             && ifc_edge(style.padding.bottom, inputs.parent_size.width)
                 + ifc_edge(style.border.bottom, inputs.parent_size.width)
                 == 0.0,
+        column_height: None,
     };
     let mut content_baseline = None;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
+    let mut measure = measure;
+    measure.column_height = tree.nodes[idx]
+        .multicol
+        .filter(|multicol| multicol.height_definite)
+        .and_then(|_| {
+            crate::layout::multicol_definite_dimension(
+                tree,
+                style.size.height,
+                inputs.parent_size.height,
+            )
+        })
+        .map(|height| {
+            let insets = if style.box_sizing == taffy::BoxSizing::BorderBox {
+                top_inset
+                    + ifc_edge(style.padding.bottom, inputs.parent_size.width)
+                    + ifc_edge(style.border.bottom, inputs.parent_size.width)
+            } else {
+                0.0
+            };
+            (height - insets).max(0.0)
+        });
     let mut output = compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
         let (size, baseline, escaping) =
             measure_ifc_root(tree, idx, known.height, available, measure, block_ctx);
@@ -618,6 +640,9 @@ struct IfcMeasure {
     top_inset: f32,
     /// The root's bottom margin may collapse with its last block child's.
     bottom_margin_escapes: bool,
+    /// The content-box height of a multicol root with a definite height:
+    /// the height of its columns.
+    column_height: Option<f32>,
 }
 
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
@@ -693,17 +718,12 @@ fn measure_ifc_root(
             .multicol
             .filter(|style| style.horizontal)
             .and_then(|style| {
-                let height = if style.height_definite {
-                    known_height
-                } else {
-                    None
-                };
-                crate::fragment::FragmentationContext::resolve(width, height, style)
+                crate::fragment::FragmentationContext::resolve(width, measure.column_height, style)
             })
     };
     // An auto-height container whose lines end in `<br>` children keeps them
     // all in its first column, as the parley path places such direct lines.
-    let in_one_column = known_height.is_none()
+    let in_one_column = measure.column_height.is_none()
         && tree.nodes[idx].children.iter().any(|&child| {
             tree.nodes[child].is_in_document() && tree.nodes[child].tag_name() == Some("br")
         });
