@@ -41,6 +41,10 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
         {
             true
         }
+        // Layout starts at the body, which always generates a block box: CSS
+        // Display 3, 2.7 blockifies the root element, and the body is the
+        // root of what raikiri lays out.
+        DisplayValue::Inline if is_layout_root(doc, idx) => true,
         DisplayValue::Inline => box_parent(doc, cascade, idx).is_some_and(|parent| {
             matches!(
                 cascade.computed[parent].display,
@@ -52,6 +56,27 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
         }),
         _ => true,
     }
+}
+
+/// Whether `idx` is the body layout starts at.
+fn is_layout_root(doc: &Document, idx: usize) -> bool {
+    doc.nodes[idx].tag_name() == Some("body") && crate::layout::find_body(doc) == Some(idx)
+}
+
+/// Whether `idx` is an ancestor of the body layout starts at: it is not laid
+/// out, so it is never a paragraph (the body is the root of its own content).
+fn is_above_the_layout_root(doc: &Document, idx: usize) -> bool {
+    doc.nodes[idx].tag_name() == Some("html")
+        && crate::layout::find_body(doc).is_some_and(|body| {
+            let mut ancestor = doc.parent_of(body);
+            while let Some(id) = ancestor {
+                if id == idx {
+                    return true;
+                }
+                ancestor = doc.parent_of(id);
+            }
+            false
+        })
 }
 
 /// The nearest element ancestor of `idx` that generates a box: elements with
@@ -85,6 +110,7 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
     if node.is_inline_svg_content()
         || node.is_inline_svg_root()
         || super::projection::ATOMIC_TAGS.contains(&tag)
+        || is_above_the_layout_root(doc, idx)
     {
         return false;
     }

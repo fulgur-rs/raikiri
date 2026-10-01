@@ -857,13 +857,13 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
         Some(body),
         "div",
         Style::default(),
-        Some("width: 50px; height: 50px;"),
+        Some("display: block; width: 50px; height: 50px;"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
         Style::default(),
-        Some("width: 200px; height: 200px; margin-left: -30px;"),
+        Some("display: block; width: 200px; height: 200px; margin-left: -30px;"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");

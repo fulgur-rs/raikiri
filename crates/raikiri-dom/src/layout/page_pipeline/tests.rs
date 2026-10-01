@@ -6105,3 +6105,37 @@ fn the_text_of_an_absolutely_positioned_inline_is_its_own_paragraph() {
         (20.0, 60.0, 10.0)
     );
 }
+
+/// `html > body > "aaaa bbbb"` with `html_css` / `body_css`, laid out with
+/// Ahem: whether the body is a paragraph root, whether `html` is one, and
+/// the number of lines of the text.
+fn inline_body(html_css: Option<&str>, body_css: &str) -> (bool, bool, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), html_css);
+    let css = format!("font-family:Ahem;font-size:10px;line-height:10px;{body_css}");
+    let body = doc.append_element(Some(html), "body", Style::default(), Some(css.as_str()));
+    let text = doc.append_text(body, "aaaa bbbb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    (
+        doc.nodes[body].is_ifc_root(),
+        doc.nodes[html].is_ifc_root(),
+        doc.ifc_text_lines(text)
+            .map_or(0, |lines| lines.lines.len()),
+    )
+}
+
+#[test]
+fn an_inline_body_still_lays_its_text_out_as_a_paragraph() {
+    // Layout starts at the body, which always generates a block box (CSS
+    // Display 3 2.7 blockifies the root element): its text is a paragraph of
+    // one line on the page, with or without a UA stylesheet, and `html` (not laid
+    // out) is never the paragraph.
+    assert_eq!(inline_body(None, ""), (true, false, 1));
+    assert_eq!(
+        inline_body(Some("display:block"), "display:inline"),
+        (true, false, 1)
+    );
+}
