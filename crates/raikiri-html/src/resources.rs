@@ -1907,6 +1907,12 @@ pub(crate) struct NetworkFontFaceLoader<'a> {
     network: Option<&'a dyn NetworkProvider>,
     base_url: Option<&'a Url>,
     warnings: SharedRenderWarnings,
+    /// The outcome of every source loaded so far, failures included. One
+    /// layout reads each `@font-face` source several times (once per
+    /// cascade, and once more for the inline engine's font layer); without
+    /// this every read would fetch again, spend the aggregate budget again,
+    /// and repeat its warning.
+    loaded: Mutex<HashMap<Url, Option<Vec<u8>>>>,
 }
 
 impl<'a> NetworkFontFaceLoader<'a> {
@@ -1919,6 +1925,7 @@ impl<'a> NetworkFontFaceLoader<'a> {
             network,
             base_url,
             warnings,
+            loaded: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -1943,13 +1950,28 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
             );
             return None;
         };
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(outcome) = loaded.get(&url) {
+            return outcome.clone();
+        }
+        let outcome = self.fetch_uncached(&url);
+        loaded.insert(url, outcome.clone());
+        outcome
+    }
+}
+
+impl NetworkFontFaceLoader<'_> {
+    fn fetch_uncached(&self, url: &Url) -> Option<Vec<u8>> {
         let Some(network) = self.network else {
             push_resource_warning(
                 &self.warnings,
                 RenderWarning {
                     kind: WarningKind::ResourceFallback {
                         kind: ResourceKind::Font,
-                        url: Some(redacted_url(&url)),
+                        url: Some(redacted_url(url)),
                     },
                     node_id: None,
                     details: "font-face source skipped because no network provider is configured"
@@ -1990,7 +2012,7 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
                     &self.warnings,
                     RenderWarning {
                         kind: WarningKind::NetworkFallback {
-                            url: redacted_url(&url),
+                            url: redacted_url(url),
                         },
                         node_id: None,
                         details: "font-face fetch failed; the family will use fallback fonts"

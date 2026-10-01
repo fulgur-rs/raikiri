@@ -570,6 +570,35 @@ fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError
     }
 }
 
+/// Switch the inline engine on for `dom` when `resources` asks for it.
+///
+/// Faces from `@font-face` go into a document layer over the engine's font
+/// layer under their authored family names, so the engine needs no rewriting
+/// of the computed font families the parley path uses. The faces are fetched
+/// through `font_loader`, the loader the parley path uses too, so a source is
+/// fetched once for both. Faces the engine cannot use are already reported by
+/// the parley path, which reads the same sources.
+fn enable_inline_engine(
+    dom: &mut raikiri_dom::Document,
+    resources: &RenderResources<'_>,
+    font_faces: &FontFaceRegistry,
+    font_loader: &dyn FontFaceLoader,
+) {
+    let Some(shared) = resources.inline_engine_fonts() else {
+        return;
+    };
+    let fonts = if font_faces.is_empty() {
+        shared
+    } else {
+        raikiri_dom::build_inline_document_fonts(&shared, font_faces, font_loader).0
+    };
+    dom.enable_inline_formatting(fonts, shodo::limits::Limits::default());
+    // The layer of the installed fonts loads a face the first time a lookup
+    // selects it, so threads would race to decide which face a fallback lands
+    // on: only a font set of bundled fonts builds paragraphs in parallel.
+    dom.set_ifc_parallel_build(resources.inline_engine_parallel_build());
+}
+
 pub(crate) struct PipelineOutput {
     pub(crate) document: raikiri_dom::Document,
     pub(crate) cascade: raikiri_style::CascadeResult,
@@ -673,8 +702,19 @@ pub(crate) fn run_pipeline(
     );
     let page_box = page_box_for_cascade(&first_cascade, &defaults);
 
+    // The inline engine lays out the eligible paragraphs unless the resources
+    // switch it off (see `RenderResources::inline_engine_fonts`). It is
+    // switched on before the first-page probe, which lays out a clone of
+    // this document, so the probe and the layout below use the same engine.
+    let mut dom = doc.uncascaded.dom.clone();
+    enable_inline_engine(
+        &mut dom,
+        resources,
+        runtime.font_faces,
+        runtime.font_face_loader,
+    );
     let resolved_initial_context = resolve_initial_page_context(
-        &doc.uncascaded.dom,
+        &dom,
         first_query.page_name.as_ref().map(ToString::to_string),
         first_cascade,
         page_box,
@@ -719,7 +759,7 @@ pub(crate) fn run_pipeline(
             },
         );
     }
-    let mut document = doc.uncascaded.dom.clone();
+    let mut document = dom;
     let mut slices = layout_pages_with_resolver_and_base_url(
         &mut document,
         &first_cascade,
