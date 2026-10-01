@@ -1,35 +1,25 @@
-//! Registers the WPT bundled font dir and builds a cross-machine
-//! deterministic `FontContext` via `system_fonts: false` plus generic
-//! family aliasing.
+//! Font sources for the inline engine: the WPT bundled font directory
+//! (system fonts disabled, so results are deterministic across machines),
+//! bundled font bytes, the process-wide system font collection, and the
+//! per-document `@font-face` layer.
 //!
 //! - Fetching is `scripts/wpt/fetch.sh` (a dev prerequisite); this module
 //!   only takes the already-fetched `target/wpt/fonts/` as a `Path`
-//! - Production runtime still uses `parley::FontContext::new()` as-is
 //! - Bundled `.ttf` / `.otf` are registered directly; `@font-face` URL
 //!   sources' WOFF/WOFF2 are converted back to sfnt via `wuff` before
 //!   registration
 //!
-//! Reference implementations:
-//! - fulgur `crates/fulgur-wpt/src/fonts.rs::load_fonts_dir` (walker + sort)
-//! - blitz `packages/blitz-dom/src/lib.rs::build_single_font_ctx`
-//!   (system_fonts: false + generic alias append)
+//! Reference implementation for the directory walk:
+//! fulgur `crates/fulgur-wpt/src/fonts.rs::load_fonts_dir` (walker + sort).
 //!
-//! Structured warn hook: [`build_wpt_font_ctx_with_observer`] accepts an
-//! optional callback that receives a [`FontWarn`] for every warn+skip site
-//! (walker + read-time TOCTOU + fontique register-empty). The signature-
-//! preserving [`build_wpt_font_ctx`] delegates to it with `None`, keeping
-//! the CLI-facing `eprintln!` shape for external consumers pinned by
-//! `crates/raikiri/tests/external_consumer.rs`.
+//! Structured warn hook: a [`FontWarnObserver`] receives a [`FontWarn`] for
+//! every warn+skip site (walker, read-time TOCTOU, faces the font library
+//! rejects); without one, warnings go to stderr.
 
-use parley::FontContext;
-use raikiri_style::{
-    ChFontKey, ComputedValues, FontFaceRegistry, FontFaceRule, FontFaceSource, FontFaceStyle,
-    FontFaceWeight, FontFamilyKind, FontFamilyName,
-};
-use smol_str::SmolStr;
+use raikiri_style::FontFaceRegistry;
 use std::path::{Path, PathBuf};
 
-/// Maximum byte count [`build_wpt_font_ctx`] allows when reading an
+/// Maximum byte count [`build_wpt_font_collection`] allows when reading an
 /// individual font file. 100 MiB leaves ample headroom for real bundled
 /// fonts (Ahem: ~12 KiB, Noto CJK: ~20 MiB or so) while still rejecting the
 /// memory exhaustion an attacker-supplied oversized regular file would
@@ -254,11 +244,12 @@ pub(crate) fn read_bounded_font_file(
         .map_err(map_reject_reason)
 }
 
-/// Structured warn event emitted by [`build_wpt_font_ctx_with_observer`] for
-/// every warn+skip site (walker + read-time TOCTOU + fontique register-empty).
-/// Consumers pass an `Option<&mut dyn FnMut(&FontWarn<'_>)>` observer to opt
-/// into programmatic consumption of these events; the [`build_wpt_font_ctx`]
-/// compatibility wrapper omits the observer and keeps the CLI-facing `eprintln!` behavior.
+/// Structured warn event emitted while building the WPT font collection
+/// (`ifc::font::wpt_collection`) for every warn+skip site (walker +
+/// read-time TOCTOU + font-library register-empty). Callers pass an
+/// `Option<&mut dyn FnMut(&FontWarn<'_>)>` observer to opt into
+/// programmatic consumption of these events; [`build_wpt_font_collection`]
+/// omits the observer and keeps the CLI-facing `eprintln!` behavior.
 ///
 /// # Design
 ///
@@ -395,13 +386,13 @@ pub enum FontWarn<'a> {
         /// Canonicalized fonts root that the target should have stayed under.
         root: &'a Path,
     },
-    /// fontique's `register_fonts` returned no families for the read blob
+    /// the font library registered no family for the read blob
     /// (parse-invalid font, corrupt asset, etc.).  Handled by the aggregate
     /// [`FontError::PreferredFontUnavailable`] / [`FontError::NoFontsRegistered`]
     /// invariant checks downstream; the observer is the only per-file
     /// programmatic signal.
     RegisterEmpty {
-        /// Path whose blob fontique rejected with an empty family list.
+        /// Path whose blob the font library rejected with an empty family list.
         path: &'a Path,
     },
 }
@@ -558,270 +549,18 @@ pub(crate) fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject
     }
 }
 
-/// Builds a `FontContext` from the WPT bundled fonts dir. The system font
-/// resolver is fully disabled, and generic families (`serif`/`sans-serif`/
-/// ...) resolve to the head of the registered family list (Ahem).
-///
-/// Delegates to [`build_wpt_font_ctx_with_observer`] with a `None` observer,
-/// preserving the CLI-facing `eprintln!` warn output.  Consumers wanting a
-/// structured observer callback for TOCTOU-swap/grow anomalies
-/// should call `_with_observer` directly.  Signature preserved
-/// for the `crates/raikiri/tests/external_consumer.rs` check.
+/// Build the shared font layer from a verified WPT font directory, with
+/// system fonts disabled.
 ///
 /// # Errors
-///
-/// See [`build_wpt_font_ctx_with_observer`].
-pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
-    build_wpt_font_ctx_with_observer(fonts_dir, None)
-}
-
-/// Build the shodo shared layer from a verified WPT font directory.
-///
-/// The counterpart of [`build_wpt_font_ctx`] for the shodo inline engine:
-/// the same directory rules apply and system fonts are disabled.
-///
-/// # Errors
-/// The same [`FontError`] cases as [`build_wpt_font_ctx`].
+/// See [`FontError`].
 pub fn build_wpt_font_collection(
     fonts_dir: &Path,
 ) -> Result<shodo::font::FontCollection, FontError> {
     crate::layout::ifc::font::wpt_collection(fonts_dir, &shodo::limits::Limits::default(), None)
 }
 
-/// Builds a `FontContext` from the WPT bundled fonts dir. The system font
-/// resolver is fully disabled, and generic families (`serif`/`sans-serif`/
-/// ...) resolve to the head of the registered family list (Ahem).
-///
-/// The `observer` receives a [`FontWarn`] for every warn+skip site — walker
-/// (symlink / non-regular / oversized), read-time TOCTOU (`ReadRejected*`),
-/// and fontique register-empty.  When `None`, warn output falls back to the
-/// legacy `eprintln!` shape so CLI use is unaffected.
-///
-/// # Errors
-/// - [`FontError::DirNotFound`] — `fonts_dir` does not exist
-/// - [`FontError::EmptyDir`] — the dir exists but has zero `.ttf`/`.otf`
-///   files
-/// - [`FontError::PreferredFontUnavailable`] — a font listed in
-///   `PREFERRED_FIRST` (currently Ahem.ttf) is missing from the dir, or
-///   fontique refused to register it (silent fallback would break cascade
-///   determinism, hence the dedicated `Err`)
-/// - [`FontError::NoFontsRegistered`] — the dir has `.ttf`/`.otf` files but
-///   none registered (the `PREFERRED_FIRST` path catches this first, so this
-///   is only reached in a future where `PREFERRED_FIRST` is empty)
-/// - [`FontError::Io`] — an Io error propagated from the dir walk, or from a
-///   font read (via the callsite-local `read_bounded_font_file`)
-///   (`FontReadReject::Io(_)` -> `FontError::Io`; other reject reasons are
-///   warn+skipped and also surfaced to the observer as
-///   `FontWarn::ReadRejected*`)
-pub fn build_wpt_font_ctx_with_observer(
-    fonts_dir: &Path,
-    mut observer: FontWarnObserver<'_>,
-) -> Result<FontContext, FontError> {
-    use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
-    use std::sync::Arc;
-
-    if !fonts_dir.exists() {
-        return Err(FontError::DirNotFound(fonts_dir.to_path_buf()));
-    }
-    // Canonicalize the walker root once, up front, so
-    // `read_bounded_font_file`'s containment check compares against a stable
-    // fully-resolved prefix.  `fonts_dir.exists()` cleared the DirNotFound
-    // path above; a canonicalize failure here would be a TOCTOU race (dir
-    // unlinked between check and canonicalize) — propagate as Io rather than
-    // panic.
-    let canonical_root = std::fs::canonicalize(fonts_dir).map_err(|source|
-        // cov:ignore: the Err arm here needs a TOCTOU race (fonts_dir
-        // unlinked between the `.exists()` check above and canonicalize)
-        // to fire, which is not deterministically unit-testable.  The
-        // other TOCTOU-race arms in this module (the open Err arm inside
-        // `raikiri_traits::io::open_bounded_regular_file`, the
-        // TOCTOU-grow reject, the read-time reject arm below) use the
-        // same cov:ignore shape.
-        FontError::Io {
-            path: fonts_dir.to_path_buf(),
-            source,
-        })?;
-    let paths = walk_fonts(fonts_dir, &mut observer)?;
-    if paths.is_empty() {
-        return Err(FontError::EmptyDir(fonts_dir.to_path_buf()));
-    }
-
-    // blitz pattern (packages/blitz-dom/src/lib.rs::build_single_font_ctx):
-    // system_fonts: false fully disables fontique's platform resolver
-    let mut ctx = FontContext {
-        source_cache: SourceCache::new_shared(),
-        collection: Collection::new(CollectionOptions {
-            shared: false,
-            system_fonts: false,
-        }),
-    };
-
-    // Registration order = fallback order. The walker places PREFERRED_FIRST
-    // at the head.
-    //
-    // A file read failure is propagated as a **hard error**
-    // (to prevent Ahem.ttf from being silently dropped): with the previous
-    // eprintln! warn+skip behavior, a read failure on Ahem.ttf
-    // (PREFERRED_FIRST`[0]`) would silently register the next candidate
-    // (e.g. CSSTest) instead, so the "serif" cascade would resolve to an
-    // unintended font. A path returned by the walker has already been
-    // confirmed to exist (it was enumerated via read_dir), so a read-time
-    // failure means something unambiguous went wrong — a permission change,
-    // a corrupted symlink, etc. Aborting here is safer than a "silent
-    // regression by default". Fontique rejecting an individual file
-    // (register.is_empty) is still caught by the aggregate check
-    // (`family_ids.is_empty` → NoFontsRegistered), so that case remains
-    // warn+skip.
-    let mut family_ids = Vec::new();
-    // PREFERRED_FIRST invariant tracking:
-    // Record, by basename, which PREFERRED_FIRST members' paths registered
-    // successfully. After the loop, cross-check this set against
-    // PREFERRED_FIRST — any that are missing or register-empty become
-    // PreferredFontUnavailable, preventing a silent fallback.
-    let mut registered_preferred_basenames: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-    for path in paths {
-        // Bounded read via `read_bounded_font_file`, which delegates the
-        // leaf-swap / kind / size gates to
-        // `raikiri_traits::io::open_bounded_regular_file` and layers this
-        // module's own path-containment recheck on top (see that
-        // function's doc comment).
-        //
-        // Callsite policy:
-        // - `Io(_)` -> hard-error propagate.  Preserves the "Ahem.ttf
-        //   silent-fallback prevention" guarantee: an
-        //   unexpected Io error at read time aborts the build directly, so
-        //   the registry cannot silently drop the preferred font without a
-        //   caller-visible error.  `PreferredFontUnavailable` is not the
-        //   catch for this branch — it fires only for the warn+skip arm
-        //   below (see next bullet).
-        // - `Symlink | NotRegularFile | NotRegularFilePostOpen |
-        //   OversizedPreOpen | OversizedDuringRead | PathEscape |
-        //   PathEscapePostOpen` -> warn+skip.
-        //   `collect_recursive` already pre-filtered symlink/non-regular/
-        //   oversized, so surfacing here means the tree changed between walk
-        //   and read (TOCTOU-swap / TOCTOU-grow / intermediate-symlink swap).
-        //   Non-preferred fonts silently drop from the registry; if Ahem.ttf
-        //   is affected, `PreferredFontUnavailable` fires downstream on the
-        //   aggregate `registered_preferred_basenames` check.
-        //   `OversizedDuringRead` closes the silent-truncation window the
-        //   prior `take(FONT_SIZE_CAP)` had (the `+1-probe` surfaces
-        //   TOCTOU-grow instead of returning a truncated buffer).  `Symlink`
-        //   covers the leaf-swap TOCTOU class: safe_open's `O_NOFOLLOW`
-        //   ELOOP or the post-error `symlink_metadata` recheck surface a
-        //   mid-walk swap-in.  `PathEscape` covers the
-        //   intermediate-symlink-swap class (walker recorded
-        //   `subdir/font.ttf`, attacker swapped `subdir/` into a symlink to
-        //   `/tmp/evil/` between walk and read; the leaf still stats as a
-        //   regular file so `is_symlink()` does not fire but canonicalize
-        //   resolves outside `canonical_root`) — this closes the
-        //   intermediate-directory-swap PathEscape gap.  `NotRegularFilePostOpen`
-        //   covers the FIFO/character device / block device swap TOCTOU
-        //   class (walker + pre-open metadata saw a regular file, attacker
-        //   swapped it for a FIFO / device between pre-open metadata and
-        //   `safe_open`).  `O_NONBLOCK` in `safe_open` prevents the
-        //   writer-less FIFO from blocking `open()`, and the fd-based
-        //   `File::metadata()` fstat inspects the inode already bound to the
-        //   descriptor (race-free by construction) — this closes the
-        //   FIFO/device leaf-swap gap.  `PathEscapePostOpen` covers
-        //   the intermediate-dir-swap subclass that survives even
-        //   `PathEscape`'s `canonicalize` check (which runs after the
-        //   open): an attacker swaps the
-        //   intermediate directory again between the open and this
-        //   `canonicalize` check.  The fd-bound containment
-        //   recheck (Linux: `/proc/self/fd/
-        //   <fd>` readlink; Apple platforms: `fcntl(fd, F_GETPATH, ..)`) is
-        //   derived from the fd the open actually returned, so it is
-        //   race-free against that second swap by construction — this
-        //   closes the intermediate-directory-swap PathEscape residual.
-        //
-        // Trade-offs recorded:
-        // - The walker's symlink_metadata / is_symlink / is_file /
-        //   metadata.len checks are re-run inside `read_bounded_font_file`.
-        //   Justified by the standalone-safe invariant; the cost is `~O(N)`
-        //   extra stat syscalls at init.  Raising `FONT_SIZE_CAP` requires
-        //   updating the walker's copy too.
-        // - Directory-swap tampering (regular-file -> directory between walk
-        //   and read) previously hard-errored via `File::open` EISDIR ->
-        //   `FontError::Io`; now surfaces as `NotRegularFile` -> warn+skip.
-        //   Signal downgrade for non-preferred fonts; preferred invariant
-        //   still fires.
-        let bytes = match read_bounded_font_file(&path, &canonical_root, FONT_SIZE_CAP) {
-            Ok(bytes) => bytes,
-            Err(FontReadReject::Io(source)) => {
-                return Err(FontError::Io {
-                    path: path.clone(),
-                    source,
-                });
-            }
-            // cov:ignore: the walker pre-filters symlink/non-regular/oversized,
-            // so surfacing a non-Io `FontReadReject` here requires a real
-            // TOCTOU race between walk and read.  The
-            // `read_reject_to_warn` mapping is instead unit-tested
-            // deterministically via `read_reject_to_warn_maps_all_non_io_variants`.
-            Err(reason) => {
-                emit_warn(&mut observer, read_reject_to_warn(&path, &reason));
-                continue;
-            }
-        };
-        let blob = Blob::new(Arc::new(bytes) as _);
-        let registered = ctx.collection.register_fonts(blob, None);
-        if registered.is_empty() {
-            emit_warn(&mut observer, FontWarn::RegisterEmpty { path: &path });
-            continue;
-        }
-        // Record the basename if a successfully-registered path is a
-        // PREFERRED_FIRST member
-        if let Some(basename) = path.file_name().and_then(|f| f.to_str())
-            && PREFERRED_FIRST.contains(&basename)
-        {
-            registered_preferred_basenames.insert(basename.to_string());
-        }
-        family_ids.extend(registered.iter().map(|(id, _)| *id));
-    }
-
-    // PREFERRED_FIRST invariant enforce:
-    // Confirm every PREFERRED_FIRST member registered successfully. If one
-    // is missing (not picked up by the walker) or register-empty (rejected
-    // by fontique), return a dedicated Err rather than letting some other
-    // valid font silently fall back into the "serif" cascade.
-    for expected in PREFERRED_FIRST {
-        if !registered_preferred_basenames.contains(*expected) {
-            return Err(FontError::PreferredFontUnavailable {
-                name: (*expected).to_string(),
-                dir: fonts_dir.to_path_buf(),
-            });
-        }
-    }
-
-    // Backstop: a defensive check for a future where PREFERRED_FIRST is
-    // empty (currently unreachable — the PREFERRED_FIRST=`["Ahem.ttf"]`
-    // invariant check above fires first). Surfaces as an Err rather than
-    // letting the "serif" cascade resolve to nothing against an empty
-    // family_ids.
-    if family_ids.is_empty() {
-        return Err(FontError::NoFontsRegistered(fonts_dir.to_path_buf()));
-    }
-
-    // Generic family alias remap (blitz pattern):
-    // Resolve the UA CSS default "serif" cascade to the bundled family
-    // (head = Ahem)
-    for generic in [
-        GenericFamily::Serif,
-        GenericFamily::SansSerif,
-        GenericFamily::Monospace,
-        GenericFamily::SystemUi,
-        GenericFamily::Cursive,
-        GenericFamily::Fantasy,
-    ] {
-        ctx.collection
-            .append_generic_families(generic, family_ids.iter().copied());
-    }
-
-    Ok(ctx)
-}
-
-/// Error type for [`build_wpt_font_ctx`]. `std`-only, no `thiserror`
+/// Error type for [`build_wpt_font_collection`]. `std`-only, no `thiserror`
 /// dependency (per raikiri workspace convention).
 #[derive(Debug)]
 pub enum FontError {
@@ -829,13 +568,13 @@ pub enum FontError {
     DirNotFound(PathBuf),
     /// `fonts_dir` exists but has zero `.ttf`/`.otf` files
     EmptyDir(PathBuf),
-    /// The dir had `.ttf`/`.otf` files, but none registered with fontique
+    /// The dir had `.ttf`/`.otf` files, but none registered with the font library
     /// (every file was parse-invalid, or an asset got corrupted by check
     /// drift, etc.). A defensive backstop only reached in a future where
     /// `PREFERRED_FIRST` is empty.
     NoFontsRegistered(PathBuf),
     /// A font listed in `PREFERRED_FIRST` is not present in the dir, or
-    /// fontique refused to register it.
+    /// the font library refused to register it.
     /// A dedicated Err so a silent fallback doesn't break cascade
     /// determinism.
     PreferredFontUnavailable {
@@ -849,7 +588,7 @@ pub enum FontError {
     /// propagated from a font read (via the callsite-local
     /// `read_bounded_font_file`).
     /// Other reject reasons are warn+skipped (see the callsite comment on
-    /// [`build_wpt_font_ctx`] for details — one source of
+    /// [`build_wpt_font_collection`] for details — one source of
     /// truth for the full variant list, so this doc doesn't drift from it).
     Io {
         /// Path where the io error occurred (during the walk or read stage)
@@ -872,12 +611,12 @@ impl std::fmt::Display for FontError {
             ),
             FontError::NoFontsRegistered(p) => write!(
                 f,
-                "no font families registered from {} (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
+                "no font families registered from {} (all .ttf/.otf files rejected by the font library — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
                 p.display()
             ),
             FontError::PreferredFontUnavailable { name, dir } => write!(
                 f,
-                "preferred font '{}' not registered under {} — missing from dir or rejected by parley/fontique; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
+                "preferred font '{}' not registered under {} — missing from dir or rejected by the font library; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
                 name,
                 dir.display()
             ),
@@ -1038,7 +777,7 @@ fn collect_recursive(
         }
         // Size cap: rejects the memory exhaustion an attacker-supplied
         // oversized regular font file would cause. The boundary value
-        // (== FONT_SIZE_CAP) is let through (build_wpt_font_ctx's
+        // (== FONT_SIZE_CAP) is let through (build_wpt_font_collection's
         // `take(FONT_SIZE_CAP)` bounded read fully consumes it, so no
         // truncation occurs).
         let metadata = std::fs::symlink_metadata(&path).map_err(|source| FontError::Io {
@@ -1065,12 +804,12 @@ fn collect_recursive(
 // @font-face application — font selection integration.
 // ---------------------------------------------------------------------------
 
-/// Fetch one `src: url(...)` target for [`apply_font_faces`].
+/// Fetch one `src: url(...)` target for [`build_inline_document_fonts`].
 ///
 /// Returns the raw font bytes, or `None` when the URL is unavailable
 /// (network deny, missing file, policy rejection — the reason stays with the
-/// loader; [`apply_font_faces`] treats every `None` as "try the next
-/// source", fail-closed). Size capping is enforced by [`apply_font_faces`]
+/// loader; [`build_inline_document_fonts`] treats every `None` as "try the next
+/// source", fail-closed). Size capping is enforced by [`build_inline_document_fonts`]
 /// itself ([`FONT_SIZE_CAP`]), not by implementations, so every loader gets
 /// the same bound.
 pub trait FontFaceLoader {
@@ -1080,7 +819,7 @@ pub trait FontFaceLoader {
     fn load(&self, url: &str) -> Option<Vec<u8>>;
 }
 
-/// What [`apply_font_faces`] did with one [`FontFaceRegistry`].
+/// What [`build_inline_document_fonts`] did with one [`FontFaceRegistry`].
 ///
 /// Family names are the `@font-face` `font-family` values as authored. A
 /// family lands in exactly one of the three lists — application is
@@ -1088,8 +827,8 @@ pub trait FontFaceLoader {
 /// and skipped.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FontFaceApplyReport {
-    /// Families whose bytes were registered into the `FontContext` under the
-    /// `@font-face` name (a `url(...)` source resolved and fontique
+    /// Families whose bytes were registered into the document layer under the
+    /// `@font-face` name (a `url(...)` source resolved and the font library
     /// accepted it). Sorted for cross-process determinism (registry
     /// iteration itself is `HashMap` order).
     pub applied: Vec<String>,
@@ -1099,7 +838,7 @@ pub struct FontFaceApplyReport {
     /// rationale as [`Self::applied`].
     pub aliased: Vec<(String, String)>,
     /// Families with no resolvable source left (every source unavailable,
-    /// oversized, unsupported-container, or fontique-rejected). Sorted, same
+    /// oversized, unsupported-container, or rejected by the font library). Sorted, same
     /// rationale. These families keep their existing behavior — typically
     /// the collection fallback — and never error.
     pub skipped: Vec<String>,
@@ -1205,7 +944,7 @@ fn woff2_within_cap(bytes: &[u8]) -> bool {
         && woff_u32(bytes, 16).is_some_and(|size| size as u64 <= FONT_SIZE_CAP)
 }
 
-/// Decode a web-font container into the sfnt bytes understood by fontique.
+/// Decode a web-font container into the sfnt bytes understood by the font library.
 ///
 /// The container signature selects the decoder. `format(...)` values are
 /// capability hints rather than byte-format assertions, so a valid sfnt is
@@ -1236,402 +975,52 @@ pub(crate) fn decode_web_font(bytes: Vec<u8>) -> Option<Vec<u8>> {
     (decoded.len() as u64 <= FONT_SIZE_CAP).then_some(decoded)
 }
 
-/// Map a [`FontFaceWeight`] descriptor to the fontique
-/// override. `Range` keeps its lower bound — registration records one face,
-/// and the lower bound is the face's nominal weight (full range matching is
-/// the deferred matcher's job).
-fn font_face_weight_override(weight: FontFaceWeight) -> parley::fontique::FontWeight {
-    match weight {
-        FontFaceWeight::Normal => parley::fontique::FontWeight::NORMAL,
-        FontFaceWeight::Bold => parley::fontique::FontWeight::BOLD,
-        FontFaceWeight::Number(v) => parley::fontique::FontWeight::new(v),
-        FontFaceWeight::Range(lo, _) => parley::fontique::FontWeight::new(lo),
-        // Future descriptor variants (this enum is non-exhaustive) fall back
-        // to the spec initial — a registration override must always resolve
-        // to *some* weight, never error.
-        _ => parley::fontique::FontWeight::NORMAL,
-    }
+pub use crate::layout::ifc::font::BundledFace;
+
+/// Build a shodo shared layer from bundled fonts.
+///
+/// The fonts are registered in order under their authored family names, and
+/// every generic family maps onto the bundle in registration order, so the
+/// result does not depend on the fonts installed on the host. The same list
+/// given to `FontCollectionBuilder` in `raikiri-html` builds the same
+/// collection. With `system_fonts` set, the installed
+/// fonts are consulted after the bundle.
+///
+/// # Errors
+/// An empty list, a face shodo rejects, or a resource limit.
+pub fn build_bundled_font_collection(
+    faces: Vec<BundledFace>,
+    system_fonts: bool,
+) -> Result<shodo::font::FontCollection, shodo::font::FontError> {
+    crate::layout::ifc::font::bundled_collection(
+        &shodo::limits::Limits::default(),
+        faces,
+        system_fonts,
+    )
 }
 
-/// Map a [`FontFaceStyle`] descriptor to the fontique
-/// override. `Oblique` drops its angles (the parser already did — see
-/// `raikiri-style`'s `font_face` module); `None` takes the engine default.
-fn font_face_style_override(style: FontFaceStyle) -> parley::fontique::FontStyle {
-    match style {
-        FontFaceStyle::Normal => parley::fontique::FontStyle::Normal,
-        FontFaceStyle::Italic => parley::fontique::FontStyle::Italic,
-        FontFaceStyle::Oblique => parley::fontique::FontStyle::Oblique(None),
-        // Same fail-closed rationale as the weight wildcard above.
-        _ => parley::fontique::FontStyle::Normal,
-    }
-}
-
-/// Seed `fonts` from an `@font-face` registry and prepare computed
-/// `font-family` lists for selection — the "resolved faces participate in
-/// font selection" half of this implementation (parsing/registry is
-/// `raikiri-style`'s `font_face` module).
+/// The process-wide shared layer built from the platform's installed fonts.
 ///
-/// For each rule, sources are tried in author order (first resolvable wins,
-/// per CSS Fonts 4 §4.2's "user agent must ... using the first ... that it
-/// can successfully activate" — the download half; full cascade-time
-/// matching stays deferred):
-///
-/// - `url(...)`: `loader.load(url)` bytes are size-capped
-///   ([`FONT_SIZE_CAP`]), decoded from WOFF/WOFF2 container signatures, and
-///   registered under the
-///   `@font-face` family name (with weight/style descriptor overrides).
-///   Decode failures and bytes fontique rejects (`register_fonts` returns
-///   empty) fall through to the next source — a corrupt download never
-///   poisons the collection.
-/// - `local(name)`: when `name` already resolves in `fonts`, the face family
-///   is aliased by appending `name` to every computed `font-family` list
-///   that mentions the face family (after it, so an actually-registered
-///   face name still wins; idempotent — repeated application does not
-///   duplicate). Query-time fallback then finds the installed font through
-///   the ordinary family list, with no fontique alias API needed.
-///
-/// Fail-closed throughout: unavailable / oversized / rejected sources only
-/// land the family in [`FontFaceApplyReport::skipped`]; parsing, cascade,
-/// and layout never see an error. An empty registry is a no-op (returns an
-/// empty report without touching `fonts` or `computed`).
-///
-/// # Determinism
-///
-/// Registry iteration is `HashMap` order, so rules are applied in
-/// family-name-sorted order and every report list is sorted — two runs over
-/// the same registry produce the same collection state and the same report.
-/// Register the `url(...)` faces of one [`FontFaceRegistry`]
-/// into `fonts` — the download half of [`apply_font_faces`], split out so
-/// consumers that build several cascades from one document (the WPT test setup
-/// builds one cascade per page) can register once and expand aliases per
-/// cascade via [`expand_font_face_aliases`].
-///
-/// Rules are visited in family-name-sorted order (registry iteration itself
-/// is `HashMap` order — see [`apply_font_faces`]'s "Determinism" section).
-/// Returns the applied family names, sorted. Everything [`apply_font_faces`]
-/// documents about WOFF/WOFF2 decoding, size capping, and fail-closed
-/// fall-through applies here; `local(...)` sources are ignored by this
-/// function (they need no bytes — see [`expand_font_face_aliases`]).
-pub fn register_font_face_sources(
-    fonts: &mut FontContext,
-    faces: &FontFaceRegistry,
-    loader: &dyn FontFaceLoader,
-) -> Vec<String> {
-    use parley::fontique::{Blob, FontInfoOverride};
-    use std::sync::Arc;
-
-    let mut applied = Vec::new();
-    for (family, rule) in ordered_font_face_rules(faces) {
-        for source in &rule.src {
-            match source {
-                FontFaceSource::Local(_) => {}
-                FontFaceSource::Url { url, .. } => {
-                    let Some(bytes) = loader.load(url.as_str()) else {
-                        continue;
-                    };
-                    if bytes.len() as u64 > FONT_SIZE_CAP {
-                        continue;
-                    }
-                    let Some(bytes) = decode_web_font(bytes) else {
-                        continue;
-                    };
-                    let blob = Blob::new(Arc::new(bytes) as _);
-                    let registered = fonts.collection.register_fonts(
-                        blob,
-                        Some(FontInfoOverride {
-                            family_name: Some(family.as_str()),
-                            width: None,
-                            style: Some(font_face_style_override(rule.style)),
-                            weight: Some(font_face_weight_override(rule.weight)),
-                            axes: None,
-                        }),
-                    );
-                    if registered.is_empty() {
-                        continue;
-                    }
-                    applied.push(family.to_string());
-                    break;
-                }
-                // Future source kinds (this enum is non-exhaustive) are
-                // skipped — an unrecognized source never resolves, so the
-                // rule falls through to its next source.
-                _ => continue,
-            }
-        }
-    }
-    applied.sort();
-    applied
-}
-
-/// Expand the `local(...)` aliases of one [`FontFaceRegistry`]
-/// into computed `font-family` lists — the selection half of
-/// [`apply_font_faces`], split out for multi-cascade consumers (see
-/// [`register_font_face_sources`]).
-///
-/// For each rule, the first `local(...)` source that already resolves in
-/// `fonts` is appended (after the face family) to every computed list
-/// mentioning the face family, via the idempotent
-/// `expand_font_face_alias` helper below. Returns the applied
-/// `(face family, local target)` pairs, sorted by face family. `url(...)`
-/// sources are ignored by this function (they resolve through registration,
-/// not aliasing).
-pub fn expand_font_face_aliases(
-    computed: &mut [ComputedValues],
-    faces: &FontFaceRegistry,
-    fonts: &mut FontContext,
-) -> Vec<(String, String)> {
-    let mut aliased = Vec::new();
-    for (family, rule) in ordered_font_face_rules(faces) {
-        if !rule.unicode_range.is_empty() {
-            let covers_ch_glyphs = |codepoint| {
-                rule.unicode_range
-                    .iter()
-                    .any(|(start, end)| *start <= codepoint && codepoint <= *end)
+/// The platform is scanned once; later calls clone the shared layer. Faces
+/// are loaded from the platform lazily, the first time a lookup selects them,
+/// into this one layer, so every document and every thread of the process
+/// shares it and its lock. The per-layer face and byte caps are lifted: with
+/// a layer that lives as long as the process, a cap would become a lifetime
+/// limit after which lookups silently fall back to the last resort. Callers
+/// must not configure it (for example with `set_generic_families`): that
+/// changes the answers for every other user of the layer.
+pub fn system_font_collection() -> shodo::font::FontCollection {
+    static SHARED: std::sync::OnceLock<shodo::font::FontCollection> = std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| {
+            let limits = shodo::limits::Limits {
+                max_faces_per_layer: None,
+                max_layer_blob_bytes: None,
+                ..shodo::limits::Limits::default()
             };
-            if !covers_ch_glyphs(0x20) || !covers_ch_glyphs(0x30) {
-                let family_registered = fonts.collection.family_id(family.as_str()).is_some();
-                let local_target_registered = rule.src.iter().any(|source| match source {
-                    FontFaceSource::Local(name) => {
-                        fonts.collection.family_id(name.as_str()).is_some()
-                    }
-                    _ => false,
-                });
-                // If a URL face was not activated, leave its name in the
-                // authored list so Parley can apply its ordinary fallback
-                // behavior. A registered face or a resolvable local alias is
-                // authoritative and must be removed when either required glyph
-                // is excluded.
-                if family_registered || local_target_registered {
-                    remove_unavailable_ch_family(computed, family.as_str());
-                }
-            } // cov:ignore: this closing edge has no executable mapping on the pinned compiler.
-        }
-        for source in &rule.src {
-            match source {
-                FontFaceSource::Local(name) => {
-                    if fonts.collection.family_id(name.as_str()).is_some() {
-                        expand_font_face_alias(computed, family.as_str(), name.as_str());
-                        aliased.push((family.to_string(), name.to_string()));
-                        break;
-                    }
-                }
-                FontFaceSource::Url { .. } => {}
-                // Same fail-closed rationale as the register wildcard: a
-                // future source kind never resolves here.
-                _ => continue,
-            }
-        }
-    }
-    aliased.sort();
-    aliased
-}
-
-/// Seed `fonts` from an `@font-face` registry and prepare computed
-/// `font-family` lists for selection — the "resolved faces participate in
-/// font selection" half of this implementation (parsing/registry is
-/// `raikiri-style`'s `font_face` module).
-///
-/// This is [`register_font_face_sources`] + [`expand_font_face_aliases`] in
-/// one call for consumers with a single cascade. For each rule, sources are
-/// tried in author order (first resolvable wins, per CSS Fonts 4 §4.2's
-/// "user agent must ... using the first ... that it can successfully
-/// activate" — the download half; full cascade-time matching stays
-/// deferred). See the two split functions' docs for the per-kind semantics.
-///
-/// Fail-closed throughout: unavailable / oversized / rejected sources only
-/// land the family in [`FontFaceApplyReport::skipped`]; parsing, cascade,
-/// and layout never see an error. An empty registry is a no-op (returns an
-/// empty report without touching `fonts` or `computed`).
-///
-/// # Determinism
-///
-/// Registry iteration is `HashMap` order, so rules are applied in
-/// family-name-sorted order and every report list is sorted — two runs over
-/// the same registry produce the same collection state and the same report.
-pub fn apply_font_faces(
-    fonts: &mut FontContext,
-    computed: &mut [ComputedValues],
-    faces: &FontFaceRegistry,
-    loader: &dyn FontFaceLoader,
-) -> FontFaceApplyReport {
-    let mut report = FontFaceApplyReport::default();
-    if faces.is_empty() {
-        return report;
-    }
-    report.applied = register_font_face_sources(fonts, faces, loader);
-    report.aliased = expand_font_face_aliases(computed, faces, fonts);
-    let mut ordered: Vec<String> = ordered_font_face_rules(faces)
-        .iter()
-        .map(|(family, _)| family.to_string())
-        .collect();
-    ordered.sort();
-    for family in ordered {
-        if !report.applied.contains(&family)
-            && !report.aliased.iter().any(|(face, _)| face == &family)
-        {
-            report.skipped.push(family);
-        }
-    }
-    report.skipped.sort();
-    report
-}
-
-/// Registry rules in family-name-sorted order — the shared deterministic
-/// visit order for [`register_font_face_sources`],
-/// [`expand_font_face_aliases`], and [`apply_font_faces`]'s skipped
-/// computation.
-fn ordered_font_face_rules(faces: &FontFaceRegistry) -> Vec<(&SmolStr, &FontFaceRule)> {
-    let mut ordered: Vec<(&SmolStr, &FontFaceRule)> = faces.iter().collect();
-    ordered.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-    ordered
-}
-
-/// Remove a font-face family from `ch` provenance when its unicode range does
-/// not cover the space and zero glyphs required by first-available `ch`
-/// selection. U+0030 supplies the advance.
-fn remove_unavailable_ch_family(computed: &mut [ComputedValues], family: &str) {
-    fn remove_from_key(key: &mut ChFontKey, family: &str) {
-        let mut families = key.family.as_ref().clone();
-        families.retain(|candidate| {
-            candidate.1 != FontFamilyKind::Named || !candidate.as_str().eq_ignore_ascii_case(family)
-        });
-        key.family = std::sync::Arc::new(families);
-    }
-    for cv in computed {
-        for key in [
-            cv.text_indent_ch_font.as_mut(),
-            cv.letter_spacing_ch_font.as_mut(),
-            cv.word_spacing_ch_font.as_mut(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            remove_from_key(key, family);
-        }
-        for provenance in [
-            cv.text_decoration_inset_start_ch.as_mut(),
-            cv.text_decoration_inset_end_ch.as_mut(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            remove_from_key(&mut provenance.font, family);
-        }
-        if let Some(provenance) = cv.width_ch.as_mut() {
-            remove_from_key(&mut provenance.font, family);
-        }
-        if let Some(provenance) = cv.height_ch.as_mut() {
-            remove_from_key(&mut provenance.font, family);
-        }
-        for provenance in [
-            cv.padding_ch.top.as_mut(),
-            cv.padding_ch.right.as_mut(),
-            cv.padding_ch.bottom.as_mut(),
-            cv.padding_ch.left.as_mut(),
-            cv.margin_ch.top.as_mut(),
-            cv.margin_ch.right.as_mut(),
-            cv.margin_ch.bottom.as_mut(),
-            cv.margin_ch.left.as_mut(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            remove_from_key(&mut provenance.font, family);
-        }
-    }
-}
-
-/// Insert `target` immediately after every computed `font-family` list entry
-/// mentioning `face`; a target that already precedes the face keeps precedence,
-/// while later duplicates are removed so repeated application is idempotent.
-/// Authored `ch` provenance is expanded in parallel because it is deliberately
-/// retained separately from the ordinary computed family list.
-fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &str) {
-    use std::sync::Arc;
-
-    fn alias_family_list(
-        families: &[FontFamilyName],
-        face: &str,
-        target: &str,
-    ) -> Option<Vec<FontFamilyName>> {
-        let face_index = families
-            .iter()
-            .position(|a| a.1 == FontFamilyKind::Named && a.as_str().eq_ignore_ascii_case(face))?;
-        if face.eq_ignore_ascii_case(target) {
-            return None;
-        }
-        if families
-            .iter()
-            .position(|a| a.1 == FontFamilyKind::Named && a.as_str().eq_ignore_ascii_case(target))
-            .is_some_and(|target_index| target_index < face_index)
-        {
-            // An explicitly earlier target already wins over the alias.
-            return None;
-        }
-        let mut expanded = Vec::with_capacity(families.len() + 1);
-        for (index, family) in families.iter().enumerate() {
-            if family.1 == FontFamilyKind::Named && family.as_str().eq_ignore_ascii_case(target) {
-                continue;
-            }
-            expanded.push(family.clone());
-            if index == face_index {
-                expanded.push(FontFamilyName::named(target));
-            }
-        }
-        Some(expanded)
-    }
-
-    fn update_key(key: &mut ChFontKey, face: &str, target: &str) {
-        if let Some(expanded) = alias_family_list(&key.family, face, target) {
-            key.family = Arc::new(expanded);
-        }
-    }
-
-    for cv in computed.iter_mut() {
-        if let Some(expanded) = alias_family_list(&cv.font_family, face, target) {
-            cv.font_family = Arc::new(expanded);
-        }
-        for key in [
-            cv.text_indent_ch_font.as_mut(),
-            cv.letter_spacing_ch_font.as_mut(),
-            cv.word_spacing_ch_font.as_mut(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            update_key(key, face, target);
-        }
-        for provenance in [
-            cv.text_decoration_inset_start_ch.as_mut(),
-            cv.text_decoration_inset_end_ch.as_mut(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            update_key(&mut provenance.font, face, target);
-        }
-        if let Some(provenance) = cv.width_ch.as_mut() {
-            update_key(&mut provenance.font, face, target);
-        }
-        if let Some(provenance) = cv.height_ch.as_mut() {
-            update_key(&mut provenance.font, face, target);
-        }
-        for provenance in [
-            cv.padding_ch.top.as_mut(),
-            cv.padding_ch.right.as_mut(),
-            cv.padding_ch.bottom.as_mut(),
-            cv.padding_ch.left.as_mut(),
-            cv.margin_ch.top.as_mut(),
-            cv.margin_ch.right.as_mut(),
-            cv.margin_ch.bottom.as_mut(),
-            cv.margin_ch.left.as_mut(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            update_key(&mut provenance.font, face, target);
-        }
-    }
+            shodo::font::FontCollection::with_options(&limits, shodo::font::FontOptions::default())
+        })
+        .clone()
 }
 
 /// A document layer over `shared` holding the faces of `faces`, for the
@@ -1656,12 +1045,11 @@ pub fn build_inline_document_fonts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raikiri_style::ChLengthProvenance;
     use std::io::Write;
     use std::path::Path;
 
     /// Minimal valid TTF header (magic 0x00010000 + zero-fill).
-    /// fontique's `register_fonts` assigns a `family_id` even to a
+    /// the font library registers a family even for a
     /// zero-fill body once the header check passes (parse-invalid, but
     /// good enough for exercising the walker).
     fn write_fake_ttf(dir: &Path, name: &str) {
@@ -1810,11 +1198,8 @@ mod tests {
 
     #[test]
     fn missing_dir_returns_err() {
-        // NB: `parley::FontContext` doesn't impl `Debug` (parley 0.10), so
-        // `Result::unwrap_err` (which requires `T: Debug`) can't be used
-        // here. `match` sidesteps that bound.
         let bogus = Path::new("/definitely/does/not/exist/raikiri-dom-fonts-test");
-        match build_wpt_font_ctx(bogus) {
+        match build_wpt_font_collection(bogus) {
             Err(FontError::DirNotFound(p)) => assert_eq!(p, bogus),
             Err(other) => panic!("expected DirNotFound, got {:?}", other),
             Ok(_) => panic!("expected DirNotFound err, got Ok"),
@@ -1824,7 +1209,7 @@ mod tests {
     #[test]
     fn empty_dir_returns_empty_dir_err() {
         let tmp = tempfile::tempdir().unwrap();
-        match build_wpt_font_ctx(tmp.path()) {
+        match build_wpt_font_collection(tmp.path()) {
             Err(FontError::EmptyDir(p)) => assert_eq!(p, tmp.path()),
             Err(other) => panic!("expected EmptyDir, got {:?}", other),
             Ok(_) => panic!("expected EmptyDir err, got Ok"),
@@ -1832,7 +1217,7 @@ mod tests {
     }
 
     /// `collect_recursive`'s own `std::fs::read_dir` error arm.
-    /// `build_wpt_font_ctx` intercepts a missing path earlier via its own
+    /// `build_wpt_font_collection` intercepts a missing path earlier via its own
     /// `DirNotFound` check (see `missing_dir_returns_err`), so reaching this
     /// specific arm requires calling `walk_fonts` directly against a path
     /// that exists (passing `.exists()`) but is not a directory.
@@ -1910,7 +1295,7 @@ mod tests {
     fn walker_accepts_regular_file_at_size_cap_boundary() {
         // Regression check: verifies the filter doesn't silently
         // over-reject (the boundary value == FONT_SIZE_CAP is let through —
-        // build_wpt_font_ctx's `take(FONT_SIZE_CAP)` bounded read fully
+        // build_wpt_font_collection's `take(FONT_SIZE_CAP)` bounded read fully
         // consumes exactly the boundary). boundary.ttf: creates a sparse
         // file via `File::set_len(FONT_SIZE_CAP)`, then checks directly that
         // exactly the boundary value (`metadata.len() == FONT_SIZE_CAP`)
@@ -1960,9 +1345,9 @@ mod tests {
         // absent from the dir, another valid font (Other.ttf) must not
         // silently fall back into the "serif" cascade.
         let tmp = tempfile::tempdir().unwrap();
-        write_fake_ttf(tmp.path(), "Other.ttf"); // valid ttf (fontique accepts)
+        write_fake_ttf(tmp.path(), "Other.ttf"); // valid ttf (the font library accepts)
         // Ahem.ttf is deliberately not written -> violates the PREFERRED_FIRST invariant
-        match build_wpt_font_ctx(tmp.path()) {
+        match build_wpt_font_collection(tmp.path()) {
             Err(FontError::PreferredFontUnavailable { name, dir }) => {
                 assert_eq!(name, "Ahem.ttf");
                 assert_eq!(dir, tmp.path());
@@ -1981,16 +1366,16 @@ mod tests {
     #[test]
     fn preferred_font_register_failure_returns_err() {
         // Regression check: when the PREFERRED_FIRST font (Ahem.ttf) is
-        // present on disk but rejected by fontique, another valid font must
+        // present on disk but rejected by the font library, another valid font must
         // not silently fall back into the "serif" cascade (register failure
         // is escalated to a dedicated Err in the same spirit as read
         // failure being escalated to a hard error).
         let tmp = tempfile::tempdir().unwrap();
-        // Ahem.ttf: garbage bytes -> fontique refuses to register it
+        // Ahem.ttf: garbage bytes -> the font library refuses to register it
         std::fs::write(tmp.path().join("Ahem.ttf"), b"not a valid font").unwrap();
-        // Other.ttf: a valid fake ttf -> fontique registers it successfully
+        // Other.ttf: a valid fake ttf -> the font library registers it successfully
         write_fake_ttf(tmp.path(), "Other.ttf");
-        match build_wpt_font_ctx(tmp.path()) {
+        match build_wpt_font_collection(tmp.path()) {
             Err(FontError::PreferredFontUnavailable { name, dir }) => {
                 assert_eq!(name, "Ahem.ttf");
                 assert_eq!(dir, tmp.path());
@@ -2004,80 +1389,6 @@ mod tests {
                  silent fallback to Other.ttf would break cascade 'serif' → Ahem promise"
             ),
         }
-    }
-
-    /// Integration-style test using the real WPT fonts (target/wpt/fonts/).
-    /// Skips (a clean early return, not a `should_panic`-style skip) when
-    /// `scripts/wpt/fetch.sh` hasn't been run yet.
-    #[test]
-    fn build_wpt_font_ctx_registers_generic_serif() {
-        use std::path::PathBuf;
-
-        // Locate target/wpt/fonts (relative to the workspace root). The CWD
-        // during `cargo test` is the crate dir, so `../..` reaches the root.
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let fonts_dir = PathBuf::from(&manifest_dir)
-            .join("..")
-            .join("..")
-            .join("target")
-            .join("wpt")
-            .join("fonts");
-
-        if !fonts_dir.join("Ahem.ttf").exists() {
-            eprintln!(
-                "skipping build_wpt_font_ctx_registers_generic_serif: \
-                 Ahem.ttf not found under {} \
-                 (run scripts/wpt/fetch.sh first)",
-                fonts_dir.display()
-            );
-            return;
-        }
-
-        let ctx = build_wpt_font_ctx(&fonts_dir).expect("build Ok with Ahem present");
-        // A full check asserting via parley 0.10's resolution API that the
-        // "serif" generic resolves to a non-empty family is left to a
-        // future end-to-end VRT. Here we only smoke-check that
-        // build_wpt_font_ctx returns Ok without panicking against a real
-        // WPT font dir (including Ahem.ttf) — within the current
-        // implementation's scope, with the controller ambiguity already
-        // resolved.
-        let _ = ctx;
-    }
-
-    /// End-to-end success path for `build_wpt_font_ctx_with_observer`: the
-    /// registration loop actually registering a font, the
-    /// `registered_preferred_basenames` bookkeeping, the PREFERRED_FIRST
-    /// invariant check passing (falling through instead of returning
-    /// `PreferredFontUnavailable`), and the generic-family alias remap
-    /// loop. None of this is reachable from a synthetic `write_fake_ttf`
-    /// body (fontique refuses to register one — see `checked_in_ahem_bytes`'s
-    /// doc), so this uses the checked-in Ahem.ttf fixture in a tempdir
-    /// instead of `target/wpt/fonts/`, unlike
-    /// `build_wpt_font_ctx_registers_generic_serif` above.
-    #[test]
-    fn build_wpt_font_ctx_with_observer_registers_real_ahem_and_aliases_generics() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("Ahem.ttf"), checked_in_ahem_bytes()).unwrap();
-        // A garbage non-preferred file: fontique must refuse to register it
-        // (RegisterEmpty warn+skip) without blocking Ahem from satisfying
-        // the PREFERRED_FIRST invariant.
-        std::fs::write(tmp.path().join("Bad.ttf"), b"not a font").unwrap();
-
-        let mut events: Vec<String> = Vec::new();
-        let mut ctx = build_wpt_font_ctx_with_observer(
-            tmp.path(),
-            Some(&mut |warn: &FontWarn<'_>| events.push(warn.to_string())),
-        )
-        .expect("build Ok with a real Ahem.ttf present");
-
-        assert!(
-            ctx.collection.family_id("Ahem").is_some(),
-            "Ahem.ttf's own name-table family must resolve after registration"
-        );
-        assert!(
-            events.iter().any(|e| e.contains("no family registered")),
-            "Bad.ttf must warn+skip via RegisterEmpty rather than silently vanish: {events:?}"
-        );
     }
 
     /// End-to-end check: `read_bounded_font_file` rejects a symlink at the
@@ -2375,9 +1686,9 @@ mod tests {
     // Observer tests
     // ------------------------------------------------------------------
     //
-    // Structural coverage for `build_wpt_font_ctx_with_observer`:
+    // Structural coverage for `ifc::font::wpt_collection`:
     // - Deterministic walker sites (symlink / non-regular / oversized) fire.
-    // - Deterministic fontique register-empty site fires.
+    // - Deterministic font-library register-empty site fires.
     // - Default None-observer path still writes to eprintln! and does not
     //   panic.
     // - The `read_reject_to_warn` mapping covers all non-Io variants
@@ -2445,7 +1756,7 @@ mod tests {
 
     /// `OwnedWarn::from_ref` maps every `FontWarn::ReadRejected*` variant.
     /// The real observer call sites for these all require a genuine
-    /// walk-then-read TOCTOU race (see `build_wpt_font_ctx_with_observer`'s
+    /// walk-then-read TOCTOU race (see `ifc::font::wpt_collection`'s
     /// `Err(reason)` arm, `cov:ignore`d for the same reason), so — mirroring
     /// `read_reject_to_warn_maps_all_non_io_variants`'s direct-construction
     /// approach — this constructs each `FontWarn` variant directly rather
@@ -2517,7 +1828,11 @@ mod tests {
 
         let mut events: Vec<OwnedWarn> = Vec::new();
         let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
-        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+        let _ = crate::layout::ifc::font::wpt_collection(
+            tmp.path(),
+            &shodo::limits::Limits::default(),
+            Some(&mut cb),
+        );
 
         assert!(
             events
@@ -2546,7 +1861,11 @@ mod tests {
 
         let mut events: Vec<OwnedWarn> = Vec::new();
         let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
-        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+        let _ = crate::layout::ifc::font::wpt_collection(
+            tmp.path(),
+            &shodo::limits::Limits::default(),
+            Some(&mut cb),
+        );
 
         assert!(
             events
@@ -2573,7 +1892,11 @@ mod tests {
 
         let mut events: Vec<OwnedWarn> = Vec::new();
         let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
-        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+        let _ = crate::layout::ifc::font::wpt_collection(
+            tmp.path(),
+            &shodo::limits::Limits::default(),
+            Some(&mut cb),
+        );
 
         assert!(
             events.iter().any(|e| matches!(
@@ -2590,20 +1913,24 @@ mod tests {
     }
 
     /// Observer fires `RegisterEmpty` when a non-preferred `.ttf` contains
-    /// garbage bytes that fontique rejects.  Uses `Other.ttf` (not
+    /// garbage bytes that the font library rejects.  Uses `Other.ttf` (not
     /// `Ahem.ttf`) so `PreferredFontUnavailable` does not preempt the
     /// event.
     #[test]
     fn observer_fires_register_empty() {
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "Ahem.ttf");
-        // Other.ttf: garbage bytes → fontique returns no families.
+        // Other.ttf: garbage bytes → the font library returns no families.
         let other = tmp.path().join("Other.ttf");
         std::fs::write(&other, b"not a valid font").unwrap();
 
         let mut events: Vec<OwnedWarn> = Vec::new();
         let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
-        let _ = build_wpt_font_ctx_with_observer(tmp.path(), Some(&mut cb));
+        let _ = crate::layout::ifc::font::wpt_collection(
+            tmp.path(),
+            &shodo::limits::Limits::default(),
+            Some(&mut cb),
+        );
 
         assert!(
             events
@@ -2615,7 +1942,7 @@ mod tests {
         );
     }
 
-    /// Default-None observer path: `build_wpt_font_ctx` (which delegates
+    /// Default-None observer path: `build_wpt_font_collection` (which delegates
     /// with `None`) must not panic and must preserve the original error
     /// classification even when warn+skip sites fire.  Regression check: the
     /// observer integration logic must not divert the `FontError` return channel or
@@ -2634,16 +1961,16 @@ mod tests {
         f.set_len(FONT_SIZE_CAP + 1).unwrap();
         drop(f);
 
-        // `build_wpt_font_ctx` delegates to `_with_observer(_, None)`, so
+        // `build_wpt_font_collection` delegates to `wpt_collection(_, _, None)`, so
         // this exercises the eprintln! fallback path end-to-end.  The
         // aggregate result depends on Ahem.ttf presence — the check is that
         // the call returns *some* Result (Ok or Err) without panicking.
-        let _ = build_wpt_font_ctx(tmp.path());
+        let _ = build_wpt_font_collection(tmp.path());
     }
 
     /// `read_reject_to_warn` maps every non-Io `FontReadReject` variant to
     /// its `FontWarn::ReadRejected*` counterpart.  The read-time observer
-    /// arm in `build_wpt_font_ctx_with_observer` is `cov:ignore` (the
+    /// arm in `ifc::font::wpt_collection` is `cov:ignore` (the
     /// walker pre-filters symlink/non-regular/oversized, so the arm only
     /// fires on a real TOCTOU race), which would otherwise leave the
     /// TOCTOU-observability deliverable untested.  This unit test closes
@@ -2832,7 +2159,7 @@ mod tests {
         );
 
         // Register-empty site — body from the original eprintln! after the
-        // fontique register_fonts empty branch.
+        // font library's empty-registration branch.
         assert_eq!(
             format!("{}", FontWarn::RegisterEmpty { path: p }),
             "skipping /tmp/fake.ttf: no family registered"
@@ -2840,7 +2167,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // apply_font_faces — @font-face selection integration.
+    // build_inline_document_fonts — @font-face registration.
     // ------------------------------------------------------------------
 
     /// Loader that serves fixed bytes for any URL (records what it saw).
@@ -2874,7 +2201,7 @@ mod tests {
         }
     }
 
-    /// Real Ahem.ttf bytes for the positive registration paths. fontique
+    /// Real Ahem.ttf bytes for the positive registration paths. The font library
     /// rejects synthetic headers (a zero-fill body with only a valid sfnt
     /// magic does not register — see `write_fake_ttf`'s own doc for the
     /// walker-only case that *does* tolerate that), so only real font bytes
@@ -2890,53 +2217,49 @@ mod tests {
         .to_vec()
     }
 
-    fn computed_with_family(family: &str) -> ComputedValues {
-        let mut cv = ComputedValues::initial();
-        cv.font_family = std::sync::Arc::new(vec![FontFamilyName::named(family)]);
-        cv
+    /// A shared layer holding only Ahem, the base of the document layers
+    /// these tests build.
+    fn ahem_shared() -> shodo::font::FontCollection {
+        super::build_bundled_font_collection(
+            vec![BundledFace {
+                family: "Ahem".to_string(),
+                bytes: checked_in_ahem_bytes(),
+            }],
+            false,
+        )
+        .expect("Ahem collection")
     }
 
     #[test]
-    fn apply_font_faces_empty_registry_is_noop() {
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("serif")];
-        let before = computed.clone();
+    fn document_fonts_empty_registry_is_noop() {
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::new();
-        let report =
-            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        let report = super::build_inline_document_fonts(&shared, &faces, &MapLoader::refusing()).1;
         assert_eq!(report, super::FontFaceApplyReport::default());
-        assert_eq!(computed, before, "empty registry must not touch computed");
     }
 
     #[test]
-    fn apply_font_faces_unavailable_url_is_skipped_fail_closed() {
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("Custom")];
-        let before = computed.clone();
+    fn document_fonts_unavailable_url_is_skipped_fail_closed() {
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: Custom; src: url(missing.ttf); }",
         );
         assert_eq!(faces.len(), 1);
-        let report =
-            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        let report = super::build_inline_document_fonts(&shared, &faces, &MapLoader::refusing()).1;
         assert!(report.applied.is_empty());
         assert!(report.aliased.is_empty());
         assert_eq!(report.skipped, vec!["Custom".to_string()]);
-        assert_eq!(computed, before, "fail-closed: computed untouched");
     }
 
     #[test]
-    fn apply_font_faces_garbage_bytes_are_rejected_fail_closed() {
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("Custom")];
-        let before = computed.clone();
+    fn document_fonts_garbage_bytes_are_rejected_fail_closed() {
+        let shared = ahem_shared();
         let faces =
             FontFaceRegistry::from_source("@font-face { font-family: Custom; src: url(bad.ttf); }");
-        // Not a font at all — fontique must accept zero families from it.
+        // Not a font at all — the font library must accept zero families from it.
         let loader = MapLoader::serving(b"definitely not a font".to_vec());
-        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        let report = super::build_inline_document_fonts(&shared, &faces, &loader).1;
         assert_eq!(report.skipped, vec!["Custom".to_string()]);
-        assert_eq!(computed, before);
     }
 
     /// Loader that hands back a fresh `FONT_SIZE_CAP + 1`-byte buffer on
@@ -2950,82 +2273,76 @@ mod tests {
         }
     }
 
-    /// `register_font_face_sources`'s own size-cap skip (checked before
+    /// `build_inline_document_fonts`'s own size-cap skip (checked before
     /// `decode_web_font`, ahead of and independent from the walker's
-    /// on-disk size cap for `build_wpt_font_ctx`'s files).
+    /// on-disk size cap for `build_wpt_font_collection`'s files).
     #[test]
-    fn register_font_face_sources_skips_oversized_url_bytes() {
-        let mut fonts = FontContext::new();
+    fn document_fonts_skips_oversized_url_bytes() {
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: Custom; src: url(huge.ttf); }",
         );
-        let applied = super::register_font_face_sources(&mut fonts, &faces, &OversizedLoader);
+        let applied = super::build_inline_document_fonts(&shared, &faces, &OversizedLoader)
+            .1
+            .applied;
         assert!(applied.is_empty());
     }
 
-    /// `register_font_face_sources`'s own `decode_web_font` rejection
+    /// `build_inline_document_fonts`'s own `decode_web_font` rejection
     /// fallthrough for a URL source — distinct from
-    /// `apply_font_faces_garbage_bytes_are_rejected_fail_closed` above,
+    /// `document_fonts_garbage_bytes_are_rejected_fail_closed` above,
     /// whose bytes don't match a WOFF/WOFF2 signature at all (so
     /// `decode_web_font` passes them through unchanged and they're instead
-    /// rejected later by fontique). Here the signature matches but the
+    /// rejected later by the font library). Here the signature matches but the
     /// container is truncated, so `woff1_within_cap` itself fails and
     /// `decode_web_font` returns `None`.
     #[test]
-    fn register_font_face_sources_skips_malformed_woff_container() {
-        let mut fonts = FontContext::new();
+    fn document_fonts_skips_malformed_woff_container() {
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: Custom; src: url(bad.woff); }",
         );
         let loader = MapLoader::serving(b"wOFF".to_vec());
-        let applied = super::register_font_face_sources(&mut fonts, &faces, &loader);
+        let applied = super::build_inline_document_fonts(&shared, &faces, &loader)
+            .1
+            .applied;
         assert!(applied.is_empty());
     }
 
     #[test]
-    fn apply_font_faces_registers_url_bytes_under_face_name() {
+    fn document_fonts_registers_url_bytes_under_face_name() {
         let ahem = checked_in_ahem_bytes();
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("Custom")];
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: Custom; src: url(custom.ttf) format(\"truetype\"); }",
         );
         let loader = MapLoader::serving(ahem);
-        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        let report = super::build_inline_document_fonts(&shared, &faces, &loader).1;
         assert_eq!(report.applied, vec!["Custom".to_string()]);
         assert!(report.skipped.is_empty());
-        assert!(
-            fonts.collection.family_id("Custom").is_some(),
-            "registered bytes must resolve under the @font-face name"
-        );
-        // url-registered faces need no alias expansion.
         assert!(report.aliased.is_empty());
-        assert_eq!(computed.len(), 1);
     }
 
     #[test]
-    fn apply_font_faces_format_hint_does_not_force_container_decode() {
+    fn document_fonts_format_hint_does_not_force_container_decode() {
         let ahem = checked_in_ahem_bytes();
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("Hinted")];
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: Hinted; src: url(ahem.ttf) format(\"woff2\"); }",
         );
         let loader = MapLoader::serving(ahem);
-        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        let report = super::build_inline_document_fonts(&shared, &faces, &loader).1;
         assert_eq!(report.applied, vec!["Hinted".to_string()]);
-        assert!(fonts.collection.family_id("Hinted").is_some());
     }
 
     #[test]
-    fn apply_font_faces_malformed_woff2_is_rejected_after_loading() {
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("Custom")];
+    fn document_fonts_malformed_woff2_is_rejected_after_loading() {
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: Custom; src: url(custom.woff2) format(\"woff2\"); }",
         );
         let loader = MapLoader::serving(b"unread".to_vec());
-        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        let report = super::build_inline_document_fonts(&shared, &faces, &loader).1;
         assert_eq!(report.skipped, vec!["Custom".to_string()]);
         assert_eq!(
             loader.seen.borrow().as_slice(),
@@ -3034,7 +2351,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_font_faces_registers_woff_and_woff2_assets() {
+    fn document_fonts_registers_woff_and_woff2_assets() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let root = std::path::PathBuf::from(manifest_dir)
             .join("..")
@@ -3065,8 +2382,7 @@ mod tests {
                 );
                 return;
             };
-            let mut fonts = FontContext::new();
-            let mut computed = vec![computed_with_family(family)];
+            let shared = ahem_shared();
             let source = match hint {
                 Some(format) => format!(
                     "@font-face {{ font-family: {family}; src: url({relative}) format(\"{format}\"); }}"
@@ -3075,16 +2391,15 @@ mod tests {
             };
             let faces = FontFaceRegistry::from_source(&source);
             let loader = MapLoader::serving(bytes);
-            let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+            let report = super::build_inline_document_fonts(&shared, &faces, &loader).1;
             assert_eq!(report.applied, vec![family.to_string()]);
             assert!(report.skipped.is_empty());
-            assert!(fonts.collection.family_id(family).is_some());
             assert_eq!(loader.seen.borrow().as_slice(), &[relative.to_string()]);
         }
     }
 
     #[test]
-    fn apply_font_faces_falls_through_from_bad_woff2_to_ttf() {
+    fn document_fonts_falls_through_from_bad_woff2_to_ttf() {
         struct FallbackLoader {
             good: Vec<u8>,
             seen: std::cell::RefCell<Vec<String>>,
@@ -3102,8 +2417,7 @@ mod tests {
         }
 
         let ahem = checked_in_ahem_bytes();
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("Fallback")];
+        let shared = ahem_shared();
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: Fallback; src: url(bad.woff2) format(\"woff2\"), url(good.ttf) format(\"truetype\"); }",
         );
@@ -3111,309 +2425,12 @@ mod tests {
             good: ahem,
             seen: std::cell::RefCell::new(Vec::new()),
         };
-        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        let report = super::build_inline_document_fonts(&shared, &faces, &loader).1;
         assert_eq!(report.applied, vec!["Fallback".to_string()]);
-        assert!(fonts.collection.family_id("Fallback").is_some());
         assert_eq!(
             loader.seen.borrow().as_slice(),
             &["bad.woff2".to_string(), "good.ttf".to_string()]
         );
-    }
-
-    #[test]
-    fn expand_font_face_unicode_range_ignores_unregistered_url_faces() {
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("Unloaded")];
-        let faces = FontFaceRegistry::from_source(
-            "@font-face { font-family: Unloaded; src: url(unloaded.ttf); unicode-range: U+0041-0042; }",
-        );
-        let report =
-            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
-        assert!(report.applied.is_empty());
-        assert!(report.aliased.is_empty());
-        assert_eq!(computed[0].font_family[0].as_str(), "Unloaded");
-    }
-
-    #[test]
-    fn apply_font_faces_local_alias_expands_computed_lists() {
-        let ahem = checked_in_ahem_bytes();
-        let mut fonts = FontContext::new();
-        // Seed a resolvable family first (standalone registration, no
-        // @font-face involved).
-        {
-            use parley::fontique::{Blob, FontInfoOverride};
-            let blob = Blob::new(std::sync::Arc::new(ahem) as _);
-            let registered = fonts.collection.register_fonts(
-                blob,
-                Some(FontInfoOverride {
-                    family_name: Some("RealFam"),
-                    width: None,
-                    style: None,
-                    weight: None,
-                    axes: None,
-                }),
-            );
-            assert!(!registered.is_empty());
-        }
-        let mut aliased_cv = computed_with_family("AliasFam");
-        aliased_cv.font_family = std::sync::Arc::new(vec![
-            FontFamilyName::named("AliasFam"),
-            FontFamilyName::named("Fallback"),
-            FontFamilyName::generic("serif"),
-        ]);
-        let source_key = ChFontKey {
-            family: aliased_cv.font_family.clone(),
-            size: aliased_cv.font_size,
-            weight: aliased_cv.font_weight,
-            style: aliased_cv.font_style,
-        };
-        aliased_cv.text_indent_ch_font = Some(source_key.clone());
-        aliased_cv.width_ch = Some(ChLengthProvenance {
-            factor: 1.0,
-            font: source_key.clone(),
-        });
-        aliased_cv.height_ch = Some(ChLengthProvenance {
-            factor: 1.0,
-            font: source_key.clone(),
-        });
-        aliased_cv.text_decoration_inset_start_ch = Some(ChLengthProvenance {
-            factor: 1.0,
-            font: source_key.clone(),
-        });
-        aliased_cv.text_decoration_inset_end_ch = Some(ChLengthProvenance {
-            factor: -1.0,
-            font: source_key.clone(),
-        });
-        aliased_cv.padding_ch.top = Some(ChLengthProvenance {
-            factor: 1.0,
-            font: source_key.clone(),
-        });
-        aliased_cv.margin_ch.left = Some(ChLengthProvenance {
-            factor: 1.0,
-            font: source_key,
-        });
-        let mut computed = vec![aliased_cv];
-        let faces = FontFaceRegistry::from_source(
-            "@font-face { font-family: AliasFam; src: local(RealFam); }",
-        );
-        let report =
-            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
-        assert_eq!(
-            report.aliased,
-            vec![("AliasFam".to_string(), "RealFam".to_string())]
-        );
-        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
-        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback", "serif"]);
-        assert_eq!(computed[0].font_family[1].1, FontFamilyKind::Named);
-        assert_eq!(computed[0].font_family[3].1, FontFamilyKind::Generic);
-        let key_names = |key: &ChFontKey| -> Vec<String> {
-            key.family.iter().map(|a| a.0.to_string()).collect()
-        };
-        assert_eq!(
-            key_names(computed[0].text_indent_ch_font.as_ref().unwrap()),
-            vec![
-                "AliasFam".to_string(),
-                "RealFam".to_string(),
-                "Fallback".to_string(),
-                "serif".to_string()
-            ]
-        );
-        assert_eq!(
-            key_names(&computed[0].width_ch.as_ref().unwrap().font),
-            vec![
-                "AliasFam".to_string(),
-                "RealFam".to_string(),
-                "Fallback".to_string(),
-                "serif".to_string()
-            ]
-        );
-        assert_eq!(
-            key_names(&computed[0].padding_ch.top.as_ref().unwrap().font),
-            vec![
-                "AliasFam".to_string(),
-                "RealFam".to_string(),
-                "Fallback".to_string(),
-                "serif".to_string()
-            ]
-        );
-        assert_eq!(
-            key_names(&computed[0].height_ch.as_ref().unwrap().font),
-            vec![
-                "AliasFam".to_string(),
-                "RealFam".to_string(),
-                "Fallback".to_string(),
-                "serif".to_string()
-            ]
-        );
-        assert_eq!(
-            key_names(&computed[0].margin_ch.left.as_ref().unwrap().font),
-            vec![
-                "AliasFam".to_string(),
-                "RealFam".to_string(),
-                "Fallback".to_string(),
-                "serif".to_string()
-            ]
-        );
-        for provenance in [
-            computed[0].text_decoration_inset_start_ch.as_ref().unwrap(),
-            computed[0].text_decoration_inset_end_ch.as_ref().unwrap(),
-        ] {
-            assert_eq!(
-                key_names(&provenance.font),
-                vec![
-                    "AliasFam".to_string(),
-                    "RealFam".to_string(),
-                    "Fallback".to_string(),
-                    "serif".to_string()
-                ]
-            );
-        }
-        // Idempotent — a second application must not duplicate.
-        let again =
-            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
-        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
-        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback", "serif"]);
-        assert_eq!(computed[0].font_family[1].1, FontFamilyKind::Named);
-        assert_eq!(computed[0].font_family[3].1, FontFamilyKind::Generic);
-        assert_eq!(again.aliased.len(), 1);
-    }
-
-    #[test]
-    fn apply_font_faces_unicode_range_removes_ch_provenance_only() {
-        let ahem = checked_in_ahem_bytes();
-        let mut fonts = FontContext::new();
-        {
-            use parley::fontique::FontInfoOverride;
-            let registered = fonts.collection.register_fonts(
-                parley::fontique::Blob::new(std::sync::Arc::new(ahem) as _),
-                Some(FontInfoOverride {
-                    family_name: Some("RealFam"),
-                    width: None,
-                    style: None,
-                    weight: None,
-                    axes: None,
-                }),
-            );
-            assert!(!registered.is_empty());
-        }
-
-        let mut cv = computed_with_family("AliasFam");
-        cv.font_family = std::sync::Arc::new(vec![
-            FontFamilyName::named("AliasFam"),
-            FontFamilyName::named("Fallback"),
-        ]);
-        let source_key = ChFontKey {
-            family: cv.font_family.clone(),
-            size: cv.font_size,
-            weight: cv.font_weight,
-            style: cv.font_style,
-        };
-        let provenance = || ChLengthProvenance {
-            factor: 1.0,
-            font: source_key.clone(),
-        };
-        cv.text_indent_ch_font = Some(source_key.clone());
-        cv.text_decoration_inset_start_ch = Some(provenance());
-        cv.text_decoration_inset_end_ch = Some(provenance());
-        cv.width_ch = Some(provenance());
-        cv.height_ch = Some(provenance());
-        cv.padding_ch.top = Some(provenance());
-        cv.padding_ch.right = Some(provenance());
-        cv.padding_ch.bottom = Some(provenance());
-        cv.padding_ch.left = Some(provenance());
-        cv.margin_ch.top = Some(provenance());
-        cv.margin_ch.right = Some(provenance());
-        cv.margin_ch.bottom = Some(provenance());
-        cv.margin_ch.left = Some(provenance());
-        let mut computed = vec![cv];
-        let faces = FontFaceRegistry::from_source(
-            "@font-face { font-family: AliasFam; src: local(RealFam); unicode-range: U+0041-005A; }",
-        );
-        let report =
-            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
-        assert_eq!(
-            report.aliased,
-            vec![("AliasFam".to_string(), "RealFam".to_string())]
-        );
-        let names: Vec<&str> = computed[0]
-            .font_family
-            .iter()
-            .map(|atom| atom.as_str())
-            .collect();
-        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback"]);
-        let provenance_names = |key: &ChFontKey| -> Vec<String> {
-            key.family.iter().map(|atom| atom.0.to_string()).collect()
-        };
-        let expected = vec!["Fallback".to_string()];
-        assert_eq!(
-            provenance_names(computed[0].text_indent_ch_font.as_ref().unwrap()),
-            expected
-        );
-        assert_eq!(
-            provenance_names(&computed[0].width_ch.as_ref().unwrap().font),
-            vec!["Fallback".to_string()]
-        );
-        assert_eq!(
-            provenance_names(&computed[0].height_ch.as_ref().unwrap().font),
-            vec!["Fallback".to_string()]
-        );
-        for provenance in [
-            computed[0].padding_ch.top.as_ref().unwrap(),
-            computed[0].padding_ch.right.as_ref().unwrap(),
-            computed[0].padding_ch.bottom.as_ref().unwrap(),
-            computed[0].padding_ch.left.as_ref().unwrap(),
-            computed[0].margin_ch.top.as_ref().unwrap(),
-            computed[0].margin_ch.right.as_ref().unwrap(),
-            computed[0].margin_ch.bottom.as_ref().unwrap(),
-            computed[0].margin_ch.left.as_ref().unwrap(),
-            computed[0].text_decoration_inset_start_ch.as_ref().unwrap(),
-            computed[0].text_decoration_inset_end_ch.as_ref().unwrap(),
-        ] {
-            assert_eq!(
-                provenance_names(&provenance.font),
-                vec!["Fallback".to_string()]
-            );
-        }
-    }
-
-    #[test]
-    fn expand_font_face_alias_keeps_existing_precedence() {
-        let mut same = computed_with_family("AliasFam");
-        super::expand_font_face_alias(std::slice::from_mut(&mut same), "AliasFam", "AliasFam");
-        assert_eq!(same.font_family[0].as_str(), "AliasFam");
-
-        let mut earlier = computed_with_family("RealFam");
-        earlier.font_family = std::sync::Arc::new(vec![
-            FontFamilyName::named("RealFam"),
-            FontFamilyName::named("AliasFam"),
-        ]);
-        super::expand_font_face_alias(std::slice::from_mut(&mut earlier), "AliasFam", "RealFam");
-        assert_eq!(
-            earlier
-                .font_family
-                .iter()
-                .map(|atom| atom.as_str())
-                .collect::<Vec<_>>(),
-            vec!["RealFam", "AliasFam"]
-        );
-
-        let mut computed = vec![computed_with_family("AliasFam")];
-        super::expand_font_face_alias(&mut computed, "AliasFam", "RealFam");
-        assert_eq!(computed[0].font_family[1].as_str(), "RealFam");
-    }
-
-    #[test]
-    fn apply_font_faces_unknown_local_is_skipped() {
-        let mut fonts = FontContext::new();
-        let mut computed = vec![computed_with_family("AliasFam")];
-        let before = computed.clone();
-        let faces = FontFaceRegistry::from_source(
-            "@font-face { font-family: AliasFam; src: local(NoSuchFamilyAnywhere); }",
-        );
-        let report =
-            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
-        assert_eq!(report.skipped, vec!["AliasFam".to_string()]);
-        assert_eq!(computed, before);
     }
 
     // ------------------------------------------------------------------
@@ -3433,7 +2450,7 @@ mod tests {
         );
         assert_eq!(
             format!("{}", FontError::NoFontsRegistered(dir.clone())),
-            "no font families registered from /fonts/wpt (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+            "no font families registered from /fonts/wpt (all .ttf/.otf files rejected by the font library — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
         );
         assert_eq!(
             format!(
@@ -3443,7 +2460,7 @@ mod tests {
                     dir: dir.clone(),
                 }
             ),
-            "preferred font 'Ahem.ttf' not registered under /fonts/wpt — missing from dir or rejected by parley/fontique; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+            "preferred font 'Ahem.ttf' not registered under /fonts/wpt — missing from dir or rejected by the font library; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
         );
         // The wrapped io::Error's own Display text is not this module's
         // contract to pin exactly, so only the fixed prefix/suffix wording
@@ -3774,372 +2791,6 @@ mod tests {
         assert_eq!(&decoded[28..36], b"ABCDEFGH");
     }
 
-    // ------------------------------------------------------------------
-    // font_face_weight_override / font_face_style_override — descriptor to
-    // fontique-override mapping.
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn font_face_weight_override_maps_named_and_numeric_descriptors() {
-        assert_eq!(
-            font_face_weight_override(FontFaceWeight::Normal),
-            parley::fontique::FontWeight::NORMAL
-        );
-        assert_eq!(
-            font_face_weight_override(FontFaceWeight::Bold),
-            parley::fontique::FontWeight::BOLD
-        );
-        assert_eq!(
-            font_face_weight_override(FontFaceWeight::Number(550.0)),
-            parley::fontique::FontWeight::new(550.0)
-        );
-        // Range keeps its lower bound -- registration records one face, and
-        // full range matching is the deferred matcher's job.
-        assert_eq!(
-            font_face_weight_override(FontFaceWeight::Range(300.0, 700.0)),
-            parley::fontique::FontWeight::new(300.0)
-        );
-    }
-
-    #[test]
-    fn font_face_style_override_maps_named_descriptors() {
-        assert_eq!(
-            font_face_style_override(FontFaceStyle::Normal),
-            parley::fontique::FontStyle::Normal
-        );
-        assert_eq!(
-            font_face_style_override(FontFaceStyle::Italic),
-            parley::fontique::FontStyle::Italic
-        );
-        // Oblique drops its angle -- the parser already stripped it (see
-        // `FontFaceStyle::Oblique`'s own doc), so the registration override
-        // always requests the engine's default oblique angle.
-        assert_eq!(
-            font_face_style_override(FontFaceStyle::Oblique),
-            parley::fontique::FontStyle::Oblique(None)
-        );
-    }
-
-    // ------------------------------------------------------------------
-    // expand_font_face_alias / remove_unavailable_ch_family — direct calls
-    // exercising branches not reached by the apply_font_faces integration
-    // tests above (all synthetic; no FontContext/WPT fixture involved,
-    // since neither function ever consults `fonts.collection`).
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn expand_font_face_alias_is_noop_when_face_absent_from_list() {
-        let mut cv = computed_with_family("Other");
-        cv.font_family = std::sync::Arc::new(vec![
-            FontFamilyName::named("Other"),
-            FontFamilyName::named("Fallback"),
-        ]);
-        let before = cv.font_family.clone();
-        let mut computed = vec![cv];
-        super::expand_font_face_alias(&mut computed, "Face", "Target");
-        assert_eq!(computed[0].font_family, before);
-    }
-
-    #[test]
-    fn expand_font_face_alias_repositions_an_existing_later_target() {
-        let mut cv = computed_with_family("Face");
-        cv.font_family = std::sync::Arc::new(vec![
-            FontFamilyName::named("Face"),
-            FontFamilyName::named("Other"),
-            FontFamilyName::named("Target"),
-        ]);
-        let mut computed = vec![cv];
-        super::expand_font_face_alias(&mut computed, "Face", "Target");
-        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
-        // Target already appeared, but after Face -- it must be
-        // deduplicated and reinserted immediately after Face rather than
-        // left duplicated or in its old spot (idempotency requires this:
-        // re-applying an already-expanded list must reach a fixed point).
-        assert_eq!(names, vec!["Face", "Target", "Other"]);
-    }
-
-    #[test]
-    fn expand_font_face_alias_is_case_insensitive_for_face_and_target_matching() {
-        let cv = computed_with_family("AliasFam");
-        let mut computed = vec![cv];
-        // Args use different casing than what's authored in the computed
-        // list; CSS family-name matching is ASCII case-insensitive.
-        super::expand_font_face_alias(&mut computed, "ALIASFAM", "realfam");
-        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
-        assert_eq!(names, vec!["AliasFam", "realfam"]);
-    }
-
-    #[test]
-    fn expand_font_face_alias_updates_every_ch_provenance_field_independently() {
-        let mut cv = ComputedValues::initial();
-        // font_family deliberately omits "Face" so this assertion proves
-        // each field below is resolved from its own family list, not from
-        // `font_family`.
-        cv.font_family = std::sync::Arc::new(vec![FontFamilyName::named("Other")]);
-
-        let key_with = |extra: &str| ChFontKey {
-            family: std::sync::Arc::new(vec![
-                FontFamilyName::named("Face"),
-                FontFamilyName::named(extra),
-            ]),
-            size: cv.font_size,
-            weight: cv.font_weight,
-            style: cv.font_style,
-        };
-        let prov_with = |extra: &str| ChLengthProvenance {
-            factor: 1.0,
-            font: key_with(extra),
-        };
-
-        cv.text_indent_ch_font = Some(key_with("Indent"));
-        cv.letter_spacing_ch_font = Some(key_with("Letter"));
-        cv.word_spacing_ch_font = Some(key_with("Word"));
-        cv.width_ch = Some(prov_with("Width"));
-        cv.height_ch = Some(prov_with("Height"));
-        cv.padding_ch.top = Some(prov_with("PadTop"));
-        cv.padding_ch.right = Some(prov_with("PadRight"));
-        cv.padding_ch.bottom = Some(prov_with("PadBottom"));
-        cv.padding_ch.left = Some(prov_with("PadLeft"));
-        cv.margin_ch.top = Some(prov_with("MarTop"));
-        cv.margin_ch.right = Some(prov_with("MarRight"));
-        cv.margin_ch.bottom = Some(prov_with("MarBottom"));
-        cv.margin_ch.left = Some(prov_with("MarLeft"));
-
-        let mut computed = vec![cv];
-        super::expand_font_face_alias(&mut computed, "Face", "Target");
-
-        assert_eq!(
-            computed[0]
-                .font_family
-                .iter()
-                .map(|a| a.as_str())
-                .collect::<Vec<_>>(),
-            vec!["Other"],
-            "font_family never mentioned Face and must stay untouched"
-        );
-
-        let names = |key: &ChFontKey| -> Vec<String> {
-            key.family.iter().map(|a| a.0.to_string()).collect()
-        };
-        assert_eq!(
-            names(computed[0].text_indent_ch_font.as_ref().unwrap()),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "Indent".to_string()
-            ]
-        );
-        for (key, extra) in [
-            (
-                computed[0].letter_spacing_ch_font.as_ref().unwrap(),
-                "Letter",
-            ),
-            (computed[0].word_spacing_ch_font.as_ref().unwrap(), "Word"),
-        ] {
-            assert_eq!(
-                names(key),
-                vec!["Face".to_string(), "Target".to_string(), extra.to_string()]
-            );
-        }
-        assert_eq!(
-            names(&computed[0].width_ch.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "Width".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].height_ch.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "Height".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].padding_ch.top.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "PadTop".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].padding_ch.right.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "PadRight".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].padding_ch.bottom.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "PadBottom".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].padding_ch.left.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "PadLeft".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].margin_ch.top.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "MarTop".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].margin_ch.right.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "MarRight".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].margin_ch.bottom.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "MarBottom".to_string()
-            ]
-        );
-        assert_eq!(
-            names(&computed[0].margin_ch.left.as_ref().unwrap().font),
-            vec![
-                "Face".to_string(),
-                "Target".to_string(),
-                "MarLeft".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn remove_unavailable_ch_family_removes_case_insensitively_from_every_ch_field() {
-        let mut cv = ComputedValues::initial();
-        let key_with = |first: &str, extra: &str| ChFontKey {
-            family: std::sync::Arc::new(vec![
-                FontFamilyName::named(first),
-                FontFamilyName::named(extra),
-            ]),
-            size: cv.font_size,
-            weight: cv.font_weight,
-            style: cv.font_style,
-        };
-        let prov_with = |first: &str, extra: &str| ChLengthProvenance {
-            factor: 1.0,
-            font: key_with(first, extra),
-        };
-
-        // Different casing than the "DropMe" argument below -- the removal
-        // must still match via `eq_ignore_ascii_case`.
-        cv.text_indent_ch_font = Some(key_with("DROPME", "Keep"));
-        cv.letter_spacing_ch_font = Some(key_with("DropMe", "Keep"));
-        cv.word_spacing_ch_font = Some(key_with("dropMe", "Keep"));
-        cv.width_ch = Some(prov_with("DropMe", "Keep"));
-        cv.height_ch = Some(prov_with("dropme", "Keep"));
-        cv.padding_ch.top = Some(prov_with("DropMe", "Keep"));
-        cv.padding_ch.right = Some(prov_with("DropMe", "Keep"));
-        cv.padding_ch.bottom = Some(prov_with("DropMe", "Keep"));
-        cv.padding_ch.left = Some(prov_with("DropMe", "Keep"));
-        cv.margin_ch.top = Some(prov_with("DropMe", "Keep"));
-        cv.margin_ch.right = Some(prov_with("DropMe", "Keep"));
-        cv.margin_ch.bottom = Some(prov_with("DropMe", "Keep"));
-        cv.margin_ch.left = Some(prov_with("DropMe", "Keep"));
-
-        let mut computed = vec![cv];
-        super::remove_unavailable_ch_family(&mut computed, "dropme");
-
-        let names = |key: &ChFontKey| -> Vec<String> {
-            key.family.iter().map(|a| a.0.to_string()).collect()
-        };
-        for key in [
-            computed[0].text_indent_ch_font.as_ref().unwrap(),
-            computed[0].letter_spacing_ch_font.as_ref().unwrap(),
-            computed[0].word_spacing_ch_font.as_ref().unwrap(),
-        ] {
-            assert_eq!(names(key), vec!["Keep".to_string()]);
-        }
-        for provenance in [
-            computed[0].width_ch.as_ref().unwrap(),
-            computed[0].height_ch.as_ref().unwrap(),
-            computed[0].padding_ch.top.as_ref().unwrap(),
-            computed[0].padding_ch.right.as_ref().unwrap(),
-            computed[0].padding_ch.bottom.as_ref().unwrap(),
-            computed[0].padding_ch.left.as_ref().unwrap(),
-            computed[0].margin_ch.top.as_ref().unwrap(),
-            computed[0].margin_ch.right.as_ref().unwrap(),
-            computed[0].margin_ch.bottom.as_ref().unwrap(),
-            computed[0].margin_ch.left.as_ref().unwrap(),
-        ] {
-            assert_eq!(names(&provenance.font), vec!["Keep".to_string()]);
-        }
-    }
-
-    #[test]
-    fn remove_unavailable_ch_family_preserves_generic_family_with_same_name() {
-        let mut computed = ComputedValues::initial();
-        computed.text_indent_ch_font = Some(ChFontKey {
-            family: std::sync::Arc::new(vec![
-                FontFamilyName::generic("serif"),
-                FontFamilyName::named("serif"),
-            ]),
-            size: computed.font_size,
-            weight: computed.font_weight,
-            style: computed.font_style,
-        });
-        let mut computed = vec![computed];
-
-        super::remove_unavailable_ch_family(&mut computed, "serif");
-
-        assert_eq!(
-            computed[0]
-                .text_indent_ch_font
-                .as_ref()
-                .unwrap()
-                .family
-                .as_ref(),
-            &[FontFamilyName::generic("serif")]
-        );
-    }
-
-    #[test]
-    fn remove_unavailable_ch_family_is_noop_when_family_absent_and_skips_unset_fields() {
-        let mut cv = ComputedValues::initial();
-        cv.text_indent_ch_font = Some(ChFontKey {
-            family: std::sync::Arc::new(vec![FontFamilyName::named("Unrelated")]),
-            size: cv.font_size,
-            weight: cv.font_weight,
-            style: cv.font_style,
-        });
-        // width_ch / height_ch / padding_ch / margin_ch all stay `None` --
-        // remove_unavailable_ch_family must not panic on the unset fields.
-        let mut computed = vec![cv];
-        super::remove_unavailable_ch_family(&mut computed, "NoSuchFamily");
-        assert_eq!(
-            computed[0]
-                .text_indent_ch_font
-                .as_ref()
-                .unwrap()
-                .family
-                .iter()
-                .map(|a| a.as_str())
-                .collect::<Vec<_>>(),
-            vec!["Unrelated"]
-        );
-        assert!(computed[0].width_ch.is_none());
-        assert!(computed[0].height_ch.is_none());
-    }
-
     #[test]
     fn wpt_font_collection_resolves_ahem() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/text-autospace");
@@ -4155,5 +2806,51 @@ mod tests {
     fn wpt_font_collection_reports_a_missing_directory() {
         let error = build_wpt_font_collection(Path::new("/nonexistent-fonts")).unwrap_err();
         assert!(matches!(error, FontError::DirNotFound(_)));
+    }
+
+    const AHEM_BYTES: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace/Ahem.ttf"
+    ));
+
+    #[test]
+    fn a_bundled_collection_resolves_its_family_and_every_generic_to_the_bundle() {
+        let collection = build_bundled_font_collection(
+            vec![BundledFace {
+                family: "Ahem".to_owned(),
+                bytes: AHEM_BYTES.to_vec(),
+            }],
+            false,
+        )
+        .expect("collection");
+        for family in [
+            shodo::style::FontFamily::Named("Ahem".to_owned()),
+            shodo::style::FontFamily::Generic(shodo::style::GenericFamily::Serif),
+            shodo::style::FontFamily::Generic(shodo::style::GenericFamily::Monospace),
+        ] {
+            let query = shodo::font::FontQuery {
+                families: vec![family.clone()],
+                ..Default::default()
+            };
+            let matched = collection
+                .match_cluster(&query, "a")
+                .unwrap_or_else(|| panic!("{family:?} resolves"));
+            let data = collection.font_data(matched.id).expect("font data");
+            assert_eq!(data.data.as_ref(), AHEM_BYTES, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_bundle_is_refused() {
+        assert!(build_bundled_font_collection(Vec::new(), false).is_err());
+    }
+
+    #[test]
+    fn the_system_collection_is_built_once_and_shared() {
+        let first = system_font_collection();
+        let second = system_font_collection();
+        // Every layer gets an identity of its own, so equal identities mean
+        // the second call returned the layer the first call built.
+        assert_eq!(first.layer_handle().id(), second.layer_handle().id());
     }
 }

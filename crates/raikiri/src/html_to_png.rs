@@ -10,7 +10,7 @@
 //!   back to `PageBox::A4`. A future
 //!   `html_to_png_with(input, PageBox, PageDefaults)` variant may allow a
 //!   custom PageBox.
-//! - `html_to_png` and `html_to_png_with_fonts` need no `ReplacedResolver`
+//! - `html_to_png` and `html_to_png_with_render_fonts` need no `ReplacedResolver`
 //!   because they do not support replaced elements. Use
 //!   [`html_to_png_with_resolver`] to fetch, decode, and paint `<img>`.
 //! - Only the first page is rendered; a future page-stream state machine
@@ -22,24 +22,34 @@
 //!   calls. [`crate::PageScene::rasterize`] centralizes this byte-identical
 //!   raster/encode sequence.
 
-use parley::FontContext;
 use raikiri_html::ParseOptions;
 use raikiri_traits::{PageBox, RenderError};
 
 use crate::page_scene::build_page_scene;
 use crate::parse_html;
 
-/// Shared implementation for `html_to_png` and `html_to_png_with_fonts`.
-/// Centralizing the VRT path (pinned `FontContext`) and production path
-/// (`FontContext::new()`) prevents their layout logic from drifting.
+/// Give `dom` the font set `fonts`; without one, its first layout takes the
+/// installed fonts.
+fn use_fonts(dom: &mut raikiri_dom::Document, fonts: Option<raikiri_html::RenderFonts>) {
+    if let Some(fonts) = fonts {
+        // Only a layer without installed fonts loads every face up front, so
+        // only then may paragraphs be built on several threads.
+        let bundled_only = fonts.is_bundled_only();
+        dom.set_font_collection(fonts.into_collection());
+        dom.set_ifc_parallel_build(bundled_only);
+    }
+}
+
+/// Shared implementation for `html_to_png` and its font variant. Without
+/// `fonts`, text is laid out with the installed fonts.
 ///
 /// # Errors
 /// - `RenderError::Parse(_)` — propagated from `parse_html` (IO / UTF-8 / html5ever)
 /// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
-///   `<body>` / parley shaping / taffy internals)
+///   `<body>` / inline layout / taffy internals)
 pub(crate) fn html_to_png_impl<R: std::io::Read>(
     input: R,
-    font_ctx: FontContext,
+    fonts: Option<raikiri_html::RenderFonts>,
 ) -> Result<Vec<u8>, RenderError> {
     // Default-equivalent ParseOptions: no extra stylesheets, network, or base URL.
     let opts = ParseOptions {
@@ -48,12 +58,13 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
         base_url: None,
     };
     let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
+    use_fonts(&mut uncascaded.dom, fonts);
 
     let page_box = PageBox::from_page_size(cascade.page.size());
     // `into_parts` takes ownership of the pieces, allowing `&mut` on the DOM
     // alongside `&` on the cascade. `?` converts LayoutError to
     // RenderError::Layout via raikiri-traits' From implementation.
-    raikiri_dom::layout_single_page(&mut uncascaded.dom, &cascade, page_box, font_ctx)?;
+    raikiri_dom::layout_single_page(&mut uncascaded.dom, &cascade, page_box)?;
 
     // Extract PageScene from the post-layout Document. PageScene::rasterize
     // centralizes the byte-identical raster/encode sequence and still receives
@@ -67,37 +78,35 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
 
 /// Rasterize an HTML byte stream to a PNG of the first page (A4 fallback).
 ///
-/// Delegate to `html_to_png_impl` with the system font resolver
-/// (`FontContext::new()`). This is the production runtime path.
+/// Text is laid out by the inline engine with the installed fonts
+/// ([`raikiri_dom::system_font_collection`]). This is the production runtime
+/// path.
 ///
 /// # Errors
 /// - `RenderError::Parse(_)` — propagated from `parse_html` (IO / UTF-8 / html5ever)
 /// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
-///   `<body>` / parley shaping / taffy internals)
+///   `<body>` / inline layout / taffy internals)
 ///
 /// The spec §L1118 gives the signature `(html: &str)`; this design instead
 /// accepts `impl Read` to match the existing `parse_html<R: Read>` API.
 pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
-    html_to_png_impl(input, FontContext::new())
+    html_to_png_impl(input, None)
 }
 
-/// Font-aware variant that uses the supplied `FontContext` for layout.
+/// Like [`html_to_png`] with a caller-built font set.
 ///
-/// Intended for VRT tests that need cross-machine reproducibility. When
-/// `font_ctx` has been validated by `build_wpt_font_ctx`, this completely
-/// bypasses the system font resolver.
-///
-/// # Scope
-/// - Intended for VRT tests; production runtimes should use [`html_to_png`].
-/// - May be extended to production consumers once `@font-face` is supported.
+/// Text is laid out and drawn with `fonts` only. Build `fonts` with
+/// [`FontCollectionBuilder`](crate::FontCollectionBuilder) for output that
+/// does not depend on the installed fonts; this is what VRT tests need for
+/// cross-machine reproducibility.
 ///
 /// # Errors
 /// Same as [`html_to_png`] (`RenderError::Parse` / `RenderError::Layout`).
-pub fn html_to_png_with_fonts<R: std::io::Read>(
+pub fn html_to_png_with_render_fonts<R: std::io::Read>(
     input: R,
-    font_ctx: FontContext,
+    fonts: raikiri_html::RenderFonts,
 ) -> Result<Vec<u8>, RenderError> {
-    html_to_png_impl(input, font_ctx)
+    html_to_png_impl(input, Some(fonts))
 }
 
 /// Like [`html_to_png`], but fetches, decodes, lays out, and paints `<img>`
@@ -133,7 +142,6 @@ where
         &mut uncascaded.dom,
         &cascade,
         page_box,
-        FontContext::new(),
         resolver,
     )?;
     let dom = &uncascaded.dom;

@@ -1,7 +1,6 @@
 use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
-use parley::FontContext;
 use peniko::Color;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
@@ -13,23 +12,28 @@ use taffy::{Dimension, Display, Size, Style};
 /// after `layout_single_page`; shared setup for all tests in this module.
 fn hello_world_paint_setup() -> (Document, raikiri_style::CascadeResult) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("color:red"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;color:red"),
+    );
     let _t = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     (doc, cr)
 }
 
 #[test]
 fn paint_single_page_empty_list_item_emits_marker() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let _item = doc.append_element(
         Some(body),
         "li",
@@ -38,7 +42,7 @@ fn paint_single_page_empty_list_item_emits_marker() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
 
@@ -56,14 +60,14 @@ fn decorated_text_scene(style: &str) -> Scene {
 
 fn decorated_text_scene_with_text(style: &str, text: &str) -> Scene {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let p = doc.append_element(Some(body), "p", Style::default(), Some(style));
     let _text = doc.append_text(p, text);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
     scene
@@ -91,18 +95,18 @@ fn named_page_paint_wrapper_uses_shared_context_entry_point() {
 #[test]
 fn paint_single_page_box_shadow_emits_basic_outer_shadow_command() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let _box = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width: 100px; height: 100px; box-shadow: rgba(0,255,0,1) 10px 10px"),
+        Some("display:block;width: 100px; height: 100px; box-shadow: rgba(0,255,0,1) 10px 10px"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
 
@@ -123,20 +127,19 @@ fn paint_single_page_box_shadow_emits_basic_outer_shadow_command() {
 #[test]
 fn paint_single_page_box_shadow_resolves_current_color_and_skips_inset_or_transparent() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let _box = doc.append_element(
             Some(body),
             "div",
             Style::default(),
-            Some(
-                "width: 100px; height: 100px; color: #0a141e; box-shadow: currentcolor 4px 3px, transparent 8px 3px, inset black 12px 3px",
+            Some("display:block;width: 100px; height: 100px; color: #0a141e; box-shadow: currentcolor 4px 3px, transparent 8px 3px, inset black 12px 3px",
             ),
         );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
 
@@ -156,18 +159,18 @@ fn paint_single_page_box_shadow_resolves_current_color_and_skips_inset_or_transp
 #[test]
 fn paint_single_page_outline_emits_basic_solid_outline() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let _box = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width: 60px; height: 60px; color: green; outline: 20px solid currentcolor"),
+        Some("display:block;width: 60px; height: 60px; color: green; outline: 20px solid currentcolor"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
 
@@ -190,18 +193,18 @@ fn paint_single_page_outline_emits_basic_solid_outline() {
 #[test]
 fn paint_single_page_opacity_wraps_element_subtree_in_one_layer() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let _box = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width: 60px; height: 60px; background: red; opacity: 0.5"),
+        Some("display:block;width: 60px; height: 60px; background: red; opacity: 0.5"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
 
@@ -228,18 +231,18 @@ fn paint_single_page_opacity_wraps_element_subtree_in_one_layer() {
 #[test]
 fn paint_single_page_blurred_text_shadow_uses_a_filtered_layer() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let p = doc.append_element(
         Some(body),
         "p",
         Style::default(),
-        Some("color: black; text-shadow: 3px 4px 5px red"),
+        Some("display:block;color: black; text-shadow: 3px 4px 5px red"),
     );
     doc.append_text(p, "blur");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
 
@@ -299,9 +302,9 @@ fn paint_single_page_canvas_background_site_is_noop_at_m1_4() {
 #[test]
 fn paint_single_page_uses_page_background_color_before_document_canvas() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let _text = doc.append_text(body, "Hi");
     let mut rules = build_rule_tree(&doc);
     rules.add_stylesheet(
@@ -334,8 +337,10 @@ fn paint_single_page_uses_page_background_color_before_document_canvas() {
 fn paint_body_origin_fallbacks_cover_auto_and_computed_margins() {
     fn paint_body(style: Option<&str>, force_auto_computed_margin: bool) -> Scene {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), style);
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        // The body is a block box whatever else its style says.
+        let style = format!("display:block;{}", style.unwrap_or(""));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some(&style));
         doc.append_text(body, "direct body text");
         let rules = build_rule_tree(&doc);
         let mut cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -343,7 +348,7 @@ fn paint_body_origin_fallbacks_cover_auto_and_computed_margins() {
             cascade.computed[body].margin.left =
                 raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto;
         }
-        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
         scene
@@ -380,8 +385,8 @@ fn paint_body_origin_fallbacks_cover_auto_and_computed_margins() {
 #[test]
 fn paint_img_filename_color_uses_padding_aware_background_path() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let img = doc.append_element(
         Some(body),
         "img",
@@ -391,7 +396,7 @@ fn paint_img_filename_color_uses_padding_aware_background_path() {
     doc.set_element_attributes(img, vec![("src".into(), "red.png".into())]);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
     assert!(scene.commands.iter().any(|command| {
@@ -408,7 +413,7 @@ fn paint_single_page_without_body_returns_early() {
     // Fragment (Document → direct `<p>` child, no `<body>`): `paint_document`
     // returns early, but still emits the white canvas background.
     let mut doc = Document::new();
-    let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let p = doc.append_element(Some(0), "p", Style::default(), Some("display:block"));
     let _t = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -441,8 +446,8 @@ fn paint_single_page_skips_zero_size_subtree() {
     // explicit size) is not walked. This checks `paint_element`'s early return
     // (the layout-side `empty_display_none_leaf...` test covers that side).
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     // Put the hidden element directly under body (Display::None, size 0).
     let hidden_style = Style {
         display: Display::None,
@@ -456,7 +461,7 @@ fn paint_single_page_skips_zero_size_subtree() {
     let _child_of_hidden = doc.append_text(hidden, "should not be painted");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     // The hidden element should have zero layout size (taffy LayoutOutput::HIDDEN).
     let hidden_layout = doc.get_node(hidden).unwrap().unrounded_layout;
     assert_eq!(
@@ -481,23 +486,23 @@ fn paint_single_page_skips_zero_size_subtree() {
 #[test]
 fn paint_single_page_clips_overflow_hidden_descendants() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let container = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width:70px;height:70px;overflow:hidden"),
+        Some("display:block;width:70px;height:70px;overflow:hidden"),
     );
     let _child = doc.append_element(
         Some(container),
         "div",
         Style::default(),
-        Some("width:200px;height:20px;background:blue"),
+        Some("display:block;width:200px;height:20px;background:blue"),
     );
     let rules = raikiri_style::build_rule_tree(&doc);
     let cr = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -544,8 +549,8 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
     // the inline `height: 0px` overwrites it with the same value.
     // Behavior is unchanged.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let zero_block_style = Style {
         display: Display::Block,
         size: Size {
@@ -560,12 +565,12 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
         zero_block_style,
         // The bridge overwrites both width and height, so set them inline
         // (height is bridged too).
-        Some("width: 0px; height: 0px"),
+        Some("display:block; width: 0px; height: 0px"),
     );
     let _text = doc.append_text(container, "visible");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     // Sanity check: honor the explicit zero width and height.
     let container_layout = doc.get_node(container).unwrap().unrounded_layout;
@@ -610,34 +615,6 @@ fn paint_single_page_hello_world_emits_one_glyph_run() {
         1,
         "hello world 'Hi' should emit exactly 1 GlyphRun, got {}",
         glyph_commands.len()
-    );
-}
-
-#[test]
-fn paint_single_page_simple_pre_tabs_normalizes_glyph_positions() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let block = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block; white-space:pre; tab-size:4; font-family:monospace; font-size:16px"),
-    );
-    let text = doc.append_text(block, "A\tB");
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-    assert!(doc.get_node(text).unwrap().snap_glyph_x_to_1_64());
-
-    let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-    assert!(
-        scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
     );
 }
 
@@ -762,14 +739,14 @@ fn paint_single_page_nested_decorations_follow_line_order() {
     use peniko::Color;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let parent = doc.append_element(
         Some(body),
         "p",
         Style::default(),
-        Some("text-decoration-line:overline; text-decoration-color:red"),
+        Some("display:block;text-decoration-line:overline; text-decoration-color:red"),
     );
     let child = doc.append_element(
         Some(parent),
@@ -780,7 +757,7 @@ fn paint_single_page_nested_decorations_follow_line_order() {
     let _text = doc.append_text(child, "nested");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -802,28 +779,6 @@ fn paint_single_page_nested_decorations_follow_line_order() {
         &fills[2].brush,
         Paint::Solid(color) if *color == Color::from_rgba8(255, 0, 0, 255)
     ));
-}
-
-#[test]
-fn paint_single_page_decoration_trims_ltr_and_rtl_line_edge_whitespace() {
-    for (style, text) in [
-        (
-            "white-space:pre; text-decoration-line:underline",
-            "  Decoration  ",
-        ),
-        (
-            "direction:rtl; white-space:pre; text-decoration-line:underline",
-            "  שלום  ",
-        ),
-    ] {
-        let scene = decorated_text_scene_with_text(style, text);
-        let fills = scene
-            .commands
-            .iter()
-            .filter(|command| matches!(command, RenderCommand::Fill(_)))
-            .count();
-        assert_eq!(fills, 2, "canvas plus one trimmed decoration expected");
-    }
 }
 
 #[test]
@@ -886,17 +841,17 @@ fn paint_single_page_html_decoration_propagates_into_body() {
         Some("text-decoration-line:underline; text-decoration-color:red"),
     );
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let p = doc.append_element(
         Some(body),
         "p",
         Style::default(),
-        Some("color:blue; text-decoration-line:none"),
+        Some("display:block;color:blue; text-decoration-line:none"),
     );
     let _text = doc.append_text(p, "root");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -926,14 +881,14 @@ fn paint_single_page_ancestor_decoration_propagates_and_keeps_origin_color() {
     use peniko::Color;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let parent = doc.append_element(
         Some(body),
         "p",
         Style::default(),
-        Some("color:red; text-decoration-line:underline"),
+        Some("display:block;color:red; text-decoration-line:underline"),
     );
     let child = doc.append_element(
         Some(parent),
@@ -944,7 +899,7 @@ fn paint_single_page_ancestor_decoration_propagates_and_keeps_origin_color() {
     let _text = doc.append_text(child, "child");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -998,9 +953,9 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
     // (`style="margin: ..."`) instead; this also matches the production
     // code path.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     // `margin: 20px 0px 0px 20px` (top=20, right=0, bottom=0, left=20)
     // recreates the old hand-built shape in CSS. Specify `0px` explicitly:
     // raikiri-style `parse_length_value` does not accept bare unitless `0`
@@ -1011,12 +966,12 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
         Some(body),
         "p",
         Style::default(),
-        Some("margin: 20px 0px 0px 20px; color: red"),
+        Some("display:block;margin: 20px 0px 0px 20px; color: red"),
     );
     let text = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     // Check that margin=20 makes p.location nonzero: a precondition for
     // actually exercising the accumulation logic.
@@ -1077,8 +1032,8 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
 }
 
 /// `<html><head></head><body><p><span style="{span_style}">Sub</span></p></body></html>`
-/// After processing it, return the Y transform component (`as_coeffs()[5]`)
-/// of the only GlyphRun for the Text inside `<span>`. If `span_style` is `None`,
+/// After processing it, return the absolute y of the first glyph (the run's
+/// y translation plus the glyph's own y) of the only GlyphRun for the Text inside `<span>`. If `span_style` is `None`,
 /// omit the `style` attribute (no author `vertical-align`, so the cascade
 /// uses the initial `VerticalAlign::Baseline`).
 ///
@@ -1090,15 +1045,15 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
 ///
 fn span_text_glyph_y(span_style: Option<&str>) -> f32 {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
     let span = doc.append_element(Some(p), "span", Style::default(), span_style);
     let _text = doc.append_text(span, "Sub");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -1110,62 +1065,13 @@ fn span_text_glyph_y(span_style: Option<&str>) -> f32 {
     else {
         unreachable!()
     };
-    glyph_cmd.transform.as_coeffs()[5] as f32
+    glyph_y(glyph_cmd)
 }
 
-#[test]
-fn paint_single_page_vertical_align_sub_shifts_glyph_down_by_one_fifth_parent_font_size() {
-    // Differential assertion (not an absolute `coeffs[5]` match) — the
-    // delta between the styled and unstyled fixture isolates exactly
-    // the vertical-align contribution, independent of whatever the
-    // baseline absolute position happens to be. CSS Inline Layout
-    // Module Level 3 §4.2.3 <https://www.w3.org/TR/css-inline-3/#baseline-shift-property>
-    // sub fallback: "dropping by one fifth of the parent's used
-    // font-size" — parent here is `<p>`, used font-size 16px (helper
-    // doc).
-    let baseline_y = span_text_glyph_y(None);
-    let sub_y = span_text_glyph_y(Some("vertical-align: sub"));
-    let expected_shift = 16.0 / 5.0;
-    let epsilon = 1e-4;
-    assert!(
-        (sub_y - baseline_y - expected_shift).abs() < epsilon,
-        "vertical-align: sub delta = {} (baseline {}, sub {}), expected {}",
-        sub_y - baseline_y,
-        baseline_y,
-        sub_y,
-        expected_shift
-    );
-}
-
-#[test]
-fn paint_single_page_vertical_align_super_shifts_glyph_up_by_one_third_parent_font_size() {
-    // Same differential shape as the `sub` test above. CSS Inline 3
-    // §4.2.3 super fallback: "raising by one third of the parent's
-    // used font-size" — raikiri-paint's Y axis grows downward
-    // (`draw_text_node`'s `abs_y` convention), so "raise" is a
-    // negative delta.
-    let baseline_y = span_text_glyph_y(None);
-    let super_y = span_text_glyph_y(Some("vertical-align: super"));
-    let expected_shift = -(16.0 / 3.0);
-    let epsilon = 1e-4;
-    assert!(
-        (super_y - baseline_y - expected_shift).abs() < epsilon,
-        "vertical-align: super delta = {} (baseline {}, super {}), expected {}",
-        super_y - baseline_y,
-        baseline_y,
-        super_y,
-        expected_shift
-    );
-}
-
-#[test]
-fn paint_single_page_vertical_align_length_raises_or_lowers_glyph_by_px_value() {
-    let baseline_y = span_text_glyph_y(None);
-    let raised_y = span_text_glyph_y(Some("vertical-align: 96px"));
-    let lowered_y = span_text_glyph_y(Some("vertical-align: -12px"));
-    let epsilon = 1e-4;
-    assert!((raised_y - baseline_y + 96.0).abs() < epsilon);
-    assert!((lowered_y - baseline_y - 12.0).abs() < epsilon);
+/// Absolute y of the first glyph of `run`: the inline engine places glyphs
+/// on the baseline inside the run.
+fn glyph_y(run: &anyrender::recording::GlyphRunCommand) -> f32 {
+    run.transform.as_coeffs()[5] as f32 + run.glyphs.first().map_or(0.0, |glyph| glyph.y)
 }
 
 #[test]
@@ -1197,168 +1103,17 @@ fn paint_single_page_vertical_align_sub_on_block_level_element_does_not_shift() 
 }
 
 #[test]
-fn paint_single_page_vertical_align_nested_sub_composes_by_addition() {
-    // Two nested `<span vertical-align: sub>` levels use the same 16px
-    // parent-font-size basis. This crate's `shift_y` stack-frame accumulator
-    // (documented in `crate::walk::paint_document` and the nested-shift
-    // note in `vertical_align_shift_px`) sums each ancestor's shift. The
-    // total should be twice the single-level shift. No spec cites this
-    // composition rule; it is documented as an approximation. This test
-    // pins the *mechanical* accumulation, not a spec requirement.
-    // Both spans use the same inherited font-size for their parent basis.
-    // The comparison below verifies the accumulated offset.
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    let outer = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("vertical-align: sub"),
-    );
-    let inner = doc.append_element(
-        Some(outer),
-        "span",
-        Style::default(),
-        Some("vertical-align: sub"),
-    );
-    let _text = doc.append_text(inner, "Sub");
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-    let RenderCommand::GlyphRun(glyph_cmd) = scene
-        .commands
-        .iter()
-        .find(|c| matches!(c, RenderCommand::GlyphRun(_)))
-        .expect("must have 1 GlyphRun")
-    else {
-        unreachable!()
-    };
-    let nested_y = glyph_cmd.transform.as_coeffs()[5] as f32;
-
-    let baseline_y = span_text_glyph_y(None);
-    let single_shift = 16.0 / 5.0;
-    let expected = baseline_y + 2.0 * single_shift;
-    let epsilon = 1e-4;
-    assert!(
-        (nested_y - expected).abs() < epsilon,
-        "nested double-sub y = {nested_y}, expected {expected} (baseline {baseline_y} + 2 * {single_shift})"
-    );
-}
-
-/// Process `<p>H<sub>2</sub>O</p>` with `raikiri_html::parse` and the UA
-/// stylesheet (`sub { vertical-align: sub }` plus `sub, sup { font-size:
-/// smaller; ... }` from `minimal.css`), then return the Y transform component
-/// of the GlyphRun for the "2" text inside `<sub>`.
-///
-/// `build_rule_tree` collects only author `<style>` elements and does not
-/// include UA CSS automatically (the `raikiri_style::ruletree::walk_style_elements`
-/// docs say that raikiri-html::parse injects UA CSS via
-/// Document::add_stylesheet, while the raikiri umbrella separately consumes it
-/// via Document::stylesheets()). Thus the caller must explicitly call
-/// `rules.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent)`.
-/// This adds the UA declarations omitted by `build_rule_tree`.
-///
-/// `extra_head_style` adds author declarations through a `<style>` element
-/// in `<head>`. Origin::Author outranks UA declarations of equal specificity:
-/// passing `sub { vertical-align: baseline; }` overrides the UA rule
-/// `sub { vertical-align: sub }`, but keeps the UA's
-/// `font-size: smaller` declaration.
-fn ua_sub_text_glyph_y(extra_head_style: &str) -> f32 {
-    use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, parse};
-    use raikiri_style::Origin;
-
-    let html = format!(
-        "<html><head><style>{extra_head_style}</style></head>\
-             <body><p>H<sub>2</sub>O</p></body></html>"
-    );
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
-    let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
-    let mut doc = uncascaded.dom;
-    let mut rules = build_rule_tree(&doc);
-    rules.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-    let glyph_commands: Vec<_> = scene
-        .commands
-        .iter()
-        .filter_map(|c| match c {
-            RenderCommand::GlyphRun(cmd) => Some(cmd),
-            _ => None,
-        })
-        .collect();
-    // "H", "2" (inside <sub>), "O" are 3 separate Text nodes and —
-    // absent an inline formatting context — each lays out as its own
-    // block row (`crate::walk` module doc), so each shapes to its own
-    // GlyphRun in document order: index 1 is <sub>'s "2".
-    assert_eq!(
-        glyph_commands.len(),
-        3,
-        "expected 3 GlyphRuns (H, <sub>'s 2, O), got {}",
-        glyph_commands.len()
-    );
-    glyph_commands[1].transform.as_coeffs()[5] as f32
-}
-
-#[test]
-fn paint_single_page_ua_sub_shift_uses_parent_font_size_not_subs_own_shrunk_size() {
-    // Exercises the real path this task exists for — the UA rules
-    // `sub { vertical-align: sub }` + `sub, sup { font-size: smaller;
-    // ... }` (`minimal.css`) both apply to the same `<sub>` element,
-    // reached through `raikiri_html::parse`, not the inline-style
-    // shortcut the tests above use.
-    //
-    // This is the one case where the shift's font-size basis actually
-    // matters: `<sub>`'s own used font-size is shrunk by `font-size:
-    // smaller` (CSS Fonts 4 §2.2's `<relative-size>` table,
-    // `resolve_relative_font_size`'s `RATIO = 1.2` — ~13.33px here),
-    // but `vertical_align_shift_px`'s basis is `<sub>`'s *parent*'s
-    // (`<p>`'s) used font-size, 16px, untouched by that shrink. Both
-    // fixtures below share the same shrunk `<sub>` font-size (the
-    // override only touches `vertical-align`), isolating the shift
-    // contribution: if the implementation used `<sub>`'s own shrunk
-    // font-size as the basis instead, this delta would be
-    // (16.0/1.2)/5.0 ≈ 2.667 rather than 16.0/5.0 = 3.2 — a
-    // difference this exact-match assertion would catch.
-    let shifted_y = ua_sub_text_glyph_y(""); // UA `vertical-align: sub` applies
-    let unshifted_y = ua_sub_text_glyph_y("sub { vertical-align: baseline; }");
-    let expected_shift = 16.0 / 5.0;
-    let epsilon = 1e-3;
-    assert!(
-        (shifted_y - unshifted_y - expected_shift).abs() < epsilon,
-        "UA sub shift delta = {} (shifted {}, unshifted {}), expected {}",
-        shifted_y - unshifted_y,
-        shifted_y,
-        unshifted_y,
-        expected_shift
-    );
-}
-
-#[test]
 fn paint_single_page_skips_empty_text() {
-    // A Text node whose text_layout is None (empty text) must silently skip
-    // `draw_glyphs`. This mirrors `preshape_text`, which leaves text_layout
-    // as None for empty text.
+    // An empty Text node has no glyph on any line and must silently skip
+    // `draw_glyphs`.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
     let _t = doc.append_text(p, ""); // ← empty text
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
     let glyph_commands: Vec<_> = scene
@@ -1434,11 +1189,14 @@ fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
         network: None,
         base_url: None,
     };
-    let uncascaded = parse(html, &opts).expect("parse ok");
+    // The cascade below has no UA sheet: the body is made a block box so it
+    // lays its text out.
+    let html = String::from_utf8_lossy(html).replace("<body>", "<body style=\"display:block\">");
+    let uncascaded = parse(html.as_bytes(), &opts).expect("parse ok");
     let mut doc = uncascaded.dom;
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -1613,7 +1371,7 @@ fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
     let mut doc = uncascaded.dom;
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
@@ -1642,7 +1400,7 @@ fn paint_single_page_debug_asserts_cascade_document_length_match() {
     // #[cfg(debug_assertions)]; otherwise `cargo test --release` fails.
     // Release builds deliberately do not enforce this invariant.
     let (mut doc, cr) = hello_world_paint_setup();
-    doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    doc.append_element(Some(0), "p", Style::default(), Some("display:block"));
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
 }
@@ -1686,8 +1444,8 @@ fn img_element_paints_its_decoded_pixels() {
     // may separately apply — this test only checks paint's own draw
     // call given a known box.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let img = doc.append_element(
         Some(body),
         "img",
@@ -1697,7 +1455,7 @@ fn img_element_paints_its_decoded_pixels() {
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let url = url::Url::parse("file:///x.png").unwrap();
     let decoded = Arc::new(DecodedImage {
@@ -1780,7 +1538,7 @@ fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let style = doc.append_element(Some(html), "style", Style::default(), None::<&str>);
     doc.append_text(
         style,
@@ -1823,8 +1581,7 @@ fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade succeeds");
     assert_eq!(cascade.computed[svg].opacity, 0.75);
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout succeeds");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     assert!(doc.get_node(svg).unwrap().is_inline_svg_root());
     assert!(doc.get_node(rect).unwrap().is_inline_svg_content());
@@ -1897,8 +1654,7 @@ fn html_inline_svg_stylesheet_opacity_groups_the_complete_root() {
     assert_eq!(uncascaded.stylesheet_sources.len(), 1);
     let cascade = raikiri_html::build_cascaded(&uncascaded);
     let mut doc = uncascaded.dom;
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout succeeds");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
@@ -1934,8 +1690,7 @@ fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded);
     let mut doc = uncascaded.dom;
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout succeeds");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
@@ -1971,8 +1726,7 @@ fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded);
     let mut doc = uncascaded.dom;
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout succeeds");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
@@ -2014,8 +1768,7 @@ fn html_inline_svg_host_transparent_background_suppresses_source_background() {
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded);
     let mut doc = uncascaded.dom;
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout succeeds");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
@@ -2052,8 +1805,8 @@ fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::Rend
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let svg = doc.append_element(Some(body), "svg", Style::default(), Some(style));
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attributes(
@@ -2073,8 +1826,7 @@ fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::Rend
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade succeeds");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout succeeds");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
     let mut scene = Scene::new();
     paint_single_page_with_images_and_warnings(
         &mut scene,
@@ -2124,8 +1876,8 @@ fn img_padding_percentage_resolves_against_width_not_height() {
     // against height" (10px) disagree, so a wrong reference axis
     // produces a different, assertion-failing offset.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let img = doc.append_element(
         Some(body),
         "img",
@@ -2138,7 +1890,7 @@ fn img_padding_percentage_resolves_against_width_not_height() {
     doc.set_element_attributes(img, vec![("src".into(), "file:///pad.png".into())]);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let url = url::Url::parse("file:///pad.png").unwrap();
     let decoded = Arc::new(DecodedImage {
@@ -2205,8 +1957,8 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
         return;
     }
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let img = doc.append_element(
             Some(body),
             "img",
@@ -2218,9 +1970,11 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
     doc.set_element_attributes(img, vec![("src".into(), "file:///ch-pad.png".into())]);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    let fonts = raikiri_dom::fonts::build_wpt_font_ctx(&fonts_dir)
-        .expect("bundled WPT fonts should register");
-    layout_single_page(&mut doc, &cr, PageBox::A4, fonts).expect("layout Ok");
+    doc.set_font_collection(
+        raikiri_dom::build_wpt_font_collection(&fonts_dir)
+            .expect("bundled WPT fonts should register"),
+    );
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let url = url::Url::parse("file:///ch-pad.png").unwrap();
     let decoded = Arc::new(DecodedImage {
@@ -2252,15 +2006,15 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
 #[test]
 fn paint_single_page_border_radius_unifies_matching_border_and_background() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let _box = document.append_element(
         Some(body),
         "div",
         Style::default(),
         Some(
-            "width: 100px; height: 80px; background: red; border: 4px solid red; \
+            "display:block;width: 100px; height: 80px; background: red; border: 4px solid red; \
                  border-radius: 12px; background-clip: padding-box",
         ),
     );
@@ -2269,7 +2023,7 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
         "div",
         Style::default(),
         Some(
-            "width: 100px; height: 80px; color: green; background: red; \
+            "display:block;width: 100px; height: 80px; color: green; background: red; \
                  border: 4px solid currentcolor; border-radius: 12px; \
                  background-clip: padding-box",
         ),
@@ -2279,20 +2033,14 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
         "div",
         Style::default(),
         Some(
-            "width: 100px; height: 80px; background: red; border: 4px dashed blue; \
+            "display:block;width: 100px; height: 80px; background: red; border: 4px dashed blue; \
                  border-radius: 12px",
         ),
     );
     let rules = build_rule_tree(&document);
     let cascade_result = cascade(&document, &rules).expect("cascade Ok");
     let mut document = document;
-    layout_single_page(
-        &mut document,
-        &cascade_result,
-        PageBox::A4,
-        FontContext::new(),
-    )
-    .expect("layout Ok");
+    layout_single_page(&mut document, &cascade_result, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &document, &cascade_result, PageBox::A4);
     assert!(
@@ -2302,344 +2050,4 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
             .any(|command| matches!(command, RenderCommand::Fill(_))),
         "rounded border/background fixture should emit fill commands", // cov:ignore: assertion message is evaluated only on failure
     );
-}
-
-#[cfg(test)]
-mod nonfinite_rasterizer_probe {
-    use std::panic::AssertUnwindSafe;
-    use std::sync::mpsc::{self, RecvTimeoutError};
-    use std::time::Duration;
-
-    use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
-    use anyrender_vello_cpu::VelloCpuImageRenderer;
-    use kurbo::{Affine, Vec2};
-    use parley::{FontContext, PositionedLayoutItem};
-    use peniko::{Color, Fill, FontData};
-    use raikiri_dom::{Document, layout_single_page};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-    use taffy::Style;
-
-    /// Deliberately tiny (`"Hi"` at the CSS-initial 16px comfortably fits and
-    /// inks it — see
-    /// [`draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`], which
-    /// pins that this canvas size is not itself the reason later tests draw
-    /// nothing) — every extreme-`font_size` case is expected to leave it
-    /// blank (a glyph many orders of magnitude larger than 16px does not
-    /// happen to place any of its ink inside a 16x16 window at this
-    /// position), which this module treats as an informative finding, not a
-    /// probe defect, precisely because the control above proves the test setup
-    /// can draw when the input is ordinary.
-    const CANVAS_W: u32 = 16;
-    const CANVAS_H: u32 = 16;
-
-    /// Shapes a real "Hi" paragraph through the normal (guarded)
-    /// `layout_single_page` pipeline and extracts the resulting `GlyphRun`'s
-    /// real `FontData` + `normalized_coords` + positioned glyphs (real glyph
-    /// ids with non-degenerate bounding boxes — a synthetic all-zero glyph
-    /// would turn `+Inf * 0` into `NaN`, which saturates to `0` on
-    /// `as i32` and would *not* reproduce the overflow this probe measures)
-    /// — plus the run's own natural `font_size` (the CSS initial `16px`,
-    /// unclamped since nothing overrode it here), returned so the control
-    /// test below can draw at the size the glyphs were actually shaped for.
-    fn real_glyph_run_parts() -> (FontData, Vec<i16>, Vec<AnyrenderGlyph>, f32) {
-        let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-        let text_id = doc.append_text(p, "Hi");
-        let rules = build_rule_tree(&doc);
-        let cr = cascade(&doc, &rules).expect("cascade Ok");
-        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-        let layout = doc
-            .get_node(text_id)
-            .expect("text node must exist (just appended it)")
-            .text_layout()
-            .expect("preshape_text must populate text_layout for a non-empty Text node");
-
-        // cov:ignore: this block's `return` on match means its closing
-        // braces are never "reached" as a fallthrough line once the first
-        // GlyphRun is found (which it always is, for "Hi") — and the
-        // assert!'s message is only executed on failure, which doesn't
-        // happen while this test passes.
-        for line in layout.lines() {
-            for item in line.items() {
-                if let PositionedLayoutItem::GlyphRun(glyph_run) = item {
-                    let run = glyph_run.run();
-                    let font = run.font().clone();
-                    let natural_font_size = run.font_size();
-                    let coords = run.normalized_coords().to_vec();
-                    let glyphs: Vec<AnyrenderGlyph> = glyph_run
-                        .positioned_glyphs()
-                        .map(|g| AnyrenderGlyph {
-                            id: g.id,
-                            x: g.x,
-                            y: g.y,
-                        })
-                        .collect();
-                    assert!(
-                        !glyphs.is_empty(),
-                        "sanity: hello-world 'Hi' must shape to >= 1 glyph"
-                    );
-                    return (font, coords, glyphs, natural_font_size);
-                }
-            }
-        }
-        // cov:ignore: this panic is a setup-sanity fallback for a code path
-        // ("Hi" produces no GlyphRun) that doesn't occur while the test
-        // suite's font/shaping setup is intact.
-        panic!(
-            "sanity: hello-world 'Hi' produced no GlyphRun — setup is broken, not a rasterizer finding"
-        );
-    }
-
-    /// Runs `draw_glyphs` against a fresh `VelloCpuImageRenderer` canvas and
-    /// reports both the raw buffer length and how many bytes in it are
-    /// non-zero (i.e. whether anything was actually drawn). Shared by the
-    /// control test and the bounded extreme-value probe below so both use
-    /// the exact same canvas geometry / transform — the only variable
-    /// between them is `font_size`.
-    fn render_glyphs_unbounded(
-        font: &FontData,
-        coords: &[i16],
-        glyphs: &[AnyrenderGlyph],
-        font_size: f32,
-    ) -> (usize, usize) {
-        let buf = anyrender::render_to_buffer::<VelloCpuImageRenderer, _>(
-            |scene| {
-                scene.draw_glyphs(
-                    font,
-                    font_size,
-                    true, // hint
-                    coords,
-                    Vec2::ZERO, // embolden
-                    Fill::NonZero,
-                    Color::BLACK,
-                    1.0,              // brush_alpha
-                    Affine::IDENTITY, // == Affine::translate((0.0, 0.0)); parley's
-                    // `positioned_glyphs()` already bakes line offset + baseline into
-                    // `g.x`/`g.y` relative to a top-left (0,0) origin (see
-                    // `crates/raikiri-paint/src/text.rs` module doc), same convention
-                    // `draw_text_node` uses for its own `base_transform`.
-                    None, // glyph_transform
-                    glyphs.iter().copied(),
-                );
-            },
-            CANVAS_W,
-            CANVAS_H,
-        );
-        let nonzero = buf.iter().filter(|&&b| b != 0).count();
-        (buf.len(), nonzero)
-    }
-
-    /// Non-vacuity control: **without any extreme input**, does this exact
-    /// test setup (font, glyphs, `CANVAS_W`×`CANVAS_H` canvas, `Affine::IDENTITY`
-    /// transform) actually put visible ink on the canvas? Drawn at the run's
-    /// own natural (unmodified, un-overridden) font-size — i.e. this is the
-    /// one call in this module that does not touch `font_size` at all.
-    ///
-    /// This exists because a probe that draws nothing at *every* input
-    /// (including a normal one) cannot distinguish "the rasterizer is robust
-    /// to extreme scale" from "this call configuration never reaches the
-    /// rasterization code path in the first place" — the three extreme-value
-    /// tests below all report zero non-zero bytes, and without this control
-    /// that would be uninformative rather than a finding. With it: the exact
-    /// same font/glyphs/canvas/transform genuinely draws (this test), and
-    /// then genuinely stops drawing once `font_size` crosses into extreme
-    /// territory (the other tests) — isolating `font_size` as the one
-    /// variable that changed.
-    #[test]
-    fn draw_glyphs_at_natural_font_size_is_a_non_vacuous_control() {
-        let (font, coords, glyphs, natural_font_size) = real_glyph_run_parts();
-        let (buf_len, nonzero) =
-            render_glyphs_unbounded(&font, &coords, &glyphs, natural_font_size);
-        assert_eq!(buf_len, (CANVAS_W * CANVAS_H * 4) as usize);
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert!(
-            nonzero > 0,
-            "control: draw_glyphs(font_size={natural_font_size}) — the run's own natural size, no override — drew zero non-zero bytes into a {CANVAS_W}x{CANVAS_H} canvas at Affine::IDENTITY. If this control ever fails, the extreme-value tests below are vacuous (they'd pass whether or not the rasterizer is actually robust) and this module's conclusion is unsupported until this is fixed — do not just delete the assertion"
-        );
-    }
-
-    /// Outcome of a bounded `draw_glyphs` probe call.
-    enum ProbeOutcome {
-        /// Rasterization returned a buffer (whether or not the glyph was
-        /// actually drawn into it — `buf_len` is the raw byte count, always
-        /// `CANVAS_W * CANVAS_H * 4` regardless of whether the atlas rejected
-        /// the glyph, since `render_to_buffer` always allocates the *canvas*
-        /// up front; `nonzero_bytes` is how many of those bytes are non-zero,
-        /// i.e. whether anything was actually drawn — see
-        /// [`draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`] for
-        /// why this field matters, not just `buf_len`).
-        Completed {
-            buf_len: usize,
-            nonzero_bytes: usize,
-        },
-        /// The worker thread panicked (`catch_unwind` caught it directly, or
-        /// the channel disconnected because the panic unwound past the
-        /// `tx.send` — both are reported the same way since either means
-        /// "did not complete normally", the distinction the caller cares
-        /// about is panic vs. hang, not which detection path fired).
-        Panicked,
-    }
-
-    /// worker thread + `recv_timeout` — the same bounding pattern
-    /// `crates/raikiri-dom/src/layout.rs`'s
-    /// `nonfinite_font_size_is_clamped_before_parley` uses for parley.
-    /// Necessary here for the same reason: if the
-    /// rasterizer *did* hang, an un-bounded `cargo test` run would eat the
-    /// CI job timeout and take the rest of the test binary's results with it
-    /// (indistinguishable from infra flake). A caught panic is fine to run
-    /// un-bounded (it returns immediately) but is routed through the same
-    /// worker so one probe function handles both failure shapes.
-    fn draw_glyphs_bounded(font_size: f32) -> ProbeOutcome {
-        let (font, coords, glyphs, _natural_font_size) = real_glyph_run_parts();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                render_glyphs_unbounded(&font, &coords, &glyphs, font_size)
-            }));
-            // Send unconditionally when we get here at all — if `catch_unwind`
-            // itself failed to catch (shouldn't happen; the closure has no
-            // `extern "C"` boundary or `panic = "abort"` in this workspace's
-            // profile) the thread would already be gone and `tx` dropped,
-            // which the `Disconnected` arm below handles.
-            let _ = tx.send(result);
-        });
-        // cov:ignore: every call site of this helper completes well within
-        // the 30s bound (that's the finding this module characterizes) —
-        // the Timeout panic arm is a diagnostic for a hang this module found
-        // does not occur, and Disconnected mirrors the same never-taken
-        // defensive shape as the layout.rs/lib.rs siblings of this pattern.
-        match rx.recv_timeout(Duration::from_secs(30)) {
-            Ok(Ok((buf_len, nonzero_bytes))) => ProbeOutcome::Completed {
-                buf_len,
-                nonzero_bytes,
-            },
-            Ok(Err(_panic_payload)) => ProbeOutcome::Panicked,
-            Err(RecvTimeoutError::Timeout) => panic!(
-                "draw_glyphs(font_size={font_size}) did not return within 30s — possible CPU rasterizer hang; note the worker thread is leaked (not joined) on this path, same caveat as the parley bound in layout.rs"
-            ),
-            Err(RecvTimeoutError::Disconnected) => ProbeOutcome::Panicked,
-        }
-    }
-
-    /// The headline finding: literal `+Inf` font-size reaching `draw_glyphs`
-    /// completes normally — no panic, no hang, the returned buffer is
-    /// exactly the caller-requested canvas size (not something proportional
-    /// to the infinite glyph scale), and — unlike the vacuous first draft of
-    /// this test — it draws **zero** visible ink, in contrast to
-    /// `draw_glyphs_at_natural_font_size_is_a_non_vacuous_control` drawing
-    /// non-zero ink through the identical canvas/transform/font/glyphs. See
-    /// this module's doc comment for the full mechanism (the
-    /// `max_cached_font_size` gate) and source citations.
-    ///
-    /// This is the module's load-bearing regression check: if a future
-    /// `glifo`/`vello_cpu` upgrade changes this dispatch (e.g. raises/removes
-    /// the atlas-caching font-size gate, or the uncached fill path stops
-    /// being canvas-bounded), this test flips to `Panicked` or a timeout and
-    /// must be re-characterized rather than silently left describing stale
-    /// behavior — do not weaken this to
-    /// `assert!(matches!(outcome, Panicked | Completed { .. }))`.
-    #[test]
-    fn draw_glyphs_with_inf_font_size_completes_within_bounded_canvas_sized_buffer() {
-        // cov:ignore: this test's whole point is that the Completed arm is
-        // always taken (no panic) — the Panicked arm's message is a
-        // diagnostic for the failure mode this module found does not occur.
-        match draw_glyphs_bounded(f32::INFINITY) {
-            ProbeOutcome::Completed {
-                buf_len,
-                nonzero_bytes,
-            } => {
-                assert_eq!(
-                    buf_len,
-                    (CANVAS_W * CANVAS_H * 4) as usize,
-                    "draw_glyphs(f32::INFINITY) must allocate exactly the caller-sized canvas buffer, not something proportional to glyph scale"
-                );
-                assert_eq!(
-                    nonzero_bytes, 0,
-                    "draw_glyphs(f32::INFINITY) drew {nonzero_bytes} non-zero bytes — this module's characterization was 'completes but draws nothing'; if this now draws *something*, that's a different (not necessarily worse) finding and needs its own re-characterization, not silent acceptance"
-                );
-            }
-            ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(f32::INFINITY) panicked — this module's characterization (uncached direct-fill path is used above the 128px glifo atlas-cache threshold, and it's canvas-bounded, not glyph-scale-bounded) no longer holds; re-characterize this test rather than deleting it"
-            ),
-        }
-    }
-
-    /// Same probe, but with a merely-huge *finite* font-size
-    /// (`i32::MAX as f32`, ~2.1e9) rather than literal `+Inf` — confirms the
-    /// no-crash result isn't an IEEE-infinity special case somewhere in the
-    /// stack; ordinary huge finite values take the same safe path. Still
-    /// ~2100x above the production clamp (`MAX_FONT_SIZE_PX = 1e6`,
-    /// `crates/raikiri-dom/src/layout.rs`), i.e. still outside what the
-    /// guarded pipeline can ever produce.
-    #[test]
-    fn draw_glyphs_with_huge_finite_font_size_also_completes_normally() {
-        // cov:ignore: this test's whole point is that the Completed arm is
-        // always taken (no panic) — the Panicked arm's message is a
-        // diagnostic for the failure mode this module found does not occur.
-        match draw_glyphs_bounded(i32::MAX as f32) {
-            ProbeOutcome::Completed {
-                buf_len,
-                nonzero_bytes,
-            } => {
-                assert_eq!(
-                    buf_len,
-                    (CANVAS_W * CANVAS_H * 4) as usize,
-                    "draw_glyphs(i32::MAX as f32) must allocate exactly the caller-sized canvas buffer, not something proportional to glyph scale"
-                );
-                assert_eq!(
-                    nonzero_bytes, 0,
-                    "draw_glyphs(i32::MAX as f32) drew {nonzero_bytes} non-zero bytes — re-characterize this test, see module doc"
-                );
-            }
-            ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(i32::MAX as f32) panicked — re-characterize this test, see module doc"
-            ),
-        }
-    }
-
-    /// Sanity / headroom check at the production clamp boundary itself
-    /// (`MAX_FONT_SIZE_PX = 1e6`, `crates/raikiri-dom/src/layout.rs`) — this
-    /// value must also complete normally (no panic, no timeout), confirming
-    /// the existing input guard's chosen bound lands
-    /// comfortably inside the region this module found safe (in fact, `1e6`
-    /// is already ~7800x past `glifo`'s own 128px atlas-cache-eligibility
-    /// cutoff, so production text has *never* exercised that caching path
-    /// for any remotely large heading/display font-size — not just for
-    /// pathological input). Not a new guard — a check that the current guard's
-    /// chosen bound is also safe for this previously-uncharacterized sink.
-    /// Like the two tests above (and unlike the natural-size control), a
-    /// production-clamp-sized glyph is *also* far too large to put visible
-    /// ink on a `CANVAS_W`×`CANVAS_H` probe canvas, so this asserts
-    /// `nonzero_bytes == 0` too — that's expected here, not a regression.
-    #[test]
-    fn draw_glyphs_at_production_font_size_clamp_completes_normally() {
-        const MAX_FONT_SIZE_PX: f32 = 1e6; // mirrors raikiri-dom's private const; see doc above
-        // cov:ignore: this test's whole point is that the Completed arm is
-        // always taken (no panic) — the Panicked arm's message is a
-        // diagnostic for the failure mode this module found does not occur.
-        match draw_glyphs_bounded(MAX_FONT_SIZE_PX) {
-            ProbeOutcome::Completed {
-                buf_len,
-                nonzero_bytes,
-            } => {
-                assert_eq!(
-                    buf_len,
-                    (CANVAS_W * CANVAS_H * 4) as usize,
-                    "render_to_buffer must return exactly width*height*4 bytes"
-                );
-                assert_eq!(
-                    nonzero_bytes, 0,
-                    "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) drew {nonzero_bytes} non-zero bytes into a {CANVAS_W}x{CANVAS_H} probe canvas — expected zero (the glyph is far larger than the probe canvas at this size); if this changed, it's not itself a problem but re-check the module doc's characterization still holds"
-                );
-            }
-            ProbeOutcome::Panicked => panic!(
-                "draw_glyphs(MAX_FONT_SIZE_PX = 1e6) panicked — this would mean the input guard has a residual gap against this specific sink, escalate rather than widen this test's expectation"
-            ),
-        }
-    }
 }

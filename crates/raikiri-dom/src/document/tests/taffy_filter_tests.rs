@@ -1,5 +1,4 @@
 use super::*;
-use crate::node::NodeFlags;
 use taffy::TraversePartialTree;
 
 #[test]
@@ -57,11 +56,11 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
 }
 
 #[test]
-fn synthetic_inline_root_keeps_collapsed_whitespace_child() {
+fn a_flex_container_drops_a_white_space_only_child() {
     let mut doc = Document::new();
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
-    let whitespace = doc.append_text(parent, "\n  ");
+    doc.append_text(parent, "\n  ");
     doc.nodes[parent].style.display = taffy::Display::Flex;
     doc.mark_in_document_flags();
 
@@ -70,11 +69,6 @@ fn synthetic_inline_root_keeps_collapsed_whitespace_child() {
         <Document as TraversePartialTree>::child_count(&doc, parent_id),
         0,
     );
-
-    doc.nodes[parent].flags.insert(NodeFlags::IS_INLINE_ROOT);
-    let children: Vec<taffy::NodeId> =
-        <Document as TraversePartialTree>::child_ids(&doc, parent_id).collect();
-    assert_eq!(children, vec![taffy::NodeId::from(whitespace)]);
 }
 
 #[test]

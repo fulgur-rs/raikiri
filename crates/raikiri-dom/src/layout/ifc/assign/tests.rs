@@ -1,5 +1,7 @@
 use super::*;
-use crate::layout::ifc::test_support::{ahem_fonts, block_fixture, span};
+use crate::IfcBuildMode;
+use crate::layout::ifc::font::{BundledFace, bundled_collection};
+use crate::layout::ifc::test_support::{AHEM, Fixture, ahem_fonts, block_fixture, span};
 use shodo::limits::Limits;
 
 /// A paragraph builder for table-driven cases.
@@ -8,11 +10,11 @@ type Build = fn(&mut crate::Document, usize);
 fn enable(fixture: &mut crate::layout::ifc::test_support::Fixture) {
     fixture
         .doc
-        .enable_inline_formatting(ahem_fonts(), Limits::default());
+        .set_font_collection_with_limits(ahem_fonts(), Limits::default());
 }
 
 fn assign(fixture: &mut crate::layout::ifc::test_support::Fixture) {
-    assign_ifc_roots(&mut fixture.doc, &fixture.cascade);
+    assign_ifc_roots(&mut fixture.doc, &fixture.cascade).expect("assign");
 }
 
 fn is_root(fixture: &crate::layout::ifc::test_support::Fixture, id: usize) -> bool {
@@ -40,7 +42,7 @@ fn a_plain_paragraph_becomes_a_root_and_marks_its_subtree() {
 }
 
 #[test]
-fn without_the_switch_no_root_is_assigned() {
+fn without_fonts_no_root_is_assigned() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -49,13 +51,8 @@ fn without_the_switch_no_root_is_assigned() {
 }
 
 #[test]
-fn ineligible_shapes_stay_on_the_parley_path() {
-    let cases: [(&str, Build); 3] = [
-        ("flex child", |doc, root| {
-            doc.append_text(root, "aa");
-            let b = span(doc, root, "display:flex");
-            doc.append_text(b, "bb");
-        }),
+fn a_box_without_inline_content_is_not_a_root() {
+    let cases: [(&str, Build); 2] = [
         ("whitespace only", |doc, root| {
             doc.append_text(root, "   ");
         }),
@@ -78,9 +75,10 @@ fn reassignment_clears_stale_marks() {
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
-    // The switch stays on but the root no longer projects: add a flex child.
-    let f = span(&mut fixture.doc, fixture.root, "display:flex");
-    fixture.doc.append_text(f, "x");
+    // The switch stays on but the root no longer generates a box.
+    fixture
+        .doc
+        .set_element_inline_style(fixture.root, Some("display:none".into()));
     fixture.doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&fixture.doc);
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
@@ -95,20 +93,26 @@ fn reassignment_clears_stale_marks() {
 }
 
 #[test]
-fn a_root_beside_inline_text_stays_on_the_parley_path() {
+fn a_root_beside_inline_text_is_still_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
-    // Put loose text next to the block under `body`.
+    // Put loose text next to the block under `body`: `body` becomes a
+    // paragraph with the block as a box, and the block stays the root of its
+    // own text.
     let body = fixture.doc.parent_of(fixture.root).expect("body");
     fixture.doc.append_text(body, "loose");
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, body));
 }
 
 #[test]
-fn a_root_inside_a_multicol_container_stays_on_the_parley_path() {
+fn a_root_inside_a_multicol_container_is_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -121,35 +125,35 @@ fn a_root_inside_a_multicol_container_stays_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_multicol_root_stays_on_the_parley_path() {
+fn a_multicol_root_is_a_root() {
     let mut fixture = block_fixture("column-count:2", |doc, root| {
         doc.append_text(root, "aa bb cc dd");
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    // The multicol dispatch runs before the ifc dispatch and would find no
-    // children on a hidden-children root.
-    assert!(!is_root(&fixture, fixture.root));
+    // The ifc dispatch runs before the multicol dispatch for a root and
+    // splits its lines in columns.
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_vertical_root_stays_on_the_parley_path() {
+fn a_vertical_root_is_a_root_laid_out_horizontally() {
+    // Vertical writing is laid out as horizontal text; the paragraph is the
+    // engine's.
     let mut fixture = block_fixture("writing-mode:vertical-rl", |doc, root| {
         doc.append_text(root, "aa bb");
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    // `project_ifc` accepts a vertical text-only block; the measurement here
-    // only knows the horizontal axis.
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn assignment_drops_the_layout_cache_only_when_the_switch_is_on() {
+fn assignment_drops_the_layout_cache_only_when_the_document_has_fonts() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -188,7 +192,7 @@ fn block_level_siblings_do_not_disqualify_a_paragraph() {
 }
 
 #[test]
-fn inline_level_siblings_still_disqualify_a_paragraph() {
+fn inline_level_siblings_do_not_disqualify_a_paragraph() {
     for display in [
         "inline",
         "inline-block",
@@ -203,17 +207,24 @@ fn inline_level_siblings_still_disqualify_a_paragraph() {
         });
         enable(&mut fixture);
         assign(&mut fixture);
-        assert!(!is_root(&fixture, fixture.root), "{display}");
+        assert!(is_root(&fixture, fixture.root), "{display}");
     }
 }
 
-/// Assert that the paragraph `build` fills under a root styled `css` stays on
-/// the parley path.
-fn assert_stays_on_parley(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
+/// Assert that the paragraph `build` fills under a root styled `css` is laid
+/// out by the engine.
+fn assert_is_a_root(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
     let mut fixture = block_fixture(css, build);
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
+}
+
+fn assert_is_root(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
+    let mut fixture = block_fixture(css, build);
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 fn text_only(text: &'static str) -> impl FnOnce(&mut crate::Document, usize) {
@@ -235,8 +246,9 @@ fn an_rtl_paragraph_is_an_ifc_root() {
 }
 
 #[test]
-fn an_rtl_paragraph_with_a_box_stays_on_the_parley_path() {
-    // Float, atomic and block-child placement is written for left-to-right lines.
+fn an_rtl_paragraph_with_a_box_is_laid_out_by_the_engine() {
+    // An accepted degradation: boxes in a right-to-left paragraph are placed
+    // where the engine puts them, not checked against CSS.
     let cases: [(&str, Build); 3] = [
         ("float", |doc, root| {
             doc.append_text(root, "aa ");
@@ -258,12 +270,12 @@ fn an_rtl_paragraph_with_a_box_stays_on_the_parley_path() {
         let mut fixture = block_fixture("direction:rtl", build);
         enable(&mut fixture);
         assign(&mut fixture);
-        assert!(!is_root(&fixture, fixture.root), "{name}");
+        assert!(is_root(&fixture, fixture.root), "{name}");
     }
 }
 
 #[test]
-fn a_box_in_a_paragraph_with_rtl_characters_stays_on_the_parley_path() {
+fn a_box_in_a_paragraph_with_rtl_characters_is_laid_out_by_the_engine() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "\u{05d0} ");
         let b = span(doc, root, "display:inline-block;width:20px;height:10px");
@@ -271,7 +283,7 @@ fn a_box_in_a_paragraph_with_rtl_characters_stays_on_the_parley_path() {
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -303,9 +315,9 @@ fn right_to_left_content_inside_a_box_does_not_make_the_paragraph_rtl() {
 }
 
 #[test]
-fn an_rtl_paragraph_with_a_unicode_bidi_value_stays_on_the_parley_path() {
-    // The parley path does not read `unicode-bidi`, so its order differs from
-    // the inline engine's for every value but `normal`.
+fn an_rtl_paragraph_with_a_unicode_bidi_value_is_laid_out_by_the_engine() {
+    // The engine orders the text by `unicode-bidi` (UAX #9), as CSS Writing
+    // Modes 3 requires.
     for value in [
         "bidi-override",
         "isolate-override",
@@ -314,9 +326,9 @@ fn an_rtl_paragraph_with_a_unicode_bidi_value_stays_on_the_parley_path() {
         "plaintext",
     ] {
         let css = format!("direction:rtl;unicode-bidi:{value}");
-        assert_stays_on_parley(&css, text_only("aa"));
+        assert_is_root(&css, text_only("aa"));
         // On a descendant of a right-to-left paragraph too.
-        assert_stays_on_parley("direction:rtl", |doc, root| {
+        assert_is_root("direction:rtl", |doc, root| {
             doc.append_text(root, "aa ");
             let inner = span(doc, root, &format!("display:inline;unicode-bidi:{value}"));
             doc.append_text(inner, "bb");
@@ -365,8 +377,8 @@ fn hanging_punctuation_first_keeps_a_paragraph_an_ifc_root() {
 
 #[test]
 fn text_emphasis_keeps_a_paragraph_an_ifc_root() {
-    // Neither path draws emphasis marks, so the paragraph lays out and paints
-    // the same as on the parley path.
+    // Emphasis marks are not drawn, so the paragraph lays out and paints as
+    // it would without them.
     let mut fixture = block_fixture("text-emphasis-style:dot", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -424,14 +436,15 @@ fn a_relative_inline_with_a_length_offset_is_a_root() {
 }
 
 #[test]
-fn a_relative_inline_with_a_calc_offset_stays_on_the_parley_path() {
+fn a_relative_inline_with_a_calc_offset_is_laid_out_by_the_engine() {
     // A plain percentage offset is dropped by the parser (both paths see
-    // `auto`), so a mixed calc() stands in for the non-px forms.
+    // `auto`), so a mixed calc() stands in for the non-px forms. An accepted
+    // degradation: such an inset is taken as zero.
     for css in [
         "display:inline;position:relative;left:calc(1% + 1px)",
         "display:inline;position:relative;bottom:calc(1% + 1px)",
     ] {
-        assert_stays_on_parley("", |doc, root| {
+        assert_is_root("", |doc, root| {
             doc.append_text(root, "aa");
             let inner = span(doc, root, css);
             doc.append_text(inner, "bb");
@@ -440,12 +453,14 @@ fn a_relative_inline_with_a_calc_offset_stays_on_the_parley_path() {
 }
 
 #[test]
-fn a_relative_inline_with_a_z_index_stays_on_the_parley_path() {
+fn a_relative_inline_with_a_z_index_is_laid_out_by_the_engine() {
+    // An accepted degradation: the offset is kept and the z-index is drawn in
+    // the paragraph's order, without a stacking context of its own.
     for css in [
         "display:inline;position:relative;left:2px;z-index:1",
         "display:inline;position:relative;z-index:0",
     ] {
-        assert_stays_on_parley("", |doc, root| {
+        assert_is_root("", |doc, root| {
             doc.append_text(root, "aa");
             let inner = span(doc, root, css);
             doc.append_text(inner, "bb");
@@ -454,20 +469,24 @@ fn a_relative_inline_with_a_z_index_stays_on_the_parley_path() {
 }
 
 #[test]
-fn a_relative_inline_that_holds_a_box_stays_on_the_parley_path() {
-    // A box inside an inline element is refused, so the shifted element never
-    // carries a box that the paragraph would place by itself.
-    assert_stays_on_parley("", |doc, root| {
+fn a_relative_inline_that_holds_a_box_is_a_root() {
+    // The box is moved with the element's offset once its lines are placed.
+    let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
         let inner = span(doc, root, "display:inline;position:relative;left:5px");
         doc.append_text(inner, "bb");
         span(doc, inner, "display:inline-block;width:10px;height:10px");
     });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn an_inline_with_opacity_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn an_inline_with_opacity_is_laid_out_by_the_engine() {
+    // An accepted degradation: the lines carry no opacity group, so the
+    // element's text is drawn opaque.
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;opacity:0.5");
         doc.append_text(inner, "bb");
@@ -496,19 +515,22 @@ fn the_root_itself_may_have_opacity_and_a_relative_position() {
 }
 
 #[test]
-fn word_space_transform_stays_on_the_parley_path() {
-    assert_stays_on_parley("word-space-transform:ideographic-space", text_only("aa bb"));
+fn word_space_transform_is_laid_out_by_the_engine() {
+    // An accepted degradation: shodo does not map word-space-transform; the
+    // spaces are left as they are.
+    assert_is_root("word-space-transform:ideographic-space", text_only("aa bb"));
 }
 
 #[test]
-fn a_full_width_text_transform_stays_on_the_parley_path() {
-    // shodo's full-width mapping covers fewer characters than the parley path.
+fn a_full_width_text_transform_is_laid_out_by_the_engine() {
+    // An accepted degradation: shodo's full-width mapping does not cover
+    // every character; what it does not map is left as is.
     for value in [
         "full-width",
         "uppercase full-width",
         "full-width full-size-kana",
     ] {
-        assert_stays_on_parley(&format!("text-transform:{value}"), text_only("aa"));
+        assert_is_root(&format!("text-transform:{value}"), text_only("aa"));
     }
 }
 
@@ -523,14 +545,17 @@ fn a_case_transform_alone_is_still_a_root() {
 }
 
 #[test]
-fn background_clip_text_stays_on_the_parley_path() {
-    // The clip needs the shape of the text, which the lines do not provide.
-    assert_stays_on_parley("background-clip:text", text_only("aa"));
+fn background_clip_text_is_laid_out_by_the_engine() {
+    // An accepted degradation: the lines do not provide the glyph shapes the
+    // clip needs; the background is drawn unclipped.
+    assert_is_root("background-clip:text", text_only("aa"));
 }
 
 #[test]
-fn background_clip_text_on_an_inline_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn background_clip_text_on_an_inline_is_laid_out_by_the_engine() {
+    // An accepted degradation: the lines do not provide the glyph shapes the
+    // clip needs; the background is drawn unclipped.
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;background-clip:text");
         doc.append_text(inner, "bb");
@@ -538,11 +563,10 @@ fn background_clip_text_on_an_inline_keeps_the_paragraph_on_the_parley_path() {
 }
 
 #[test]
-fn a_fixed_position_root_stays_on_the_parley_path() {
-    // taffy sizes a fixed box against its nearest positioned ancestor, which
-    // can be zero wide, and breaking at that width wraps every word. The
-    // parley path shapes at the page width in advance and hides the error.
-    assert_stays_on_parley("position:fixed;top:0", text_only("aa bb cc"));
+fn a_fixed_position_root_is_a_root() {
+    // taffy sizes a fixed box against its nearest positioned ancestor on
+    // either path; the engine breaks its lines at that width.
+    assert_is_a_root("position:fixed;top:0", text_only("aa bb cc"));
 }
 
 #[test]
@@ -591,9 +615,9 @@ fn a_float_beside_an_ancestor_leaves_the_paragraph_a_root() {
 }
 
 #[test]
-fn a_paragraph_inside_a_fixed_box_without_a_width_stays_on_the_parley_path() {
-    // taffy sizes the fixed box against its nearest positioned ancestor, which
-    // can be zero wide, and the paragraph inside would wrap at that width.
+fn a_paragraph_inside_a_fixed_box_without_a_width_is_a_root() {
+    // taffy sizes the fixed box against its nearest positioned ancestor on
+    // either path; the paragraph inside wraps at that width.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa bb cc");
     });
@@ -606,7 +630,7 @@ fn a_paragraph_inside_a_fixed_box_without_a_width_stays_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -661,9 +685,9 @@ fn a_raised_inline_under_an_ancestor_decoration_is_an_ifc_root() {
 }
 
 #[test]
-fn a_line_relative_inline_under_a_decoration_stays_on_the_parley_path() {
+fn a_line_relative_inline_under_a_decoration_is_a_root() {
     for value in ["top", "bottom", "middle", "text-top", "text-bottom"] {
-        assert_stays_on_parley("text-decoration:underline", |doc, root| {
+        assert_is_root("text-decoration:underline", |doc, root| {
             doc.append_text(root, "aa ");
             let inner = span(doc, root, &format!("display:inline;vertical-align:{value}"));
             doc.append_text(inner, "bb");
@@ -672,7 +696,7 @@ fn a_line_relative_inline_under_a_decoration_stays_on_the_parley_path() {
 }
 
 #[test]
-fn a_line_relative_inline_under_an_ancestor_decoration_stays_on_the_parley_path() {
+fn a_line_relative_inline_under_an_ancestor_decoration_is_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;vertical-align:top");
@@ -687,12 +711,12 @@ fn a_line_relative_inline_under_an_ancestor_decoration_stays_on_the_parley_path(
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_line_relative_inline_with_its_own_decoration_stays_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn a_line_relative_inline_with_its_own_decoration_is_a_root() {
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(
             doc,
@@ -769,12 +793,9 @@ fn a_float_child_does_not_make_its_subtree_part_of_the_paragraph() {
             .flags
             .contains(NodeFlags::IN_IFC_SUBTREE)
     );
-    let text = fixture.doc.nodes[float].children[0];
-    assert!(
-        !fixture.doc.nodes[text]
-            .flags
-            .contains(NodeFlags::IN_IFC_SUBTREE)
-    );
+    // The float's text is the paragraph of the float itself, a root of its
+    // own, not part of the outer paragraph.
+    assert!(is_root(&fixture, float));
     assert_eq!(fixture.doc.nodes[fixture.root].ifc_boxes(), vec![float]);
 }
 
@@ -790,7 +811,7 @@ fn a_paragraph_whose_only_text_is_inside_a_float_is_not_a_root() {
 }
 
 #[test]
-fn rtl_text_inside_a_float_does_not_keep_the_paragraph_on_the_parley_path() {
+fn rtl_text_inside_a_float_keeps_the_paragraph_a_root() {
     // The float is painted as a box of its own, so what is inside it does not
     // matter to the paragraph painter.
     let mut fixture = block_fixture("", |doc, root| {
@@ -819,9 +840,10 @@ fn a_shifted_inline_inside_a_float_does_not_keep_a_decorated_paragraph_off() {
 }
 
 #[test]
-fn a_paragraph_with_a_float_child_beside_an_outer_float_stays_on_the_parley_path() {
-    // An outer float can keep the paragraph's own floats lower than the line
-    // they are anchored in, which the line layout cannot see.
+fn a_paragraph_with_a_float_child_beside_an_outer_float_is_laid_out_by_the_engine() {
+    // A documented approximation: an outer float can keep the paragraph's
+    // own floats lower than the line they are anchored in, which the line
+    // layout does not see.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
         span(doc, root, "display:block;float:left;width:30px;height:20px");
@@ -829,7 +851,7 @@ fn a_paragraph_with_a_float_child_beside_an_outer_float_stays_on_the_parley_path
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -856,13 +878,11 @@ fn an_atomic_inline_does_not_make_its_subtree_part_of_the_paragraph() {
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
+    // The atomic's text is the paragraph of the atomic itself, a root of its
+    // own, not part of the outer paragraph.
     let atomic = fixture.doc.nodes[fixture.root].children[1];
-    let text = fixture.doc.nodes[atomic].children[0];
-    assert!(
-        !fixture.doc.nodes[text]
-            .flags
-            .contains(NodeFlags::IN_IFC_SUBTREE)
-    );
+    assert!(is_root(&fixture, atomic));
+    assert_eq!(fixture.doc.nodes[fixture.root].ifc_boxes(), vec![atomic]);
 }
 
 #[test]
@@ -890,7 +910,8 @@ fn a_paragraph_inside_an_atomic_inline_is_a_root_of_its_own() {
 }
 
 #[test]
-fn a_paragraph_with_only_an_image_is_not_a_root() {
+fn a_paragraph_with_only_an_image_is_a_root() {
+    // An atomic inline makes a line on its own (CSS 2.1, 9.4.2).
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_element(
             Some(root),
@@ -901,14 +922,14 @@ fn a_paragraph_with_only_an_image_is_not_a_root() {
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_block_child_under_a_decoration_keeps_the_paragraph_on_the_parley_path() {
-    // A decoration propagates into an in-flow block, which the lines do not
-    // carry.
-    assert_stays_on_parley("text-decoration:underline", |doc, root| {
+fn a_block_child_under_a_decoration_is_a_root() {
+    // A decoration propagates into an in-flow block; the block child is a
+    // root of its own and its lines take the decoration from its ancestors.
+    assert_is_root("text-decoration:underline", |doc, root| {
         doc.append_text(root, "aa");
         let block = span(doc, root, "display:block;height:10px");
         doc.append_text(block, "bb");
@@ -947,8 +968,10 @@ fn right_to_left_text_outside_the_document_is_ignored() {
 }
 
 #[test]
-fn an_inline_with_a_background_image_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn an_inline_with_a_background_image_is_laid_out_by_the_engine() {
+    // An accepted degradation: the image is not laid out across the
+    // element's pieces on its lines.
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;background-image:url(x.png)");
         doc.append_text(inner, "bb");
@@ -979,7 +1002,7 @@ fn the_root_itself_may_have_a_background_image() {
 }
 
 #[test]
-fn a_contents_child_does_not_keep_the_paragraph_on_the_parley_path() {
+fn a_contents_child_keeps_the_paragraph_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
         let wrapper = span(doc, root, "display:contents");
@@ -991,9 +1014,8 @@ fn a_contents_child_does_not_keep_the_paragraph_on_the_parley_path() {
 }
 
 #[test]
-fn a_paragraph_with_generated_text_stays_on_the_parley_path() {
-    // The text of ::before is measured and painted at paint time; the lines
-    // of the inline engine would not contain it.
+fn a_paragraph_with_generated_text_is_a_root() {
+    // The text of ::before is laid out in the paragraph.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -1008,5 +1030,434 @@ fn a_paragraph_with_generated_text_stays_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+/// `aa <div css>bb</div> cc`: a block child inside the paragraph.
+fn with_block_child(css: &'static str) -> impl FnOnce(&mut crate::Document, usize) {
+    move |doc, root| {
+        doc.append_text(root, "aa ");
+        let block = doc.append_element(Some(root), "div", taffy::Style::default(), Some(css));
+        doc.append_text(block, "bb");
+        doc.append_text(root, " cc");
+    }
+}
+
+#[test]
+fn a_block_child_with_a_forced_page_break_is_still_a_root() {
+    assert_is_a_root("", with_block_child("display:block;break-before:page"));
+    assert_is_a_root("", with_block_child("display:block;break-after:page"));
+}
+
+#[test]
+fn a_box_with_a_named_page_is_still_a_root() {
+    assert_is_a_root("", with_block_child("display:block;page:chapter"));
+}
+
+#[test]
+fn a_block_child_without_a_page_break_is_still_a_root() {
+    let mut fixture = block_fixture("", with_block_child("display:block"));
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn a_page_break_inside_a_box_of_the_paragraph_is_still_a_root() {
+    // Pagination breaks at the inner block on its own; the lines after the
+    // box would not follow it.
+    for css in [
+        "display:block;break-before:page",
+        "display:block;page:chapter",
+    ] {
+        assert_is_a_root("", move |doc, root| {
+            doc.append_text(root, "aa ");
+            let block = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            let inner = doc.append_element(Some(block), "div", taffy::Style::default(), Some(css));
+            doc.append_text(inner, "bb");
+            doc.append_text(root, " cc");
+        });
+    }
+}
+
+#[test]
+fn a_paragraph_that_fails_to_build_is_a_limit_error() {
+    // One glyph is allowed per paragraph, so shaping "aa bb" fails after the
+    // builder step succeeded. A limit is not a refusal: the layout fails with
+    // the paragraph's root, and nothing is marked.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa bb");
+    });
+    let limits = Limits {
+        max_shaped_glyphs: Some(1),
+        ..Limits::default()
+    };
+    // The walk itself accepts the paragraph: the failure is in the shaping.
+    let fonts = ahem_fonts();
+    let projected = crate::layout::ifc::projection::project_ifc_builder(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &fonts,
+        &limits,
+    )
+    .expect("the walk succeeds");
+    assert!(
+        projected
+            .build(&mut shodo::LayoutContext::new(), &fonts)
+            .is_err()
+    );
+    fixture
+        .doc
+        .set_font_collection_with_limits(ahem_fonts(), limits);
+    let result = assign_ifc_roots(&mut fixture.doc, &fixture.cascade);
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { node, .. }) if node == fixture.root),
+        "{result:?}"
+    );
     assert!(!is_root(&fixture, fixture.root));
+    let text = fixture.doc.nodes[fixture.root].children[0];
+    assert!(
+        !fixture.doc.nodes[text]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
+    );
+    assert!(fixture.doc.nodes[fixture.root].ifc.is_none());
+    // The engine state is kept for the next pass.
+    assert!(fixture.doc.has_font_collection());
+}
+
+#[test]
+fn a_paragraph_inside_a_float_of_a_root_is_still_a_root() {
+    // The inside of a box is not part of the outer paragraph, so a paragraph
+    // there is a root of its own whether or not the outer one is built first.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let float = span(doc, root, "display:block;float:left;width:60px");
+        let inner = doc.append_element(
+            Some(float),
+            "div",
+            taffy::Style::default(),
+            Some("display:block"),
+        );
+        doc.append_text(inner, "bb cc");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    let float = fixture.doc.nodes[fixture.root].children[1];
+    let inner = fixture.doc.nodes[float].children[0];
+    assert!(is_root(&fixture, inner));
+}
+
+/// A face that covers U+0E70 and U+0E71, which Ahem does not.
+const NOTO_SANS_TEST: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/noto-sans-test/NotoSansTest-Regular.ttf"
+));
+
+/// Ahem first, then NotoSansTest: a bundled collection without system faces
+/// in which some text needs the second family.
+fn ahem_and_noto_fonts() -> shodo::font::FontCollection {
+    bundled_collection(
+        &Limits::default(),
+        vec![
+            BundledFace {
+                family: "Ahem".to_owned(),
+                bytes: AHEM.to_vec(),
+            },
+            BundledFace {
+                family: "NotoSansTest".to_owned(),
+                bytes: NOTO_SANS_TEST.to_vec(),
+            },
+        ],
+        false,
+    )
+    .expect("bundled Ahem and NotoSansTest")
+}
+
+/// `n` paragraphs of Ahem text side by side under the body.
+fn many_paragraphs(n: usize) -> Fixture {
+    block_fixture("", |doc, root| {
+        // `root` is the first paragraph; the rest follow it under the body.
+        doc.append_text(root, "aa bb cc dd ee ff");
+        let body = doc.parent_of(root).expect("body");
+        for i in 1..n {
+            let p = doc.append_element(
+                Some(body),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+            );
+            doc.append_text(p, format!("aa bb cc dd ee ff {i}"));
+        }
+    })
+}
+
+/// `n` paragraphs whose text needs the second family: Ahem has no glyph for
+/// U+0E70, NotoSansTest has one.
+fn many_fallback_paragraphs(n: usize) -> Fixture {
+    block_fixture("font-family:Ahem,NotoSansTest", |doc, root| {
+        doc.append_text(root, "aa \u{0E70} bb cc dd");
+        let body = doc.parent_of(root).expect("body");
+        for i in 1..n {
+            let p = doc.append_element(
+                Some(body),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;font-family:Ahem,NotoSansTest;font-size:10px;line-height:10px"),
+            );
+            doc.append_text(p, format!("aa \u{0E70} bb cc {i}"));
+        }
+    })
+}
+
+#[test]
+fn roots_at_or_above_the_threshold_are_built_in_parallel() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_build(true);
+    fixture.doc.set_ifc_parallel_threshold(8);
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Parallel));
+}
+
+#[test]
+fn roots_below_the_threshold_are_built_in_sequence() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_build(true);
+    fixture.doc.set_ifc_parallel_threshold(9);
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Sequential));
+}
+
+#[test]
+fn a_document_that_did_not_allow_it_is_built_in_sequence() {
+    // Many roots, threshold 0, but nothing said the collection is safe.
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_threshold(0);
+    assert!(!fixture.doc.ifc_parallel_build());
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Sequential));
+}
+
+#[test]
+fn a_document_without_fonts_records_no_build() {
+    let mut fixture = many_paragraphs(8);
+    fixture.doc.set_ifc_parallel_build(true);
+    assert!(!fixture.doc.ifc_parallel_build());
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), None);
+}
+
+/// Everything a paint pass reads from the roots: per line the text, its range
+/// and both sizes, per glyph run a hash of the font bytes, the face index,
+/// the glyph ids and the advances.
+fn signature(mut fixture: Fixture, parallel: bool) -> Vec<(usize, Vec<String>)> {
+    fixture.doc.set_ifc_parallel_build(parallel);
+    fixture.doc.set_ifc_parallel_threshold(0);
+    assign(&mut fixture);
+    let expected = if parallel {
+        IfcBuildMode::Parallel
+    } else {
+        IfcBuildMode::Sequential
+    };
+    assert_eq!(fixture.doc.ifc_last_build(), Some(expected));
+    let mut out = Vec::new();
+    for idx in 0..fixture.doc.nodes.len() {
+        if !fixture.doc.nodes[idx].is_ifc_root() {
+            continue;
+        }
+        let root = fixture.doc.nodes[idx].ifc.as_ref().expect("root state");
+        let mut cx = shodo::LayoutContext::new();
+        let lines =
+            root.paragraph
+                .break_all(&mut cx, &root.options, 50.0, &shodo::AtomicSizes::EMPTY);
+        let mut rows = Vec::new();
+        for line in &lines {
+            let mut row = format!(
+                "{:?}|{:?}|{:x}|{:x}",
+                line.text()[line.text_range()].trim_end(),
+                line.text_range(),
+                line.inline_size().to_bits(),
+                line.block_size().to_bits(),
+            );
+            for fragment in line.fragments() {
+                let shodo::Fragment::GlyphRun(run) = fragment else {
+                    continue;
+                };
+                let font = run.font_data().expect("font of a run");
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(font.data.data(), &mut hasher);
+                row.push_str(&format!(
+                    "|font={:x}/{}",
+                    std::hash::Hasher::finish(&hasher),
+                    font.index
+                ));
+                for glyph in run.glyphs() {
+                    row.push_str(&format!(",{}:{:x}", glyph.id, glyph.advance.to_bits()));
+                }
+            }
+            rows.push(row);
+        }
+        out.push((idx, rows));
+    }
+    out
+}
+
+/// The distinct `font=` entries of a signature.
+fn fonts_of(signature: &[(usize, Vec<String>)]) -> std::collections::BTreeSet<String> {
+    signature
+        .iter()
+        .flat_map(|(_, rows)| rows.iter())
+        .flat_map(|row| row.split('|'))
+        .filter(|part| part.starts_with("font="))
+        .map(|part| part.split(',').next().unwrap_or(part).to_owned())
+        .collect()
+}
+
+#[test]
+fn parallel_and_sequential_builds_give_the_same_roots() {
+    let build = |parallel| {
+        let mut fixture = many_paragraphs(40);
+        enable(&mut fixture);
+        signature(fixture, parallel)
+    };
+    let sequential = build(false);
+    let parallel = build(true);
+    assert_eq!(sequential.len(), 40);
+    assert_eq!(parallel, sequential);
+}
+
+#[test]
+fn parallel_and_sequential_builds_agree_when_a_fallback_family_is_needed() {
+    // Ahem lacks U+0E70, so every paragraph takes the fallback branch of the
+    // font matcher. The collection has no system faces, so the result cannot
+    // depend on which worker asks first.
+    let build = |parallel| {
+        let mut fixture = many_fallback_paragraphs(40);
+        fixture
+            .doc
+            .set_font_collection_with_limits(ahem_and_noto_fonts(), Limits::default());
+        signature(fixture, parallel)
+    };
+    let sequential = build(false);
+    let parallel = build(true);
+    assert_eq!(sequential.len(), 40);
+    // Both faces shape runs, so the fallback branch was taken.
+    assert_eq!(
+        fonts_of(&sequential).len(),
+        2,
+        "{:?}",
+        fonts_of(&sequential)
+    );
+    assert_eq!(parallel, sequential);
+}
+
+#[test]
+fn what_crosses_threads_is_send() {
+    fn assert_send<T: Send>() {}
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send::<Candidate>();
+    assert_send::<ProjectedIfc>();
+    assert_send_sync::<shodo::font::FontCollection>();
+    assert_send_sync::<shodo::Paragraph>();
+}
+
+#[test]
+fn a_cloned_document_keeps_the_build_policy() {
+    // A probe layout runs on a clone of the document; it holds the same font
+    // collection, so it may build the same way.
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_parallel_build(true);
+    fixture.doc.set_ifc_parallel_threshold(8);
+    assign(&mut fixture);
+    let mut clone = fixture.doc.clone();
+    // The record of the last build belongs to the original.
+    assert_eq!(clone.ifc_last_build(), None);
+    assert!(clone.ifc_parallel_build());
+    assign_ifc_roots(&mut clone, &fixture.cascade).expect("assign");
+    assert_eq!(clone.ifc_last_build(), Some(IfcBuildMode::Parallel));
+}
+
+#[test]
+fn without_a_threshold_set_32_roots_are_needed_for_a_parallel_build() {
+    let build = |n| {
+        let mut fixture = many_paragraphs(n);
+        enable(&mut fixture);
+        fixture.doc.set_ifc_parallel_build(true);
+        assign(&mut fixture);
+        fixture.doc.ifc_last_build()
+    };
+    assert_eq!(build(31), Some(IfcBuildMode::Sequential));
+    assert_eq!(build(32), Some(IfcBuildMode::Parallel));
+}
+
+#[test]
+fn a_cleared_line_break_is_a_root() {
+    // `clear` on a `<br>` moves the next line below the floats; the line loop
+    // reads it from the paragraph.
+    let mut fixture = block_fixture("", |doc, root| {
+        span(doc, root, "display:block;float:left;width:10px;height:10px");
+        doc.append_element(
+            Some(root),
+            "br",
+            taffy::Style::default(),
+            Some("display:inline;clear:both"),
+        );
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn svg_elements_are_never_roots_and_a_form_control_lays_out_its_label() {
+    // An inline SVG lays out its content by other means: text inside it (an
+    // SVG <title>) is not a paragraph. A form control is an atomic box whose
+    // label is a paragraph of its own.
+    let mut nodes = Vec::new();
+    let mut fixture = block_fixture("display:flex", |doc, root| {
+        let svg = doc.append_element(Some(root), "svg", taffy::Style::default(), None::<&str>);
+        let title = doc.append_element(Some(svg), "title", taffy::Style::default(), None::<&str>);
+        doc.append_text(title, "Close");
+        let button = doc.append_element(
+            Some(root),
+            "button",
+            taffy::Style::default(),
+            Some("display:inline-block"),
+        );
+        doc.append_text(button, "OK");
+        nodes.extend([svg, title, button]);
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, nodes[0]));
+    assert!(!is_root(&fixture, nodes[1]));
+    assert!(is_root(&fixture, nodes[2]));
+}
+
+#[test]
+fn a_refusal_is_always_an_error() {
+    use raikiri_traits::LayoutError;
+    let refusal = || IfcError::Unsupported {
+        node: 3,
+        reason: "an internal inconsistency",
+    };
+    assert!(matches!(
+        super::projection_error(1, refusal()),
+        LayoutError::IfcUnsupported { node: 3, .. }
+    ));
+    assert!(matches!(
+        super::projection_error(1, IfcError::InvalidNode(5)),
+        LayoutError::IfcUnsupported { node: 5, .. }
+    ));
 }

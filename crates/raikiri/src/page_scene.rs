@@ -56,7 +56,7 @@ use raikiri_style::property::{DisplayValue, FloatValue, PositionValue};
 use raikiri_style::resolve::{ComputedLengthPercentage, ComputedLengthPercentageOrAuto};
 use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Type alias for coordinates within `PageScene`.
 ///
@@ -206,11 +206,11 @@ impl PageScene {
     ///
     /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) have their
     /// minimal fields populated, but paint has not switched to consuming them.
-    /// Glyph runs (their actual shapes and positions) still live in
-    /// `parley::Layout`, outside the field-type policy for [`crate::entries`]
-    /// (which excludes raikiri-style/parley types). The source of truth for
-    /// paint therefore remains post-layout `Node.text_layout` in the DOM arena,
-    /// which [`raikiri_paint::paint_single_page`] consumes by DFS. To maintain
+    /// Glyph runs (their actual shapes and positions) still live on the
+    /// paragraph roots of the DOM arena as shodo lines, outside the field-type
+    /// policy for [`crate::entries`] (which excludes raikiri-style and shodo
+    /// types). The source of truth for paint therefore remains the post-layout
+    /// arena, which [`raikiri_paint::paint_single_page`] consumes by DFS. To maintain
     /// byte-identical output, rasterize still passes `dom` and `cascade` through
     /// to the existing paint pipeline verbatim. Reworking `paint_single_page`
     /// to consume `PageDrawables` (achieving actual snapshot semantics and
@@ -244,7 +244,7 @@ impl PageScene {
     ///   another document.
     ///
     /// Passing a pre-layout Document produces a PNG with missing glyphs because
-    /// `Node.text_layout` is empty. Behavior is undefined; callers must wait
+    /// no paragraph has lines yet. Behavior is undefined; callers must wait
     /// for `layout_single_page` to complete.
     #[must_use]
     pub fn rasterize(&self, dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> Vec<u8> {
@@ -606,6 +606,13 @@ pub fn build_page_scene_for_page_named(
         // y stays in the shared document coordinate space until the fragment
         // is committed, which makes page intersection independent of nesting.
         let mut stack: Vec<(usize, Pt, Pt)> = vec![(body_idx, 0.0, 0.0)];
+        // Content-box origin and inline element pieces of every paragraph
+        // laid out by the inline engine, by root. Its text nodes have no
+        // layout of their own, and its inline elements are recorded as one
+        // rectangle per line; both are measured from the root's content box.
+        // A root is visited before its descendants.
+        let mut ifc_origin: HashMap<usize, (Pt, Pt)> = HashMap::new();
+        let mut ifc_pieces: HashMap<usize, Vec<raikiri_dom::InlineBoxPiece>> = HashMap::new();
         while let Some((idx, parent_abs_x, parent_abs_y)) = stack.pop() {
             let Some(node) = dom.get_node(idx) else {
                 continue; // cov:ignore: DFS stack holds only body-subtree indices, always valid in a well-formed Document
@@ -620,24 +627,86 @@ pub fn build_page_scene_for_page_named(
             let abs_x = parent_abs_x + layout.location.x;
             let abs_y = parent_abs_y + layout.location.y;
             let is_body = idx == body_idx;
-            let height = layout.size.height.max(0.0);
-            let intersects = is_body
-                || if height == 0.0 {
-                    abs_y >= page_top && abs_y <= page_bottom
+            if node.is_ifc_root() {
+                ifc_origin.insert(
+                    idx,
+                    (
+                        abs_x + layout.border.left + layout.padding.left,
+                        abs_y + layout.border.top + layout.padding.top,
+                    ),
+                );
+                ifc_pieces.insert(idx, node.ifc_inline_boxes().unwrap_or_default());
+            }
+            let ifc_lines = if node.kind() == NodeKind::Text {
+                dom.ifc_text_lines(idx)
+            } else {
+                None
+            };
+            // Border boxes of the node in document coordinates: one for most
+            // nodes, one per line for an inline element of an ifc paragraph.
+            let rects: Vec<(Pt, Pt, Pt, Pt)> = if let Some(owned) = &ifc_lines {
+                let (root_x, root_y) = ifc_origin
+                    .get(&owned.root)
+                    .copied()
+                    .unwrap_or((abs_x, abs_y));
+                let first_top = owned.lines.first().map_or(0.0, |l| l.top);
+                let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
+                vec![(
+                    root_x,
+                    root_y + first_top,
+                    owned.width,
+                    (last_bottom - first_top).max(0.0),
+                )]
+            } else {
+                let pieces: Vec<(Pt, Pt, Pt, Pt)> = if node.in_ifc_subtree() {
+                    ifc_root_of(dom, idx)
+                        .and_then(|root| Some((ifc_origin.get(&root)?, ifc_pieces.get(&root)?)))
+                        .map(|(&(root_x, root_y), pieces)| {
+                            pieces
+                                .iter()
+                                .filter(|piece| piece.node == idx)
+                                .map(|piece| {
+                                    let rect = piece.border_box;
+                                    (root_x + rect.x, root_y + rect.y, rect.width, rect.height)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
                 } else {
-                    abs_y < page_bottom && abs_y + height > page_top
+                    Vec::new()
                 };
+                if pieces.is_empty() {
+                    vec![(abs_x, abs_y, layout.size.width, layout.size.height)]
+                } else {
+                    pieces
+                }
+            };
+            let on_page: Vec<(Pt, Pt, Pt, Pt)> = rects
+                .into_iter()
+                .filter(|&(_, y, _, height)| {
+                    let height = height.max(0.0);
+                    is_body
+                        || if height == 0.0 {
+                            y >= page_top && y <= page_bottom
+                        } else {
+                            y < page_bottom && y + height > page_top
+                        }
+                })
+                .collect();
 
-            if intersects {
+            if !on_page.is_empty() {
                 let node_id = NodeId::new(idx as u64);
                 node_ids.push(node_id);
-                fragments.entry(node_id).or_default().push(Fragment {
-                    page_index,
-                    x: abs_x,
-                    y: abs_y - content_origin_y,
-                    width: layout.size.width,
-                    height: layout.size.height,
-                });
+                let entries = fragments.entry(node_id).or_default();
+                for (x, y, width, height) in on_page {
+                    entries.push(Fragment {
+                        page_index,
+                        x,
+                        y: y - content_origin_y,
+                        width,
+                        height,
+                    });
+                }
 
                 // `crate::entries` keeps primitive snapshots; the live DOM is
                 // still the paint truth until drawables become the renderer
@@ -665,7 +734,8 @@ pub fn build_page_scene_for_page_named(
                         drawables.block_styles.insert(node_id, entry);
                     }
                     NodeKind::Text => {
-                        let line_count = node.text_layout().map_or(0, |l| l.lines().count());
+                        // A text node outside every paragraph has no lines.
+                        let line_count = ifc_lines.as_ref().map_or(0, |owned| owned.lines.len());
                         let entry = ParagraphEntry {
                             line_count,
                             ..ParagraphEntry::default()
@@ -677,8 +747,15 @@ pub fn build_page_scene_for_page_named(
             }
 
             if node.kind() == NodeKind::Element {
+                // The children of an inline element of an inline engine
+                // paragraph are located from the paragraph's root.
+                let (base_x, base_y) = if dom.contributes_layout_offset(idx) {
+                    (abs_x, abs_y)
+                } else {
+                    (parent_abs_x, parent_abs_y)
+                };
                 for &child in node.children.iter().rev() {
-                    stack.push((child, abs_x, abs_y));
+                    stack.push((child, base_x, base_y));
                 }
             }
         }
@@ -698,6 +775,18 @@ pub fn build_page_scene_for_page_named(
         margin_boxes: cascade.page.margin_boxes().to_vec(),
         content_origin_y,
     }
+}
+
+/// The paragraph root above a node inside an ifc paragraph.
+fn ifc_root_of(dom: &Document, idx: usize) -> Option<usize> {
+    let mut current = dom.parent_of(idx);
+    while let Some(id) = current {
+        if dom.get_node(id)?.is_ifc_root() {
+            return Some(id);
+        }
+        current = dom.parent_of(id);
+    }
+    None
 }
 
 /// Get an Element node's `id` attribute through the

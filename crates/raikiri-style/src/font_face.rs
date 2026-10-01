@@ -10,9 +10,9 @@
 //! # Scope
 //!
 //! This module implements `@font-face` descriptor parsing and the registry.
-//! Fetching a `src: url(...)` target over the network and registering the
-//! downloaded bytes into a `parley::FontContext` is deferred — this module
-//! has **no dependency on `raikiri-traits`, `raikiri-net`, or `raikiri-dom`**
+//! Fetching a `src: url(...)` target and registering the bytes into a font
+//! collection happen downstream (`raikiri-dom`'s `build_inline_document_fonts`
+//! with a loader the caller provides) — this module has **no dependency on `raikiri-traits`, `raikiri-net`, or `raikiri-dom`**
 //! and is not wired into any of those crates. See [`FontFaceRegistry`]'s doc
 //! for exactly what a caller gets back and why.
 //!
@@ -51,7 +51,7 @@
 //!   above). A parsed [`FontFaceSource::Url`] carries the raw URL string and
 //!   the optional `format(...)` hint so a future consumer
 //!   (`raikiri-traits::ResourceKind::Font` policy + `raikiri-net` fetch +
-//!   fontique `register_fonts` with a family-name override) has everything
+//!   registration under the face's family name) has everything
 //!   the stylesheet said; until that consumer exists, an unavailable `url`
 //!   source simply never resolves — fail-closed, never a parse or cascade
 //!   error.

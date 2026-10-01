@@ -9,7 +9,7 @@
 # `cc`/`ld` starts failing with "No space left on device" — intermittently,
 # depending on what other sessions happen to be doing at that moment. The
 # umbrella crate (`raikiri`) is the most exposed doctest target because its
-# dependency graph (vello / parley / icu / html5ever …) makes each doctest
+# dependency graph (vello / shodo / icu / html5ever …) makes each doctest
 # binary a large link job.
 #
 # The fix pins TMPDIR to a location on a filesystem that is not a small

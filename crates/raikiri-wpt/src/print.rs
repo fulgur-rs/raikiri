@@ -69,9 +69,8 @@ pub fn render_print_url(
             image_pixel_source: Some(&image_resolver),
             font_loader: Some(&font_loader),
             prepare_cascade_images: Some(&prepare_images),
-            inline_formatting: false,
-            wpt_fonts: false,
             canvas_bitmaps: None,
+            require_inline_fonts: false,
         },
     )
     .map_err(|error| PrintRenderError::new(error.to_string()))

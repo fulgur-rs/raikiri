@@ -250,23 +250,20 @@ impl DocumentHost for WptDocumentHost {
         self.flushes.set(self.flushes.get() + 1);
         self.resync_stylesheets();
         self.setup.uncascaded.dom.mark_in_document_flags();
-        let mut cascade = raikiri::build_cascaded_with_media_context_for_page(
+        let cascade = raikiri::build_cascaded_with_media_context_for_page(
             &self.setup.uncascaded,
             &self.setup.media_context,
             &self.setup.page_query,
         );
-        let mut font_context = self.setup.font_context.clone();
-        raikiri_dom::expand_font_face_aliases(
-            &mut cascade.computed,
-            self.setup.font_face_tree.font_faces(),
-            &mut font_context,
-        );
+        self.setup
+            .uncascaded
+            .dom
+            .set_font_collection(self.setup.fonts.clone());
         let image_resolver = raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider);
         raikiri_dom::layout_single_page_with_resolver_and_base_url(
             &mut self.setup.uncascaded.dom,
             &cascade,
             self.setup.page_box,
-            font_context,
             &image_resolver,
             self.setup.document_base_url.as_ref(),
         )
@@ -360,11 +357,9 @@ impl DocumentHost for WptDocumentHost {
             .as_ref()
             .and_then(|styles| styles.get(node))
             .ok_or_else(|| HostError(format!("computed style is missing for DOM node {node}")))?;
-        let mut font_context = None;
-        let mut ch_advance = |font: &raikiri_style::ChFontKey| {
-            let font_context = font_context.get_or_insert_with(|| self.setup.font_context.clone());
-            raikiri_dom::layout::measure_ch_advance_for_font_key(font_context, font)
-        };
+        let fonts = &self.setup.fonts;
+        let mut ch_advance =
+            |font: &raikiri_style::ChFontKey| raikiri_dom::layout::measure_ch_advance(fonts, font);
         Ok(property.serialize(computed, &mut ch_advance))
     }
 

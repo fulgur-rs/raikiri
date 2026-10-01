@@ -17,7 +17,7 @@ use raikiri_wpt::baseline_report::{
     write_tsv,
 };
 
-const USAGE: &str = "usage:\n  run-baseline-report [--wpt-root DIR] [--baseline FILE] [--output FILE] [--jobs N] [--only ID]... [--limit N] [--ifc] [--wpt-fonts]\n  run-baseline-report diff BEFORE.tsv AFTER.tsv";
+const USAGE: &str = "usage:\n  run-baseline-report [--wpt-root DIR] [--baseline FILE] [--output FILE] [--jobs N] [--only ID]... [--limit N] [--wpt-fonts]\n  (text is laid out with the WPT fonts; --wpt-fonts names that default)\n  run-baseline-report diff BEFORE.tsv AFTER.tsv";
 
 fn main() {
     if let Err(error) = run() {
@@ -50,24 +50,16 @@ fn run_report(args: &[String]) -> Result<(), String> {
     if let Some(limit) = options.limit {
         ids.truncate(limit);
     }
-    if options.inline_formatting {
-        // A run that silently fell back to the parley path would report no
-        // difference, so refuse to start without the inline engine's fonts.
-        raikiri_wpt::reftest::check_inline_formatting_fonts().map_err(|e| format!("--ifc: {e}"))?;
-    }
+    // A run that silently fell back to the installed fonts would give
+    // machine-dependent numbers, so refuse to start without the WPT fonts.
+    raikiri_wpt::reftest::check_inline_formatting_fonts()
+        .map_err(|e| format!("inline engine fonts: {e}"))?;
     eprintln!("running {} tests with {} job(s)", ids.len(), options.jobs);
-    let rows = run_ids(
-        &options.wpt_root,
-        &ids,
-        options.jobs,
-        options.inline_formatting,
-        options.wpt_fonts,
-        &|row: &Row| {
-            if row.status != Status::Pass {
-                eprintln!("{}\t{}\t{}", row.status.as_str(), row.id, row.detail);
-            }
-        },
-    );
+    let rows = run_ids(&options.wpt_root, &ids, options.jobs, &|row: &Row| {
+        if row.status != Status::Pass {
+            eprintln!("{}\t{}\t{}", row.status.as_str(), row.id, row.detail);
+        }
+    });
     let text = write_tsv(&rows);
     match &options.output {
         Some(path) => {

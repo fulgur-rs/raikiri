@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::test_support::with_ahem;
 use taffy::Style;
 
 // ── layout_single_page driver (Task 7) ──────────────────────
@@ -8,10 +9,15 @@ fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     // Equivalent to parsing (built manually instead; future umbrella integration handles raikiri-html).
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("color:red"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;color:red"),
+    );
     let _text = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -24,13 +30,17 @@ fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
     use raikiri_traits::PageBox;
 
     let mut direct_doc = Document::new();
-    let html =
-        direct_doc.append_element(Some(0), "html", Style::default(), Some("margin-top:auto"));
+    let html = direct_doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:auto"),
+    );
     let body = direct_doc.append_element(
         Some(html),
         "body",
         Style::default(),
-        Some("background-color:red"),
+        Some("display:block;background-color:red"),
     );
     direct_doc.append_text(body, "direct body text");
     let direct_rules = build_rule_tree(&direct_doc);
@@ -39,24 +49,20 @@ fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
     direct_page.width = 100.0;
     direct_page.height = 100.0;
     assert!(
-        !layout_pages(
-            &mut direct_doc,
-            &direct_cascade,
-            direct_page,
-            FontContext::new(),
-        )
-        .expect("direct pagination Ok")
-        .is_empty()
+        !layout_pages(&mut direct_doc, &direct_cascade, direct_page,)
+            .expect("direct pagination Ok")
+            .is_empty()
     );
 
     let mut block_doc = Document::new();
-    let html = block_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = block_doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = block_doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body =
+        block_doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     block_doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("height:20px;margin-bottom:auto"),
+        Some("display:block;height:20px;margin-bottom:auto"),
     );
     let mut block_rules = build_rule_tree(&block_doc);
     block_rules.add_stylesheet("@page { padding:10px; }", Origin::Author);
@@ -65,14 +71,9 @@ fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
     block_page.width = 100.0;
     block_page.height = 100.0;
     assert!(
-        !layout_pages(
-            &mut block_doc,
-            &block_cascade,
-            block_page,
-            FontContext::new(),
-        )
-        .expect("block pagination Ok")
-        .is_empty()
+        !layout_pages(&mut block_doc, &block_cascade, block_page,)
+            .expect("block pagination Ok")
+            .is_empty()
     );
 }
 
@@ -120,7 +121,7 @@ fn relayout_nested_multicol_children_packs_block_children_into_columns() {
     let mut page = PageBox::new();
     page.width = 300.0;
     page.height = 200.0;
-    layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
     // Each column balances to a 60px target (4 * 30px total / 2
     // columns); the third child overflows the first column's budget and
@@ -198,7 +199,7 @@ fn relayout_nested_multicol_children_honors_break_before_avoid() {
     let mut page = PageBox::new();
     page.width = 300.0;
     page.height = 200.0;
-    layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
     // `break-before:avoid` on the third child forbids the break that
     // would otherwise land there, so it stays in column 0 and the
@@ -227,688 +228,7 @@ fn relayout_nested_multicol_children_honors_break_before_avoid() {
 }
 
 #[test]
-fn establish_minimal_line_boxes_aligns_inline_block_text_baselines() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
-    let small = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline-block; font-size:10px; line-height:10px; vertical-align:8px"),
-    );
-    let small_text = doc.append_text(small, "A");
-    let large = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline-block; font-size:20px; line-height:20px"),
-    );
-    let large_text = doc.append_text(large, "B");
-    let lowered = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline-block; font-size:12px; line-height:12px; vertical-align:-4px"),
-    );
-    let _lowered_text = doc.append_text(lowered, "C");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let text_baseline = |element: usize, text: usize| {
-        doc.nodes[element].unrounded_layout.location.y
-            + doc.nodes[text].unrounded_layout.location.y
-            + doc.nodes[text]
-                .text_layout()
-                .expect("text shaped")
-                .lines()
-                .next()
-                .expect("one line")
-                .metrics()
-                .baseline
-    };
-    assert_eq!(
-        doc.nodes[p].style.padding.top,
-        LengthPercentage::length(8.0)
-    );
-    assert_eq!(
-        doc.nodes[p].style.padding.bottom,
-        LengthPercentage::length(4.0)
-    );
-    let small_baseline = text_baseline(small, small_text);
-    let large_baseline = text_baseline(large, large_text);
-    // cov:ignore: panic-message literal only executed on assertion failure.
-    assert!(
-        (small_baseline - large_baseline).abs() < 1e-3,
-        "inline-block text baselines must align across siblings, got small={small_baseline} large={large_baseline}"
-    );
-}
-
-fn inline_image_positions(
-    parent_width: u32,
-    image_specs: &[(u32, &str)],
-    spaces_between: bool,
-) -> Vec<(f32, f32, f32)> {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p_style = format!("display:block;width:{parent_width}px;font-size:20px;line-height:20px");
-    let p = doc.append_element(Some(body), "p", Style::default(), Some(&p_style));
-    let mut images = Vec::with_capacity(image_specs.len());
-    for (index, (height, extra_style)) in image_specs.iter().enumerate() {
-        if spaces_between && index > 0 {
-            doc.append_text(p, " ");
-        }
-        let image_style = format!("display:inline;width:8px;height:{height}px;{extra_style}");
-        images.push(doc.append_element(Some(p), "img", Style::default(), Some(&image_style)));
-    }
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::BASELINE)
-    );
-
-    images
-        .into_iter()
-        .map(|image| {
-            let layout = doc.nodes[image].unrounded_layout;
-            (layout.location.x, layout.location.y, layout.size.height)
-        })
-        .collect()
-}
-
-#[test]
-fn establish_minimal_line_boxes_keep_relative_image_offsets_out_of_shared_baseline() {
-    let first_relative =
-        inline_image_positions(100, &[(8, "position:relative;top:5px"), (4, "")], true);
-    let bottom = |index: usize| first_relative[index].1 + first_relative[index].2;
-    assert!(
-        (bottom(0) - bottom(1) - 5.0).abs() < 1e-3,
-        "a relative inset on the first image must not move its baseline sibling"
-    );
-
-    let second_relative =
-        inline_image_positions(100, &[(8, ""), (4, "position:relative;top:5px")], true);
-    let bottom = |index: usize| second_relative[index].1 + second_relative[index].2;
-    assert!(
-        (bottom(1) - bottom(0) - 5.0).abs() < 1e-3,
-        "a relative inset on a later image must remain local to that image"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_keep_relative_horizontal_offsets_per_image() {
-    let normal = inline_image_positions(100, &[(8, ""), (4, "")], true);
-    let first_left =
-        inline_image_positions(100, &[(8, "position:relative;left:5px"), (4, "")], true);
-    let first_right =
-        inline_image_positions(100, &[(8, "position:relative;right:5px"), (4, "")], true);
-    let second_left =
-        inline_image_positions(100, &[(8, ""), (4, "position:relative;left:5px")], true);
-    let second_right =
-        inline_image_positions(100, &[(8, ""), (4, "position:relative;right:5px")], true);
-    let epsilon = 1e-3;
-
-    assert!((first_left[0].0 - normal[0].0 - 5.0).abs() < epsilon);
-    assert!((first_left[1].0 - normal[1].0).abs() < epsilon);
-    assert!((first_right[0].0 - normal[0].0 + 5.0).abs() < epsilon);
-    assert!((first_right[1].0 - normal[1].0).abs() < epsilon);
-    assert!((second_left[0].0 - normal[0].0).abs() < epsilon);
-    assert!((second_left[1].0 - normal[1].0 - 5.0).abs() < epsilon);
-    assert!((second_right[0].0 - normal[0].0).abs() < epsilon);
-    assert!((second_right[1].0 - normal[1].0 + 5.0).abs() < epsilon);
-}
-
-#[test]
-fn establish_minimal_line_boxes_keep_bottom_relative_offset_after_manual_wrap() {
-    let images = inline_image_positions(
-        16,
-        &[
-            (8, "vertical-align:bottom"),
-            (4, "vertical-align:bottom"),
-            (6, "vertical-align:bottom"),
-            (3, "vertical-align:bottom;position:relative;top:5px"),
-        ],
-        false,
-    );
-    let bottom = |index: usize| images[index].1 + images[index].2;
-    assert!(
-        (bottom(0) - bottom(1)).abs() < 1e-3,
-        "the first bottom-aligned image row must share its line edge"
-    );
-    assert!(
-        (bottom(3) - bottom(2) - 5.0).abs() < 1e-3,
-        "the later row must preserve only the last image's relative inset"
-    );
-}
-
-fn assert_inline_image_bottom_matches_text_baseline(text_content: &str, white_space: &str) {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p_style =
-        format!("display:block;font-size:20px;line-height:20px;white-space:{white_space}");
-    let p = doc.append_element(Some(body), "p", Style::default(), Some(&p_style));
-    // Comments are ignored by the inline bridge and exercise its non-box path.
-    doc.append_comment(Some(p), "baseline helper should ignore comments");
-    let text = doc.append_text(p, text_content);
-    let image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:8px"),
-    );
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    assert_eq!(doc.nodes[p].style.display, Display::Flex);
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::BASELINE)
-    );
-    let text_baseline = doc.nodes[text].unrounded_layout.location.y
-        + doc.nodes[text]
-            .text_layout()
-            .expect("text shaped")
-            .lines()
-            .next()
-            .expect("one line")
-            .metrics()
-            .baseline;
-    let image_bottom = doc.nodes[image].unrounded_layout.location.y
-        + doc.nodes[image].unrounded_layout.size.height;
-    assert!(
-        (image_bottom - text_baseline).abs() < 1e-3,
-        "inline image bottom must meet the text baseline, got image_bottom={image_bottom} text_baseline={text_baseline}"
-    );
-    if white_space == "pre" {
-        let text_right = doc.nodes[text].unrounded_layout.location.x
-            + doc.nodes[text].unrounded_layout.size.width;
-        assert!(
-            doc.nodes[image].unrounded_layout.location.x >= text_right - 1e-3,
-            "preserved leading space must advance the image, got image_x={} text_right={text_right}",
-            doc.nodes[image].unrounded_layout.location.x
-        );
-    }
-}
-
-#[test]
-fn establish_minimal_line_boxes_aligns_inline_image_bottom_to_visible_text_baseline() {
-    assert_inline_image_bottom_matches_text_baseline("A", "normal");
-}
-
-#[test]
-fn establish_minimal_line_boxes_aligns_replaced_bottoms_after_nbsp_text() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;font-size:20px;line-height:20px;white-space:normal"),
-    );
-    // A normal-mode NBSP is preserved as an advance-only item; it must not let
-    // the legacy top-alignment pass undo the replaced-box baseline fallback.
-    doc.append_text(p, "\u{00A0}");
-    let tall_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:8px"),
-    );
-    let short_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:4px"),
-    );
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::BASELINE)
-    );
-    let tall_bottom = doc.nodes[tall_image].unrounded_layout.location.y
-        + doc.nodes[tall_image].unrounded_layout.size.height;
-    let short_bottom = doc.nodes[short_image].unrounded_layout.location.y
-        + doc.nodes[short_image].unrounded_layout.size.height;
-    assert!(
-        (tall_bottom - short_bottom).abs() < 1e-3,
-        "baseline fallback must align replaced bottoms after NBSP, got tall={tall_bottom} short={short_bottom}"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_aligns_replaced_bottoms_across_collapsible_space() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;font-size:20px;line-height:20px;white-space:normal"),
-    );
-    let tall_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:8px"),
-    );
-    doc.append_text(p, " ");
-    let short_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:4px"),
-    );
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::BASELINE)
-    );
-    let tall_bottom = doc.nodes[tall_image].unrounded_layout.location.y
-        + doc.nodes[tall_image].unrounded_layout.size.height;
-    let short_bottom = doc.nodes[short_image].unrounded_layout.location.y
-        + doc.nodes[short_image].unrounded_layout.size.height;
-    assert!(
-        (tall_bottom - short_bottom).abs() < 1e-3,
-        "normal-space inline images must retain Taffy's shared baseline, got tall={tall_bottom} short={short_bottom}"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_recomputes_baselines_after_manual_wrap() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;width:16px;font-size:20px;line-height:20px"),
-    );
-    let first_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:8px"),
-    );
-    let second_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:4px"),
-    );
-    let third_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:6px"),
-    );
-    let fourth_image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:3px"),
-    );
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::BASELINE)
-    );
-    let bottom = |image: usize| {
-        doc.nodes[image].unrounded_layout.location.y + doc.nodes[image].unrounded_layout.size.height
-    };
-    let first_row_baseline = bottom(first_image);
-    let second_row_baseline = bottom(second_image);
-    let third_row_baseline = bottom(third_image);
-    let fourth_row_baseline = bottom(fourth_image);
-    assert!(
-        (first_row_baseline - second_row_baseline).abs() < 1e-3,
-        "the first manually wrapped row must share its image baseline"
-    );
-    assert!(
-        (third_row_baseline - fourth_row_baseline).abs() < 1e-3,
-        "the second manually wrapped row must recompute its own image baseline"
-    );
-    assert!(
-        (doc.nodes[third_image].unrounded_layout.location.y
-            - doc.nodes[first_image].unrounded_layout.location.y
-            - 20.0)
-            .abs()
-            < 1e-3,
-        "the second row must start one line-height after the first, without stale Taffy offset"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_preserves_inline_image_baseline_with_preformatted_space() {
-    assert_inline_image_bottom_matches_text_baseline(" ", "pre");
-}
-
-#[test]
-fn establish_minimal_line_boxes_aligns_inline_image_with_wrapped_text_baseline() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;font-size:20px;line-height:20px"),
-    );
-    let wrapper = doc.append_element(Some(p), "span", Style::default(), Some("display:inline"));
-    let text = doc.append_text(wrapper, "A");
-    let image = doc.append_element(
-        Some(p),
-        "img",
-        Style::default(),
-        Some("display:inline;width:8px;height:8px"),
-    );
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::BASELINE)
-    );
-    let text_baseline = doc.nodes[wrapper].unrounded_layout.location.y
-        + doc.nodes[text].unrounded_layout.location.y
-        + doc.nodes[text]
-            .text_layout()
-            .expect("text shaped")
-            .lines()
-            .next()
-            .expect("one line")
-            .metrics()
-            .baseline;
-    let image_bottom = doc.nodes[image].unrounded_layout.location.y
-        + doc.nodes[image].unrounded_layout.size.height;
-    assert!(
-        (image_bottom - text_baseline).abs() < 1e-3,
-        "inline image bottom must meet the wrapped text baseline, got image_bottom={image_bottom} text_baseline={text_baseline}"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_keep_ordinary_inline_text_top_aligned() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
-    doc.append_text(p, "A");
-    let wrapper = doc.append_element(Some(p), "span", Style::default(), Some("display:inline"));
-    let raised = doc.append_element(
-        Some(wrapper),
-        "span",
-        Style::default(),
-        Some("display:inline; vertical-align:super"),
-    );
-    doc.append_text(raised, "B");
-    doc.append_text(p, "C");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    assert_eq!(doc.nodes[p].style.display, Display::Flex);
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::FLEX_START)
-    );
-    assert_eq!(
-        doc.nodes[p].style.padding.top,
-        LengthPercentage::length(16.0 / 3.0)
-    );
-    assert_eq!(
-        doc.nodes[p].style.padding.bottom,
-        LengthPercentage::length(0.0)
-    );
-}
-
-#[test]
-fn inline_block_baseline_uses_last_in_flow_text_line() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
-    let multiline = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline-block; width:20px; font-size:10px; line-height:10px"),
-    );
-    let first_text = doc.append_text(multiline, "A");
-    doc.append_element(Some(multiline), "br", Style::default(), None::<&str>);
-    let last_text = doc.append_text(multiline, "B");
-    let hidden = doc.append_element(
-        Some(multiline),
-        "span",
-        Style::default(),
-        Some("display:none"),
-    );
-    doc.append_text(hidden, "hidden");
-    let single_line = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline-block; font-size:20px; line-height:20px"),
-    );
-    let sibling_text = doc.append_text(single_line, "C");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let first_y = doc.nodes[first_text].unrounded_layout.location.y;
-    let last_y = doc.nodes[last_text].unrounded_layout.location.y;
-    assert!(last_y > first_y, "the br must put B on a later line");
-    let multiline_baseline = doc.nodes[multiline].unrounded_layout.location.y
-        + last_y
-        + doc.nodes[last_text]
-            .text_layout()
-            .expect("last text shaped")
-            .lines()
-            .next()
-            .expect("one line in B text node")
-            .metrics()
-            .baseline;
-    let sibling_baseline = doc.nodes[single_line].unrounded_layout.location.y
-        + doc.nodes[sibling_text].unrounded_layout.location.y
-        + doc.nodes[sibling_text]
-            .text_layout()
-            .expect("sibling text shaped")
-            .lines()
-            .next()
-            .expect("one sibling line")
-            .metrics()
-            .baseline;
-    assert!(
-        (multiline_baseline - sibling_baseline).abs() < 1e-3,
-        "inline-block last text baseline must align with sibling: {multiline_baseline} vs {sibling_baseline}" // cov:ignore: panic-message literal only runs if the assertion fails.
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_honors_vertical_align_top_and_bottom() {
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
-    let top = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline-block; width:10px; height:30px; vertical-align:top"),
-    );
-    let bottom = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline-block; width:10px; height:10px; vertical-align:bottom"),
-    );
-    let wrapper = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline; padding-top:20px"),
-    );
-    let _wrapper_text = doc.append_text(wrapper, "A");
-    let intermediary = doc.append_element(
-        Some(wrapper),
-        "span",
-        Style::default(),
-        Some("display:inline"),
-    );
-    let _nested_top = doc.append_element(
-        Some(intermediary),
-        "span",
-        Style::default(),
-        Some("display:inline-block; width:10px; height:30px; vertical-align:top"),
-    );
-    let plain_wrapper =
-        doc.append_element(Some(p), "span", Style::default(), Some("display:inline"));
-    let _plain_text = doc.append_text(plain_wrapper, "B");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let parent_y = doc.nodes[p].unrounded_layout.location.y;
-    let parent_bottom = parent_y + doc.nodes[p].unrounded_layout.size.height;
-    let top_layout = doc.nodes[top].unrounded_layout;
-    let bottom_layout = doc.nodes[bottom].unrounded_layout;
-    assert!((top_layout.location.y - parent_y).abs() < 1e-3);
-    assert!((bottom_layout.location.y + bottom_layout.size.height - parent_bottom).abs() < 1e-3);
-    assert!((top_layout.size.height - 30.0).abs() < 1e-3);
-    assert!((bottom_layout.size.height - 10.0).abs() < 1e-3);
-    assert_eq!(
-        doc.nodes[wrapper].style.padding.top,
-        LengthPercentage::length(0.0)
-    );
-}
-
-#[test]
-fn terminal_preserved_newline_does_not_create_an_empty_line_box() {
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let block = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:inline-block;font:24px monospace;white-space:pre-wrap;letter-spacing:10px"),
-    );
-    let content_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
-    let content = doc.append_text(content_span, "1. a");
-    let newline_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
-    let newline = doc.append_text(newline_span, "\n");
-
-    let _separator = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    let direct_block = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:inline-block;font:24px monospace;white-space:pre-wrap;letter-spacing:10px"),
-    );
-    let direct_content_span =
-        doc.append_element(Some(direct_block), "span", Style::default(), None::<&str>);
-    let direct_content = doc.append_text(direct_content_span, "2. b");
-    let direct_newline = doc.append_text(direct_block, "\n");
-
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    assert_eq!(
-        doc.nodes[content]
-            .text_layout()
-            .expect("content shaped")
-            .len(),
-        1
-    );
-    assert!(doc.nodes[newline].text_layout().is_none());
-    assert!(doc.nodes[block].unrounded_layout.size.height < 40.0);
-    assert_eq!(
-        doc.nodes[direct_content]
-            .text_layout()
-            .expect("direct content shaped")
-            .len(),
-        1
-    );
-    assert!(doc.nodes[direct_newline].text_layout().is_none());
-    assert!(doc.nodes[direct_block].unrounded_layout.size.height < 40.0);
-}
-
-#[test]
 fn text_indent_offsets_empty_inline_block_by_content_box_percentage() {
-    use parley::FontContext;
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -929,184 +249,10 @@ fn text_indent_offsets_empty_inline_block_by_content_box_percentage() {
     );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
 
     assert!((doc.nodes[block].unrounded_layout.content_box_width() - 110.0).abs() < 0.01);
     assert!((doc.nodes[inline_block].unrounded_layout.location.x - 55.0).abs() < 0.01);
-}
-
-#[test]
-fn modifier_text_indent_ch_changes_taffy_height_before_layout() {
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-    use std::path::PathBuf;
-
-    let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("target")
-        .join("wpt")
-        .join("fonts");
-    // cov:ignore: this integration fixture is intentionally skippable when shared WPT assets are absent.
-    if !fonts_dir.join("Ahem.ttf").exists() {
-        eprintln!(
-            "skipping modifier text-indent ch test: Ahem.ttf is required under {}",
-            fonts_dir.display()
-        );
-        return;
-    }
-
-    fn measure(fonts_dir: &std::path::Path, value: &str) -> (usize, f32, f32, bool, bool, bool) {
-        let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let block = doc.append_element(
-                Some(body),
-                "p",
-                Style::default(),
-                Some(&format!(
-                    "display:block;width:80px;font-family:Ahem;font-size:16px;line-height:20px;word-break:break-all;text-indent:{value}"
-                )),
-            );
-        let text = doc.append_text(block, "0000000000");
-        let rules = build_rule_tree(&doc);
-        let cascade = cascade(&doc, &rules).expect("cascade Ok");
-        let fonts =
-            crate::fonts::build_wpt_font_ctx(fonts_dir).expect("bundled WPT fonts should register");
-        layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
-        let layout = doc.nodes[text].text_layout().expect("text shaped");
-        let crate::node::NodeData::Text(text_data) = &doc.nodes[text].data else {
-            unreachable!("text node remains text after layout"); // cov:ignore: layout preserves text nodes after shaping.
-        };
-        (
-            layout.len(),
-            layout.height(),
-            doc.nodes[block].unrounded_layout.size.height,
-            text_data.text_indent_hanging,
-            text_data.text_indent_each_line,
-            text_data.text_indent_rebreak,
-        )
-    }
-
-    let hanging = measure(&fonts_dir, "2ch hanging");
-    let each_line = measure(&fonts_dir, "2ch each-line");
-    // Parley's `each_line` option covers the first and hard-break lines;
-    // soft-wrap continuation lines still use its normal scope semantics.
-    assert_eq!(hanging.0, 3);
-    assert_eq!(each_line.0, 3);
-    assert!((hanging.1 - hanging.2).abs() < 0.01);
-    assert!((each_line.1 - each_line.2).abs() < 0.01);
-    assert!(hanging.2 > 20.0);
-    assert!(each_line.2 > 20.0);
-    assert!(hanging.3 && !hanging.4 && hanging.5);
-    assert!(!each_line.3 && each_line.4 && each_line.5);
-}
-
-#[test]
-fn width_ch_and_text_indent_ch_change_taffy_height_before_layout() {
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-    use std::path::PathBuf;
-
-    let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("target")
-        .join("wpt")
-        .join("fonts");
-    // cov:ignore: this integration fixture is intentionally skippable when shared WPT assets are absent.
-    if !fonts_dir.join("Ahem.ttf").exists() {
-        eprintln!(
-            "skipping width/text-indent ch test: Ahem.ttf is required under {}",
-            fonts_dir.display()
-        );
-        return;
-    }
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let block = doc.append_element(
-            Some(body),
-            "p",
-            Style::default(),
-            Some(
-                "display:block;width:2ch;font-family:Ahem;font-size:16px;line-height:20px;word-break:break-all;text-indent:1ch",
-            ),
-        );
-    let text = doc.append_text(block, "00");
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let fonts =
-        crate::fonts::build_wpt_font_ctx(&fonts_dir).expect("bundled WPT fonts should register");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
-
-    let layout = doc.nodes[text].text_layout().expect("text shaped");
-    assert_eq!(layout.len(), 2, "one ch of indent leaves one ch per line");
-    assert!((layout.height() - 40.0).abs() < 0.01);
-    let block_layout = doc.nodes[block].unrounded_layout;
-    assert!((block_layout.size.width - 32.0).abs() < 0.01);
-    assert!((block_layout.size.height - 40.0).abs() < 0.01);
-    assert!(matches!(
-        &doc.nodes[text].data,
-        crate::node::NodeData::Text(text)
-            if text.text_indent_px.is_some() && text.text_indent_rebreak
-    ));
-}
-
-#[test]
-fn relayout_text_for_width_rebuilds_pre_taffy_indent_state() {
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;width:80px;font-size:16px;text-indent:1ch"),
-    );
-    let text = doc.append_text(p, "00 00");
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
-    relayout_text_for_width(&mut doc, &cascade, 80.0, 80.0, FontContext::new());
-    assert!(doc.nodes[text].text_layout().is_some());
-    assert!(matches!(
-        &doc.nodes[text].data,
-        crate::node::NodeData::Text(text) if text.text_indent_px.is_some()
-    ));
-}
-
-#[test]
-fn text_indent_calc_ch_adds_absolute_offset_to_measured_indent() {
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    fn prepared_indent(indent: &str) -> f32 {
-        let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let style = format!("display:block;width:80px;font-size:16px;text-indent:{indent}");
-        let p = doc.append_element(Some(body), "p", Style::default(), Some(style.as_str()));
-        let text = doc.append_text(p, "00 00");
-        let rules = build_rule_tree(&doc);
-        let cascade = cascade(&doc, &rules).expect("cascade Ok");
-        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
-        match &doc.nodes[text].data {
-            crate::node::NodeData::Text(text) => text.text_indent_px.expect("indent prepared"),
-            _ => unreachable!("appended node is text"),
-        }
-    }
-
-    let plain = prepared_indent("1ch");
-    let calc = prepared_indent("calc(1ch + 7px)");
-    assert!(
-        (calc - plain - 7.0).abs() < 0.01,
-        "plain ch={plain}, calc={calc}"
-    );
 }
 
 #[test]
@@ -1147,9 +293,11 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let fonts =
-        crate::fonts::build_wpt_font_ctx(&fonts_dir).expect("bundled WPT fonts should register");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+    doc.set_font_collection(
+        crate::fonts::build_wpt_font_collection(&fonts_dir)
+            .expect("bundled WPT fonts should register"),
+    );
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -1168,275 +316,6 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     assert!((child_layout.size.width - 16.0).abs() < 0.01);
 }
 
-/// Helper returning both glyph ends of a single-line block.
-/// (first glyph x, last glyph x+advance).
-fn single_line_ends(doc: &Document, t: usize) -> (f32, f32) {
-    use parley::PositionedLayoutItem;
-
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    assert_eq!(layout.len(), 1, "fixture must stay single-line");
-    let mut first = None;
-    let mut last = (0.0, 0.0);
-    for line in layout.lines() {
-        for it in line.items() {
-            if let PositionedLayoutItem::GlyphRun(gr) = it {
-                for g in gr.positioned_glyphs() {
-                    if first.is_none() {
-                        first = Some(g.x);
-                    }
-                    last = (g.x, g.advance);
-                }
-            }
-        }
-    }
-    (first.expect("glyph"), last.0 + last.1)
-}
-
-#[test]
-fn text_justify_none_disables_justification() {
-    // text-align:justify + text-justify:none → do not spread.
-    // (CSS Text 3 §6.2).
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display: block; width: 200px; text-align: justify; text-justify: none"),
-    );
-    let t = doc.append_text(div, "aa bb cc");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let (first_x, last_end) = single_line_ends(&doc, t);
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        first_x.abs() < 2.0 && last_end < 150.0,
-        "unjustified single line must not spread: first={} last_end={}",
-        first_x,
-        last_end
-    );
-}
-
-#[test]
-fn word_break_break_all_rebreaks_narrow_container_text() {
-    // Text is initially shaped against the page width. `word-break` must
-    // still take effect when the containing block is narrower than that
-    // preshape width.
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display: block; width: 1px; word-break: break-all"),
-    );
-    let t = doc.append_text(div, "ab");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    assert_eq!(layout.len(), 2, "break-all text must wrap in a 1px block");
-}
-
-#[test]
-fn break_spaces_rebreaks_narrow_container_text() {
-    // `break-spaces` preserves spaces but still needs the containing block
-    // width during the post-layout rebreak (the initial shape uses page width).
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display: block; width: 1px; white-space: break-spaces"),
-    );
-    let t = doc.append_text(div, "a b");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    assert_eq!(
-        layout.len(),
-        2,
-        "break-spaces text must wrap in a 1px block"
-    );
-}
-
-#[test]
-fn text_wrap_nowrap_keeps_single_line_in_narrow_container() {
-    // `text-wrap: nowrap` suppresses soft wrapping (CSS Text 4 §5,
-    // Long text in a narrow block stays one line.
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display: block; width: 60px; text-wrap: nowrap"),
-    );
-    let t = doc.append_text(div, "aaaa bbbb cccc dddd eeee ffff");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(layout.len(), 1, "nowrap text must not soft-wrap");
-}
-
-#[test]
-fn establish_minimal_line_boxes_br_forces_second_line_end_to_end() {
-    // End-to-end check (full `layout_single_page` pipeline, matching
-    // `establish_minimal_line_boxes_lays_out_children_side_by_side_not_stacked`'s
-    // style) for the concrete geometry `<br>` must produce: the content
-    // after `<br>` lands on a lower line than the content before it,
-    // and the `<br>` itself contributes no visible height — the line
-    // it alone occupies (taffy's line-packing algorithm assigns it one
-    // because its flex_basis:100% never fits next to prior content)
-    // must have cross size 0, so it does not introduce a phantom blank
-    // line between the two real ones.
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let a = doc.append_text(p, "AAAA");
-    let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
-    let c = doc.append_text(p, "CCCC");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let a_loc = doc.nodes[a].unrounded_layout;
-    let br_loc = doc.nodes[br].unrounded_layout;
-    let c_loc = doc.nodes[c].unrounded_layout;
-    let p_loc = doc.nodes[p].unrounded_layout;
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        c_loc.location.y >= a_loc.location.y + a_loc.size.height - 1e-3,
-        "the text after <br> must start at or below the first line's \
-             bottom edge (forced break into a second line), got \
-             a.y={} a.h={} c.y={}",
-        a_loc.location.y,
-        a_loc.size.height,
-        c_loc.location.y
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        br_loc.size.height, 0.0,
-        "<br> is a childless leaf with no text layout, so its own \
-             measured cross size must be 0 — the load-bearing fact that \
-             keeps the line it alone occupies from adding visible height"
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (p_loc.size.height - (a_loc.size.height + c_loc.size.height)).abs() < 1e-3,
-        "the container's total height must equal exactly the sum of \
-             the two real lines' heights — no phantom third (blank) line \
-             from the line <br> alone occupies, got p.h={} a.h={} c.h={}",
-        p_loc.size.height,
-        a_loc.size.height,
-        c_loc.size.height
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_consecutive_br_adds_no_blank_line_either() {
-    // Same mechanism as the leading-<br> Non-goal
-    // (`establish_minimal_line_boxes_leading_br_does_not_add_leading_blank_line`),
-    // checked for the *second* <br> in a `<br><br>` run instead of the
-    // first: after the first <br> takes the whole of its own (now
-    // empty) line, the second <br> is checked against a line with 0
-    // remaining space — still its line's first item (the first <br>
-    // already moved on), so the same "an empty line accepts its first
-    // item" exception applies to it too, and it likewise measures
-    // 0-height. Confirms the doc's claim explicitly, rather than
-    // leaving it as an un-pinned assertion about a case distinct from
-    // the leading-<br> one.
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let a = doc.append_text(p, "AAAA");
-    let br1 = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
-    let br2 = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
-    let b = doc.append_text(p, "BBBB");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let a_loc = doc.nodes[a].unrounded_layout;
-    let br1_loc = doc.nodes[br1].unrounded_layout;
-    let br2_loc = doc.nodes[br2].unrounded_layout;
-    let b_loc = doc.nodes[b].unrounded_layout;
-    let p_loc = doc.nodes[p].unrounded_layout;
-
-    assert_eq!(br1_loc.size.height, 0.0);
-    assert_eq!(br2_loc.size.height, 0.0);
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        b_loc.location.y >= a_loc.location.y + a_loc.size.height - 1e-3,
-        "got a.y={} a.h={} b.y={}",
-        a_loc.location.y,
-        a_loc.size.height,
-        b_loc.location.y
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (p_loc.size.height - (a_loc.size.height + b_loc.size.height)).abs() < 1e-3,
-        "a consecutive <br><br> must not add a visible blank line \
-             between AAAA and BBBB — got p.h={} a.h={} b.h={}",
-        p_loc.size.height,
-        a_loc.size.height,
-        b_loc.size.height
-    );
-}
-
 #[test]
 fn layout_single_page_without_body_returns_error() {
     use raikiri_style::{build_rule_tree, cascade};
@@ -1448,7 +327,7 @@ fn layout_single_page_without_body_returns_error() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
 
-    match layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()) {
+    match layout_single_page(&mut doc, &cr, PageBox::A4) {
         Err(LayoutError::Internal { message }) => {
             assert!(
                 message.contains("body"),
@@ -1477,7 +356,7 @@ fn layout_single_page_bridges_display_none() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     assert_eq!(doc.nodes[body].style.display, Display::None);
 }
 
@@ -1526,7 +405,7 @@ fn inline_block_width_auto_shrink_wraps_to_content() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let auto_size = doc.nodes[ib].unrounded_layout.size;
     // cov:ignore: panic-message literal only executed on assertion
@@ -1594,7 +473,7 @@ fn flex_items_follow_order_modified_source_order() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     assert_eq!(doc.nodes[flex].children, vec![a, absolute, b, c, d]);
     assert_eq!(
@@ -1636,8 +515,7 @@ fn relayout_invalidates_cache_when_order_modified_view_returns_to_dom_order() {
 
     let rules = build_rule_tree(&doc);
     let cascade_result = cascade(&doc, &rules).expect("initial cascade Ok");
-    layout_single_page(&mut doc, &cascade_result, PageBox::A4, FontContext::new())
-        .expect("initial layout Ok");
+    layout_single_page(&mut doc, &cascade_result, PageBox::A4).expect("initial layout Ok");
     assert_eq!(
         doc.nodes[flex].order_modified_children.as_ref(),
         &[second, first]
@@ -1654,8 +532,7 @@ fn relayout_invalidates_cache_when_order_modified_view_returns_to_dom_order() {
     doc.set_element_inline_style(second, Some("order:0;width:30px;height:20px".into()));
     let rules = build_rule_tree(&doc);
     let updated_cascade = cascade(&doc, &rules).expect("updated cascade Ok");
-    layout_single_page(&mut doc, &updated_cascade, PageBox::A4, FontContext::new())
-        .expect("updated layout Ok");
+    layout_single_page(&mut doc, &updated_cascade, PageBox::A4).expect("updated layout Ok");
 
     assert!(doc.nodes[flex].order_modified_children.is_empty());
     assert!(
@@ -1689,7 +566,7 @@ fn order_is_ignored_for_non_flex_grid_children() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     assert!(doc.nodes[block].order_modified_children.is_empty());
     // cov:ignore: panic-message text is only executed when the assertion fails.
@@ -1748,7 +625,7 @@ fn nested_normal_flow_descendant_clears_ancestor_level_float() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let float_loc = doc.nodes[float_sibling].unrounded_layout.location;
     let float_size = doc.nodes[float_sibling].unrounded_layout.size;
@@ -1777,7 +654,7 @@ fn layout_single_page_deterministic_across_10_runs() {
 
     fn one_run() -> Vec<taffy::Layout> {
         let (mut doc, cr) = hello_world_doc();
-        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
         doc.nodes.iter().map(|n| n.unrounded_layout).collect()
     }
 
@@ -1827,7 +704,7 @@ fn grid_auto_placement_uses_order_modified_source_order() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     assert_eq!(doc.nodes[grid].children, vec![a, b, c, d]);
     assert_eq!(
@@ -1884,7 +761,7 @@ fn grid_template_columns_named_line_after_repeat_resolves_to_the_correct_taffy_g
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let first_loc = doc.nodes[cell_first].unrounded_layout.location;
     let z_loc = doc.nodes[cell_z].unrounded_layout.location;
@@ -1922,7 +799,7 @@ fn grid_auto_abspos_static_position_uses_all_parent_padding_sides() {
     );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     let layout = doc.nodes[child].unrounded_layout;
     assert!((layout.location.x - 10.0).abs() < 0.01);
     assert!((layout.location.y - 10.0).abs() < 0.01);
@@ -1931,7 +808,7 @@ fn grid_auto_abspos_static_position_uses_all_parent_padding_sides() {
 #[test]
 fn layout_page_fragments_emits_one_page_with_deterministic_items() {
     let (mut doc, cascade) = hello_world_doc();
-    let pages = layout_page_fragments(&mut doc, &cascade, PageBox::A4, FontContext::new())
+    let pages = layout_page_fragments(&mut doc, &cascade, PageBox::A4)
         .expect("page fragment layout should succeed");
 
     assert_eq!(pages.len(), 1);
@@ -1957,15 +834,20 @@ fn layout_page_fragments_preserves_forced_page_break() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let first = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let first = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
     doc.append_text(first, "first");
     let second = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("break-before:page;height:10px"),
+        Some("display:block;break-before:page;height:10px"),
     );
     doc.append_text(second, "second");
     let rules = build_rule_tree(&doc);
@@ -1974,7 +856,7 @@ fn layout_page_fragments_preserves_forced_page_break() {
     page.width = 100.0;
     page.height = 60.0;
 
-    let pages = layout_page_fragments(&mut doc, &cascade, page, FontContext::new())
+    let pages = layout_page_fragments(&mut doc, &cascade, page)
         .expect("page fragment layout should succeed");
     assert!(pages.len() >= 2, "forced page break must create page 1+");
     assert!(
@@ -2091,7 +973,7 @@ fn layout_page_fragments_classifies_replaced_and_skips_non_rendered_nodes() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
 
-    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4)
         .expect("page fragment layout should succeed");
     assert!(
         pages[0]
@@ -2171,7 +1053,7 @@ fn propagated_start_page_name_uses_resolved_grid_child_order() {
     );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     assert_eq!(
         propagated_start_page_name(&doc, &cascade, body, None),
         (true, Some("b".to_owned()))
@@ -2210,7 +1092,7 @@ fn layout_pages_uses_order_modified_flex_sequence_for_forced_breaks() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
     let first_y = doc.nodes[first_in_visual_order].unrounded_layout.location.y;
@@ -2266,8 +1148,7 @@ fn layout_pages_uses_order_modified_flex_last_item_for_overflow() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let _slices =
-        layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let _slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     let first_y = doc.nodes[visual_first].unrounded_layout.location.y;
     let last_y = doc.nodes[visual_last].unrounded_layout.location.y;
@@ -2319,7 +1200,7 @@ fn layout_pages_uses_column_reverse_visual_order_for_forced_breaks() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
     assert_eq!(
@@ -2375,8 +1256,7 @@ fn layout_pages_keeps_column_reverse_visual_last_item_at_page_edge() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let _slices =
-        layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let _slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert_eq!(
         doc.nodes[flex].layout_children(),
@@ -2429,7 +1309,7 @@ fn layout_pages_orders_grid_rows_by_resolved_placement_before_forced_break() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
     assert_eq!(
@@ -2482,7 +1362,7 @@ fn layout_pages_processes_single_column_grid_in_placed_row_order() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
@@ -2527,8 +1407,7 @@ fn layout_pages_coalesces_zero_height_named_boxes_at_same_position() {
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let slices =
-        layout_pages(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, PageBox::A4).expect("pagination Ok");
 
     assert_eq!(slices.len(), 1);
     assert_eq!(slices[0].page_name.as_deref(), Some("last"));
@@ -2566,7 +1445,7 @@ fn layout_pages_processes_mixed_auto_and_explicit_grid_rows_by_resolved_placemen
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
@@ -2618,7 +1497,7 @@ fn layout_pages_orders_direct_grid_text_before_later_forced_break() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
     assert_eq!(
@@ -2670,7 +1549,7 @@ fn layout_pages_orders_negative_explicit_grid_rows_by_placement() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
@@ -2724,7 +1603,7 @@ fn layout_pages_uses_resolved_rows_for_reversed_grid_lines_and_order() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
     assert_eq!(
@@ -2781,7 +1660,7 @@ fn layout_pages_orders_relative_grid_items_by_resolved_placement() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
     let first_row_y = doc.nodes[relative_first_row].unrounded_layout.location.y;
@@ -2827,7 +1706,7 @@ fn layout_pages_places_footnote_at_page_bottom_without_flow_footprint() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 50.0;
-    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert_eq!(slices.len(), 1);
     let note_y = doc.nodes[note].unrounded_layout.location.y;
@@ -2871,7 +1750,7 @@ fn direct_absolute_auto_width_shrink_to_fit_empty_with_margin() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
     // Empty content shrink-wraps to zero; the border box holds only borders.
     let layout = doc.nodes[abs].unrounded_layout;
@@ -2909,7 +1788,7 @@ fn direct_absolute_auto_width_shrink_to_fit_block_child() {
     let mut page = PageBox::new();
     page.width = 800.0;
     page.height = 600.0;
-    layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
     let layout = doc.nodes[abs_pos].unrounded_layout;
     assert!(
@@ -2953,7 +1832,7 @@ fn nested_absolute_auto_width_matches_direct_body_shrink() {
     let mut page = PageBox::new();
     page.width = 800.0;
     page.height = 600.0;
-    layout_single_page(&mut doc, &cascade, page, parley::FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
     let layout = doc.nodes[abs_pos].unrounded_layout;
     assert!(
@@ -2965,45 +1844,17 @@ fn nested_absolute_auto_width_matches_direct_body_shrink() {
 
 mod page_fragments_tests;
 
-// ── ifc roots stay off the parley passes ─────────────────────
-
-#[test]
-fn ifc_root_text_is_not_shaped_by_parley_and_the_root_is_not_a_flex_line() {
-    use crate::layout::ifc::test_support::ahem_fonts;
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, page_box_800x600};
-    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
-    doc.enable_inline_formatting(ahem_fonts(), shodo::limits::Limits::default());
-    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
-        .expect("layout");
-    let text = doc.nodes[root].children[0];
-    assert!(doc.nodes[root].flags.contains(NodeFlags::IS_IFC_ROOT));
-    assert!(!doc.nodes[root].flags.contains(NodeFlags::IS_INLINE_ROOT));
-    // Parley cannot satisfy this: the text node was never shaped.
-    assert!(doc.nodes[text].text_layout().is_none());
-}
-
-#[test]
-fn without_the_switch_the_same_paragraph_is_shaped_by_parley() {
-    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, page_box_800x600};
-    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
-    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
-        .expect("layout");
-    let text = doc.nodes[root].children[0];
-    assert!(!doc.nodes[root].flags.contains(NodeFlags::IS_IFC_ROOT));
-    assert!(doc.nodes[text].text_layout().is_some());
-}
-
 // ── ifc roots in taffy ───────────────────────────────────────
 
 use crate::layout::test_support::{
-    ahem_font_context, ahem_paragraph, ahem_paragraph_beside_float, ahem_paragraph_beside_floats,
+    ahem_paragraph, ahem_paragraph_beside_float, ahem_paragraph_beside_floats,
     ahem_paragraph_in_block_wrapper, ahem_paragraph_with_atomic, ahem_paragraph_with_float,
     ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
 };
 
-fn lay_out_with_switch(doc: &mut Document, cascade: &CascadeResult) {
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-    layout_single_page(doc, cascade, page_box_800x600(), ahem_font_context()).expect("layout");
+fn lay_out(doc: &mut Document, cascade: &CascadeResult) {
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(doc), cascade, page_box_800x600()).expect("layout");
 }
 
 fn stored_lines(doc: &Document, root: usize) -> &crate::layout::ifc::root::IfcLines {
@@ -3017,16 +1868,11 @@ fn stored_lines(doc: &Document, root: usize) -> &crate::layout::ifc::root::IfcLi
 #[test]
 fn ifc_root_height_is_lines_times_line_height() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[root].unrounded_layout;
     assert_eq!(layout.size.width, 50.0);
-    // Three 10px lines, and the text node was never shaped by parley.
+    // Three 10px lines.
     assert_eq!(layout.size.height, 30.0);
-    assert!(
-        doc.nodes[doc.nodes[root].children[0]]
-            .text_layout()
-            .is_none()
-    );
     assert_eq!(stored_lines(&doc, root).lines.len(), 3);
 }
 
@@ -3036,7 +1882,7 @@ fn padding_and_border_shrink_the_line_width() {
         "aaaa bbbb",
         "box-sizing:border-box;width:70px;padding:0 10px;border:0 solid red;border-width:0 5px",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     // Content box: 70 - 2*10 - 2*5 = 40px, so "aaaa" and "bbbb" stack.
     let lines = stored_lines(&doc, root);
     assert_eq!(lines.width, 40.0);
@@ -3048,7 +1894,7 @@ fn an_explicit_width_root_breaks_at_the_box_width() {
     // The width is stretched or explicit, so it must not be clamped to the
     // max-content width of the text (90px).
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "width:200px");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).width, 200.0);
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 200.0);
 }
@@ -3058,7 +1904,7 @@ fn a_floated_root_shrinks_to_its_max_content() {
     // A `width:auto` float is laid out with no known width and a definite
     // available width: the shrink-to-fit branch.
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "float:left");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 90.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
 }
@@ -3069,7 +1915,7 @@ fn an_inline_block_shrinks_to_the_max_content_of_its_ifc_root() {
     // max-content, which reaches the root as `AvailableSpace::MaxContent`.
     let (mut doc, cascade, wrapper, root) =
         ahem_paragraph_in_block_wrapper("aaaa bbbb", "display:inline-block");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(doc.nodes[wrapper].unrounded_layout.size.width, 90.0);
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 90.0);
 }
@@ -3080,7 +1926,7 @@ fn the_last_performed_layout_decides_the_stored_lines() {
     // pass; whichever pass ran last must be the one the root keeps.
     let (mut doc, cascade, _wrapper, root) =
         ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;max-width:50px");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(
         stored_lines(&doc, root).width,
         doc.nodes[root].unrounded_layout.size.width
@@ -3090,11 +1936,10 @@ fn the_last_performed_layout_decides_the_stored_lines() {
 #[test]
 fn lines_survive_a_second_layout_pass() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
-    lay_out_with_switch(&mut doc, &cascade);
-    // Same cascade: no generation change, so only the switch's own cache drop
+    lay_out(&mut doc, &cascade);
+    // Same cascade: no generation change, so only the engine's own cache drop
     // keeps the measure callback running.
-    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
-        .expect("second layout");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("second layout");
     assert_eq!(stored_lines(&doc, root).lines.len(), 3);
 }
 
@@ -3108,7 +1953,7 @@ fn first_baseline_includes_the_top_padding_and_border() {
         "aa",
         "width:100px;padding-top:6px;border-top-width:3px;border-top-style:solid",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     // Ask the root for its layout output again: the baselines are part of it.
     let output = doc.compute_child_layout(
         NodeId::from(root),
@@ -3145,7 +1990,7 @@ fn calc_min_width_is_resolved_on_an_ifc_root() {
     // padding. A floated root shrinks to 90px, so the calc minimum decides.
     let (mut doc, cascade, root) =
         ahem_paragraph("aaaa bbbb", "float:left;min-width:calc(20% + 10px)");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     // 20% of the 800px page plus 10px.
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 170.0);
     // The stored lines must be broken at the final content width too.
@@ -3158,7 +2003,7 @@ fn a_floated_root_with_a_narrow_max_width_breaks_at_that_width() {
     // lines must be broken there: three lines, not the two that min-content
     // (60px) would give.
     let (mut doc, cascade, root) = ahem_paragraph("aaaaaa bb cc", "float:left;max-width:40px");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 40.0);
     assert_eq!(stored_lines(&doc, root).width, 40.0);
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
@@ -3172,7 +2017,7 @@ fn an_inline_block_baseline_follows_the_last_ifc_line() {
     };
     let (mut doc, cascade, wrapper, _root) =
         ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;width:50px");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let output = doc.compute_child_layout(
         NodeId::from(wrapper),
         LayoutInput {
@@ -3205,13 +2050,13 @@ fn an_inline_block_baseline_follows_the_last_ifc_line() {
 fn relayout_keeps_an_authored_width_root_at_its_width() {
     use crate::layout::relayout_text_for_width;
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:200px");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     let height_before = doc.nodes[root].unrounded_layout.size.height;
-    // parley keeps the authored 200px whatever the page width is.
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    // The authored 200px is kept whatever the page width is.
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
-    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, height_before);
 }
@@ -3220,53 +2065,31 @@ fn relayout_keeps_an_authored_width_root_at_its_width() {
 fn relayout_follows_the_page_width_for_an_auto_width_root() {
     use crate::layout::relayout_text_for_width;
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     let height_before = doc.nodes[root].unrounded_layout.size.height;
-    // No authored width anywhere above: parley re-shapes at `max_advance`,
+    // No authored width anywhere above: the lines break again at `max_advance`,
     // narrower or wider than the width laid out at.
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 3);
-    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     // Only the lines change; the taffy box is left as it was.
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, height_before);
 }
 
 #[test]
-fn relayout_matches_the_parley_line_count() {
+fn relayout_breaks_lines_at_the_authored_or_the_given_width() {
     use crate::layout::relayout_text_for_width;
-    for (css, max_advance) in [("", 50.0_f32), ("width:200px", 50.0), ("", 800.0)] {
-        let (mut off_doc, cascade, off_root) = ahem_paragraph("aaaa bbbb cccc", css);
-        layout_single_page(
-            &mut off_doc,
-            &cascade,
-            page_box_800x600(),
-            ahem_font_context(),
-        )
-        .expect("layout");
-        relayout_text_for_width(
-            &mut off_doc,
-            &cascade,
-            max_advance,
-            max_advance,
-            ahem_font_context(),
-        );
-        let text = off_doc.nodes[off_root].children[0];
-        let parley_lines = off_doc.nodes[text].text_layout().map(|layout| layout.len());
-
-        let (mut on_doc, cascade, on_root) = ahem_paragraph("aaaa bbbb cccc", css);
-        lay_out_with_switch(&mut on_doc, &cascade);
-        relayout_text_for_width(
-            &mut on_doc,
-            &cascade,
-            max_advance,
-            max_advance,
-            ahem_font_context(),
-        );
+    // "aaaa bbbb cccc" is 140px of Ahem: three lines at 50px, one line in an
+    // authored 200px box whatever `max_advance` is, one line at 800px.
+    for (css, max_advance, lines) in [("", 50.0_f32, 3), ("width:200px", 50.0, 1), ("", 800.0, 1)] {
+        let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", css);
+        lay_out(&mut doc, &cascade);
+        relayout_text_for_width(&mut doc, &cascade, max_advance);
         assert_eq!(
-            Some(stored_lines(&on_doc, on_root).lines.len()),
-            parley_lines,
+            stored_lines(&doc, root).lines.len(),
+            lines,
             "{css} / {max_advance}"
         );
     }
@@ -3278,7 +2101,7 @@ fn relayout_matches_the_parley_line_count() {
 fn a_paragraph_beside_a_left_float_starts_after_it() {
     let (mut doc, cascade, _float, root) =
         ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(
         doc.nodes[root].is_ifc_root(),
         "the paragraph beside a float is an ifc root"
@@ -3301,7 +2124,7 @@ fn a_paragraph_beside_a_left_float_starts_after_it() {
 fn a_paragraph_beside_a_right_float_keeps_its_start_and_loses_width() {
     let (mut doc, cascade, _float, root) =
         ahem_paragraph_beside_float("aaaa bbbb cccc", "float:right;width:30px;height:20px", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
@@ -3331,7 +2154,7 @@ fn a_line_that_reaches_a_later_float_segment_is_narrowed_by_it() {
         ],
         "line-height:20px",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
@@ -3349,14 +2172,14 @@ fn relayout_keeps_the_lines_of_a_paragraph_beside_a_float() {
     use crate::layout::relayout_text_for_width;
     let (mut doc, cascade, _float, root) =
         ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let before: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
         .map(line_text)
         .collect();
     assert_eq!(before, ["aaaa", "bbbb", "cccc"]);
-    relayout_text_for_width(&mut doc, &cascade, 800.0, 800.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     // The shared float context is gone at this point; re-breaking at the full
     // width would ignore the float the lines were laid out beside.
     let after: Vec<_> = stored_lines(&doc, root)
@@ -3374,7 +2197,7 @@ fn a_paragraph_with_padding_beside_a_float_is_offset_inside_its_content_box() {
         "float:left;width:30px;height:20px",
         "padding:0 10px;box-sizing:border-box",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     // The content box is 80px wide and starts 10px in; the float covers the
     // first 30px of the context, so 20px of the content box remain covered.
@@ -3392,7 +2215,7 @@ fn a_paragraph_with_top_padding_asks_for_space_below_its_border_top() {
         "float:left;width:30px;height:20px",
         "padding-top:15px",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
         lines.iter().map(line_start_x).collect::<Vec<_>>(),
@@ -3410,7 +2233,7 @@ fn a_float_inside_the_paragraph_shortens_the_line_it_is_anchored_in() {
         " bbbb cccc dddd",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(
         doc.nodes[root].is_ifc_root(),
         "a paragraph with a float child is an ifc root"
@@ -3441,7 +2264,7 @@ fn a_right_float_inside_the_paragraph_sits_at_the_right_edge() {
         " bbbb cccc dddd",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[float].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (70.0, 0.0));
     let lines = &stored_lines(&doc, root).lines;
@@ -3462,7 +2285,7 @@ fn a_float_that_would_shorten_its_own_line_moves_to_the_next_line() {
         " cccc",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(line_text(&lines[0]), "aaaa bbbb");
     assert_eq!(line_start_x(&lines[0]), Some(0.0));
@@ -3485,7 +2308,7 @@ fn an_intrinsic_width_includes_the_float() {
         " bbbb",
         "float:left;width:auto",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[float].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
     let lines = &stored_lines(&doc, root).lines;
@@ -3503,7 +2326,7 @@ fn a_float_inside_a_padded_paragraph_is_placed_inside_its_content_box() {
         " bbbb",
         "padding:0 10px;box-sizing:border-box",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(doc.nodes[float].unrounded_layout.location.x, 10.0);
 }
 
@@ -3516,13 +2339,13 @@ fn relayout_keeps_the_lines_of_a_paragraph_that_has_boxes() {
         " bbbb cccc dddd",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let before: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
         .map(line_text)
         .collect();
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     let after: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
@@ -3552,7 +2375,7 @@ fn a_float_wider_than_the_rest_of_its_line_waits_for_the_next_line() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade_2 = raikiri_style::cascade(&doc, &rules).expect("cascade");
     drop(cascade);
-    lay_out_with_switch(&mut doc, &cascade_2);
+    lay_out(&mut doc, &cascade_2);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
@@ -3583,7 +2406,7 @@ fn a_paragraph_inside_a_float_of_a_root_is_measured() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade_2 = raikiri_style::cascade(&doc, &rules).expect("cascade");
     drop(cascade);
-    lay_out_with_switch(&mut doc, &cascade_2);
+    lay_out(&mut doc, &cascade_2);
     assert!(doc.nodes[root].is_ifc_root());
     assert!(doc.nodes[inner].is_ifc_root());
     assert_eq!(stored_lines(&doc, inner).lines.len(), 2);
@@ -3597,7 +2420,7 @@ fn relayout_keeps_the_lines_of_a_paragraph_whose_float_is_below_them() {
     use crate::layout::relayout_text_for_width;
     let (mut doc, cascade, _float, root) =
         ahem_paragraph_with_float("aaaa bbbb", "float:left;width:60px;height:10px", "", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(!stored_lines(&doc, root).beside_floats);
     let before: Vec<_> = stored_lines(&doc, root)
         .lines
@@ -3605,7 +2428,7 @@ fn relayout_keeps_the_lines_of_a_paragraph_whose_float_is_below_them() {
         .map(line_text)
         .collect();
     assert_eq!(before, ["aaaa bbbb"]);
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     let after: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
@@ -3624,7 +2447,7 @@ fn only_a_root_that_is_its_own_formatting_context_grows_around_its_floats() {
     for (root_css, height) in [("", 10.0), ("float:left", 20.0)] {
         let (mut doc, cascade, _float, root) =
             ahem_paragraph_with_float("aa", "float:left;width:30px;height:20px", " bb", root_css);
-        lay_out_with_switch(&mut doc, &cascade);
+        lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{root_css}");
         let lines = stored_lines(&doc, root);
         assert_eq!(lines.lines.len(), 1, "{root_css}");
@@ -3644,7 +2467,7 @@ fn a_paragraph_that_is_a_formatting_context_contains_its_floats() {
         " bb",
         "float:left;width:100px",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 50.0);
 }
@@ -3653,13 +2476,13 @@ fn a_paragraph_that_is_a_formatting_context_contains_its_floats() {
 fn an_in_flow_paragraph_does_not_grow_for_its_floats() {
     let (mut doc, cascade, _float, root) =
         ahem_paragraph_with_float("aa", "float:left;width:30px;height:50px", " bb", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     // One 10px line; the float hangs below the content, which is what a block
     // that is not a formatting context does.
     assert_eq!(stored_lines(&doc, root).height, 10.0);
-    // `realign_text_after_layout` later grows every auto-height ancestor of a
-    // float to the float's bottom, on either path; the float starts at the
+    // `propagate_float_bottoms_to_auto_height_ancestors` later grows every
+    // auto-height ancestor of a float to the float's bottom; the float starts at the
     // top of the paragraph, so that is 50px.
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 50.0);
 }
@@ -3672,7 +2495,7 @@ fn a_committed_float_layout_carries_its_box_model() {
         " bb",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[float].unrounded_layout;
     // The border box starts after the 5px margin and is 22px tall.
     assert_eq!((layout.location.x, layout.location.y), (5.0, 0.0));
@@ -3690,7 +2513,7 @@ fn a_percentage_margin_resolves_against_the_paragraph_width() {
         " bb",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[float].unrounded_layout;
     assert_eq!(layout.margin.left, 10.0);
     assert_eq!(layout.location.x, 10.0);
@@ -3707,7 +2530,7 @@ fn a_padded_formatting_context_does_not_count_its_top_edge_twice() {
         " bb",
         "float:left;width:100px;padding-top:15px",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 65.0);
 }
 
@@ -3757,7 +2580,7 @@ fn a_float_after_a_deferred_float_is_deferred_too() {
         &[("float:left;width:5px;height:10px", " cc")],
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(line_text(&lines[0]), "aaaa bbbb");
     assert_eq!(line_start_x(&lines[0]), Some(0.0));
@@ -3775,7 +2598,7 @@ fn a_float_that_clears_a_float_of_the_same_line_does_not_narrow_it() {
         &[("float:left;clear:left;width:20px;height:10px", " bb")],
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(line_start_x(&lines[0]), Some(20.0));
     assert_eq!(origin(&doc, floats[0]), (0.0, 0.0));
@@ -3796,7 +2619,7 @@ fn a_float_is_not_placed_above_an_earlier_cleared_float() {
         ],
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
@@ -3813,7 +2636,7 @@ fn a_line_too_narrow_beside_a_float_moves_below_it() {
     // down. Only 20px are left beside the 80px float, too little for "aaaa".
     let (mut doc, cascade, _float, root) =
         ahem_paragraph_beside_float("aaaa bbbb", "float:left;width:80px;height:20px", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
@@ -3827,7 +2650,7 @@ fn a_line_too_narrow_beside_a_float_moves_below_it() {
 fn a_float_wider_than_the_paragraph_stays_at_the_top_and_the_text_goes_below() {
     let (mut doc, cascade, float, root) =
         ahem_paragraph_with_float("", "float:left;width:150px;height:20px", "aa", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(origin(&doc, float), (0.0, 0.0));
     let lines = &stored_lines(&doc, root).lines;
@@ -3846,7 +2669,7 @@ fn a_cleared_float_does_not_shorten_the_line_above_its_clearance() {
         &[("float:left;clear:left;width:20px;height:10px", " dd")],
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
@@ -3865,7 +2688,7 @@ fn an_inline_block_is_measured_before_the_lines_are_broken() {
     // the line is 30 + 2 (the strut's descent) = 32px tall.
     let (mut doc, cascade, _atomic, root) =
         ahem_paragraph_with_atomic("aa ", "width:30px;height:30px", " bb", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(lines.len(), 1);
@@ -3876,7 +2699,7 @@ fn an_inline_block_is_measured_before_the_lines_are_broken() {
 fn a_wide_atomic_moves_to_the_next_line() {
     let (mut doc, cascade, _atomic, root) =
         ahem_paragraph_with_atomic("aa ", "width:90px;height:10px", " bb", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     // "aa " leaves 70px, the atomic needs 90: it starts the second line. After
     // it only 10px are left, so " bb" (30px) starts a third line. The line
     // with the atomic has no text (the placeholder is stripped).
@@ -3896,7 +2719,7 @@ fn a_shrink_to_fit_paragraph_with_an_inline_block_is_as_wide_as_its_content() {
         "bb",
         "float:left;width:auto",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 80.0);
 }
@@ -3930,7 +2753,7 @@ fn an_inline_block_holding_a_paragraph_is_measured() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert!(
         doc.nodes[inner].is_ifc_root(),
@@ -3959,7 +2782,7 @@ fn an_inline_block_baseline_counts_its_top_margin() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(lines.len(), 1);
@@ -3988,7 +2811,7 @@ fn a_clipping_inline_block_sits_on_its_bottom_margin_edge() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(lines.len(), 1);
@@ -4001,7 +2824,7 @@ fn an_inline_block_is_placed_at_its_fragment() {
     // top is the line's top (y=0).
     let (mut doc, cascade, atomic, _root) =
         ahem_paragraph_with_atomic("aa ", "width:30px;height:30px", " bb", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[atomic].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (30.0, 30.0));
@@ -4024,7 +2847,7 @@ fn an_inline_block_with_text_sits_on_its_last_baseline() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[atomic].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
@@ -4039,7 +2862,7 @@ fn an_atomic_margin_moves_its_border_box_inside_the_margin_box() {
         "",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[atomic].unrounded_layout;
     // The margin box starts after "aa " (30px); the border box is 5px in.
     assert_eq!(layout.location.x, 35.0);
@@ -4054,7 +2877,7 @@ fn an_atomic_margin_moves_its_border_box_inside_the_margin_box() {
 fn atomics_on_later_lines_are_placed_on_their_own_line() {
     let (mut doc, cascade, atomic, root) =
         ahem_paragraph_with_atomic("aaaaaaaa ", "width:30px;height:10px", "", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     // "aaaaaaaa " is 90px; the atomic (30px) starts the second line.
     let layout = doc.nodes[atomic].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
@@ -4069,7 +2892,7 @@ fn an_atomic_is_offset_by_the_content_box_of_its_paragraph() {
         "",
         "padding:4px 6px;box-sizing:border-box",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[atomic].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (36.0, 4.0));
 }
@@ -4089,7 +2912,7 @@ fn an_atomic_beside_a_float_starts_after_it() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[atomic].unrounded_layout;
     assert_eq!(layout.location.x, 60.0);
@@ -4110,7 +2933,7 @@ fn an_image_is_placed_like_an_inline_block() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[image].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
@@ -4144,7 +2967,7 @@ fn paragraph_with_block(
 #[test]
 fn a_block_child_splits_the_lines_around_it() {
     let (mut doc, cascade, block, root) = paragraph_with_block("aa", "height:20px", "bb", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
@@ -4164,7 +2987,7 @@ fn a_block_child_splits_the_lines_around_it() {
 #[test]
 fn a_leading_block_child_starts_the_paragraph() {
     let (mut doc, cascade, block, root) = paragraph_with_block("", "height:20px", "bb", "");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[block].unrounded_layout.location.y, 0.0);
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
@@ -4178,7 +3001,7 @@ fn a_block_child_is_as_wide_as_the_content_box_less_its_margins() {
         "bb",
         "",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     let layout = doc.nodes[block].unrounded_layout;
     assert_eq!((layout.location.x, layout.size.width), (10.0, 70.0));
 }
@@ -4191,7 +3014,7 @@ fn a_block_child_is_offset_by_the_content_box_of_its_paragraph() {
         "bb",
         "padding:4px 6px;box-sizing:border-box",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[block].unrounded_layout;
     // The content box starts at (6, 4); the block follows the first line.
@@ -4204,18 +3027,16 @@ fn a_block_child_is_offset_by_the_content_box_of_its_paragraph() {
 
 #[test]
 fn text_inside_a_block_child_is_laid_out_inside_the_block() {
-    // The block's parent is the outer root, which also holds inline text, so
-    // `parent_holds_only_blocks` rejects the block as a root of its own: its
-    // text stays on the parley path and the block is one 10px line tall
-    // ("bb cc dd" is 80px in the 100px block).
+    // The block is a box of the outer root and the root of its own text: it
+    // is one 10px line tall ("bb cc dd" is 80px in the 100px block).
     let (mut doc, _cascade, block, root) = paragraph_with_block("aa", "", "cc", "");
     doc.append_text(block, "bb cc dd");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    assert!(!doc.nodes[block].is_ifc_root());
+    assert!(doc.nodes[block].is_ifc_root());
     let layout = doc.nodes[block].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
     assert_eq!(layout.size.height, 10.0);
@@ -4252,7 +3073,7 @@ fn a_float_anchored_right_before_a_block_child_is_placed_above_it() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[float].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
@@ -4269,7 +3090,7 @@ fn a_shrink_to_fit_paragraph_is_as_wide_as_its_widest_block_child() {
         "bb",
         "float:left;width:auto",
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 60.0);
 }
@@ -4290,7 +3111,7 @@ fn a_paragraph_that_contains_its_floats_contains_those_of_its_block_children() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let lines = stored_lines(&doc, root);
     assert_eq!(
@@ -4319,14 +3140,14 @@ fn relayout_keeps_the_lines_of_a_paragraph_with_an_atomic() {
     use crate::layout::relayout_text_for_width;
     let (mut doc, cascade, root) =
         unsized_paragraph_with_child("display:inline-block;width:30px;height:10px", " bbbb cccc");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let before: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
         .map(line_text)
         .collect();
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     let after: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
@@ -4343,14 +3164,14 @@ fn relayout_keeps_the_lines_of_a_paragraph_with_a_block_child() {
     use crate::layout::relayout_text_for_width;
     let (mut doc, cascade, root) =
         unsized_paragraph_with_child("display:block;height:20px", "bbbb cccc");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let before: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
         .map(line_text)
         .collect();
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     let after: Vec<_> = stored_lines(&doc, root)
         .lines
         .iter()
@@ -4363,8 +3184,8 @@ fn relayout_keeps_the_lines_of_a_paragraph_with_a_block_child() {
 fn relayout_still_follows_the_page_width_for_a_plain_paragraph() {
     use crate::layout::relayout_text_for_width;
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "");
-    lay_out_with_switch(&mut doc, &cascade);
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    lay_out(&mut doc, &cascade);
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 3);
 }
 
@@ -4381,7 +3202,7 @@ fn a_block_child_keeps_its_own_width() {
         ("width:40px;padding-left:5px;height:10px", 45.0),
     ] {
         let (mut doc, cascade, block, root) = paragraph_with_block("aa", css, "bb", "");
-        lay_out_with_switch(&mut doc, &cascade);
+        lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
         let layout = doc.nodes[block].unrounded_layout;
         assert_eq!(
@@ -4406,7 +3227,7 @@ fn a_right_float_inside_a_narrow_block_child_sits_at_the_block_edge() {
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-        lay_out_with_switch(&mut doc, &cascade);
+        lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
         assert_eq!(doc.nodes[float].unrounded_layout.location.x, 30.0, "{css}");
     }
@@ -4425,7 +3246,7 @@ fn a_float_root_with_its_own_width_breaks_a_long_word_at_that_width() {
         "float:left;width:calc(50px + 6.25%);overflow-wrap:break-word",
     ] {
         let (mut doc, cascade, root) = ahem_paragraph("FillerFillerFillerFiller", css);
-        lay_out_with_switch(&mut doc, &cascade);
+        lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
         assert_eq!(doc.nodes[root].unrounded_layout.size.width, 100.0, "{css}");
         assert_eq!(stored_lines(&doc, root).lines.len(), 3, "{css}");
@@ -4436,7 +3257,7 @@ fn a_float_root_with_its_own_width_breaks_a_long_word_at_that_width() {
 #[test]
 fn a_float_root_without_a_width_still_shrinks_to_fit() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bb", "float:left");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 70.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
@@ -4447,7 +3268,7 @@ fn a_float_root_without_a_width_still_shrinks_to_fit() {
 const SPAN_EDGES: &str = "padding:0 3px;border-width:0 2px;border-style:solid;margin:0 4px";
 
 #[test]
-fn an_inline_element_has_the_same_border_box_with_and_without_the_switch() {
+fn an_inline_element_has_its_pinned_border_box() {
     use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
     let make = || {
         let mut span_id = 0;
@@ -4466,23 +3287,13 @@ fn an_inline_element_has_the_same_border_box_with_and_without_the_switch() {
         (doc, cascade, span_id)
     };
     let (mut off_doc, off_cascade, off_span) = make();
-    layout_single_page(
-        &mut off_doc,
-        &off_cascade,
-        page_box_800x600(),
-        ahem_font_context(),
-    )
-    .expect("layout");
+    layout_single_page(with_ahem(&mut off_doc), &off_cascade, page_box_800x600()).expect("layout");
     let (mut on_doc, on_cascade, on_span) = make();
-    lay_out_with_switch(&mut on_doc, &on_cascade);
+    lay_out(&mut on_doc, &on_cascade);
     assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
 
     let off = absolute_rect(&off_doc, off_span);
-    assert_eq!(
-        off,
-        (24.0, 0.0, 30.0, 10.0),
-        "the parley path boxes the span like F"
-    );
+    assert_eq!(off, (24.0, 0.0, 30.0, 10.0), "the span's border box");
     assert_eq!(absolute_rect(&on_doc, on_span), off);
 }
 
@@ -4508,15 +3319,9 @@ fn a_padded_root_places_the_inline_element_inside_its_content_box() {
         (doc, cascade, span_id)
     };
     let (mut off_doc, off_cascade, off_span) = make();
-    layout_single_page(
-        &mut off_doc,
-        &off_cascade,
-        page_box_800x600(),
-        ahem_font_context(),
-    )
-    .expect("layout");
+    layout_single_page(with_ahem(&mut off_doc), &off_cascade, page_box_800x600()).expect("layout");
     let (mut on_doc, on_cascade, on_span) = make();
-    lay_out_with_switch(&mut on_doc, &on_cascade);
+    lay_out(&mut on_doc, &on_cascade);
     assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
     // 7px left padding, "aa" 20px, then the span's box.
     assert_eq!(absolute_rect(&on_doc, on_span), (27.0, 0.0, 26.0, 10.0));
@@ -4543,7 +3348,7 @@ fn a_root_with_a_top_border_places_the_inline_element_below_it() {
             span_id = inner;
         },
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     // The content box starts 7px below the root's border-box top.
     let (_, root_y, _, _) = absolute_rect(&doc, root);
@@ -4567,7 +3372,7 @@ fn a_wrapping_inline_element_has_the_bounding_box_of_its_pieces() {
         doc.append_text(inner, "aaaa bbbb");
         span_id = inner;
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     // The span wraps after "aaaa ": pieces x 4..49 (line 1) and x 0..45
     // (line 2); the bounding box is x 0..49, y 0..20.
     assert_eq!(absolute_rect(&doc, span_id), (0.0, 0.0, 49.0, 20.0));
@@ -4596,7 +3401,7 @@ fn nested_inline_elements_accumulate_to_their_own_boxes() {
         outer_id = outer;
         inner_id = inner;
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(absolute_rect(&doc, outer_id), (10.0, 0.0, 26.0, 10.0));
     assert_eq!(absolute_rect(&doc, inner_id), (21.0, 0.0, 14.0, 10.0));
 }
@@ -4616,7 +3421,7 @@ fn an_empty_inline_element_has_a_zero_width_box_on_its_line() {
             Some("display:inline"),
         );
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(absolute_rect(&doc, span_id), (20.0, 0.0, 0.0, 10.0));
 }
 
@@ -4635,7 +3440,7 @@ fn an_inline_element_without_a_piece_gets_an_empty_layout() {
             );
             doc.append_text(span_id, "bb");
         });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[span_id].unrounded_layout;
     assert_eq!(
@@ -4664,14 +3469,14 @@ fn a_second_layout_does_not_keep_the_stale_box_of_a_removed_element() {
         doc.append_text(inner, "bb");
         span_id = inner;
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[span_id].unrounded_layout.size.width > 0.0);
     // Hide the element and lay out again: it has no piece any more.
     doc.set_element_inline_style(span_id, Some("display:none".into()));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(doc.nodes[span_id].unrounded_layout.size.width, 0.0);
 }
 
@@ -4692,7 +3497,7 @@ fn a_wide_padding_does_not_make_the_layout_check_zero_the_element() {
         doc.append_text(inner, "a b");
         span_id = inner;
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(
         absolute_rect(&doc, span_id).2 > 0.0,
         "the element kept its box"
@@ -4719,14 +3524,14 @@ fn relayout_records_the_boxes_again_for_the_new_lines() {
             span_id = inner;
         },
     );
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(
         absolute_rect(&doc, span_id),
         (7.0, 3.0, 90.0, 10.0),
         "one line"
     );
-    relayout_text_for_width(&mut doc, &cascade, 50.0, 50.0, ahem_font_context());
+    relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(
         absolute_rect(&doc, span_id),
         (7.0, 3.0, 40.0, 20.0),
@@ -4734,9 +3539,8 @@ fn relayout_records_the_boxes_again_for_the_new_lines() {
     );
 }
 
-/// Pages of a paragraph whose inline element asks for a page break before it,
-/// with the switch on or off.
-fn pages_with_a_breaking_inline(switch: bool) -> (usize, bool) {
+/// Pages of a paragraph whose inline element asks for a page break before it.
+fn pages_with_a_breaking_inline() -> (usize, bool) {
     use crate::layout::test_support::ahem_paragraph_with;
     // At 30px the span lands on the third line, 20px down the page.
     let (mut doc, cascade, root) = ahem_paragraph_with("width:30px", |doc, root| {
@@ -4750,21 +3554,15 @@ fn pages_with_a_breaking_inline(switch: bool) -> (usize, bool) {
         doc.append_text(inner, "bb");
         doc.append_text(root, " cc");
     });
-    if switch {
-        doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-    }
-    let slices =
-        layout_pages(&mut doc, &cascade, page_box_800x600(), ahem_font_context()).expect("pages");
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("pages");
     (slices.len(), doc.nodes[root].is_ifc_root())
 }
 
 #[test]
 fn an_inline_element_in_an_ifc_paragraph_is_not_a_page_break_candidate() {
     // `break-before` applies to block-level boxes (CSS Fragmentation 3 3.1);
-    // the paragraph's lines are not split around an inline element, as on
-    // the parley path.
-    assert_eq!(pages_with_a_breaking_inline(false), (1, false));
-    assert_eq!(pages_with_a_breaking_inline(true), (1, true));
+    // the paragraph's lines are not split around an inline element.
+    assert_eq!(pages_with_a_breaking_inline(), (1, true));
 }
 
 #[test]
@@ -4782,14 +3580,14 @@ fn a_relative_inline_element_is_located_with_its_offset() {
         doc.append_text(inner, "bb");
         span_id = inner;
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     // Unshifted "bb" box: x 20..40, y 0..10; shifted by (5, 2).
     assert_eq!(absolute_rect(&doc, span_id), (25.0, 2.0, 20.0, 10.0));
 }
 
 #[test]
-fn a_relative_inline_is_located_like_the_parley_path() {
+fn a_relative_inline_is_located() {
     use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
     let make = || {
         let mut span_id = 0;
@@ -4807,22 +3605,12 @@ fn a_relative_inline_is_located_like_the_parley_path() {
         (doc, cascade, span_id)
     };
     let (mut off_doc, off_cascade, off_span) = make();
-    layout_single_page(
-        &mut off_doc,
-        &off_cascade,
-        page_box_800x600(),
-        ahem_font_context(),
-    )
-    .expect("layout");
+    layout_single_page(with_ahem(&mut off_doc), &off_cascade, page_box_800x600()).expect("layout");
     let (mut on_doc, on_cascade, on_span) = make();
-    lay_out_with_switch(&mut on_doc, &on_cascade);
+    lay_out(&mut on_doc, &on_cascade);
     assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
     let off = absolute_rect(&off_doc, off_span);
-    assert_eq!(
-        off,
-        (16.0, -3.0, 20.0, 10.0),
-        "the parley path shifts the span"
-    );
+    assert_eq!(off, (16.0, -3.0, 20.0, 10.0), "the span is shifted");
     assert_eq!(absolute_rect(&on_doc, on_span), off);
 }
 
@@ -4848,7 +3636,7 @@ fn a_child_of_a_relative_inline_moves_with_it() {
         outer_id = outer;
         inner_id = inner;
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert_eq!(absolute_rect(&doc, outer_id), (5.0, 0.0, 20.0, 10.0));
     // The child is not itself relative, but sits inside the shifted parent.
     assert_eq!(absolute_rect(&doc, inner_id), (15.0, 0.0, 10.0, 10.0));
@@ -4876,7 +3664,7 @@ fn an_element_inside_a_contents_element_is_located_from_the_nearest_box() {
         wrapper_id = wrapper;
         inner_id = inner;
     });
-    lay_out_with_switch(&mut doc, &cascade);
+    lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     // The contents element has no box; the span after "aa" is x 20..46.
     assert_eq!(absolute_rect(&doc, wrapper_id), (0.0, 0.0, 0.0, 0.0));
@@ -4904,12 +3692,2455 @@ fn a_block_inside_a_contents_child_of_a_paragraph_still_breaks_the_page() {
             doc.append_text(block, "bb");
         });
         if switch {
-            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+            doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         }
-        layout_pages(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
+        layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600())
             .expect("pages")
             .len()
     };
-    assert_eq!(pages(false), 2);
-    assert_eq!(pages(true), pages(false));
+    assert_eq!(pages(true), 2);
+}
+
+// ── roots under other layout algorithms ─────────────────────
+
+use crate::layout::test_support::{
+    ahem_paragraph_in, body_with_text_and_block_child, flex_container_with_inline_item,
+    paragraph_with_inline_block, paragraph_with_only_an_empty_span, paragraph_with_only_atomic,
+    paragraph_with_only_br,
+};
+
+/// Lay `doc` out with Ahem. The inline engine is the only text layout path,
+/// so `ifc` no longer changes anything; the callers' comparisons of the two
+/// values compare a layout with itself.
+/// Border-box size of the paragraph of [`ahem_paragraph_in`].
+fn laid_out_sizes(parent_css: &str, css: &str, text: &str) -> (f32, f32) {
+    let (mut doc, cascade, root) = ahem_paragraph_in(parent_css, css, text);
+    lay_out(&mut doc, &cascade);
+    let layout = doc.nodes[root].unrounded_layout;
+    (layout.size.width, layout.size.height)
+}
+
+/// Offset of the outer line's baseline from the top of the inline-block of
+/// [`paragraph_with_inline_block`]: where the inline-block's own baseline sits.
+fn inline_block_baseline(text: &str, width: f32) -> f32 {
+    let (mut doc, cascade, root, inline_block) = paragraph_with_inline_block(text, width);
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let line = &stored_lines(&doc, root).lines[0];
+    let line_baseline =
+        line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic);
+    line_baseline - doc.nodes[inline_block].unrounded_layout.location.y
+}
+
+#[test]
+fn a_flex_item_becomes_an_ifc_root() {
+    let (mut doc, cascade, root) = ahem_paragraph_in("display:flex", "", "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn an_inline_flex_item_becomes_an_ifc_root() {
+    // The item is `display:inline` in the cascade; only taffy blockifies it.
+    let (mut doc, cascade, span) = flex_container_with_inline_item("aaaa");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[span].is_ifc_root());
+    assert_eq!(doc.nodes[span].unrounded_layout.size.width, 40.0); // 4 em of Ahem 10px
+}
+
+#[test]
+fn a_block_child_of_a_paragraph_with_text_is_its_own_root() {
+    // <body>aaaa <div>bbbb cccc</div></body>: the div is a box of body's paragraph
+    // and the root of its own text.
+    let (mut doc, cascade, body, div) = body_with_text_and_block_child("aaaa ", "bbbb cccc");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[body].is_ifc_root());
+    assert!(doc.nodes[div].is_ifc_root());
+}
+
+#[test]
+fn a_flex_item_is_laid_out() {
+    // Ahem 10px: "aaaa bbbb" is 90px wide in one line, 40px per word when wrapped.
+    let mut expected_3795 = [(90.0, 10.0), (50.0, 20.0), (800.0, 10.0), (90.0, 10.0)].into_iter();
+    for (parent_css, css) in [
+        ("display:flex", ""),
+        ("display:flex", "width:50px"),
+        ("display:flex;flex-direction:column", ""),
+        ("display:flex;align-items:flex-start", ""),
+    ] {
+        assert_eq!(
+            laid_out_sizes(parent_css, css, "aaaa bbbb"),
+            expected_3795.next().expect("a value per case"),
+            "{parent_css} / {css}"
+        );
+    }
+    // Hand-computed, not an oracle: a flex row item shrinks to its max-content.
+    assert_eq!(
+        laid_out_sizes("display:flex", "", "aaaa bbbb"),
+        (90.0, 10.0)
+    );
+}
+
+#[test]
+fn a_paragraph_of_only_an_atomic_becomes_a_root() {
+    let (mut doc, cascade, root) =
+        paragraph_with_only_atomic("display:inline-block;width:20px;height:10px");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn a_paragraph_of_only_br_elements_becomes_a_root() {
+    let (mut doc, cascade, root) = paragraph_with_only_br(2);
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 20.0); // two 10px lines
+}
+
+#[test]
+fn a_paragraph_of_only_an_empty_inline_with_edges_becomes_a_root() {
+    let (mut doc, cascade, root) =
+        paragraph_with_only_an_empty_span("padding:4px;border:1px solid");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn an_inline_block_baseline_is_its_last_line() {
+    // Two lines of 10px text: the inline-block's baseline sits on line 2.
+    let off = 18.0;
+    let on = inline_block_baseline("aaaa bbbb", 40.0);
+    assert_eq!(on, off);
+    assert_eq!(on, 18.0); // 10 (line 1) + 8 (ascent of line 2)
+}
+
+#[test]
+fn a_paragraph_of_only_an_atomic_has_the_strut_descent_below_it() {
+    // A 20x10 inline-block without lines sits on the baseline with its bottom
+    // margin edge (CSS 2.1 10.8.1); the strut adds Ahem's 2px descent below
+    // the baseline, so the line is 12px tall.
+    let css = "display:inline-block;width:20px;height:10px";
+    let (mut doc, cascade, root) = paragraph_with_only_atomic(css);
+    lay_out(&mut doc, &cascade);
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 12.0);
+}
+
+#[test]
+fn a_paragraph_of_only_an_empty_inline_with_edges_is_one_line_tall() {
+    {
+        let (mut doc, cascade, root) =
+            paragraph_with_only_an_empty_span("padding:4px;border:1px solid");
+        lay_out(&mut doc, &cascade);
+        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+    }
+}
+
+#[test]
+fn a_grid_item_becomes_an_ifc_root() {
+    let (mut doc, cascade, root) = ahem_paragraph_in("display:grid", "", "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(
+        laid_out_sizes("display:grid", "", "aaaa bbbb"),
+        (800.0, 10.0)
+    );
+    // Hand-computed: the single grid column stretches over the 800px page.
+    assert_eq!(
+        laid_out_sizes("display:grid", "", "aaaa bbbb"),
+        (800.0, 10.0)
+    );
+}
+
+#[test]
+fn an_inline_block_with_text_becomes_an_ifc_root() {
+    let (mut doc, cascade, root) = ahem_paragraph_in("", "display:inline-block", "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let on = laid_out_sizes("", "display:inline-block", "aaaa bbbb");
+    assert_eq!(on, (90.0, 10.0));
+    // Hand-computed: shrink-to-fit is the max-content width of "aaaa bbbb".
+    assert_eq!(on, (90.0, 10.0));
+}
+
+#[test]
+fn a_list_item_becomes_an_ifc_root() {
+    let css = "display:list-item;list-style-type:none;width:50px";
+    let (mut doc, cascade, root) = ahem_paragraph_in("", css, "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    let on = laid_out_sizes("", css, "aaaa bbbb");
+    assert_eq!(on, (50.0, 20.0));
+    // Hand-computed: two 40px words do not fit 50px together.
+    assert_eq!(on, (50.0, 20.0));
+}
+
+/// `location.y` of two flex items aligned by their baselines: Ahem at 10px and
+/// at 20px, with a line height of 1.
+fn flex_baseline_item_ys() -> (f32, f32) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;align-items:baseline;font-family:Ahem;line-height:1"),
+    );
+    let small = doc.append_element(Some(flex), "div", Style::default(), Some("font-size:10px"));
+    doc.append_text(small, "aa");
+    let large = doc.append_element(Some(flex), "div", Style::default(), Some("font-size:20px"));
+    doc.append_text(large, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[small].is_ifc_root() && doc.nodes[large].is_ifc_root());
+    (
+        doc.nodes[small].unrounded_layout.location.y,
+        doc.nodes[large].unrounded_layout.location.y,
+    )
+}
+
+#[test]
+fn a_flex_item_baseline_matches() {
+    let on = flex_baseline_item_ys();
+    assert_eq!(on, (8.0, 0.0));
+    // Hand-computed: the 20px item's ascent is 16 and the 10px item's is 8,
+    // so the small item sits 8px lower.
+    assert_eq!(on, (8.0, 0.0));
+}
+
+#[test]
+fn an_empty_inline_block_keeps_its_margin_box_baseline() {
+    // "x" then an empty 20x20 inline-block: without lines it sits on the
+    // baseline with its bottom margin edge, so the line baseline is 20px down
+    // and the strut descent makes the line 22px tall.
+    {
+        let (mut doc, cascade, root, inline_block) = paragraph_with_inline_block("", 20.0);
+        doc.set_element_inline_style(
+            inline_block,
+            Some("display:inline-block;width:20px;height:20px".into()),
+        );
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade_again = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        let _ = cascade;
+        lay_out(&mut doc, &cascade_again);
+        assert!(!doc.nodes[inline_block].is_ifc_root());
+        assert_eq!(doc.nodes[inline_block].unrounded_layout.location.y, 0.0);
+        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 22.0);
+    }
+}
+
+#[test]
+fn bare_text_next_to_an_element_item_gets_its_own_root() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let bare = doc.append_text(flex, "aa");
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    doc.append_text(item, "bbbb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(!doc.nodes[flex].is_ifc_root());
+    assert!(doc.nodes[item].is_ifc_root());
+    // The bare text is an anonymous item and the root of its own paragraph.
+    assert!(doc.nodes[bare].is_ifc_root());
+    // Hand-computed: the item follows the 20px anonymous item.
+    assert_eq!(doc.nodes[item].unrounded_layout.location.x, 20.0);
+    assert_eq!(doc.nodes[item].unrounded_layout.size.width, 40.0);
+}
+
+// ── text node roots ─────────────────────────────────────────
+
+use crate::layout::test_support::ahem_paragraph_in_text_only;
+
+/// Border-box size of the bare text of [`ahem_paragraph_in_text_only`].
+fn bare_text_size(parent_css: &str) -> (f32, f32) {
+    let (mut doc, cascade, parent) = ahem_paragraph_in_text_only(parent_css, "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[parent].children[0];
+    let layout = doc.nodes[text].unrounded_layout;
+    (layout.size.width, layout.size.height)
+}
+
+#[test]
+fn bare_text_in_a_flex_container_becomes_a_root() {
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    assert!(doc.nodes[text].is_ifc_root());
+}
+
+#[test]
+fn bare_text_in_a_flex_container_has_its_pinned_size() {
+    let mut expected_4025 = [(90.0, 10.0), (800.0, 10.0), (800.0, 10.0)].into_iter();
+    for parent_css in [
+        "display:flex",
+        "display:flex;flex-direction:column",
+        "display:grid",
+    ] {
+        assert_eq!(
+            bare_text_size(parent_css),
+            expected_4025.next().expect("a value per case"),
+            "{parent_css}"
+        );
+    }
+    // Hand-computed: a flex row item shrinks to "aaaa bbbb" (90px), one line;
+    // in a 50px container the two words wrap.
+    assert_eq!(bare_text_size("display:flex"), (90.0, 10.0));
+    assert_eq!(bare_text_size("display:flex;width:50px"), (50.0, 20.0));
+}
+
+#[test]
+fn a_text_node_root_answers_the_line_and_baseline_readers() {
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    let lines = doc.ifc_text_lines(text).expect("lines");
+    assert_eq!(lines.root, text);
+    assert_eq!(lines.lines.len(), 1);
+    // The baseline reader is the root's own measurement, which a flex
+    // container aligns by (see a_bare_text_root_is_aligned_by_its_baseline).
+}
+
+/// `location.y` of a bare-text anonymous item (Ahem 10px) and an element item
+/// (Ahem 20px) of a flex row aligned by their baselines, line height 1.
+fn bare_text_baseline_item_ys() -> (f32, f32) {
+    let (mut doc, _, flex) =
+        ahem_paragraph_in_text_only("display:flex;align-items:baseline;line-height:1", "aa");
+    let large = doc.append_element(Some(flex), "div", Style::default(), Some("font-size:20px"));
+    doc.append_text(large, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    assert!(doc.nodes[text].is_ifc_root() && doc.nodes[large].is_ifc_root());
+    (
+        doc.nodes[text].unrounded_layout.location.y,
+        doc.nodes[large].unrounded_layout.location.y,
+    )
+}
+
+#[test]
+fn a_bare_text_root_is_aligned_by_its_baseline() {
+    let on = bare_text_baseline_item_ys();
+    assert_eq!(on, (8.0, 0.0));
+    // Hand-computed: ascents 8 (10px) and 16 (20px), so the text sits 8px lower.
+    assert_eq!(on, (8.0, 0.0));
+}
+
+#[test]
+fn whitespace_only_text_in_a_flex_container_is_not_a_root() {
+    // Collapsible white space makes no anonymous item (CSS Flexbox 1, 4).
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", " \n\t ");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    assert!(!doc.nodes[text].is_ifc_root());
+}
+
+#[test]
+fn a_flex_row_places_bare_text_after_its_sibling_item() {
+    let (mut doc, cascade, flex) = ahem_paragraph_in_text_only("display:flex", "");
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;width:30px;height:10px"),
+    );
+    let text = doc.append_text(flex, "aaaa");
+    let _ = item;
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_again = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let _ = cascade;
+    lay_out(&mut doc, &cascade_again);
+    assert!(doc.nodes[text].is_ifc_root());
+    let layout = doc.nodes[text].unrounded_layout;
+    // Hand-computed: the 30px item first, then the 40px anonymous item.
+    assert_eq!((layout.location.x, layout.size.width), (30.0, 40.0));
+}
+
+#[test]
+fn bare_text_takes_the_text_align_of_its_container() {
+    // The anonymous item inherits `text-align` from the container: in a 50px
+    // flex row, "aaaa" (40px) is centered in the 50px item.
+    let (mut doc, cascade, flex) =
+        ahem_paragraph_in_text_only("display:flex;width:50px;text-align:center", "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[flex].children[0];
+    let lines = &stored_lines(&doc, text).lines;
+    assert_eq!(line_start_x(&lines[0]), Some(5.0));
+}
+
+#[test]
+fn a_lone_empty_inline_block_is_indented_once() {
+    // The paragraph's only content is an empty inline-block: the engine
+    // places it after the 20px indent, and nothing moves it again.
+    let (mut doc, cascade, root) = ahem_paragraph_in("", "width:200px;text-indent:20px", "");
+    let span = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline-block;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_again = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let _ = cascade;
+    lay_out(&mut doc, &cascade_again);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[span].unrounded_layout.location.x, 20.0);
+}
+
+#[test]
+fn an_inline_block_root_with_side_margins_shrinks_to_its_content() {
+    // A 200px paragraph holding an inline-block with 20px side margins: the
+    // margin box may take 200px, so "aaaa bbbb cccc" (140px) fits on one
+    // line and the inline-block is 140px wide. The margins come off the
+    // available width once.
+    {
+        let (mut doc, cascade, root) = ahem_paragraph_in("", "width:200px", "");
+        let inline_block = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;margin:0 20px"),
+        );
+        doc.append_text(inline_block, "aaaa bbbb cccc");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade_again = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        let _ = cascade;
+        lay_out(&mut doc, &cascade_again);
+        assert!(doc.nodes[inline_block].is_ifc_root());
+        let size = doc.nodes[inline_block].unrounded_layout.size;
+        assert_eq!((size.width, size.height), (140.0, 10.0));
+    }
+}
+
+#[test]
+fn an_inline_block_root_under_an_authored_width_shrinks_to_its_content() {
+    // "aa" then an inline-block "bb" in a 200px paragraph. The inline-block's
+    // width is auto, so it shrinks to fit (CSS 2.1 10.3.9): 20px, beside
+    // "aa" on the first line. It does not take the paragraph's 200px.
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+    let inline_block = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    doc.append_text(inline_block, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[inline_block].is_ifc_root());
+    let layout = doc.nodes[inline_block].unrounded_layout;
+    assert_eq!(
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height
+        ),
+        (20.0, 0.0, 20.0, 10.0)
+    );
+}
+
+// ── table cells ──────────────────────────────────────────────
+
+/// Border-box sizes of the table and the cell of [`ahem_table`].
+#[derive(Debug, PartialEq)]
+struct TableSizes {
+    table: (f32, f32),
+    cell: (f32, f32),
+}
+
+fn table_sizes(table_css: &str, cell_css: &str, text: &str) -> TableSizes {
+    let (mut doc, cascade, [table, row, cell]) =
+        crate::layout::test_support::ahem_table(table_css, cell_css, |doc, cell| {
+            doc.append_text(cell, text);
+        });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[cell].is_ifc_root(), "{cell_css}");
+    let size = |id: usize| {
+        let s = doc.nodes[id].unrounded_layout.size;
+        (s.width, s.height)
+    };
+    // The table algorithm lays out cells, not rows: a row keeps no layout of
+    // its own.
+    let _ = row;
+    TableSizes {
+        table: size(table),
+        cell: size(cell),
+    }
+}
+
+#[test]
+fn a_table_cell_becomes_an_ifc_root() {
+    let (mut doc, cascade, [table, row, cell]) =
+        crate::layout::test_support::ahem_table("", "", |doc, cell| {
+            doc.append_text(cell, "aaaa bbbb");
+        });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[cell].is_ifc_root());
+    // The table and the row hold rows and cells, not inline content: they
+    // are not candidates at all (not refused roots).
+    assert!(!doc.nodes[table].is_ifc_root());
+    assert!(!doc.nodes[row].is_ifc_root());
+    assert!(!crate::layout::ifc::assign::can_be_ifc_root(
+        &doc, &cascade, table
+    ));
+    assert!(!crate::layout::ifc::assign::can_be_ifc_root(
+        &doc, &cascade, row
+    ));
+}
+
+#[test]
+fn a_table_cell_is_laid_out() {
+    let mut expected_4254 = [
+        TableSizes {
+            table: (90.0, 10.0),
+            cell: (90.0, 10.0),
+        },
+        TableSizes {
+            table: (50.0, 20.0),
+            cell: (50.0, 20.0),
+        },
+    ]
+    .into_iter();
+    for cell_css in ["", "width:50px"] {
+        assert_eq!(
+            table_sizes("", cell_css, "aaaa bbbb"),
+            expected_4254.next().expect("a value per case"),
+            "{cell_css}"
+        );
+    }
+    // Hand-computed, not an oracle: a one-cell table is as wide as
+    // "aaaa bbbb" (90px) and one 10px line tall.
+    assert_eq!(table_sizes("", "", "aaaa bbbb").cell, (90.0, 10.0));
+    // A 50px cell breaks it into two 40px words on two lines.
+    assert_eq!(
+        table_sizes("", "width:50px", "aaaa bbbb").cell,
+        (50.0, 20.0)
+    );
+}
+
+#[test]
+fn an_all_inline_table_box_is_laid_out_by_the_ifc_branch() {
+    // `display:table` whose children are all inline: the root's IFC branch
+    // runs, not compute_table_layout.
+    let (mut doc, cascade, table) =
+        crate::layout::test_support::ahem_table_with_only_text("", "aaaa bbbb");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[table].is_ifc_root());
+    let size = doc.nodes[table].unrounded_layout.size;
+    // Hand-computed: the table shrinks to "aaaa bbbb", one 10px line.
+    assert_eq!((size.width, size.height), (90.0, 10.0));
+}
+
+#[test]
+fn a_table_cell_keeps_its_padding_and_border() {
+    // A 40px content box breaks "aaaa bbbb" into two 10px lines; 5px of
+    // padding and a 3px border on each side make a 56x36 cell.
+    let css = "width:40px;padding:5px;border:3px solid";
+    let on = table_sizes("", css, "aaaa bbbb");
+    assert_eq!(on.cell, (56.0, 36.0));
+    assert_eq!(
+        on,
+        TableSizes {
+            table: (56.0, 36.0),
+            cell: (56.0, 36.0)
+        }
+    );
+    let (mut doc, cascade, [_, _, cell]) =
+        crate::layout::test_support::ahem_table("", css, |doc, cell| {
+            doc.append_text(cell, "aaaa bbbb");
+        });
+    lay_out(&mut doc, &cascade);
+    assert_eq!(stored_lines(&doc, cell).lines.len(), 2);
+}
+
+#[test]
+fn a_table_cell_with_mixed_block_and_inline_content_is_laid_out() {
+    // "aaaa" then a block of "bbbb": the cell is a root with the block as a
+    // box of its paragraph, and the block is the root of its own text.
+    let sizes = || {
+        let (mut doc, cascade, [table, _, cell]) =
+            crate::layout::test_support::ahem_table("", "", |doc, cell| {
+                doc.append_text(cell, "aaaa");
+                let block =
+                    doc.append_element(Some(cell), "div", Style::default(), Some("display:block"));
+                doc.append_text(block, "bbbb");
+            });
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[cell].is_ifc_root());
+        let size = |id: usize| {
+            let s = doc.nodes[id].unrounded_layout.size;
+            (s.width, s.height)
+        };
+        (size(table), size(cell))
+    };
+    let on = sizes();
+    assert_eq!(on, ((40.0, 20.0), (40.0, 20.0)));
+    // Hand-computed: two 40px lines, one above the block and one in it.
+    assert_eq!(on.1, (40.0, 20.0));
+}
+
+#[test]
+fn bare_text_directly_in_a_table_is_laid_out() {
+    // Text straight in a table box (no row or cell): one anonymous cell's
+    // content. The height is pinned.
+    let mut expected_4339 = [10.0, 20.0].into_iter();
+    for (text, lines) in [("aaaa bbbb", 1.0), ("aaaa\nbbbb", 2.0)] {
+        let height = || {
+            let (mut doc, cascade, table) = crate::layout::test_support::ahem_table_with_only_text(
+                "white-space:pre-line",
+                text,
+            );
+            lay_out(&mut doc, &cascade);
+            assert!(doc.nodes[table].is_ifc_root());
+            doc.nodes[table].unrounded_layout.size.height
+        };
+        assert_eq!(height(), 10.0 * lines, "{text:?}");
+        assert_eq!(
+            height(),
+            expected_4339.next().expect("a value per case"),
+            "{text:?}"
+        );
+    }
+}
+
+// ── vertical margins of block children ───────────────────────
+
+/// `root > ["aaaa", div(a_css) > "bb", div(b_css) > "cc", "dddd"]` in a
+/// 200px Ahem paragraph. Returns the document, the cascade, the root and
+/// the two blocks.
+fn paragraph_with_block_children(
+    a_css: &str,
+    b_css: &str,
+) -> (Document, CascadeResult, usize, [usize; 2]) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+    let a = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{a_css}")),
+    );
+    doc.append_text(a, "bb");
+    let b = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{b_css}")),
+    );
+    doc.append_text(b, "cc");
+    doc.append_text(root, "dddd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root, [a, b])
+}
+
+/// Distance from the bottom of the first block child to the top of the
+/// second, in a paragraph of [`paragraph_with_block_children`].
+fn block_child_gap(a_css: &str, b_css: &str) -> f32 {
+    let (mut doc, cascade, root, [a, b]) = paragraph_with_block_children(a_css, b_css);
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{a_css} / {b_css}");
+    let a = doc.nodes[a].unrounded_layout;
+    let b = doc.nodes[b].unrounded_layout;
+    b.location.y - (a.location.y + a.size.height)
+}
+
+#[test]
+fn block_child_margins_keep_the_root_an_ifc_root() {
+    let (mut doc, cascade, root, _) =
+        paragraph_with_block_children("margin-bottom:20px", "margin-top:30px");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn adjoining_block_children_collapse_their_margins() {
+    assert_eq!(
+        block_child_gap("margin-bottom:20px", "margin-top:30px"),
+        30.0
+    );
+    assert_eq!(30.0, 30.0);
+}
+
+#[test]
+fn negative_and_positive_margins_collapse_by_summing_the_extremes() {
+    // CSS 2.1 8.3.1: the largest positive (20) plus the most negative (-5).
+    assert_eq!(
+        block_child_gap("margin-bottom:20px", "margin-top:-5px"),
+        15.0
+    );
+    assert_eq!(
+        block_child_gap("margin-bottom:-8px", "margin-top:-5px"),
+        -8.0
+    );
+}
+
+#[test]
+fn a_block_childs_inner_margin_collapses_through_it() {
+    // A's last child "pp" has a 20px bottom margin. A has no padding or
+    // border, so that margin leaves A and collapses with B's 30px top
+    // margin: 30px between A's bottom and B's top.
+    let gap = || {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+        let a = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+        let p = doc.append_element(
+            Some(a),
+            "div",
+            Style::default(),
+            Some("display:block;margin-bottom:20px"),
+        );
+        doc.append_text(p, "pp");
+        let b = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;margin-top:30px"),
+        );
+        doc.append_text(b, "cc");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        let a = doc.nodes[a].unrounded_layout;
+        let b = doc.nodes[b].unrounded_layout;
+        (a.size.height, b.location.y - (a.location.y + a.size.height))
+    };
+    assert_eq!(gap(), (10.0, 30.0));
+    assert_eq!(gap(), (10.0, 30.0));
+}
+
+/// Distance from the bottom of the line "aaaa" to the top of a block child
+/// with `css` that follows it.
+fn gap_between_line_and_block(css: &str) -> f32 {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+    let block = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{css}")),
+    );
+    doc.append_text(block, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{css}");
+    doc.nodes[block].unrounded_layout.location.y - 10.0
+}
+
+#[test]
+fn a_margin_does_not_collapse_with_a_line() {
+    assert_eq!(gap_between_line_and_block("margin-top:12px"), 12.0);
+    assert_eq!(gap_between_line_and_block("margin-top:12px"), 12.0);
+}
+
+/// `root > [lead, div(a_css) > "bb", div(e_css) (empty), div(b_css) > "cc"]`
+/// in a 200px Ahem paragraph; `lead` is text before the first block (may be
+/// empty). Returns the root, the three blocks and their border boxes as
+/// `(y, height)`, and the root's `(y, height)`.
+fn three_blocks(
+    lead: &str,
+    a_css: &str,
+    e_css: &str,
+    b_css: &str,
+) -> ((f32, f32), [(f32, f32); 3]) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", lead);
+    let mut blocks = [0; 3];
+    for (slot, (css, text)) in [(a_css, "bb"), (e_css, ""), (b_css, "cc")]
+        .into_iter()
+        .enumerate()
+    {
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        );
+        if !text.is_empty() {
+            doc.append_text(block, text);
+        }
+        blocks[slot] = block;
+    }
+    doc.append_text(root, "dddd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{a_css} / {e_css} / {b_css}");
+    let geometry = |id: usize| {
+        let l = doc.nodes[id].unrounded_layout;
+        (l.location.y, l.size.height)
+    };
+    (geometry(root), blocks.map(geometry))
+}
+
+#[test]
+fn an_empty_block_child_collapses_through() {
+    // 20 (A's bottom), 10 and 25 (the empty block) and 5 (B's top) are one
+    // collapsed margin: 25px from A's bottom to B's top.
+    let run = || {
+        three_blocks(
+            "aaaa",
+            "margin-bottom:20px",
+            "margin-top:10px;margin-bottom:25px",
+            "margin-top:5px",
+        )
+    };
+    let (_, [a, _, b]) = run();
+    assert_eq!(b.0 - (a.0 + a.1), 25.0);
+    assert_eq!(
+        run(),
+        ((0.0, 65.0), [(10.0, 10.0), (40.0, 0.0), (45.0, 10.0)])
+    );
+}
+
+#[test]
+fn a_block_child_with_padding_does_not_collapse_through() {
+    // The 1px padding separates the empty block's margins: 20 above it
+    // (max of 20 and 10), 1px of padding, 25 below it (max of 25 and 5).
+    let run = || {
+        three_blocks(
+            "aaaa",
+            "margin-bottom:20px",
+            "margin-top:10px;margin-bottom:25px;padding-top:1px",
+            "margin-top:5px",
+        )
+    };
+    let (_, [a, e, b]) = run();
+    assert_eq!(e.0 - (a.0 + a.1), 20.0);
+    assert_eq!(b.0 - (a.0 + a.1), 46.0);
+    assert_eq!(
+        run(),
+        ((0.0, 86.0), [(10.0, 10.0), (40.0, 1.0), (66.0, 10.0)])
+    );
+}
+
+#[test]
+fn margins_are_included_in_the_roots_height() {
+    // Line "aaaa" (10) + A (10) + 20 + B (10) + 8 (B's bottom margin, then
+    // the line "dddd") + "dddd" (10): the lines keep the margins in the root.
+    let run = || three_blocks("aaaa", "margin-bottom:20px", "", "margin-bottom:8px");
+    let (root, _) = run();
+    assert_eq!(root.1, 68.0);
+    assert_eq!(
+        run(),
+        ((0.0, 68.0), [(10.0, 10.0), (40.0, 0.0), (40.0, 10.0)])
+    );
+}
+
+#[test]
+fn the_first_block_childs_top_margin_stays_inside_the_root() {
+    // The paragraph contains its first block child's top margin: the root
+    // stays where it is and the block starts 15px into it.
+    let run = || three_blocks("", "margin-top:15px", "", "");
+    let (root, [a, _, _]) = run();
+    assert_eq!((root.0, a.0), (0.0, 15.0));
+    assert_eq!(
+        run(),
+        ((0.0, 45.0), [(15.0, 10.0), (25.0, 0.0), (25.0, 10.0)])
+    );
+}
+
+#[test]
+fn the_last_block_childs_bottom_margin_collapses_through_the_root() {
+    // "aaaa" then a block with a 12px bottom margin and nothing after it.
+    // The paragraph is in its parent's formatting context and has no bottom
+    // padding or border, so the margin collapses through its bottom edge
+    // (CSS 2.1 8.3.1): the paragraph is 20px tall, and the margin is the
+    // root's to collapse with whatever follows it.
+    let height = || {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;margin-bottom:12px"),
+        );
+        doc.append_text(block, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        doc.nodes[root].unrounded_layout.size.height
+    };
+    assert_eq!(height(), 20.0);
+    assert_eq!(height(), 20.0);
+}
+
+#[test]
+fn a_formatting_context_root_contains_its_last_block_childs_bottom_margin() {
+    // A flex item establishes a formatting context of its own: the 12px
+    // bottom margin of its last block child stays inside it, 10 + 10 + 12.
+    let height = || {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("display:flex", "", "aaaa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;margin-bottom:12px"),
+        );
+        doc.append_text(block, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        doc.nodes[root].unrounded_layout.size.height
+    };
+    assert_eq!(height(), 32.0);
+    assert_eq!(height(), 32.0);
+}
+
+// ── engine-only mode and limits ──────────────────────────────
+
+/// A paragraph of 200 bytes of text with the engine limited to 10 bytes.
+fn over_the_text_limit() -> (Document, CascadeResult) {
+    let (mut doc, cascade, _) = ahem_paragraph(&"a ".repeat(100), "");
+    doc.set_font_collection_with_limits(
+        ifc_ahem_fonts(),
+        shodo::limits::Limits {
+            max_text_bytes: Some(10),
+            ..Default::default()
+        },
+    );
+    (doc, cascade)
+}
+
+#[test]
+fn a_limit_overflow_is_reported_as_an_error() {
+    let (mut doc, cascade) = over_the_text_limit();
+    let result = layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600());
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { .. })),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_limit_overflow_is_an_error_whatever_the_document() {
+    // A limit is not a refusal, and there is no other layout path to leave
+    // it to, so it is always reported.
+    let (mut doc, cascade) = over_the_text_limit();
+    let result = layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600());
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { .. })),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn every_authored_shape_lays_out_without_an_error() {
+    // The shapes that were refused last (a fixed root, a block with a forced
+    // page break, generated content, a positioned box) are all laid out in
+    // engine-only mode; a refusal is now an internal inconsistency only (see
+    // the assignment's unit tests).
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph_with(
+        "position:fixed;width:100px",
+        |doc, root| {
+            doc.append_text(root, "aa ");
+            doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;break-before:page"),
+            );
+            doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px"),
+            );
+        },
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let result = layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600());
+    assert!(result.is_ok(), "{result:?}");
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn a_shaping_limit_overflow_is_an_error_on_either_build_path() {
+    // The glyph budget is checked when a paragraph is shaped, after it is
+    // projected: the error has to come out of the build step, sequential or
+    // parallel.
+    for parallel in [false, true] {
+        let (mut doc, cascade, root) = ahem_paragraph(&"a ".repeat(100), "");
+        doc.set_font_collection_with_limits(
+            ifc_ahem_fonts(),
+            shodo::limits::Limits {
+                max_shaped_glyphs: Some(5),
+                ..Default::default()
+            },
+        );
+        doc.set_ifc_parallel_build(parallel);
+        doc.set_ifc_parallel_threshold(1);
+        let result = layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600());
+        assert!(
+            matches!(result, Err(LayoutError::IfcLimitExceeded { node, .. }) if node == root),
+            "{parallel}: {result:?}"
+        );
+    }
+}
+
+// ── degraded projections ─────────────────────────────────────
+
+/// `root > span(css) > text` in an Ahem paragraph (or `root(css) > text`
+/// when `on_root`); returns the root's border-box size, asserting the root
+/// is a root exactly when the engine is on.
+fn degraded_size(css: &str, text: &str, on_root: bool) -> (f32, f32) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in(
+        "",
+        if on_root { css } else { "" },
+        if on_root { text } else { "" },
+    );
+    if !on_root {
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(&format!("display:inline;{css}")),
+        );
+        doc.append_text(span, text);
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{css}");
+    let size = doc.nodes[root].unrounded_layout.size;
+    (size.width, size.height)
+}
+
+#[test]
+fn a_vertical_writing_mode_paragraph_is_projected_as_horizontal() {
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "writing-mode:vertical-rl");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // Hand-computed: laid out as horizontal text, Ahem 10px, one 10px line.
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+}
+
+#[test]
+fn degraded_forms_have_their_pinned_sizes() {
+    // Each property is on an inline child, where the degradation applies
+    // (on the root, taffy resolves the percentage and the property is moot).
+    let mut expected_4772 = [(800.0, 10.0), (800.0, 10.0), (800.0, 10.0)].into_iter();
+    for (css, text) in [
+        ("padding-left:10%", "aaaa"),
+        ("text-autospace:auto", "漢字abc"),
+        ("text-autospace:normal", "漢字abc"),
+    ] {
+        assert_eq!(
+            degraded_size(css, text, false),
+            expected_4772.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+    // The writing-mode row degrades on the root.
+    assert_eq!(
+        degraded_size("writing-mode:vertical-rl", "aaaa", true),
+        (800.0, 10.0)
+    );
+}
+
+/// `root > ["aaaa", input(css)]`; returns the input's x and the root's
+/// height.
+fn paragraph_with_input(css: &str) -> (f32, f32) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+    let input = doc.append_element(Some(root), "input", Style::default(), Some(css));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{css}");
+    (
+        doc.nodes[input].unrounded_layout.location.x,
+        doc.nodes[root].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_form_control_in_a_paragraph_is_an_atomic_box() {
+    // Hand-computed: "aaaa" followed by a 30x10 atomic, so the input starts
+    // at x = 40 on a single line. The input has no baseline, so its margin
+    // box's bottom sits on the line's baseline (CSS 2.1 10.8.1) and the
+    // strut's 2px descent hangs below it: the line is 12px tall.
+    assert_eq!(paragraph_with_input("width:30px;height:10px"), (40.0, 12.0));
+}
+
+#[test]
+fn vertical_align_middle_centres_the_box_on_half_the_parents_x_height() {
+    // CSS 2.1 10.8.1: the box's midpoint (3px above its baseline: Ahem 10px
+    // has an 8px ascent and a 2px descent) is aligned with the baseline plus
+    // half the parent's x-height (Ahem's x-height is 8px, so 4px): the span
+    // is raised 1px and the line is 11px tall.
+    assert_eq!(
+        degraded_size("vertical-align:middle", "aaaa", false).1,
+        11.0
+    );
+}
+
+#[test]
+fn a_block_child_with_auto_side_margins_is_centred() {
+    // CSS 2.1 10.3.3: a 100px block in a 200px paragraph with both side
+    // margins auto takes 50px on each side; with only the left one auto it
+    // goes to the right edge.
+    let x = |css: &str| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;width:100px;{css}")),
+        );
+        doc.append_text(block, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{css}");
+        doc.nodes[block].unrounded_layout.location.x
+    };
+    assert_eq!(x("margin:0 auto"), 50.0);
+    assert_eq!(x("margin-left:auto"), 100.0);
+    assert_eq!(x("margin-left:auto;margin-right:20px"), 80.0);
+    let mut expected_4852 = [50.0, 100.0, 80.0].into_iter();
+    for css in [
+        "margin:0 auto",
+        "margin-left:auto",
+        "margin-left:auto;margin-right:20px",
+    ] {
+        assert_eq!(
+            x(css),
+            expected_4852.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn an_inline_table_sits_on_the_line_like_an_inline_block() {
+    // "aa" then an inline-table holding a cell with "bb": a 20px atomic at
+    // x = 20 on the first line (CSS 2.1 17.4: an inline-level table).
+    let place = || {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+        let table = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-table"),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "span",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "span",
+            Style::default(),
+            Some("display:table-cell"),
+        );
+        doc.append_text(cell, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        let l = doc.nodes[table].unrounded_layout;
+        (l.location.x, l.size.width, l.size.height)
+    };
+    assert_eq!(place(), (20.0, 20.0, 10.0));
+}
+
+#[test]
+fn a_relatively_positioned_inline_block_is_offset_from_its_place_on_the_line() {
+    // "aa" then a 10x10 inline-block moved by left:5px and top:3px: it keeps
+    // its place on the line (x = 20) and is drawn 5px right and 3px down
+    // (CSS 2.1 9.4.3).
+    let place = |css: &str| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+        let block = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(&format!(
+                "display:inline-block;width:10px;height:10px;{css}"
+            )),
+        );
+        doc.append_text(root, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{css}");
+        let l = doc.nodes[block].unrounded_layout.location;
+        (l.x, l.y)
+    };
+    let still = place("");
+    assert_eq!(still.0, 20.0);
+    let moved = place("position:relative;left:5px;top:3px");
+    assert_eq!(moved, (still.0 + 5.0, still.1 + 3.0));
+    assert_eq!(moved, (25.0, 3.0));
+    let moved = place("position:relative;right:5px;bottom:3px");
+    assert_eq!(moved, (still.0 - 5.0, still.1 - 3.0));
+}
+
+#[test]
+fn a_relatively_positioned_float_is_placed_like_a_float() {
+    // A 10x10 left float with left:5px: placed at the line start like any
+    // float; the offset is applied by the painter.
+    let place = || {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+        let float = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:block;float:left;width:10px;height:10px;position:relative;left:5px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        let l = doc.nodes[float].unrounded_layout.location;
+        (l.x, l.y)
+    };
+    // CSS 2.1 9.5.1 lets the float share the line of "aa" when it fits.
+    assert_eq!(place(), (0.0, 0.0));
+}
+
+#[test]
+fn an_atomic_in_a_right_to_left_paragraph_is_placed_from_the_right_edge() {
+    // A 200px right-to-left paragraph "aa", a 10x10 inline-block, "bb": the
+    // line runs from the right edge, so "aa" takes 180..200 and the box sits
+    // at 170..180.
+    let place = || {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px;direction:rtl", "aa");
+        let block = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+        doc.append_text(root, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        doc.nodes[block].unrounded_layout.location.x
+    };
+    assert_eq!(place(), 170.0);
+    assert_eq!(place(), 170.0);
+}
+
+/// The root ("aaaa" then a block with a 12px bottom margin) with `root_css`,
+/// and a sibling after it with a 3px top margin: the root's height and the
+/// sibling's y.
+fn root_then_sibling(root_css: &str) -> (f32, f32) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", root_css, "aaaa");
+    let block = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some("display:block;margin-bottom:12px"),
+    );
+    doc.append_text(block, "bb");
+    let parent = doc.parent_of(root).expect("parent");
+    let sibling = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;margin-top:3px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{root_css}");
+    (
+        doc.nodes[root].unrounded_layout.size.height,
+        doc.nodes[sibling].unrounded_layout.location.y,
+    )
+}
+
+#[test]
+fn an_escaping_bottom_margin_collapses_with_the_next_sibling() {
+    // The 12px margin leaves the 20px root and collapses with the sibling's
+    // 3px: the sibling starts at 20 + 12.
+    assert_eq!(root_then_sibling(""), (20.0, 32.0));
+    assert_eq!(root_then_sibling(""), (20.0, 32.0));
+}
+
+#[test]
+fn a_min_height_keeps_the_last_childs_margin_inside_the_root() {
+    // CSS 2.1 8.3.1: when min-height sets the used height the last child's
+    // bottom margin does not collapse through the root; only the sibling's
+    // own 3px separates them.
+    let mut expected_5029 = [(20.0, 23.0), (25.0, 28.0), (50.0, 53.0)].into_iter();
+    for (css, height) in [
+        ("min-height:20px", 20.0),
+        ("min-height:25px", 25.0),
+        ("min-height:50px", 50.0),
+    ] {
+        assert_eq!(root_then_sibling(css), (height, height + 3.0), "{css}");
+        assert_eq!(
+            root_then_sibling(css),
+            expected_5029.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+}
+
+/// `aa <span>bb</span>` in an Ahem root with a 10px line height, `root_css`
+/// on the root and `sheet` as the author style sheet.
+fn generated_paragraph(sheet: &str, root_css: &str) -> (Document, CascadeResult, usize) {
+    let crate::layout::ifc::test_support::Fixture { doc, cascade, root } =
+        crate::layout::ifc::test_support::sheet_fixture(
+            sheet,
+            &format!("line-height:10px;{root_css}"),
+            |doc, root| {
+                doc.append_text(root, "aa ");
+                let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+                doc.set_element_attribute(span, "data-k", "zz")
+                    .expect("attribute");
+                doc.append_text(span, "bb");
+            },
+        );
+    (doc, cascade, root)
+}
+
+/// The text of every stored line of the engine root of `generated_paragraph`,
+/// and the root's height.
+fn generated_lines(sheet: &str, root_css: &str) -> (Vec<String>, f32) {
+    let (mut doc, cascade, root) = generated_paragraph(sheet, root_css);
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{sheet}");
+    let lines = stored_lines(&doc, root)
+        .lines
+        .iter()
+        .map(line_text)
+        .collect();
+    (lines, doc.nodes[root].unrounded_layout.size.height)
+}
+
+#[test]
+fn generated_text_of_an_inline_takes_room_on_its_line() {
+    // Hand-computed: "aa " is 30px, then the span's "x" and "bb" make "xbb"
+    // (30px), which does not fit the 20px left of a 50px line.
+    assert_eq!(
+        generated_lines(r#"span::before { content: "x" }"#, "width:50px"),
+        (vec!["aa".to_owned(), "xbb".to_owned()], 20.0)
+    );
+    // `::after` closes the span's content.
+    assert_eq!(
+        generated_lines(r#"span::after { content: "y" }"#, "width:200px").0,
+        ["aa bby"]
+    );
+}
+
+#[test]
+fn generated_text_of_the_root_starts_and_ends_its_lines() {
+    assert_eq!(
+        generated_lines(
+            r#"div::before { content: "x" } div::after { content: "y" }"#,
+            "width:200px"
+        ),
+        (vec!["xaa bby".to_owned()], 10.0)
+    );
+}
+
+#[test]
+fn counters_and_attributes_resolve_in_generated_text() {
+    // `counter-reset: n 6` on the root; the span's `::before` reads it and the
+    // span's `data-k` attribute.
+    assert_eq!(
+        generated_lines(
+            r#"div { counter-reset: n 6 } span::before { content: counter(n) attr(data-k) }"#,
+            "width:200px"
+        )
+        .0,
+        ["aa 6zzbb"]
+    );
+}
+
+#[test]
+fn generated_images_and_out_of_flow_generated_boxes_are_not_in_the_lines() {
+    for sheet in [
+        r#"span::before { content: url(missing.png) }"#,
+        r#"span::before { content: "x"; position: absolute }"#,
+        r#"span::before { content: "x"; float: left }"#,
+        r#"span::before { content: none }"#,
+    ] {
+        assert_eq!(
+            generated_lines(sheet, "width:200px").0,
+            ["aa bb"],
+            "{sheet}"
+        );
+    }
+}
+
+#[test]
+fn block_level_generated_text_gets_a_line_of_its_own() {
+    assert_eq!(
+        generated_lines(
+            r#"div::before { content: "x"; display: block }"#,
+            "width:200px"
+        ),
+        (vec!["x".to_owned(), "aa bb".to_owned()], 20.0)
+    );
+    assert_eq!(
+        generated_lines(
+            r#"div::after { content: "y"; display: block }"#,
+            "width:200px"
+        ),
+        (vec!["aa bb".to_owned(), "y".to_owned()], 20.0)
+    );
+}
+
+#[test]
+fn an_element_with_only_generated_text_is_a_one_line_root() {
+    let crate::layout::ifc::test_support::Fixture {
+        mut doc,
+        cascade,
+        root,
+    } = crate::layout::ifc::test_support::sheet_fixture(
+        r#"div::before { content: "x" }"#,
+        "line-height:10px",
+        |_, _| {},
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert!(doc.nodes[root].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+}
+
+#[test]
+fn generated_content_is_laid_out_by_the_engine() {
+    let (mut doc, cascade, root) = generated_paragraph(
+        r#"div::before { content: "x" } span::before { content: url(missing.png) "w" }"#,
+        "width:200px",
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(line_text(&stored_lines(&doc, root).lines[0]), "xaa wbb");
+}
+
+/// Where the lines of a paragraph split across columns are drawn.
+#[derive(Debug, PartialEq)]
+struct MulticolTextGeometry {
+    /// Border-box height of the multicol container.
+    container_height: f32,
+    /// Start of each line, `(x, y)` from the paragraph's content-box corner,
+    /// after the column offsets.
+    lines: Vec<(f32, f32)>,
+}
+
+/// The engine side of [`multicol_text_geometry`]: the stored lines of `root`
+/// moved by its column fragments.
+fn engine_multicol_lines(doc: &Document, root: usize) -> Vec<(f32, f32)> {
+    let ifc = doc.nodes[root].ifc.as_ref().expect("an ifc root");
+    let lines = &ifc.lines.as_ref().expect("performed lines").lines;
+    let fragments = ifc.multicol_fragments.clone().unwrap_or_else(|| {
+        vec![crate::node::MulticolTextFragment {
+            line_start: 0,
+            line_end: lines.len(),
+            x: 0.0,
+            y: lines.first().map_or(0.0, |line| line.block_offset()),
+        }]
+    });
+    let mut out = Vec::new();
+    for fragment in fragments {
+        let first = lines[fragment.line_start].block_offset();
+        for line in &lines[fragment.line_start..fragment.line_end] {
+            out.push((fragment.x, fragment.y - first + line.block_offset()));
+        }
+    }
+    out
+}
+
+/// A paragraph under a multicol parent (`parent_css`) or, with `own`, a
+/// multicol container that holds the text itself: its column geometry on
+/// either path.
+fn multicol_text_geometry_of(parent_css: &str, text: &str, own: bool) -> MulticolTextGeometry {
+    let (mut doc, cascade, root) = if own {
+        ahem_paragraph(text, parent_css)
+    } else {
+        ahem_paragraph_in(parent_css, "", text)
+    };
+    let container = if own {
+        root
+    } else {
+        doc.parent_of(root).expect("parent")
+    };
+    lay_out(&mut doc, &cascade);
+    assert!(
+        doc.nodes[root].is_ifc_root(),
+        "{parent_css}: not an ifc root"
+    );
+    let lines = engine_multicol_lines(&doc, root);
+    MulticolTextGeometry {
+        container_height: doc.nodes[container].unrounded_layout.size.height,
+        lines,
+    }
+}
+
+fn multicol_text_geometry(parent_css: &str, text: &str) -> MulticolTextGeometry {
+    multicol_text_geometry_of(parent_css, text, false)
+}
+
+#[test]
+fn a_paragraph_in_a_multicol_container_becomes_a_root() {
+    let (mut doc, cascade, p) =
+        ahem_paragraph_in("column-count:2;width:100px", "", "aaaa bbbb cccc dddd");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[p].is_ifc_root());
+}
+
+#[test]
+fn a_multicol_paragraph_is_split() {
+    let mut expected_5265 = [
+        MulticolTextGeometry {
+            container_height: 40.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0), (55.0, 30.0)],
+        },
+        MulticolTextGeometry {
+            container_height: 60.0,
+            lines: vec![
+                (0.0, 0.0),
+                (0.0, 10.0),
+                (50.0, 20.0),
+                (50.0, 30.0),
+                (100.0, 40.0),
+                (100.0, 50.0),
+            ],
+        },
+        MulticolTextGeometry {
+            container_height: 40.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0), (55.0, 30.0)],
+        },
+    ]
+    .into_iter();
+    for (parent_css, text) in [
+        (
+            "column-count:2;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+        (
+            "column-count:3;width:150px;column-gap:0",
+            "aaaa bbbb cccc dddd eeee ffff",
+        ),
+        (
+            "column-width:40px;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+    ] {
+        assert_eq!(
+            multicol_text_geometry(parent_css, text),
+            expected_5265.next().expect("a value per case"),
+            "{parent_css}"
+        );
+    }
+    // Hand-computed, not an oracle: two 45px columns with a 10px gap; each
+    // 40px word takes a line of its own, two lines per column, and the
+    // second column's lines start at x = 55.
+    let geometry = multicol_text_geometry(
+        "column-count:2;width:100px;column-gap:10px",
+        "aaaa bbbb cccc dddd",
+    );
+    assert_eq!(geometry.lines[2].0, 55.0);
+    assert_eq!(geometry.lines.len(), 4);
+}
+
+#[test]
+fn multicol_container_with_direct_text_is_laid_out() {
+    let mut expected_5299 = [
+        MulticolTextGeometry {
+            container_height: 20.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)],
+        },
+        MulticolTextGeometry {
+            container_height: 20.0,
+            lines: vec![
+                (0.0, 0.0),
+                (0.0, 10.0),
+                (50.0, 0.0),
+                (50.0, 10.0),
+                (100.0, 0.0),
+                (100.0, 10.0),
+            ],
+        },
+        MulticolTextGeometry {
+            container_height: 20.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)],
+        },
+    ]
+    .into_iter();
+    for (css, text) in [
+        (
+            "column-count:2;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+        (
+            "column-count:3;width:150px;column-gap:0",
+            "aaaa bbbb cccc dddd eeee ffff",
+        ),
+        (
+            "column-width:40px;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+    ] {
+        assert_eq!(
+            multicol_text_geometry_of(css, text, true),
+            expected_5299.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+    // Hand-computed: four one-word lines balanced over two 45px columns: the
+    // container is two lines tall and the third line starts the second
+    // column at (55, 0).
+    let geometry = multicol_text_geometry_of(
+        "column-count:2;width:100px;column-gap:10px",
+        "aaaa bbbb cccc dddd",
+        true,
+    );
+    assert_eq!(geometry.container_height, 20.0);
+    assert_eq!(
+        geometry.lines,
+        [(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)]
+    );
+}
+
+#[test]
+fn a_definite_height_multicol_fills_its_columns_in_turn_and_keeps_widows() {
+    // Hand-computed: a 20px-tall content box holds two 10px lines per
+    // column; five lines fill 2 + 2 + 1, and `widows: 2` moves one line of
+    // the second column into the third.
+    let geometry = multicol_text_geometry_of(
+        "column-count:3;width:150px;column-gap:0;height:20px;widows:2;orphans:1",
+        "aaaa bbbb cccc dddd eeee",
+        true,
+    );
+    assert_eq!(
+        geometry.lines,
+        [
+            (0.0, 0.0),
+            (0.0, 10.0),
+            (50.0, 0.0),
+            (100.0, 0.0),
+            (100.0, 10.0)
+        ]
+    );
+}
+
+#[test]
+fn multicol_with_a_forced_break_is_laid_out() {
+    // Under a multicol parent, one text node with preserved newlines.
+    let css = "column-count:2;width:100px;column-gap:10px;white-space:pre-line";
+    assert_eq!(
+        multicol_text_geometry(css, "aa\nbb\ncc"),
+        MulticolTextGeometry {
+            container_height: 30.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0)]
+        },
+    );
+    // A container whose direct content is lines with `<br>` between them:
+    // those lines are placed in source order in the first
+    // column, and the container is as tall as all of them.
+    let own = multicol_text_geometry_of(css, "aa\nbb\ncc", true);
+    assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]);
+    assert_eq!(
+        own.container_height,
+        MulticolTextGeometry {
+            container_height: 30.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]
+        }
+        .container_height
+    );
+    assert_eq!(own.container_height, 30.0);
+}
+
+#[test]
+fn a_definite_height_multicol_with_line_breaks_keeps_widows() {
+    // Hand-computed: a 40px column holds four 10px lines; nine lines fill
+    // 4 + 4 + 1, and `widows: 3` moves two lines of the second column into
+    // the third. The columns are 120px wide with a 20px gap.
+    let geometry = multicol_text_geometry_of(
+        "width:400px;column-count:3;column-gap:20px;height:40px;widows:3;orphans:1",
+        "1\n2\n3\n4\n5\n6\n7\n8\n9",
+        true,
+    );
+    let xs: Vec<f32> = geometry.lines.iter().map(|line| line.0).collect();
+    assert_eq!(xs, [0.0, 0.0, 0.0, 0.0, 140.0, 140.0, 280.0, 280.0, 280.0]);
+    assert_eq!(geometry.container_height, 40.0);
+}
+
+// ── block-level boxes of every kind inside a paragraph ───────
+
+/// A 200px Ahem paragraph whose children `build` appends after an empty text
+/// node. Returns the document, its cascade and the root.
+fn paragraph_of(build: impl FnOnce(&mut Document, usize)) -> (Document, CascadeResult, usize) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "");
+    build(&mut doc, root);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root)
+}
+
+/// `root > ["aa ", div(inner) > [div(margin-top:10px) > "bb"], " cc"]`.
+/// Returns the document, the cascade, the root and the block child.
+fn paragraph_with_block_child(inner: &str) -> (Document, CascadeResult, usize, usize) {
+    let mut block = 0;
+    let (doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_text(root, "aa ");
+        block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{inner}")),
+        );
+        let first = doc.append_element(
+            Some(block),
+            "div",
+            Style::default(),
+            Some("display:block;margin-top:10px"),
+        );
+        doc.append_text(first, "bb");
+        doc.append_text(root, " cc");
+    });
+    (doc, cascade, root, block)
+}
+
+/// Border box of the block child of [`paragraph_with_block_child`] from the
+/// root's border box, and the root's height.
+fn block_child_geometry(inner: &str) -> ((f32, f32, f32, f32), f32) {
+    let (mut doc, cascade, root, block) = paragraph_with_block_child(inner);
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{inner}");
+    let layout = doc.nodes[block].unrounded_layout;
+    (
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        ),
+        doc.nodes[root].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn block_level_boxes_of_every_inner_display_keep_the_root() {
+    let mut expected_5448 = [
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 20.0, 200.0, 10.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 20.0, 200.0, 10.0), 40.0),
+    ]
+    .into_iter();
+    for inner in [
+        "display:flow-root",
+        "display:flex",
+        "display:grid",
+        "display:list-item",
+        "overflow:hidden",
+        "clear:left",
+    ] {
+        let (mut doc, cascade, root, _) = paragraph_with_block_child(inner);
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{inner}");
+        assert_eq!(
+            block_child_geometry(inner),
+            expected_5448.next().expect("a value per case"),
+            "{inner}"
+        );
+    }
+}
+
+#[test]
+fn a_formatting_context_block_child_does_not_collapse_with_its_children() {
+    // Hand-computed: the "aa" line is 10px; a plain block lets its first
+    // child's 10px top margin through (its border box starts at 20 and holds
+    // one 10px line), a flow-root keeps it inside (it starts at 10 and is
+    // 20px tall).
+    assert_eq!(
+        block_child_geometry("display:flow-root").0,
+        (0.0, 10.0, 200.0, 20.0)
+    );
+    assert_eq!(block_child_geometry("").0, (0.0, 20.0, 200.0, 10.0));
+    assert_eq!(
+        block_child_geometry("display:flow-root;margin-top:10px"),
+        ((0.0, 20.0, 200.0, 20.0), 50.0)
+    );
+}
+
+/// `root > [div(float:left;width:20px;height:20px), "aa", div(css) > "bb"]`:
+/// the block child's border box from the root.
+fn block_after_float(float_css: &str, css: &str) -> (f32, f32, f32, f32) {
+    let mut block = 0;
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;float:left;{float_css}")),
+        );
+        doc.append_text(root, "aa");
+        block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        );
+        doc.append_text(block, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{css}");
+    let layout = doc.nodes[block].unrounded_layout;
+    (
+        layout.location.x,
+        layout.location.y,
+        layout.size.width,
+        layout.size.height,
+    )
+}
+
+#[test]
+fn a_cleared_block_child_moves_below_the_float() {
+    let float = "width:20px;height:20px";
+    assert_eq!(
+        block_after_float(float, "clear:left"),
+        (0.0, 20.0, 200.0, 10.0)
+    );
+    // Hand-computed: a 20px-tall left float precedes a 10px line; the cleared
+    // block starts at y = 20.
+    assert_eq!(block_after_float(float, "clear:left").1, 20.0);
+}
+
+#[test]
+fn an_overflow_hidden_block_child_sits_beside_a_float() {
+    let float = "width:50px;height:30px";
+    // With a width of its own, both paths place it the same.
+    assert_eq!(
+        block_after_float(float, "overflow:hidden;width:100px"),
+        (50.0, 10.0, 100.0, 10.0)
+    );
+    // Hand-computed: below the 10px line, beside the 50px float, as wide as
+    // the 150px left of it.
+    assert_eq!(
+        block_after_float(float, "overflow:hidden"),
+        (50.0, 10.0, 150.0, 10.0)
+    );
+}
+
+#[test]
+fn a_flex_block_child_gets_its_own_height() {
+    let mut expected_5539 = [
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+    ]
+    .into_iter();
+    for inner in [
+        "display:flex",
+        "display:grid",
+        "display:flex;flex-direction:column",
+    ] {
+        assert_eq!(
+            block_child_geometry(inner),
+            expected_5539.next().expect("a value per case"),
+            "{inner}"
+        );
+    }
+    // Hand-computed: the flex item keeps its 10px top margin inside the flex
+    // container, below the 10px "aa" line.
+    assert_eq!(
+        block_child_geometry("display:flex").0,
+        (0.0, 10.0, 200.0, 20.0)
+    );
+}
+
+#[test]
+fn a_table_block_child_is_laid_out() {
+    // A table holding only text: one anonymous cell's content.
+    let geometry = || {
+        let mut table = 0;
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            doc.append_text(root, "aa ");
+            table = doc.append_element(Some(root), "div", Style::default(), Some("display:table"));
+            doc.append_text(table, "bb");
+            doc.append_text(root, " cc");
+        });
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        let layout = doc.nodes[table].unrounded_layout;
+        (
+            layout.location.y,
+            layout.size.height,
+            doc.nodes[root].unrounded_layout.size.height,
+        )
+    };
+    assert_eq!(geometry(), (10.0, 10.0, 30.0));
+    // Hand-computed: between the "aa" and "cc" lines, one 10px line tall.
+    assert_eq!(geometry(), (10.0, 10.0, 30.0));
+}
+
+#[test]
+fn a_list_item_block_child_collapses_like_a_block() {
+    // A list item is a block container in its parent's formatting context.
+    assert_eq!(
+        block_child_geometry("display:list-item"),
+        block_child_geometry("")
+    );
+    assert_eq!(
+        block_child_geometry("display:list-item"),
+        ((0.0, 20.0, 200.0, 10.0), 40.0)
+    );
+}
+
+#[test]
+fn a_cleared_line_break_moves_the_next_line_below_the_float() {
+    let lines = || {
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;float:left;width:20px;height:30px"),
+            );
+            doc.append_text(root, "aa");
+            doc.append_element(
+                Some(root),
+                "br",
+                Style::default(),
+                Some("display:inline;clear:left"),
+            );
+            doc.append_text(root, "bb");
+        });
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        doc.nodes[root].unrounded_layout.size.height
+    };
+    // Hand-computed: "aa" beside the 30px float, then "bb" below it.
+    assert_eq!(lines(), 40.0);
+    assert_eq!(lines(), 40.0);
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:20px;height:30px"),
+        );
+        doc.append_text(root, "aa");
+        doc.append_element(
+            Some(root),
+            "br",
+            Style::default(),
+            Some("display:inline;clear:left"),
+        );
+        doc.append_text(root, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(lines[1].block_offset(), 30.0);
+}
+
+#[test]
+fn logical_float_sides_and_clears_are_placed() {
+    // The bridge maps the logical sides to none on both paths: such a box is
+    // not floated and does not clear.
+    let mut expected_5662 = [(0.0, 10.0, 40.0), (0.0, 10.0, 40.0)].into_iter();
+    for css in ["float:inline-start", "float:inline-end"] {
+        let geometry = || {
+            let mut float = 0;
+            let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+                doc.append_text(root, "aa");
+                float = doc.append_element(
+                    Some(root),
+                    "div",
+                    Style::default(),
+                    Some(&format!("display:block;width:20px;height:20px;{css}")),
+                );
+                doc.append_text(root, "bb");
+            });
+            lay_out(&mut doc, &cascade);
+            assert!(doc.nodes[root].is_ifc_root(), "{css}");
+            let layout = doc.nodes[float].unrounded_layout;
+            (
+                layout.location.x,
+                layout.location.y,
+                doc.nodes[root].unrounded_layout.size.height,
+            )
+        };
+        assert_eq!(
+            geometry(),
+            expected_5662.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+    assert_eq!(
+        block_after_float("width:20px;height:20px", "clear:inline-start"),
+        (0.0, 10.0, 200.0, 10.0)
+    );
+}
+
+// ── boxes inside inline elements ─────────────────────────────
+
+/// `root > [span > ["aaaa", child(css)], " bbbb"]` in a 200px Ahem paragraph.
+fn paragraph_with_span_child(css: &str) -> (Document, CascadeResult, usize) {
+    paragraph_of(|doc, root| {
+        let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        doc.append_text(span, "aaaa");
+        doc.append_element(
+            Some(span),
+            "span",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        );
+        doc.append_text(root, " bbbb");
+    })
+}
+
+/// The position of `node` from the page origin, adding up the locations of
+/// its layout parents.
+fn layout_position(doc: &Document, node: usize) -> (f32, f32) {
+    let (mut x, mut y) = (0.0, 0.0);
+    let mut current = Some(node);
+    while let Some(id) = current {
+        let layout = doc.nodes[id].unrounded_layout;
+        x += layout.location.x;
+        y += layout.location.y;
+        current = doc.layout_parent_of(id);
+    }
+    (x, y)
+}
+
+#[test]
+fn a_float_inside_a_span_keeps_the_root() {
+    let (mut doc, cascade, root) = paragraph_with_span_child("float:left;width:20px;height:10px");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn layout_parent_of_skips_inline_elements_inside_a_root() {
+    let (mut doc, cascade, root) =
+        paragraph_with_span_child("display:inline-block;width:20px;height:10px");
+    lay_out(&mut doc, &cascade);
+    let span = doc.nodes[root].children[1];
+    let atomic = doc.nodes[span].children[1];
+    assert_eq!(doc.layout_parent_of(atomic), Some(root));
+    assert_eq!(doc.layout_parent_of(span), doc.parent_of(span));
+    assert!(!doc.contributes_layout_offset(span));
+    assert!(doc.contributes_layout_offset(atomic));
+}
+
+#[test]
+fn an_atomic_inside_a_span_has_the_same_absolute_position_as_without_the_span() {
+    let position = |nested: bool| {
+        let mut atomic = 0;
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            let parent = if nested {
+                doc.append_element(Some(root), "span", Style::default(), Some("padding-left:0"))
+            } else {
+                root
+            };
+            doc.append_text(parent, "aaaa");
+            atomic = doc.append_element(
+                Some(parent),
+                "span",
+                Style::default(),
+                Some("display:inline-block;width:20px;height:10px"),
+            );
+            doc.append_text(root, " bbbb");
+        });
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        let (root_x, root_y) = layout_position(&doc, root);
+        let (x, y) = layout_position(&doc, atomic);
+        (x - root_x, y - root_y)
+    };
+    assert_eq!(position(true), (40.0, 0.0));
+    // Hand-computed: "aaaa" (40px) then the 20x10 atomic, which sits on the
+    // baseline and is the tallest thing on the line: its top is the line's.
+    assert_eq!(position(true), (40.0, 0.0));
+}
+
+#[test]
+fn a_float_inside_a_nested_span_displaces_the_next_lines() {
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        let outer = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        let inner = doc.append_element(Some(outer), "span", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(inner),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:120px;height:20px"),
+        );
+        doc.append_text(outer, "aaaa bbbb cccc");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // Hand-computed: 80px beside the 120px float on the first two lines, one
+    // 40px word each ("aaaa bbbb" is 90px); the third line is below it.
+    let lines = &stored_lines(&doc, root).lines;
+    let starts: Vec<Option<f32>> = lines.iter().map(line_start_x).collect();
+    assert_eq!(starts, [Some(120.0), Some(120.0), Some(0.0)]);
+}
+
+#[test]
+fn a_block_inside_a_span_splits_the_paragraph() {
+    let geometry = || {
+        let mut block = 0;
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            doc.append_text(root, "aa ");
+            let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+            doc.append_text(span, "bb");
+            block = doc.append_element(Some(span), "div", Style::default(), Some("display:block"));
+            doc.append_text(block, "cc");
+            doc.append_text(span, "dd");
+            doc.append_text(root, " ee");
+        });
+        lay_out(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root());
+        let (root_x, root_y) = layout_position(&doc, root);
+        let (x, y) = layout_position(&doc, block);
+        (
+            x - root_x,
+            y - root_y,
+            doc.nodes[block].unrounded_layout.size.height,
+            doc.nodes[root].unrounded_layout.size.height,
+        )
+    };
+    let (on, off) = (geometry(), (0.0, 10.0, 10.0, 30.0));
+    assert_eq!((on.1, on.2, on.3), (off.1, off.2, off.3));
+    // Hand-computed: "aa bb", the block's "cc" line, then "dd ee"; the block
+    // starts at the content edge.
+    assert_eq!(on, (0.0, 10.0, 10.0, 30.0));
+}
+
+// ── positioned boxes inside a paragraph ──────────────────────
+
+/// `root(position:relative) > ["aaaa ", span(position:absolute;css), " bbbb"]`
+/// in a 200px Ahem paragraph. Returns the document, cascade, root and span.
+fn paragraph_with_absolute_child(css: &str) -> (Document, CascadeResult, usize, usize) {
+    let mut span = 0;
+    let (mut doc, _cascade, root) = paragraph_of(|doc, root| {
+        doc.append_text(root, "aaaa ");
+        span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(&format!("position:absolute;width:10px;height:10px;{css}")),
+        );
+        doc.append_text(root, " bbbb");
+    });
+    doc.set_element_inline_style(
+        root,
+        Some("display:block;line-height:10px;width:200px;position:relative".into()),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root, span)
+}
+
+/// The border-box location of the positioned span from the root's border
+/// box, and the root's line count (0 off the engine).
+fn positioned_box_location(css: &str) -> (f32, f32) {
+    let (mut doc, cascade, root, span) = paragraph_with_absolute_child(css);
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{css}");
+    let layout = doc.nodes[span].unrounded_layout;
+    (layout.location.x, layout.location.y)
+}
+
+#[test]
+fn a_positioned_box_inside_a_paragraph_keeps_the_root() {
+    let (mut doc, cascade, root, _) = paragraph_with_absolute_child("left:5px;top:7px");
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn a_positioned_box_with_auto_insets_takes_its_static_position() {
+    // Hand-computed (CSS 2.1 10.3.7, 10.6.4): the span was inline-level, so
+    // its static position is where it would have been on the line, after
+    // "aaaa " (50px), at the top of that line.
+    assert_eq!(positioned_box_location(""), (50.0, 0.0));
+    // A box that was block-level would have started below the line.
+    assert_eq!(positioned_box_location("display:block"), (0.0, 10.0));
+}
+
+#[test]
+fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
+    let mut expected_5872 = [(5.0, 7.0), (185.0, -7.0), (20.0, 0.0)].into_iter();
+    for css in [
+        "left:5px;top:7px",
+        "right:5px;bottom:7px",
+        "left:20px;top:0",
+    ] {
+        assert_eq!(
+            positioned_box_location(css),
+            expected_5872.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+    // Hand-computed: against the root's padding box (no padding).
+    assert_eq!(positioned_box_location("left:5px;top:7px"), (5.0, 7.0));
+    // From the right edge of the 200px box: 200 - 5 - 10.
+    assert_eq!(positioned_box_location("right:5px;top:0").0, 185.0);
+}
+
+#[test]
+fn an_absolute_box_does_not_take_up_inline_space() {
+    for css in [
+        "left:0;top:0",
+        "display:inline-block",
+        "display:block;float:left",
+    ] {
+        let (mut doc, cascade, root, _) = paragraph_with_absolute_child(css);
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        // Hand-computed: one 90px line, "aaaa bbbb" (the two spaces collapse).
+        assert_eq!(lines.len(), 1, "{css}");
+        assert_eq!(lines[0].inline_size(), 90.0, "{css}");
+    }
+}
+
+#[test]
+fn a_fixed_box_inside_a_paragraph_is_laid_out() {
+    // With insets: against the root, as taffy lays a fixed child out.
+    let css = "position:fixed;left:3px;top:4px";
+    assert_eq!(positioned_box_location(css), (3.0, 4.0),);
+    assert_eq!(positioned_box_location(css), (3.0, 4.0));
+}
+
+#[test]
+fn a_relatively_positioned_block_child_is_offset() {
+    let mut expected_5920 = [
+        ((4.0, 23.0, 200.0, 10.0), 40.0),
+        ((0.0, 23.0, 200.0, 10.0), 40.0),
+    ]
+    .into_iter();
+    for css in [
+        "position:relative;left:4px;top:3px",
+        "position:sticky;top:3px",
+    ] {
+        assert_eq!(
+            block_child_geometry(css),
+            expected_5920.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+}
+
+// ── `ch` on box properties through the inline engine's fonts ──
+
+/// The border box of an Ahem block styled `css` (10px font), on either path.
+fn ch_box_size(css: &str) -> (f32, f32, f32, f32) {
+    let (mut doc, cascade, root) = ahem_paragraph("aa", css);
+    lay_out(&mut doc, &cascade);
+    let layout = doc.nodes[root].unrounded_layout;
+    (
+        layout.size.width,
+        layout.size.height,
+        layout.padding.left,
+        layout.margin.left,
+    )
+}
+
+#[test]
+fn ch_box_values_resolve_through_the_engine() {
+    let mut expected_5949 = [
+        (100.0, 10.0, 0.0, 0.0),
+        (800.0, 30.0, 0.0, 0.0),
+        (800.0, 10.0, 20.0, 0.0),
+        (760.0, 10.0, 0.0, 40.0),
+    ]
+    .into_iter();
+    for css in [
+        "width:10ch",
+        "height:3ch",
+        "padding-left:2ch",
+        "margin-left:4ch",
+    ] {
+        assert_eq!(
+            ch_box_size(css),
+            expected_5949.next().expect("a value per case"),
+            "{css}"
+        );
+    }
+    // Hand-computed: Ahem's "0" advance is 1 em, so 10ch at 10px is 100px.
+    assert_eq!(ch_box_size("width:10ch").0, 100.0);
+    assert_eq!(ch_box_size("padding-left:2ch").2, 20.0);
+}
+
+#[test]
+fn measure_ch_advance_uses_the_engine_fonts() {
+    let key = raikiri_style::ChFontKey {
+        family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        size: raikiri_style::ComputedLength(16.0),
+        weight: 400.0,
+        style: raikiri_style::property::FontStyle::Normal,
+    };
+    assert_eq!(
+        crate::layout::measure_ch_advance(&ifc_ahem_fonts(), &key),
+        16.0
+    );
+}
+
+#[test]
+fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engine() {
+    // A fixed box shrinks against the page area; "aaaa bbbb cccc" is one
+    // 140px line wherever the box sits, also under a zero-wide positioned
+    // parent (CSS 2.1 10.1).
+    for (parent_css, css) in [
+        ("", "position:fixed"),
+        ("width:0;position:relative", "position:fixed"),
+    ] {
+        let (mut doc, cascade, root) = ahem_paragraph_in(parent_css, css, "aaaa bbbb cccc");
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert!(doc.nodes[root].is_ifc_root(), "{parent_css} / {css}");
+        let size = doc.nodes[root].unrounded_layout.size;
+        assert_eq!(
+            (size.width, size.height),
+            (140.0, 10.0),
+            "{parent_css} / {css}"
+        );
+    }
+    // A block paragraph inside a fixed box: the box is laid out by taffy on
+    // both paths, the paragraph by the engine.
+    let (mut doc, cascade, root) = ahem_paragraph_in("position:fixed", "", "aaaa bbbb cccc");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
+    // A fixed box's containing block is the viewport (the page area here),
+    // not the narrow absolutely positioned box it sits in: its 140px line
+    // "aaaa bbbb cccc" stays one line.
+    let size = || {
+        let mut fixed = 0;
+        let (mut doc, cascade, _root) = paragraph_of(|doc, root| {
+            let abs = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;position:absolute"),
+            );
+            doc.append_text(abs, "aa");
+            fixed = doc.append_element(
+                Some(abs),
+                "div",
+                Style::default(),
+                Some("display:block;position:fixed;bottom:0"),
+            );
+            doc.append_text(fixed, "aaaa bbbb cccc");
+        });
+        lay_out(&mut doc, &cascade);
+        doc.nodes[fixed].unrounded_layout.size
+    };
+    assert_eq!(
+        size(),
+        taffy::Size {
+            width: 140.0,
+            height: 10.0
+        }
+    );
+    assert_eq!((size().width, size().height), (140.0, 10.0));
+}
+
+#[test]
+fn the_text_of_an_absolutely_positioned_inline_is_its_own_paragraph() {
+    // An absolutely positioned box is blockified (CSS 2.1 9.7): a `<span>`
+    // with `position: absolute` is a block container whose text is a
+    // paragraph of the engine. Hand-computed: "abspos" is one 60px line.
+    let mut span = 0;
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_text(root, "aa");
+        span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("position:absolute;left:0;top:20px"),
+        );
+        doc.append_text(span, "abspos");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    assert!(doc.nodes[span].is_ifc_root());
+    let layout = doc.nodes[span].unrounded_layout;
+    assert_eq!(
+        (layout.location.y, layout.size.width, layout.size.height),
+        (20.0, 60.0, 10.0)
+    );
+}
+
+/// `html > body > "aaaa bbbb"` with `html_css` / `body_css`, laid out with
+/// Ahem: whether the body is a paragraph root, whether `html` is one, and
+/// the number of lines of the text.
+fn inline_body(html_css: Option<&str>, body_css: &str) -> (bool, bool, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), html_css);
+    let css = format!("font-family:Ahem;font-size:10px;line-height:10px;{body_css}");
+    let body = doc.append_element(Some(html), "body", Style::default(), Some(css.as_str()));
+    let text = doc.append_text(body, "aaaa bbbb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    (
+        doc.nodes[body].is_ifc_root(),
+        doc.nodes[html].is_ifc_root(),
+        doc.ifc_text_lines(text)
+            .map_or(0, |lines| lines.lines.len()),
+    )
+}
+
+#[test]
+fn an_inline_body_still_lays_its_text_out_as_a_paragraph() {
+    // Layout starts at the body, which always generates a block box (CSS
+    // Display 3 2.7 blockifies the root element): its text is a paragraph of
+    // one line on the page, with or without a UA stylesheet, and `html` (not laid
+    // out) is never the paragraph.
+    assert_eq!(inline_body(None, ""), (true, false, 1));
+    assert_eq!(
+        inline_body(Some("display:block"), "display:inline"),
+        (true, false, 1)
+    );
+    // `display: contents` on the root also computes to `block`.
+    assert_eq!(
+        inline_body(Some("display:block"), "display:contents"),
+        (true, false, 1)
+    );
 }

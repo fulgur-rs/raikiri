@@ -59,7 +59,7 @@ fn ch_falls_back_to_half_an_em_without_a_face() {
 #[test]
 fn ch_falls_back_to_half_an_em_when_the_face_has_no_zero() {
     // CanvasTestNoSpace is registered and is the selected face, but it has no
-    // `0`. The style layer of the parley path also gives half an em then.
+    // `0`, so `ch` is half an em (CSS Values 4 §6.1.1).
     let canvas = empty_collection();
     canvas
         .register(CANVAS_TEST.to_vec())

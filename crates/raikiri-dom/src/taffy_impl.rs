@@ -10,34 +10,23 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CoreStyle, DetailedGridInfo,
-    Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
-    LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, Position as TaffyPosition, Size, Style,
-    TraversePartialTree, TraverseTree, compute_block_layout, compute_cached_layout,
-    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
+    DetailedGridInfo, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
+    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
+    Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
+    compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
+    compute_leaf_layout,
 };
 
 use crate::document::Document;
 use crate::node::{NodeData, NodeFlags};
 use raikiri_style::property::DisplayValue;
 
-/// Combines an `<img>`'s resolved intrinsic size (if any) with a text
-/// node's shaped intrinsic size (if any) into the single `Option<Size<f32>>`
-/// the leaf-measure closures fall back to when CSS gives no explicit size.
-/// A given `Node` is either an element or a text node
-/// ([`crate::node::NodeData`]), so at most one of
-/// [`crate::node::Node::image_intrinsic_size`] /
-/// [`crate::node::Node::text_layout`] ever returns `Some` here.
-fn leaf_intrinsic_size(
-    node: &mut crate::node::Node,
-    available_width: Option<f32>,
-) -> Option<Size<f32>> {
+/// The intrinsic size of a leaf: an `<img>`'s resolved size, `None` for any
+/// other leaf (a text node outside every paragraph has no size).
+fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
     node.image_intrinsic_size()
         .map(|(width, height)| Size { width, height })
-        .or_else(|| {
-            node.text_layout_size_for_width(available_width)
-                .map(|(width, height)| Size { width, height })
-        })
 }
 
 /// Resolve a `calc()` payload handle against `basis`.
@@ -109,13 +98,8 @@ impl TaffyChildIter<'_> {
         // CSS Flexbox §4: anonymous flex items are not generated for
         // whitespace-only text nodes. The same filtering is needed for Grid,
         // whose item collection also excludes inter-element source whitespace.
-        // A synthetic inline root is the one exception: its whitespace nodes
-        // are explicit zero-content inline items whose collapsed advance was
-        // measured by `preshape_text` and stored in their style.
         let parent_node = &doc.nodes[usize::from(parent)];
-        if !matches!(parent_node.style.display, Display::Flex | Display::Grid)
-            || parent_node.flags.contains(NodeFlags::IS_INLINE_ROOT)
-        {
+        if !matches!(parent_node.style.display, Display::Flex | Display::Grid) {
             return true;
         }
         !matches!(
@@ -283,12 +267,10 @@ impl Document {
                 use crate::node::NodeFlags;
                 use raikiri_style::property::DisplayValue;
                 let dv = tree.nodes[idx].display;
-                // Pure-inline table boxes carry IS_INLINE_ROOT (set by
-                // establish_minimal_line_boxes for all-inline children) and
-                // flow as flex instead: they are exactly one anonymous
-                // cell's content, which the grid collector cannot represent.
-                let inline_flow = tree.nodes[idx].flags.contains(NodeFlags::IS_INLINE_ROOT);
-                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable) && !inline_flow {
+                // A table box that is an ifc root holds only inline content:
+                // the ifc branch below lays it out.
+                let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
+                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable) && !ifc_root {
                     return crate::layout::table::compute_table_layout(tree, node_id, inputs);
                 }
             }
@@ -302,10 +284,20 @@ impl Document {
             // block path below; only width:auto sizes to fit-content here.
             {
                 use raikiri_style::property::DisplayValue;
-                let inline_shrink_wrap = matches!(
+                // A table box laid out as an ifc root is an anonymous cell's
+                // content inside the table wrapper, whose auto width shrinks to
+                // fit as well (CSS 2.1 17.5.2.2).
+                let ifc_table = matches!(
                     tree.nodes[idx].display,
-                    DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
-                );
+                    DisplayValue::Table | DisplayValue::InlineTable
+                ) && tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
+                let inline_shrink_wrap = ifc_table
+                    || matches!(
+                        tree.nodes[idx].display,
+                        DisplayValue::InlineBlock
+                            | DisplayValue::InlineFlex
+                            | DisplayValue::InlineGrid
+                    );
                 if inline_shrink_wrap
                     && tree.nodes[idx].style.size.width.is_auto()
                     && (inputs.known_dimensions.width.is_none()
@@ -321,14 +313,20 @@ impl Document {
             // stack; the ordinary Taffy path remains the bounded fallback.
             const MAX_NESTED_MULTICOL_DEPTH: usize = 64;
             // cov:ignore: exercised by ignored nested multicol WPT reftests
+            // A multicol container whose own content is a paragraph is laid
+            // out by the ifc branch below, which splits its lines in columns.
             if tree.nodes[idx].multicol.is_some()
+                && !tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
                 && tree.fragmentation_stack.len() < MAX_NESTED_MULTICOL_DEPTH // cov:ignore: exercised by ignored nested multicol WPT reftests
             // cov:ignore: exercised by ignored nested multicol WPT reftests
                 && matches!(display, Display::Block | Display::FlowRoot)
             {
                 return crate::layout::compute_multicol_layout(tree, node_id, inputs, block_ctx); // cov:ignore: exercised by ignored nested multicol WPT reftests
             }
-            let is_leaf = tree.nodes[idx].children.is_empty();
+            // An inline SVG root is replaced content: its children are drawn
+            // by the SVG renderer, not laid out, so it is measured as a leaf.
+            let is_leaf =
+                tree.nodes[idx].children.is_empty() || tree.nodes[idx].is_inline_svg_root();
             if tree.nodes[idx].is_inline_svg_root()
                 && tree.nodes[idx].attribute("width").is_none()
                 && tree.nodes[idx].attribute("height").is_none()
@@ -341,6 +339,17 @@ impl Document {
                 // Transfer the ratio in measurement only. Taffy's leaf ratio
                 // floor would otherwise override explicit/max heights.
                 style.aspect_ratio = None;
+                // An authored height gives an auto width through the ratio
+                // (CSS 2.1 10.3.2), also when no parent passes the height in
+                // as a known dimension; taffy's leaf then hands it to the
+                // measure function as the definite available height.
+                let height_is_authored = style.size.width.is_auto()
+                    && taffy::util::MaybeResolve::maybe_resolve(
+                        style.size.height,
+                        inputs.parent_size.height,
+                        |val, basis| tree.resolve_calc_value(val, basis),
+                    )
+                    .is_some();
                 return compute_leaf_layout(
                     inputs,
                     &style,
@@ -352,9 +361,14 @@ impl Document {
                             width: known.width.and(available.width.into_option()),
                             height: known.height.and(available.height.into_option()),
                         };
+                        let authored_height = available
+                            .height
+                            .into_option()
+                            .filter(|_| height_is_authored);
                         let width = known
                             .width
                             .or(known.height.map(|height| height * ratio))
+                            .or(authored_height.map(|height| height * ratio))
                             .unwrap_or(match available.width {
                                 AvailableSpace::Definite(width) => width,
                                 AvailableSpace::MinContent => 0.0,
@@ -368,103 +382,31 @@ impl Document {
                 );
             }
             if tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) {
-                let style = tree.nodes[idx].style.clone();
-                // Border-box top inset, resolved here: the parent has not
-                // stored this node's layout yet.
-                let top_inset = ifc_top_inset(&style, inputs.parent_size.width);
-                // A known width on the input means the parent stretched or
-                // fixed the box, and a definite `width` of its own fixes it
-                // too (taffy passes it as the available width); otherwise the
-                // box shrinks to fit.
-                let stretched = inputs.known_dimensions.width.is_some()
-                    || (inputs.sizing_mode == taffy::SizingMode::InherentSize
-                        && ifc_has_definite_width(&style, inputs.parent_size.width));
-                let measure = IfcMeasure {
-                    run_mode: inputs.run_mode,
-                    stretched,
-                    width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
-                    edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
-                    top_inset,
-                };
-                let mut content_baseline = None;
-                let mut output =
-                    compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
-                        let (size, baseline) = measure_ifc_root(
-                            tree,
-                            idx,
-                            known.height,
-                            available,
-                            measure,
-                            block_ctx,
-                        );
-                        content_baseline = baseline;
-                        size
-                    });
-                output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
-                return output;
+                return compute_ifc_root(tree, node_id, inputs, block_ctx);
             }
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
-                if tree.nodes[idx].has_pre_taffy_text_indent() {
-                    compute_leaf_layout(
-                        inputs,
-                        &style,
-                        |_val, _basis| 0.0,
-                        |known, available| {
-                            // Rebreak ch-aware text at the width Taffy
-                            // passes to this measure callback, so its
-                            // intrinsic height participates in the current
-                            // pass.
-                            let leaf_intrinsic = leaf_intrinsic_size(
-                                &mut tree.nodes[idx],
-                                available.width.into_option(),
-                            );
-                            Size {
-                                width: known
-                                    .width
-                                    .or(leaf_intrinsic.map(|s| s.width))
-                                    .unwrap_or(0.0),
-                                height: known
-                                    .height
-                                    .or(leaf_intrinsic.map(|s| s.height))
-                                    .unwrap_or(0.0),
-                            }
-                        },
-                    )
-                } else {
-                    compute_leaf_layout(
-                        inputs,
-                        &style,
-                        |_val, _basis| 0.0,
-                        |known, available| {
-                            // Nested fragmentainers may probe a narrower width
-                            // than the page-level preshape pass. Keep ordinary
-                            // text behavior unchanged, but rebreak text while
-                            // a recursive multicol context is active.
-                            // cov:ignore: exercised by ignored nested multicol WPT reftests
-                            let probe_width = if !tree.fragmentation_stack.is_empty() {
-                                available.width.into_option()
-                            } else {
-                                None
-                            };
-                            let leaf_intrinsic =
-                                leaf_intrinsic_size(&mut tree.nodes[idx], probe_width);
-                            // If taffy derives Some known.width / .height from style, prefer
-                            // that explicit size; otherwise use parley or image intrinsic sizes;
-                            // if neither is available, use zero.
-                            Size {
-                                width: known
-                                    .width
-                                    .or(leaf_intrinsic.map(|s| s.width))
-                                    .unwrap_or(0.0),
-                                height: known
-                                    .height
-                                    .or(leaf_intrinsic.map(|s| s.height))
-                                    .unwrap_or(0.0),
-                            }
-                        },
-                    )
-                }
+                let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
+                compute_leaf_layout(
+                    inputs,
+                    &style,
+                    |_val, _basis| 0.0,
+                    |known, _available| {
+                        // An explicit size from the style wins; otherwise an
+                        // image's intrinsic size; a text node outside every
+                        // paragraph and any other leaf measure zero.
+                        Size {
+                            width: known
+                                .width
+                                .or(leaf_intrinsic.map(|s| s.width))
+                                .unwrap_or(0.0),
+                            height: known
+                                .height
+                                .or(leaf_intrinsic.map(|s| s.height))
+                                .unwrap_or(0.0),
+                        }
+                    },
+                )
             } else {
                 match display {
                     Display::Block | Display::FlowRoot => {
@@ -476,11 +418,107 @@ impl Document {
                 }
             }
         });
-        if let Some(baseline) = first_inline_baseline(self, usize::from(node_id)) {
+        // An ifc root measured its baseline from the lines of this very call;
+        // the stored lines may be those of another width.
+        if !self.nodes[usize::from(node_id)]
+            .flags
+            .contains(NodeFlags::IS_IFC_ROOT)
+            && let Some(baseline) = first_inline_baseline(self, usize::from(node_id))
+        {
             output.baselines.first = Some(baseline);
         }
         output
     }
+}
+
+/// Lay out an ifc root: its paragraph is measured and broken into lines by
+/// the inline engine, and taffy sees it as a leaf.
+fn compute_ifc_root(
+    tree: &mut Document,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    block_ctx: Option<&mut BlockContext<'_>>,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let style = tree.nodes[idx].style.clone();
+    // Border-box top inset, resolved here: the parent has not
+    // stored this node's layout yet.
+    let top_inset = ifc_top_inset(&style, inputs.parent_size.width);
+    // A known width on the input means the parent stretched or
+    // fixed the box, and a definite `width` of its own fixes it
+    // too (taffy passes it as the available width); otherwise the
+    // box shrinks to fit.
+    let stretched = inputs.known_dimensions.width.is_some()
+        || (inputs.sizing_mode == taffy::SizingMode::InherentSize
+            && ifc_has_definite_width(&style, inputs.parent_size.width));
+    let measure = IfcMeasure {
+        run_mode: inputs.run_mode,
+        stretched,
+        width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
+        edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
+        top_inset,
+        // CSS 2.1 8.3.1: the bottom margin of a last in-flow child and that
+        // of its parent are adjoining when the parent has no bottom padding
+        // or border and an `auto` height, and the parent is in the same
+        // formatting context as its own parent (a block context is passed).
+        bottom_margin_escapes: block_ctx.is_some()
+            && inputs.vertical_margins_are_collapsible.end
+            && style.size.height.is_auto()
+            && ifc_edge(style.padding.bottom, inputs.parent_size.width)
+                + ifc_edge(style.border.bottom, inputs.parent_size.width)
+                == 0.0,
+        column_height: None,
+    };
+    let mut content_baseline = None;
+    let mut escaping_margin = CollapsibleMarginSet::ZERO;
+    let mut measure = measure;
+    measure.column_height = tree.nodes[idx]
+        .multicol
+        .filter(|multicol| multicol.height_definite)
+        .and_then(|_| {
+            crate::layout::multicol_definite_dimension(
+                tree,
+                style.size.height,
+                inputs.parent_size.height,
+            )
+        })
+        .map(|height| {
+            let insets = if style.box_sizing == taffy::BoxSizing::BorderBox {
+                top_inset
+                    + ifc_edge(style.padding.bottom, inputs.parent_size.width)
+                    + ifc_edge(style.border.bottom, inputs.parent_size.width)
+            } else {
+                0.0
+            };
+            (height - insets).max(0.0)
+        });
+    let mut output = compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
+        let (size, baseline, escaping) =
+            measure_ifc_root(tree, idx, known.height, available, measure, block_ctx);
+        content_baseline = baseline;
+        escaping_margin = escaping;
+        size
+    });
+    output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
+    if inputs.run_mode == RunMode::PerformLayout {
+        crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size);
+    }
+    // When `min-height` gives the used height, the last child's bottom margin
+    // no longer adjoins the box's bottom edge and does not collapse through
+    // it (CSS 2.1 8.3.1), as taffy's block algorithm decides.
+    let min_height = taffy::util::MaybeResolve::maybe_resolve(
+        style.min_size.height,
+        inputs.parent_size.height,
+        resolve_calc,
+    );
+    let constrained_by_min_height =
+        min_height.is_some_and(|min| min > 0.0 && min >= output.size.height);
+    output.bottom_margin = if constrained_by_min_height {
+        CollapsibleMarginSet::ZERO
+    } else {
+        escaping_margin
+    };
+    output
 }
 
 /// The node's own `min-width` and `max-width`, as content-box widths.
@@ -558,6 +596,11 @@ struct IfcMeasure {
     edges: (f32, f32),
     /// Border plus padding above the content box.
     top_inset: f32,
+    /// The root's bottom margin may collapse with its last block child's.
+    bottom_margin_escapes: bool,
+    /// The content-box height of a multicol root with a definite height:
+    /// the height of its columns.
+    column_height: Option<f32>,
 }
 
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
@@ -577,10 +620,22 @@ fn measure_ifc_root(
     available: Size<AvailableSpace>,
     measure: IfcMeasure,
     block_ctx: Option<&mut BlockContext<'_>>,
-) -> (Size<f32>, Option<f32>) {
+) -> (Size<f32>, Option<f32>, CollapsibleMarginSet) {
     use crate::layout::ifc::{flow, root::with_state};
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
-        return (Size::ZERO, None);
+        return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
+    };
+    // A fixed box shrinks to fit against its containing block, the page area
+    // (CSS 2.1 10.1), while taffy hands it its parent's room.
+    let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
+    let available = match page_width {
+        Some(page_width) if root.fixed && !measure.stretched => Size {
+            width: AvailableSpace::Definite(
+                (page_width - measure.edges.0 - measure.edges.1).max(0.0),
+            ),
+            ..available
+        },
+        _ => available,
     };
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
@@ -602,7 +657,7 @@ fn measure_ifc_root(
     let Some((min_content, max_content)) = with_state(tree, |state| {
         flow::intrinsic_widths_with(&probe, &mut state.layout_cx, &box_intrinsics.engine)
     }) else {
-        return (Size::ZERO, None);
+        return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
     };
     let (min_content, max_content) = (
         min_content.max(box_intrinsics.blocks.0),
@@ -623,32 +678,75 @@ fn measure_ifc_root(
             .min(measure.width_bounds.1)
             .max(measure.width_bounds.0)
     };
+    // The content of a multicol container is broken at the column width and
+    // split in its columns. A paragraph with boxes of its own is laid out in
+    // one column as wide as the container.
+    let fragmentation = if has_boxes {
+        None
+    } else {
+        tree.nodes[idx]
+            .multicol
+            .filter(|style| style.horizontal)
+            .and_then(|style| {
+                crate::fragment::FragmentationContext::resolve(width, measure.column_height, style)
+            })
+    };
+    // An auto-height container whose lines end in `<br>` children keeps them
+    // all in its first column: without a definite column height there is no
+    // height at which to break them over columns.
+    let in_one_column = measure.column_height.is_none()
+        && tree.nodes[idx].children.iter().any(|&child| {
+            tree.nodes[child].is_in_document() && tree.nodes[child].tag_name() == Some("br")
+        });
     let geometry = flow::FlowGeometry {
-        width,
+        width: fragmentation.map_or(width, |context| context.column_width),
         edges: measure.edges,
         top_edge: measure.top_inset,
     };
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;
-    let lines =
-        crate::layout::ifc::boxes::layout_with_boxes(tree, idx, geometry, block_ctx, perform);
+    let lines = crate::layout::ifc::boxes::layout_with_boxes_in(
+        tree,
+        idx,
+        geometry,
+        block_ctx,
+        perform,
+        measure.bottom_margin_escapes,
+    );
+    let fragments = fragmentation
+        .map(|context| crate::layout::root_column_fragments(&lines, context, in_one_column));
+    let content_height = fragments
+        .as_ref()
+        .map_or(lines.height, |(_, height)| *height);
     let size = Size {
         width,
-        height: known_height.unwrap_or(lines.height),
+        height: known_height.unwrap_or(content_height),
     };
-    let baseline = flow::first_baseline(&lines);
+    // An inline-block's baseline is that of its last line box (CSS 2.1
+    // 10.8.1); every other box exposes its first.
+    let baseline = if tree.nodes[idx].display == raikiri_style::property::DisplayValue::InlineBlock
+    {
+        flow::last_baseline(&lines)
+    } else {
+        flow::first_baseline(&lines)
+    };
+    let escaping_margin = if known_height.is_none() {
+        lines.escaping_margin
+    } else {
+        CollapsibleMarginSet::ZERO
+    };
     if measure.run_mode == RunMode::PerformLayout
         && let Some(root) = tree.nodes[idx].ifc.as_mut()
     {
         root.lines = Some(lines);
+        root.multicol_fragments = fragments.map(|(fragments, _)| fragments);
     }
-    (size, baseline)
+    (size, baseline, escaping_margin)
 }
 
-/// Return the first baseline for text leaves from Parley's first line. Taffy's
-/// block algorithm propagates that baseline through ordinary inline wrappers;
-/// inline-blocks use the baseline of their last in-flow line box, so recover
+/// Return the first baseline of an inline-block from the descendant layout
+/// tree: inline-blocks use the baseline of their last in-flow line box, so recover
 /// the last in-flow text line from the descendant layout tree. See CSS 2.1
 /// §10.8.1: <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
 fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
@@ -657,17 +755,15 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     if root_node.style.display == Display::None {
         return None;
     }
-    if let NodeData::Text(text) = &root_node.data {
-        let baseline = text
-            .text_layout
-            .as_ref()?
-            .lines()
-            .next()?
-            .metrics()
-            .baseline;
-        return baseline.is_finite().then_some(baseline);
+    // A text node outside every paragraph has no line, so no baseline.
+    if root_node.kind() == raikiri_traits::NodeKind::Text {
+        return None;
     }
-    if root_node.display != DisplayValue::InlineBlock {
+    // An ifc root has measured its own baseline from its lines; its children
+    // carry no lines of their own.
+    if root_node.display != DisplayValue::InlineBlock
+        || root_node.flags.contains(NodeFlags::IS_IFC_ROOT)
+    {
         return None;
     }
 
@@ -684,12 +780,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     while let Some((idx, offset_y)) = stack.pop() {
         let node = &doc.nodes[idx];
         if node.flags.contains(NodeFlags::IS_IFC_ROOT) {
-            if let Some(line_baseline) = node
-                .ifc
-                .as_ref()
-                .and_then(|root| root.lines.as_ref())
-                .and_then(crate::layout::ifc::flow::last_baseline)
-            {
+            if let Some(line_baseline) = node.ifc.as_ref().and_then(|root| root.last_baseline()) {
                 let layout = &node.unrounded_layout;
                 let baseline = offset_y + layout.padding.top + layout.border.top + line_baseline;
                 if baseline.is_finite() {
@@ -698,17 +789,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
             }
             continue;
         }
-        if let NodeData::Text(text) = &node.data {
-            if let Some(line) = text
-                .text_layout
-                .as_ref()
-                .and_then(|layout| layout.lines().last())
-            {
-                let baseline = offset_y + line.metrics().baseline;
-                if baseline.is_finite() {
-                    last_baseline = Some(baseline);
-                }
-            }
+        if node.kind() == raikiri_traits::NodeKind::Text {
             continue;
         }
         for &child in node.children.iter().rev() {
@@ -756,11 +837,14 @@ fn compute_inline_block_shrink_wrap(
     block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    // An ifc root's children are hidden from the block algorithm: the inline
+    // engine measures and lays out its content in the same steps below.
+    let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
     let display = tree.nodes[idx].display;
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.
     let leaf_style = tree.nodes[idx].style.clone();
-    let leaf_intrinsic = leaf_intrinsic_size(&mut tree.nodes[idx], None);
+    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
     // Scalar copies so the measure closure below captures no large state.
     let sizing_mode = inputs.sizing_mode;
     let known_height = inputs.known_dimensions.height;
@@ -822,6 +906,11 @@ fn compute_inline_block_shrink_wrap(
                         .size
                         .width
                 }
+                _ if ifc_root => {
+                    compute_ifc_root(tree, node_id, intrinsic_inputs, None)
+                        .size
+                        .width
+                }
                 _ => {
                     compute_block_layout(tree, node_id, intrinsic_inputs, None)
                         .size
@@ -876,6 +965,7 @@ fn compute_inline_block_shrink_wrap(
         match display {
             DisplayValue::InlineFlex => compute_flexbox_layout(tree, node_id, final_inputs),
             DisplayValue::InlineGrid => compute_grid_layout(tree, node_id, final_inputs),
+            _ if ifc_root => compute_ifc_root(tree, node_id, final_inputs, block_ctx),
             _ => compute_block_layout(tree, node_id, final_inputs, block_ctx),
         }
     }

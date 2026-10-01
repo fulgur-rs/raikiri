@@ -3680,6 +3680,7 @@ fn minimal_ua_css_covers_required_display_block_selectors() {
         "center",
         "listing",
         "plaintext",
+        "pre",
         "search",
         "xmp",
     ] {

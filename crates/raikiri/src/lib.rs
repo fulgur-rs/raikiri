@@ -10,6 +10,11 @@
 //! contract for external page-output consumers lives in `raikiri-html` and
 //! `raikiri-dom`.
 //!
+//! Text is laid out by the shodo inline engine, with the installed fonts in
+//! [`html_to_png()`] and [`RenderResources`], or with a font set built by
+//! [`FontCollectionBuilder`] and passed to [`RenderResources::fonts`] or
+//! [`html_to_png_with_render_fonts`].
+//!
 //! # Example
 //!
 //! ```
@@ -34,11 +39,12 @@ pub use raikiri_html::{
 };
 
 pub use raikiri_html::{
-    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES,
+    BundledFont, FontCollection, FontCollectionBuildError, FontCollectionBuilder,
+    MAX_BUNDLED_FONT_BYTES, RenderFonts,
 };
 
 mod html_to_png;
-pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_resolver};
+pub use html_to_png::{html_to_png, html_to_png_with_render_fonts, html_to_png_with_resolver};
 
 // ── PageScene + PageDrawables dogfooding surface ───────
 // Implementation is growing incrementally from placeholder structs (empty
@@ -61,13 +67,8 @@ pub use entries::{
     ParagraphEntry, SemanticEntry, SvgEntry, TableEntry, TransformEntry,
 };
 
-// ── VRT font check API ────────────────────────────────────────────────────
-// Re-export the types used by `html_to_png_with_fonts` so an external consumer
-// can build a pinned `FontContext` with only a `raikiri` dependency. Otherwise
-// it would require direct raikiri-dom/parley dependencies and expose the
-// implementation crates.
-pub use parley::FontContext;
-pub use raikiri_dom::{FontError, PageMargins, PageSlice, build_wpt_font_ctx, first_page_name};
+// ── Page geometry types ───────────────────────────────────────────────────
+pub use raikiri_dom::{PageMargins, PageSlice, first_page_name};
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // A consumer implementing `NetworkProvider` needs Request, FetchedResource,

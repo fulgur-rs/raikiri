@@ -16,6 +16,7 @@ use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::{Affine, Rect};
 use peniko::{Fill, Mix};
 use raikiri_dom::Document;
+use raikiri_dom::generated_content::{computed_for_id, generated_origin};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
@@ -43,7 +44,15 @@ fn context_for_text(
     shifts: &HashMap<usize, f32>,
 ) -> DecorationContext {
     let mut chain = Vec::new();
-    let mut current = document.parent_of(text_node);
+    // The text of a pseudo-element is owned by the pseudo-element's own box,
+    // which is decorated like an inline element child of its element.
+    let mut current = match generated_origin(text_node) {
+        Some((element, _)) => {
+            chain.push(text_node);
+            (element != root_id).then_some(element)
+        }
+        None => document.parent_of(text_node),
+    };
     while let Some(id) = current {
         if id == root_id {
             break;
@@ -52,11 +61,10 @@ fn context_for_text(
         current = document.parent_of(id);
     }
     chain.iter().rev().fold(base.clone(), |context, &id| {
-        decorations_for_element(
-            &context,
-            &cascade.computed[id],
-            shifts.get(&id).copied().unwrap_or(0.0),
-        )
+        let Some(cv) = computed_for_id(cascade, id) else {
+            return context;
+        };
+        decorations_for_element(&context, cv, shifts.get(&id).copied().unwrap_or(0.0))
     })
 }
 
@@ -108,6 +116,8 @@ fn cumulative_offset(
     node: usize,
 ) -> (f32, f32) {
     let (mut dx, mut dy) = (0.0, 0.0);
+    // A pseudo-element moves with its element.
+    let node = generated_origin(node).map_or(node, |(element, _)| element);
     let mut current = Some(node);
     while let Some(id) = current {
         if id == root_id {
@@ -125,7 +135,8 @@ fn cumulative_offset(
 /// Draw the glyph runs of an ifc root.
 ///
 /// Per line, underlines and overlines of every run come first, then the
-/// glyphs, then the line-throughs, which is the order the parley path uses.
+/// glyphs, then the line-throughs (CSS Text Decoration 3 §3: underlines and
+/// overlines below the text, line-throughs over it).
 pub(crate) fn draw_ifc_lines(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -137,10 +148,39 @@ pub(crate) fn draw_ifc_lines(
     let Some(lines) = document.get_node(root_id).and_then(|n| n.ifc_lines()) else {
         return;
     };
-    let transform = Affine::translate((
-        f64::from(position.x),
-        f64::from(position.y + position.shift_y),
-    ));
+    // Lines split across columns are drawn where their column puts them:
+    // the first line of a range at the range's offset. Without a split every
+    // line stays where it was laid out.
+    let mut line_offsets: Vec<Option<(f32, f32)>> = vec![None; lines.len()];
+    match document
+        .get_node(root_id)
+        .and_then(|n| n.ifc_multicol_fragments())
+    {
+        Some(fragments) => {
+            for fragment in fragments {
+                let Some(first) = lines.get(fragment.line_start) else {
+                    continue;
+                };
+                let dy = fragment.y - first.block_offset();
+                let end = fragment.line_end.min(lines.len());
+                for offset in &mut line_offsets[fragment.line_start.min(end)..end] {
+                    *offset = Some((fragment.x, dy));
+                }
+            }
+        }
+        None => line_offsets.fill(Some((0.0, 0.0))),
+    }
+    // Lines that pagination moved down with a block before them.
+    let shifts = document
+        .get_node(root_id)
+        .map(|n| n.ifc_line_shifts())
+        .unwrap_or_default();
+    for (offset, shift) in line_offsets.iter_mut().zip(&shifts) {
+        if let Some((_, dy)) = offset {
+            *dy += shift;
+        }
+    }
+    let base = position;
     let size = document
         .get_node(root_id)
         .and_then(|n| n.ifc_size())
@@ -155,20 +195,35 @@ pub(crate) fn draw_ifc_lines(
         .map(|node| node.ifc_relative_offsets())
         .unwrap_or_default();
     for (line_index, line) in lines.iter().enumerate() {
+        let Some((column_x, column_y)) = line_offsets[line_index] else {
+            continue;
+        };
+        let position = IfcPosition {
+            x: base.x + column_x,
+            y: base.y + column_y,
+            shift_y: base.shift_y,
+        };
+        let transform = Affine::translate((
+            f64::from(position.x),
+            f64::from(position.y + position.shift_y),
+        ));
         // The boxes of the inline elements on this line go below its text
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
         for piece in pieces.iter().filter(|piece| piece.line == line_index) {
-            let Some(cv) = cascade.computed.get(piece.node) else {
+            let Some(cv) = computed_for_id(cascade, piece.node) else {
                 continue;
             };
             let (dx, dy) = cumulative_offset(document, root_id, offsets, piece.node);
+            // The pieces already carry the line's pagination shift, which
+            // `position` holds too.
+            let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
             crate::walk::paint_inline_box(
                 scene,
                 cv,
                 piece,
                 position.x + dx,
-                position.y + position.shift_y + dy,
+                position.y + position.shift_y + dy - line_shift,
             );
         }
         // An element's shift can differ from line to line, so the contexts
@@ -184,7 +239,7 @@ pub(crate) fn draw_ifc_lines(
             // inherited one.
             let Some(owner) = run.node() else { continue };
             let owner = owner.0 as usize;
-            let Some(cv) = cascade.computed.get(owner) else {
+            let Some(cv) = computed_for_id(cascade, owner) else {
                 continue;
             };
             let Some(font) = run.font_data() else {
@@ -252,6 +307,9 @@ pub(crate) fn draw_ifc_lines(
             let Some(font) = draw.run.font_data() else {
                 continue;
             };
+            let Some(owner_style) = computed_for_id(cascade, draw.owner) else {
+                continue;
+            };
             let font_size = draw.run.font_size();
             // shodo's normalized coordinates are `F2Dot14` newtypes; the scene
             // takes the raw `i16` bits.
@@ -275,7 +333,7 @@ pub(crate) fn draw_ifc_lines(
                     coords: &coords,
                     glyph_transform,
                 },
-                &cascade.computed[draw.owner],
+                owner_style,
                 run_transform,
                 IfcPosition {
                     x: position.x + draw.offset.0,
@@ -315,7 +373,7 @@ struct ShadowRun<'a, 'b> {
 /// CSS Text Decoration 3 §4 paints the shadows below the text, the first one
 /// on top, so the list is drawn in reverse. A blurred shadow is drawn inside a
 /// filter layer clipped to the lines grown by three times the blur radius,
-/// which is how the parley path isolates the blur.
+/// which isolates the blur from the rest of the page.
 fn draw_shadows(
     scene: &mut impl PaintScene,
     run: &ShadowRun<'_, '_>,

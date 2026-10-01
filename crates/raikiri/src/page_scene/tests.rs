@@ -1,6 +1,5 @@
 use super::*;
 use crate::build_cascaded;
-use parley::FontContext;
 use raikiri_html::{ParseOptions, parse};
 
 /// Parse, cascade, and lay out a hello-world HTML document, then return
@@ -15,8 +14,7 @@ fn hello_world_post_layout() -> (Document, CascadeResult) {
     let uncascaded = parse(&b"<p>Hi</p>"[..], &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     (dom, cascade)
 }
 
@@ -85,8 +83,7 @@ fn build_page_scene_consumes_cascaded_margin_box_rules() {
     .expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
 
     assert_eq!(scene.margin_boxes.len(), 1);
@@ -146,7 +143,7 @@ fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
     assert!(body_entry.visible);
 
     // At least one paragraph entry must have shaped lines (the "Hi" text
-    // node) — proves text_layout() is actually read, not defaulted.
+    // node) — proves the paragraph's lines are actually read, not defaulted.
     assert!(
         scene
             .drawables
@@ -188,8 +185,7 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
         let cascade = build_cascaded(&uncascaded);
         let mut dom = uncascaded.dom;
-        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-            .expect("layout Ok");
+        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
         let scene = build_page_scene(&dom, &cascade, PageBox::A4);
         assert_eq!(
             scene.body_offset_pt, expected_offset,
@@ -232,8 +228,7 @@ fn body_margin_lone_5px_collapses_to_8px() {
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     assert_eq!(scene.body_offset_pt, (8.0, 3.0));
     let idx = (0..dom.node_count())
@@ -256,7 +251,8 @@ fn body_margin_lone_5px_collapses_to_8px() {
 
 /// Check that PageScene::rasterize returns the same PNG bytes as
 /// html_to_png. This tests verbatim reuse of the byte-identical sequence
-/// and pins the primary regression signal locally in this module.
+/// and pins the primary regression signal locally in this module. The
+/// fixture is laid out with the installed fonts, as `html_to_png` does.
 #[test]
 fn rasterize_matches_html_to_png_bytes() {
     let (dom, cascade) = hello_world_post_layout();
@@ -337,8 +333,7 @@ fn body_margin_helpers_cover_barrier_and_empty_fallbacks() {
     .expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let body_idx = (0..dom.node_count())
         .find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("body"))
         .expect("body resolves");
@@ -380,8 +375,7 @@ fn body_margin_helpers_cover_first_child_blockers() {
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
         let cascade = build_cascaded(&uncascaded);
         let mut dom = uncascaded.dom;
-        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-            .expect("layout Ok");
+        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
         let scene = build_page_scene(&dom, &cascade, PageBox::A4);
         assert!(
             scene.body_offset_pt.0.is_finite(),
@@ -420,8 +414,7 @@ fn body_margin_helpers_cover_computed_fallbacks() {
         parse(&b"<div id=b style='margin-top:10px'></div>"[..], &opts).expect("parse Ok");
     let mut cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let body_idx = (0..dom.node_count())
         .find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("body"))
         .expect("body resolves");
@@ -453,11 +446,130 @@ fn body_margin_helpers_cover_html_barrier_fallback() {
     .expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     assert!(scene.body_offset_pt.0.is_finite());
     assert!(scene.body_offset_pt.1.is_finite());
+}
+
+const FONT_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace"
+);
+
+/// Parse the HTML, switch the inline engine on, lay it out on one A4 page,
+/// and build the page scene.
+fn scene_with_engine(html: &str) -> (Document, CascadeResult, PageScene) {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
+    let cascade = build_cascaded(&uncascaded);
+    let mut dom = uncascaded.dom;
+    let dir = std::path::Path::new(FONT_DIR);
+    dom.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
+    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    (dom, cascade, scene)
+}
+
+fn node(dom: &Document, id: usize) -> &raikiri_dom::Node {
+    dom.get_node(id).expect("node")
+}
+
+/// The first in-document element named `tag`.
+fn find_element(dom: &Document, tag: &str) -> usize {
+    (0..dom.node_count())
+        .find(|&id| {
+            dom.get_node(id)
+                .is_some_and(|node| node.is_in_document() && node.tag_name() == Some(tag))
+        })
+        .expect("element")
+}
+
+fn rects(scene: &PageScene, id: usize) -> Vec<(f32, f32, f32, f32)> {
+    scene.fragments[&NodeId::new(id as u64)]
+        .iter()
+        .map(|f| (f.x, f.y, f.width, f.height))
+        .collect()
+}
+
+/// `aa <span>bb cc</span>` in a 40px Ahem 10px block: the lines are "aa",
+/// "bb" and "cc".
+const WRAPPING_SPAN: &str = "<style>body{margin:0} div{font:10px/10px Ahem;width:40px}</style>\
+     <div>aa <span>bb cc</span></div>";
+
+#[test]
+fn an_ifc_text_reports_its_lines_and_a_wrapping_span_one_fragment_per_line() {
+    let (dom, _cascade, scene) = scene_with_engine(WRAPPING_SPAN);
+    let div = find_element(&dom, "div");
+    let span = find_element(&dom, "span");
+    assert!(
+        node(&dom, div).is_ifc_root(),
+        "the paragraph is laid out by the engine"
+    );
+    let first = node(&dom, div).children[0]; // "aa "
+    let inner = node(&dom, span).children[0]; // "bb cc"
+    assert_eq!(rects(&scene, first), [(0.0, 0.0, 40.0, 10.0)]);
+    assert_eq!(rects(&scene, inner), [(0.0, 10.0, 40.0, 20.0)]);
+    assert_eq!(
+        rects(&scene, span),
+        [(0.0, 10.0, 20.0, 10.0), (0.0, 20.0, 20.0, 10.0)]
+    );
+    let line_count = |id: usize| scene.drawables.paragraphs[&NodeId::new(id as u64)].line_count;
+    assert_eq!((line_count(first), line_count(inner)), (1, 2));
+}
+
+#[test]
+fn an_ifc_text_starts_at_the_padded_root_content_origin() {
+    let (dom, _cascade, scene) = scene_with_engine(
+        "<style>body{margin:0} div{font:10px/10px Ahem;width:40px;padding:5px}</style>\
+         <div>aa <span>bb cc</span></div>",
+    );
+    let div = find_element(&dom, "div");
+    let span = find_element(&dom, "span");
+    let inner = node(&dom, span).children[0];
+    assert_eq!(rects(&scene, inner), [(5.0, 15.0, 40.0, 20.0)]);
+    assert_eq!(
+        rects(&scene, span),
+        [(5.0, 15.0, 20.0, 10.0), (5.0, 25.0, 20.0, 10.0)]
+    );
+    assert!(node(&dom, div).is_ifc_root());
+}
+
+#[test]
+fn each_inline_element_gets_only_its_own_pieces() {
+    let (dom, _cascade, scene) = scene_with_engine(
+        "<style>body{margin:0} div{font:10px/10px Ahem;width:80px}</style>\
+         <div><span>aa</span> <em>bb</em></div>",
+    );
+    let div = find_element(&dom, "div");
+    assert!(node(&dom, div).is_ifc_root());
+    assert_eq!(
+        rects(&scene, find_element(&dom, "span")),
+        [(0.0, 0.0, 20.0, 10.0)]
+    );
+    assert_eq!(
+        rects(&scene, find_element(&dom, "em")),
+        [(30.0, 0.0, 20.0, 10.0)]
+    );
+}
+
+#[test]
+fn a_later_page_gets_only_the_lines_and_pieces_below_its_top() {
+    let (dom, cascade, _scene) = scene_with_engine(WRAPPING_SPAN);
+    // A page whose content starts at y 20: the "cc" line (20..30) is on it,
+    // the "aa" (0..10) and "bb" (10..20) lines are not.
+    let scene = build_page_scene_for_page(&dom, &cascade, PageBox::A4, 1, 20.0);
+    let div = find_element(&dom, "div");
+    let span = find_element(&dom, "span");
+    let first = node(&dom, div).children[0];
+    let inner = node(&dom, span).children[0];
+    assert!(!scene.fragments.contains_key(&NodeId::new(first as u64)));
+    assert_eq!(rects(&scene, inner), [(0.0, -10.0, 40.0, 20.0)]);
+    assert_eq!(rects(&scene, span), [(0.0, 0.0, 20.0, 10.0)]);
 }
 
 /// Paginating a tall document splits nodes across per-page scenes.
@@ -484,8 +596,7 @@ fn build_page_scene_for_page_splits_tall_content_across_pages() {
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
 
     // Derive page 1's origin from the same public page-geometry API the
     // scene builder uses, so the test tracks geometry changes instead of
@@ -571,8 +682,7 @@ fn build_page_scene_for_page_named_attaches_name_and_landscape() {
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
     let page_box = PageBox::from_page_size(cascade.page.size());
-    raikiri_dom::layout_single_page(&mut dom, &cascade, page_box, FontContext::new())
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, page_box).expect("layout Ok");
     let scene = build_page_scene_for_page_named(
         &dom,
         &cascade,
@@ -601,4 +711,21 @@ fn build_page_scene_for_page_named_attaches_name_and_landscape() {
 #[should_panic(expected = "encode_png: expected")]
 fn encode_png_rejects_mismatched_buffer_length() {
     super::encode_png(&[0u8; 3], 1, 1);
+}
+
+#[test]
+fn page_scene_places_an_atomic_inside_a_span_once() {
+    // The inline-block is laid out relative to the paragraph's root; the
+    // span's own location is not added to it.
+    let (dom, _cascade, scene) = scene_with_engine(
+        "<style>body{margin:0} div{font:10px/10px Ahem;width:200px} \
+         b{display:inline-block;width:20px;height:10px}</style>\
+         <div><span>aaaa<b></b></span> cc</div>",
+    );
+    let div = find_element(&dom, "div");
+    assert!(node(&dom, div).is_ifc_root());
+    assert_eq!(
+        rects(&scene, find_element(&dom, "b")),
+        [(40.0, 0.0, 20.0, 10.0)]
+    );
 }

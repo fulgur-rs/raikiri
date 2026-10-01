@@ -283,7 +283,8 @@ pub struct Document {
     /// O(1) cost per mutation plus O(N) per layout batch gives amortized
     /// O(1) invalidation.
     pub(crate) layout_dirty: bool,
-    /// Shodo inline-engine state; `None` keeps the parley-only path.
+    /// Inline-engine state; `None` until fonts are set or the first layout
+    /// takes the installed fonts.
     pub(crate) ifc: Option<crate::layout::ifc::root::IfcState>,
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
@@ -326,8 +327,7 @@ pub struct Document {
     /// diagnostics use, once per pass, after the taffy compute step returns.
     ///
     /// Cleared at the start of each `layout_single_page` call (re-entrance
-    /// safety, mirrors the `Node.text_layout` clear in the same function) and
-    /// drained near its end.
+    /// safety) and drained near its end.
     ///
     /// # Scope boundary: only `layout_single_page` clears/drains this
     ///
@@ -366,10 +366,21 @@ pub struct Document {
 }
 
 impl Document {
-    /// Route eligible paragraphs through the shodo inline engine.
+    /// Lay text out with the fonts of `fonts`.
     ///
-    /// Without this call, layout uses the parley path only.
-    pub fn enable_inline_formatting(
+    /// `fonts` is the font layer the inline engine looks families up in, for
+    /// example one built from bundled fonts, or a document layer of
+    /// `@font-face` faces over a shared layer
+    /// ([`crate::build_inline_document_fonts`]). Without this call, the first
+    /// layout uses the installed fonts ([`crate::system_font_collection`]).
+    pub fn set_font_collection(&mut self, fonts: shodo::font::FontCollection) {
+        self.set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
+    }
+
+    /// [`Document::set_font_collection`] with explicit resource limits for
+    /// the inline engine.
+    #[doc(hidden)]
+    pub fn set_font_collection_with_limits(
         &mut self,
         fonts: shodo::font::FontCollection,
         limits: shodo::limits::Limits,
@@ -378,8 +389,8 @@ impl Document {
         self.layout_dirty = true;
     }
 
-    /// Metrics of a font of the inline engine, at `size`. `None` when the
-    /// inline engine is not enabled.
+    /// Metrics of a font of the inline engine, at `size`. `None` before the
+    /// document has fonts.
     #[doc(hidden)]
     pub fn ifc_font_metrics(
         &self,
@@ -391,9 +402,45 @@ impl Document {
             .map(|state| state.fonts.metrics(font, size))
     }
 
-    /// Whether [`Document::enable_inline_formatting`] was called.
-    pub fn inline_formatting_enabled(&self) -> bool {
+    /// Whether the document has fonts for the inline engine: they were set,
+    /// or a layout took the installed fonts.
+    pub fn has_font_collection(&self) -> bool {
         self.ifc.is_some()
+    }
+
+    /// Paragraphs are built on several threads when a layout pass has at
+    /// least `threshold` of them and [`Document::set_ifc_parallel_build`]
+    /// allowed it. No effect without the inline engine.
+    #[doc(hidden)]
+    pub fn set_ifc_parallel_threshold(&mut self, threshold: usize) {
+        if let Some(state) = self.ifc.as_mut() {
+            state.parallel_threshold = threshold;
+        }
+    }
+
+    /// Allow building paragraphs on several threads. Only safe when the font
+    /// collection has no system faces that are loaded on first use: the face
+    /// chosen for text no family covers would then depend on thread
+    /// scheduling. Off by default; no effect without the inline engine.
+    #[doc(hidden)]
+    pub fn set_ifc_parallel_build(&mut self, allowed: bool) {
+        if let Some(state) = self.ifc.as_mut() {
+            state.parallel_build = allowed;
+        }
+    }
+
+    /// Whether paragraphs may be built on several threads (`false` without
+    /// the inline engine).
+    #[doc(hidden)]
+    pub fn ifc_parallel_build(&self) -> bool {
+        self.ifc.as_ref().is_some_and(|state| state.parallel_build)
+    }
+
+    /// How the paragraphs of the last layout pass were built; `None` before
+    /// the first pass or without the inline engine.
+    #[doc(hidden)]
+    pub fn ifc_last_build(&self) -> Option<crate::IfcBuildMode> {
+        self.ifc.as_ref().and_then(|state| state.last_build)
     }
 
     /// Construct a new Document with a Document node at arena index 0.
@@ -726,6 +773,15 @@ impl Document {
     /// a parent, so a contents fragment root still reports `None`).
     pub fn parent_of(&self, child: usize) -> Option<usize> {
         self.nodes.get(child)?.parent
+    }
+
+    /// Lines of a text node inside a paragraph laid out by the inline engine,
+    /// in the paragraph root's content box.
+    ///
+    /// `None` for any other node, for a paragraph without lines, and for a
+    /// text node that has no glyph on any line.
+    pub fn ifc_text_lines(&self, node: usize) -> Option<crate::layout::IfcTextLines> {
+        crate::layout::ifc::text_lines::lines_of(self, node)
     }
 
     /// Remove `child` from its current parent and return that parent's index.

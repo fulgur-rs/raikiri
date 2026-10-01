@@ -1969,8 +1969,7 @@ css_keywords!(Visibility {
 /// Three variants preserve the top-level alternatives in the spec:
 ///
 /// - [`Normal`](Self::Normal) — the initial value. Downstream paint uses a line
-///   height based on font metrics (roughly ascent + descent), as in `parley`'s
-///   default line-height behavior.
+///   height based on font metrics (roughly ascent + descent).
 /// - [`Number`](Self::Number) — a unitless multiplier. `line-height: 1.5` is
 ///   1.5 times the used element's computed `font-size`. **Special spec behavior**:
 ///   a child inherits the **specified value** of a unitless number (the raw
@@ -4868,13 +4867,9 @@ pub enum PageValue {
 ///   The `@page` phase-3 pipeline ([`crate::page`]'s
 ///   `absolutize_in_page_context` / `specified_layer_residue`) also has a
 ///   dedicated match arm for this variant.
-/// - **Implemented (minimal line-box scope)**: The `top` / `bottom` keywords
-///   are parsed and cascaded as line-box edge alignment per CSS 2.1 §10.8.1.
-///   The taffy bridge in `establish_minimal_line_boxes` maps `bottom` on a
-///   direct inline-level child to `flex-end`. In this narrow slice, it also
-///   excludes block-axis padding on nested inline wrappers so the padding
-///   cannot displace an edge-aligned subtree. This is focused behavior for
-///   one minimal line box, not full baseline/strut/nested-inline flattening.
+/// - **Implemented**: The `top` / `bottom` keywords are parsed and cascaded
+///   as line-box edge alignment per CSS 2.1 §10.8.1; the inline engine
+///   aligns the box with the line box edge.
 /// - **Implemented**: A `<percentage>` value (§10.8.1 propdef
 ///   "Percentages: refer to the 'line-height' of the element itself").
 ///   The value is absolutized as a percentage of the element's own used
@@ -4898,8 +4893,7 @@ pub enum PageValue {
 ///   absolute length; the "normal" wall in that function's documentation
 ///   is canonical. Normally, used line-height has an absolute length from
 ///   font metrics, which would allow the percentage to resolve naturally.
-///   Until this crate has a source of font metrics (the parley integration
-///   milestone), it falls back to `0px` (equivalent to `baseline`). This
+///   This crate has no source of font metrics, so it falls back to `0px` (equivalent to `baseline`). This
 ///   independent fallback does not invent a ratio. It differs from the
 ///   staging used for `<percentage>` in `padding` and `margin`, which leaves
 ///   the value unresolved in computed style for the consumer to resolve.
@@ -5731,8 +5725,8 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
 ///
 /// The `text-wrap` shorthand is expanded into separate mode and style values
 /// before cascade. Inherited, initial `wrap`, computed value = specified
-/// keyword. `nowrap` suppresses soft wrapping in raikiri-dom preshape and
-/// realign.
+/// keyword. `nowrap` suppresses soft wrapping in the inline engine's line
+/// breaking.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextWrapMode {
@@ -6091,7 +6085,7 @@ pub enum TextJustify {
     InterCharacter,
     /// Legacy `distribute` (an older CSS Text 3 §6.2 value treated as an alias
     /// for `inter-character`, used by WPT text-justify-distribute-001).
-    /// Parley makes no distinction, so the consumer treats it like `Justify`.
+    /// The inline engine lays it out as `inter-character`.
     Distribute,
 }
 
@@ -8359,7 +8353,8 @@ pub enum PropertyValue {
     /// The payload is [`TextIndentValue`] (length plus hanging/each-line flags).
     /// The cascade distributes the length to `text_indent` and the flags to
     /// `text_indent_hanging` / `text_indent_each_line`. The consumer
-    /// (raikiri-dom realign) maps them to parley's `IndentOptions`.
+    /// (the inline engine's line options in raikiri-dom) applies them to the
+    /// first line or to every line.
     TextIndent(TextIndentValue),
     /// `padding-top: <length-percentage [0,∞]>` — non-inherited, initial: `0`.
     /// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>.

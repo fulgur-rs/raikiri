@@ -1,7 +1,7 @@
 use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
-use raikiri_dom::Document;
+use raikiri_dom::{Document, StandaloneAlign};
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
@@ -88,9 +88,24 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
             Style::default(),
             Some(display),
         );
-        let a = document.append_element(Some(parent), "div", Style::default(), Some("order:2"));
-        let b = document.append_element(Some(parent), "div", Style::default(), Some("order:-1"));
-        let c = document.append_element(Some(parent), "div", Style::default(), Some("order:2"));
+        let a = document.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;order:2"),
+        );
+        let b = document.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;order:-1"),
+        );
+        let c = document.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;order:2"),
+        );
         (parent, [a, b, c])
     }
 
@@ -100,13 +115,13 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
         Some(flex),
         "div",
         Style::default(),
-        Some("order:10;position:absolute"),
+        Some("display:block;order:10;position:absolute"),
     );
     let absolute_second = document.append_element(
         Some(flex),
         "div",
         Style::default(),
-        Some("order:5;position:absolute"),
+        Some("display:block;order:5;position:absolute"),
     );
     let (grid, grid_items) = parent_with_ordered_children(&mut document, "display:grid");
     let (block, block_items) = parent_with_ordered_children(&mut document, "display:block");
@@ -142,25 +157,25 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("z-index:1;order:1"),
+        Some("display:block;z-index:1;order:1"),
     );
     let z_two_early = document.append_element(
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("z-index:2;order:-1"),
+        Some("display:block;z-index:2;order:-1"),
     );
     let z_one_early = document.append_element(
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("z-index:1;order:0"),
+        Some("display:block;z-index:1;order:0"),
     );
     let positioned_z_two = document.append_element(
         Some(z_index_parent),
         "div",
         Style::default(),
-        Some("position:relative;z-index:2;order:-2"),
+        Some("display:block;position:relative;z-index:2;order:-2"),
     );
 
     // Out-of-flow flex children are treated as order 0 for painting. Their
@@ -175,19 +190,19 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
         Some(positioned_parent),
         "div",
         Style::default(),
-        Some("position:absolute;order:100"),
+        Some("display:block;position:absolute;order:100"),
     );
     let relative_late = document.append_element(
         Some(positioned_parent),
         "div",
         Style::default(),
-        Some("position:relative;order:1"),
+        Some("display:block;position:relative;order:1"),
     );
     let relative_early = document.append_element(
         Some(positioned_parent),
         "div",
         Style::default(),
-        Some("position:relative;order:-1"),
+        Some("display:block;position:relative;order:-1"),
     );
 
     let rules = build_rule_tree(&document);
@@ -574,7 +589,7 @@ fn generated_content_resolves_dom_attributes_and_fallbacks() {
         Some(document.root_index()),
         "div",
         Style::default(),
-        None::<&str>,
+        Some("display:block"),
     );
     document.set_element_attributes(element, vec![("data-value".into(), "Actual".into())]);
     let components = vec![
@@ -593,7 +608,7 @@ fn generated_content_resolves_dom_attributes_and_fallbacks() {
         },
     ];
     let registry = CounterStyleRegistry::new();
-    let rendered = content_components_to_text_with_quotes(
+    let rendered = raikiri_dom::generated_content::content_components_to_text_with_quotes(
         &document,
         element,
         &components,
@@ -737,8 +752,8 @@ fn generated_pseudo_metrics_preserve_before_after_order() {
 #[test]
 fn paint_document_skips_hidden_table_decoration() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let table = document.append_element(
             Some(body),
             "table",
@@ -761,13 +776,7 @@ fn paint_document_skips_hidden_table_decoration() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -783,25 +792,19 @@ fn paint_document_skips_hidden_table_decoration() {
 #[test]
 fn paint_document_orders_literal_pseudos_around_direct_text() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
     document.append_text(
         style,
         r##"div::before { content: "BEFORE " } div::after { content: " AFTER" }"##,
     );
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = document.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let div = document.append_element(Some(body), "div", Style::default(), Some("display:block"));
     document.append_text(div, "BODY");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -809,7 +812,13 @@ fn paint_document_orders_literal_pseudos_around_direct_text() {
         .commands
         .iter()
         .filter_map(|command| match command {
-            RenderCommand::GlyphRun(glyph_run) => Some(glyph_run.transform.as_coeffs()[4]),
+            RenderCommand::GlyphRun(glyph_run) => Some(
+                glyph_run.transform.as_coeffs()[4]
+                    + glyph_run
+                        .glyphs
+                        .first()
+                        .map_or(0.0, |glyph| f64::from(glyph.x)),
+            ),
             _ => None,
         })
         .collect();
@@ -829,15 +838,15 @@ fn paint_document_orders_literal_pseudos_around_direct_text() {
 #[test]
 fn paint_document_offsets_generated_counter_inline_siblings() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
     document.append_text(
             style,
             r##"div { counter-reset: c } div span { counter-increment: c } div span::before { content: counter(c) } div span::after { display: none; content: "hidden" }"##,
         );
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let test = document.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let test = document.append_element(Some(body), "div", Style::default(), Some("display:block"));
     document.append_text(test, "\n");
     document.append_element(Some(test), "span", Style::default(), None::<&str>);
     document.append_text(test, "\n");
@@ -845,13 +854,7 @@ fn paint_document_offsets_generated_counter_inline_siblings() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -866,24 +869,18 @@ fn paint_document_offsets_generated_counter_inline_siblings() {
 #[test]
 fn paint_document_expands_auto_height_for_empty_pseudo_box() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
     document.append_text(
         style,
         r##"div { border: 2px solid black } div::before { content: "A" }"##,
     );
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    document.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    document.append_element(Some(body), "div", Style::default(), Some("display:block"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
@@ -1036,25 +1033,25 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: 3px 4px"),
+        Some("display:block;background-position: 3px 4px"),
     );
     let start_percent_id = document.append_element(
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: 25% 50%"),
+        Some("display:block;background-position: 25% 50%"),
     );
     let end_px_id = document.append_element(
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: right 3px bottom 4px"),
+        Some("display:block;background-position: right 3px bottom 4px"),
     );
     let end_percent_id = document.append_element(
         Some(document.root_index()),
         "div",
         Style::default(),
-        Some("background-position: bottom 50% right 25%"),
+        Some("display:block;background-position: bottom 50% right 25%"),
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -1358,7 +1355,7 @@ fn paint_root_element_border_paints_html_border_sides() {
 
 fn canvas_fixture(page_css: Option<&str>, body_style: Option<&str>) -> (Document, CascadeResult) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     if let Some(css) = page_css {
         let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
@@ -1448,7 +1445,7 @@ fn fixed_margin_spec() -> MarginBoxPaintSpec {
         text_color: Color::from_rgba8(0, 0, 0, 255),
         font_size: 16.0,
         font_family: String::new(),
-        alignment: parley::Alignment::Start,
+        alignment: StandaloneAlign::Start,
         vertical_align: text::MarginTextVerticalAlign::Top,
         vertical_writing: false,
     }
@@ -1463,7 +1460,7 @@ fn paint_margin_row(
     let mut warnings = Vec::new();
     paint_horizontal_margin_boxes(
         &mut scene,
-        None,
+        &Document::new(),
         specs,
         top,
         PageBox::A4.width,
@@ -1503,20 +1500,14 @@ fn margin_row_paints_fixed_width_background() {
 
 fn transformed_box_scene(transform: &str, origin: &str) -> Scene {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = document.append_element(Some(html), "body", Style::default(), Some("margin:0"));
     document.append_element(Some(body), "div", Style::default(), Some(format!(
         "display:block;position:absolute;left:10px;top:20px;width:100px;height:50px;background:green;transform:{transform};transform-origin:{origin}"
     )));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).unwrap();
-    raikiri_dom::layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
     scene
@@ -1592,13 +1583,7 @@ fn transform_markup_scene(markup: &str) -> Scene {
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     scene
@@ -1744,13 +1729,7 @@ fn replaced_inline_image_composes_own_and_ancestor_transform() {
     }
     let mut parsed = raikiri_html::parse("<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0'><img src='https://example.test/green.png' style='width:10px;height:10px;transform:scale(3);transform-origin:0 0'></div>".as_bytes(), &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None }).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     let warnings = crate::paint_single_page_with_images_and_warnings(
         &mut scene,
@@ -1836,7 +1815,7 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
         Some(0),
         "div",
         Style::default(),
-        Some("transform:scale(1) translate(100%,100%);transform-origin:0 0"),
+        Some("display:block;transform:scale(1) translate(100%,100%);transform-origin:0 0"),
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).unwrap();
@@ -3133,7 +3112,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut warnings = Vec::new();
     paint_margin_box(
         &mut scene,
-        None,
+        &Document::new(),
         &spec,
         0.0,
         0.0,
@@ -3151,7 +3130,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut unsupported_warnings = Vec::new();
     paint_margin_box(
         &mut unsupported_scene,
-        None,
+        &Document::new(),
         &unsupported,
         0.0,
         0.0,
@@ -3386,7 +3365,7 @@ fn engine_document() -> Document {
         "/../raikiri-dom/tests/data/text-autospace"
     ));
     let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
-    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    doc.set_font_collection_with_limits(collection, shodo::limits::Limits::default());
     doc
 }
 
@@ -3399,12 +3378,12 @@ fn a_margin_box_width_follows_the_document_font() {
     spec.content = "abc".to_owned();
     spec.font_family = "serif".to_owned();
     spec.font_size = 10.0;
-    assert_eq!(margin_box_text_width(Some(&doc), &spec), 30.0);
+    assert_eq!(margin_box_text_width(&doc, &spec), 30.0);
     assert_eq!(doc.standalone_text_calls(), 1);
-    // A vertical box is measured by the old path, never by the engine.
+    // A vertical box is measured by the engine too, as horizontal text.
     spec.vertical_writing = true;
-    let _ = margin_box_text_width(Some(&doc), &spec);
-    assert_eq!(doc.standalone_text_calls(), 1);
+    assert_eq!(margin_box_text_width(&doc, &spec), 30.0);
+    assert_eq!(doc.standalone_text_calls(), 2);
 }
 
 struct NoImages;
@@ -3416,7 +3395,7 @@ impl raikiri_traits::ImagePixelSource for NoImages {
 
 /// `(x, y)` of the first glyph of each margin box text, left to right, and
 /// the number of engine results.
-fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
+fn margin_box_glyph_ys() -> (Vec<(f64, f64)>, usize) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
@@ -3434,12 +3413,8 @@ fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
         env!("CARGO_MANIFEST_DIR"),
         "/../raikiri-dom/tests/data/text-autospace"
     ));
-    if inline_formatting {
-        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    }
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
-    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    document.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
     crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages);
     let mut out = Vec::new();
@@ -3457,7 +3432,7 @@ fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
 
 #[test]
 fn engine_margin_boxes_do_not_add_the_ahem_baseline_correction() {
-    let (boxes, _) = margin_box_glyph_ys(true);
+    let (boxes, _) = margin_box_glyph_ys();
     assert_eq!(boxes.len(), 2, "one glyph run per margin box: {boxes:?}");
     // Both boxes have the same height and the same resolved font, so the text
     // sits at the same y whatever the family was called.
@@ -3472,65 +3447,25 @@ fn margin_boxes_are_measured_and_drawn_by_the_engine() {
     // Two boxes, each measured once for its width (`margin_box_text_width`)
     // and drawn once: four results. The Ahem correction is decided with
     // `standalone_text_eligible`, which shapes nothing.
-    let (_, calls) = margin_box_glyph_ys(true);
+    let (_, calls) = margin_box_glyph_ys();
     assert_eq!(calls, 4);
-    let (_, off_calls) = margin_box_glyph_ys(false);
-    assert_eq!(off_calls, 0);
 }
 
 #[test]
-fn a_vertical_writing_margin_box_stays_on_the_parley_path() {
+fn a_vertical_writing_margin_box_is_drawn_by_the_engine_like_a_horizontal_one() {
+    // Vertical writing is laid out as horizontal text: the vertical box is
+    // shaped by the engine and its glyphs land where the horizontal box's do.
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "abc".to_owned();
     spec.font_family = "Ahem".to_owned();
     spec.font_size = 10.0;
-    let draw = |spec: &MarginBoxPaintSpec| {
+    let glyphs = |spec: &MarginBoxPaintSpec| -> Vec<(f64, f64)> {
         let mut scene = Scene::new();
         paint_margin_box(
             &mut scene,
-            Some(&doc),
+            &doc,
             spec,
-            0.0,
-            0.0,
-            200.0,
-            40.0,
-            None,
-            &mut Vec::new(),
-        );
-        scene
-    };
-    // Control: the same box in horizontal writing is drawn by the engine, once.
-    let _ = draw(&spec);
-    assert_eq!(doc.standalone_text_calls(), 1);
-    spec.vertical_writing = true;
-    let scene = draw(&spec);
-    assert_eq!(doc.standalone_text_calls(), 1, "no new engine result");
-    assert!(
-        scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
-        "parley still draws it"
-    );
-}
-
-#[test]
-fn a_vertical_ahem_margin_box_keeps_the_baseline_correction_of_the_parley_path() {
-    // The vertical box is drawn by parley even when the document has the
-    // engine, so it keeps the correction that path applies to Ahem.
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc".to_owned();
-    spec.font_family = "Ahem".to_owned();
-    spec.font_size = 10.0;
-    spec.vertical_writing = true;
-    let glyph_ys = |document: Option<&Document>| -> Vec<f64> {
-        let mut scene = Scene::new();
-        paint_margin_box(
-            &mut scene,
-            document,
-            &spec,
             0.0,
             0.0,
             200.0,
@@ -3542,14 +3477,19 @@ fn a_vertical_ahem_margin_box_keeps_the_baseline_correction_of_the_parley_path()
             .commands
             .iter()
             .filter_map(|command| match command {
-                RenderCommand::GlyphRun(run) => Some(run.transform.translation().y),
+                RenderCommand::GlyphRun(run) => Some(run.transform.translation()),
                 _ => None,
             })
+            .map(|origin| (origin.x, origin.y))
             .collect()
     };
-    let without = glyph_ys(None);
-    assert!(!without.is_empty());
-    assert_eq!(glyph_ys(Some(&doc)), without);
+    let horizontal = glyphs(&spec);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    spec.vertical_writing = true;
+    let vertical = glyphs(&spec);
+    assert_eq!(doc.standalone_text_calls(), 2, "the engine drew it");
+    assert!(!vertical.is_empty());
+    assert_eq!(vertical, horizontal);
 }
 
 #[test]
@@ -3582,13 +3522,7 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
         .dom
         .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let image = scene
@@ -3645,13 +3579,7 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
         .dom
         .canvas_fill_rect(canvas, 25, 50, 25, 50, [255, 255, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -3691,13 +3619,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     assert!(scene.commands.iter().any(|command| matches!(
@@ -3733,13 +3655,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
         .dom
         .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -3780,13 +3696,7 @@ fn canvas_object_fit_variants_all_paint() {
             .dom
             .canvas_fill_rect(canvas, 0, 0, 4, 2, [255, 0, 0, 255]);
         let cascade = raikiri_html::build_cascaded(&parsed);
-        raikiri_dom::layout_single_page(
-            &mut parsed.dom,
-            &cascade,
-            PageBox::A4,
-            parley::FontContext::new(),
-        )
-        .unwrap();
+        raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
         let mut scene = Scene::new();
         crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
         assert!(
@@ -3828,13 +3738,7 @@ fn canvas_hidden_overflow_clips_to_content_box() {
         .dom
         .canvas_fill_rect(canvas, 0, 0, 4, 4, [255, 0, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -3859,13 +3763,7 @@ fn canvas_zero_bitmap_size_paints_nothing() {
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     // Zero-size bitmap paints nothing but does not fall back to image error paths.
@@ -4233,12 +4131,11 @@ const FONT_DIR: &str = concat!(
     "/../raikiri-dom/tests/data/text-autospace"
 );
 
-/// Lay out and record a document with generated content, with the inline
-/// engine on or off. Both the parley context and the engine's layer hold Ahem.
+/// Lay out and record a document with generated content. The engine's
+/// layer holds Ahem.
 fn generated_scene(
     css: &str,
     build: impl FnOnce(&mut Document, usize),
-    inline_formatting: bool,
 ) -> (Document, CascadeResult, Scene, usize) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -4257,12 +4154,8 @@ fn generated_scene(
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let dir = std::path::Path::new(FONT_DIR);
-    if inline_formatting {
-        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    }
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
-    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    document.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
     (document, cascade, scene, div)
@@ -4283,25 +4176,24 @@ fn glyph_xs(scene: &Scene) -> Vec<f64> {
 #[test]
 fn the_text_after_a_generated_before_starts_after_its_advance() {
     // "AB " is 30px with its trailing space, so BODY starts at x = 30.
-    let (document, _, scene, _) = generated_scene(
-        r#"div::before { content: "AB " }"#,
-        |doc, div| {
+    let (document, _, scene, _) =
+        generated_scene(r#"div::before { content: "AB " }"#, |doc, div| {
             doc.append_text(div, "BODY");
-        },
-        true,
-    );
+        });
     assert_eq!(glyph_xs(&scene), [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
-    assert!(document.standalone_text_calls() > 0);
+    // The generated text is laid out in the div's paragraph, not drawn as a
+    // separately shaped overlay.
+    assert_eq!(document.standalone_text_calls(), 0);
 }
 
 #[test]
 fn a_generated_run_is_measured_with_the_document_font() {
     let (document, cascade, _, div) = generated_scene(
-        r#"div::before { content: "A" } div::after { content: "B " }"#,
+        // Out-of-flow pseudo-elements stay overlays measured by the painter.
+        r#"div::before { content: "A"; position: absolute } div::after { content: "B "; float: left }"#,
         |doc, div| {
             doc.append_text(div, "x");
         },
-        true,
     );
     let snapshots: Vec<CounterSnapshot> = Vec::new();
     let height = generated_pseudo_text_height(
@@ -4331,14 +4223,14 @@ fn list_fixture_with_engine() -> (Document, CascadeResult, usize) {
     );
     let dir = std::path::Path::new(FONT_DIR);
     let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-    document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    document.set_font_collection_with_limits(collection, shodo::limits::Limits::default());
     (document, cascade, first)
 }
 
 #[test]
 fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
     // The marker text is "1. " (three glyphs, the last one a space). Its width
-    // is 20 (the trailing space is left out, as parley does), so an outside
+    // is 20 (the trailing space is left out of the width), so an outside
     // marker starts at 0 + 0 - 20 - 4 = -24: glyphs at -24, -14 and -4.
     let (document, cascade, first) = list_fixture_with_engine();
     let mut scene = Scene::new();

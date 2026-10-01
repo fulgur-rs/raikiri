@@ -7,7 +7,6 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
-use parley::FontContext;
 use raikiri_dom::FontFaceLoader;
 use raikiri_style::{
     CascadeResult,
@@ -428,17 +427,23 @@ impl ResourceLimits {
 /// cache and policy isolation; the process-wide decode and retained budgets
 /// stay shared because they bound the process, not one security context.
 ///
-/// `FontContext::new()` is retained as the default for compatibility with the
-/// existing consumer behavior. For deterministic rendering, supply a context
-/// built with [`crate::FontContextBuilder`], which disables system font discovery
-/// by default and applies bundled fonts in a stable fallback order.
+/// # Fonts
+///
+/// Text is laid out with the installed fonts
+/// ([`raikiri_dom::system_font_collection`]) unless a font set is given with
+/// [`fonts`](Self::fonts). Paragraphs are only built on several threads with
+/// a font set built from bundled fonts only. For deterministic rendering,
+/// build the fonts with [`crate::FontCollectionBuilder`], which disables
+/// system font discovery by default and applies bundled fonts in a stable
+/// fallback order.
 #[derive(Clone)]
 pub struct RenderResources<'a> {
     extra_stylesheets: Vec<String>,
     network: Option<&'a dyn NetworkProvider>,
     policy: Option<&'a dyn ResourcePolicy>,
     base_url: Option<Url>,
-    font_context: FontContext,
+    font_collection: Option<shodo::font::FontCollection>,
+    font_collection_bundled_only: bool,
     resolver: Option<&'a (dyn ReplacedResolver + Send + Sync)>,
     image_pixel_source: Option<&'a (dyn ImagePixelSource + Send + Sync)>,
     render_limits: RenderLimits,
@@ -456,7 +461,7 @@ impl fmt::Debug for RenderResources<'_> {
             .field("has_network_provider", &self.network.is_some())
             .field("has_network_policy", &self.policy.is_some())
             .field("base_url", &self.base_url)
-            .field("has_font_context", &true)
+            .field("has_font_collection", &self.font_collection.is_some())
             .field("has_replaced_resolver", &self.resolver.is_some())
             .field("has_image_pixel_source", &self.image_pixel_source.is_some())
             .field("render_limits", &self.render_limits)
@@ -481,7 +486,8 @@ impl<'a> RenderResources<'a> {
             network: None,
             policy: None,
             base_url: None,
-            font_context: FontContext::new(),
+            font_collection: None,
+            font_collection_bundled_only: false,
             resolver: None,
             image_pixel_source: None,
             render_limits: RenderLimits::default(),
@@ -554,10 +560,31 @@ impl<'a> RenderResources<'a> {
         self
     }
 
-    /// Use a caller-built font context for layout and paint.
-    pub fn font_context(mut self, font_context: FontContext) -> Self {
-        self.font_context = font_context;
+    /// Use a font set built from bundled fonts for layout and paint.
+    pub fn fonts(mut self, fonts: crate::RenderFonts) -> Self {
+        self.font_collection_bundled_only = fonts.is_bundled_only();
+        self.font_collection = Some(fonts.into_collection());
         self
+    }
+
+    /// The font layer text is laid out with: the layer of the font set given
+    /// to [`fonts`](Self::fonts), or the process-wide layer of the installed
+    /// fonts ([`raikiri_dom::system_font_collection`]).
+    pub fn inline_engine_fonts(&self) -> shodo::font::FontCollection {
+        self.font_collection
+            .clone()
+            .unwrap_or_else(raikiri_dom::system_font_collection)
+    }
+
+    /// Whether paragraphs may be built on several threads: the font set was
+    /// built from bundled fonts only.
+    ///
+    /// The layer of the installed fonts loads a face the first time a lookup
+    /// selects it, so which face a fallback lands on could depend on the order
+    /// in which threads ask; with bundled fonts only, every face is loaded
+    /// up front.
+    pub fn inline_engine_parallel_build(&self) -> bool {
+        self.font_collection_bundled_only
     }
 
     /// Set the limits used when parsing HTML.
@@ -607,9 +634,10 @@ impl<'a> RenderResources<'a> {
         self
     }
 
-    /// The prepared font context used as the baseline for layout passes.
-    pub fn font_context_ref(&self) -> &FontContext {
-        &self.font_context
+    /// The font layer given with [`fonts`](Self::fonts); `None` when text is
+    /// laid out with the installed fonts.
+    pub fn font_collection_ref(&self) -> Option<&shodo::font::FontCollection> {
+        self.font_collection.as_ref()
     }
 
     /// The combined configured image source and CSS background cache for painting.
@@ -643,10 +671,6 @@ impl<'a> RenderResources<'a> {
 
     pub(crate) fn fallback_base_url(&self) -> Option<&Url> {
         self.base_url.as_ref()
-    }
-
-    pub(crate) fn clone_font_context(&self) -> FontContext {
-        self.font_context.clone()
     }
 
     pub(crate) fn policy(&self) -> Option<&dyn ResourcePolicy> {
@@ -1835,6 +1859,12 @@ pub(crate) struct NetworkFontFaceLoader<'a> {
     network: Option<&'a dyn NetworkProvider>,
     base_url: Option<&'a Url>,
     warnings: SharedRenderWarnings,
+    /// The outcome of every source loaded so far, failures included. One
+    /// layout reads each `@font-face` source several times (once per
+    /// cascade, and once more for the inline engine's font layer); without
+    /// this every read would fetch again, spend the aggregate budget again,
+    /// and repeat its warning.
+    loaded: Mutex<HashMap<Url, Option<Vec<u8>>>>,
 }
 
 impl<'a> NetworkFontFaceLoader<'a> {
@@ -1847,6 +1877,7 @@ impl<'a> NetworkFontFaceLoader<'a> {
             network,
             base_url,
             warnings,
+            loaded: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -1871,13 +1902,28 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
             );
             return None;
         };
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(outcome) = loaded.get(&url) {
+            return outcome.clone();
+        }
+        let outcome = self.fetch_uncached(&url);
+        loaded.insert(url, outcome.clone());
+        outcome
+    }
+}
+
+impl NetworkFontFaceLoader<'_> {
+    fn fetch_uncached(&self, url: &Url) -> Option<Vec<u8>> {
         let Some(network) = self.network else {
             push_resource_warning(
                 &self.warnings,
                 RenderWarning {
                     kind: WarningKind::ResourceFallback {
                         kind: ResourceKind::Font,
-                        url: Some(redacted_url(&url)),
+                        url: Some(redacted_url(url)),
                     },
                     node_id: None,
                     details: "font-face source skipped because no network provider is configured"
@@ -1918,7 +1964,7 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
                     &self.warnings,
                     RenderWarning {
                         kind: WarningKind::NetworkFallback {
-                            url: redacted_url(&url),
+                            url: redacted_url(url),
                         },
                         node_id: None,
                         details: "font-face fetch failed; the family will use fallback fonts"

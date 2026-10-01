@@ -568,8 +568,8 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
 
 /// Cascaded state selected for the first page after verifying resolved Grid placement.
 ///
-/// `page_name` is the query name used to build `cascade`; `page_box` and
-/// `font_context` are the matching layout inputs. Callers rebuild these values
+/// `page_name` is the query name used to build `cascade`; `page_box` is the
+/// matching layout input. Callers rebuild these values
 /// in `recascade` when the resolved first in-flow box selects a different page.
 pub struct InitialPageContext {
     /// Named page used by the current first-page cascade, if any.
@@ -578,8 +578,6 @@ pub struct InitialPageContext {
     pub cascade: CascadeResult,
     /// Physical page dimensions derived from that cascade or caller defaults.
     pub page_box: PageBox,
-    /// Font context used when probing the first-page layout.
-    pub font_context: FontContext,
 }
 
 /// Failure while resolving the page context selected by the first placed Grid item.
@@ -634,7 +632,8 @@ impl<'a> InitialPageProbeResources<'a> {
 /// starts a document. When a document has both a named page and a Flex/Grid
 /// container, this helper probes placement, asks [`first_page_name`] for the
 /// resolved first box, and invokes `recascade` when that name differs from the
-/// current page query. Every probe uses the caller's replaced-resource resolver
+/// current page query. Every probe lays out a clone of `document`, with its
+/// fonts, and uses the caller's replaced-resource resolver
 /// and base URL so intrinsic sizes match the final layout. The operation is
 /// bounded so self-referential page-size changes fail explicitly. Documents
 /// without both features return their input state without a probe.
@@ -643,15 +642,13 @@ pub fn resolve_initial_page_context(
     page_name: Option<String>,
     cascade: CascadeResult,
     page_box: PageBox,
-    font_context: FontContext,
     resources: InitialPageProbeResources<'_>,
-    mut recascade: impl FnMut(Option<&str>) -> (CascadeResult, PageBox, FontContext),
+    mut recascade: impl FnMut(Option<&str>) -> (CascadeResult, PageBox),
 ) -> Result<InitialPageContext, InitialPageContextError> {
     let mut context = InitialPageContext {
         page_name,
         cascade,
         page_box,
-        font_context,
     };
     let has_named_page = context
         .cascade
@@ -679,17 +676,11 @@ pub fn resolve_initial_page_context(
                 &mut probe_document,
                 &context.cascade,
                 context.page_box,
-                context.font_context.clone(),
                 resolver,
                 resources.base_url,
             )
         } else {
-            layout_single_page(
-                &mut probe_document,
-                &context.cascade,
-                context.page_box,
-                context.font_context.clone(),
-            )
+            layout_single_page(&mut probe_document, &context.cascade, context.page_box)
         };
         probe_layout.map_err(InitialPageContextError::Layout)?;
         let resolved_name = first_page_name(&probe_document, &context.cascade);
@@ -698,10 +689,9 @@ pub fn resolve_initial_page_context(
         }
 
         context.page_name = resolved_name;
-        let (cascade, page_box, font_context) = recascade(context.page_name.as_deref());
+        let (cascade, page_box) = recascade(context.page_name.as_deref());
         context.cascade = cascade;
         context.page_box = page_box;
-        context.font_context = font_context;
     }
     // cov:ignore: an oscillating named-grid page query needs a self-referential page-size fixture; callers expose a structured terminal error.
     Err(InitialPageContextError::PageGeometryDidNotConverge {
