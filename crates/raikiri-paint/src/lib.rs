@@ -26,6 +26,7 @@ pub mod border;
     reason = "no caller until the paint walk dispatches ifc roots"
 )]
 mod ifc_text;
+mod standalone_text;
 mod text;
 mod transform;
 mod walk;

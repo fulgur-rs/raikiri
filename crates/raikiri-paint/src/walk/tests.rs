@@ -1463,6 +1463,7 @@ fn paint_margin_row(
     let mut warnings = Vec::new();
     paint_horizontal_margin_boxes(
         &mut scene,
+        None,
         specs,
         top,
         PageBox::A4.width,
@@ -3132,6 +3133,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut warnings = Vec::new();
     paint_margin_box(
         &mut scene,
+        None,
         &spec,
         0.0,
         0.0,
@@ -3149,6 +3151,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut unsupported_warnings = Vec::new();
     paint_margin_box(
         &mut unsupported_scene,
+        None,
         &unsupported,
         0.0,
         0.0,
@@ -4050,4 +4053,32 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &mut transparent_warnings,
     );
     assert!(!transparent_scene.commands.is_empty());
+}
+
+fn engine_document() -> Document {
+    let mut doc = Document::new();
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    ));
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
+    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    doc
+}
+
+#[test]
+fn a_margin_box_width_follows_the_document_font() {
+    // "serif" resolves to Ahem in the document layer (30px for "abc" at 10px);
+    // the system serif font is nowhere near that.
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.font_family = "serif".to_owned();
+    spec.font_size = 10.0;
+    assert_eq!(margin_box_text_width(Some(&doc), &spec), 30.0);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    // A vertical box is measured by the old path, never by the engine.
+    spec.vertical_writing = true;
+    let _ = margin_box_text_width(Some(&doc), &spec);
+    assert_eq!(doc.standalone_text_calls(), 1);
 }

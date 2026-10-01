@@ -1760,7 +1760,7 @@ fn generated_pseudo_text_advance(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_advance(&content, computed.font_size.px(), &family)
+    text::measure_margin_text_advance(Some(document), &content, computed.font_size.px(), &family)
 }
 
 fn generated_flow_height(
@@ -1874,7 +1874,7 @@ fn generated_pseudo_text_height(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_height(&content, computed.font_size.px(), &family)
+    text::measure_margin_text_height(Some(document), &content, computed.font_size.px(), &family)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1903,7 +1903,12 @@ fn paint_generated_pseudo(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    let advance = text::measure_margin_text_advance(&content, computed.font_size.px(), &family);
+    let advance = text::measure_margin_text_advance(
+        Some(document),
+        &content,
+        computed.font_size.px(),
+        &family,
+    );
     text::draw_margin_text(
         scene,
         &content,
@@ -2013,7 +2018,8 @@ fn paint_list_marker_with_snapshots(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    let marker_width = text::measure_margin_text(&content, computed.font_size.px(), &family);
+    let marker_width =
+        text::measure_margin_text(Some(document), &content, computed.font_size.px(), &family);
     if marker_width <= 0.0 {
         return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
     }
@@ -2442,6 +2448,7 @@ fn margin_box_spec(
 #[allow(clippy::too_many_arguments)]
 fn paint_margin_box(
     scene: &mut impl PaintScene,
+    document: Option<&Document>,
     spec: &MarginBoxPaintSpec,
     x: f32,
     y: f32,
@@ -2599,7 +2606,12 @@ fn paint_margin_box(
         let image_x = (x
             + spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
             + spec.padding[3]
-            + text::measure_margin_text(&spec.content, spec.font_size, &spec.font_family))
+            + text::measure_margin_text(
+                margin_box_document(document, spec),
+                &spec.content,
+                spec.font_size,
+                &spec.font_family,
+            ))
         .round();
         let image_rect = Rect::new(
             image_x as f64,
@@ -2670,8 +2682,27 @@ fn margin_box_margin_height(spec: &MarginBoxPaintSpec) -> f32 {
     spec.margin[0] + spec.margin[2]
 }
 
-fn margin_box_text_width(spec: &MarginBoxPaintSpec) -> f32 {
-    let measured = text::measure_margin_text(&spec.content, spec.font_size, &spec.font_family);
+/// `document` unless the box is vertical (the engine has no writing-mode
+/// mapping), in which case `None`: both its measurement and its drawing then
+/// stay on the parley path.
+fn margin_box_document<'a>(
+    document: Option<&'a Document>,
+    spec: &MarginBoxPaintSpec,
+) -> Option<&'a Document> {
+    if spec.vertical_writing {
+        None
+    } else {
+        document
+    }
+}
+
+fn margin_box_text_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
+    let measured = text::measure_margin_text(
+        margin_box_document(document, spec),
+        &spec.content,
+        spec.font_size,
+        &spec.font_family,
+    );
     // The bundled WPT Ahem face is loaded by the document shaping pass, but
     // the small intrinsic-measure helper owns a separate font context.  Use
     // Ahem's one-em-per-glyph advance as a deterministic fallback there.
@@ -2701,8 +2732,8 @@ fn margin_box_text_width(spec: &MarginBoxPaintSpec) -> f32 {
         .max(0.0)
 }
 
-fn margin_box_intrinsic_width(spec: &MarginBoxPaintSpec) -> f32 {
-    (margin_box_text_width(spec)
+fn margin_box_intrinsic_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
+    (margin_box_text_width(document, spec)
         + margin_box_border_width(spec)
         + margin_box_padding_width(spec)
         + margin_box_margin_width(spec))
@@ -2753,6 +2784,7 @@ fn margin_box_outer_height(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn paint_horizontal_margin_boxes(
     scene: &mut impl PaintScene,
+    document: Option<&Document>,
     specs: &[MarginBoxPaintSpec],
     top: bool,
     page_width: f32,
@@ -2801,7 +2833,7 @@ fn paint_horizontal_margin_boxes(
             if spec.width.is_some() {
                 0.0
             } else {
-                margin_box_intrinsic_width(spec)
+                margin_box_intrinsic_width(document, spec)
             }
         })
         .collect();
@@ -2897,6 +2929,7 @@ fn paint_horizontal_margin_boxes(
         };
         paint_margin_box(
             scene,
+            document,
             spec,
             paint_x,
             y,
@@ -2912,6 +2945,7 @@ fn paint_horizontal_margin_boxes(
 #[allow(clippy::too_many_arguments)]
 fn paint_vertical_margin_boxes(
     scene: &mut impl PaintScene,
+    document: Option<&Document>,
     specs: &[MarginBoxPaintSpec],
     left: bool,
     page_width: f32,
@@ -3053,6 +3087,7 @@ fn paint_vertical_margin_boxes(
         };
         paint_margin_box(
             scene,
+            document,
             spec,
             paint_x,
             paint_y,
@@ -3157,6 +3192,7 @@ pub(crate) fn paint_page_margin_boxes(
 
     paint_horizontal_margin_boxes(
         scene,
+        Some(document),
         &specs,
         true,
         page_box.width,
@@ -3167,6 +3203,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_horizontal_margin_boxes(
         scene,
+        Some(document),
         &specs,
         false,
         page_box.width,
@@ -3177,6 +3214,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
+        Some(document),
         &specs,
         true,
         page_box.width,
@@ -3187,6 +3225,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
+        Some(document),
         &specs,
         false,
         page_box.width,
@@ -3245,7 +3284,17 @@ pub(crate) fn paint_page_margin_boxes(
                 _ => y,
             }
         };
-        paint_margin_box(scene, spec, x, y, width, height, pixel_source, warnings);
+        paint_margin_box(
+            scene,
+            Some(document),
+            spec,
+            x,
+            y,
+            width,
+            height,
+            pixel_source,
+            warnings,
+        );
     }
 }
 
@@ -4457,8 +4506,12 @@ fn paint_document_impl(
                         .first()
                         .map(|family| family.as_str().to_string())
                         .unwrap_or_else(|| "serif".to_string());
-                    let collapsed_space =
-                        text::measure_margin_text_advance(" ", cv.font_size.px(), &family);
+                    let collapsed_space = text::measure_margin_text_advance(
+                        Some(document),
+                        " ",
+                        cv.font_size.px(),
+                        &family,
+                    );
                     let mut flow_advance = 0.0;
                     let mut saw_generated_inline = false;
                     let mut offsets = Vec::new();

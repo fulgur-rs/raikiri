@@ -21,7 +21,7 @@ use parley::{
     Glyph as ParleyGlyph, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
 };
 use peniko::{Color, Fill, Mix};
-use raikiri_dom::Node;
+use raikiri_dom::{Document, Node, StandaloneAlign};
 use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, HangingPunctuation, PositionValue, TextAlign,
     TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
@@ -705,9 +705,24 @@ pub(crate) fn draw_margin_text(
 /// Measure one-line generated margin text using the same font defaults as
 /// [`draw_margin_text`].  Replaced content such as an image can use the result
 /// as its inline origin without leaking URL syntax into the painted text.
-pub(crate) fn measure_margin_text(content: &str, font_size: f32, font_family: &str) -> f32 {
+pub(crate) fn measure_margin_text(
+    document: Option<&Document>,
+    content: &str,
+    font_size: f32,
+    font_family: &str,
+) -> f32 {
     if content.is_empty() {
         return 0.0;
+    }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        None,
+        StandaloneAlign::Start,
+    ) {
+        return shaped.width();
     }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
         font_size
@@ -734,9 +749,24 @@ pub(crate) fn measure_margin_text(content: &str, font_size: f32, font_family: &s
 /// A generated `::before` run is different: its trailing spaces are part of
 /// the inline advance consumed before `::after`, so use the line metrics'
 /// advance (which retains [`parley::LineMetrics::trailing_whitespace`]).
-pub(crate) fn measure_margin_text_advance(content: &str, font_size: f32, font_family: &str) -> f32 {
+pub(crate) fn measure_margin_text_advance(
+    document: Option<&Document>,
+    content: &str,
+    font_size: f32,
+    font_family: &str,
+) -> f32 {
     if content.is_empty() {
         return 0.0;
+    }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        None,
+        StandaloneAlign::Start,
+    ) {
+        return shaped.advance();
     }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
         font_size
@@ -764,9 +794,24 @@ pub(crate) fn measure_margin_text_advance(content: &str, font_size: f32, font_fa
 /// [`draw_margin_text`].  This is needed before an originating auto-height box
 /// is painted: generated content contributes to that box's used height even
 /// though the current arena has no synthetic child node for it.
-pub(crate) fn measure_margin_text_height(content: &str, font_size: f32, font_family: &str) -> f32 {
+pub(crate) fn measure_margin_text_height(
+    document: Option<&Document>,
+    content: &str,
+    font_size: f32,
+    font_family: &str,
+) -> f32 {
     if content.is_empty() {
         return 0.0;
+    }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        None,
+        StandaloneAlign::Start,
+    ) {
+        return shaped.height();
     }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
         font_size
@@ -1411,10 +1456,13 @@ mod tests {
 
     #[test]
     fn generated_text_measurements_handle_empty_and_nonfinite_inputs() {
-        assert_eq!(measure_margin_text_advance("", f32::NAN, "serif"), 0.0);
-        assert!(measure_margin_text_advance("A", f32::NAN, "serif") > 0.0);
-        assert_eq!(measure_margin_text_height("", f32::NAN, "serif"), 0.0);
-        assert!(measure_margin_text_height("A", f32::NAN, "serif") > 0.0);
+        assert_eq!(
+            measure_margin_text_advance(None, "", f32::NAN, "serif"),
+            0.0
+        );
+        assert!(measure_margin_text_advance(None, "A", f32::NAN, "serif") > 0.0);
+        assert_eq!(measure_margin_text_height(None, "", f32::NAN, "serif"), 0.0);
+        assert!(measure_margin_text_height(None, "A", f32::NAN, "serif") > 0.0);
     }
 
     #[test]
