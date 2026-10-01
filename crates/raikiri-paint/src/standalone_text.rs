@@ -56,7 +56,8 @@ pub(crate) fn draw(
     color: Color,
 ) {
     let transform = Affine::translate((f64::from(x), f64::from(y)));
-    for line in shaped.lines() {
+    for (index, line) in shaped.lines().iter().enumerate() {
+        let shift = shaped.hang_shift(index);
         for fragment in line.fragments() {
             let Fragment::GlyphRun(run) = fragment else {
                 continue;
@@ -71,7 +72,7 @@ pub(crate) fn draw(
                     let (gx, gy) = run.glyph_origin(index)?;
                     Some(AnyrenderGlyph {
                         id: glyph.id,
-                        x: gx,
+                        x: gx + shift,
                         y: gy + line.block_offset(),
                     })
                 })

@@ -48,6 +48,9 @@ pub enum StandaloneAlign {
 /// Lines of one shaped run.
 pub struct StandaloneText {
     lines: Vec<Line>,
+    /// Per line, how far its content moves right when its trailing blanks
+    /// hang instead of being aligned.
+    hang_shifts: Vec<f32>,
     width: f32,
     advance: f32,
     height: f32,
@@ -58,6 +61,17 @@ impl StandaloneText {
     /// `Line::block_offset` places each line below the first.
     pub fn lines(&self) -> &[Line] {
         &self.lines
+    }
+
+    /// How far the content of line `index` must move in the inline direction
+    /// to be aligned without its trailing blanks.
+    ///
+    /// shodo keeps the trailing blanks that fit on the last line and before a
+    /// forced break inside the aligned content, while parley hangs them
+    /// outside it: a right-aligned or centred `"ab "` would otherwise sit
+    /// (half) a space to the left of where parley puts it.
+    pub fn hang_shift(&self, index: usize) -> f32 {
+        self.hang_shifts.get(index).copied().unwrap_or(0.0)
     }
 
     /// Widest line without its trailing blanks (space, tab, U+00A0), the
@@ -197,14 +211,35 @@ impl Document {
         let lines = shape_lines(state, text, style, width, align)?;
         // shodo keeps the trailing spaces that fit on the last line and before
         // a forced break inside `inline_size`; parley's width leaves them out.
-        // The width is therefore taken from a copy without trailing blanks.
+        // The width and the alignment shift therefore use a copy without
+        // trailing blanks.
         let stripped = without_trailing_blanks(text);
-        let line_width = if stripped == text {
-            widest(&lines)
+        let ink_lines = if stripped == text {
+            None
         } else if stripped.is_empty() {
-            0.0
+            Some(Vec::new())
         } else {
-            widest(&shape_lines(state, &stripped, style, width, align)?)
+            Some(shape_lines(state, &stripped, style, width, align)?)
+        };
+        let line_width = widest(ink_lines.as_deref().unwrap_or(&lines));
+        // Start-like alignments put the content at the same place with or
+        // without its trailing blanks; the copy's lines pair with the text's
+        // lines by index (stripping only shortens line ends).
+        let factor = match align {
+            StandaloneAlign::End | StandaloneAlign::Right => 1.0,
+            StandaloneAlign::Center => 0.5,
+            StandaloneAlign::Start | StandaloneAlign::Left | StandaloneAlign::Justify => 0.0,
+        };
+        let hang_shifts = match &ink_lines {
+            Some(ink) if factor > 0.0 => lines
+                .iter()
+                .zip(ink.iter().map(Some).chain(std::iter::repeat(None)))
+                .map(|(line, ink)| {
+                    let ink_size = ink.map_or(0.0, Line::inline_size);
+                    (factor * (line.inline_size() - ink_size)).max(0.0)
+                })
+                .collect(),
+            _ => Vec::new(),
         };
         // `inline_size + hang_end` does not change when shodo retains a space.
         let advance = lines
@@ -214,6 +249,7 @@ impl Document {
         state.standalone_calls.fetch_add(1, Ordering::Relaxed);
         Some(StandaloneText {
             lines,
+            hang_shifts,
             width: line_width.max(0.0),
             advance: advance.max(0.0),
             height,

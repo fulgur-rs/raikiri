@@ -3379,6 +3379,179 @@ fn overflow_hidden_clip_min_edges_floor_outward() {
     );
 }
 
+fn engine_document() -> Document {
+    let mut doc = Document::new();
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    ));
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
+    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    doc
+}
+
+#[test]
+fn a_margin_box_width_follows_the_document_font() {
+    // "serif" resolves to Ahem in the document layer (30px for "abc" at 10px);
+    // the system serif font is nowhere near that.
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.font_family = "serif".to_owned();
+    spec.font_size = 10.0;
+    assert_eq!(margin_box_text_width(Some(&doc), &spec), 30.0);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    // A vertical box is measured by the old path, never by the engine.
+    spec.vertical_writing = true;
+    let _ = margin_box_text_width(Some(&doc), &spec);
+    assert_eq!(doc.standalone_text_calls(), 1);
+}
+
+struct NoImages;
+impl raikiri_traits::ImagePixelSource for NoImages {
+    fn get_decoded(&self, _url: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        None
+    }
+}
+
+/// `(x, y)` of the first glyph of each margin box text, left to right, and
+/// the number of engine results.
+fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    document.append_text(
+        style,
+        "@page { margin: 50px; \
+           @top-left { content: 'a'; font-family: Ahem; font-size: 10px } \
+           @top-right { content: 'a'; font-family: serif; font-size: 10px } }",
+    );
+    document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    ));
+    if inline_formatting {
+        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    }
+    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages);
+    let mut out = Vec::new();
+    for command in &scene.commands {
+        if let RenderCommand::GlyphRun(run) = command {
+            let origin = run.transform.translation();
+            if let Some(glyph) = run.glyphs.first() {
+                out.push((origin.x + f64::from(glyph.x), origin.y + f64::from(glyph.y)));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    (out, document.standalone_text_calls())
+}
+
+#[test]
+fn engine_margin_boxes_do_not_add_the_ahem_baseline_correction() {
+    let (boxes, _) = margin_box_glyph_ys(true);
+    assert_eq!(boxes.len(), 2, "one glyph run per margin box: {boxes:?}");
+    // Both boxes have the same height and the same resolved font, so the text
+    // sits at the same y whatever the family was called.
+    assert_eq!(boxes[0].1, boxes[1].1);
+    // The boxes are 10px tall at the top of the page: the baseline is the
+    // Ahem ascent, 8.
+    assert_eq!(boxes[0].1, 8.0);
+}
+
+#[test]
+fn margin_boxes_are_measured_and_drawn_by_the_engine() {
+    // Two boxes, each measured once for its width (`margin_box_text_width`)
+    // and drawn once: four results. The Ahem correction is decided with
+    // `standalone_text_eligible`, which shapes nothing.
+    let (_, calls) = margin_box_glyph_ys(true);
+    assert_eq!(calls, 4);
+    let (_, off_calls) = margin_box_glyph_ys(false);
+    assert_eq!(off_calls, 0);
+}
+
+#[test]
+fn a_vertical_writing_margin_box_stays_on_the_parley_path() {
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.font_family = "Ahem".to_owned();
+    spec.font_size = 10.0;
+    let draw = |spec: &MarginBoxPaintSpec| {
+        let mut scene = Scene::new();
+        paint_margin_box(
+            &mut scene,
+            Some(&doc),
+            spec,
+            0.0,
+            0.0,
+            200.0,
+            40.0,
+            None,
+            &mut Vec::new(),
+        );
+        scene
+    };
+    // Control: the same box in horizontal writing is drawn by the engine, once.
+    let _ = draw(&spec);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    spec.vertical_writing = true;
+    let scene = draw(&spec);
+    assert_eq!(doc.standalone_text_calls(), 1, "no new engine result");
+    assert!(
+        scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
+        "parley still draws it"
+    );
+}
+
+#[test]
+fn a_vertical_ahem_margin_box_keeps_the_baseline_correction_of_the_parley_path() {
+    // The vertical box is drawn by parley even when the document has the
+    // engine, so it keeps the correction that path applies to Ahem.
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.font_family = "Ahem".to_owned();
+    spec.font_size = 10.0;
+    spec.vertical_writing = true;
+    let glyph_ys = |document: Option<&Document>| -> Vec<f64> {
+        let mut scene = Scene::new();
+        paint_margin_box(
+            &mut scene,
+            document,
+            &spec,
+            0.0,
+            0.0,
+            200.0,
+            40.0,
+            None,
+            &mut Vec::new(),
+        );
+        scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::GlyphRun(run) => Some(run.transform.translation().y),
+                _ => None,
+            })
+            .collect()
+    };
+    let without = glyph_ys(None);
+    assert!(!without.is_empty());
+    assert_eq!(glyph_ys(Some(&doc)), without);
+}
+
 #[test]
 fn canvas_bitmap_paints_with_object_fit_fill() {
     let mut parsed = raikiri_html::parse(
@@ -4053,177 +4226,4 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &mut transparent_warnings,
     );
     assert!(!transparent_scene.commands.is_empty());
-}
-
-fn engine_document() -> Document {
-    let mut doc = Document::new();
-    let dir = std::path::Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../raikiri-dom/tests/data/text-autospace"
-    ));
-    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
-    doc.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    doc
-}
-
-#[test]
-fn a_margin_box_width_follows_the_document_font() {
-    // "serif" resolves to Ahem in the document layer (30px for "abc" at 10px);
-    // the system serif font is nowhere near that.
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc".to_owned();
-    spec.font_family = "serif".to_owned();
-    spec.font_size = 10.0;
-    assert_eq!(margin_box_text_width(Some(&doc), &spec), 30.0);
-    assert_eq!(doc.standalone_text_calls(), 1);
-    // A vertical box is measured by the old path, never by the engine.
-    spec.vertical_writing = true;
-    let _ = margin_box_text_width(Some(&doc), &spec);
-    assert_eq!(doc.standalone_text_calls(), 1);
-}
-
-struct NoImages;
-impl raikiri_traits::ImagePixelSource for NoImages {
-    fn get_decoded(&self, _url: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-        None
-    }
-}
-
-/// `(x, y)` of the first glyph of each margin box text, left to right, and
-/// the number of engine results.
-fn margin_box_glyph_ys(inline_formatting: bool) -> (Vec<(f64, f64)>, usize) {
-    let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
-    document.append_text(
-        style,
-        "@page { margin: 50px; \
-           @top-left { content: 'a'; font-family: Ahem; font-size: 10px } \
-           @top-right { content: 'a'; font-family: serif; font-size: 10px } }",
-    );
-    document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let rules = build_rule_tree(&document);
-    let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let dir = std::path::Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../raikiri-dom/tests/data/text-autospace"
-    ));
-    if inline_formatting {
-        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
-        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
-    }
-    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
-    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
-    let mut scene = Scene::new();
-    crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages);
-    let mut out = Vec::new();
-    for command in &scene.commands {
-        if let RenderCommand::GlyphRun(run) = command {
-            let origin = run.transform.translation();
-            if let Some(glyph) = run.glyphs.first() {
-                out.push((origin.x + f64::from(glyph.x), origin.y + f64::from(glyph.y)));
-            }
-        }
-    }
-    out.sort_by(|a, b| a.0.total_cmp(&b.0));
-    (out, document.standalone_text_calls())
-}
-
-#[test]
-fn engine_margin_boxes_do_not_add_the_ahem_baseline_correction() {
-    let (boxes, _) = margin_box_glyph_ys(true);
-    assert_eq!(boxes.len(), 2, "one glyph run per margin box: {boxes:?}");
-    // Both boxes have the same height and the same resolved font, so the text
-    // sits at the same y whatever the family was called.
-    assert_eq!(boxes[0].1, boxes[1].1);
-    // The boxes are 10px tall at the top of the page: the baseline is the
-    // Ahem ascent, 8.
-    assert_eq!(boxes[0].1, 8.0);
-}
-
-#[test]
-fn margin_boxes_are_measured_and_drawn_by_the_engine() {
-    // Two boxes, each measured once for its width (`margin_box_text_width`)
-    // and drawn once: four results. The Ahem correction is decided with
-    // `standalone_text_eligible`, which shapes nothing.
-    let (_, calls) = margin_box_glyph_ys(true);
-    assert_eq!(calls, 4);
-    let (_, off_calls) = margin_box_glyph_ys(false);
-    assert_eq!(off_calls, 0);
-}
-
-#[test]
-fn a_vertical_writing_margin_box_stays_on_the_parley_path() {
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc".to_owned();
-    spec.font_family = "Ahem".to_owned();
-    spec.font_size = 10.0;
-    let draw = |spec: &MarginBoxPaintSpec| {
-        let mut scene = Scene::new();
-        paint_margin_box(
-            &mut scene,
-            Some(&doc),
-            spec,
-            0.0,
-            0.0,
-            200.0,
-            40.0,
-            None,
-            &mut Vec::new(),
-        );
-        scene
-    };
-    // Control: the same box in horizontal writing is drawn by the engine, once.
-    let _ = draw(&spec);
-    assert_eq!(doc.standalone_text_calls(), 1);
-    spec.vertical_writing = true;
-    let scene = draw(&spec);
-    assert_eq!(doc.standalone_text_calls(), 1, "no new engine result");
-    assert!(
-        scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
-        "parley still draws it"
-    );
-}
-
-#[test]
-fn a_vertical_ahem_margin_box_keeps_the_baseline_correction_of_the_parley_path() {
-    // The vertical box is drawn by parley even when the document has the
-    // engine, so it keeps the correction that path applies to Ahem.
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc".to_owned();
-    spec.font_family = "Ahem".to_owned();
-    spec.font_size = 10.0;
-    spec.vertical_writing = true;
-    let glyph_ys = |document: Option<&Document>| -> Vec<f64> {
-        let mut scene = Scene::new();
-        paint_margin_box(
-            &mut scene,
-            document,
-            &spec,
-            0.0,
-            0.0,
-            200.0,
-            40.0,
-            None,
-            &mut Vec::new(),
-        );
-        scene
-            .commands
-            .iter()
-            .filter_map(|command| match command {
-                RenderCommand::GlyphRun(run) => Some(run.transform.translation().y),
-                _ => None,
-            })
-            .collect()
-    };
-    let without = glyph_ys(None);
-    assert!(!without.is_empty());
-    assert_eq!(glyph_ys(Some(&doc)), without);
 }

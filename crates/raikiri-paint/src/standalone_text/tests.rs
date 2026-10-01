@@ -246,3 +246,51 @@ fn a_second_line_is_drawn_one_line_below_the_first() {
     // Baselines at the ascent (8) of each 10px line.
     assert_eq!(glyph_positions(&scene), [(0.0, 8.0), (0.0, 18.0)]);
 }
+
+/// Glyph x positions of `content` drawn in a 100-wide box at x = 5.
+fn aligned_xs(doc: &Document, content: &str, align: parley::Alignment) -> Vec<f64> {
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text(
+        Some(doc),
+        &mut scene,
+        content,
+        5.0,
+        0.0,
+        100.0,
+        40.0,
+        Color::from_rgba8(0, 0, 0, 255),
+        10.0,
+        "Ahem",
+        align,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    glyph_positions(&scene)
+        .into_iter()
+        .map(|(x, _)| x)
+        .collect()
+}
+
+#[test]
+fn trailing_blanks_hang_when_the_text_is_aligned() {
+    // parley hangs trailing blanks outside the aligned content, so "ab " is
+    // placed like "ab" (right-aligned at 5 + 80, centred at 5 + 40) and its
+    // space glyph follows past the end.
+    let doc = engine_document();
+    assert_eq!(
+        aligned_xs(&doc, "ab ", parley::Alignment::Right),
+        [85.0, 95.0, 105.0]
+    );
+    assert_eq!(
+        aligned_xs(&doc, "ab ", parley::Alignment::Center),
+        [45.0, 55.0, 65.0]
+    );
+    // A line before a forced break hangs its blanks too; "b" is not moved.
+    assert_eq!(
+        aligned_xs(&doc, "a  \nb", parley::Alignment::End),
+        [95.0, 105.0, 115.0, 95.0]
+    );
+    assert_eq!(
+        aligned_xs(&doc, "ab ", parley::Alignment::Start),
+        [5.0, 15.0, 25.0]
+    );
+}
