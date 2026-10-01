@@ -664,3 +664,220 @@ fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one()
     );
     assert_eq!(moved[1], moved[0]);
 }
+
+/// Lay out `html > body > (spacer, root)` with a fixed-height root of Ahem
+/// text on 100px-wide pages, OFF and then ON, and return for each run the
+/// page count and the pages the root's first text has a fragment on.
+fn pages_of_a_fixed_height_paragraph(
+    text: &str,
+    root_css: &str,
+    spacer_height: f32,
+    page_height: f32,
+) -> Vec<(usize, Vec<u32>)> {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    let mut results = Vec::new();
+    for ifc in [false, true] {
+        let (mut doc, _cascade, root) = ahem_paragraph(text, root_css);
+        let body = doc.parent_of(root).expect("body");
+        let spacer = doc.append_element(
+            Some(body),
+            "div",
+            taffy::Style::default(),
+            Some(format!("display:block;height:{spacer_height}px").as_str()),
+        );
+        doc.nodes[body].children.retain(|&c| c != spacer);
+        doc.nodes[body].children.insert(0, spacer);
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = page_height;
+        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let text = doc.nodes[root].children[0];
+        let on_page: Vec<u32> = text_fragments(&doc, &cascade, page, &slices, text)
+            .iter()
+            .map(|(page_index, _)| *page_index)
+            .collect();
+        results.push((slices.len(), on_page));
+    }
+    results
+}
+
+#[test]
+fn a_paragraph_whose_first_line_overflows_the_page_moves_like_the_parley_one() {
+    // The 20px paragraph at y 10 ends at 30 > 25: it moves to page 1 as a unit.
+    let results = pages_of_a_fixed_height_paragraph(
+        "aaaa bbbb",
+        "width:40px;height:20px;orphans:1;widows:1",
+        10.0,
+        25.0,
+    );
+    assert_eq!(results[0], (2, vec![1]), "the parley path is the oracle");
+    assert_eq!(results[1], results[0]);
+}
+
+#[test]
+fn a_padded_paragraph_whose_first_line_overflows_moves_like_the_parley_one() {
+    // The root's border box (22px tall, it fits a 26px page) starts at 5 and
+    // its content box at 7: the lines end at 27 > 26 and the paragraph moves.
+    // Measured from the border box they would end at 25 and stay.
+    let results = pages_of_a_fixed_height_paragraph(
+        "aaaa bbbb",
+        "width:40px;height:20px;padding-top:2px;box-sizing:content-box;orphans:1;widows:1",
+        5.0,
+        26.0,
+    );
+    assert_eq!(results[0], (2, vec![1]), "the parley path is the oracle");
+    assert_eq!(results[1], results[0]);
+}
+
+/// `html > body > (15px spacer, root)`: the root holds `<span>aa </span>`
+/// on line 0 and a direct text "bbbb cccc" on lines 1 and 2 (Ahem 10px,
+/// width 40), so the direct text starts 10px below the content box. Returns,
+/// OFF and then ON, the text's line ranges per page.
+fn ranges_of_a_text_below_a_span(
+    page_height: f32,
+) -> Vec<Vec<(u32, Option<PageFragmentLineRange>)>> {
+    use crate::layout::test_support::{ahem_font_context, ahem_paragraph, ifc_ahem_fonts};
+    let mut results = Vec::new();
+    for ifc in [false, true] {
+        let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_text(span, "aa ");
+        let text = doc.append_text(root, "bbbb cccc");
+        let body = doc.parent_of(root).expect("body");
+        let spacer = doc.append_element(
+            Some(body),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:15px"),
+        );
+        doc.nodes[body].children.retain(|&c| c != spacer);
+        doc.nodes[body].children.insert(0, spacer);
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = page_height;
+        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        results.push(text_fragments(&doc, &cascade, page, &slices, text));
+    }
+    results
+}
+
+#[test]
+fn a_text_that_starts_on_a_later_line_is_checked_for_orphans_from_that_line() {
+    // The text's lines end at 35 and 45 on a 40px page: one line would be
+    // left behind, so orphans:2 moves the paragraph to page 1.
+    let results = ranges_of_a_text_below_a_span(40.0);
+    assert_eq!(
+        results[1],
+        [(1, Some(PageFragmentLineRange::new(0, 2)))],
+        "the ifc text moves with its paragraph"
+    );
+}
+
+#[test]
+fn a_text_that_starts_on_a_later_line_stays_when_its_lines_fit() {
+    // The text's lines end at 35 and 45 on a 46px page: both fit.
+    let results = ranges_of_a_text_below_a_span(46.0);
+    assert_eq!(
+        results[1],
+        [(0, Some(PageFragmentLineRange::new(0, 2)))],
+        "the ifc text stays on page 0"
+    );
+}
+
+/// `body > section(page:a) > (div(page:b) "x", root "aaaa", next "bbbb")`,
+/// OFF and then ON: the roots are not page candidates of their own, so the
+/// page change back to `a` is found at the first root's text. Returns the
+/// slices' page names and the pages the two roots' texts have fragments on.
+#[allow(clippy::type_complexity)]
+fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32>, Vec<u32>)> {
+    use crate::layout::ifc::test_support::{Fixture, block_fixture};
+    use crate::layout::test_support::{ahem_font_context, ifc_ahem_fonts};
+    let mut results = Vec::new();
+    for ifc in [false, true] {
+        let Fixture { mut doc, root, .. } =
+            block_fixture("line-height:10px;width:40px", |doc, root| {
+                doc.append_text(root, "aaaa");
+            });
+        let body = doc.parent_of(root).expect("body");
+        let section = doc.append_element(
+            Some(body),
+            "section",
+            taffy::Style::default(),
+            Some("display:block;page:a"),
+        );
+        let named = doc.append_element(
+            Some(section),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;page:b;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        doc.append_text(named, "x");
+        doc.detach_from_parent(root);
+        doc.append_child(section, root).expect("move the root");
+        let next = doc.append_element(
+            Some(section),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
+        );
+        doc.append_text(next, "bbbb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        assert_eq!(doc.nodes[next].is_ifc_root(), ifc);
+        let on_page = |id: usize| -> Vec<u32> {
+            text_fragments(&doc, &cascade, page, &slices, doc.nodes[id].children[0])
+                .iter()
+                .map(|(page_index, _)| *page_index)
+                .collect()
+        };
+        results.push((
+            slices.iter().map(|s| s.page_name.clone()).collect(),
+            on_page(root),
+            on_page(next),
+        ));
+    }
+    results
+}
+
+#[test]
+fn a_paragraph_whose_text_changes_the_page_name_moves_like_the_parley_one() {
+    let results = pages_of_a_paragraph_after_a_named_box();
+    assert_eq!(
+        results[0],
+        (
+            vec![Some("b".to_owned()), Some("a".to_owned())],
+            vec![1],
+            vec![1]
+        ),
+        "the parley path is the oracle"
+    );
+    assert_eq!(results[1], results[0]);
+}

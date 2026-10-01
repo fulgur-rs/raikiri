@@ -5,6 +5,7 @@ use super::projection::{box_kind, project_ifc};
 use super::root::IfcRoot;
 use super::style;
 use crate::Document;
+use crate::layout::page_pipeline::{page_break_is_forced, selected_page_name};
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
@@ -267,6 +268,15 @@ fn has_visible_text(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool
 }
 
 /// Clear every IFC mark, then mark the eligible roots and their subtrees.
+/// A box that pagination may break before or after on its own: one with a
+/// forced page break or a page name.
+fn starts_a_page_of_its_own(cascade: &CascadeResult, id: usize) -> bool {
+    let computed = &cascade.computed[id];
+    page_break_is_forced(computed.break_before)
+        || page_break_is_forced(computed.break_after)
+        || selected_page_name(cascade, id).is_some()
+}
+
 pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
     for node in &mut doc.nodes {
         node.flags
@@ -332,6 +342,15 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
             continue;
         };
         if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
+            continue;
+        }
+        // Pagination may move a box with a forced page break or a page name
+        // on its own, and the lines around it would not follow.
+        if projected
+            .boxes
+            .iter()
+            .any(|b| starts_a_page_of_its_own(cascade, b.node))
+        {
             continue;
         }
         let has_own_floats = projected.boxes.iter().any(|b| b.kind == IfcBoxKind::Float);

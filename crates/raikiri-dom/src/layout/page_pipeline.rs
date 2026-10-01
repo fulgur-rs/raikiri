@@ -932,7 +932,7 @@ fn finite_nonnegative(value: f32) -> f32 {
     }
 }
 
-fn page_break_is_forced(value: BreakBetween) -> bool {
+pub(super) fn page_break_is_forced(value: BreakBetween) -> bool {
     matches!(value, BreakBetween::Page)
 }
 
@@ -1346,6 +1346,10 @@ pub fn layout_pages_with_page_geometry(
         /// An inline canvas with a named page is a boundary marker, but its
         /// inline-level box does not itself establish the named page type.
         inline_named_page: bool,
+        /// For a text node of an ifc paragraph: the paragraph root and the
+        /// text's offset below the root's border-box top. The root's lines
+        /// are painted from the root, so the text moves by moving the root.
+        ifc_root: Option<(usize, f32)>,
     }
 
     fn has_nested_named_page_descendant(
@@ -1419,10 +1423,34 @@ pub fn layout_pages_with_page_geometry(
                         crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
                     )
                 {
+                    // A text node of an ifc paragraph has no layout of its own:
+                    // it stands for the lines it owns, measured from the root's
+                    // content box. Only a direct child of the root gets here
+                    // (inline elements below the root return before their
+                    // children), so `parent_abs_y` is the root's border-box y.
+                    let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
+                        Some(owned) if document.parent_of(node_id) == Some(owned.root) => {
+                            let root_layout = document.nodes[owned.root].unrounded_layout;
+                            let first_top = owned.lines.first().map_or(0.0, |l| l.top);
+                            let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
+                            let offset =
+                                root_layout.border.top + root_layout.padding.top + first_top;
+                            (
+                                parent_abs_y + offset,
+                                (last_bottom - first_top).max(0.0),
+                                Some((owned.root, offset)),
+                            )
+                        }
+                        _ => (
+                            parent_abs_y + node.unrounded_layout.location.y,
+                            node.unrounded_layout.size.height.max(0.0),
+                            None,
+                        ),
+                    };
                     out.push(PageCandidate {
                         node_id,
-                        raw_y: parent_abs_y + node.unrounded_layout.location.y,
-                        height: node.unrounded_layout.size.height.max(0.0),
+                        raw_y,
+                        height,
                         is_text: true,
                         is_direct_body_text: direct_body_child,
                         is_direct_body_element: false,
@@ -1434,6 +1462,7 @@ pub fn layout_pages_with_page_geometry(
                         page_name: inherited_page_name,
                         deferred_named_break_after: false,
                         inline_named_page: false,
+                        ifc_root,
                     });
                 }
             }
@@ -1565,6 +1594,7 @@ pub fn layout_pages_with_page_geometry(
                         page_name: page_name.clone(),
                         deferred_named_break_after,
                         inline_named_page,
+                        ifc_root: None,
                     });
                 }
                 let child_is_direct_body = node_id == body_id;
@@ -1787,6 +1817,9 @@ pub fn layout_pages_with_page_geometry(
                     }
                 }
             }
+            if let Some((ifc_root, offset)) = candidate.ifc_root {
+                materialize_y(document, ifc_root, effective_y - offset, &parent_of);
+            }
             materialize_y(document, node_id, effective_y, &parent_of);
             let named_page_change = saw_child
                 && height > 0.0
@@ -1812,7 +1845,10 @@ pub fn layout_pages_with_page_geometry(
                     let node_delta = target_y - effective_y;
                     let shift_delta = target_y - effective_y;
                     if node_delta.is_finite() && shift_delta.is_finite() {
-                        document.nodes[node_id].unrounded_layout.location.y += node_delta;
+                        // The text of an ifc paragraph is painted from its
+                        // root, so the root carries the movement.
+                        let moved = candidate.ifc_root.map_or(node_id, |(root, _)| root);
+                        document.nodes[moved].unrounded_layout.location.y += node_delta;
                         flow_shift += shift_delta;
                         effective_y += shift_delta;
                     }

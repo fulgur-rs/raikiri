@@ -1010,3 +1010,32 @@ fn a_paragraph_with_generated_text_stays_on_the_parley_path() {
     assign(&mut fixture);
     assert!(!is_root(&fixture, fixture.root));
 }
+
+/// `aa <div css>bb</div> cc`: a block child inside the paragraph.
+fn with_block_child(css: &'static str) -> impl FnOnce(&mut crate::Document, usize) {
+    move |doc, root| {
+        doc.append_text(root, "aa ");
+        let block = doc.append_element(Some(root), "div", taffy::Style::default(), Some(css));
+        doc.append_text(block, "bb");
+        doc.append_text(root, " cc");
+    }
+}
+
+#[test]
+fn a_block_child_with_a_forced_page_break_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", with_block_child("display:block;break-before:page"));
+    assert_stays_on_parley("", with_block_child("display:block;break-after:page"));
+}
+
+#[test]
+fn a_box_with_a_named_page_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", with_block_child("display:block;page:chapter"));
+}
+
+#[test]
+fn a_block_child_without_a_page_break_is_still_a_root() {
+    let mut fixture = block_fixture("", with_block_child("display:block"));
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
