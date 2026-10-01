@@ -206,8 +206,15 @@ fn push_generated(
 pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Option<IfcBoxKind> {
     let cv = cascade.computed.get(id)?;
     let node = doc.get_node(id)?;
-    if node.kind() != NodeKind::Element {
+    if node.kind() != NodeKind::Element
+        || matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+    {
         return None;
+    }
+    // An absolutely positioned or fixed box is out of flow whatever its
+    // display and float (CSS 2.1 9.7: its float computes to none).
+    if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
+        return Some(IfcBoxKind::OutOfFlow);
     }
     // Logical float sides are not mapped to physical ones: the box is laid
     // out as not floated, as the taffy bridge maps it.
@@ -253,48 +260,6 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
         return Some(IfcBoxKind::Block);
     }
     None
-}
-
-/// A float the inline engine can place: in normal position or relatively
-/// positioned. A float's logical `clear` sides are mapped to none, as the
-/// taffy bridge maps them.
-fn supported_float(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
-    // A relatively positioned float is placed as a float and drawn offset
-    // from that place by the painter, as a block box is.
-    if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
-        return Err(IfcError::Unsupported {
-            node,
-            reason: "positioned floats are not placed yet",
-        });
-    }
-    Ok(())
-}
-
-/// An atomic inline the inline engine can place: in normal position, or
-/// relatively positioned (it keeps its place on the line and is drawn offset
-/// from it).
-fn supported_atomic(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
-    if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
-        return Err(IfcError::Unsupported {
-            node,
-            reason: "positioned atomic inlines are not placed yet",
-        });
-    }
-    Ok(())
-}
-
-/// A block child the inline engine can place between lines: in normal
-/// position. Its vertical margins collapse with those of the block children
-/// next to it and are added to the lines around it; `clear` moves it below
-/// the floats it clears.
-fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
-    if cv.position != PositionValue::Static && !style::is_inert_relative(cv) {
-        return Err(IfcError::Unsupported {
-            node,
-            reason: "positioned blocks are not placed yet",
-        });
-    }
-    Ok(())
 }
 
 /// A physical `clear` side; `None` for `none` and the logical sides, which
@@ -640,8 +605,18 @@ pub(crate) fn project_ifc_builder_with(
                 // A box inside an inline element is laid out relative to the
                 // root like any other box of the paragraph; readers find its
                 // layout parent with `Document::layout_parent_of`.
+                if box_kind(cascade, doc, id) == Some(IfcBoxKind::OutOfFlow) {
+                    builder.push_out_of_flow(NodeId(id as u64), OutOfFlowKind::Absolute);
+                    boxes.push(IfcBox {
+                        node: id,
+                        kind: IfcBoxKind::OutOfFlow,
+                    });
+                    if let Some(error) = builder.error() {
+                        return Err(IfcError::Limit(error));
+                    }
+                    continue;
+                }
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Float) {
-                    supported_float(cv, id)?;
                     builder.push_out_of_flow(NodeId(id as u64), OutOfFlowKind::Float);
                     boxes.push(IfcBox {
                         node: id,
@@ -653,7 +628,6 @@ pub(crate) fn project_ifc_builder_with(
                     continue;
                 }
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
-                    supported_atomic(cv, id)?;
                     let atomic_style = styled(doc, cascade, cv, id, fonts)?;
                     // shodo sizes an atomic from `AtomicSize` alone, margins
                     // included; the edges are not read for atomics.
@@ -671,7 +645,6 @@ pub(crate) fn project_ifc_builder_with(
                 // it (CSS 2.1 9.2.1.1): the lines before and after it are the
                 // element's, the block sits between them.
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Block) {
-                    supported_block(cv, id)?;
                     builder.push_block_in_inline(NodeId(id as u64));
                     boxes.push(IfcBox {
                         node: id,
@@ -681,9 +654,6 @@ pub(crate) fn project_ifc_builder_with(
                         return Err(IfcError::Limit(error));
                     }
                     continue;
-                }
-                if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
-                    return Err(unsupported("positioned inline boxes are not supported yet"));
                 }
                 if cv.display != DisplayValue::Inline {
                     return Err(unsupported("only inline-level boxes are projected"));

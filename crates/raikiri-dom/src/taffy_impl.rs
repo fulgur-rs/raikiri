@@ -545,6 +545,9 @@ fn compute_ifc_root(
         size
     });
     output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
+    if inputs.run_mode == RunMode::PerformLayout {
+        crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size);
+    }
     // When `min-height` gives the used height, the last child's bottom margin
     // no longer adjoins the box's bottom edge and does not collapse through
     // it (CSS 2.1 8.3.1), as taffy's block algorithm decides.

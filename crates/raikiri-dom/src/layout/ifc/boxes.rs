@@ -30,6 +30,9 @@ pub(crate) enum IfcBoxKind {
     /// A block child of the root: it ends the line before it, and the lines
     /// after it start below it.
     Block,
+    /// An absolutely positioned (or fixed) box: it takes no room on the
+    /// lines and is placed against the root once they are final.
+    OutOfFlow,
 }
 
 /// A float met while laying out the current line. It is not in the context
@@ -737,9 +740,12 @@ fn layout_block_child(
         (top, (top + output.size.height, bottom_set))
     };
     if perform {
+        // A relatively positioned block is moved from its place by its
+        // offsets, which taffy carries in the layout location.
+        let (dx, dy) = relative_inset(tree, node, geometry.width);
         let location = taffy::Point {
-            x: geometry.edges.0 + margin.left,
-            y: geometry.top_edge + top,
+            x: geometry.edges.0 + margin.left + dx,
+            y: geometry.top_edge + top + dy,
         };
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
@@ -870,9 +876,10 @@ fn layout_formatting_context_child(
     };
     let top = position.y - geometry.top_edge;
     if perform {
+        let (dx, dy) = relative_inset(tree, node, geometry.width);
         let location = taffy::Point {
-            x: position.x + extra_left,
-            y: position.y,
+            x: position.x + extra_left + dx,
+            y: position.y + dy,
         };
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
@@ -1068,6 +1075,150 @@ pub(crate) fn commit_child_layout(
     tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
 }
 
+/// Place the absolutely positioned and fixed boxes of the paragraph rooted at
+/// `idx`, once its lines are final and its border box is `border_box`, the
+/// way taffy's block algorithm places the positioned children of a block
+/// (CSS 2.1 10.3.7, 10.6.4): against the root's padding box, an `auto` inset
+/// pair taking the static position. That position is where the box's anchor
+/// sits in the lines: at the anchor for a box that was inline-level, below
+/// the anchor's line for one that was block-level (as if it were a block
+/// there), and below the last line when it has no anchor.
+pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Size<f32>) {
+    use taffy::util::MaybeResolve;
+    let Some(root) = tree.nodes[idx].ifc.as_ref() else {
+        return;
+    };
+    let positioned: Vec<usize> = root
+        .boxes
+        .iter()
+        .filter(|b| b.kind == IfcBoxKind::OutOfFlow)
+        .map(|b| b.node)
+        .collect();
+    if positioned.is_empty() {
+        return;
+    }
+    let rtl = root.rtl;
+    let Some(lines) = root.lines.clone() else {
+        return;
+    };
+    let style = &tree.nodes[idx].style;
+    let border = style
+        .border
+        .resolve_or_zero(Some(border_box.width), resolve_calc);
+    let padding = style
+        .padding
+        .resolve_or_zero(Some(border_box.width), resolve_calc);
+    // The containing block: the root's padding box.
+    let cb_width = (border_box.width - border.left - border.right).max(0.0);
+    let cb_height = (border_box.height - border.top - border.bottom).max(0.0);
+    let content_left = border.left + padding.left;
+    let content_top = border.top + padding.top;
+    for node in positioned {
+        let anchor = lines.lines.iter().enumerate().find_map(|(index, line)| {
+            line.fragments().find_map(|fragment| match fragment {
+                shodo::Fragment::OutOfFlowAnchor(anchor) if anchor.node.0 as usize == node => {
+                    Some((index, anchor.inline_position))
+                }
+                _ => None,
+            })
+        });
+        let inline_level = matches!(
+            tree.nodes[node].display,
+            raikiri_style::property::DisplayValue::Inline
+                | raikiri_style::property::DisplayValue::InlineBlock
+                | raikiri_style::property::DisplayValue::InlineFlex
+                | raikiri_style::property::DisplayValue::InlineGrid
+                | raikiri_style::property::DisplayValue::InlineTable
+        );
+        let (static_x, static_y) = match anchor {
+            Some((index, position)) => {
+                let line = &lines.lines[index];
+                let top = content_top + lines.line_top(index);
+                if inline_level {
+                    let x = if rtl {
+                        lines.width - position
+                    } else {
+                        position
+                    };
+                    (content_left + x, top)
+                } else {
+                    (content_left, top + line.block_size())
+                }
+            }
+            None => (content_left, content_top + lines.height),
+        };
+        let child = &tree.nodes[node].style;
+        let margin = child.margin.map(|margin| {
+            margin
+                .resolve_to_option(cb_width, resolve_calc)
+                .unwrap_or(0.0)
+        });
+        let horizontal =
+            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb_width), resolve_calc);
+        let vertical =
+            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb_height), resolve_calc);
+        let (left, right) = (horizontal(child.inset.left), horizontal(child.inset.right));
+        let (top, bottom) = (vertical(child.inset.top), vertical(child.inset.bottom));
+        let width = used_block_width(tree, node, cb_width).or(match (left, right) {
+            (Some(left), Some(right)) => {
+                Some((cb_width - left - right - margin.left - margin.right).max(0.0))
+            }
+            _ => None,
+        });
+        let height = tree.nodes[node]
+            .style
+            .size
+            .height
+            .maybe_resolve(Some(cb_height), resolve_calc)
+            .or(match (top, bottom) {
+                (Some(top), Some(bottom)) => {
+                    Some((cb_height - top - bottom - margin.top - margin.bottom).max(0.0))
+                }
+                _ => None,
+            });
+        let available =
+            (cb_width - margin.left - margin.right - left.unwrap_or(0.0) - right.unwrap_or(0.0))
+                .max(0.0);
+        let output = tree.compute_child_layout(
+            taffy::NodeId::from(node),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::ContentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size { width, height },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                parent_size: Size {
+                    width: Some(cb_width),
+                    height: Some(cb_height),
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(available),
+                    height: AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
+            },
+        );
+        let x = match (left, right) {
+            (Some(left), _) => border.left + left + margin.left,
+            (None, Some(right)) => {
+                border.left + cb_width - right - output.size.width - margin.right
+            }
+            (None, None) => static_x + margin.left,
+        };
+        let y = match (top, bottom) {
+            (Some(top), _) => border.top + top + margin.top,
+            (None, Some(bottom)) => {
+                border.top + cb_height - bottom - output.size.height - margin.bottom
+            }
+            (None, None) => static_y + margin.top,
+        };
+        commit_child_layout(tree, node, &output, taffy::Point { x, y }, cb_width);
+    }
+}
+
 /// Intrinsic widths of the root's boxes.
 pub(crate) struct BoxIntrinsics {
     /// What the engine takes for atomic inlines and floats.
@@ -1124,6 +1275,8 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
                     },
                 );
             }
+            // Out of flow: no part of the paragraph's widths.
+            IfcBoxKind::OutOfFlow => {}
             IfcBoxKind::Block => {
                 let margin = resolved_margins(tree, b.node, basis);
                 let (min_content, max_content) =

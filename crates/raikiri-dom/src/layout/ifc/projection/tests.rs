@@ -83,23 +83,6 @@ fn display_none_children_are_skipped() {
 }
 
 #[test]
-fn constructs_the_inline_path_cannot_place_yet_are_rejected() {
-    let cases: [(&str, &str); 1] = [("absolute", "display:inline;position:absolute")];
-    for (name, style) in cases {
-        let fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "aa");
-            let child = span(doc, root, style);
-            doc.append_text(child, "bb");
-        });
-        let error = project(&fixture).expect_err(name);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{name}: {error}"
-        );
-    }
-}
-
-#[test]
 fn an_inline_block_is_recorded_as_an_atomic_box() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
@@ -172,23 +155,31 @@ fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
 }
 
 #[test]
-fn atomics_that_are_not_placed_yet_stay_unsupported() {
+fn positioned_boxes_of_every_kind_are_out_of_flow_boxes() {
+    // An absolutely positioned or fixed box takes no room on the lines,
+    // whatever its display and float (CSS 2.1 9.7).
     for (tag, css) in [
         (
             "span",
             "display:inline-block;vertical-align:middle;position:absolute",
         ),
         ("img", "display:inline;position:fixed"),
+        ("span", "display:inline;position:absolute"),
+        ("span", "display:block;position:absolute"),
+        ("span", "display:block;float:left;position:absolute"),
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
             doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
         });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{tag} {css}: {error}"
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{tag} {css}");
+        assert_eq!(
+            projected.boxes[0].kind,
+            IfcBoxKind::OutOfFlow,
+            "{tag} {css}"
         );
+        assert_eq!(line_texts(&projected, 500.0), ["aa"], "{tag} {css}");
     }
 }
 
@@ -392,21 +383,6 @@ fn a_float_child_is_recorded_as_a_box_and_anchored() {
 }
 
 #[test]
-fn unsupported_floats_stay_unsupported() {
-    let css = "display:block;float:left;position:absolute";
-    let fixture = block_fixture("", |doc, root| {
-        doc.append_text(root, "aa ");
-        let float = span(doc, root, css);
-        doc.append_text(float, "ff");
-    });
-    let error = project(&fixture).expect_err(css);
-    assert!(
-        matches!(error, IfcError::Unsupported { .. }),
-        "{css}: {error}"
-    );
-}
-
-#[test]
 fn a_block_child_is_recorded_as_a_block_box() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
@@ -438,45 +414,6 @@ fn a_block_child_with_vertical_margins_is_a_box_of_the_paragraph() {
         assert_eq!(projected.boxes.len(), 1, "{css}");
         assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
     }
-}
-
-#[test]
-fn blocks_that_are_not_placed_yet_stay_unsupported() {
-    for (name, css, nested) in [
-        (
-            "positioned",
-            "display:block;position:relative;top:3px",
-            false,
-        ),
-        ("absolute", "display:block;position:absolute", false),
-    ] {
-        let fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "aa");
-            let parent = if nested {
-                span(doc, root, "display:inline")
-            } else {
-                root
-            };
-            let block = span(doc, parent, css);
-            doc.append_text(block, "bb");
-        });
-        let error = project(&fixture).expect_err(name);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{name}: {error}"
-        );
-    }
-}
-
-#[test]
-fn an_absolutely_positioned_child_is_still_unsupported() {
-    let fixture = block_fixture("", |doc, root| {
-        doc.append_text(root, "aa ");
-        let child = span(doc, root, "display:block;position:absolute;top:0");
-        doc.append_text(child, "bb");
-    });
-    let error = project(&fixture).expect_err("abspos");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
 }
 
 #[test]
@@ -558,23 +495,23 @@ fn a_relative_block_child_with_no_offset_is_accepted() {
 }
 
 #[test]
-fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_rejected() {
+fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_a_block_child() {
+    // It is laid out in place and moved by its offsets.
     for css in [
         "display:block;position:relative;top:3px",
         "display:block;position:relative;right:1px",
         "display:block;position:relative;bottom:-2px",
         "display:block;position:relative;left:calc(10% + 1px)",
         "display:block;position:relative;z-index:2",
+        "display:block;position:sticky;top:2px",
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");
             let b = span(doc, root, css);
             doc.append_text(b, "bb");
         });
-        assert!(
-            matches!(project(&fixture), Err(IfcError::Unsupported { .. })),
-            "{css}"
-        );
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
     }
 }
 
@@ -757,10 +694,8 @@ fn a_builder_can_cross_threads() {
 fn a_builder_error_is_reported_before_any_shaping() {
     // An unsupported shape is refused while the builder is made, so a caller
     // never pays for shaping a paragraph it will not use.
-    let fixture = block_fixture("", |doc, root| {
+    let fixture = block_fixture("display:inline", |doc, root| {
         doc.append_text(root, "aa");
-        let inline_block = span(doc, root, "display:inline-block;position:absolute");
-        doc.append_text(inline_block, "bb");
     });
     let fonts = ahem_fonts();
     let error = project_ifc_builder(

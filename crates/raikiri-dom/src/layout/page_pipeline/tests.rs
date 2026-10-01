@@ -5907,16 +5907,10 @@ fn a_limit_overflow_is_an_error_even_when_the_switch_is_not_engine_only() {
     );
 }
 
-/// A paragraph the engine refuses: an absolutely positioned inline box.
+/// A paragraph the engine refuses: a fixed root.
 fn refused_paragraph() -> (Document, CascadeResult, usize) {
-    crate::layout::test_support::ahem_paragraph_with("", |doc, root| {
+    crate::layout::test_support::ahem_paragraph_with("position:fixed;width:100px", |doc, root| {
         doc.append_text(root, "aa ");
-        doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("position:absolute;width:10px;height:10px"),
-        );
     })
 }
 
@@ -7125,4 +7119,127 @@ fn a_block_inside_a_span_splits_the_paragraph_like_parley() {
     // the span's x, 20.)
     assert_eq!(on, (0.0, 10.0, 10.0, 30.0));
     assert_eq!(off.0, 20.0);
+}
+
+// ── positioned boxes inside a paragraph ──────────────────────
+
+/// `root(position:relative) > ["aaaa ", span(position:absolute;css), " bbbb"]`
+/// in a 200px Ahem paragraph. Returns the document, cascade, root and span.
+fn paragraph_with_absolute_child(css: &str) -> (Document, CascadeResult, usize, usize) {
+    let mut span = 0;
+    let (mut doc, _cascade, root) = paragraph_of(|doc, root| {
+        doc.append_text(root, "aaaa ");
+        span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(&format!("position:absolute;width:10px;height:10px;{css}")),
+        );
+        doc.append_text(root, " bbbb");
+    });
+    doc.set_element_inline_style(
+        root,
+        Some("display:block;line-height:10px;width:200px;position:relative".into()),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root, span)
+}
+
+/// The border-box location of the positioned span from the root's border
+/// box, and the root's line count (0 off the engine).
+fn positioned_box_location(css: &str, ifc: bool) -> (f32, f32) {
+    let (mut doc, cascade, root, span) = paragraph_with_absolute_child(css);
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+    let layout = doc.nodes[span].unrounded_layout;
+    (layout.location.x, layout.location.y)
+}
+
+#[test]
+fn a_positioned_box_inside_a_paragraph_keeps_the_root() {
+    let (mut doc, cascade, root, _) = paragraph_with_absolute_child("left:5px;top:7px");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn a_positioned_box_with_auto_insets_takes_its_static_position() {
+    // Hand-computed (CSS 2.1 10.3.7, 10.6.4): the span was inline-level, so
+    // its static position is where it would have been on the line, after
+    // "aaaa " (50px), at the top of that line.
+    assert_eq!(positioned_box_location("", true), (50.0, 0.0));
+    // A box that was block-level would have started below the line.
+    assert_eq!(positioned_box_location("display:block", true), (0.0, 10.0));
+}
+
+#[test]
+fn parley_puts_a_positioned_box_with_auto_insets_at_the_content_start() {
+    // Parley error: taffy places a positioned child with `auto` insets at the
+    // start of its parent's content box, whatever precedes it.
+    assert_eq!(positioned_box_location("", false), (0.0, 0.0));
+}
+
+#[test]
+fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
+    for css in [
+        "left:5px;top:7px",
+        "right:5px;bottom:7px",
+        "left:20px;top:0",
+    ] {
+        assert_eq!(
+            positioned_box_location(css, true),
+            positioned_box_location(css, false),
+            "{css}"
+        );
+    }
+    // Hand-computed: against the root's padding box (no padding).
+    assert_eq!(
+        positioned_box_location("left:5px;top:7px", true),
+        (5.0, 7.0)
+    );
+    // From the right edge of the 200px box: 200 - 5 - 10.
+    assert_eq!(positioned_box_location("right:5px;top:0", true).0, 185.0);
+}
+
+#[test]
+fn an_absolute_box_does_not_take_up_inline_space() {
+    for css in [
+        "left:0;top:0",
+        "display:inline-block",
+        "display:block;float:left",
+    ] {
+        let (mut doc, cascade, root, _) = paragraph_with_absolute_child(css);
+        lay_out_with_switch(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        // Hand-computed: one 90px line, "aaaa bbbb" (the two spaces collapse).
+        assert_eq!(lines.len(), 1, "{css}");
+        assert_eq!(lines[0].inline_size(), 90.0, "{css}");
+    }
+}
+
+#[test]
+fn a_fixed_box_inside_a_paragraph_is_laid_out_like_parley() {
+    // With insets: against the root, as taffy lays a fixed child out.
+    let css = "position:fixed;left:3px;top:4px";
+    assert_eq!(
+        positioned_box_location(css, true),
+        positioned_box_location(css, false),
+    );
+    assert_eq!(positioned_box_location(css, true), (3.0, 4.0));
+}
+
+#[test]
+fn a_relatively_positioned_block_child_is_offset_like_parley() {
+    for css in [
+        "position:relative;left:4px;top:3px",
+        "position:sticky;top:3px",
+    ] {
+        assert_eq!(
+            block_child_geometry(css, true),
+            block_child_geometry(css, false),
+            "{css}"
+        );
+    }
 }

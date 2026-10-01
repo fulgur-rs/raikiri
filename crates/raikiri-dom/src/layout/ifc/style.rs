@@ -54,24 +54,6 @@ pub(crate) fn map_text_combine_upright(
     }
 }
 
-/// A `position: relative` box whose offsets are all `auto` or `0` and whose
-/// `z-index` is `auto` (no stacking context). It moves nothing, so drawing it
-/// in place differs from the positioned paint layer only where it overlaps
-/// other content.
-pub(crate) fn is_inert_relative(cv: &ComputedValues) -> bool {
-    let zero = |value: LengthOrAuto| match value {
-        LengthOrAuto::Auto => true,
-        LengthOrAuto::Px(px) => px == 0.0,
-        _ => false,
-    };
-    cv.position == p::PositionValue::Relative
-        && zero(cv.top)
-        && zero(cv.right)
-        && zero(cv.bottom)
-        && zero(cv.left)
-        && cv.z_index == p::ZIndexValue::Auto
-}
-
 /// The paint offset of a `position: relative` box whose insets are all
 /// lengths: `left` over `-right`, `top` over `-bottom` (CSS 2.1 9.4.3). `None`
 /// when an inset is a percentage or `calc()`, or the box has a `z-index`

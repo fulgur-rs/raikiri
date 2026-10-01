@@ -1884,3 +1884,56 @@ fn lines_after_a_block_moved_to_the_next_page_are_painted_there() {
     // "cc" on its second (baseline 18).
     assert_eq!(ys.into_iter().collect::<Vec<_>>(), [px(8), px(18)]);
 }
+
+#[test]
+fn a_positioned_box_inside_the_paragraph_is_painted_once_where_it_was_placed() {
+    // "aaaa " + an absolutely positioned 10x10 span inside a red-bordered
+    // inline + " bbbb", in a relatively positioned root: the span is painted
+    // at its insets, the text keeps one 90px line and the inline's piece is
+    // still painted.
+    let (mut doc, cascade, root) = paragraph("width:200px;position:relative", |doc, root| {
+        doc.append_text(root, "aaaa ");
+        let inline = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("background-color:blue"),
+        );
+        doc.append_text(inline, "cc");
+        doc.append_element(
+            Some(inline),
+            "span",
+            Style::default(),
+            Some("position:absolute;left:5px;top:20px;width:10px;height:10px;background-color:red"),
+        );
+        doc.append_text(root, " bbbb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let fills: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .collect();
+    let squares: Vec<_> = fills
+        .iter()
+        .filter(|b| (b.x1 - b.x0, b.y1 - b.y0) == (10.0, 10.0))
+        .map(|b| (b.x0, b.y0))
+        .collect();
+    assert_eq!(squares, [(5.0, 20.0)]);
+    // The inline's piece: "cc" from 50 to 70 on the first line.
+    assert!(
+        fills
+            .iter()
+            .any(|b| (b.x0, b.y0, b.x1, b.y1) == (50.0, 0.0, 70.0, 10.0)),
+        "{fills:?}"
+    );
+    // Hand-computed: one line, "aaaa ccbbbb" with the glyphs of "bbbb" ending
+    // at 110 (the positioned span takes no room).
+    let max_x = glyphs(&scene).iter().map(|g| g.1).fold(0.0_f64, f64::max);
+    assert_eq!(max_x, 110.0);
+}
