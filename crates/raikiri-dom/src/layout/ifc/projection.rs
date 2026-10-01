@@ -259,12 +259,55 @@ enum Step {
     Close,
 }
 
+/// Everything of a paragraph's projection except the shaping. The builder
+/// holds the text and styles as owned data and is `Send`, so the shaping can
+/// run on another thread while the document stays where it is.
+pub(crate) struct ProjectedBuilder {
+    /// The paragraph's content, not shaped yet.
+    pub(crate) builder: ParagraphBuilder,
+    /// Line options of the block root.
+    pub(crate) options: LineOptions,
+    /// The block's raw `text-indent`, to be resolved against its width.
+    pub(crate) indent: ComputedTextIndent,
+    /// Children laid out as boxes of their own, in document order.
+    pub(crate) boxes: Vec<IfcBox>,
+    /// The root's `direction` is `rtl`: its lines start at the right edge.
+    pub(crate) rtl: bool,
+    /// Paint offsets of the relatively positioned inline elements, by DOM
+    /// node id.
+    pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// Text nodes whose spaces are preserved (not collapsed), in document
+    /// order.
+    pub(crate) preserved_spaces: Vec<usize>,
+}
+
+impl ProjectedBuilder {
+    /// Shape the paragraph.
+    ///
+    /// # Errors
+    /// [`IfcError::Limit`] when a shodo resource limit is exceeded.
+    pub(crate) fn build(
+        self,
+        cx: &mut LayoutContext,
+        fonts: &FontCollection,
+    ) -> Result<ProjectedIfc, IfcError> {
+        let paragraph = self.builder.build(cx, fonts).map_err(IfcError::Limit)?;
+        Ok(ProjectedIfc {
+            paragraph,
+            options: self.options,
+            indent: self.indent,
+            boxes: self.boxes,
+            rtl: self.rtl,
+            offsets: self.offsets,
+            preserved_spaces: self.preserved_spaces,
+        })
+    }
+}
+
 /// Build the shodo paragraph for the in-flow block `root`.
 ///
 /// # Errors
-/// [`IfcError::InvalidNode`] for an unknown or detached node,
-/// [`IfcError::Unsupported`] for anything the first slice does not place, and
-/// [`IfcError::Limit`] when a shodo resource limit is exceeded.
+/// The errors of [`project_ifc_builder`] and [`ProjectedBuilder::build`].
 pub(crate) fn project_ifc(
     doc: &Document,
     cascade: &CascadeResult,
@@ -273,6 +316,24 @@ pub(crate) fn project_ifc(
     fonts: &FontCollection,
     limits: &Limits,
 ) -> Result<ProjectedIfc, IfcError> {
+    project_ifc_builder(doc, cascade, root, fonts, limits)?.build(cx, fonts)
+}
+
+/// Walk the in-flow block `root` and fill a paragraph builder, without
+/// shaping. `fonts` is read for font-relative lengths (`ch`).
+///
+/// # Errors
+/// [`IfcError::InvalidNode`] for an unknown or detached node,
+/// [`IfcError::Unsupported`] for anything the first slice does not place, and
+/// [`IfcError::Limit`] when a shodo resource limit is exceeded while the
+/// content is pushed.
+pub(crate) fn project_ifc_builder(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    fonts: &FontCollection,
+    limits: &Limits,
+) -> Result<ProjectedBuilder, IfcError> {
     let root_node = doc.get_node(root).ok_or(IfcError::InvalidNode(root))?;
     let root_cv = cascade
         .computed
@@ -490,9 +551,8 @@ pub(crate) fn project_ifc(
             return Err(IfcError::Limit(error));
         }
     }
-    let paragraph = builder.build(cx, fonts).map_err(IfcError::Limit)?;
-    Ok(ProjectedIfc {
-        paragraph,
+    Ok(ProjectedBuilder {
+        builder,
         options,
         indent,
         boxes,

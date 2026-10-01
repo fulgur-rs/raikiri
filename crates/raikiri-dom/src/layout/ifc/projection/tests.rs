@@ -670,3 +670,63 @@ fn a_contents_child_contributes_its_text() {
     let projected = project(&fixture).expect("project");
     assert_eq!(line_texts(&projected, 500.0), ["aabbcc"]);
 }
+
+fn project_in_two_steps(fixture: &Fixture) -> Result<ProjectedIfc, IfcError> {
+    let fonts = ahem_fonts();
+    let limits = Limits::default();
+    let projected = project_ifc_builder(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &fonts,
+        &limits,
+    )?;
+    let mut cx = LayoutContext::new();
+    projected.build(&mut cx, &fonts)
+}
+
+#[test]
+fn building_in_two_steps_gives_the_same_paragraph() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aaaa ");
+        let inner = span(doc, root, "display:inline");
+        doc.append_text(inner, "bbbb cccc");
+    });
+    let whole = project(&fixture).expect("project");
+    let split = project_in_two_steps(&fixture).expect("project in two steps");
+    assert_eq!(line_texts(&split, 50.0), line_texts(&whole, 50.0));
+    assert_eq!(line_texts(&split, 500.0), line_texts(&whole, 500.0));
+    assert_eq!(split.rtl, whole.rtl);
+    assert_eq!(split.boxes.len(), whole.boxes.len());
+}
+
+#[test]
+fn a_builder_can_cross_threads() {
+    // A builder is plain data: it may be built on another thread while the
+    // document stays where it is.
+    fn assert_send<T: Send>() {}
+    assert_send::<ProjectedBuilder>();
+    assert_send::<shodo::ParagraphBuilder>();
+}
+
+#[test]
+fn a_builder_error_is_reported_before_any_shaping() {
+    // An unsupported shape is refused while the builder is made, so a caller
+    // never pays for shaping a paragraph it will not use.
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        let inline_block = span(doc, root, "display:inline-block;position:absolute");
+        doc.append_text(inline_block, "bb");
+    });
+    let fonts = ahem_fonts();
+    let error = project_ifc_builder(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &fonts,
+        &Limits::default(),
+    )
+    .err()
+    .expect("refused");
+    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+}
