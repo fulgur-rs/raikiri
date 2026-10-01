@@ -1768,3 +1768,22 @@ fn generated_text_of_the_root_is_painted_once() {
         [60.0]
     );
 }
+
+#[test]
+fn multicol_paint_places_lines_in_columns() {
+    // A multicol container whose own content is the paragraph, and one whose
+    // child paragraph is split in its columns.
+    let own = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aaaa bbbb cccc dddd");
+    };
+    let (off, on) = off_and_on("width:100px;column-count:2;column-gap:10px", own);
+    assert_eq!(ink(&on), ink(&off));
+    // Hand-computed: one 40px word per line in two 45px columns; "cccc" starts
+    // the second column at x = 55, on the first baseline (y = 8).
+    let placed = glyphs(&on);
+    assert!(
+        placed.iter().any(|g| g.1 == 55.0 && g.2 == 8.0),
+        "{:?}",
+        placed.iter().map(|g| (g.1, g.2)).collect::<Vec<_>>()
+    );
+}

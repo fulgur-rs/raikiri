@@ -228,8 +228,13 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         // Lines laid out beside floats depend on the float context of the
         // performed layout, which is gone here; breaking them again at the
         // full width would run them under the floats. The positions of a
-        // root's own boxes are tied to the lines they were placed with.
-        if !root.boxes.is_empty() || root.lines.as_ref().is_some_and(|lines| lines.beside_floats) {
+        // root's own boxes are tied to the lines they were placed with, and
+        // lines split in columns to the column width.
+        if !root.boxes.is_empty()
+            || root.columns.is_some()
+            || root.multicol_fragments.is_some()
+            || root.lines.as_ref().is_some_and(|lines| lines.beside_floats)
+        {
             continue;
         }
         let lines = break_lines(root, &mut state.layout_cx, width);

@@ -147,10 +147,29 @@ pub(crate) fn draw_ifc_lines(
     let Some(lines) = document.get_node(root_id).and_then(|n| n.ifc_lines()) else {
         return;
     };
-    let transform = Affine::translate((
-        f64::from(position.x),
-        f64::from(position.y + position.shift_y),
-    ));
+    // Lines split across columns are drawn where their column puts them:
+    // the first line of a range at the range's offset. Without a split every
+    // line stays where it was laid out.
+    let mut line_offsets: Vec<Option<(f32, f32)>> = vec![None; lines.len()];
+    match document
+        .get_node(root_id)
+        .and_then(|n| n.ifc_multicol_fragments())
+    {
+        Some(fragments) => {
+            for fragment in fragments {
+                let Some(first) = lines.get(fragment.line_start) else {
+                    continue;
+                };
+                let dy = fragment.y - first.block_offset();
+                let end = fragment.line_end.min(lines.len());
+                for offset in &mut line_offsets[fragment.line_start.min(end)..end] {
+                    *offset = Some((fragment.x, dy));
+                }
+            }
+        }
+        None => line_offsets.fill(Some((0.0, 0.0))),
+    }
+    let base = position;
     let size = document
         .get_node(root_id)
         .and_then(|n| n.ifc_size())
@@ -165,6 +184,18 @@ pub(crate) fn draw_ifc_lines(
         .map(|node| node.ifc_relative_offsets())
         .unwrap_or_default();
     for (line_index, line) in lines.iter().enumerate() {
+        let Some((column_x, column_y)) = line_offsets[line_index] else {
+            continue;
+        };
+        let position = IfcPosition {
+            x: base.x + column_x,
+            y: base.y + column_y,
+            shift_y: base.shift_y,
+        };
+        let transform = Affine::translate((
+            f64::from(position.x),
+            f64::from(position.y + position.shift_y),
+        ));
         // The boxes of the inline elements on this line go below its text
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).

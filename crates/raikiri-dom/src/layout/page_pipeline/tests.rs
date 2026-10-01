@@ -5907,19 +5907,33 @@ fn a_limit_overflow_is_an_error_even_when_the_switch_is_not_engine_only() {
     );
 }
 
+/// A paragraph the engine refuses: an inline-block inside a span.
+fn refused_paragraph() -> (Document, CascadeResult, usize) {
+    crate::layout::test_support::ahem_paragraph_with("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(span),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+    })
+}
+
 #[test]
 fn engine_only_mode_reports_a_refused_paragraph_as_an_error() {
-    // A paragraph inside a multicol container is refused for now.
-    let (mut doc, cascade, root) = ahem_paragraph_in("column-count:2", "", "aaaa bbbb");
+    // A paragraph with a box inside an inline element is refused for now.
+    let (mut doc, cascade, _) = refused_paragraph();
     doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
     doc.inline_formatting_engine_only(true);
     let result = layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context());
     assert!(
-        matches!(result, Err(LayoutError::IfcUnsupported { node, .. }) if node == root),
+        matches!(result, Err(LayoutError::IfcUnsupported { .. })),
         "{result:?}"
     );
     // Without the mode the paragraph is left to the parley path.
-    let (mut doc, cascade, root) = ahem_paragraph_in("column-count:2", "", "aaaa bbbb");
+    let (mut doc, cascade, root) = refused_paragraph();
     lay_out_with_switch(&mut doc, &cascade);
     assert!(!doc.nodes[root].is_ifc_root());
 }
@@ -6418,4 +6432,214 @@ fn generated_content_is_laid_out_in_engine_only_mode() {
     layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
         .expect("layout");
     assert_eq!(line_text(&stored_lines(&doc, root).lines[0]), "xaa wbb");
+}
+
+/// Where the lines of a paragraph split across columns are drawn.
+#[derive(Debug, PartialEq)]
+struct MulticolTextGeometry {
+    /// Border-box height of the multicol container.
+    container_height: f32,
+    /// Start of each line, `(x, y)` from the paragraph's content-box corner,
+    /// after the column offsets.
+    lines: Vec<(f32, f32)>,
+}
+
+/// The engine side of [`multicol_text_geometry`]: the stored lines of `root`
+/// moved by its column fragments.
+fn engine_multicol_lines(doc: &Document, root: usize) -> Vec<(f32, f32)> {
+    let ifc = doc.nodes[root].ifc.as_ref().expect("an ifc root");
+    let lines = &ifc.lines.as_ref().expect("performed lines").lines;
+    let fragments = ifc.multicol_fragments.clone().unwrap_or_else(|| {
+        vec![crate::node::MulticolTextFragment {
+            line_start: 0,
+            line_end: lines.len(),
+            x: 0.0,
+            y: lines.first().map_or(0.0, |line| line.block_offset()),
+        }]
+    });
+    let mut out = Vec::new();
+    for fragment in fragments {
+        let first = lines[fragment.line_start].block_offset();
+        for line in &lines[fragment.line_start..fragment.line_end] {
+            out.push((fragment.x, fragment.y - first + line.block_offset()));
+        }
+    }
+    out
+}
+
+/// The parley side of [`multicol_text_geometry`]: the lines of the text node
+/// `text` moved by its column fragments.
+fn parley_multicol_lines(doc: &Document, text: usize) -> Vec<(f32, f32)> {
+    let layout = doc.nodes[text].text_layout().expect("a shaped text node");
+    let fragments = doc.nodes[text]
+        .multicol_fragments()
+        .map(<[_]>::to_vec)
+        .unwrap_or_else(|| {
+            vec![crate::node::MulticolTextFragment {
+                line_start: 0,
+                line_end: layout.len(),
+                x: 0.0,
+                y: 0.0,
+            }]
+        });
+    let has_fragments = doc.nodes[text].multicol_fragments().is_some();
+    let mut out = Vec::new();
+    for fragment in fragments {
+        let first = layout
+            .lines()
+            .nth(fragment.line_start)
+            .map_or(0.0, |line| line.metrics().block_min_coord);
+        let normalise = if has_fragments { first } else { 0.0 };
+        for line in layout
+            .lines()
+            .skip(fragment.line_start)
+            .take(fragment.line_end - fragment.line_start)
+        {
+            out.push((
+                fragment.x,
+                fragment.y - normalise + line.metrics().block_min_coord,
+            ));
+        }
+    }
+    out
+}
+
+/// A paragraph under a multicol parent (`parent_css`) or, with `own`, a
+/// multicol container that holds the text itself: its column geometry on
+/// either path.
+fn multicol_text_geometry_of(
+    parent_css: &str,
+    text: &str,
+    own: bool,
+    ifc: bool,
+) -> MulticolTextGeometry {
+    let (mut doc, cascade, root) = if own {
+        ahem_paragraph(text, parent_css)
+    } else {
+        ahem_paragraph_in(parent_css, "", text)
+    };
+    let container = if own {
+        root
+    } else {
+        doc.parent_of(root).expect("parent")
+    };
+    lay_out(&mut doc, &cascade, ifc);
+    let lines = if ifc {
+        assert!(
+            doc.nodes[root].is_ifc_root(),
+            "{parent_css}: not an ifc root"
+        );
+        engine_multicol_lines(&doc, root)
+    } else {
+        parley_multicol_lines(&doc, doc.nodes[root].children[0])
+    };
+    MulticolTextGeometry {
+        container_height: doc.nodes[container].unrounded_layout.size.height,
+        lines,
+    }
+}
+
+fn multicol_text_geometry(parent_css: &str, text: &str, ifc: bool) -> MulticolTextGeometry {
+    multicol_text_geometry_of(parent_css, text, false, ifc)
+}
+
+#[test]
+fn a_paragraph_in_a_multicol_container_becomes_a_root() {
+    let (mut doc, cascade, p) =
+        ahem_paragraph_in("column-count:2;width:100px", "", "aaaa bbbb cccc dddd");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[p].is_ifc_root());
+}
+
+#[test]
+fn a_multicol_paragraph_is_split_like_the_parley_path() {
+    for (parent_css, text) in [
+        (
+            "column-count:2;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+        (
+            "column-count:3;width:150px;column-gap:0",
+            "aaaa bbbb cccc dddd eeee ffff",
+        ),
+        (
+            "column-width:40px;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+    ] {
+        assert_eq!(
+            multicol_text_geometry(parent_css, text, true),
+            multicol_text_geometry(parent_css, text, false),
+            "{parent_css}"
+        );
+    }
+    // Hand-computed, not an oracle: two 45px columns with a 10px gap; each
+    // 40px word takes a line of its own, two lines per column, and the
+    // second column's lines start at x = 55.
+    let geometry = multicol_text_geometry(
+        "column-count:2;width:100px;column-gap:10px",
+        "aaaa bbbb cccc dddd",
+        true,
+    );
+    assert_eq!(geometry.lines[2].0, 55.0);
+    assert_eq!(geometry.lines.len(), 4);
+}
+
+#[test]
+fn multicol_container_with_direct_text_matches_parley() {
+    for (css, text) in [
+        (
+            "column-count:2;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+        (
+            "column-count:3;width:150px;column-gap:0",
+            "aaaa bbbb cccc dddd eeee ffff",
+        ),
+        (
+            "column-width:40px;width:100px;column-gap:10px",
+            "aaaa bbbb cccc dddd",
+        ),
+    ] {
+        assert_eq!(
+            multicol_text_geometry_of(css, text, true, true),
+            multicol_text_geometry_of(css, text, true, false),
+            "{css}"
+        );
+    }
+    // Hand-computed: four one-word lines balanced over two 45px columns: the
+    // container is two lines tall and the third line starts the second
+    // column at (55, 0).
+    let geometry = multicol_text_geometry_of(
+        "column-count:2;width:100px;column-gap:10px",
+        "aaaa bbbb cccc dddd",
+        true,
+        true,
+    );
+    assert_eq!(geometry.container_height, 20.0);
+    assert_eq!(
+        geometry.lines,
+        [(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)]
+    );
+}
+
+#[test]
+fn multicol_with_a_forced_break_matches_parley() {
+    // Under a multicol parent, one text node with preserved newlines.
+    let css = "column-count:2;width:100px;column-gap:10px;white-space:pre-line";
+    assert_eq!(
+        multicol_text_geometry(css, "aa\nbb\ncc", true),
+        multicol_text_geometry(css, "aa\nbb\ncc", false),
+    );
+    // A container whose direct content is lines with `<br>` between them.
+    // The parley path splits each text node on its own; the engine balances
+    // the three lines, two in the first column. The container keeps the
+    // height of every line, as on the parley path for direct `<br>`s.
+    let own = multicol_text_geometry_of(css, "aa\nbb\ncc", true, true);
+    assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (55.0, 0.0)]);
+    assert_eq!(
+        own.container_height,
+        multicol_text_geometry_of(css, "aa\nbb\ncc", true, false).container_height
+    );
+    assert_eq!(own.container_height, 30.0);
 }

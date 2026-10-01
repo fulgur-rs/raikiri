@@ -129,19 +129,19 @@ fn a_root_inside_a_multicol_container_stays_on_the_parley_path() {
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_multicol_root_stays_on_the_parley_path() {
+fn a_multicol_root_is_a_root() {
     let mut fixture = block_fixture("column-count:2", |doc, root| {
         doc.append_text(root, "aa bb cc dd");
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    // The multicol dispatch runs before the ifc dispatch and would find no
-    // children on a hidden-children root.
-    assert!(!is_root(&fixture, fixture.root));
+    // The ifc dispatch runs before the multicol dispatch for a root and
+    // splits its lines in columns.
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]

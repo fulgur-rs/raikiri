@@ -12,10 +12,9 @@ use crate::Document;
 use crate::layout::page_pipeline::{page_break_is_forced, selected_page_name};
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
-use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
+use raikiri_style::property::DisplayValue;
 use raikiri_style::property::PositionValue;
-use raikiri_style::property::{ColumnCountValue, DisplayValue};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
@@ -50,7 +49,8 @@ const FORM_CONTROL_TAGS: &[&str] = &["input", "button", "select", "textarea"];
 /// only inline-level children. Flex and grid boxes and tables with rows lay
 /// their children out by algorithms of their own; the table algorithm places a
 /// caption only when the table is empty, so a caption is not a root either. A
-/// multicol container is refused by the caller.
+/// multicol container is a root like any block container: its lines are
+/// split in columns.
 pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     // Images, inline SVG and form controls lay their content out by other
     // means: text inside them (an SVG `<title>`, a button label) is not a
@@ -98,12 +98,6 @@ fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx
                 DisplayValue::Inline | DisplayValue::InlineBlock | DisplayValue::None
             )
     })
-}
-
-fn is_multicol(cascade: &CascadeResult, idx: usize) -> bool {
-    let cv = &cascade.computed[idx];
-    !matches!(cv.column_count, ColumnCountValue::Auto)
-        || !matches!(cv.column_width, ComputedColumnWidth::Auto)
 }
 
 /// Whether the paragraph sits inside a fixed box without an authored width.
@@ -322,22 +316,7 @@ fn collect_candidates(
         }
         // From here on the box is a paragraph: anything that keeps it from
         // the engine is a refusal.
-        // The root itself counts: a multicol container is laid out by its own
-        // dispatch, which would find no children once they are hidden. A
-        // paragraph's own content is caught by `taken` above; the inside of
-        // its boxes is not taken and may hold paragraphs of its own.
-        let mut ancestor = Some(idx);
-        let mut blocked = false;
-        while let Some(id) = ancestor {
-            if is_multicol(cascade, id) {
-                blocked = true;
-                break;
-            }
-            ancestor = doc.parent_of(id);
-        }
-        let refusal = if blocked {
-            Some("a paragraph in a multicol container is not laid out")
-        } else if cascade.computed[idx].position == PositionValue::Fixed {
+        let refusal = if cascade.computed[idx].position == PositionValue::Fixed {
             // taffy sizes a fixed box against its nearest positioned
             // ancestor, which can be zero wide; breaking lines at that width
             // wraps every word. The parley path shapes at the page width
@@ -434,21 +413,7 @@ fn collect_text_candidates(
         if !is_anonymous_item_text(doc, cascade, idx) {
             continue;
         }
-        let Some(parent) = doc.parent_of(idx) else {
-            continue;
-        };
-        let mut ancestor = Some(parent);
-        let mut blocked = false;
-        while let Some(id) = ancestor {
-            if is_multicol(cascade, id) {
-                blocked = true;
-                break;
-            }
-            ancestor = doc.parent_of(id);
-        }
-        let refusal = if blocked {
-            Some("a paragraph in a multicol container is not laid out")
-        } else if inside_unsized_fixed_box(doc, cascade, idx) {
+        let refusal = if inside_unsized_fixed_box(doc, cascade, idx) {
             Some("a paragraph in a fixed box without a width is not laid out")
         } else {
             None

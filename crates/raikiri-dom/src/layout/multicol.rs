@@ -472,7 +472,27 @@ fn nested_text_line_ranges(
     layout: &parley::Layout<()>,
     context: FragmentationContext,
 ) -> Vec<(usize, usize, usize)> {
-    let line_count = layout.len();
+    let extents: Vec<(f32, f32)> = layout
+        .lines()
+        .map(|line| {
+            (
+                line.metrics().block_min_coord,
+                line.metrics().block_max_coord,
+            )
+        })
+        .collect();
+    line_ranges_in_columns(&extents, context)
+}
+
+/// Split lines, given by their block-start and block-end offsets, over the
+/// columns of `context` from its current column on: by the column height
+/// when it is definite, else balanced by count; then `widows` and `orphans`
+/// move lines across each break. Returns `(first, end, column)` ranges.
+fn line_ranges_in_columns(
+    extents: &[(f32, f32)],
+    context: FragmentationContext,
+) -> Vec<(usize, usize, usize)> {
+    let line_count = extents.len();
     if line_count == 0 || context.column_index >= context.column_count {
         return Vec::new();
     }
@@ -483,24 +503,16 @@ fn nested_text_line_ranges(
         if start >= line_count {
             break;
         }
-        let origin = layout
-            .lines()
-            .nth(start)
-            .map(|line| line.metrics().block_min_coord)
-            .unwrap_or(0.0);
+        let origin = extents.get(start).map_or(0.0, |extent| extent.0);
         let mut end = start;
         while end < line_count {
             let fits = context
                 .available_height
                 .filter(|height| *height > 0.0)
                 .map(|height| {
-                    layout
-                        .lines()
-                        .nth(end)
-                        .map(|line| {
-                            line.metrics().block_max_coord - origin <= height + f32::EPSILON
-                        })
-                        .unwrap_or(false)
+                    extents
+                        .get(end)
+                        .is_some_and(|extent| extent.1 - origin <= height + f32::EPSILON)
                 })
                 .unwrap_or_else(|| {
                     let remaining = line_count - start;
@@ -550,6 +562,38 @@ fn refresh_nested_text_fragments(
     node_id: usize,
     context: FragmentationContext,
 ) {
+    // A paragraph laid out by the inline engine keeps its lines on its root:
+    // its fragments go there, and only its boxes hold text of their own.
+    if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
+        let extents: Vec<(f32, f32)> = root
+            .lines
+            .as_ref()
+            .map(|lines| {
+                lines
+                    .lines
+                    .iter()
+                    .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        root.multicol_fragments = (!extents.is_empty()).then(|| {
+            line_ranges_in_columns(&extents, context)
+                .into_iter()
+                .map(|(start, end, column)| MulticolTextFragment {
+                    line_start: start,
+                    line_end: end,
+                    x: context.column_offset_x(column)
+                        - context.column_offset_x(context.column_index),
+                    y: extents[start].0,
+                })
+                .collect()
+        });
+        let boxes = tree.nodes[node_id].ifc_boxes();
+        for child in boxes {
+            refresh_nested_text_fragments(tree, child, context);
+        }
+        return;
+    }
     if let NodeData::Text(text) = &mut tree.nodes[node_id].data {
         let Some(layout) = text.text_layout.as_ref() else {
             return;
@@ -885,6 +929,89 @@ pub(crate) fn line_height_px(cv: &ComputedValues) -> f32 {
 /// paint emits those ranges at the corresponding column offset. Descendants
 /// below another multicol container are left to the recursive Taffy seam so
 /// their used widths are not guessed from a page fallback.
+/// The line ranges of a multicol container's own paragraph in its columns,
+/// and the height of the tallest column. The lines are balanced by count, as
+/// many in each column as the first needs (the parley path's split of a
+/// container's direct text): column `k` holds lines `k * n .. (k + 1) * n` and
+/// starts at the top of the content box.
+pub(crate) fn root_column_fragments(
+    lines: &crate::layout::ifc::root::IfcLines,
+    columns: crate::layout::ifc::root::RootColumns,
+) -> (Vec<MulticolTextFragment>, f32) {
+    let count = lines.lines.len();
+    let per_column = count.div_ceil(columns.count.max(1)).max(1);
+    let mut fragments = Vec::new();
+    let mut height = 0.0_f32;
+    for column in 0..columns.count.max(1) {
+        let start = (column * per_column).min(count);
+        let end = ((column + 1) * per_column).min(count);
+        if start >= end {
+            break;
+        }
+        height = height.max(
+            lines.lines[start..end]
+                .iter()
+                .map(|line| line.block_size())
+                .sum(),
+        );
+        fragments.push(MulticolTextFragment {
+            line_start: start,
+            line_end: end,
+            x: column as f32 * (columns.width + columns.gap),
+            y: 0.0,
+        });
+    }
+    (fragments, height)
+}
+
+/// Prepare a multicol container whose own content is a paragraph of the
+/// inline engine: its lines are broken at the column width and balanced over
+/// the columns, and an `auto` height becomes the tallest column's (with
+/// direct `<br>` children, every line's, as for direct text on the parley
+/// path). A paragraph with boxes of its own is laid out in one column.
+fn prepare_root_columns(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    metrics: MulticolMetrics,
+) {
+    let Some(root) = doc.nodes[idx].ifc.as_ref().map(|root| root.without_lines()) else {
+        return;
+    };
+    if !root.boxes.is_empty() {
+        return;
+    }
+    let columns = crate::layout::ifc::root::RootColumns {
+        width: metrics.column_width,
+        count: metrics.column_count,
+        gap: metrics.column_gap,
+    };
+    let Some(lines) = crate::layout::ifc::root::with_state(doc, |state| {
+        crate::layout::ifc::flow::break_lines(&root, &mut state.layout_cx, columns.width)
+    }) else {
+        return;
+    };
+    let (_, column_height) = root_column_fragments(&lines, columns);
+    let direct_breaks = doc.nodes[idx].children.iter().any(|&child| {
+        doc.nodes[child].is_in_document() && doc.nodes[child].tag_name() == Some("br")
+    });
+    let auto_height = matches!(
+        cascade.computed[idx].height,
+        ComputedLengthPercentageOrAuto::Auto
+    );
+    let height = if direct_breaks {
+        lines.height
+    } else {
+        column_height
+    };
+    if auto_height && height > 0.0 {
+        doc.nodes[idx].style.size.height = Dimension::length(height);
+    }
+    if let Some(root) = doc.nodes[idx].ifc.as_mut() {
+        root.columns = Some(columns);
+    }
+}
+
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 pub(crate) fn prepare_multicol_layout(
     doc: &mut Document,
@@ -946,6 +1073,10 @@ pub(crate) fn prepare_multicol_layout(
         else {
             continue;
         };
+        if doc.nodes[idx].is_ifc_root() {
+            prepare_root_columns(doc, cascade, idx, metrics);
+            continue;
+        }
         let direct_text: Vec<usize> = doc.nodes[idx]
             .children
             .iter()

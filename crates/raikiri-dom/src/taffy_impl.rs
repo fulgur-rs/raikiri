@@ -338,7 +338,10 @@ impl Document {
             // stack; the ordinary Taffy path remains the bounded fallback.
             const MAX_NESTED_MULTICOL_DEPTH: usize = 64;
             // cov:ignore: exercised by ignored nested multicol WPT reftests
+            // A multicol container whose own content is a paragraph is laid
+            // out by the ifc branch below, which splits its lines in columns.
             if tree.nodes[idx].multicol.is_some()
+                && !tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
                 && tree.fragmentation_stack.len() < MAX_NESTED_MULTICOL_DEPTH // cov:ignore: exercised by ignored nested multicol WPT reftests
             // cov:ignore: exercised by ignored nested multicol WPT reftests
                 && matches!(display, Display::Block | Display::FlowRoot)
@@ -680,8 +683,11 @@ fn measure_ifc_root(
             .min(measure.width_bounds.1)
             .max(measure.width_bounds.0)
     };
+    // The content of a multicol container is broken at the column width and
+    // its lines are balanced over the columns.
+    let columns = tree.nodes[idx].ifc.as_ref().and_then(|root| root.columns);
     let geometry = flow::FlowGeometry {
-        width,
+        width: columns.map_or(width, |columns| columns.width),
         edges: measure.edges,
         top_edge: measure.top_inset,
     };
@@ -696,9 +702,13 @@ fn measure_ifc_root(
         perform,
         measure.bottom_margin_escapes,
     );
+    let fragments = columns.map(|columns| crate::layout::root_column_fragments(&lines, columns));
+    let content_height = fragments
+        .as_ref()
+        .map_or(lines.height, |(_, height)| *height);
     let size = Size {
         width,
-        height: known_height.unwrap_or(lines.height),
+        height: known_height.unwrap_or(content_height),
     };
     // An inline-block's baseline is that of its last line box (CSS 2.1
     // 10.8.1); every other box exposes its first.
@@ -717,6 +727,7 @@ fn measure_ifc_root(
         && let Some(root) = tree.nodes[idx].ifc.as_mut()
     {
         root.lines = Some(lines);
+        root.multicol_fragments = fragments.map(|(fragments, _)| fragments);
     }
     (size, baseline, escaping_margin)
 }

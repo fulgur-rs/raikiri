@@ -32,6 +32,26 @@ pub(crate) struct IfcRoot {
     /// Text nodes whose spaces are preserved: spaces of theirs that hang at
     /// the end of a line stay in their elements' boxes.
     pub(crate) preserved_spaces: Vec<usize>,
+    /// The paragraph is the content of a multicol container that is the root
+    /// itself: its lines are broken at the column width and balanced over
+    /// the columns.
+    pub(crate) columns: Option<RootColumns>,
+    /// Line ranges of the last performed lines and where each range is drawn
+    /// in the columns of a multicol container, when the lines are split
+    /// across columns. `y` is the block offset the range's first line is
+    /// drawn at.
+    pub(crate) multicol_fragments: Option<Vec<crate::node::MulticolTextFragment>>,
+}
+
+/// The columns of a multicol container whose own content is the paragraph.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RootColumns {
+    /// Used width of one column, the width the lines are broken at.
+    pub(crate) width: f32,
+    /// Used number of columns.
+    pub(crate) count: usize,
+    /// Used gap between two columns.
+    pub(crate) gap: f32,
 }
 
 /// Lines broken for one content-box width.
@@ -68,6 +88,8 @@ impl IfcRoot {
             rtl: projected.rtl,
             offsets: projected.offsets,
             preserved_spaces: projected.preserved_spaces,
+            columns: None,
+            multicol_fragments: None,
         }
     }
 
@@ -82,6 +104,8 @@ impl IfcRoot {
             rtl: self.rtl,
             offsets: self.offsets.clone(),
             preserved_spaces: self.preserved_spaces.clone(),
+            columns: self.columns,
+            multicol_fragments: None,
         }
     }
 }

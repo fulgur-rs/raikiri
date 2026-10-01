@@ -711,6 +711,15 @@ impl Node {
             .map_or(&[], |root| root.offsets.as_slice())
     }
 
+    /// Line ranges of an ifc root's lines split across the columns of a
+    /// multicol container, with the offset each range is drawn at: `x` from
+    /// the content-box start, `y` the block offset its first line is drawn
+    /// at. `None` when the lines are not split.
+    #[doc(hidden)]
+    pub fn ifc_multicol_fragments(&self) -> Option<&[MulticolTextFragment]> {
+        self.ifc.as_ref()?.multicol_fragments.as_deref()
+    }
+
     /// Content width the lines of an ifc root were broken at, and their total
     /// height.
     #[doc(hidden)]
