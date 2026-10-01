@@ -166,6 +166,89 @@ impl FontContextBuilder {
 
         Ok(context)
     }
+
+    /// Build both engines' font sets from the bundled fonts: the parley
+    /// context [`build`](Self::build) returns and the shodo font layer of the
+    /// inline engine, registered in the same order under the same family
+    /// names.
+    ///
+    /// # Errors
+    /// The errors of [`build`](Self::build), which are checked first, and
+    /// [`FontContextBuildError::FontRejected`] when the inline engine refuses
+    /// a font parley accepted (it names the first bundled family).
+    pub fn build_fonts(self) -> Result<RenderFonts, FontContextBuildError> {
+        let faces: Vec<raikiri_dom::BundledFace> = self
+            .fonts
+            .iter()
+            .map(|font| raikiri_dom::BundledFace {
+                family: font.family().trim().to_owned(),
+                bytes: font.bytes().to_vec(),
+            })
+            .collect();
+        let first_family = self
+            .fonts
+            .first()
+            .map(|font| font.family().trim().to_owned())
+            .unwrap_or_default();
+        let system_fonts = self.system_fonts;
+        // The parley builder validates the list first, so this reports the
+        // same errors as `build()` does.
+        let context = self.build()?;
+        let collection =
+            raikiri_dom::build_bundled_font_collection(faces, system_fonts).map_err(|_| {
+                FontContextBuildError::FontRejected {
+                    family: first_family,
+                }
+            })?;
+        Ok(RenderFonts {
+            context,
+            collection,
+            bundled_only: !system_fonts,
+        })
+    }
+}
+
+/// A parley font context and the shodo font layer built from the same bytes.
+///
+/// Both resolve a family name to the same face, and every generic family to
+/// the bundle in registration order, so a document laid out partly by one
+/// engine and partly by the other draws from one font set.
+pub struct RenderFonts {
+    context: FontContext,
+    collection: shodo::font::FontCollection,
+    bundled_only: bool,
+}
+
+impl RenderFonts {
+    /// Whether the set was built without the installed fonts. Only then does
+    /// the answer to a font lookup not depend on which installed face was
+    /// loaded first.
+    pub fn is_bundled_only(&self) -> bool {
+        self.bundled_only
+    }
+
+    /// The parley font context.
+    pub fn context(&self) -> &FontContext {
+        &self.context
+    }
+
+    /// The shodo font layer of the inline engine.
+    pub fn collection(&self) -> &shodo::font::FontCollection {
+        &self.collection
+    }
+
+    /// Both halves: the parley context and the shodo font layer.
+    pub fn into_parts(self) -> (FontContext, shodo::font::FontCollection) {
+        (self.context, self.collection)
+    }
+}
+
+impl fmt::Debug for RenderFonts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RenderFonts")
+            .field("bundled_only", &self.bundled_only)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Failure while building a context from bundled fonts.

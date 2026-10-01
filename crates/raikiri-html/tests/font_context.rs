@@ -121,3 +121,72 @@ fn html_font_context_lays_out_text_deterministically() {
     }
     assert_eq!(outputs[0], outputs[1]);
 }
+
+const AHEM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+));
+
+#[test]
+fn build_fonts_gives_both_engines_the_same_bundle() {
+    let fonts = FontContextBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build_fonts()
+        .expect("fonts");
+    // The shodo side resolves the authored family and a generic to the bundle.
+    for family in [
+        shodo::style::FontFamily::Named("Ahem".to_owned()),
+        shodo::style::FontFamily::Generic(shodo::style::GenericFamily::SansSerif),
+    ] {
+        let query = shodo::font::FontQuery {
+            families: vec![family.clone()],
+            ..Default::default()
+        };
+        let matched = fonts
+            .collection()
+            .match_cluster(&query, "a")
+            .unwrap_or_else(|| panic!("{family:?} resolves"));
+        let data = fonts.collection().font_data(matched.id).expect("font data");
+        assert_eq!(data.data.as_ref(), AHEM, "{family:?}");
+    }
+    // The parley side knows the authored family.
+    let mut context = fonts.context().clone();
+    assert!(context.collection.family_id("Ahem").is_some());
+}
+
+#[test]
+fn build_fonts_reports_whether_installed_fonts_are_excluded() {
+    let bundled = FontContextBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build_fonts()
+        .expect("fonts");
+    assert!(bundled.is_bundled_only());
+    let with_system = FontContextBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .system_fonts(true)
+        .build_fonts()
+        .expect("fonts");
+    assert!(!with_system.is_bundled_only());
+}
+
+#[test]
+fn build_fonts_refuses_what_build_refuses() {
+    assert!(matches!(
+        FontContextBuilder::new().build_fonts(),
+        Err(FontContextBuildError::NoFonts)
+    ));
+    assert!(matches!(
+        FontContextBuilder::new()
+            .font_bytes("  ", AHEM.to_vec())
+            .build_fonts(),
+        Err(FontContextBuildError::EmptyFamily)
+    ));
+}
+
+#[test]
+fn build_still_returns_only_the_parley_context() {
+    let _context: raikiri_html::FontContext = FontContextBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("context");
+}

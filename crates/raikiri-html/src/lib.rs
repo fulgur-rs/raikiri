@@ -36,7 +36,7 @@ pub use document_layout::{
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_context::{
-    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES,
+    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES, RenderFonts,
 };
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
 pub use resources::{

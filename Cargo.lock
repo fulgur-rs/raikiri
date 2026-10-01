@@ -2599,6 +2599,7 @@ dependencies = [
  "raikiri-svg",
  "raikiri-traits",
  "rustc-hash",
+ "shodo",
  "smol_str",
  "taffy",
  "url",

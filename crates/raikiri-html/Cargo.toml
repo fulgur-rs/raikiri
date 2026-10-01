@@ -13,6 +13,7 @@ raikiri-dom    = { workspace = true }
 raikiri-style  = { workspace = true }
 cssparser      = { workspace = true }
 parley         = { workspace = true }
+shodo          = { workspace = true }
 image          = { workspace = true }
 raikiri-svg    = { workspace = true }
 html5ever      = { workspace = true }
