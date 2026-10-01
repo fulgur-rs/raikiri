@@ -1388,3 +1388,33 @@ fn a_cleared_line_break_stays_on_the_parley_path() {
         );
     });
 }
+
+#[test]
+fn replaced_and_svg_elements_are_never_roots() {
+    // A flex item or an authored inline-block that is a replaced element, a
+    // form control or an inline SVG lays out its content by other means; text
+    // inside it (an SVG <title>, a button label) is not a paragraph.
+    let mut nodes = Vec::new();
+    let mut fixture = block_fixture("display:flex", |doc, root| {
+        let svg = doc.append_element(Some(root), "svg", taffy::Style::default(), None::<&str>);
+        let title = doc.append_element(Some(svg), "title", taffy::Style::default(), None::<&str>);
+        doc.append_text(title, "Close");
+        let button = doc.append_element(
+            Some(root),
+            "button",
+            taffy::Style::default(),
+            Some("display:inline-block"),
+        );
+        doc.append_text(button, "OK");
+        nodes.extend([svg, title, button]);
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    for node in nodes {
+        assert!(
+            !is_root(&fixture, node),
+            "{:?}",
+            fixture.doc.nodes[node].tag_name()
+        );
+    }
+}

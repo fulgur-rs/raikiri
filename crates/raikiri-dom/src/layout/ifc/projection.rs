@@ -30,13 +30,13 @@ use shodo::style::LineOptions;
 use shodo::{LayoutContext, Paragraph, ParagraphBuilder};
 
 /// Tags of replaced elements the inline engine sizes as atomic inlines.
-const ATOMIC_TAGS: &[&str] = &["img", "svg"];
+pub(crate) const ATOMIC_TAGS: &[&str] = &["img", "svg"];
 
 /// Replaced and form-control elements the inline engine does not size yet.
 /// They are refused whatever their `display` or `float`: an author rule can
 /// make a form control `inline-block`, and taffy would size it as an empty
 /// block.
-const UNSUPPORTED_REPLACED_TAGS: &[&str] = &[
+pub(crate) const UNSUPPORTED_REPLACED_TAGS: &[&str] = &[
     "canvas", "video", "audio", "iframe", "object", "embed", "input", "button", "select",
     "textarea", "math",
 ];

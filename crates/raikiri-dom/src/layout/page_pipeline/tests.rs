@@ -5269,11 +5269,37 @@ fn a_text_node_root_answers_the_line_and_baseline_readers() {
     let lines = doc.ifc_text_lines(text).expect("lines");
     assert_eq!(lines.root, text);
     assert_eq!(lines.lines.len(), 1);
-    // Hand-computed: Ahem 10px, line-height 10px, ascent 8.
-    assert_eq!(
-        crate::taffy_impl::first_inline_baseline(&doc, text),
-        Some(8.0)
-    );
+    // The baseline reader is the root's own measurement, which a flex
+    // container aligns by (see a_bare_text_root_is_aligned_by_its_baseline).
+}
+
+/// `location.y` of a bare-text anonymous item (Ahem 10px) and an element item
+/// (Ahem 20px) of a flex row aligned by their baselines, line height 1.
+fn bare_text_baseline_item_ys(ifc: bool) -> (f32, f32) {
+    let (mut doc, _, flex) =
+        ahem_paragraph_in_text_only("display:flex;align-items:baseline;line-height:1", "aa");
+    let large = doc.append_element(Some(flex), "div", Style::default(), Some("font-size:20px"));
+    doc.append_text(large, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade, ifc);
+    let text = doc.nodes[flex].children[0];
+    if ifc {
+        assert!(doc.nodes[text].is_ifc_root() && doc.nodes[large].is_ifc_root());
+    }
+    (
+        doc.nodes[text].unrounded_layout.location.y,
+        doc.nodes[large].unrounded_layout.location.y,
+    )
+}
+
+#[test]
+fn a_bare_text_root_is_aligned_by_its_baseline() {
+    let on = bare_text_baseline_item_ys(true);
+    assert_eq!(on, bare_text_baseline_item_ys(false));
+    // Hand-computed: ascents 8 (10px) and 16 (20px), so the text sits 8px lower.
+    assert_eq!(on, (8.0, 0.0));
 }
 
 #[test]

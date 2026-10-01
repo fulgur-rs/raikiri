@@ -669,18 +669,13 @@ fn measure_ifc_root(
 /// inline-blocks use the baseline of their last in-flow line box, so recover
 /// the last in-flow text line from the descendant layout tree. See CSS 2.1
 /// §10.8.1: <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
-pub(crate) fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
+fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     use raikiri_style::property::DisplayValue;
     let root_node = doc.nodes.get(root)?;
     if root_node.style.display == Display::None {
         return None;
     }
     if let NodeData::Text(text) = &root_node.data {
-        // A text node laid out as an anonymous flex or grid item is a
-        // paragraph of its own, without edges.
-        if root_node.flags.contains(NodeFlags::IS_IFC_ROOT) {
-            return root_node.ifc.as_ref()?.first_baseline();
-        }
         let baseline = text
             .text_layout
             .as_ref()?

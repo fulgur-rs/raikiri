@@ -47,6 +47,18 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
 /// children out by algorithms of their own, and a multicol container is
 /// refused by the caller.
 pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    // Replaced elements, form controls and inline SVG lay their content out
+    // by other means: text inside them (an SVG `<title>`, a button label,
+    // fallback content) is not a paragraph of theirs.
+    let node = &doc.nodes[idx];
+    let tag = node.tag_name().unwrap_or("");
+    if node.is_inline_svg_content()
+        || node.is_inline_svg_root()
+        || super::projection::ATOMIC_TAGS.contains(&tag)
+        || super::projection::UNSUPPORTED_REPLACED_TAGS.contains(&tag)
+    {
+        return false;
+    }
     generates_own_box(doc, cascade, idx)
         && matches!(
             cascade.computed[idx].display,
@@ -278,7 +290,10 @@ fn has_inline_content(
                 Some(_) => {}
                 None => {
                     let cv = &cascade.computed[id];
-                    if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
+                    if cv.display == DisplayValue::None
+                        || node.is_non_rendered_html_element()
+                        || node.is_inline_svg_content()
+                    {
                         continue;
                     }
                     if cv.display == DisplayValue::Inline {
