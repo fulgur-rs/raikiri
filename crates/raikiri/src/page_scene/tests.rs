@@ -452,7 +452,6 @@ fn body_margin_helpers_cover_html_barrier_fallback() {
     assert!(scene.body_offset_pt.1.is_finite());
 }
 
-
 const FONT_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../raikiri-dom/tests/data/text-autospace"
@@ -597,8 +596,7 @@ fn build_page_scene_for_page_splits_tall_content_across_pages() {
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4)
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
 
     // Derive page 1's origin from the same public page-geometry API the
     // scene builder uses, so the test tracks geometry changes instead of
@@ -684,8 +682,7 @@ fn build_page_scene_for_page_named_attaches_name_and_landscape() {
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
     let page_box = PageBox::from_page_size(cascade.page.size());
-    raikiri_dom::layout_single_page(&mut dom, &cascade, page_box)
-        .expect("layout Ok");
+    raikiri_dom::layout_single_page(&mut dom, &cascade, page_box).expect("layout Ok");
     let scene = build_page_scene_for_page_named(
         &dom,
         &cascade,

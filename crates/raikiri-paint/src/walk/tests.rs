@@ -3522,12 +3522,7 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
         .dom
         .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let image = scene
@@ -3584,12 +3579,7 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
         .dom
         .canvas_fill_rect(canvas, 25, 50, 25, 50, [255, 255, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -3629,12 +3619,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     assert!(scene.commands.iter().any(|command| matches!(
@@ -3670,12 +3655,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
         .dom
         .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -3716,12 +3696,7 @@ fn canvas_object_fit_variants_all_paint() {
             .dom
             .canvas_fill_rect(canvas, 0, 0, 4, 2, [255, 0, 0, 255]);
         let cascade = raikiri_html::build_cascaded(&parsed);
-        raikiri_dom::layout_single_page(
-            &mut parsed.dom,
-            &cascade,
-            PageBox::A4,
-        )
-        .unwrap();
+        raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
         let mut scene = Scene::new();
         crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
         assert!(
@@ -3763,12 +3738,7 @@ fn canvas_hidden_overflow_clips_to_content_box() {
         .dom
         .canvas_fill_rect(canvas, 0, 0, 4, 4, [255, 0, 0, 255]);
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -3793,12 +3763,7 @@ fn canvas_zero_bitmap_size_paints_nothing() {
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed);
-    raikiri_dom::layout_single_page(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-    )
-    .unwrap();
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
     // Zero-size bitmap paints nothing but does not fall back to image error paths.
