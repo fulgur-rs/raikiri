@@ -684,10 +684,31 @@ fn measure_ifc_root(
             .max(measure.width_bounds.0)
     };
     // The content of a multicol container is broken at the column width and
-    // its lines are balanced over the columns.
-    let columns = tree.nodes[idx].ifc.as_ref().and_then(|root| root.columns);
+    // split in its columns. A paragraph with boxes of its own is laid out in
+    // one column as wide as the container.
+    let fragmentation = if has_boxes {
+        None
+    } else {
+        tree.nodes[idx]
+            .multicol
+            .filter(|style| style.horizontal)
+            .and_then(|style| {
+                let height = if style.height_definite {
+                    known_height
+                } else {
+                    None
+                };
+                crate::fragment::FragmentationContext::resolve(width, height, style)
+            })
+    };
+    // An auto-height container whose lines end in `<br>` children keeps them
+    // all in its first column, as the parley path places such direct lines.
+    let in_one_column = known_height.is_none()
+        && tree.nodes[idx].children.iter().any(|&child| {
+            tree.nodes[child].is_in_document() && tree.nodes[child].tag_name() == Some("br")
+        });
     let geometry = flow::FlowGeometry {
-        width: columns.map_or(width, |columns| columns.width),
+        width: fragmentation.map_or(width, |context| context.column_width),
         edges: measure.edges,
         top_edge: measure.top_inset,
     };
@@ -702,7 +723,8 @@ fn measure_ifc_root(
         perform,
         measure.bottom_margin_escapes,
     );
-    let fragments = columns.map(|columns| crate::layout::root_column_fragments(&lines, columns));
+    let fragments = fragmentation
+        .map(|context| crate::layout::root_column_fragments(&lines, context, in_one_column));
     let content_height = fragments
         .as_ref()
         .map_or(lines.height, |(_, height)| *height);

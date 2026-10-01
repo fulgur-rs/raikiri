@@ -6624,6 +6624,29 @@ fn multicol_container_with_direct_text_matches_parley() {
 }
 
 #[test]
+fn a_definite_height_multicol_fills_its_columns_in_turn_and_keeps_widows() {
+    // Hand-computed: a 20px-tall content box holds two 10px lines per
+    // column; five lines fill 2 + 2 + 1, and `widows: 2` moves one line of
+    // the second column into the third.
+    let geometry = multicol_text_geometry_of(
+        "column-count:3;width:150px;column-gap:0;height:20px;widows:2;orphans:1",
+        "aaaa bbbb cccc dddd eeee",
+        true,
+        true,
+    );
+    assert_eq!(
+        geometry.lines,
+        [
+            (0.0, 0.0),
+            (0.0, 10.0),
+            (50.0, 0.0),
+            (100.0, 0.0),
+            (100.0, 10.0)
+        ]
+    );
+}
+
+#[test]
 fn multicol_with_a_forced_break_matches_parley() {
     // Under a multicol parent, one text node with preserved newlines.
     let css = "column-count:2;width:100px;column-gap:10px;white-space:pre-line";
@@ -6631,12 +6654,11 @@ fn multicol_with_a_forced_break_matches_parley() {
         multicol_text_geometry(css, "aa\nbb\ncc", true),
         multicol_text_geometry(css, "aa\nbb\ncc", false),
     );
-    // A container whose direct content is lines with `<br>` between them.
-    // The parley path splits each text node on its own; the engine balances
-    // the three lines, two in the first column. The container keeps the
-    // height of every line, as on the parley path for direct `<br>`s.
+    // A container whose direct content is lines with `<br>` between them:
+    // the parley path places those lines in source order in the first
+    // column, and the container is as tall as all of them.
     let own = multicol_text_geometry_of(css, "aa\nbb\ncc", true, true);
-    assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (55.0, 0.0)]);
+    assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]);
     assert_eq!(
         own.container_height,
         multicol_text_geometry_of(css, "aa\nbb\ncc", true, false).container_height

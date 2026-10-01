@@ -231,7 +231,6 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         // root's own boxes are tied to the lines they were placed with, and
         // lines split in columns to the column width.
         if !root.boxes.is_empty()
-            || root.columns.is_some()
             || root.multicol_fragments.is_some()
             || root.lines.as_ref().is_some_and(|lines| lines.beside_floats)
         {
