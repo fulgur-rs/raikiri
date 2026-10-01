@@ -5391,3 +5391,33 @@ fn an_inline_block_root_with_side_margins_shrinks_to_its_content() {
         assert_eq!((size.width, size.height), (140.0, 10.0), "{ifc}");
     }
 }
+
+#[test]
+fn an_inline_block_root_under_an_authored_width_shrinks_to_its_content() {
+    // "aa" then an inline-block "bb" in a 200px paragraph. The inline-block's
+    // width is auto, so it shrinks to fit (CSS 2.1 10.3.9): 20px, beside
+    // "aa" on the first line. It does not take the paragraph's 200px.
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
+    let inline_block = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    doc.append_text(inline_block, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.nodes[inline_block].is_ifc_root());
+    let layout = doc.nodes[inline_block].unrounded_layout;
+    assert_eq!(
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height
+        ),
+        (20.0, 0.0, 20.0, 10.0)
+    );
+}

@@ -909,6 +909,14 @@ pub(crate) fn prepare_multicol_layout(
         if has_multicol_ancestor(doc, &parent_of, idx) {
             continue;
         }
+        // An inline-block that is an atomic inline of a paragraph laid out by
+        // the inline engine is placed on the lines by its used width, so an
+        // auto width must stay auto and shrink to fit (CSS 2.1 10.3.9).
+        let engine_atomic = cascade.computed[idx].display == DisplayValue::InlineBlock
+            && parent_of[idx].is_some_and(|parent| doc.nodes[parent].is_ifc_root());
+        if engine_atomic {
+            continue;
+        }
         if matches!(
             cascade.computed[idx].width,
             ComputedLengthPercentageOrAuto::Auto
