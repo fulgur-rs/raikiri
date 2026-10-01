@@ -1608,3 +1608,37 @@ fn lines_overflowing_a_short_root_are_painted_on_a_later_page() {
     let ys: std::collections::BTreeSet<i64> = ink(&scene).iter().map(|g| g.2).collect();
     assert!(ys.contains(&px(8)), "{ys:?}");
 }
+
+#[test]
+fn a_table_cell_root_paints_its_text_inside_its_border_and_padding() {
+    // A cell with a 3px border and 5px of padding: its content box starts
+    // 8px in, so "aa" starts at x = 8 with its baseline at 8 + 8.
+    let build = |doc: &mut Document, table: usize| {
+        let row = doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some("display:table-cell;padding:5px;border:3px solid"),
+        );
+        doc.append_text(cell, "aa");
+    };
+    let (mut doc, cascade, table) = paragraph("display:table", build);
+    lay_out(&mut doc, &cascade, true);
+    let row = doc.get_node(table).expect("table").children[0];
+    let cell = doc.get_node(row).expect("row").children[0];
+    assert!(doc.get_node(cell).is_some_and(|n| n.is_ifc_root()));
+    let on = ink(&painted(&doc, &cascade));
+    assert_eq!(
+        on.iter().map(|g| (g.1, g.2)).collect::<Vec<_>>(),
+        [(px(8), px(16)), (px(18), px(16))]
+    );
+    let (mut off_doc, cascade, _) = paragraph("display:table", build);
+    lay_out(&mut off_doc, &cascade, false);
+    assert_eq!(on, ink(&painted(&off_doc, &cascade)));
+}

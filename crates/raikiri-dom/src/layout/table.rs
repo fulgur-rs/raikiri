@@ -42,6 +42,7 @@ use taffy::{
 };
 
 use crate::document::Document;
+use taffy::util::ResolveOrZero;
 
 // ---------------------------------------------------------------------------
 // Depth cap — fail-closed for nested tables.
@@ -1427,6 +1428,22 @@ fn place_cells(
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         );
+        // A cell laid out by the inline engine has no child layouts: its
+        // lines are drawn from its content box, which its own border and
+        // padding (as the engine measured them) place inside the cell.
+        let (padding, border) = if doc.nodes[cell.node_id].is_ifc_root() {
+            let style = &doc.nodes[cell.node_id].style;
+            (
+                style
+                    .padding
+                    .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
+                style
+                    .border
+                    .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
+            )
+        } else {
+            (Rect::ZERO, Rect::ZERO)
+        };
         let layout = TaffyLayout {
             order: order as u32,
             location: Point {
@@ -1439,8 +1456,8 @@ fn place_cells(
             },
             scrollable_overflow_rect: output.scrollable_overflow_rect,
             scrollbar_size: Size::ZERO,
-            padding: Rect::ZERO,
-            border: Rect::ZERO,
+            padding,
+            border,
             margin: Rect::ZERO,
         };
         cell.resolved = Some(layout);
