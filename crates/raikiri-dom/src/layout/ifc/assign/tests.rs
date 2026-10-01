@@ -908,3 +908,35 @@ fn right_to_left_text_outside_the_document_is_ignored() {
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
 }
+
+#[test]
+fn an_inline_with_a_background_image_keeps_the_paragraph_on_the_parley_path() {
+    assert_stays_on_parley("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;background-image:url(x.png)");
+        doc.append_text(inner, "bb");
+    });
+}
+
+#[test]
+fn an_inline_with_a_background_color_is_still_a_root() {
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let inner = span(doc, root, "display:inline;background-color:rgb(255,0,0)");
+        doc.append_text(inner, "bb");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn the_root_itself_may_have_a_background_image() {
+    // The root's own background is painted with its box, not with the lines.
+    let mut fixture = block_fixture("background-image:url(x.png)", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+}

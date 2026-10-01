@@ -9,7 +9,7 @@ use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
-use raikiri_style::property::{ColumnCountValue, DisplayValue, FloatValue};
+use raikiri_style::property::{BackgroundImage, ColumnCountValue, DisplayValue, FloatValue};
 use raikiri_style::property::{
     PositionValue, TextDecorationLine, TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
 };
@@ -86,16 +86,19 @@ fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
         && !has_full_width_transform(cv.text_transform)
 }
 
-/// Descendants are drawn without their own boxes: a relative offset moves the
-/// element on the parley path (taffy applies it) and an opacity group wraps it
-/// (the walk pushes a layer per element), neither of which the lines carry. A
-/// relative box that moves nothing and makes no stacking context is drawn in
-/// place.
+/// Whether the painter can draw an inline element of the paragraph with its
+/// box. A relative offset moves the element on the parley path (taffy applies
+/// it) and an opacity group wraps it (the walk pushes a layer per element),
+/// neither of which the lines carry; a relative box that moves nothing and
+/// makes no stacking context is drawn in place. A background image would have
+/// to be laid out across the pieces of the element on its lines, which the
+/// painter does not do.
 fn is_paintable_descendant(cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
     is_paintable_element(cascade, id)
         && (cv.position != PositionValue::Relative || style::is_inert_relative(cv))
         && cv.opacity >= 1.0
+        && matches!(cv.background_image, BackgroundImage::None)
 }
 
 /// Every element and text of the paragraph rooted at `idx` can be drawn.

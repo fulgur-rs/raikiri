@@ -512,3 +512,39 @@ fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_rejected() {
         );
     }
 }
+
+#[test]
+fn a_float_inside_an_inline_element_is_rejected() {
+    // A box inside an inline element would be located relative to the
+    // element, whose layout is no longer zero; it stays on the parley path.
+    let fixture = block_fixture("", |doc, root| {
+        let inner = span(doc, root, "display:inline");
+        doc.append_text(inner, "a");
+        let float = span(doc, inner, "float:left;width:10px;height:10px");
+        doc.append_text(float, "x");
+    });
+    let error = project(&fixture).expect_err("a float inside an inline");
+    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+}
+
+#[test]
+fn an_atomic_inside_an_inline_element_is_rejected() {
+    let fixture = block_fixture("", |doc, root| {
+        let inner = span(doc, root, "display:inline");
+        doc.append_text(inner, "a");
+        span(doc, inner, "display:inline-block;width:10px;height:10px");
+    });
+    let error = project(&fixture).expect_err("an atomic inside an inline");
+    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+}
+
+#[test]
+fn a_float_and_an_atomic_directly_under_the_root_are_still_projected() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "a");
+        span(doc, root, "float:left;width:10px;height:10px");
+        span(doc, root, "display:inline-block;width:10px;height:10px");
+    });
+    let projected = project(&fixture).expect("boxes directly under the root");
+    assert_eq!(projected.boxes.len(), 2);
+}

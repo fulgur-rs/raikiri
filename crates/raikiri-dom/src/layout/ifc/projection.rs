@@ -349,6 +349,20 @@ pub(crate) fn project_ifc(
                         "boxes in right-to-left paragraphs are not placed yet",
                     ));
                 }
+                // A box is laid out relative to the root, while its DOM parent
+                // is the inline element, which now has a layout of its own:
+                // readers that add up the locations of the DOM parents would
+                // shift the box twice.
+                if nested
+                    && matches!(
+                        box_kind(cascade, doc, id),
+                        Some(IfcBoxKind::Float | IfcBoxKind::Atomic)
+                    )
+                {
+                    return Err(unsupported(
+                        "a box inside an inline element is located from the element, which is not modelled yet",
+                    ));
+                }
                 if cv.float != FloatValue::None {
                     supported_float(cv, id)?;
                     builder.push_out_of_flow(NodeId(id as u64), OutOfFlowKind::Float);
