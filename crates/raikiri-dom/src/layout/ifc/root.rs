@@ -46,6 +46,9 @@ pub(crate) struct IfcLines {
     /// True when some line was laid out beside a float (its space was
     /// narrower than the content box or did not start at the content start).
     pub(crate) beside_floats: bool,
+    /// Bottom margins of a last block child that collapse through the root's
+    /// bottom edge with the root's own (CSS 2.1 8.3.1); not in `height`.
+    pub(crate) escaping_margin: taffy::CollapsibleMarginSet,
 }
 
 impl IfcRoot {
@@ -168,6 +171,7 @@ impl fmt::Debug for IfcLines {
             .field("lines", &self.lines.len())
             .field("height", &self.height)
             .field("beside_floats", &self.beside_floats)
+            .field("escaping_margin", &self.escaping_margin.resolve())
             .finish()
     }
 }

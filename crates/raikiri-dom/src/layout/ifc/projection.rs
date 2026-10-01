@@ -5,8 +5,8 @@
 //! are projected; a float becomes an anchor in the text, an atomic a
 //! placeholder and a block a break between lines, and all three are laid out
 //! as boxes of their own. Anything the inline path cannot place yet
-//! (positioned boxes, blocks inside inline elements or with vertical margins,
-//! boxes in right-to-left paragraphs, form controls and other replaced
+//! (positioned boxes, blocks inside inline elements, boxes in right-to-left
+//! paragraphs, form controls and other replaced
 //! elements, generated content) is rejected with [`IfcError::Unsupported`]
 //! rather than approximated.
 
@@ -162,19 +162,13 @@ fn supported_atomic(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
 }
 
 /// A block child the inline engine can place between lines: in normal
-/// position, with no vertical margin (collapsing it with the lines and with
-/// other blocks is not modelled), no `auto` side margin, not a scroll
-/// container and not cleared.
+/// position, with no `auto` side margin, not a scroll container and not
+/// cleared. Its vertical margins collapse with those of the block children
+/// next to it and are added to the lines around it.
 fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
     if cv.position != PositionValue::Static && !style::is_inert_relative(cv) {
         return Err(unsupported("positioned blocks are not placed yet"));
-    }
-    let zero = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if px == 0.0);
-    if !zero(cv.margin.top) || !zero(cv.margin.bottom) {
-        return Err(unsupported(
-            "vertical margins of a block child are not collapsed yet",
-        ));
     }
     if matches!(cv.margin.left, ComputedLengthPercentageOrAuto::Auto)
         || matches!(cv.margin.right, ComputedLengthPercentageOrAuto::Auto)

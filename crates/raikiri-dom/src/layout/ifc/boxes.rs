@@ -10,8 +10,8 @@ use shodo::{
 };
 use taffy::util::ResolveOrZero;
 use taffy::{
-    AvailableSpace, BlockContext, BlockFormattingContext, Clear, FloatDirection, LayoutInput,
-    LayoutPartialTree, Line, RequestedAxis, RunMode, Size, SizingMode,
+    AvailableSpace, BlockContext, BlockFormattingContext, Clear, CollapsibleMarginSet,
+    FloatDirection, LayoutInput, LayoutPartialTree, Line, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -49,12 +49,29 @@ pub(crate) struct TentativeFloat {
 /// Lay the paragraph out with its boxes against `block_ctx` (the parent's
 /// context) or a context of its own. When `perform` is true, floats are
 /// committed to the context and the boxes get their final layouts.
+#[cfg(test)]
 pub(crate) fn layout_with_boxes(
     tree: &mut Document,
     idx: usize,
     geometry: FlowGeometry,
     block_ctx: Option<&mut BlockContext<'_>>,
     perform: bool,
+) -> IfcLines {
+    layout_with_boxes_in(tree, idx, geometry, block_ctx, perform, false)
+}
+
+/// [`layout_with_boxes`] for a root whose bottom margin may collapse with the
+/// bottom margins of its last block child (`bottom_margin_escapes`): the root
+/// is in its parent's formatting context and has no bottom padding, border
+/// or height in between. Those margins are then returned in
+/// [`IfcLines::escaping_margin`] instead of being added to the height.
+pub(crate) fn layout_with_boxes_in(
+    tree: &mut Document,
+    idx: usize,
+    geometry: FlowGeometry,
+    block_ctx: Option<&mut BlockContext<'_>>,
+    perform: bool,
+    bottom_margin_escapes: bool,
 ) -> IfcLines {
     let Some(root) = tree.nodes[idx]
         .ifc
@@ -66,25 +83,37 @@ pub(crate) fn layout_with_boxes(
             lines: std::sync::Arc::new(Vec::new()),
             height: 0.0,
             beside_floats: false,
+            escaping_margin: CollapsibleMarginSet::ZERO,
         };
     };
     // One inner function takes the context from both arms: the caller's
     // context and a local one cannot share a lifetime, because the pointee of
     // `&mut BlockContext<'_>` is invariant.
     match block_ctx {
-        Some(ctx) => run_boxes(tree, idx, &root, geometry, ctx, perform, false),
+        Some(ctx) => run_boxes(
+            tree,
+            idx,
+            &root,
+            geometry,
+            ctx,
+            perform,
+            false,
+            bottom_margin_escapes,
+        ),
         None => {
             let mut bfc = BlockFormattingContext::new();
             let mut ctx = bfc.root_block_context();
             ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
-            run_boxes(tree, idx, &root, geometry, &mut ctx, perform, true)
+            run_boxes(tree, idx, &root, geometry, &mut ctx, perform, true, false)
         }
     }
 }
 
 /// The line loop. `local` is true when the context is this paragraph's own,
 /// which makes the paragraph a block formatting context that contains its
-/// floats.
+/// floats and its children's margins. `bottom_margin_escapes` is described
+/// at [`layout_with_boxes_in`].
+#[allow(clippy::too_many_arguments)]
 fn run_boxes(
     tree: &mut Document,
     idx: usize,
@@ -93,6 +122,7 @@ fn run_boxes(
     ctx: &mut BlockContext<'_>,
     perform: bool,
     local: bool,
+    bottom_margin_escapes: bool,
 ) -> IfcLines {
     let FlowGeometry {
         width,
@@ -128,6 +158,11 @@ fn run_boxes(
     let mut calls = 0;
     // Bottom of the floats inside block children, from the content-box top.
     let mut block_floats_bottom = f32::NEG_INFINITY;
+    // Vertical margins after the last block child that are not placed yet:
+    // they collapse with the next block child's top margins, and are added in
+    // full before a line (margins never collapse with a line box; CSS 2.1
+    // 8.3.1).
+    let mut pending = CollapsibleMarginSet::ZERO;
 
     loop {
         calls += 1;
@@ -135,7 +170,10 @@ fn run_boxes(
             debug_assert!(false, "the line loop does not converge");
             break;
         }
-        let base = line_space(ctx, edges.0, top_edge, width, y, assumed_height);
+        // Where the next line starts if it is a line: below the margins
+        // still pending.
+        let line_y = y + pending.resolve();
+        let base = line_space(ctx, edges.0, top_edge, width, line_y, assumed_height);
         let space = shorten(base, &tentative);
         let mut constraint = LineConstraint::new(space.width);
         // `space` is measured from the content box's left edge; shodo measures
@@ -146,7 +184,7 @@ fn run_boxes(
         } else {
             space.start
         };
-        constraint.block_offset = y;
+        constraint.block_offset = line_y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float
         // below lays out another node, which may be an ifc root itself.
@@ -181,11 +219,11 @@ fn run_boxes(
                 // whether they are placed already or only on this line.
                 let clears_tentative = tentative.iter().any(|f| clears(float.clear, f.direction));
                 let below = clears_tentative
-                    || ceiling > y
+                    || ceiling > line_y
                     || (float.clear != Clear::None
                         && ctx
                             .cleared_threshold(float.clear)
-                            .is_some_and(|bottom| bottom > top_edge + y));
+                            .is_some_and(|bottom| bottom > top_edge + line_y));
                 // Floats are placed in source order (CSS 2.1 9.5.1 rule 5):
                 // once one of this line waits for the next line, the later
                 // ones wait too.
@@ -217,7 +255,7 @@ fn run_boxes(
                 // was assumed to have; lay it out again if the space for its
                 // real height differs.
                 let real = shorten(
-                    line_space(ctx, edges.0, top_edge, width, y, height),
+                    line_space(ctx, edges.0, top_edge, width, line_y, height),
                     &tentative,
                 );
                 if retries < MAX_SPACE_RETRIES && real != space {
@@ -239,11 +277,13 @@ fn run_boxes(
                     && moves < MAX_LINE_MOVES;
                 if overflows {
                     for float in tentative.drain(..) {
-                        ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
+                        ceiling =
+                            ceiling.max(commit_float(tree, ctx, float, line_y, geometry, perform));
                     }
                 }
-                if overflows && let Some(next) = next_float_edge(ctx, top_edge, y) {
+                if overflows && let Some(next) = next_float_edge(ctx, top_edge, line_y) {
                     y = next;
+                    pending = CollapsibleMarginSet::ZERO;
                     moves += 1;
                     assumed_height = 0.0;
                     retries = 0;
@@ -254,14 +294,16 @@ fn run_boxes(
                     beside = true;
                 }
                 for float in tentative.drain(..) {
-                    ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
+                    ceiling =
+                        ceiling.max(commit_float(tree, ctx, float, line_y, geometry, perform));
                 }
                 withdrawn.clear();
                 assumed_height = 0.0;
                 retries = 0;
                 calls = 0;
                 moves = 0;
-                y += height;
+                y = line_y + height;
+                pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();
                 lines.push(line);
                 // Floats that did not fit beside the line they are anchored
@@ -276,11 +318,13 @@ fn run_boxes(
                 // Floats anchored before the block and not placed yet go
                 // above it: the block starts below the last line.
                 for float in tentative.drain(..).chain(deferred.drain(..)) {
-                    ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
+                    ceiling =
+                        ceiling.max(commit_float(tree, ctx, float, line_y, geometry, perform));
                 }
-                let block = layout_block_child(tree, ctx, node.0 as usize, y, geometry, perform);
-                block_floats_bottom = block_floats_bottom.max(y + block.floats_bottom);
-                y += block.height;
+                let block =
+                    layout_block_child(tree, ctx, node.0 as usize, y, pending, geometry, perform);
+                block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
+                (y, pending) = (block.next_y, block.pending);
                 token = token_after;
                 // The call count is kept: every block is one of the root's
                 // boxes, so blocks in a row stay within the bound, and a
@@ -299,6 +343,15 @@ fn run_boxes(
             }
         }
     }
+    // The margins below a last block child collapse through the root's
+    // bottom edge when nothing separates them from the root's own; otherwise
+    // the paragraph contains them.
+    let escaping_margin = if bottom_margin_escapes {
+        pending
+    } else {
+        y += pending.resolve();
+        CollapsibleMarginSet::ZERO
+    };
     // A float met after the last line still gets a place.
     for float in tentative.drain(..).chain(deferred.drain(..)) {
         commit_float(tree, ctx, float, y, geometry, perform);
@@ -328,6 +381,7 @@ fn run_boxes(
         height,
         lines: std::sync::Arc::new(lines),
         beside_floats: beside,
+        escaping_margin,
     }
 }
 
@@ -504,26 +558,40 @@ pub(crate) fn measure_atomics(
 
 /// What laying out a block child gives the line loop.
 struct BlockChild {
-    /// Border-box height: the block has no vertical margins.
-    height: f32,
+    /// Top of the block's border box, from the content-box top.
+    top: f32,
+    /// Where the content after the block starts, before `pending`: the
+    /// bottom of its border box, or `y` itself when it is collapsed through.
+    next_y: f32,
+    /// Margins below the block that collapse with what follows: its own
+    /// bottom margin with the ones that leave it through its last child, or
+    /// everything up to here when the block is collapsed through.
+    pending: CollapsibleMarginSet,
     /// Bottom of the floats placed inside the block, from its top;
     /// `NEG_INFINITY` when it has none.
     floats_bottom: f32,
 }
 
-/// Lay a block child out at the line offset `y`, as wide as the content box
+/// Lay a block child out below the offset `y`, as wide as the content box
 /// less its side margins, the way the parent's block algorithm lays out an
-/// in-flow block. With `perform`, its final layout is stored.
+/// in-flow block (CSS 2.1 8.3.1): its top margin, with the margins of its
+/// first child that leave it, collapses with the `pending` margins of the
+/// block children above it. With `perform`, its final layout is stored.
 fn layout_block_child(
     tree: &mut Document,
     ctx: &mut BlockContext<'_>,
     node: usize,
     y: f32,
+    pending: CollapsibleMarginSet,
     geometry: FlowGeometry,
     perform: bool,
 ) -> BlockChild {
     use taffy::LayoutBlockContainer;
     let margin = resolved_margins(tree, node, geometry.width);
+    // Placed where its own top margin alone puts it. Margins that leave the
+    // block through its first child are known only after it is laid out; they
+    // move its box below, not the floats it placed inside.
+    let guess = y + pending.collapse_with_margin(margin.top).resolve();
     let stretch = (geometry.width - margin.left - margin.right).max(0.0);
     let width = used_block_width(tree, node, geometry.width).unwrap_or(stretch);
     let width = clamp_block_width(tree, node, geometry.width, width);
@@ -532,7 +600,7 @@ fn layout_block_child(
     // taffy's own in-flow loop.
     let right = geometry.width - margin.left - width + geometry.edges.1;
     let mut child_ctx = ctx.sub_context(
-        geometry.top_edge + y,
+        geometry.top_edge + guess,
         [geometry.edges.0 + margin.left, right],
     );
     let inputs = LayoutInput {
@@ -559,23 +627,42 @@ fn layout_block_child(
             width: AvailableSpace::Definite(width),
             height: AvailableSpace::MaxContent,
         },
-        // Neither the block's margins (zero) nor its children's collapse
-        // with the lines around it.
-        vertical_margins_are_collapsible: Line::FALSE,
+        // The block is in the paragraph's formatting context: the margins of
+        // its first and last children collapse through it unless its padding,
+        // border or height keep them in (taffy decides and returns them).
+        vertical_margins_are_collapsible: Line::TRUE,
     };
     let output =
         tree.compute_block_child_layout(taffy::NodeId::from(node), inputs, Some(&mut child_ctx));
     let floats_bottom = child_ctx.floated_content_height_contribution();
+    let top_set = output.top_margin.collapse_with_margin(margin.top);
+    let bottom_set = output.bottom_margin.collapse_with_margin(margin.bottom);
+    let (top, after) = if output.margins_can_collapse_through {
+        // An empty block: its margins and the ones above it are one set, and
+        // its box sits where that set would put the next box's top.
+        let through = pending
+            .collapse_with_set(top_set)
+            .collapse_with_set(bottom_set);
+        (
+            y + pending.collapse_with_set(top_set).resolve(),
+            (y, through),
+        )
+    } else {
+        let top = y + pending.collapse_with_set(top_set).resolve();
+        (top, (top + output.size.height, bottom_set))
+    };
     if perform {
         let location = taffy::Point {
             x: geometry.edges.0 + margin.left,
-            y: geometry.top_edge + y,
+            y: geometry.top_edge + top,
         };
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
     BlockChild {
-        height: output.size.height,
-        floats_bottom,
+        top,
+        next_y: after.0,
+        pending: after.1,
+        floats_bottom: floats_bottom + (guess - top),
     }
 }
 

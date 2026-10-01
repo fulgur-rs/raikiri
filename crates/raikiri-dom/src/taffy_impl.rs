@@ -10,11 +10,12 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CoreStyle, DetailedGridInfo,
-    Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
-    LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, Position as TaffyPosition, Size, Style,
-    TraversePartialTree, TraverseTree, compute_block_layout, compute_cached_layout,
-    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
+    DetailedGridInfo, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
+    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
+    Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
+    compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
+    compute_leaf_layout,
 };
 
 use crate::document::Document;
@@ -498,15 +499,28 @@ fn compute_ifc_root(
         width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
         edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
         top_inset,
+        // CSS 2.1 8.3.1: the bottom margin of a last in-flow child and that
+        // of its parent are adjoining when the parent has no bottom padding
+        // or border and an `auto` height, and the parent is in the same
+        // formatting context as its own parent (a block context is passed).
+        bottom_margin_escapes: block_ctx.is_some()
+            && inputs.vertical_margins_are_collapsible.end
+            && style.size.height.is_auto()
+            && ifc_edge(style.padding.bottom, inputs.parent_size.width)
+                + ifc_edge(style.border.bottom, inputs.parent_size.width)
+                == 0.0,
     };
     let mut content_baseline = None;
+    let mut escaping_margin = CollapsibleMarginSet::ZERO;
     let mut output = compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
-        let (size, baseline) =
+        let (size, baseline, escaping) =
             measure_ifc_root(tree, idx, known.height, available, measure, block_ctx);
         content_baseline = baseline;
+        escaping_margin = escaping;
         size
     });
     output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
+    output.bottom_margin = escaping_margin;
     output
 }
 
@@ -585,6 +599,8 @@ struct IfcMeasure {
     edges: (f32, f32),
     /// Border plus padding above the content box.
     top_inset: f32,
+    /// The root's bottom margin may collapse with its last block child's.
+    bottom_margin_escapes: bool,
 }
 
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
@@ -604,10 +620,10 @@ fn measure_ifc_root(
     available: Size<AvailableSpace>,
     measure: IfcMeasure,
     block_ctx: Option<&mut BlockContext<'_>>,
-) -> (Size<f32>, Option<f32>) {
+) -> (Size<f32>, Option<f32>, CollapsibleMarginSet) {
     use crate::layout::ifc::{flow, root::with_state};
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
-        return (Size::ZERO, None);
+        return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
     };
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
@@ -629,7 +645,7 @@ fn measure_ifc_root(
     let Some((min_content, max_content)) = with_state(tree, |state| {
         flow::intrinsic_widths_with(&probe, &mut state.layout_cx, &box_intrinsics.engine)
     }) else {
-        return (Size::ZERO, None);
+        return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
     };
     let (min_content, max_content) = (
         min_content.max(box_intrinsics.blocks.0),
@@ -658,8 +674,14 @@ fn measure_ifc_root(
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;
-    let lines =
-        crate::layout::ifc::boxes::layout_with_boxes(tree, idx, geometry, block_ctx, perform);
+    let lines = crate::layout::ifc::boxes::layout_with_boxes_in(
+        tree,
+        idx,
+        geometry,
+        block_ctx,
+        perform,
+        measure.bottom_margin_escapes,
+    );
     let size = Size {
         width,
         height: known_height.unwrap_or(lines.height),
@@ -672,12 +694,17 @@ fn measure_ifc_root(
     } else {
         flow::first_baseline(&lines)
     };
+    let escaping_margin = if known_height.is_none() {
+        lines.escaping_margin
+    } else {
+        CollapsibleMarginSet::ZERO
+    };
     if measure.run_mode == RunMode::PerformLayout
         && let Some(root) = tree.nodes[idx].ifc.as_mut()
     {
         root.lines = Some(lines);
     }
-    (size, baseline)
+    (size, baseline, escaping_margin)
 }
 
 /// Return the first baseline for text leaves from Parley's first line. Taffy's

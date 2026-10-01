@@ -177,6 +177,7 @@ pub(crate) fn place_lines(
         height: lines.iter().map(|line| line.block_size()).sum(),
         lines: std::sync::Arc::new(lines),
         beside_floats: false,
+        escaping_margin: taffy::CollapsibleMarginSet::ZERO,
     }
 }
 

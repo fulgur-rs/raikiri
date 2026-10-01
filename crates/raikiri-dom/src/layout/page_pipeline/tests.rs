@@ -5577,3 +5577,294 @@ fn bare_text_directly_in_a_table_is_laid_out_like_parley() {
         assert_eq!(height(true), height(false), "{text:?}");
     }
 }
+
+// ── vertical margins of block children ───────────────────────
+
+/// `root > ["aaaa", div(a_css) > "bb", div(b_css) > "cc", "dddd"]` in a
+/// 200px Ahem paragraph. Returns the document, the cascade, the root and
+/// the two blocks.
+fn paragraph_with_block_children(
+    a_css: &str,
+    b_css: &str,
+) -> (Document, CascadeResult, usize, [usize; 2]) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+    let a = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{a_css}")),
+    );
+    doc.append_text(a, "bb");
+    let b = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{b_css}")),
+    );
+    doc.append_text(b, "cc");
+    doc.append_text(root, "dddd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root, [a, b])
+}
+
+/// Distance from the bottom of the first block child to the top of the
+/// second, in a paragraph of [`paragraph_with_block_children`].
+fn block_child_gap(a_css: &str, b_css: &str, ifc: bool) -> f32 {
+    let (mut doc, cascade, root, [a, b]) = paragraph_with_block_children(a_css, b_css);
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{a_css} / {b_css}");
+    let a = doc.nodes[a].unrounded_layout;
+    let b = doc.nodes[b].unrounded_layout;
+    b.location.y - (a.location.y + a.size.height)
+}
+
+#[test]
+fn block_child_margins_keep_the_root_an_ifc_root() {
+    let (mut doc, cascade, root, _) =
+        paragraph_with_block_children("margin-bottom:20px", "margin-top:30px");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn adjoining_block_children_collapse_their_margins() {
+    assert_eq!(
+        block_child_gap("margin-bottom:20px", "margin-top:30px", true),
+        30.0
+    );
+    assert_eq!(
+        block_child_gap("margin-bottom:20px", "margin-top:30px", false),
+        30.0
+    );
+}
+
+#[test]
+fn negative_and_positive_margins_collapse_by_summing_the_extremes() {
+    // CSS 2.1 8.3.1: the largest positive (20) plus the most negative (-5).
+    assert_eq!(
+        block_child_gap("margin-bottom:20px", "margin-top:-5px", true),
+        15.0
+    );
+    assert_eq!(
+        block_child_gap("margin-bottom:-8px", "margin-top:-5px", true),
+        -8.0
+    );
+}
+
+#[test]
+fn a_block_childs_inner_margin_collapses_through_it() {
+    // A's last child "pp" has a 20px bottom margin. A has no padding or
+    // border, so that margin leaves A and collapses with B's 30px top
+    // margin: 30px between A's bottom and B's top.
+    let gap = |ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+        let a = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+        let p = doc.append_element(
+            Some(a),
+            "div",
+            Style::default(),
+            Some("display:block;margin-bottom:20px"),
+        );
+        doc.append_text(p, "pp");
+        let b = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;margin-top:30px"),
+        );
+        doc.append_text(b, "cc");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let a = doc.nodes[a].unrounded_layout;
+        let b = doc.nodes[b].unrounded_layout;
+        (a.size.height, b.location.y - (a.location.y + a.size.height))
+    };
+    assert_eq!(gap(true), (10.0, 30.0));
+    assert_eq!(gap(true), gap(false));
+}
+
+/// Distance from the bottom of the line "aaaa" to the top of a block child
+/// with `css` that follows it.
+fn gap_between_line_and_block(css: &str, ifc: bool) -> f32 {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+    let block = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{css}")),
+    );
+    doc.append_text(block, "bb");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+    doc.nodes[block].unrounded_layout.location.y - 10.0
+}
+
+#[test]
+fn a_margin_does_not_collapse_with_a_line() {
+    assert_eq!(gap_between_line_and_block("margin-top:12px", true), 12.0);
+    assert_eq!(
+        gap_between_line_and_block("margin-top:12px", true),
+        gap_between_line_and_block("margin-top:12px", false)
+    );
+}
+
+/// `root > [lead, div(a_css) > "bb", div(e_css) (empty), div(b_css) > "cc"]`
+/// in a 200px Ahem paragraph; `lead` is text before the first block (may be
+/// empty). Returns the root, the three blocks and their border boxes as
+/// `(y, height)`, and the root's `(y, height)`.
+fn three_blocks(
+    lead: &str,
+    a_css: &str,
+    e_css: &str,
+    b_css: &str,
+    ifc: bool,
+) -> ((f32, f32), [(f32, f32); 3]) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", lead);
+    let mut blocks = [0; 3];
+    for (slot, (css, text)) in [(a_css, "bb"), (e_css, ""), (b_css, "cc")]
+        .into_iter()
+        .enumerate()
+    {
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        );
+        if !text.is_empty() {
+            doc.append_text(block, text);
+        }
+        blocks[slot] = block;
+    }
+    doc.append_text(root, "dddd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(
+        doc.nodes[root].is_ifc_root(),
+        ifc,
+        "{a_css} / {e_css} / {b_css}"
+    );
+    let geometry = |id: usize| {
+        let l = doc.nodes[id].unrounded_layout;
+        (l.location.y, l.size.height)
+    };
+    (geometry(root), blocks.map(geometry))
+}
+
+#[test]
+fn an_empty_block_child_collapses_through() {
+    // 20 (A's bottom), 10 and 25 (the empty block) and 5 (B's top) are one
+    // collapsed margin: 25px from A's bottom to B's top.
+    let run = |ifc| {
+        three_blocks(
+            "aaaa",
+            "margin-bottom:20px",
+            "margin-top:10px;margin-bottom:25px",
+            "margin-top:5px",
+            ifc,
+        )
+    };
+    let (_, [a, _, b]) = run(true);
+    assert_eq!(b.0 - (a.0 + a.1), 25.0);
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn a_block_child_with_padding_does_not_collapse_through() {
+    // The 1px padding separates the empty block's margins: 20 above it
+    // (max of 20 and 10), 1px of padding, 25 below it (max of 25 and 5).
+    let run = |ifc| {
+        three_blocks(
+            "aaaa",
+            "margin-bottom:20px",
+            "margin-top:10px;margin-bottom:25px;padding-top:1px",
+            "margin-top:5px",
+            ifc,
+        )
+    };
+    let (_, [a, e, b]) = run(true);
+    assert_eq!(e.0 - (a.0 + a.1), 20.0);
+    assert_eq!(b.0 - (a.0 + a.1), 46.0);
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn margins_are_included_in_the_roots_height() {
+    // Line "aaaa" (10) + A (10) + 20 + B (10) + 8 (B's bottom margin, then
+    // the line "dddd") + "dddd" (10): the lines keep the margins in the root.
+    let run = |ifc| three_blocks("aaaa", "margin-bottom:20px", "", "margin-bottom:8px", ifc);
+    let (root, _) = run(true);
+    assert_eq!(root.1, 68.0);
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn the_first_block_childs_top_margin_stays_inside_the_root() {
+    // The paragraph contains its first block child's top margin: the root
+    // stays where it is and the block starts 15px into it.
+    let run = |ifc| three_blocks("", "margin-top:15px", "", "", ifc);
+    let (root, [a, _, _]) = run(true);
+    assert_eq!((root.0, a.0), (0.0, 15.0));
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn the_last_block_childs_bottom_margin_collapses_through_the_root() {
+    // "aaaa" then a block with a 12px bottom margin and nothing after it.
+    // The paragraph is in its parent's formatting context and has no bottom
+    // padding or border, so the margin collapses through its bottom edge
+    // (CSS 2.1 8.3.1): the paragraph is 20px tall, and the margin is the
+    // root's to collapse with whatever follows it.
+    let height = |ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;margin-bottom:12px"),
+        );
+        doc.append_text(block, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        doc.nodes[root].unrounded_layout.size.height
+    };
+    assert_eq!(height(true), 20.0);
+    assert_eq!(height(true), height(false));
+}
+
+#[test]
+fn a_formatting_context_root_contains_its_last_block_childs_bottom_margin() {
+    // A flex item establishes a formatting context of its own: the 12px
+    // bottom margin of its last block child stays inside it, 10 + 10 + 12.
+    let height = |ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("display:flex", "", "aaaa");
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;margin-bottom:12px"),
+        );
+        doc.append_text(block, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        doc.nodes[root].unrounded_layout.size.height
+    };
+    assert_eq!(height(true), 32.0);
+    assert_eq!(height(true), height(false));
+}

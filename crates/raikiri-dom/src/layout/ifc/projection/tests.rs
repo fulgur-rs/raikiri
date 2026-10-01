@@ -409,11 +409,26 @@ fn a_block_child_is_recorded_as_a_block_box() {
 }
 
 #[test]
+fn a_block_child_with_vertical_margins_is_a_box_of_the_paragraph() {
+    for css in [
+        "display:block;margin-top:5px",
+        "display:block;margin-bottom:-5px",
+        "display:block;margin-top:10%",
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let block = span(doc, root, css);
+            doc.append_text(block, "bb");
+        });
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{css}");
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
+    }
+}
+
+#[test]
 fn blocks_that_are_not_placed_yet_stay_unsupported() {
     for (name, css, nested) in [
-        ("vertical margin", "display:block;margin-top:5px", false),
-        ("bottom margin", "display:block;margin-bottom:5px", false),
-        ("percentage margin", "display:block;margin-top:10%", false),
         ("auto side margin", "display:block;margin-left:auto", false),
         (
             "positioned",
