@@ -4227,3 +4227,125 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
     );
     assert!(!transparent_scene.commands.is_empty());
 }
+
+const FONT_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace"
+);
+
+/// Lay out and record a document with generated content, with the inline
+/// engine on or off. Both the parley context and the engine's layer hold Ahem.
+fn generated_scene(
+    css: &str,
+    build: impl FnOnce(&mut Document, usize),
+    inline_formatting: bool,
+) -> (Document, CascadeResult, Scene, usize) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    document.append_text(style, css);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let div = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    build(&mut document, div);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let dir = std::path::Path::new(FONT_DIR);
+    if inline_formatting {
+        let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+        document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    }
+    let fonts = raikiri_dom::build_wpt_font_ctx(dir).expect("font ctx");
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4, fonts).expect("layout");
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    (document, cascade, scene, div)
+}
+
+fn glyph_xs(scene: &Scene) -> Vec<f64> {
+    let mut xs = Vec::new();
+    for command in &scene.commands {
+        if let RenderCommand::GlyphRun(run) = command {
+            let origin = run.transform.translation();
+            xs.extend(run.glyphs.iter().map(|g| origin.x + f64::from(g.x)));
+        }
+    }
+    xs.sort_by(f64::total_cmp);
+    xs
+}
+
+#[test]
+fn the_text_after_a_generated_before_starts_after_its_advance() {
+    // "AB " is 30px with its trailing space, so BODY starts at x = 30.
+    let (document, _, scene, _) = generated_scene(
+        r#"div::before { content: "AB " }"#,
+        |doc, div| {
+            doc.append_text(div, "BODY");
+        },
+        true,
+    );
+    assert_eq!(glyph_xs(&scene), [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
+    assert!(document.standalone_text_calls() > 0);
+}
+
+#[test]
+fn a_generated_run_is_measured_with_the_document_font() {
+    let (document, cascade, _, div) = generated_scene(
+        r#"div::before { content: "A" } div::after { content: "B " }"#,
+        |doc, div| {
+            doc.append_text(div, "x");
+        },
+        true,
+    );
+    let snapshots: Vec<CounterSnapshot> = Vec::new();
+    let height = generated_pseudo_text_height(
+        &document,
+        &cascade,
+        div,
+        raikiri_style::PseudoElem::Before,
+        &snapshots,
+    );
+    let advance = generated_pseudo_text_advance(
+        &document,
+        &cascade,
+        div,
+        raikiri_style::PseudoElem::After,
+        &snapshots,
+    );
+    assert_eq!(height, 10.0);
+    assert_eq!(advance, 20.0);
+}
+
+fn list_fixture_with_engine() -> (Document, CascadeResult, usize) {
+    let (mut document, cascade, first, _) = list_fixture(
+        "display:list-item;list-style-type:decimal;list-style-position:outside;\
+         font-family:Ahem;font-size:10px",
+        "display:list-item",
+        None,
+    );
+    let dir = std::path::Path::new(FONT_DIR);
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
+    document.enable_inline_formatting(collection, shodo::limits::Limits::default());
+    (document, cascade, first)
+}
+
+#[test]
+fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
+    // The marker text is "1. " (three glyphs, the last one a space). Its width
+    // is 20 (the trailing space is left out, as parley does), so an outside
+    // marker starts at 0 + 0 - 20 - 4 = -24: glyphs at -24, -14 and -4.
+    let (document, cascade, first) = list_fixture_with_engine();
+    let mut scene = Scene::new();
+    paint_list_marker(
+        &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+    );
+    assert_eq!(glyph_xs(&scene), [-24.0, -14.0, -4.0]);
+    // One engine result for the measurement, one for the drawing.
+    assert_eq!(document.standalone_text_calls(), 2);
+}

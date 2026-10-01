@@ -989,3 +989,24 @@ fn a_contents_child_does_not_keep_the_paragraph_on_the_parley_path() {
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
 }
+
+#[test]
+fn a_paragraph_with_generated_text_stays_on_the_parley_path() {
+    // The text of ::before is measured and painted at paint time; the lines
+    // of the inline engine would not contain it.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    let head = fixture
+        .doc
+        .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    fixture
+        .doc
+        .append_text(head, r#"div::before { content: "x" }"#);
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+}
