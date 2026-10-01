@@ -42,7 +42,7 @@ fn a_plain_paragraph_becomes_a_root_and_marks_its_subtree() {
 }
 
 #[test]
-fn without_the_switch_no_root_is_assigned() {
+fn without_fonts_no_root_is_assigned() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -51,7 +51,7 @@ fn without_the_switch_no_root_is_assigned() {
 }
 
 #[test]
-fn ineligible_shapes_stay_on_the_parley_path() {
+fn a_box_without_inline_content_is_not_a_root() {
     let cases: [(&str, Build); 2] = [
         ("whitespace only", |doc, root| {
             doc.append_text(root, "   ");
@@ -112,7 +112,7 @@ fn a_root_beside_inline_text_is_still_a_root() {
 }
 
 #[test]
-fn a_root_inside_a_multicol_container_stays_on_the_parley_path() {
+fn a_root_inside_a_multicol_container_is_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -142,8 +142,8 @@ fn a_multicol_root_is_a_root() {
 
 #[test]
 fn a_vertical_root_is_a_root_laid_out_horizontally() {
-    // Vertical writing is laid out as horizontal text, as on the parley
-    // path; the paragraph is the engine's.
+    // Vertical writing is laid out as horizontal text; the paragraph is the
+    // engine's.
     let mut fixture = block_fixture("writing-mode:vertical-rl", |doc, root| {
         doc.append_text(root, "aa bb");
     });
@@ -153,7 +153,7 @@ fn a_vertical_root_is_a_root_laid_out_horizontally() {
 }
 
 #[test]
-fn assignment_drops_the_layout_cache_only_when_the_switch_is_on() {
+fn assignment_drops_the_layout_cache_only_when_the_document_has_fonts() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -248,7 +248,7 @@ fn an_rtl_paragraph_is_an_ifc_root() {
 #[test]
 fn an_rtl_paragraph_with_a_box_is_laid_out_by_the_engine() {
     // An accepted degradation: boxes in a right-to-left paragraph are placed
-    // where the engine puts them, not checked against the parley path.
+    // where the engine puts them, not checked against CSS.
     let cases: [(&str, Build); 3] = [
         ("float", |doc, root| {
             doc.append_text(root, "aa ");
@@ -316,9 +316,8 @@ fn right_to_left_content_inside_a_box_does_not_make_the_paragraph_rtl() {
 
 #[test]
 fn an_rtl_paragraph_with_a_unicode_bidi_value_is_laid_out_by_the_engine() {
-    // An accepted difference: the parley path does not read `unicode-bidi`;
-    // the engine orders the text by it (UAX #9), as CSS Writing Modes 3
-    // requires.
+    // The engine orders the text by `unicode-bidi` (UAX #9), as CSS Writing
+    // Modes 3 requires.
     for value in [
         "bidi-override",
         "isolate-override",
@@ -378,8 +377,8 @@ fn hanging_punctuation_first_keeps_a_paragraph_an_ifc_root() {
 
 #[test]
 fn text_emphasis_keeps_a_paragraph_an_ifc_root() {
-    // Neither path draws emphasis marks, so the paragraph lays out and paints
-    // the same as on the parley path.
+    // Emphasis marks are not drawn, so the paragraph lays out and paints as
+    // it would without them.
     let mut fixture = block_fixture("text-emphasis-style:dot", |doc, root| {
         doc.append_text(root, "aa");
     });
@@ -524,8 +523,8 @@ fn word_space_transform_is_laid_out_by_the_engine() {
 
 #[test]
 fn a_full_width_text_transform_is_laid_out_by_the_engine() {
-    // An accepted degradation: shodo's full-width mapping covers fewer
-    // characters than the parley path; what it does not map is left as is.
+    // An accepted degradation: shodo's full-width mapping does not cover
+    // every character; what it does not map is left as is.
     for value in [
         "full-width",
         "uppercase full-width",
@@ -812,7 +811,7 @@ fn a_paragraph_whose_only_text_is_inside_a_float_is_not_a_root() {
 }
 
 #[test]
-fn rtl_text_inside_a_float_does_not_keep_the_paragraph_on_the_parley_path() {
+fn rtl_text_inside_a_float_keeps_the_paragraph_a_root() {
     // The float is painted as a box of its own, so what is inside it does not
     // matter to the paragraph painter.
     let mut fixture = block_fixture("", |doc, root| {
@@ -1003,7 +1002,7 @@ fn the_root_itself_may_have_a_background_image() {
 }
 
 #[test]
-fn a_contents_child_does_not_keep_the_paragraph_on_the_parley_path() {
+fn a_contents_child_keeps_the_paragraph_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
         let wrapper = span(doc, root, "display:contents");
@@ -1250,7 +1249,7 @@ fn a_document_that_did_not_allow_it_is_built_in_sequence() {
 }
 
 #[test]
-fn a_document_without_the_switch_records_no_build() {
+fn a_document_without_fonts_records_no_build() {
     let mut fixture = many_paragraphs(8);
     fixture.doc.set_ifc_parallel_build(true);
     assert!(!fixture.doc.ifc_parallel_build());

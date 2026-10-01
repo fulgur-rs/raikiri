@@ -378,8 +378,8 @@ abbr[title], acronym[title] { text-decoration: dotted underline; }
  *   code, kbd, samp, tt { font-family: monospace; }
  *
  * font-family (`ComputedValues.font_family`, parsed by `parse_font_family`
- * in property.rs) is fully implemented end to end: raikiri-dom's layout.rs
- * hands the computed family list to parley, which resolves the CSS keyword
+ * in property.rs) is fully implemented end to end: raikiri-dom hands the
+ * computed family list to the inline engine, which resolves the CSS keyword
  * `monospace` as a generic family rather than looking up a font literally
  * named "monospace", so this rule lands verbatim. */
 code, kbd, samp, tt { font-family: monospace; }

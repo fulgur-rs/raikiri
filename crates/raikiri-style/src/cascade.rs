@@ -279,9 +279,8 @@ fn cascade_from_candidates<D: StyleDom>(
     // nodes (foster-parenting transients, orphans after stripping, etc.) do
     // not get entries from the walk. But the contract
     // `computed.len() == document.node_count()` covers the entire arena:
-    // `raikiri-dom::layout::preshape_text` and
-    // `raikiri-paint::text::draw_text_node` index `computed[idx]` directly by
-    // node_id. Fill with initial() in advance, then overwrite visited slots
+    // raikiri-dom's layout and raikiri-paint's walker index `computed[idx]`
+    // directly by node_id. Fill with initial() in advance, then overwrite visited slots
     // during DFS.
     let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
     let mut non_ua_margin_sides = vec![Sides::all(false); dom.node_count()];

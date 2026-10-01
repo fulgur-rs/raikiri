@@ -124,7 +124,7 @@ fn a_document_layer_face_is_invisible_to_the_shared_layer() {
 }
 
 #[test]
-fn a_document_without_an_explicit_switch_uses_the_engine() {
+fn a_document_without_explicit_fonts_uses_the_engine() {
     // No fonts are given to the document: the first layout switches the
     // engine on with the installed fonts.
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "");
@@ -134,7 +134,7 @@ fn a_document_without_an_explicit_switch_uses_the_engine() {
 }
 
 #[test]
-fn a_paragraph_the_engine_cannot_project_is_an_error_not_a_parley_fallback() {
+fn a_paragraph_the_engine_cannot_project_is_an_error() {
     // Four text bytes are allowed per paragraph; "aaaa bbbb" has nine.
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "");
     doc.set_font_collection_with_limits(

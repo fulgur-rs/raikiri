@@ -631,12 +631,8 @@ fn node_accessors_are_callable_from_external_call_site() {
 /// then driving `compute_root_layout` straight from this test. That
 /// characterizes **taffy's own** block layout algorithm — the sink under
 /// test here — independent of whether raikiri's input guard currently
-/// prevents the input from reaching it — the same "characterize the
-/// sink, not just the guard" approach used for the parley probe in
-/// `crates/raikiri-dom/src/layout.rs`
-/// (`parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard`)
-/// and the rasterizer probe in `crates/raikiri-paint/src/lib.rs`
-/// (`nonfinite_rasterizer_probe`).
+/// prevents the input from reaching it ("characterize the sink, not just
+/// the guard").
 ///
 /// **What this does *not* bypass**: the output-side guard,
 /// `sanitize_taffy_layout`, called unconditionally from
@@ -659,10 +655,9 @@ fn node_accessors_are_callable_from_external_call_site() {
 /// percentage) — and it isn't a silently-skipped no-op either, since the
 /// child's `unrounded_layout` is asserted below to be both non-default
 /// and (per the output-side guard) finite. This is consistent with —
-/// and now formalizes as an automated regression check, rather than leaving
-/// it as prose — the manual observation already recorded on
-/// `MAX_FONT_SIZE_PX` in `crates/raikiri-dom/src/layout.rs`: “taffy-side
-/// tests at sites 1–4 immediately fail assertions (only values break).” This test
+/// and now formalizes as an automated regression check — the observation
+/// that taffy-side tests at sites 1–4 immediately fail assertions (only
+/// values break). This test
 /// does not assert anything about *which specific* values taffy produces
 /// (a separate, still-open concern about the "finite garbage"
 /// semantic-validity of taffy's output is tracked elsewhere); it pins the

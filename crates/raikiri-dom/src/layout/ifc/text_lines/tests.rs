@@ -147,8 +147,8 @@ fn the_lines_follow_a_rebreak_for_another_width() {
     lay_out(&mut doc, &cascade);
     let text = doc.nodes[root].children[0];
     assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(1));
-    // No authored width anywhere: parley re-shapes at max_advance, and so does
-    // the inline engine.
+    // No authored width anywhere: the inline engine breaks the lines again at
+    // max_advance.
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(doc.ifc_text_lines(text).map(|l| l.lines.len()), Some(3));
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);

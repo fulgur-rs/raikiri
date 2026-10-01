@@ -12,7 +12,7 @@ fn a_document_opts_in_explicitly() {
 }
 
 #[test]
-fn a_cloned_document_keeps_the_switch() {
+fn a_cloned_document_keeps_its_fonts() {
     let mut doc = Document::new();
     doc.set_font_collection_with_limits(ahem_fonts(), Limits::default());
     assert!(doc.clone().has_font_collection());
@@ -28,7 +28,7 @@ fn with_state_puts_the_state_back() {
 }
 
 #[test]
-fn with_state_does_nothing_without_the_switch() {
+fn with_state_does_nothing_without_fonts() {
     let mut doc = Document::new();
     assert!(with_state(&mut doc, |_| ()).is_none());
     assert!(!doc.has_font_collection());

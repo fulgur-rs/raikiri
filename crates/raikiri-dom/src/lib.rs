@@ -4,7 +4,7 @@
 //! For details, see §4, raikiri-dom scope, in the original design.
 
 // Public module rustdoc cross-links some crate-private helpers (e.g.
-// `crate::layout::preshape_text`, `Document::flags_dirty`) which resolve fine
+// `Document::flags_dirty`) which resolve fine
 // under `--document-private-items` but trip the strict public build.  Preserve
 // the cross-links; the linker's audience is intra-crate readers.
 #![allow(rustdoc::private_intra_doc_links)]
@@ -17,8 +17,10 @@
 //! - [`dom_impl`] — `raikiri_traits::{Dom, Node, Element}` +
 //!   `raikiri_style::{StyleDom, StyleNode, StyleElement}` impls + `NodeRef` /
 //!   `ElementRef` types (both trait families over one arena, see file header)
-//! - [`fonts`] — constructs a cross-machine deterministic `FontContext` from the
-//!   WPT bundled font directory (`build_wpt_font_ctx`)
+//! - [`fonts`] — font collections for the inline engine: a cross-machine
+//!   deterministic one from the WPT bundled font directory
+//!   (`build_wpt_font_collection`), bundled bytes, the installed fonts, and
+//!   the `@font-face` document layer
 //!
 //! # Flat tree membership
 //!

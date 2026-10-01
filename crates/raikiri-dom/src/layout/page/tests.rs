@@ -338,7 +338,7 @@ fn layout_single_page_can_be_called_multiple_times() {
     let body_id = find_body(&doc).expect("body exists");
     let first_size = doc.nodes[body_id].unrounded_layout.size;
 
-    // Second call — check that clearing text_layout for re-entry and rerunning layout
+    // Second call — check that resetting per-pass state and rerunning layout
     // produce the same result (detect a silent regression from future incremental
     // optimizations).
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("second call Ok");

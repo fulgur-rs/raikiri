@@ -155,7 +155,7 @@ fn painted_root(css: &str, build: impl Fn(&mut Document, usize)) -> Scene {
 }
 
 #[test]
-fn ifc_glyph_positions_match_the_parley_path() {
+fn ifc_glyph_positions_are_pinned() {
     // `word-break: break-all` wraps a run of distinct letters without spaces,
     // so both engines emit the same ink glyphs and no trailing-space glyphs.
     // The alignment and indent cases pin that shodo's glyph positions already
@@ -179,10 +179,7 @@ fn ifc_glyph_positions_match_the_parley_path() {
         let on = painted_root(css, |doc, root| {
             doc.append_text(root, text);
         });
-        assert!(
-            !ink(&on).is_empty(),
-            "{css}: the parley path painted nothing"
-        );
+        assert!(!ink(&on).is_empty(), "{css}: nothing painted");
         let expected = match css {
             "width:50px;word-break:break-all" => &[
                 (67, 0, 512),
@@ -269,9 +266,9 @@ fn ink_whole_pixel_y(scene: &Scene) -> Vec<(u32, i64, i64)> {
 
 #[test]
 fn ifc_glyph_positions_at_the_default_size_match_to_the_pixel() {
-    // At 16px with `line-height: normal` parley rounds the ascent and descent
-    // (baseline 13.0) while shodo keeps 1/64px metrics (baseline 12.796875), so
-    // the recorded y differs by 0.2px. The renderer rounds a hinted glyph's y
+    // At 16px with `line-height: normal` shodo keeps 1/64px metrics
+    // (baseline 12.796875), not whole-pixel ones (baseline 13.0), so the
+    // recorded y is 0.2px off a whole pixel. The renderer rounds a hinted glyph's y
     // to whole pixels, which hides it; compare y the same way and do not round
     // in the painter.
     let css = "width:80px;word-break:break-all;font-size:16px;line-height:normal";
@@ -359,7 +356,7 @@ fn a_paragraph_inside_a_fixed_box_is_painted_like_fixed_text() {
     assert!(on_doc.get_node(inner).is_some_and(|n| n.is_ifc_root()));
     let on = ink(&painted(&on_doc, &cascade));
 
-    assert!(!on.is_empty(), "the parley path draws fixed text");
+    assert!(!on.is_empty(), "fixed text is drawn");
     assert_eq!(
         on,
         [
@@ -411,7 +408,7 @@ fn decoration_fills(scene: &Scene) -> Vec<(i64, i64, i64, i64)> {
 }
 
 #[test]
-fn underline_and_line_through_match_the_parley_path() {
+fn underline_and_line_through_are_pinned() {
     for css in ["text-decoration:underline", "text-decoration:line-through"] {
         let build = |doc: &mut Document, root: usize| {
             doc.append_text(root, "abcde");
@@ -421,7 +418,7 @@ fn underline_and_line_through_match_the_parley_path() {
         lay_out(&mut on_doc, &cascade);
         let on = decoration_fills(&painted(&on_doc, &cascade));
 
-        assert!(!on.is_empty(), "{css}: the parley path drew no line");
+        assert!(!on.is_empty(), "{css}: no line drawn");
         let expected = match css {
             "text-decoration:underline" => &[(0, 544, 3200, 608)][..],
             "text-decoration:line-through" => &[(0, 301, 3200, 365)][..],
@@ -472,7 +469,7 @@ fn a_decoration_originating_on_an_inline_element_covers_only_its_text() {
     lay_out(&mut on_doc, &cascade);
     let on = decoration_fills(&painted(&on_doc, &cascade));
 
-    assert_eq!(on.len(), 1, "the parley path underlines only the span");
+    assert_eq!(on.len(), 1, "only the span is underlined");
     assert_eq!(on, [(1920, 544, 3200, 608)]);
 }
 
@@ -581,13 +578,12 @@ fn an_atomic_inline_is_painted_at_its_position_once() {
 }
 
 #[test]
-fn ch_lengths_place_glyphs_like_the_parley_path() {
+fn ch_lengths_place_glyphs() {
     // Ahem at 10px: one ch is 10px, so the lengths below are whole pixels.
     let cases = [
         ("width:200px;letter-spacing:1ch", "abc"),
         ("width:200px;word-spacing:2ch", "a b c"),
-        // The parley path indents a run only when it re-breaks it to a
-        // narrower width, as in the px indent case above.
+        // An indent in `ch`, as in the px indent case above.
         (
             "width:50px;word-break:break-all;text-indent:2ch",
             "abcdefghijklmno",
@@ -663,7 +659,7 @@ fn ch_lengths_place_glyphs_like_the_parley_path() {
 const AHEM_SPACE_GLYPH: u32 = 3;
 
 #[test]
-fn an_inherited_ch_spacing_places_glyphs_like_the_parley_path() {
+fn an_inherited_ch_spacing_places_glyphs() {
     // The span inherits `1ch` measured with the paragraph's 10px font, not
     // with its own 20px font.
     let on = painted_root("width:300px;letter-spacing:1ch", |doc, root| {
@@ -676,9 +672,8 @@ fn an_inherited_ch_spacing_places_glyphs_like_the_parley_path() {
         );
         doc.append_text(inner, "cd");
     });
-    // Only the inline positions are compared: the parley path lays the 10px
-    // text on its own baseline instead of the line's shared one, which is
-    // unrelated to `ch`.
+    // Only the inline positions are compared: the baseline is unrelated to
+    // `ch`.
     let x_of = |scene: &Scene| {
         ink(scene)
             .into_iter()
@@ -692,7 +687,7 @@ fn an_inherited_ch_spacing_places_glyphs_like_the_parley_path() {
 }
 
 #[test]
-fn break_word_breaks_a_long_word_like_the_parley_path() {
+fn break_word_breaks_a_long_word() {
     let on = painted_root("width:50px;word-break:break-word", |doc, root| {
         doc.append_text(root, "abcdefghij");
     });
@@ -729,8 +724,7 @@ fn text_emphasis_paints_nothing_extra() {
 #[test]
 fn tabs_and_spaces_place_glyphs_on_the_same_positions() {
     // tab-size 8 and Ahem's 10px space: a tab after `a` reaches the stop at
-    // 80px, which seven spaces reach too. The positions must be identical,
-    // without the snapping the parley path needs for this case.
+    // 80px, which seven spaces reach too. The positions must be identical.
     let place = |text: &'static str| {
         let (mut doc, cascade, _) = paragraph("white-space:pre;width:400px", |doc, root| {
             doc.append_text(root, text);
@@ -763,9 +757,9 @@ fn a_hanging_opening_bracket_sits_before_the_line_start() {
 }
 
 #[test]
-fn a_relative_inline_with_no_offset_paints_like_the_parley_path() {
-    // No space at the text boundary: the parley path shapes a space that ends
-    // a text node with another glyph, which is unrelated to the position.
+fn a_relative_inline_with_no_offset_paints() {
+    // No space at the text boundary, so the glyphs are those of the letters
+    // only.
     let on = painted_root("width:100px", |doc, root| {
         doc.append_text(root, "aa");
         let inner = doc.append_element(
@@ -801,7 +795,7 @@ fn a_relative_inline_with_no_offset_paints_like_the_parley_path() {
 }
 
 #[test]
-fn a_relative_block_child_with_no_offset_is_painted_once_like_the_parley_path() {
+fn a_relative_block_child_with_no_offset_is_painted_once() {
     let on = painted_root("width:100px", |doc, root| {
         doc.append_text(root, "aa");
         let block = doc.append_element(
@@ -907,8 +901,7 @@ fn a_shadow_of_an_inline_element_uses_that_elements_color() {
 
 /// Whole-pixel x of every drawn glyph, sorted. Ahem's space glyph has no
 /// outline and is left out: at the end of a wrapped right-to-left line the
-/// inline engine hangs it at the line's left end, past the content, while the
-/// parley path puts it at the right edge.
+/// inline engine hangs it at the line's left end, past the content.
 fn sorted_xs(scene: &Scene) -> Vec<i64> {
     let mut xs: Vec<i64> = ink(scene)
         .iter()
@@ -920,7 +913,7 @@ fn sorted_xs(scene: &Scene) -> Vec<i64> {
 }
 
 #[test]
-fn rtl_lines_place_glyphs_like_the_parley_path() {
+fn rtl_lines_place_glyphs() {
     let cases: [(&str, &str, &[i64]); 7] = [
         ("direction:rtl;width:100px", "abc", &[70, 80, 90]),
         (
@@ -969,7 +962,7 @@ fn rtl_lines_place_glyphs_like_the_parley_path() {
 }
 
 #[test]
-fn an_rtl_underline_spans_the_same_extent_as_the_parley_path() {
+fn an_rtl_underline_spans_its_text() {
     let on = painted_root(
         "direction:rtl;width:100px;text-decoration:underline",
         |doc, root| {
@@ -984,8 +977,7 @@ fn an_rtl_underline_spans_the_same_extent_as_the_parley_path() {
 fn an_rtl_text_indent_is_taken_from_the_right_edge() {
     // CSS Text 3 §7.1: the indent is at the start side, the right in a
     // right-to-left line. The start is at 100 - 20 = 80, so the three 10px
-    // letters end there: a 50, b 60, c 70. The parley path does not indent a
-    // run it does not re-break, so this is hand-computed, not an oracle.
+    // letters end there: a 50, b 60, c 70 (hand-computed).
     let (mut doc, cascade, root) =
         paragraph("direction:rtl;width:100px;text-indent:20px", |doc, root| {
             doc.append_text(root, "abc");
@@ -1061,10 +1053,8 @@ fn an_ltr_paragraph_beside_a_left_float_is_unchanged() {
 #[test]
 fn an_rtl_line_ends_at_the_right_edge_of_the_content_box() {
     // Padding 5px left and 15px right around a 100px content box: the content
-    // box spans 5..105, so `abc` ends at 105 (a 75, b 85, c 95). The parley
-    // path aligns the run 20px further right, past the content box, for
-    // `text-align: right` in a left-to-right paragraph as well, so this is
-    // hand-computed, not an oracle.
+    // box spans 5..105, so `abc` ends at 105 (a 75, b 85, c 95)
+    // (hand-computed).
     let (mut doc, cascade, root) = paragraph(
         "direction:rtl;padding:0 15px 0 5px;width:100px",
         |doc, root| {
@@ -1130,9 +1120,8 @@ fn a_rtl_wrapped_underline_leaves_out_the_break_space_too() {
 fn an_underline_under_a_hanging_bracket_covers_the_bracket_and_the_content() {
     // `(` hangs one em (10px) before the line start, so the glyphs are at
     // -10, 0, 10. The line's content width leaves the hung bracket out (it is
-    // 20px), so the extent has to add the hang back: -10 .. 20. The parley
-    // path only hangs a leading U+3000, so this is a hand-computed value, not
-    // an oracle.
+    // 20px), so the extent has to add the hang back: -10 .. 20
+    // (hand-computed).
     let (mut doc, cascade, _) = paragraph(
         "width:100px;hanging-punctuation:first;text-decoration:underline",
         |doc, root| {
@@ -1146,8 +1135,7 @@ fn an_underline_under_a_hanging_bracket_covers_the_bracket_and_the_content() {
 }
 
 /// `aa` then a span `bb` with `vertical-align: {align}`. No space at the text
-/// boundary: the parley path ends each text node's decoration before a
-/// trailing space, which is unrelated to the baseline.
+/// boundary, so a decoration covers the letters only.
 fn raised(doc: &mut Document, root: usize, align: &str, css: &str) {
     doc.append_text(root, "aa");
     let inner = doc.append_element(
@@ -1300,7 +1288,7 @@ const BOX_EDGES: &str = "background-color:rgb(255,0,0);padding:0 3px;\
 border-width:0 2px;border-style:solid;border-color:rgb(0,0,255);margin:0 4px";
 
 #[test]
-fn an_inline_background_and_border_match_the_parley_path() {
+fn an_inline_background_and_border_are_pinned() {
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
         let inner = doc.append_element(
@@ -1421,7 +1409,7 @@ fn vertical_edges_grow_the_painted_box_but_not_the_line() {
 }
 
 #[test]
-fn an_inline_box_shadow_matches_the_parley_path() {
+fn an_inline_box_shadow_is_pinned() {
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
         let inner = doc.append_element(
@@ -1437,7 +1425,7 @@ fn an_inline_box_shadow_matches_the_parley_path() {
     assert_eq!(
         box_shadows(&on),
         [([px(22), px(2), px(48), px(12)], solid(0, 255, 0))],
-        "the parley path paints a shadow"
+        "a shadow is painted"
     );
     assert_eq!(
         format!("{:?}", box_shadows(&on)),
@@ -1478,7 +1466,7 @@ fn box_shadows_with_radius(scene: &Scene) -> Vec<([i64; 4], anyrender::Paint, i6
 }
 
 #[test]
-fn an_inline_outline_matches_the_parley_path() {
+fn an_inline_outline_is_pinned() {
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
         let inner = doc.append_element(
@@ -1492,7 +1480,7 @@ fn an_inline_outline_matches_the_parley_path() {
     let on = painted_root("width:200px", build);
     assert!(
         !fills_with(&on, &solid(0, 255, 0)).is_empty(),
-        "the parley path paints an outline"
+        "an outline is painted"
     );
     assert_eq!(
         format!("{:?}", all_fills(&on)),
@@ -1555,7 +1543,7 @@ fn an_inline_shadow_without_a_border_or_background_has_square_corners() {
     let on = painted_root("width:200px", build);
     let shadows = box_shadows_with_radius(&on);
     assert_eq!(shadows.len(), 1);
-    assert_eq!(shadows[0].2, 0, "the parley path squares the corners");
+    assert_eq!(shadows[0].2, 0, "the corners are square");
     assert_eq!(
         format!("{:?}", box_shadows_with_radius(&on)),
         "[([1408, 128, 2688, 768], Solid(AlphaColor { components: [0.0, 1.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> }), 0)]"
@@ -1563,7 +1551,7 @@ fn an_inline_shadow_without_a_border_or_background_has_square_corners() {
 }
 
 #[test]
-fn an_inline_background_clipped_to_its_content_box_matches_the_parley_path() {
+fn an_inline_background_clipped_to_its_content_box_is_pinned() {
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
         let inner = doc.append_element(
@@ -1669,7 +1657,7 @@ fn a_content_box_background_leaves_out_the_vertical_padding() {
 }
 
 #[test]
-fn a_relative_inline_is_painted_like_the_parley_path() {
+fn a_relative_inline_is_painted() {
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
         let inner = doc.append_element(
@@ -1744,8 +1732,7 @@ fn the_dom_and_the_paint_crate_agree_on_the_relative_offset() {
 
 #[test]
 fn a_contents_element_is_transparent_in_the_paragraph() {
-    // The parley path stacks the three texts on three lines here, so the
-    // positions are hand-computed: "aabbcc" on one line, 10px per glyph, on
+    // Hand-computed: "aabbcc" on one line, 10px per glyph, on
     // the 8px baseline; "bb" takes the contents element's colour.
     let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
         doc.append_text(root, "aa");
@@ -1916,7 +1903,7 @@ fn a_table_cell_root_paints_its_text_inside_its_border_and_padding() {
 }
 
 #[test]
-fn a_block_child_under_a_decoration_is_underlined_like_the_parley_path() {
+fn a_block_child_under_a_decoration_is_underlined() {
     // The root's underline reaches the text of its block child, which is a
     // root of its own: one 20px underline under each line, 0.5px below the
     // baselines at 8 and 18.
@@ -2032,8 +2019,8 @@ fn generated_text_of_the_root_is_painted_once() {
     lay_out(&mut doc, &cascade);
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     let scene = painted(&doc, &cascade);
-    // Hand-computed: "x" at 0, "aa bb" from 10 to 60, "y" at 60; the overlay
-    // the parley path paints is not drawn again.
+    // Hand-computed: "x" at 0, "aa bb" from 10 to 60, "y" at 60; the
+    // generated text is drawn once.
     assert_eq!(
         glyph_xs_in(&scene, peniko::Color::from_rgba8(255, 0, 0, 255)),
         [0.0]
@@ -2250,7 +2237,7 @@ fn a_fixed_root_is_painted_like_fixed_text() {
     assert!(on_doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     let on = ink(&painted(&on_doc, &cascade));
 
-    assert!(!on.is_empty(), "the parley path draws fixed text");
+    assert!(!on.is_empty(), "fixed text is drawn");
     assert_eq!(
         on,
         [

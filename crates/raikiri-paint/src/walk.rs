@@ -5007,8 +5007,8 @@ fn paint_inline_svg(
 }
 
 /// Pixel offset contributed by `vertical-align` to an inline-level box's
-/// position. Positive values move downward, as does `draw_text_node`'s
-/// `abs_y` in the downward-growing Y coordinate system.
+/// position. Positive values move downward, as does a box's `abs_y` in the
+/// downward-growing Y coordinate system.
 ///
 /// # Supported behavior
 ///

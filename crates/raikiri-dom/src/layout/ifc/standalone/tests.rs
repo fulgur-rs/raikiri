@@ -194,7 +194,7 @@ fn trailing_blanks_before_a_newline_do_not_count_in_the_width() {
 
 #[test]
 fn a_trailing_no_break_space_is_not_counted_in_the_width() {
-    // parley treats U+00A0 as whitespace at a line end.
+    // U+00A0 counts as a trailing blank at a line end.
     let doc = enabled();
     let text = shape(&doc, "ab\u{a0}", None);
     assert_eq!((text.width(), text.advance()), (20.0, 30.0));

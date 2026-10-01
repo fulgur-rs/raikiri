@@ -19,7 +19,7 @@
 use raikiri_style::FontFaceRegistry;
 use std::path::{Path, PathBuf};
 
-/// Maximum byte count [`build_wpt_font_ctx`] allows when reading an
+/// Maximum byte count [`build_wpt_font_collection`] allows when reading an
 /// individual font file. 100 MiB leaves ample headroom for real bundled
 /// fonts (Ahem: ~12 KiB, Noto CJK: ~20 MiB or so) while still rejecting the
 /// memory exhaustion an attacker-supplied oversized regular file would
@@ -244,11 +244,12 @@ pub(crate) fn read_bounded_font_file(
         .map_err(map_reject_reason)
 }
 
-/// Structured warn event emitted by [`build_wpt_font_ctx_with_observer`] for
-/// every warn+skip site (walker + read-time TOCTOU + fontique register-empty).
-/// Consumers pass an `Option<&mut dyn FnMut(&FontWarn<'_>)>` observer to opt
-/// into programmatic consumption of these events; the [`build_wpt_font_ctx`]
-/// compatibility wrapper omits the observer and keeps the CLI-facing `eprintln!` behavior.
+/// Structured warn event emitted while building the WPT font collection
+/// (`ifc::font::wpt_collection`) for every warn+skip site (walker +
+/// read-time TOCTOU + font-library register-empty). Callers pass an
+/// `Option<&mut dyn FnMut(&FontWarn<'_>)>` observer to opt into
+/// programmatic consumption of these events; [`build_wpt_font_collection`]
+/// omits the observer and keeps the CLI-facing `eprintln!` behavior.
 ///
 /// # Design
 ///
@@ -385,13 +386,13 @@ pub enum FontWarn<'a> {
         /// Canonicalized fonts root that the target should have stayed under.
         root: &'a Path,
     },
-    /// fontique's `register_fonts` returned no families for the read blob
+    /// the font library registered no family for the read blob
     /// (parse-invalid font, corrupt asset, etc.).  Handled by the aggregate
     /// [`FontError::PreferredFontUnavailable`] / [`FontError::NoFontsRegistered`]
     /// invariant checks downstream; the observer is the only per-file
     /// programmatic signal.
     RegisterEmpty {
-        /// Path whose blob fontique rejected with an empty family list.
+        /// Path whose blob the font library rejected with an empty family list.
         path: &'a Path,
     },
 }
@@ -567,13 +568,13 @@ pub enum FontError {
     DirNotFound(PathBuf),
     /// `fonts_dir` exists but has zero `.ttf`/`.otf` files
     EmptyDir(PathBuf),
-    /// The dir had `.ttf`/`.otf` files, but none registered with fontique
+    /// The dir had `.ttf`/`.otf` files, but none registered with the font library
     /// (every file was parse-invalid, or an asset got corrupted by check
     /// drift, etc.). A defensive backstop only reached in a future where
     /// `PREFERRED_FIRST` is empty.
     NoFontsRegistered(PathBuf),
     /// A font listed in `PREFERRED_FIRST` is not present in the dir, or
-    /// fontique refused to register it.
+    /// the font library refused to register it.
     /// A dedicated Err so a silent fallback doesn't break cascade
     /// determinism.
     PreferredFontUnavailable {
@@ -587,7 +588,7 @@ pub enum FontError {
     /// propagated from a font read (via the callsite-local
     /// `read_bounded_font_file`).
     /// Other reject reasons are warn+skipped (see the callsite comment on
-    /// [`build_wpt_font_ctx`] for details — one source of
+    /// [`build_wpt_font_collection`] for details — one source of
     /// truth for the full variant list, so this doc doesn't drift from it).
     Io {
         /// Path where the io error occurred (during the walk or read stage)
@@ -610,12 +611,12 @@ impl std::fmt::Display for FontError {
             ),
             FontError::NoFontsRegistered(p) => write!(
                 f,
-                "no font families registered from {} (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
+                "no font families registered from {} (all .ttf/.otf files rejected by the font library — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
                 p.display()
             ),
             FontError::PreferredFontUnavailable { name, dir } => write!(
                 f,
-                "preferred font '{}' not registered under {} — missing from dir or rejected by parley/fontique; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
+                "preferred font '{}' not registered under {} — missing from dir or rejected by the font library; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)",
                 name,
                 dir.display()
             ),
@@ -776,7 +777,7 @@ fn collect_recursive(
         }
         // Size cap: rejects the memory exhaustion an attacker-supplied
         // oversized regular font file would cause. The boundary value
-        // (== FONT_SIZE_CAP) is let through (build_wpt_font_ctx's
+        // (== FONT_SIZE_CAP) is let through (build_wpt_font_collection's
         // `take(FONT_SIZE_CAP)` bounded read fully consumes it, so no
         // truncation occurs).
         let metadata = std::fs::symlink_metadata(&path).map_err(|source| FontError::Io {
@@ -803,12 +804,12 @@ fn collect_recursive(
 // @font-face application — font selection integration.
 // ---------------------------------------------------------------------------
 
-/// Fetch one `src: url(...)` target for [`apply_font_faces`].
+/// Fetch one `src: url(...)` target for [`build_inline_document_fonts`].
 ///
 /// Returns the raw font bytes, or `None` when the URL is unavailable
 /// (network deny, missing file, policy rejection — the reason stays with the
-/// loader; [`apply_font_faces`] treats every `None` as "try the next
-/// source", fail-closed). Size capping is enforced by [`apply_font_faces`]
+/// loader; [`build_inline_document_fonts`] treats every `None` as "try the next
+/// source", fail-closed). Size capping is enforced by [`build_inline_document_fonts`]
 /// itself ([`FONT_SIZE_CAP`]), not by implementations, so every loader gets
 /// the same bound.
 pub trait FontFaceLoader {
@@ -818,7 +819,7 @@ pub trait FontFaceLoader {
     fn load(&self, url: &str) -> Option<Vec<u8>>;
 }
 
-/// What [`apply_font_faces`] did with one [`FontFaceRegistry`].
+/// What [`build_inline_document_fonts`] did with one [`FontFaceRegistry`].
 ///
 /// Family names are the `@font-face` `font-family` values as authored. A
 /// family lands in exactly one of the three lists — application is
@@ -826,8 +827,8 @@ pub trait FontFaceLoader {
 /// and skipped.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FontFaceApplyReport {
-    /// Families whose bytes were registered into the `FontContext` under the
-    /// `@font-face` name (a `url(...)` source resolved and fontique
+    /// Families whose bytes were registered into the document layer under the
+    /// `@font-face` name (a `url(...)` source resolved and the font library
     /// accepted it). Sorted for cross-process determinism (registry
     /// iteration itself is `HashMap` order).
     pub applied: Vec<String>,
@@ -837,7 +838,7 @@ pub struct FontFaceApplyReport {
     /// rationale as [`Self::applied`].
     pub aliased: Vec<(String, String)>,
     /// Families with no resolvable source left (every source unavailable,
-    /// oversized, unsupported-container, or fontique-rejected). Sorted, same
+    /// oversized, unsupported-container, or rejected by the font library). Sorted, same
     /// rationale. These families keep their existing behavior — typically
     /// the collection fallback — and never error.
     pub skipped: Vec<String>,
@@ -943,7 +944,7 @@ fn woff2_within_cap(bytes: &[u8]) -> bool {
         && woff_u32(bytes, 16).is_some_and(|size| size as u64 <= FONT_SIZE_CAP)
 }
 
-/// Decode a web-font container into the sfnt bytes understood by fontique.
+/// Decode a web-font container into the sfnt bytes understood by the font library.
 ///
 /// The container signature selects the decoder. `format(...)` values are
 /// capability hints rather than byte-format assertions, so a valid sfnt is
@@ -981,8 +982,8 @@ pub use crate::layout::ifc::font::BundledFace;
 /// The fonts are registered in order under their authored family names, and
 /// every generic family maps onto the bundle in registration order, so the
 /// result does not depend on the fonts installed on the host. The same list
-/// given to `FontContextBuilder` in `raikiri-html` resolves a family to the
-/// same face on the parley path. With `system_fonts` set, the installed
+/// given to `FontCollectionBuilder` in `raikiri-html` builds the same
+/// collection. With `system_fonts` set, the installed
 /// fonts are consulted after the bundle.
 ///
 /// # Errors
@@ -1048,7 +1049,7 @@ mod tests {
     use std::path::Path;
 
     /// Minimal valid TTF header (magic 0x00010000 + zero-fill).
-    /// fontique's `register_fonts` assigns a `family_id` even to a
+    /// the font library registers a family even for a
     /// zero-fill body once the header check passes (parse-invalid, but
     /// good enough for exercising the walker).
     fn write_fake_ttf(dir: &Path, name: &str) {
@@ -1197,9 +1198,6 @@ mod tests {
 
     #[test]
     fn missing_dir_returns_err() {
-        // NB: `parley::FontContext` doesn't impl `Debug` (parley 0.10), so
-        // `Result::unwrap_err` (which requires `T: Debug`) can't be used
-        // here. `match` sidesteps that bound.
         let bogus = Path::new("/definitely/does/not/exist/raikiri-dom-fonts-test");
         match build_wpt_font_collection(bogus) {
             Err(FontError::DirNotFound(p)) => assert_eq!(p, bogus),
@@ -1219,7 +1217,7 @@ mod tests {
     }
 
     /// `collect_recursive`'s own `std::fs::read_dir` error arm.
-    /// `build_wpt_font_ctx` intercepts a missing path earlier via its own
+    /// `build_wpt_font_collection` intercepts a missing path earlier via its own
     /// `DirNotFound` check (see `missing_dir_returns_err`), so reaching this
     /// specific arm requires calling `walk_fonts` directly against a path
     /// that exists (passing `.exists()`) but is not a directory.
@@ -1297,7 +1295,7 @@ mod tests {
     fn walker_accepts_regular_file_at_size_cap_boundary() {
         // Regression check: verifies the filter doesn't silently
         // over-reject (the boundary value == FONT_SIZE_CAP is let through —
-        // build_wpt_font_ctx's `take(FONT_SIZE_CAP)` bounded read fully
+        // build_wpt_font_collection's `take(FONT_SIZE_CAP)` bounded read fully
         // consumes exactly the boundary). boundary.ttf: creates a sparse
         // file via `File::set_len(FONT_SIZE_CAP)`, then checks directly that
         // exactly the boundary value (`metadata.len() == FONT_SIZE_CAP`)
@@ -1347,7 +1345,7 @@ mod tests {
         // absent from the dir, another valid font (Other.ttf) must not
         // silently fall back into the "serif" cascade.
         let tmp = tempfile::tempdir().unwrap();
-        write_fake_ttf(tmp.path(), "Other.ttf"); // valid ttf (fontique accepts)
+        write_fake_ttf(tmp.path(), "Other.ttf"); // valid ttf (the font library accepts)
         // Ahem.ttf is deliberately not written -> violates the PREFERRED_FIRST invariant
         match build_wpt_font_collection(tmp.path()) {
             Err(FontError::PreferredFontUnavailable { name, dir }) => {
@@ -1368,14 +1366,14 @@ mod tests {
     #[test]
     fn preferred_font_register_failure_returns_err() {
         // Regression check: when the PREFERRED_FIRST font (Ahem.ttf) is
-        // present on disk but rejected by fontique, another valid font must
+        // present on disk but rejected by the font library, another valid font must
         // not silently fall back into the "serif" cascade (register failure
         // is escalated to a dedicated Err in the same spirit as read
         // failure being escalated to a hard error).
         let tmp = tempfile::tempdir().unwrap();
-        // Ahem.ttf: garbage bytes -> fontique refuses to register it
+        // Ahem.ttf: garbage bytes -> the font library refuses to register it
         std::fs::write(tmp.path().join("Ahem.ttf"), b"not a valid font").unwrap();
-        // Other.ttf: a valid fake ttf -> fontique registers it successfully
+        // Other.ttf: a valid fake ttf -> the font library registers it successfully
         write_fake_ttf(tmp.path(), "Other.ttf");
         match build_wpt_font_collection(tmp.path()) {
             Err(FontError::PreferredFontUnavailable { name, dir }) => {
@@ -1688,9 +1686,9 @@ mod tests {
     // Observer tests
     // ------------------------------------------------------------------
     //
-    // Structural coverage for `build_wpt_font_ctx_with_observer`:
+    // Structural coverage for `ifc::font::wpt_collection`:
     // - Deterministic walker sites (symlink / non-regular / oversized) fire.
-    // - Deterministic fontique register-empty site fires.
+    // - Deterministic font-library register-empty site fires.
     // - Default None-observer path still writes to eprintln! and does not
     //   panic.
     // - The `read_reject_to_warn` mapping covers all non-Io variants
@@ -1758,7 +1756,7 @@ mod tests {
 
     /// `OwnedWarn::from_ref` maps every `FontWarn::ReadRejected*` variant.
     /// The real observer call sites for these all require a genuine
-    /// walk-then-read TOCTOU race (see `build_wpt_font_ctx_with_observer`'s
+    /// walk-then-read TOCTOU race (see `ifc::font::wpt_collection`'s
     /// `Err(reason)` arm, `cov:ignore`d for the same reason), so — mirroring
     /// `read_reject_to_warn_maps_all_non_io_variants`'s direct-construction
     /// approach — this constructs each `FontWarn` variant directly rather
@@ -1915,14 +1913,14 @@ mod tests {
     }
 
     /// Observer fires `RegisterEmpty` when a non-preferred `.ttf` contains
-    /// garbage bytes that fontique rejects.  Uses `Other.ttf` (not
+    /// garbage bytes that the font library rejects.  Uses `Other.ttf` (not
     /// `Ahem.ttf`) so `PreferredFontUnavailable` does not preempt the
     /// event.
     #[test]
     fn observer_fires_register_empty() {
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "Ahem.ttf");
-        // Other.ttf: garbage bytes → fontique returns no families.
+        // Other.ttf: garbage bytes → the font library returns no families.
         let other = tmp.path().join("Other.ttf");
         std::fs::write(&other, b"not a valid font").unwrap();
 
@@ -1944,7 +1942,7 @@ mod tests {
         );
     }
 
-    /// Default-None observer path: `build_wpt_font_ctx` (which delegates
+    /// Default-None observer path: `build_wpt_font_collection` (which delegates
     /// with `None`) must not panic and must preserve the original error
     /// classification even when warn+skip sites fire.  Regression check: the
     /// observer integration logic must not divert the `FontError` return channel or
@@ -1963,7 +1961,7 @@ mod tests {
         f.set_len(FONT_SIZE_CAP + 1).unwrap();
         drop(f);
 
-        // `build_wpt_font_ctx` delegates to `_with_observer(_, None)`, so
+        // `build_wpt_font_collection` delegates to `wpt_collection(_, _, None)`, so
         // this exercises the eprintln! fallback path end-to-end.  The
         // aggregate result depends on Ahem.ttf presence — the check is that
         // the call returns *some* Result (Ok or Err) without panicking.
@@ -1972,7 +1970,7 @@ mod tests {
 
     /// `read_reject_to_warn` maps every non-Io `FontReadReject` variant to
     /// its `FontWarn::ReadRejected*` counterpart.  The read-time observer
-    /// arm in `build_wpt_font_ctx_with_observer` is `cov:ignore` (the
+    /// arm in `ifc::font::wpt_collection` is `cov:ignore` (the
     /// walker pre-filters symlink/non-regular/oversized, so the arm only
     /// fires on a real TOCTOU race), which would otherwise leave the
     /// TOCTOU-observability deliverable untested.  This unit test closes
@@ -2161,7 +2159,7 @@ mod tests {
         );
 
         // Register-empty site — body from the original eprintln! after the
-        // fontique register_fonts empty branch.
+        // font library's empty-registration branch.
         assert_eq!(
             format!("{}", FontWarn::RegisterEmpty { path: p }),
             "skipping /tmp/fake.ttf: no family registered"
@@ -2169,7 +2167,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // apply_font_faces — @font-face selection integration.
+    // build_inline_document_fonts — @font-face registration.
     // ------------------------------------------------------------------
 
     /// Loader that serves fixed bytes for any URL (records what it saw).
@@ -2203,7 +2201,7 @@ mod tests {
         }
     }
 
-    /// Real Ahem.ttf bytes for the positive registration paths. fontique
+    /// Real Ahem.ttf bytes for the positive registration paths. The font library
     /// rejects synthetic headers (a zero-fill body with only a valid sfnt
     /// magic does not register — see `write_fake_ttf`'s own doc for the
     /// walker-only case that *does* tolerate that), so only real font bytes
@@ -2258,7 +2256,7 @@ mod tests {
         let shared = ahem_shared();
         let faces =
             FontFaceRegistry::from_source("@font-face { font-family: Custom; src: url(bad.ttf); }");
-        // Not a font at all — fontique must accept zero families from it.
+        // Not a font at all — the font library must accept zero families from it.
         let loader = MapLoader::serving(b"definitely not a font".to_vec());
         let report = super::build_inline_document_fonts(&shared, &faces, &loader).1;
         assert_eq!(report.skipped, vec!["Custom".to_string()]);
@@ -2275,9 +2273,9 @@ mod tests {
         }
     }
 
-    /// `register_font_face_sources`'s own size-cap skip (checked before
+    /// `build_inline_document_fonts`'s own size-cap skip (checked before
     /// `decode_web_font`, ahead of and independent from the walker's
-    /// on-disk size cap for `build_wpt_font_ctx`'s files).
+    /// on-disk size cap for `build_wpt_font_collection`'s files).
     #[test]
     fn document_fonts_skips_oversized_url_bytes() {
         let shared = ahem_shared();
@@ -2290,12 +2288,12 @@ mod tests {
         assert!(applied.is_empty());
     }
 
-    /// `register_font_face_sources`'s own `decode_web_font` rejection
+    /// `build_inline_document_fonts`'s own `decode_web_font` rejection
     /// fallthrough for a URL source — distinct from
-    /// `apply_font_faces_garbage_bytes_are_rejected_fail_closed` above,
+    /// `document_fonts_garbage_bytes_are_rejected_fail_closed` above,
     /// whose bytes don't match a WOFF/WOFF2 signature at all (so
     /// `decode_web_font` passes them through unchanged and they're instead
-    /// rejected later by fontique). Here the signature matches but the
+    /// rejected later by the font library). Here the signature matches but the
     /// container is truncated, so `woff1_within_cap` itself fails and
     /// `decode_web_font` returns `None`.
     #[test]
@@ -2452,7 +2450,7 @@ mod tests {
         );
         assert_eq!(
             format!("{}", FontError::NoFontsRegistered(dir.clone())),
-            "no font families registered from /fonts/wpt (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+            "no font families registered from /fonts/wpt (all .ttf/.otf files rejected by the font library — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
         );
         assert_eq!(
             format!(
@@ -2462,7 +2460,7 @@ mod tests {
                     dir: dir.clone(),
                 }
             ),
-            "preferred font 'Ahem.ttf' not registered under /fonts/wpt — missing from dir or rejected by parley/fontique; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+            "preferred font 'Ahem.ttf' not registered under /fonts/wpt — missing from dir or rejected by the font library; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
         );
         // The wrapped io::Error's own Display text is not this module's
         // contract to pin exactly, so only the fixed prefix/suffix wording
@@ -2792,18 +2790,6 @@ mod tests {
         assert_eq!(decoded.len(), 36);
         assert_eq!(&decoded[28..36], b"ABCDEFGH");
     }
-
-    // ------------------------------------------------------------------
-    // font_face_weight_override / font_face_style_override — descriptor to
-    // fontique-override mapping.
-    // ------------------------------------------------------------------
-
-    // ------------------------------------------------------------------
-    // expand_font_face_alias / remove_unavailable_ch_family — direct calls
-    // exercising branches not reached by the apply_font_faces integration
-    // tests above (all synthetic; no FontContext/WPT fixture involved,
-    // since neither function ever consults `fonts.collection`).
-    // ------------------------------------------------------------------
 
     #[test]
     fn wpt_font_collection_resolves_ahem() {

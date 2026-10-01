@@ -81,10 +81,8 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 ///   `grid-column-start` / `grid-column-end` → [`taffy::Style`]'s matching
 ///   grid container/item fields (CSS Grid Layout Module Level 1)
 ///
-/// After the per-node bridge loop, a second pass
-/// ([`establish_minimal_line_boxes`]) scans the entire bridged tree and
-/// establishes a minimal inline formatting context in qualifying block
-/// containers. See that function's docs for the conditions and scope.
+/// After the per-node bridge loop, the paragraphs of the inline engine are
+/// assigned ([`crate::layout::ifc::assign::assign_ifc_roots`]).
 ///
 /// # Errors
 /// What [`crate::layout::ifc::assign::assign_ifc_roots`] returns: a paragraph

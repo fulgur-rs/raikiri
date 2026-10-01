@@ -2053,7 +2053,7 @@ fn relayout_keeps_an_authored_width_root_at_its_width() {
     lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     let height_before = doc.nodes[root].unrounded_layout.size.height;
-    // parley keeps the authored 200px whatever the page width is.
+    // The authored 200px is kept whatever the page width is.
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
@@ -2068,7 +2068,7 @@ fn relayout_follows_the_page_width_for_an_auto_width_root() {
     lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     let height_before = doc.nodes[root].unrounded_layout.size.height;
-    // No authored width anywhere above: parley re-shapes at `max_advance`,
+    // No authored width anywhere above: the lines break again at `max_advance`,
     // narrower or wider than the width laid out at.
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 3);
@@ -2481,8 +2481,8 @@ fn an_in_flow_paragraph_does_not_grow_for_its_floats() {
     // One 10px line; the float hangs below the content, which is what a block
     // that is not a formatting context does.
     assert_eq!(stored_lines(&doc, root).height, 10.0);
-    // `realign_text_after_layout` later grows every auto-height ancestor of a
-    // float to the float's bottom, on either path; the float starts at the
+    // `propagate_float_bottoms_to_auto_height_ancestors` later grows every
+    // auto-height ancestor of a float to the float's bottom; the float starts at the
     // top of the paragraph, so that is 50px.
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 50.0);
 }
@@ -3268,7 +3268,7 @@ fn a_float_root_without_a_width_still_shrinks_to_fit() {
 const SPAN_EDGES: &str = "padding:0 3px;border-width:0 2px;border-style:solid;margin:0 4px";
 
 #[test]
-fn an_inline_element_has_the_same_border_box_with_and_without_the_switch() {
+fn an_inline_element_has_its_pinned_border_box() {
     use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
     let make = || {
         let mut span_id = 0;
@@ -3293,11 +3293,7 @@ fn an_inline_element_has_the_same_border_box_with_and_without_the_switch() {
     assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
 
     let off = absolute_rect(&off_doc, off_span);
-    assert_eq!(
-        off,
-        (24.0, 0.0, 30.0, 10.0),
-        "the parley path boxes the span like F"
-    );
+    assert_eq!(off, (24.0, 0.0, 30.0, 10.0), "the span's border box");
     assert_eq!(absolute_rect(&on_doc, on_span), off);
 }
 
@@ -3591,7 +3587,7 @@ fn a_relative_inline_element_is_located_with_its_offset() {
 }
 
 #[test]
-fn a_relative_inline_is_located_like_the_parley_path() {
+fn a_relative_inline_is_located() {
     use crate::layout::test_support::{absolute_rect, ahem_paragraph_with};
     let make = || {
         let mut span_id = 0;
@@ -3614,11 +3610,7 @@ fn a_relative_inline_is_located_like_the_parley_path() {
     lay_out(&mut on_doc, &on_cascade);
     assert!(on_doc.nodes[on_doc.parent_of(on_span).expect("root")].is_ifc_root());
     let off = absolute_rect(&off_doc, off_span);
-    assert_eq!(
-        off,
-        (16.0, -3.0, 20.0, 10.0),
-        "the parley path shifts the span"
-    );
+    assert_eq!(off, (16.0, -3.0, 20.0, 10.0), "the span is shifted");
     assert_eq!(absolute_rect(&on_doc, on_span), off);
 }
 
@@ -3767,7 +3759,7 @@ fn a_block_child_of_a_paragraph_with_text_is_its_own_root() {
 }
 
 #[test]
-fn a_flex_item_is_laid_out_like_the_parley_path() {
+fn a_flex_item_is_laid_out() {
     // Ahem 10px: "aaaa bbbb" is 90px wide in one line, 40px per word when wrapped.
     let mut expected_3795 = [(90.0, 10.0), (50.0, 20.0), (800.0, 10.0), (90.0, 10.0)].into_iter();
     for (parent_css, css) in [
@@ -3989,7 +3981,7 @@ fn bare_text_in_a_flex_container_becomes_a_root() {
 }
 
 #[test]
-fn bare_text_in_a_flex_container_has_the_parley_size() {
+fn bare_text_in_a_flex_container_has_its_pinned_size() {
     let mut expected_4025 = [(90.0, 10.0), (800.0, 10.0), (800.0, 10.0)].into_iter();
     for parent_css in [
         "display:flex",
@@ -4093,8 +4085,7 @@ fn bare_text_takes_the_text_align_of_its_container() {
 #[test]
 fn a_lone_empty_inline_block_is_indented_once() {
     // The paragraph's only content is an empty inline-block: the engine
-    // places it after the 20px indent, and the parley path's post-layout
-    // indent shift for such a block must not move it again.
+    // places it after the 20px indent, and nothing moves it again.
     let (mut doc, cascade, root) = ahem_paragraph_in("", "width:200px;text-indent:20px", "");
     let span = doc.append_element(
         Some(root),
@@ -4188,8 +4179,7 @@ fn table_sizes(table_css: &str, cell_css: &str, text: &str) -> TableSizes {
         (s.width, s.height)
     };
     // The table algorithm lays out cells, not rows: a row keeps no layout of
-    // its own on either path (the parley path only grows its height in a
-    // post-layout pass that propagates text heights to every ancestor).
+    // its own.
     let _ = row;
     TableSizes {
         table: size(table),
@@ -4218,7 +4208,7 @@ fn a_table_cell_becomes_an_ifc_root() {
 }
 
 #[test]
-fn a_table_cell_is_laid_out_like_the_parley_path() {
+fn a_table_cell_is_laid_out() {
     let mut expected_4254 = [
         TableSizes {
             table: (90.0, 10.0),
@@ -4283,7 +4273,7 @@ fn a_table_cell_keeps_its_padding_and_border() {
 }
 
 #[test]
-fn a_table_cell_with_mixed_block_and_inline_content_matches_parley() {
+fn a_table_cell_with_mixed_block_and_inline_content_is_laid_out() {
     // "aaaa" then a block of "bbbb": the cell is a root with the block as a
     // box of its paragraph, and the block is the root of its own text.
     let sizes = || {
@@ -4309,10 +4299,9 @@ fn a_table_cell_with_mixed_block_and_inline_content_matches_parley() {
 }
 
 #[test]
-fn bare_text_directly_in_a_table_is_laid_out_like_parley() {
+fn bare_text_directly_in_a_table_is_laid_out() {
     // Text straight in a table box (no row or cell): one anonymous cell's
-    // content. The two paths agree on the height; the width is pinned by
-    // parley_gives_an_all_inline_table_no_width.
+    // content. The height is pinned.
     let mut expected_4339 = [10.0, 20.0].into_iter();
     for (text, lines) in [("aaaa bbbb", 1.0), ("aaaa\nbbbb", 2.0)] {
         let height = || {
@@ -4639,7 +4628,7 @@ fn over_the_text_limit() -> (Document, CascadeResult) {
 }
 
 #[test]
-fn engine_only_mode_reports_a_limit_overflow_as_an_error() {
+fn a_limit_overflow_is_reported_as_an_error() {
     let (mut doc, cascade) = over_the_text_limit();
     let result = layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600());
     assert!(
@@ -4649,9 +4638,9 @@ fn engine_only_mode_reports_a_limit_overflow_as_an_error() {
 }
 
 #[test]
-fn a_limit_overflow_is_an_error_even_when_the_switch_is_not_engine_only() {
-    // A limit is not a refusal: there is no parley path to leave it to once
-    // the engine is the only one, so it is reported in every mode.
+fn a_limit_overflow_is_an_error_whatever_the_document() {
+    // A limit is not a refusal, and there is no other layout path to leave
+    // it to, so it is always reported.
     let (mut doc, cascade) = over_the_text_limit();
     let result = layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600());
     assert!(
@@ -4661,7 +4650,7 @@ fn a_limit_overflow_is_an_error_even_when_the_switch_is_not_engine_only() {
 }
 
 #[test]
-fn engine_only_mode_lays_out_every_authored_shape_without_an_error() {
+fn every_authored_shape_lays_out_without_an_error() {
     // The shapes that were refused last (a fixed root, a block with a forced
     // page break, generated content, a positioned box) are all laid out in
     // engine-only mode; a refusal is now an internal inconsistency only (see
@@ -4753,7 +4742,7 @@ fn a_vertical_writing_mode_paragraph_is_projected_as_horizontal() {
 }
 
 #[test]
-fn degraded_forms_have_the_same_size_as_the_parley_path() {
+fn degraded_forms_have_their_pinned_sizes() {
     // Each property is on an inline child, where the degradation applies
     // (on the root, taffy resolves the percentage and the property is moot).
     let mut expected_4772 = [(800.0, 10.0), (800.0, 10.0), (800.0, 10.0)].into_iter();
@@ -4890,7 +4879,7 @@ fn an_inline_table_sits_on_the_line_like_an_inline_block() {
 fn a_relatively_positioned_inline_block_is_offset_from_its_place_on_the_line() {
     // "aa" then a 10x10 inline-block moved by left:5px and top:3px: it keeps
     // its place on the line (x = 20) and is drawn 5px right and 3px down
-    // (CSS 2.1 9.4.3), as the parley path moves it.
+    // (CSS 2.1 9.4.3).
     let place = |css: &str| {
         let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
         let block = doc.append_element(
@@ -4947,7 +4936,7 @@ fn a_relatively_positioned_float_is_placed_like_a_float() {
 fn an_atomic_in_a_right_to_left_paragraph_is_placed_from_the_right_edge() {
     // A 200px right-to-left paragraph "aa", a 10x10 inline-block, "bb": the
     // line runs from the right edge, so "aa" takes 180..200 and the box sits
-    // at 170..180, as on the parley path.
+    // at 170..180.
     let place = || {
         let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px;direction:rtl", "aa");
         let block = doc.append_element(
@@ -5150,7 +5139,7 @@ fn an_element_with_only_generated_text_is_a_one_line_root() {
 }
 
 #[test]
-fn generated_content_is_laid_out_in_engine_only_mode() {
+fn generated_content_is_laid_out_by_the_engine() {
     let (mut doc, cascade, root) = generated_paragraph(
         r#"div::before { content: "x" } span::before { content: url(missing.png) "w" }"#,
         "width:200px",
@@ -5232,7 +5221,7 @@ fn a_paragraph_in_a_multicol_container_becomes_a_root() {
 }
 
 #[test]
-fn a_multicol_paragraph_is_split_like_the_parley_path() {
+fn a_multicol_paragraph_is_split() {
     let mut expected_5265 = [
         MulticolTextGeometry {
             container_height: 40.0,
@@ -5287,7 +5276,7 @@ fn a_multicol_paragraph_is_split_like_the_parley_path() {
 }
 
 #[test]
-fn multicol_container_with_direct_text_matches_parley() {
+fn multicol_container_with_direct_text_is_laid_out() {
     let mut expected_5299 = [
         MulticolTextGeometry {
             container_height: 20.0,
@@ -5368,7 +5357,7 @@ fn a_definite_height_multicol_fills_its_columns_in_turn_and_keeps_widows() {
 }
 
 #[test]
-fn multicol_with_a_forced_break_matches_parley() {
+fn multicol_with_a_forced_break_is_laid_out() {
     // Under a multicol parent, one text node with preserved newlines.
     let css = "column-count:2;width:100px;column-gap:10px;white-space:pre-line";
     assert_eq!(
@@ -5379,7 +5368,7 @@ fn multicol_with_a_forced_break_matches_parley() {
         },
     );
     // A container whose direct content is lines with `<br>` between them:
-    // the parley path places those lines in source order in the first
+    // those lines are placed in source order in the first
     // column, and the container is as tall as all of them.
     let own = multicol_text_geometry_of(css, "aa\nbb\ncc", true);
     assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]);
@@ -5598,7 +5587,7 @@ fn a_flex_block_child_gets_its_own_height() {
 }
 
 #[test]
-fn a_table_block_child_is_laid_out_like_parley() {
+fn a_table_block_child_is_laid_out() {
     // A table holding only text: one anonymous cell's content.
     let geometry = || {
         let mut table = 0;
@@ -5683,7 +5672,7 @@ fn a_cleared_line_break_moves_the_next_line_below_the_float() {
 }
 
 #[test]
-fn logical_float_sides_and_clears_are_placed_like_the_parley_path() {
+fn logical_float_sides_and_clears_are_placed() {
     // The bridge maps the logical sides to none on both paths: such a box is
     // not floated and does not clear.
     let mut expected_5662 = [(0.0, 10.0, 40.0), (0.0, 10.0, 40.0)].into_iter();
@@ -5826,7 +5815,7 @@ fn a_float_inside_a_nested_span_displaces_the_next_lines() {
 }
 
 #[test]
-fn a_block_inside_a_span_splits_the_paragraph_like_parley() {
+fn a_block_inside_a_span_splits_the_paragraph() {
     let geometry = || {
         let mut block = 0;
         let (mut doc, cascade, root) = paragraph_of(|doc, root| {
@@ -5946,7 +5935,7 @@ fn an_absolute_box_does_not_take_up_inline_space() {
 }
 
 #[test]
-fn a_fixed_box_inside_a_paragraph_is_laid_out_like_parley() {
+fn a_fixed_box_inside_a_paragraph_is_laid_out() {
     // With insets: against the root, as taffy lays a fixed child out.
     let css = "position:fixed;left:3px;top:4px";
     assert_eq!(positioned_box_location(css), (3.0, 4.0),);
@@ -5954,7 +5943,7 @@ fn a_fixed_box_inside_a_paragraph_is_laid_out_like_parley() {
 }
 
 #[test]
-fn a_relatively_positioned_block_child_is_offset_like_parley() {
+fn a_relatively_positioned_block_child_is_offset() {
     let mut expected_5920 = [
         ((4.0, 23.0, 200.0, 10.0), 40.0),
         ((0.0, 23.0, 200.0, 10.0), 40.0),
@@ -5988,7 +5977,7 @@ fn ch_box_size(css: &str) -> (f32, f32, f32, f32) {
 }
 
 #[test]
-fn ch_box_values_resolve_through_the_engine_like_the_parley_probe() {
+fn ch_box_values_resolve_through_the_engine() {
     let mut expected_5949 = [
         (100.0, 10.0, 0.0, 0.0),
         (800.0, 30.0, 0.0, 0.0),
@@ -6059,7 +6048,7 @@ fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engi
 fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
     // A fixed box's containing block is the viewport (the page area here),
     // not the narrow absolutely positioned box it sits in: its 140px line
-    // "aaaa bbbb cccc" stays one line. The parley path gives it the same box.
+    // "aaaa bbbb cccc" stays one line.
     let size = || {
         let mut fixed = 0;
         let (mut doc, cascade, _root) = paragraph_of(|doc, root| {

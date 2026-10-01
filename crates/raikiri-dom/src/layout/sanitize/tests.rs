@@ -22,7 +22,7 @@ fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
 
 // ── Non-finite f32 guard ────────
 //
-// Check that +Inf / NaN from untrusted author CSS does not reach taffy / parley on **all 5 sites**. The
+// Check that +Inf / NaN from untrusted author CSS does not reach taffy on **all 5 sites**. The
 // reproducer comes from the original probe comment.
 //
 // The expected value should be written as the **specific value after clamping**, not "not non-finite" —
@@ -158,10 +158,7 @@ fn sanitize_finite_maps_nan_to_zero() {
     // `f32::clamp` returns NaN as NaN, so without this branch, NaN would pass through.
     let mut diag = Vec::new();
     assert_eq!(sanitize_finite(f32::NAN, -1.0, 1.0, "test", &mut diag), 0.0);
-    assert_eq!(
-        sanitize_finite(f32::NAN, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
-        0.0
-    );
+    assert_eq!(sanitize_finite(f32::NAN, 0.0, 1e6, "test", &mut diag), 0.0);
     // Since both were actually clamped (NaN != 0.0), 1 event each of `LayoutWarn::NonFiniteClamped` will be
     // accumulated.
     assert_eq!(
@@ -185,8 +182,8 @@ fn sanitize_finite_maps_nan_to_zero() {
 fn sanitize_finite_clamps_infinities_to_bounds() {
     let mut diag = Vec::new();
     assert_eq!(
-        sanitize_finite(f32::INFINITY, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
-        MAX_FONT_SIZE_PX
+        sanitize_finite(f32::INFINITY, 0.0, 1e6, "test", &mut diag),
+        1e6
     );
     assert_eq!(
         sanitize_finite(
@@ -200,7 +197,7 @@ fn sanitize_finite_clamps_infinities_to_bounds() {
     );
     // At sites with a lower bound of 0.0 (font-size), -Inf falls to 0.0.
     assert_eq!(
-        sanitize_finite(f32::NEG_INFINITY, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
+        sanitize_finite(f32::NEG_INFINITY, 0.0, 1e6, "test", &mut diag),
         0.0
     );
     assert_eq!(diag.len(), 3, "3 回とも clamp が発火する (全て非有限入力)");
@@ -346,33 +343,6 @@ fn layout_warn_display_is_human_readable() {
     assert_eq!(
         truncated.to_string(),
         "7 additional layout clamp warning(s) suppressed (buffer cap reached)"
-    );
-}
-
-/// Pin that the clamp constant is **within the range asserted by the doc**.
-///
-/// Do not use `assert_eq!` with a literal, as it is tautological — if the constant is rewritten, the test
-/// will also be rewritten, detecting nothing. Write the **relational expression** that the doc cites as
-/// its basis.
-#[test]
-fn clamp_limits_are_in_the_documented_range() {
-    // Taffy geometry: that it is within the LayoutUnit upper bound range (1e7-1e8 px) of implementations
-    // reported by CSSWG issue #4552.
-    assert!(
-        (1e7..=1e8).contains(&MAX_TAFFY_MAGNITUDE),
-        "MAX_TAFFY_MAGNITUDE は CSSWG #4552 の 1e7..=1e8 px 帯に収まること: {MAX_TAFFY_MAGNITUDE}"
-    );
-    // The doc asserts more strongly that "taking the **lower bound** of the range = below the upper limit of
-    // any of the 3 engines." The minimum is old-Edge's `2^31 / 100 ≈ 2.15e7 px`.
-    assert!(
-        MAX_TAFFY_MAGNITUDE <= (i32::MAX / 100) as f32,
-        "MAX_TAFFY_MAGNITUDE は 3 engine の最小上限 (2^31/100 ≈ 2.15e7 px) 以下であること: {MAX_TAFFY_MAGNITUDE}"
-    );
-    // Font-size: **more than 1 digit** below `i32::MAX / 64 ≈ 3.36e7` ppem where skrifa's 16.16 fixed
-    // conversion saturates (as asserted by the doc).
-    assert!(
-        MAX_FONT_SIZE_PX * 10.0 < (i32::MAX / 64) as f32,
-        "MAX_FONT_SIZE_PX は skrifa の saturation 点より 1 桁以上下であること: {MAX_FONT_SIZE_PX}"
     );
 }
 

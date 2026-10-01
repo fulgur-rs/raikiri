@@ -536,7 +536,7 @@ fn text_fragments(
 }
 
 #[test]
-fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
+fn an_ifc_paragraph_across_a_page_reports_its_line_ranges() {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut ranges = Vec::new();
     {
@@ -556,7 +556,7 @@ fn an_ifc_paragraph_across_a_page_reports_the_same_line_ranges_as_parley() {
             (0, Some(PageFragmentLineRange::new(0, 3))),
             (1, Some(PageFragmentLineRange::new(3, 5))),
         ],
-        "the parley path is the oracle"
+        "pinned"
     );
 }
 
@@ -635,7 +635,7 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
 }
 
 #[test]
-fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one() {
+fn an_ifc_paragraph_that_would_leave_one_line_behind_moves() {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut moved = Vec::new();
     {
@@ -670,7 +670,7 @@ fn an_ifc_paragraph_that_would_leave_one_line_behind_moves_like_the_parley_one()
     assert_eq!(
         moved[0],
         [(1, 3)],
-        "orphans:2 moves the whole paragraph to page 2 (parley oracle)"
+        "orphans:2 moves the whole paragraph to page 2"
     );
 }
 
@@ -716,7 +716,7 @@ fn pages_of_a_fixed_height_paragraph(
 }
 
 #[test]
-fn a_paragraph_whose_first_line_overflows_the_page_moves_like_the_parley_one() {
+fn a_paragraph_whose_first_line_overflows_the_page_moves() {
     // The 20px paragraph at y 10 ends at 30 > 25: it moves to page 1 as a unit.
     let results = pages_of_a_fixed_height_paragraph(
         "aaaa bbbb",
@@ -724,11 +724,11 @@ fn a_paragraph_whose_first_line_overflows_the_page_moves_like_the_parley_one() {
         10.0,
         25.0,
     );
-    assert_eq!(results[0], (2, vec![1]), "the parley path is the oracle");
+    assert_eq!(results[0], (2, vec![1]), "pinned");
 }
 
 #[test]
-fn a_padded_paragraph_whose_first_line_overflows_moves_like_the_parley_one() {
+fn a_padded_paragraph_whose_first_line_overflows_moves() {
     // The root's border box (22px tall, it fits a 26px page) starts at 5 and
     // its content box at 7: the lines end at 27 > 26 and the paragraph moves.
     // Measured from the border box they would end at 25 and stay.
@@ -738,7 +738,7 @@ fn a_padded_paragraph_whose_first_line_overflows_moves_like_the_parley_one() {
         5.0,
         26.0,
     );
-    assert_eq!(results[0], (2, vec![1]), "the parley path is the oracle");
+    assert_eq!(results[0], (2, vec![1]), "pinned");
 }
 
 /// `html > body > (15px spacer, root)`: the root holds `<span>aa </span>`
@@ -869,7 +869,7 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
 }
 
 #[test]
-fn a_paragraph_whose_text_changes_the_page_name_moves_like_the_parley_one() {
+fn a_paragraph_whose_text_changes_the_page_name_moves() {
     let results = pages_of_a_paragraph_after_a_named_box();
     assert_eq!(
         results[0],
@@ -878,7 +878,7 @@ fn a_paragraph_whose_text_changes_the_page_name_moves_like_the_parley_one() {
             vec![1],
             vec![1]
         ),
-        "the parley path is the oracle"
+        "pinned"
     );
 }
 
@@ -963,7 +963,7 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
             .collect();
         results.push(rects);
     }
-    assert_eq!(results[0], [(1, 0.0)], "the parley path is the oracle");
+    assert_eq!(results[0], [(1, 0.0)], "pinned");
 }
 
 #[test]

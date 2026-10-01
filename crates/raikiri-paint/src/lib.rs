@@ -58,7 +58,7 @@ mod walk;
 ///   call). Release builds omit this `debug_assert!`. Their behavior depends
 ///   on the direction of the mismatch: if the computed length is less than
 ///   `document.node_count()`, a raw-index site in `walk::paint_document` or
-///   `text::draw_text_node` (`cascade.computed[node_id]`) eventually panics
+///   `ifc_text::draw_ifc_lines` (`cascade.computed[node_id]`) eventually panics
 ///   with "index out of bounds". If it is greater, the indices stay in bounds,
 ///   so painting completes without a panic while silently using computed
 ///   values from another document.
@@ -282,7 +282,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     fixed_page_width: f32,
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
 ) {
-    // The walker (`walk::paint_document` / `text::draw_text_node`) has several
+    // The walker (`walk::paint_document` / `ifc_text::draw_ifc_lines`) has several
     // raw-index reads of `cascade.computed[node_id]`. Each assumes the caller
     // meets the module doc's `## Contract` (`cascade.computed.len() ==
     // document.node_count()`). Without one enforcement point, a violation

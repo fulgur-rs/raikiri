@@ -219,8 +219,8 @@ fn rtl_and_plaintext_bidi_set_the_paragraph_style() {
 
 #[test]
 fn a_vertical_writing_mode_is_laid_out_as_horizontal() {
-    // The parley path lays vertical text out horizontally; so does the
-    // projection, whatever the authored writing mode.
+    // Real vertical writing is not supported: the projection lays vertical
+    // text out horizontally, whatever the authored writing mode.
     for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
         let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
             doc.append_text(root, "x");
@@ -397,10 +397,8 @@ fn the_wrap_longhand_after_a_legacy_keyword_changes_only_the_wrap() {
 
 #[test]
 fn word_break_break_word_is_normal_with_break_word_wrapping() {
-    // The parley path turns `word-break: break-word` into normal breaking plus
-    // `overflow-wrap: break-word` whatever `overflow-wrap` says
-    // (`parley_overflow_wrap` in `inline_text.rs`), so that is what is mapped:
-    // off and on then break and size the same way.
+    // `word-break: break-word` is mapped to normal breaking plus
+    // `overflow-wrap: break-word`, whatever `overflow-wrap` says.
     for extra in ["", ";overflow-wrap:anywhere"] {
         let css = format!("word-break:break-word;overflow-wrap:normal{extra}");
         let style = root_style(&css).expect("map");
