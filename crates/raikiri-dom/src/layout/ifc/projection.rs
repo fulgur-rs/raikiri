@@ -36,7 +36,7 @@ pub(crate) const ATOMIC_TAGS: &[&str] = &["img", "svg"];
 /// They are refused whatever their `display` or `float`: an author rule can
 /// make a form control `inline-block`, and taffy would size it as an empty
 /// block.
-pub(crate) const UNSUPPORTED_REPLACED_TAGS: &[&str] = &[
+const UNSUPPORTED_REPLACED_TAGS: &[&str] = &[
     "canvas", "video", "audio", "iframe", "object", "embed", "input", "button", "select",
     "textarea", "math",
 ];

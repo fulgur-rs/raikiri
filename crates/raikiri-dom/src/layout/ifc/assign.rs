@@ -41,21 +41,25 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
     }
 }
 
+/// Form controls, whose content the painter draws as a control.
+const FORM_CONTROL_TAGS: &[&str] = &["input", "button", "select", "textarea"];
+
 /// Whether `idx` is a box that lays its own inline content out in lines: a
 /// block container (`block`, `flow-root`, `inline-block`, `list-item`) or a
 /// blockified inline flex or grid item. Flex, grid and table boxes lay their
 /// children out by algorithms of their own, and a multicol container is
 /// refused by the caller.
 pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    // Replaced elements, form controls and inline SVG lay their content out
-    // by other means: text inside them (an SVG `<title>`, a button label,
-    // fallback content) is not a paragraph of theirs.
+    // Images, inline SVG and form controls lay their content out by other
+    // means: text inside them (an SVG `<title>`, a button label) is not a
+    // paragraph of theirs. The fallback content of the other replaced
+    // elements is laid out as ordinary content, as on the parley path.
     let node = &doc.nodes[idx];
     let tag = node.tag_name().unwrap_or("");
     if node.is_inline_svg_content()
         || node.is_inline_svg_root()
         || super::projection::ATOMIC_TAGS.contains(&tag)
-        || super::projection::UNSUPPORTED_REPLACED_TAGS.contains(&tag)
+        || FORM_CONTROL_TAGS.contains(&tag)
     {
         return false;
     }
