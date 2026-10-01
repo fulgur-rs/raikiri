@@ -33,17 +33,6 @@ macro_rules! same_enum {
     };
 }
 
-pub(crate) fn map_writing_mode(mode: p::WritingMode) -> Result<WritingMode, &'static str> {
-    match mode {
-        p::WritingMode::HorizontalTb => Ok(WritingMode::HorizontalTb),
-        p::WritingMode::VerticalRl => Ok(WritingMode::VerticalRl),
-        p::WritingMode::VerticalLr => Ok(WritingMode::VerticalLr),
-        p::WritingMode::SidewaysRl => Ok(WritingMode::SidewaysRl),
-        p::WritingMode::SidewaysLr => Ok(WritingMode::SidewaysLr),
-        _ => Err("writing-mode is not represented by shodo"),
-    }
-}
-
 pub(crate) fn map_text_orientation(
     value: p::TextOrientation,
 ) -> Result<TextOrientation, &'static str> {
@@ -114,6 +103,30 @@ pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
     Some((dx, dy))
 }
 
+/// The paint offset of a `position: relative` inline element of a paragraph
+/// laid out by the inline engine, as [`relative_offset`] gives it, with what
+/// the lines do not model degraded: an inset in a percentage or calc() is
+/// taken as zero (the root's width is not known when the paragraph is
+/// projected), and a `z-index` is drawn in the paragraph's order instead of
+/// as a stacking context of its own.
+pub(crate) fn relative_offset_in_lines(cv: &ComputedValues) -> (f32, f32) {
+    if cv.position != p::PositionValue::Relative {
+        return (0.0, 0.0);
+    }
+    let inset = |value: LengthOrAuto| match value {
+        LengthOrAuto::Px(px) => Some(px),
+        LengthOrAuto::Auto => None,
+        _ => Some(0.0),
+    };
+    let dx = inset(cv.left)
+        .or(inset(cv.right).map(|r| -r))
+        .unwrap_or(0.0);
+    let dy = inset(cv.top)
+        .or(inset(cv.bottom).map(|b| -b))
+        .unwrap_or(0.0);
+    (dx, dy)
+}
+
 /// The key of this element's own font, which measures a `ch` value declared
 /// on it.
 fn own_ch_font(cv: &ComputedValues) -> ChFontKey {
@@ -141,6 +154,12 @@ pub(crate) fn map_font_families(names: &[FontFamilyName]) -> Result<Vec<FontFami
                     "cursive" => s::GenericFamily::Cursive,
                     "fantasy" => s::GenericFamily::Fantasy,
                     "system-ui" => s::GenericFamily::SystemUi,
+                    // shodo names six generic families; the others take the
+                    // nearest of those (CSS Fonts 4, 4.2: a UA may map a
+                    // generic family it does not distinguish to another).
+                    "ui-serif" | "math" | "fangsong" => s::GenericFamily::Serif,
+                    "ui-sans-serif" | "ui-rounded" | "emoji" => s::GenericFamily::SansSerif,
+                    "ui-monospace" => s::GenericFamily::Monospace,
                     _ => return Err("generic family is not represented by shodo"),
                 };
                 Ok(FontFamily::Generic(generic))
@@ -158,11 +177,12 @@ pub(crate) fn inline_style(
     fonts: &FontCollection,
 ) -> Result<InlineStyle, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    let absolute_spacing = |value: &ComputedLetterSpacing| match value {
-        ComputedLetterSpacing::Px(value) => Ok(*value),
-        _ => Err(unsupported(
-            "percentage or calc spacing needs used-value resolution",
-        )),
+    // A percentage or calc() spacing would resolve against the font size at
+    // used-value time; the parley path takes the computed length's absolute
+    // part (`px()`), and so does this projection.
+    let absolute_spacing = |value: &ComputedLetterSpacing, fallback: f32| match value {
+        ComputedLetterSpacing::Px(value) => Ok::<f32, IfcError>(*value),
+        _ => Ok(fallback),
     };
     // A `ch` value is measured with the font of the element that declared it;
     // an inherited one carries that font's key, one declared here has none.
@@ -176,11 +196,11 @@ pub(crate) fn inline_style(
             &cv.letter_spacing_ch_font,
             cv.letter_spacing_ch_offset,
         ),
-        None => absolute_spacing(&cv.letter_spacing_computed)?,
+        None => absolute_spacing(&cv.letter_spacing_computed, cv.letter_spacing.px())?,
     };
     let word_spacing = match cv.word_spacing_ch_factor {
         Some(factor) => ch_length(factor, &cv.word_spacing_ch_font, cv.word_spacing_ch_offset),
-        None => absolute_spacing(&cv.word_spacing_computed)?,
+        None => absolute_spacing(&cv.word_spacing_computed, cv.word_spacing.px())?,
     };
     let line_height = match cv.line_height {
         ComputedLineHeight::Normal => LineHeight::Normal,
@@ -366,7 +386,25 @@ pub(crate) fn inline_style(
         p::VerticalAlign::Top => s::VerticalAlign::Top,
         p::VerticalAlign::Bottom => s::VerticalAlign::Bottom,
         p::VerticalAlign::Length(p::Length::Px(value)) => s::VerticalAlign::Length(value),
-        _ => return Err(unsupported("vertical-align length needs resolution")),
+        // The cascade absolutizes lengths; an `em` left over is taken
+        // against the element's own font size.
+        p::VerticalAlign::Length(p::Length::Em(value)) => {
+            s::VerticalAlign::Length(value * cv.font_size.0)
+        }
+        // A percentage refers to the element's own `line-height` (CSS 2.1
+        // 10.8.1); `normal` is taken as 1.2 times the font size.
+        p::VerticalAlign::Calc(calc) => {
+            let line_height = match cv.line_height {
+                ComputedLineHeight::Normal => 1.2 * cv.font_size.0,
+                ComputedLineHeight::Number(value) => value * cv.font_size.0,
+                ComputedLineHeight::Length(value) => value.0,
+            };
+            s::VerticalAlign::Length(calc.px + calc.percent / 100.0 * line_height)
+        }
+        // Other units are absolutized by the cascade; one that is not is
+        // treated like the parley path, which shifts by nothing.
+        p::VerticalAlign::Length(_) => s::VerticalAlign::Baseline,
+        _ => return Err(unsupported("vertical-align is not represented by shodo")),
     };
     let line_break =
         same_enum!(LineBreak, cv.line_break, node; Auto, Loose, Normal, Strict, Anywhere)?;
@@ -395,7 +433,26 @@ pub(crate) fn inline_style(
         ComputedTabSize::Number(value) => s::TabSize::Spaces(value),
         ComputedTabSize::Length(value) => s::TabSize::Px(value.0),
     };
-    let text_autospace = same_enum!(TextAutospace, cv.text_autospace, node; Normal, NoAutospace)?;
+    let text_autospace = match cv.text_autospace {
+        // `auto` behaves like `normal`, as on the parley path.
+        p::TextAutospace::Normal | p::TextAutospace::Auto => s::TextAutospace::Normal,
+        p::TextAutospace::NoAutospace => s::TextAutospace::NoAutospace,
+        // shodo has no per-class switches: a custom set that spaces
+        // ideographs next to letters or numbers is taken as `normal`, one
+        // that does not as `no-autospace`.
+        p::TextAutospace::Custom {
+            ideograph_alpha,
+            ideograph_numeric,
+            ..
+        } => {
+            if ideograph_alpha || ideograph_numeric {
+                s::TextAutospace::Normal
+            } else {
+                s::TextAutospace::NoAutospace
+            }
+        }
+        _ => return Err(unsupported("text-autospace is not represented by shodo")),
+    };
     let text_spacing_trim = same_enum!(
         TextSpacingTrim, cv.text_spacing_trim, node;
         Normal, SpaceAll, TrimStart, SpaceFirst, TrimBoth, TrimAll, Auto
@@ -445,18 +502,15 @@ pub(crate) fn inline_style(
 
 /// Paragraph-level style for a block root.
 ///
-/// The writing mode comes from `cssom_writing_mode`: the renderer-facing
-/// `writing_mode` is normalized to horizontal and would silently drop vertical
-/// text.
+/// Vertical writing modes are laid out as horizontal text, as the parley path
+/// lays them out: the paragraph is always `horizontal-tb`.
 pub(crate) fn paragraph_style(
-    cv: &ComputedValues,
-    node: usize,
+    _cv: &ComputedValues,
+    _node: usize,
     root: InlineStyle,
 ) -> Result<ParagraphStyle, IfcError> {
-    let writing_mode = map_writing_mode(cv.cssom_writing_mode)
-        .map_err(|reason| IfcError::Unsupported { node, reason })?;
     Ok(ParagraphStyle {
-        writing_mode,
+        writing_mode: WritingMode::HorizontalTb,
         direction: root.direction,
         unicode_bidi_plaintext: root.unicode_bidi == s::UnicodeBidi::Plaintext,
         root,
@@ -541,20 +595,16 @@ pub(crate) fn line_options(
     ))
 }
 
-/// Absolute inline-box edges as logical sides. Percentages, calc, and ch edges
-/// need a containing-block basis or a font measurement and are rejected.
+/// Absolute inline-box edges as logical sides, for horizontal lines (vertical
+/// writing modes are laid out horizontally). A `ch` edge is measured with the
+/// font that declared it; a percentage or calc() edge would need the
+/// containing block's width and is taken as zero.
 pub(crate) fn inline_edges(
     cv: &ComputedValues,
     node: usize,
     fonts: &FontCollection,
 ) -> Result<InlineEdges, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    // The physical-to-logical side mapping below is horizontal-tb only.
-    if cv.cssom_writing_mode != p::WritingMode::HorizontalTb {
-        return Err(unsupported(
-            "inline edges are mapped for horizontal writing only",
-        ));
-    }
     // An edge in `ch` records the font of the element that declared it.
     let ch_px = |provenance: &Option<ChLengthProvenance>| {
         provenance
@@ -562,19 +612,14 @@ pub(crate) fn inline_edges(
             .map(|value| value.factor * ch_advance(fonts, &value.font))
     };
     let padding = |value: Length, ch: &Option<ChLengthProvenance>| match (ch_px(ch), value) {
-        (Some(px), _) => Ok(px),
+        (Some(px), _) => Ok::<f32, IfcError>(px),
         (None, Length::Px(value)) => Ok(value),
-        _ => Err(unsupported(
-            "inline percentage or calc padding needs a basis",
-        )),
+        _ => Ok(0.0),
     };
     let margin = |value: LengthOrAuto, ch: &Option<ChLengthProvenance>| match (ch_px(ch), value) {
-        (Some(px), _) => Ok(px),
+        (Some(px), _) => Ok::<f32, IfcError>(px),
         (None, LengthOrAuto::Px(value)) => Ok(value),
-        (None, LengthOrAuto::Auto) => Ok(0.0),
-        _ => Err(unsupported(
-            "inline percentage or calc margin needs a basis",
-        )),
+        _ => Ok(0.0),
     };
     let logical = |top, right, bottom, left| match cv.direction {
         p::Direction::Ltr => Ok(Sides {

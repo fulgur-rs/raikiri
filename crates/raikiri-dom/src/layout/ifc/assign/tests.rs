@@ -145,15 +145,15 @@ fn a_multicol_root_stays_on_the_parley_path() {
 }
 
 #[test]
-fn a_vertical_root_stays_on_the_parley_path() {
+fn a_vertical_root_is_a_root_laid_out_horizontally() {
+    // Vertical writing is laid out as horizontal text, as on the parley
+    // path; the paragraph is the engine's.
     let mut fixture = block_fixture("writing-mode:vertical-rl", |doc, root| {
         doc.append_text(root, "aa bb");
     });
     enable(&mut fixture);
     assign(&mut fixture);
-    // `project_ifc` accepts a vertical text-only block; the measurement here
-    // only knows the horizontal axis.
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -222,6 +222,13 @@ fn assert_stays_on_parley(css: &str, build: impl FnOnce(&mut crate::Document, us
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(!is_root(&fixture, fixture.root));
+}
+
+fn assert_is_root(css: &str, build: impl FnOnce(&mut crate::Document, usize)) {
+    let mut fixture = block_fixture(css, build);
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 fn text_only(text: &'static str) -> impl FnOnce(&mut crate::Document, usize) {
@@ -432,14 +439,15 @@ fn a_relative_inline_with_a_length_offset_is_a_root() {
 }
 
 #[test]
-fn a_relative_inline_with_a_calc_offset_stays_on_the_parley_path() {
+fn a_relative_inline_with_a_calc_offset_is_laid_out_by_the_engine() {
     // A plain percentage offset is dropped by the parser (both paths see
-    // `auto`), so a mixed calc() stands in for the non-px forms.
+    // `auto`), so a mixed calc() stands in for the non-px forms. An accepted
+    // degradation: such an inset is taken as zero.
     for css in [
         "display:inline;position:relative;left:calc(1% + 1px)",
         "display:inline;position:relative;bottom:calc(1% + 1px)",
     ] {
-        assert_stays_on_parley("", |doc, root| {
+        assert_is_root("", |doc, root| {
             doc.append_text(root, "aa");
             let inner = span(doc, root, css);
             doc.append_text(inner, "bb");
@@ -448,12 +456,14 @@ fn a_relative_inline_with_a_calc_offset_stays_on_the_parley_path() {
 }
 
 #[test]
-fn a_relative_inline_with_a_z_index_stays_on_the_parley_path() {
+fn a_relative_inline_with_a_z_index_is_laid_out_by_the_engine() {
+    // An accepted degradation: the offset is kept and the z-index is drawn in
+    // the paragraph's order, without a stacking context of its own.
     for css in [
         "display:inline;position:relative;left:2px;z-index:1",
         "display:inline;position:relative;z-index:0",
     ] {
-        assert_stays_on_parley("", |doc, root| {
+        assert_is_root("", |doc, root| {
             doc.append_text(root, "aa");
             let inner = span(doc, root, css);
             doc.append_text(inner, "bb");
@@ -474,8 +484,10 @@ fn a_relative_inline_that_holds_a_box_stays_on_the_parley_path() {
 }
 
 #[test]
-fn an_inline_with_opacity_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn an_inline_with_opacity_is_laid_out_by_the_engine() {
+    // An accepted degradation: the lines carry no opacity group, so the
+    // element's text is drawn opaque.
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;opacity:0.5");
         doc.append_text(inner, "bb");
@@ -504,19 +516,22 @@ fn the_root_itself_may_have_opacity_and_a_relative_position() {
 }
 
 #[test]
-fn word_space_transform_stays_on_the_parley_path() {
-    assert_stays_on_parley("word-space-transform:ideographic-space", text_only("aa bb"));
+fn word_space_transform_is_laid_out_by_the_engine() {
+    // An accepted degradation: shodo does not map word-space-transform; the
+    // spaces are left as they are.
+    assert_is_root("word-space-transform:ideographic-space", text_only("aa bb"));
 }
 
 #[test]
-fn a_full_width_text_transform_stays_on_the_parley_path() {
-    // shodo's full-width mapping covers fewer characters than the parley path.
+fn a_full_width_text_transform_is_laid_out_by_the_engine() {
+    // An accepted degradation: shodo's full-width mapping covers fewer
+    // characters than the parley path; what it does not map is left as is.
     for value in [
         "full-width",
         "uppercase full-width",
         "full-width full-size-kana",
     ] {
-        assert_stays_on_parley(&format!("text-transform:{value}"), text_only("aa"));
+        assert_is_root(&format!("text-transform:{value}"), text_only("aa"));
     }
 }
 
@@ -531,14 +546,17 @@ fn a_case_transform_alone_is_still_a_root() {
 }
 
 #[test]
-fn background_clip_text_stays_on_the_parley_path() {
-    // The clip needs the shape of the text, which the lines do not provide.
-    assert_stays_on_parley("background-clip:text", text_only("aa"));
+fn background_clip_text_is_laid_out_by_the_engine() {
+    // An accepted degradation: the lines do not provide the glyph shapes the
+    // clip needs; the background is drawn unclipped.
+    assert_is_root("background-clip:text", text_only("aa"));
 }
 
 #[test]
-fn background_clip_text_on_an_inline_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn background_clip_text_on_an_inline_is_laid_out_by_the_engine() {
+    // An accepted degradation: the lines do not provide the glyph shapes the
+    // clip needs; the background is drawn unclipped.
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;background-clip:text");
         doc.append_text(inner, "bb");
@@ -951,8 +969,10 @@ fn right_to_left_text_outside_the_document_is_ignored() {
 }
 
 #[test]
-fn an_inline_with_a_background_image_keeps_the_paragraph_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn an_inline_with_a_background_image_is_laid_out_by_the_engine() {
+    // An accepted degradation: the image is not laid out across the
+    // element's pieces on its lines.
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;background-image:url(x.png)");
         doc.append_text(inner, "bb");

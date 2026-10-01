@@ -217,14 +217,18 @@ fn rtl_and_plaintext_bidi_set_the_paragraph_style() {
 }
 
 #[test]
-fn vertical_writing_mode_is_read_from_the_cssom_value() {
-    let fixture = block_fixture("writing-mode:vertical-rl", |doc, root| {
-        doc.append_text(root, "x");
-    });
-    let cv = &fixture.cascade.computed[fixture.root];
-    let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
-    let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph");
-    assert_eq!(paragraph.writing_mode, WritingMode::VerticalRl);
+fn a_vertical_writing_mode_is_laid_out_as_horizontal() {
+    // The parley path lays vertical text out horizontally; so does the
+    // projection, whatever the authored writing mode.
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let cv = &fixture.cascade.computed[fixture.root];
+        let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
+        let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph");
+        assert_eq!(paragraph.writing_mode, WritingMode::HorizontalTb, "{mode}");
+    }
 }
 
 #[test]
@@ -235,9 +239,19 @@ fn text_orientation_and_combine_upright_map() {
 }
 
 #[test]
-fn autospace_auto_is_rejected_instead_of_treated_as_normal() {
-    let error = root_style("text-autospace:auto").expect_err("auto");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+fn autospace_auto_and_custom_sets_map_to_normal_or_none() {
+    use shodo::style::TextAutospace;
+    for (css, expected) in [
+        ("auto", TextAutospace::Normal),
+        ("normal", TextAutospace::Normal),
+        ("no-autospace", TextAutospace::NoAutospace),
+        ("ideograph-alpha", TextAutospace::Normal),
+        ("ideograph-numeric", TextAutospace::Normal),
+        ("punctuation", TextAutospace::NoAutospace),
+    ] {
+        let style = root_style(&format!("text-autospace:{css}")).expect(css);
+        assert_eq!(style.text_autospace, expected, "{css}");
+    }
 }
 
 #[test]
@@ -266,15 +280,6 @@ fn inline_edges_swap_sides_for_rtl() {
 #[test]
 fn vertical_mappers_are_one_to_one_and_fail_closed() {
     use raikiri_style::property as p;
-    for (from, to) in [
-        (p::WritingMode::HorizontalTb, WritingMode::HorizontalTb),
-        (p::WritingMode::VerticalRl, WritingMode::VerticalRl),
-        (p::WritingMode::VerticalLr, WritingMode::VerticalLr),
-        (p::WritingMode::SidewaysRl, WritingMode::SidewaysRl),
-        (p::WritingMode::SidewaysLr, WritingMode::SidewaysLr),
-    ] {
-        assert_eq!(map_writing_mode(from), Ok(to));
-    }
     assert_eq!(
         map_text_orientation(p::TextOrientation::Sideways),
         Ok(TextOrientation::Sideways)
@@ -307,18 +312,79 @@ fn word_break_manual_and_every_spacing_trim_value_map() {
 }
 
 #[test]
-fn inline_edges_reject_vertical_writing_modes() {
-    // The physical-to-logical side mapping is horizontal-tb only.
-    let fixture = block_fixture("writing-mode:vertical-rl;padding-top:3px", |doc, root| {
-        doc.append_text(root, "x");
-    });
-    let error = inline_edges(
+fn inline_edges_of_a_vertical_element_are_mapped_as_horizontal() {
+    // Vertical text is laid out horizontally, so its edges keep the
+    // horizontal-tb mapping: left is inline-start, top is block-start.
+    let fixture = block_fixture(
+        "writing-mode:vertical-rl;padding-top:3px;margin-left:1px",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let edges = inline_edges(
         &fixture.cascade.computed[fixture.root],
         fixture.root,
         &fonts(),
     )
-    .expect_err("vertical");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    .expect("vertical");
+    assert_eq!(
+        (edges.padding.block_start, edges.margin.inline_start),
+        (3.0, 1.0)
+    );
+}
+
+#[test]
+fn percentage_and_calc_edges_and_spacing_are_taken_as_their_absolute_part() {
+    let fixture = block_fixture(
+        "padding-left:10%;margin-right:calc(5% + 2px);letter-spacing:10%",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let cv = &fixture.cascade.computed[fixture.root];
+    let edges = inline_edges(cv, fixture.root, &fonts()).expect("edges");
+    assert_eq!(
+        (edges.padding.inline_start, edges.margin.inline_end),
+        (0.0, 0.0)
+    );
+    let style = inline_style(cv, fixture.root, &fonts()).expect("style");
+    assert_eq!(style.letter_spacing, cv.letter_spacing.px());
+}
+
+#[test]
+fn a_vertical_align_percentage_resolves_against_the_line_height() {
+    // CSS 2.1 10.8.1: 50% of a 20px line height raises the box by 10px.
+    let style = root_style("line-height:20px;vertical-align:50%").expect("map");
+    assert_eq!(
+        style.vertical_align,
+        shodo::style::VerticalAlign::Length(10.0)
+    );
+    let style = root_style("line-height:20px;vertical-align:calc(50% + 1px)").expect("map");
+    assert_eq!(
+        style.vertical_align,
+        shodo::style::VerticalAlign::Length(11.0)
+    );
+}
+
+#[test]
+fn generic_families_shodo_does_not_name_take_the_nearest_one() {
+    use shodo::style::{FontFamily, GenericFamily};
+    for (css, expected) in [
+        ("ui-serif", GenericFamily::Serif),
+        ("ui-sans-serif", GenericFamily::SansSerif),
+        ("ui-monospace", GenericFamily::Monospace),
+        ("ui-rounded", GenericFamily::SansSerif),
+        ("math", GenericFamily::Serif),
+        ("emoji", GenericFamily::SansSerif),
+        ("fangsong", GenericFamily::Serif),
+    ] {
+        let style = root_style(&format!("font-family:{css}")).expect(css);
+        assert_eq!(
+            style.font_families,
+            [FontFamily::Generic(expected)],
+            "{css}"
+        );
+    }
 }
 
 #[test]
@@ -377,4 +443,20 @@ fn no_hanging_punctuation_leaves_the_flags_clear() {
         options.hanging_punctuation,
         s::HangingPunctuation::default()
     );
+}
+
+#[test]
+fn a_relative_offset_in_lines_keeps_lengths_and_degrades_the_rest() {
+    let offset = |css: &str| {
+        let fixture = block_fixture(&format!("position:relative;{css}"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        relative_offset_in_lines(&fixture.cascade.computed[fixture.root])
+    };
+    assert_eq!(offset("left:2px;top:3px"), (2.0, 3.0));
+    assert_eq!(offset("right:2px;bottom:3px"), (-2.0, -3.0));
+    // A z-index does not drop the offset; the stacking context is not drawn.
+    assert_eq!(offset("left:2px;z-index:1"), (2.0, 0.0));
+    // An inset that needs the containing block is taken as zero.
+    assert_eq!(offset("left:calc(1% + 1px);top:4px"), (0.0, 4.0));
 }

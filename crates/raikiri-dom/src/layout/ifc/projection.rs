@@ -32,11 +32,12 @@ use shodo::{LayoutContext, Paragraph, ParagraphBuilder};
 /// Tags of replaced elements the inline engine sizes as atomic inlines.
 pub(crate) const ATOMIC_TAGS: &[&str] = &["img", "svg"];
 
-/// Replaced and form-control elements the inline engine does not size yet.
-/// They are refused whatever their `display` or `float`: an author rule can
-/// make a form control `inline-block`, and taffy would size it as an empty
-/// block.
-const UNSUPPORTED_REPLACED_TAGS: &[&str] = &[
+/// Replaced elements, form controls and MathML roots: in a paragraph they are
+/// atomic inlines (CSS 2.1 10.3.2, 10.8.1) sized as nodes of their own (the
+/// leaf measurement: their authored or intrinsic size, zero when neither is
+/// known), whose content (fallback content, a control's label, MathML) is
+/// not part of the paragraph's text.
+const REPLACED_BOX_TAGS: &[&str] = &[
     "canvas", "video", "audio", "iframe", "object", "embed", "input", "button", "select",
     "textarea", "math",
 ];
@@ -60,6 +61,49 @@ pub(crate) struct ProjectedIfc {
     /// Text nodes whose spaces are preserved (not collapsed), in document
     /// order.
     pub(crate) preserved_spaces: Vec<usize>,
+}
+
+/// Whether `node` or one of its ancestors has an authored vertical writing
+/// mode. Such text is laid out horizontally, without autospacing, as on the
+/// parley path.
+fn under_vertical_writing(doc: &Document, cascade: &CascadeResult, node: usize) -> bool {
+    use raikiri_style::property::WritingMode;
+    let mut current = Some(node);
+    while let Some(id) = current {
+        if matches!(
+            cascade
+                .authored_writing_modes
+                .get(id)
+                .and_then(|mode| *mode),
+            Some(
+                WritingMode::VerticalRl
+                    | WritingMode::VerticalLr
+                    | WritingMode::SidewaysRl
+                    | WritingMode::SidewaysLr
+            )
+        ) {
+            return true;
+        }
+        current = doc.parent_of(id);
+    }
+    false
+}
+
+/// The text style of `node` with its document context: its `lang`, and no
+/// autospacing under a vertical writing mode.
+fn styled(
+    doc: &Document,
+    cascade: &CascadeResult,
+    cv: &ComputedValues,
+    node: usize,
+    fonts: &FontCollection,
+) -> Result<shodo::style::InlineStyle, IfcError> {
+    let mut inline = style::inline_style(cv, node, fonts)?;
+    inline.lang = language_of(doc, node);
+    if under_vertical_writing(doc, cascade, node) {
+        inline.text_autospace = shodo::style::TextAutospace::NoAutospace;
+    }
+    Ok(inline)
 }
 
 /// The effective `lang` of `node`: the nearest ancestor-or-self `lang`
@@ -116,7 +160,8 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
         DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
     );
     let tag = node.tag_name().unwrap_or("");
-    let replaced = cv.display == DisplayValue::Inline && ATOMIC_TAGS.contains(&tag);
+    let replaced = cv.display == DisplayValue::Inline
+        && (ATOMIC_TAGS.contains(&tag) || REPLACED_BOX_TAGS.contains(&tag));
     if inline_block || replaced {
         return Some(IfcBoxKind::Atomic);
     }
@@ -369,8 +414,7 @@ pub(crate) fn project_ifc_text_builder(
         });
     }
     let (options, indent) = style::line_options(cv, text, fonts)?;
-    let mut root_style = style::inline_style(cv, text, fonts)?;
-    root_style.lang = language_of(doc, text);
+    let root_style = styled(doc, cascade, cv, text, fonts)?;
     let paragraph_style = style::paragraph_style(cv, text, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let preserved_spaces = if matches!(
@@ -446,8 +490,7 @@ pub(crate) fn project_ifc_builder(
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
     let (options, indent) = style::line_options(root_cv, root, fonts)?;
-    let mut root_style = style::inline_style(root_cv, root, fonts)?;
-    root_style.lang = language_of(doc, root);
+    let root_style = styled(doc, cascade, root_cv, root, fonts)?;
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
@@ -501,9 +544,6 @@ pub(crate) fn project_ifc_builder(
                 }
                 let unsupported = |reason: &'static str| IfcError::Unsupported { node: id, reason };
                 let tag = node.tag_name().unwrap_or_default();
-                if UNSUPPORTED_REPLACED_TAGS.contains(&tag) {
-                    return Err(unsupported("this replaced element is not sized yet"));
-                }
                 if bidi.rtl && box_kind(cascade, doc, id).is_some() {
                     return Err(unsupported(
                         "boxes in right-to-left paragraphs are not placed yet",
@@ -561,8 +601,7 @@ pub(crate) fn project_ifc_builder(
                 }
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
                     supported_atomic(cv, id)?;
-                    let mut atomic_style = style::inline_style(cv, id, fonts)?;
-                    atomic_style.lang = language_of(doc, id);
+                    let atomic_style = styled(doc, cascade, cv, id, fonts)?;
                     // shodo sizes an atomic from `AtomicSize` alone, margins
                     // included; the edges are not read for atomics.
                     builder.push_atomic(NodeId(id as u64), &atomic_style, InlineEdges::default());
@@ -599,15 +638,12 @@ pub(crate) fn project_ifc_builder(
                     return Err(unsupported("only inline-level boxes are projected"));
                 }
                 reject_generated_content(cascade, id)?;
-                let mut inline_style = style::inline_style(cv, id, fonts)?;
-                inline_style.lang = language_of(doc, id);
+                let inline_style = styled(doc, cascade, cv, id, fonts)?;
                 let edges = style::inline_edges(cv, id, fonts)?;
                 // The eligibility check keeps every offset that is not a plain
                 // length out of the paragraph.
-                if cv.position == PositionValue::Relative
-                    && let Some(offset) = style::relative_offset(cv)
-                {
-                    offsets.push((id, offset));
+                if cv.position == PositionValue::Relative {
+                    offsets.push((id, style::relative_offset_in_lines(cv)));
                 }
                 // `clear` on a line break moves the next line below the
                 // floats (CSS 2.1, 9.5.2); the engine's forced break carries

@@ -5948,3 +5948,108 @@ fn a_shaping_limit_overflow_is_an_error_on_either_build_path() {
         );
     }
 }
+
+// ── degraded projections ─────────────────────────────────────
+
+/// `root > span(css) > text` in an Ahem paragraph (or `root(css) > text`
+/// when `on_root`); returns the root's border-box size, asserting the root
+/// is a root exactly when the engine is on.
+fn degraded_size(css: &str, text: &str, on_root: bool, ifc: bool) -> (f32, f32) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in(
+        "",
+        if on_root { css } else { "" },
+        if on_root { text } else { "" },
+    );
+    if !on_root {
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(&format!("display:inline;{css}")),
+        );
+        doc.append_text(span, text);
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+    let size = doc.nodes[root].unrounded_layout.size;
+    (size.width, size.height)
+}
+
+#[test]
+fn a_vertical_writing_mode_paragraph_is_projected_as_horizontal() {
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "writing-mode:vertical-rl");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // Hand-computed: laid out as horizontal text, Ahem 10px, one 10px line.
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+}
+
+#[test]
+fn degraded_forms_have_the_same_size_as_the_parley_path() {
+    // Each property is on an inline child, where the degradation applies
+    // (on the root, taffy resolves the percentage and the property is moot).
+    for (css, text) in [
+        ("padding-left:10%", "aaaa"),
+        ("text-autospace:auto", "漢字abc"),
+        ("text-autospace:normal", "漢字abc"),
+    ] {
+        assert_eq!(
+            degraded_size(css, text, false, true),
+            degraded_size(css, text, false, false),
+            "{css}"
+        );
+    }
+    // The writing-mode row degrades on the root.
+    assert_eq!(
+        degraded_size("writing-mode:vertical-rl", "aaaa", true, true),
+        degraded_size("writing-mode:vertical-rl", "aaaa", true, false)
+    );
+}
+
+/// `root > ["aaaa", input(css)]`; returns the input's x and the root's
+/// height.
+fn paragraph_with_input(css: &str, ifc: bool) -> (f32, f32) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
+    let input = doc.append_element(Some(root), "input", Style::default(), Some(css));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+    (
+        doc.nodes[input].unrounded_layout.location.x,
+        doc.nodes[root].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_form_control_in_a_paragraph_is_an_atomic_box() {
+    // Hand-computed: "aaaa" followed by a 30x10 atomic, so the input starts
+    // at x = 40 on a single line. The input has no baseline, so its margin
+    // box's bottom sits on the line's baseline (CSS 2.1 10.8.1) and the
+    // strut's 2px descent hangs below it: the line is 12px tall.
+    assert_eq!(
+        paragraph_with_input("width:30px;height:10px", true),
+        (40.0, 12.0)
+    );
+}
+
+#[test]
+fn vertical_align_middle_centres_the_box_on_half_the_parents_x_height() {
+    // CSS 2.1 10.8.1: the box's midpoint (3px above its baseline: Ahem 10px
+    // has an 8px ascent and a 2px descent) is aligned with the baseline plus
+    // half the parent's x-height (Ahem's x-height is 8px, so 4px): the span
+    // is raised 1px and the line is 11px tall. The parley path does not
+    // move it and keeps a 10px line.
+    assert_eq!(
+        degraded_size("vertical-align:middle", "aaaa", false, true).1,
+        11.0
+    );
+    assert_eq!(
+        degraded_size("vertical-align:middle", "aaaa", false, false).1,
+        10.0
+    );
+}

@@ -140,6 +140,41 @@ fn an_img_and_an_inline_svg_are_atomic() {
 }
 
 #[test]
+fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
+    for (tag, css, kind) in [
+        ("video", "display:inline", IfcBoxKind::Atomic),
+        ("iframe", "display:inline", IfcBoxKind::Atomic),
+        ("canvas", "display:inline", IfcBoxKind::Atomic),
+        ("audio", "display:inline", IfcBoxKind::Atomic),
+        ("object", "display:inline", IfcBoxKind::Atomic),
+        ("embed", "display:inline", IfcBoxKind::Atomic),
+        ("math", "display:inline", IfcBoxKind::Atomic),
+        ("input", "display:inline", IfcBoxKind::Atomic),
+        ("button", "display:inline", IfcBoxKind::Atomic),
+        ("textarea", "display:inline", IfcBoxKind::Atomic),
+        (
+            "input",
+            "display:inline-block;width:20px;height:10px",
+            IfcBoxKind::Atomic,
+        ),
+        ("select", "display:inline-block", IfcBoxKind::Atomic),
+        (
+            "input",
+            "display:block;float:left;width:20px;height:10px",
+            IfcBoxKind::Float,
+        ),
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
+        });
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{tag} {css}");
+        assert_eq!(projected.boxes[0].kind, kind, "{tag} {css}");
+    }
+}
+
+#[test]
 fn atomics_that_are_not_placed_yet_stay_unsupported() {
     for (tag, css) in [
         ("span", "display:inline-table"),
@@ -149,17 +184,6 @@ fn atomics_that_are_not_placed_yet_stay_unsupported() {
             "display:inline-block;vertical-align:middle;position:absolute",
         ),
         ("img", "display:inline;position:relative"),
-        ("video", "display:inline"),
-        ("iframe", "display:inline"),
-        ("input", "display:inline"),
-        ("button", "display:inline"),
-        // An author rule can make a form control `inline-block`; the tag is
-        // what decides, not the display.
-        ("input", "display:inline-block;width:20px;height:10px"),
-        ("button", "display:inline-block;width:20px;height:10px"),
-        ("select", "display:inline-block"),
-        // A floated form control is refused as well, before the float check.
-        ("input", "display:block;float:left;width:20px;height:10px"),
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");

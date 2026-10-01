@@ -13,10 +13,8 @@ use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
-use raikiri_style::property::{BackgroundImage, ColumnCountValue, DisplayValue, FloatValue};
-use raikiri_style::property::{
-    PositionValue, TextDecorationLine, TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
-};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, FloatValue};
+use raikiri_style::property::{PositionValue, TextDecorationLine, VerticalAlign};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
@@ -101,87 +99,10 @@ fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx
     })
 }
 
-fn is_horizontal(cascade: &CascadeResult, idx: usize) -> bool {
-    cascade.computed[idx].cssom_writing_mode == raikiri_style::property::WritingMode::HorizontalTb
-}
-
 fn is_multicol(cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
     !matches!(cv.column_count, ColumnCountValue::Auto)
         || !matches!(cv.column_width, ComputedColumnWidth::Auto)
-}
-
-/// Whether a `text-transform` value includes `full-width`. shodo's mapping
-/// covers fewer characters than the parley path, so such text is not handed
-/// to the inline engine.
-fn has_full_width_transform(value: TextTransform) -> bool {
-    matches!(
-        value,
-        TextTransform::FullWidth
-            | TextTransform::CapitalizeFullWidth
-            | TextTransform::UppercaseFullWidth
-            | TextTransform::LowercaseFullWidth
-            | TextTransform::FullWidthFullSizeKana
-            | TextTransform::CapitalizeFullWidthFullSizeKana
-            | TextTransform::UppercaseFullWidthFullSizeKana
-            | TextTransform::LowercaseFullWidthFullSizeKana
-    )
-}
-
-/// Whether the painter can draw the text of an element (the root or a
-/// descendant). Emphasis marks are drawn by neither path.
-fn is_paintable_element(cascade: &CascadeResult, id: usize) -> bool {
-    let cv = &cascade.computed[id];
-    cv.word_space_transform == WordSpaceTransform::None
-        && cv.background_clip != VisualBox::Text
-        && !has_full_width_transform(cv.text_transform)
-}
-
-/// Whether the painter can draw an inline element of the paragraph with its
-/// box. A relative offset in lengths moves the element and its content
-/// together; one that needs the containing block (a percentage or calc()) or
-/// a stacking context (`z-index`) is not modelled, and an opacity group wraps
-/// the element (the walk pushes a layer per element), which the lines do not
-/// carry. A background image would have to be laid out across the pieces of
-/// the element on its lines, which the painter does not do.
-fn is_paintable_descendant(cascade: &CascadeResult, id: usize) -> bool {
-    let cv = &cascade.computed[id];
-    is_paintable_element(cascade, id)
-        && style::relative_offset(cv).is_some()
-        && cv.opacity >= 1.0
-        && matches!(cv.background_image, BackgroundImage::None)
-}
-
-/// Every element and text of the paragraph rooted at `idx` can be drawn.
-fn paragraph_is_paintable(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    // A fixed box is sized against its nearest positioned ancestor by taffy,
-    // which can be zero wide; breaking lines at that width wraps every word.
-    // The parley path shapes at the page width beforehand and hides the error.
-    if cascade.computed[idx].position == PositionValue::Fixed {
-        return false;
-    }
-    if !is_paintable_element(cascade, idx) {
-        return false;
-    }
-    let mut stack = doc.nodes[idx].children.clone();
-    while let Some(id) = stack.pop() {
-        let node = &doc.nodes[id];
-        if !node.is_in_document() {
-            continue;
-        }
-        if node.kind() == NodeKind::Element {
-            // A box is painted on its own, so its content does not reach the
-            // paragraph painter.
-            if box_kind(cascade, doc, id).is_some() {
-                continue;
-            }
-            if !is_paintable_descendant(cascade, id) {
-                return false;
-            }
-            stack.extend(node.children.iter().copied());
-        }
-    }
-    true
 }
 
 /// Whether a float next to the paragraph, or next to any of its ancestors,
@@ -480,10 +401,6 @@ fn collect_candidates(
         }
         // From here on the box is a paragraph: anything that keeps it from
         // the engine is a refusal.
-        if !is_horizontal(cascade, idx) {
-            refuse(engine_only, idx, "vertical writing modes are not laid out")?;
-            continue;
-        }
         // The root itself counts: a multicol container is laid out by its own
         // dispatch, which would find no children once they are hidden. A
         // paragraph's own content is caught by `taken` above; the inside of
@@ -499,8 +416,12 @@ fn collect_candidates(
         }
         let refusal = if blocked {
             Some("a paragraph in a multicol container is not laid out")
-        } else if !paragraph_is_paintable(doc, cascade, idx) {
-            Some("the paragraph has a style the painter does not draw from lines")
+        } else if cascade.computed[idx].position == PositionValue::Fixed {
+            // taffy sizes a fixed box against its nearest positioned
+            // ancestor, which can be zero wide; breaking lines at that width
+            // wraps every word. The parley path shapes at the page width
+            // beforehand and hides the error.
+            Some("a fixed root is not laid out")
         } else if inside_unsized_fixed_box(doc, cascade, idx) {
             Some("a paragraph in a fixed box without a width is not laid out")
         } else if decoration_meets_a_line_relative_inline(doc, cascade, idx) {
@@ -608,10 +529,6 @@ fn collect_text_candidates(
         }
         let refusal = if blocked {
             Some("a paragraph in a multicol container is not laid out")
-        } else if !is_horizontal(cascade, idx) {
-            Some("vertical writing modes are not laid out")
-        } else if !is_paintable_element(cascade, parent) {
-            Some("the paragraph has a style the painter does not draw from lines")
         } else if inside_unsized_fixed_box(doc, cascade, idx) {
             Some("a paragraph in a fixed box without a width is not laid out")
         } else {
