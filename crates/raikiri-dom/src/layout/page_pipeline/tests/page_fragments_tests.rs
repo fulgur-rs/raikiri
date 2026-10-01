@@ -1374,3 +1374,99 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
     assert_eq!(run(true), [(1, 0.0), (1, 20.0)]);
     assert_eq!(run(true), run(false));
 }
+
+#[test]
+fn nested_named_pages_inside_paragraphs_start_their_pages() {
+    // The page-name-002 shape: named boxes inside paragraphs, and text after
+    // them that returns to the outer page name.
+    let run = |ifc: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        let div = |doc: &mut Document, parent: usize, css: &str| {
+            doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;{css}")),
+            )
+        };
+        let mut texts = Vec::new();
+        let d1 = div(&mut doc, body, "page:a");
+        texts.push(doc.append_text(d1, "p1"));
+        let d2 = div(&mut doc, body, "page:a");
+        let d2b = div(&mut doc, d2, "page:b");
+        texts.push(doc.append_text(d2b, "p2"));
+        texts.push(doc.append_text(d2, "p3"));
+        let d3 = div(&mut doc, body, "page:a");
+        texts.push(doc.append_text(d3, "p3b"));
+        texts.push(doc.append_text(body, "p4"));
+        let d4 = div(&mut doc, body, "page:a");
+        texts.push(doc.append_text(d4, "p5"));
+        let d5 = div(&mut doc, body, "page:a");
+        let d5a = div(&mut doc, d5, "");
+        let d5b = div(&mut doc, d5a, "page:b");
+        texts.push(doc.append_text(d5b, "p6"));
+        texts.push(doc.append_text(d5a, "p7"));
+        texts.push(doc.append_text(d5, "p7b"));
+        texts.push(doc.append_text(body, "p8"));
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(
+                crate::layout::test_support::ifc_ahem_fonts(),
+                shodo::limits::Limits::default(),
+            );
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices = layout_pages(
+            &mut doc,
+            &cascade,
+            page,
+            crate::layout::test_support::ahem_font_context(),
+        )
+        .expect("pages");
+        let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+        let first_fragments: Vec<_> = texts
+            .iter()
+            .map(|&text| {
+                fragments
+                    .iter()
+                    .flat_map(|p| p.items.iter())
+                    .find(|item| item.node_id == NodeId::new(text as u64))
+                    .map(|item| (item.page_index, item.rect.y))
+                    .expect("fragment")
+            })
+            .collect::<Vec<_>>();
+        (slices.len(), first_fragments)
+    };
+    // Hand-computed: a page per change of page name, the text that returns
+    // to `a` after a `b` box on a page of its own below it.
+    assert_eq!(
+        run(true),
+        (
+            8,
+            vec![
+                (0, 0.0),
+                (1, 0.0),
+                (2, 0.0),
+                (2, 10.0),
+                (3, 0.0),
+                (4, 0.0),
+                (5, 0.0),
+                (6, 0.0),
+                (6, 10.0),
+                (7, 0.0)
+            ]
+        )
+    );
+    assert_eq!(run(true), run(false));
+}

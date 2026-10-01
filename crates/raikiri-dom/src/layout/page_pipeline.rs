@@ -1510,9 +1510,11 @@ pub fn layout_pages_with_page_geometry(
                     // it stands for the lines it owns, measured from the root's
                     // content box. The inline elements between the root and
                     // the text pass the root's border-box y down unchanged, so
-                    // `parent_abs_y` is the root's.
+                    // `parent_abs_y` is the root's. A text node that is a root
+                    // itself (an anonymous flex or grid item) has a box of its
+                    // own, located like any other.
                     let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
-                        Some(owned) => {
+                        Some(owned) if owned.root != node_id => {
                             let root_layout = document.nodes[owned.root].unrounded_layout;
                             let first_top = owned.lines.first().map_or(0.0, |l| l.top);
                             let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
@@ -1950,6 +1952,20 @@ pub fn layout_pages_with_page_geometry(
             }
             if let Some((ifc_root, offset)) = ifc_root {
                 materialize_y(document, ifc_root, effective_y - offset, &parent_of);
+            } else if let Some((root, _)) = candidate.ifc_root
+                && let Some(first) = document
+                    .ifc_text_lines(node_id)
+                    .and_then(|owned| owned.lines.first().copied())
+            {
+                // A later text of a paragraph whose root already moved: its
+                // lines go where the flow puts them, and the ones after
+                // follow (an earlier box of the paragraph may have grown).
+                let layout = document.nodes[root].unrounded_layout;
+                let current = current_abs_y(document, root, &parent_of)
+                    + layout.border.top
+                    + layout.padding.top
+                    + first.top;
+                follow_moved_ifc_text(document, root, node_id, effective_y - current);
             }
             materialize_y(document, node_id, effective_y, &parent_of);
             let named_page_change = saw_child
