@@ -359,7 +359,7 @@ fn run_boxes(
         commit_float(tree, ctx, float, y, geometry, perform);
     }
     if perform {
-        place_atomics(tree, &lines, &atomics.outputs, geometry);
+        place_atomics(tree, &lines, &atomics.outputs, geometry, root.rtl);
         super::records::record_inline_boxes(tree, idx, root, &lines, &geometry);
     }
     // A paragraph that is its own formatting context contains its floats; one
@@ -729,6 +729,7 @@ fn place_atomics(
     lines: &[shodo::Line],
     outputs: &[(usize, taffy::LayoutOutput)],
     geometry: FlowGeometry,
+    rtl: bool,
 ) {
     for line in lines {
         for fragment in line.fragments() {
@@ -744,8 +745,16 @@ fn place_atomics(
             // relatively positioned atomic is drawn offset from that place,
             // which taffy's layout location carries for inline-level boxes.
             let (dx, dy) = relative_inset(tree, node, geometry.width);
+            // A right-to-left line runs from the right edge: its inline axis
+            // is mirrored inside the content box.
+            let rect = atomic.border_rect;
+            let start = if rtl {
+                geometry.width - (rect.inline_start + rect.inline_size)
+            } else {
+                rect.inline_start
+            };
             let location = taffy::Point {
-                x: geometry.edges.0 + atomic.border_rect.inline_start + dx,
+                x: geometry.edges.0 + start + dx,
                 y: geometry.top_edge + line.block_offset() + atomic.border_rect.block_start + dy,
             };
             commit_child_layout(tree, node, output, location, geometry.width);

@@ -6184,3 +6184,89 @@ fn a_relatively_positioned_float_is_placed_like_a_float() {
     // "aa" (CSS 2.1 9.5.1 lets it share that line when it fits).
     assert_eq!(place(false), (0.0, 10.0));
 }
+
+#[test]
+fn an_atomic_in_a_right_to_left_paragraph_is_placed_from_the_right_edge() {
+    // A 200px right-to-left paragraph "aa", a 10x10 inline-block, "bb": the
+    // line runs from the right edge, so "aa" takes 180..200 and the box sits
+    // at 170..180, as on the parley path.
+    let place = |ifc: bool| {
+        let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px;direction:rtl", "aa");
+        let block = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+        doc.append_text(root, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        doc.nodes[block].unrounded_layout.location.x
+    };
+    assert_eq!(place(true), 170.0);
+    assert_eq!(place(true), place(false));
+}
+
+/// The root ("aaaa" then a block with a 12px bottom margin) with `root_css`,
+/// and a sibling after it with a 3px top margin: the root's height and the
+/// sibling's y.
+fn root_then_sibling(root_css: &str, ifc: bool) -> (f32, f32) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", root_css, "aaaa");
+    let block = doc.append_element(
+        Some(root),
+        "div",
+        Style::default(),
+        Some("display:block;margin-bottom:12px"),
+    );
+    doc.append_text(block, "bb");
+    let parent = doc.parent_of(root).expect("parent");
+    let sibling = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;margin-top:3px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{root_css}");
+    (
+        doc.nodes[root].unrounded_layout.size.height,
+        doc.nodes[sibling].unrounded_layout.location.y,
+    )
+}
+
+#[test]
+fn an_escaping_bottom_margin_collapses_with_the_next_sibling() {
+    // The 12px margin leaves the 20px root and collapses with the sibling's
+    // 3px: the sibling starts at 20 + 12.
+    assert_eq!(root_then_sibling("", true), (20.0, 32.0));
+    assert_eq!(root_then_sibling("", true), root_then_sibling("", false));
+}
+
+#[test]
+fn a_min_height_keeps_the_last_childs_margin_inside_the_root() {
+    // CSS 2.1 8.3.1: when min-height sets the used height the last child's
+    // bottom margin does not collapse through the root; only the sibling's
+    // own 3px separates them.
+    for (css, height) in [
+        ("min-height:20px", 20.0),
+        ("min-height:25px", 25.0),
+        ("min-height:50px", 50.0),
+    ] {
+        assert_eq!(
+            root_then_sibling(css, true),
+            (height, height + 3.0),
+            "{css}"
+        );
+        assert_eq!(
+            root_then_sibling(css, true),
+            root_then_sibling(css, false),
+            "{css}"
+        );
+    }
+}

@@ -520,7 +520,21 @@ fn compute_ifc_root(
         size
     });
     output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
-    output.bottom_margin = escaping_margin;
+    // When `min-height` gives the used height, the last child's bottom margin
+    // no longer adjoins the box's bottom edge and does not collapse through
+    // it (CSS 2.1 8.3.1), as taffy's block algorithm decides.
+    let min_height = taffy::util::MaybeResolve::maybe_resolve(
+        style.min_size.height,
+        inputs.parent_size.height,
+        resolve_calc,
+    );
+    let constrained_by_min_height =
+        min_height.is_some_and(|min| min > 0.0 && min >= output.size.height);
+    output.bottom_margin = if constrained_by_min_height {
+        CollapsibleMarginSet::ZERO
+    } else {
+        escaping_margin
+    };
     output
 }
 
