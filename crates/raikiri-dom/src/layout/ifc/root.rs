@@ -9,6 +9,7 @@ use shodo::limits::Limits;
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Line, Paragraph};
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 /// A block laid out as one shodo paragraph.
@@ -38,7 +39,8 @@ pub(crate) struct IfcRoot {
 pub(crate) struct IfcLines {
     /// Content-box width the lines were broken at.
     pub(crate) width: f32,
-    pub(crate) lines: Vec<Line>,
+    /// Shared, so cloning a root or a document does not copy them.
+    pub(crate) lines: Arc<Vec<Line>>,
     /// Sum of the line advances.
     pub(crate) height: f32,
     /// True when some line was laid out beside a float (its space was
@@ -60,8 +62,7 @@ impl IfcRoot {
         }
     }
 
-    /// A copy without the stored lines, for measuring: the paragraph is a
-    /// cheap clone, the lines are not.
+    /// A copy without the stored lines, for measuring with lines of its own.
     pub(crate) fn without_lines(&self) -> Self {
         Self {
             paragraph: self.paragraph.clone(),

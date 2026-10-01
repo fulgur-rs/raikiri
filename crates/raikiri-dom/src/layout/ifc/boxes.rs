@@ -63,7 +63,7 @@ pub(crate) fn layout_with_boxes(
     else {
         return IfcLines {
             width: geometry.width,
-            lines: Vec::new(),
+            lines: std::sync::Arc::new(Vec::new()),
             height: 0.0,
             beside_floats: false,
         };
@@ -326,7 +326,7 @@ fn run_boxes(
     IfcLines {
         width,
         height,
-        lines,
+        lines: std::sync::Arc::new(lines),
         beside_floats: beside,
     }
 }

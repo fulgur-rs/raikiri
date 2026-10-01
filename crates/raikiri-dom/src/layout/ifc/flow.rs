@@ -175,7 +175,7 @@ pub(crate) fn place_lines(
     IfcLines {
         width: first_width.unwrap_or(0.0),
         height: lines.iter().map(|line| line.block_size()).sum(),
-        lines,
+        lines: std::sync::Arc::new(lines),
         beside_floats: false,
     }
 }
@@ -245,7 +245,12 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
             ),
             top_edge: layout.padding.top + layout.border.top,
         };
-        if let Some(lines) = doc.nodes[id].ifc_lines().map(<[shodo::Line]>::to_vec) {
+        let lines = doc.nodes[id]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .map(|lines| std::sync::Arc::clone(&lines.lines));
+        if let Some(lines) = lines {
             super::records::record_inline_boxes(doc, id, &ifc, &lines, &geometry);
         }
     }
