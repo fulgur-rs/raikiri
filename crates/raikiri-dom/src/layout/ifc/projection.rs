@@ -304,10 +304,12 @@ impl ProjectedBuilder {
     }
 }
 
-/// Build the shodo paragraph for the in-flow block `root`.
+/// Build the shodo paragraph for the in-flow block `root`: the walk and the
+/// shaping in one call.
 ///
 /// # Errors
 /// The errors of [`project_ifc_builder`] and [`ProjectedBuilder::build`].
+#[cfg(test)]
 pub(crate) fn project_ifc(
     doc: &Document,
     cascade: &CascadeResult,

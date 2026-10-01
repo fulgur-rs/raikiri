@@ -1,8 +1,8 @@
 //! Choose the blocks laid out by the shodo inline engine.
 
 use super::boxes::{IfcBox, IfcBoxKind};
-use super::projection::{box_kind, project_ifc};
-use super::root::IfcRoot;
+use super::projection::{ProjectedBuilder, ProjectedIfc, box_kind, project_ifc_builder};
+use super::root::{IfcRoot, IfcState};
 use super::style;
 use crate::Document;
 use crate::layout::page_pipeline::{page_break_is_forced, selected_page_name};
@@ -296,20 +296,47 @@ fn box_has_a_page_break(doc: &Document, cascade: &CascadeResult, idx: usize) -> 
     false
 }
 
+/// A paragraph the walk accepted, waiting to be shaped.
+struct Candidate {
+    idx: usize,
+    projected: ProjectedBuilder,
+}
+
 /// Clear every IFC mark, then mark the eligible roots and their subtrees.
+///
+/// Runs in three steps: a walk over the document that decides which blocks
+/// are paragraph roots and fills their builders, the shaping of those
+/// builders, which touches neither the document nor the cascade, and the
+/// writing of the shaped paragraphs and marks back, in document order.
 pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
     for node in &mut doc.nodes {
         node.flags
             .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
         node.ifc = None;
     }
-    // Take the engine state out so `project_ifc` can borrow the document.
+    // Take the engine state out so the walk can borrow the document.
     let Some(mut state) = doc.ifc.take() else {
         return;
     };
     // The roots are rebuilt on every pass, so a cached layout would skip the
     // measure callback that fills their lines.
     doc.layout_dirty = true;
+    let candidates = collect_candidates(doc, cascade, &state);
+    let built = build_all(&mut state, candidates);
+    write_roots(doc, built);
+    doc.ifc = Some(state);
+}
+
+/// Walk the document in index order and return the eligible paragraphs, in
+/// ascending index order, with their builders.
+///
+/// The content of an accepted paragraph is taken here, before it is shaped:
+/// that content is text and inline elements, none of which can be a root,
+/// while the inside of its boxes is not taken and may hold roots of its own.
+/// So a paragraph that later fails to shape changes no other paragraph's
+/// eligibility.
+fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState) -> Vec<Candidate> {
+    let mut candidates = Vec::new();
     let mut taken = vec![false; doc.nodes.len()];
     for idx in 0..doc.nodes.len() {
         let node = &doc.nodes[idx];
@@ -351,14 +378,8 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
         {
             continue;
         }
-        let Ok(projected) = project_ifc(
-            doc,
-            cascade,
-            idx,
-            &mut state.layout_cx,
-            &state.fonts,
-            &state.limits,
-        ) else {
+        let Ok(projected) = project_ifc_builder(doc, cascade, idx, &state.fonts, &state.limits)
+        else {
             continue;
         };
         if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
@@ -375,6 +396,38 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
         if has_own_floats && has_float_beside(doc, cascade, idx) {
             continue;
         }
+        let mut stack = doc.nodes[idx].children.clone();
+        while let Some(id) = stack.pop() {
+            if projected.boxes.iter().any(|b| b.node == id) {
+                continue;
+            }
+            taken[id] = true;
+            stack.extend(doc.nodes[id].children.iter().copied());
+        }
+        taken[idx] = true;
+        candidates.push(Candidate { idx, projected });
+    }
+    candidates
+}
+
+/// Shape every candidate. A candidate that fails to shape is dropped and
+/// stays on the parley path.
+fn build_all(state: &mut IfcState, candidates: Vec<Candidate>) -> Vec<(usize, ProjectedIfc)> {
+    candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            candidate
+                .projected
+                .build(&mut state.layout_cx, &state.fonts)
+                .ok()
+                .map(|projected| (candidate.idx, projected))
+        })
+        .collect()
+}
+
+/// Store each shaped paragraph on its root and mark the root's subtree.
+fn write_roots(doc: &mut Document, built: Vec<(usize, ProjectedIfc)>) {
+    for (idx, projected) in built {
         // Boxes are laid out and painted as nodes of their own, so neither
         // they nor their content belong to the paragraph's subtree.
         let boxes: Vec<usize> = projected.boxes.iter().map(|b| b.node).collect();
@@ -386,12 +439,9 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
                 continue;
             }
             doc.nodes[id].flags.insert(NodeFlags::IN_IFC_SUBTREE);
-            taken[id] = true;
             stack.extend(doc.nodes[id].children.iter().copied());
         }
-        taken[idx] = true;
     }
-    doc.ifc = Some(state);
 }
 
 #[cfg(test)]

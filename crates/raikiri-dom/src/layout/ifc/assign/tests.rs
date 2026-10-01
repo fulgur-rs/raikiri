@@ -1062,3 +1062,64 @@ fn a_page_break_inside_a_box_of_the_paragraph_keeps_it_on_the_parley_path() {
         });
     }
 }
+
+#[test]
+fn a_paragraph_that_fails_to_build_stays_on_the_parley_path() {
+    // One glyph is allowed per paragraph, so shaping "aa bb" fails after the
+    // builder step succeeded. Only that paragraph stays on the parley path.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa bb");
+    });
+    let limits = Limits {
+        max_shaped_glyphs: Some(1),
+        ..Limits::default()
+    };
+    // The walk itself accepts the paragraph: the failure is in the shaping.
+    let fonts = ahem_fonts();
+    let projected = crate::layout::ifc::projection::project_ifc_builder(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &fonts,
+        &limits,
+    )
+    .expect("the walk succeeds");
+    assert!(
+        projected
+            .build(&mut shodo::LayoutContext::new(), &fonts)
+            .is_err()
+    );
+    fixture.doc.enable_inline_formatting(ahem_fonts(), limits);
+    assign(&mut fixture);
+    assert!(!is_root(&fixture, fixture.root));
+    let text = fixture.doc.nodes[fixture.root].children[0];
+    assert!(
+        !fixture.doc.nodes[text]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
+    );
+    assert!(fixture.doc.nodes[fixture.root].ifc.is_none());
+}
+
+#[test]
+fn a_paragraph_inside_a_float_of_a_root_is_still_a_root() {
+    // The inside of a box is not part of the outer paragraph, so a paragraph
+    // there is a root of its own whether or not the outer one is built first.
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let float = span(doc, root, "display:block;float:left;width:60px");
+        let inner = doc.append_element(
+            Some(float),
+            "div",
+            taffy::Style::default(),
+            Some("display:block"),
+        );
+        doc.append_text(inner, "bb cc");
+    });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    let float = fixture.doc.nodes[fixture.root].children[1];
+    let inner = fixture.doc.nodes[float].children[0];
+    assert!(is_root(&fixture, inner));
+}
