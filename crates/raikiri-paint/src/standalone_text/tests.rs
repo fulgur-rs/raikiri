@@ -89,3 +89,160 @@ fn an_unusable_font_size_falls_back_to_sixteen_like_before() {
         48.0
     );
 }
+
+use anyrender::Scene;
+use anyrender::recording::RenderCommand;
+use peniko::Color;
+
+/// `(x, y)` of every recorded glyph, in the page's coordinates.
+fn glyph_positions(scene: &Scene) -> Vec<(f64, f64)> {
+    let mut out = Vec::new();
+    for command in &scene.commands {
+        if let RenderCommand::GlyphRun(run) = command {
+            let origin = run.transform.translation();
+            for glyph in &run.glyphs {
+                out.push((origin.x + f64::from(glyph.x), origin.y + f64::from(glyph.y)));
+            }
+        }
+    }
+    out
+}
+
+fn draw(
+    doc: &Document,
+    align: parley::Alignment,
+    vertical: crate::text::MarginTextVerticalAlign,
+) -> Vec<(f64, f64)> {
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text(
+        Some(doc),
+        &mut scene,
+        "abc",
+        5.0,
+        7.0,
+        100.0,
+        40.0,
+        Color::from_rgba8(0, 0, 0, 255),
+        10.0,
+        "Ahem",
+        align,
+        vertical,
+    );
+    glyph_positions(&scene)
+}
+
+#[test]
+fn the_text_sits_at_the_baseline_of_its_vertical_alignment() {
+    use crate::text::MarginTextVerticalAlign::{Bottom, Middle, Top};
+    let doc = engine_document();
+    let y = |vertical| draw(&doc, parley::Alignment::Start, vertical)[0].1;
+    assert_eq!(y(Top), 15.0);
+    assert_eq!(y(Middle), 30.0);
+    assert_eq!(y(Bottom), 45.0);
+}
+
+#[test]
+fn the_text_is_aligned_inside_the_box_width() {
+    use crate::text::MarginTextVerticalAlign::Top;
+    let doc = engine_document();
+    let xs = |align| -> Vec<f64> { draw(&doc, align, Top).into_iter().map(|(x, _)| x).collect() };
+    assert_eq!(xs(parley::Alignment::Start), [5.0, 15.0, 25.0]);
+    assert_eq!(xs(parley::Alignment::Center), [40.0, 50.0, 60.0]);
+    assert_eq!(xs(parley::Alignment::End), [75.0, 85.0, 95.0]);
+    assert_eq!(xs(parley::Alignment::Right), [75.0, 85.0, 95.0]);
+}
+
+#[test]
+fn the_colour_is_the_colour_the_caller_gave() {
+    let doc = engine_document();
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text(
+        Some(&doc),
+        &mut scene,
+        "a",
+        0.0,
+        0.0,
+        100.0,
+        20.0,
+        Color::from_rgba8(255, 0, 0, 255),
+        10.0,
+        "Ahem",
+        parley::Alignment::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    let red = anyrender::Paint::Solid(Color::from_rgba8(255, 0, 0, 255));
+    let brushes: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run.brush.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(brushes, [red]);
+    assert_eq!(doc.standalone_text_calls(), 1);
+}
+
+#[test]
+fn text_the_engine_declines_is_drawn_by_the_old_path() {
+    let doc = engine_document();
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text(
+        Some(&doc),
+        &mut scene,
+        "ab \u{5d0}",
+        0.0,
+        0.0,
+        100.0,
+        20.0,
+        Color::from_rgba8(0, 0, 0, 255),
+        10.0,
+        "Ahem",
+        parley::Alignment::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    assert_eq!(doc.standalone_text_calls(), 0);
+    assert!(!glyph_positions(&scene).is_empty(), "parley still draws it");
+}
+
+#[test]
+fn without_a_document_the_old_path_draws() {
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text(
+        None,
+        &mut scene,
+        "abc",
+        0.0,
+        0.0,
+        100.0,
+        20.0,
+        Color::from_rgba8(0, 0, 0, 255),
+        16.0,
+        "serif",
+        parley::Alignment::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    assert!(!glyph_positions(&scene).is_empty());
+}
+
+#[test]
+fn a_second_line_is_drawn_one_line_below_the_first() {
+    let doc = engine_document();
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text(
+        Some(&doc),
+        &mut scene,
+        "a\nb",
+        0.0,
+        0.0,
+        100.0,
+        40.0,
+        Color::from_rgba8(0, 0, 0, 255),
+        10.0,
+        "Ahem",
+        parley::Alignment::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    // Baselines at the ascent (8) of each 10px line.
+    assert_eq!(glyph_positions(&scene), [(0.0, 8.0), (0.0, 18.0)]);
+}

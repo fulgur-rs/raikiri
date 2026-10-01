@@ -1910,6 +1910,7 @@ fn paint_generated_pseudo(
         &family,
     );
     text::draw_margin_text(
+        Some(document),
         scene,
         &content,
         x,
@@ -2037,6 +2038,7 @@ fn paint_list_marker_with_snapshots(
         _ => paint_x + padding_left - marker_width - MARKER_GAP,
     };
     text::draw_margin_text(
+        Some(document),
         scene,
         &content,
         marker_x, // cov:ignore: argument mapping has no executable location
@@ -2572,10 +2574,13 @@ fn paint_margin_box(
         let border_top = spec.border_top.map(|(width, _)| width).unwrap_or(0.0);
         let border_bottom = spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
         let content_x = x + border_left + spec.padding[3];
-        let ahem_baseline_adjust = if spec
-            .font_family
-            .split(',')
-            .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
+        // The correction aligns the parley path's fallback fonts with Ahem;
+        // the engine shapes with the document's Ahem itself.
+        let ahem_baseline_adjust = if !margin_box_uses_engine(document, spec)
+            && spec
+                .font_family
+                .split(',')
+                .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
         {
             -1.0
         } else {
@@ -2588,6 +2593,7 @@ fn paint_margin_box(
             spec.content.clone()
         };
         text::draw_margin_text(
+            margin_box_document(document, spec),
             scene,
             &content,
             content_x,
@@ -2694,6 +2700,17 @@ fn margin_box_document<'a>(
     } else {
         document
     }
+}
+
+/// Whether the inline engine will shape this margin box's text. The Ahem
+/// baseline correction exists for the parley path's fallback fonts only.
+fn margin_box_uses_engine(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> bool {
+    margin_box_document(document, spec).is_some_and(|document| {
+        document.standalone_text_eligible(
+            &spec.content,
+            crate::standalone_text::usable_size(spec.font_size),
+        )
+    })
 }
 
 fn margin_box_text_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {

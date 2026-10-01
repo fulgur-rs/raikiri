@@ -627,6 +627,18 @@ pub(crate) enum MarginTextVerticalAlign {
     Bottom,
 }
 
+/// The engine's alignment for a parley alignment.
+fn standalone_align(alignment: Alignment) -> StandaloneAlign {
+    match alignment {
+        Alignment::Start => StandaloneAlign::Start,
+        Alignment::End => StandaloneAlign::End,
+        Alignment::Left => StandaloneAlign::Left,
+        Alignment::Right => StandaloneAlign::Right,
+        Alignment::Center => StandaloneAlign::Center,
+        Alignment::Justify => StandaloneAlign::Justify,
+    }
+}
+
 /// Draw generated text in a page-margin box.
 ///
 /// Margin-box content is not a DOM text node, so it has no pre-shaped layout
@@ -635,6 +647,7 @@ pub(crate) enum MarginTextVerticalAlign {
 /// the style data needed by the page-context caller.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_margin_text(
+    document: Option<&Document>,
     scene: &mut impl PaintScene,
     content: &str,
     x: f32,
@@ -648,6 +661,23 @@ pub(crate) fn draw_margin_text(
     vertical_align: MarginTextVerticalAlign,
 ) {
     if content.is_empty() || width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    if let Some(shaped) = crate::standalone_text::shape(
+        document,
+        content,
+        font_size,
+        font_family,
+        Some(width),
+        standalone_align(alignment),
+    ) {
+        let free_y = (height - shaped.height()).max(0.0);
+        let offset_y = match vertical_align {
+            MarginTextVerticalAlign::Top => 0.0,
+            MarginTextVerticalAlign::Middle => free_y * 0.5,
+            MarginTextVerticalAlign::Bottom => free_y,
+        };
+        crate::standalone_text::draw(scene, &shaped, x, y + offset_y, color);
         return;
     }
     let font_size = if font_size.is_finite() && font_size > 0.0 {
