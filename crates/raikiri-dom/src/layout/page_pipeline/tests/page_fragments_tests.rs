@@ -920,3 +920,51 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
     assert_eq!(passes[0][0].0, 1, "the paragraph is on page 1");
     assert_eq!(passes[1], passes[0]);
 }
+
+#[test]
+fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it() {
+    use crate::layout::test_support::{ahem_font_context, ifc_ahem_fonts};
+    // body: "aa " + a 20px block of two lines + " dd". The block's first line
+    // ends at 30 > 25, so the block moves to page 1 as a unit; the text after
+    // it comes later in the same paragraph.
+    let mut results = Vec::new();
+    for ifc in [false, true] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
+        );
+        doc.append_text(body, "aa ");
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px;orphans:1;widows:1"),
+        );
+        let inner = doc.append_text(block, "bbbb cccc");
+        doc.append_text(body, " dd");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        if ifc {
+            doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        }
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 25.0;
+        let slices = layout_pages(&mut doc, &cascade, page, ahem_font_context()).expect("pages");
+        assert_eq!(doc.nodes[body].is_ifc_root(), ifc);
+        let rects: Vec<_> = page_fragments_from_slices(&doc, &cascade, page, &slices)
+            .iter()
+            .flat_map(|p| p.items.iter())
+            .filter(|item| item.node_id == NodeId::new(inner as u64))
+            .map(|item| (item.page_index, item.rect.y))
+            .collect();
+        results.push(rects);
+    }
+    assert_eq!(results[0], [(1, 0.0)], "the parley path is the oracle");
+    assert_eq!(results[1], results[0]);
+}

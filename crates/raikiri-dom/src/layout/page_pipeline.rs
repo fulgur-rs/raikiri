@@ -1695,8 +1695,25 @@ pub fn layout_pages_with_page_geometry(
     let mut page_names = vec![current_page_name.clone()];
 
     let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
+    // Paragraphs laid out by the inline engine that already had a candidate
+    // inside them. Only the first candidate of a paragraph may move its root:
+    // a later one would move again what the earlier ones placed.
+    let mut entered_ifc_roots = HashSet::new();
+    let inline_formatting = document.inline_formatting_enabled();
     for candidate in candidates {
         let node_id = candidate.node_id;
+        let moves_ifc_root = inline_formatting && {
+            let mut first = true;
+            let mut current = parent_of.get(node_id).copied().flatten();
+            while let Some(id) = current {
+                if document.nodes[id].is_ifc_root() && !entered_ifc_roots.insert(id) {
+                    first = false;
+                }
+                current = parent_of.get(id).copied().flatten();
+            }
+            first
+        };
+        let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
         if let Some((ancestor_id, correction)) = pending_underflow
             && !is_descendant_or_self(document, node_id, ancestor_id, &parent_of)
         {
@@ -1817,7 +1834,7 @@ pub fn layout_pages_with_page_geometry(
                     }
                 }
             }
-            if let Some((ifc_root, offset)) = candidate.ifc_root {
+            if let Some((ifc_root, offset)) = ifc_root {
                 materialize_y(document, ifc_root, effective_y - offset, &parent_of);
             }
             materialize_y(document, node_id, effective_y, &parent_of);
@@ -1847,7 +1864,7 @@ pub fn layout_pages_with_page_geometry(
                     if node_delta.is_finite() && shift_delta.is_finite() {
                         // The text of an ifc paragraph is painted from its
                         // root, so the root carries the movement.
-                        let moved = candidate.ifc_root.map_or(node_id, |(root, _)| root);
+                        let moved = ifc_root.map_or(node_id, |(root, _)| root);
                         document.nodes[moved].unrounded_layout.location.y += node_delta;
                         flow_shift += shift_delta;
                         effective_y += shift_delta;
