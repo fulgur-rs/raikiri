@@ -56,16 +56,22 @@ fn physical(rect: LogicalRect, line_top: f32, content_width: f32, rtl: bool) -> 
     }
 }
 
-/// Logical inline end of the last glyph run of a line: where the space that
-/// hangs at the end of the line ends.
-fn text_end(fragments: &[Fragment]) -> f32 {
+/// The last glyph run of a line (the one that ends furthest along the
+/// line): its logical inline end, where a space that hangs at the end of the
+/// line ends, and the text node it belongs to.
+fn text_end(fragments: &[Fragment]) -> (f32, Option<usize>) {
     fragments
         .iter()
         .filter_map(|fragment| match fragment {
-            Fragment::GlyphRun(run) => Some(run.inline_start() + run.inline_size()),
+            Fragment::GlyphRun(run) => Some((
+                run.inline_start() + run.inline_size(),
+                run.node().map(|node| node.0 as usize),
+            )),
             _ => None,
         })
-        .fold(f32::NEG_INFINITY, f32::max)
+        .fold((f32::NEG_INFINITY, None), |last, run| {
+            if run.0 > last.0 { run } else { last }
+        })
 }
 
 /// Tolerance for comparing logical positions computed by shodo.
@@ -79,17 +85,24 @@ const EPSILON: f32 = 0.01;
 /// width of every element that holds it (one that continues on the next
 /// line, or one that closes after it), while CSS Text 3 4.1.3 removes it; the
 /// hung width is taken off those pieces (and their content boxes) here: the
-/// pieces that reach the end of the line's last glyph run.
+/// pieces that reach the end of the line's last glyph run. Preserved spaces
+/// (`preserved_spaces` lists the text nodes whose spaces are kept) hang
+/// without being removed, so their elements keep them as ink overflow.
 pub(crate) fn inline_box_pieces(
     lines: &[Line],
     content_width: f32,
     rtl: bool,
+    preserved_spaces: &[usize],
 ) -> Vec<InlineBoxPiece> {
     let mut pieces = Vec::new();
     for (line_index, line) in lines.iter().enumerate() {
         let fragments: Vec<Fragment> = line.fragments().collect();
-        let hung = line.hang_end();
-        let end = text_end(&fragments);
+        let (end, owner) = text_end(&fragments);
+        let hung = if owner.is_some_and(|owner| preserved_spaces.contains(&owner)) {
+            0.0
+        } else {
+            line.hang_end()
+        };
         for fragment in &fragments {
             let Fragment::InlineBox(piece) = fragment else {
                 continue;

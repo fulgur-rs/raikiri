@@ -16,7 +16,7 @@ use super::style;
 use crate::Document;
 use raikiri_style::property::{
     ClearValue, ContentComponent, Direction, DisplayValue, FloatValue, OverflowValue,
-    PositionValue, UnicodeBidi,
+    PositionValue, UnicodeBidi, WhiteSpaceCollapse,
 };
 use raikiri_style::{
     CascadeResult, ComputedLengthPercentageOrAuto, ComputedTextIndent, ComputedValues, PseudoElem,
@@ -57,6 +57,9 @@ pub(crate) struct ProjectedIfc {
     /// Paint offsets of the relatively positioned inline elements, by DOM
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// Text nodes whose spaces are preserved (not collapsed), in document
+    /// order.
+    pub(crate) preserved_spaces: Vec<usize>,
 }
 
 /// The effective `lang` of `node`: the nearest ancestor-or-self `lang`
@@ -305,6 +308,7 @@ pub(crate) fn project_ifc(
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
+    let mut preserved_spaces = Vec::new();
 
     let mut stack: Vec<Step> = root_node
         .children
@@ -327,6 +331,14 @@ pub(crate) fn project_ifc(
         match node.kind() {
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
+                if cascade.computed.get(id).is_some_and(|cv| {
+                    matches!(
+                        cv.effective_white_space_collapse,
+                        WhiteSpaceCollapse::Preserve | WhiteSpaceCollapse::PreserveSpaces
+                    )
+                }) {
+                    preserved_spaces.push(id);
+                }
                 builder.push_text(
                     TextSource::Dom {
                         node: NodeId(id as u64),
@@ -483,6 +495,7 @@ pub(crate) fn project_ifc(
         boxes,
         rtl: root_cv.direction == Direction::Rtl,
         offsets,
+        preserved_spaces,
     })
 }
 

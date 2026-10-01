@@ -690,6 +690,7 @@ impl Node {
             &lines.lines,
             lines.width,
             root.rtl,
+            &root.preserved_spaces,
         ))
     }
 
