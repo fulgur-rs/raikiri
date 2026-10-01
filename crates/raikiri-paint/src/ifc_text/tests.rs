@@ -1642,3 +1642,60 @@ fn a_table_cell_root_paints_its_text_inside_its_border_and_padding() {
     lay_out(&mut off_doc, &cascade, false);
     assert_eq!(on, ink(&painted(&off_doc, &cascade)));
 }
+
+#[test]
+fn a_block_child_under_a_decoration_is_underlined_like_the_parley_path() {
+    // The root's underline reaches the text of its block child, which is a
+    // root of its own: one 20px underline under each line, 0.5px below the
+    // baselines at 8 and 18.
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let block = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+        doc.append_text(block, "bb");
+    };
+    let (off, on) = off_and_on("width:200px;text-decoration:underline", build);
+    let px = |v: f64| (v * 64.0) as i64;
+    assert_eq!(
+        decoration_fills(&on),
+        [
+            (0, px(8.5), px(20.0), px(9.5)),
+            (0, px(18.5), px(20.0), px(19.5))
+        ]
+    );
+    assert_eq!(decoration_fills(&on), decoration_fills(&off));
+}
+
+#[test]
+fn a_propagated_underline_stays_on_its_box_across_a_line_relative_inline() {
+    // CSS Text Decoration 3, 2.1: a decoration propagated from the root is
+    // drawn at the root's position across all its text, including a
+    // descendant aligned to the line's top. The parley path draws the
+    // descendant's part at that descendant's own top instead (y 3.5).
+    let build = |doc: &mut Document, root: usize| {
+        doc.append_text(root, "aa");
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;vertical-align:top;font-size:20px"),
+        );
+        doc.append_text(span, "bb");
+    };
+    let (off, on) = off_and_on("width:200px;text-decoration:underline", build);
+    let px = |v: f64| (v * 64.0) as i64;
+    assert_eq!(
+        decoration_fills(&on),
+        [
+            (0, px(8.5), px(20.0), px(9.5)),
+            (px(20.0), px(8.5), px(60.0), px(9.5))
+        ]
+    );
+    assert_eq!(
+        decoration_fills(&off),
+        [
+            (0, px(8.5), px(20.0), px(9.5)),
+            (px(20.0), px(3.5), px(60.0), px(4.5))
+        ]
+    );
+    assert_eq!(ink(&on), ink(&off));
+}

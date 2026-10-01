@@ -1,6 +1,6 @@
 //! Choose the blocks laid out by the shodo inline engine.
 
-use super::boxes::{IfcBox, IfcBoxKind};
+use super::boxes::IfcBoxKind;
 use super::error::IfcError;
 use super::projection::{
     ProjectedBuilder, ProjectedIfc, box_kind, project_ifc_builder, project_ifc_text_builder,
@@ -12,8 +12,8 @@ use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
 use raikiri_style::ComputedColumnWidth;
 use raikiri_style::ComputedLengthPercentageOrAuto;
+use raikiri_style::property::PositionValue;
 use raikiri_style::property::{ColumnCountValue, DisplayValue};
-use raikiri_style::property::{PositionValue, TextDecorationLine, VerticalAlign};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
@@ -114,71 +114,6 @@ fn inside_unsized_fixed_box(doc: &Document, cascade: &CascadeResult, idx: usize)
         if cv.position == PositionValue::Fixed
             && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
         {
-            return true;
-        }
-        current = doc.parent_of(id);
-    }
-    false
-}
-
-/// Whether a decoration line meets an inline whose `vertical-align` is
-/// measured from the line box or the parent's content area rather than from
-/// the baseline (`top`, `bottom`, `middle`, `text-top`, `text-bottom`). The
-/// painter places a decoration at the baseline of the element that declares
-/// it; for those values neither a parley-path counterpart nor a hand-computed
-/// position has been checked, so such paragraphs stay on the parley path.
-fn decoration_meets_a_line_relative_inline(
-    doc: &Document,
-    cascade: &CascadeResult,
-    idx: usize,
-) -> bool {
-    let decorated =
-        |id: usize| cascade.computed[id].text_decoration_line != TextDecorationLine::NONE;
-    let mut any_decoration = false;
-    let mut current = Some(idx);
-    while let Some(id) = current {
-        any_decoration |= decorated(id);
-        current = doc.parent_of(id);
-    }
-    let mut line_relative = false;
-    let mut stack = doc.nodes[idx].children.clone();
-    while let Some(id) = stack.pop() {
-        let node = &doc.nodes[id];
-        if !node.is_in_document()
-            || node.kind() != NodeKind::Element
-            || box_kind(cascade, doc, id).is_some()
-        {
-            continue;
-        }
-        any_decoration |= decorated(id);
-        line_relative |= matches!(
-            cascade.computed[id].vertical_align,
-            VerticalAlign::Top
-                | VerticalAlign::Bottom
-                | VerticalAlign::Middle
-                | VerticalAlign::TextTop
-                | VerticalAlign::TextBottom
-        );
-        stack.extend(node.children.iter().copied());
-    }
-    any_decoration && line_relative
-}
-
-/// Whether a block child of the paragraph would take a decoration from the
-/// root or one of its ancestors. A decoration propagates into in-flow block
-/// children (CSS Text Decoration 3, 2.1), and the lines do not carry it there.
-fn has_block_child_under_a_decoration(
-    doc: &Document,
-    cascade: &CascadeResult,
-    idx: usize,
-    boxes: &[IfcBox],
-) -> bool {
-    if !boxes.iter().any(|b| b.kind == IfcBoxKind::Block) {
-        return false;
-    }
-    let mut current = Some(idx);
-    while let Some(id) = current {
-        if cascade.computed[id].text_decoration_line != TextDecorationLine::NONE {
             return true;
         }
         current = doc.parent_of(id);
@@ -372,8 +307,6 @@ fn collect_candidates(
             Some("a fixed root is not laid out")
         } else if inside_unsized_fixed_box(doc, cascade, idx) {
             Some("a paragraph in a fixed box without a width is not laid out")
-        } else if decoration_meets_a_line_relative_inline(doc, cascade, idx) {
-            Some("a decoration across a line-relative vertical-align is not laid out")
         } else {
             None
         };
@@ -388,15 +321,6 @@ fn collect_candidates(
                 continue;
             }
         };
-        let refusal = if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
-            Some("a block child under a decoration is not laid out")
-        } else {
-            None
-        };
-        if let Some(reason) = refusal {
-            refuse(engine_only, idx, reason)?;
-            continue;
-        }
         let mut stack = doc.nodes[idx].children.clone();
         while let Some(id) = stack.pop() {
             if projected.boxes.iter().any(|b| b.node == id) {

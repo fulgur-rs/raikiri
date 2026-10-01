@@ -689,9 +689,9 @@ fn a_raised_inline_under_an_ancestor_decoration_is_an_ifc_root() {
 }
 
 #[test]
-fn a_line_relative_inline_under_a_decoration_stays_on_the_parley_path() {
+fn a_line_relative_inline_under_a_decoration_is_a_root() {
     for value in ["top", "bottom", "middle", "text-top", "text-bottom"] {
-        assert_stays_on_parley("text-decoration:underline", |doc, root| {
+        assert_is_root("text-decoration:underline", |doc, root| {
             doc.append_text(root, "aa ");
             let inner = span(doc, root, &format!("display:inline;vertical-align:{value}"));
             doc.append_text(inner, "bb");
@@ -700,7 +700,7 @@ fn a_line_relative_inline_under_a_decoration_stays_on_the_parley_path() {
 }
 
 #[test]
-fn a_line_relative_inline_under_an_ancestor_decoration_stays_on_the_parley_path() {
+fn a_line_relative_inline_under_an_ancestor_decoration_is_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(doc, root, "display:inline;vertical-align:top");
@@ -715,12 +715,12 @@ fn a_line_relative_inline_under_an_ancestor_decoration_stays_on_the_parley_path(
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
     enable(&mut fixture);
     assign(&mut fixture);
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn a_line_relative_inline_with_its_own_decoration_stays_on_the_parley_path() {
-    assert_stays_on_parley("", |doc, root| {
+fn a_line_relative_inline_with_its_own_decoration_is_a_root() {
+    assert_is_root("", |doc, root| {
         doc.append_text(root, "aa ");
         let inner = span(
             doc,
@@ -930,10 +930,10 @@ fn a_paragraph_with_only_an_image_is_a_root() {
 }
 
 #[test]
-fn a_block_child_under_a_decoration_keeps_the_paragraph_on_the_parley_path() {
-    // A decoration propagates into an in-flow block, which the lines do not
-    // carry.
-    assert_stays_on_parley("text-decoration:underline", |doc, root| {
+fn a_block_child_under_a_decoration_is_a_root() {
+    // A decoration propagates into an in-flow block; the block child is a
+    // root of its own and its lines take the decoration from its ancestors.
+    assert_is_root("text-decoration:underline", |doc, root| {
         doc.append_text(root, "aa");
         let block = span(doc, root, "display:block;height:10px");
         doc.append_text(block, "bb");
