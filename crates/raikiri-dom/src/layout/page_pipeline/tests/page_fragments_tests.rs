@@ -1470,3 +1470,83 @@ fn nested_named_pages_inside_paragraphs_start_their_pages() {
     );
     assert_eq!(run(true), run(false));
 }
+
+/// The page fragments of `ids` in a body paragraph built by `build`, laid
+/// out by the engine on 100x50 pages: `(page, x, y)` of each first fragment.
+fn engine_fragments_of(
+    build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+) -> Vec<(u32, f32, f32)> {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let ids = build(&mut doc, body);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.enable_inline_formatting(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(
+        &mut doc,
+        &cascade,
+        page,
+        crate::layout::test_support::ahem_font_context(),
+    )
+    .expect("pages");
+    assert!(doc.nodes[body].is_ifc_root());
+    let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+    ids.iter()
+        .map(|&id| {
+            fragments
+                .iter()
+                .flat_map(|p| p.items.iter())
+                .find(|item| item.node_id == NodeId::new(id as u64))
+                .map(|item| (item.page_index, item.rect.x, item.rect.y))
+                .expect("fragment")
+        })
+        .collect()
+}
+
+#[test]
+fn a_nested_inline_element_is_located_on_its_line() {
+    // "aaaa " (50px) then <b>"bb " (30px) <a>"cc"</a></b>: the <a> starts at
+    // x = 80 on the first line, not at its offset inside <b>.
+    let fragments = engine_fragments_of(|doc, body| {
+        doc.append_text(body, "aaaa ");
+        let b = doc.append_element(Some(body), "b", Style::default(), None::<&str>);
+        doc.append_text(b, "bb ");
+        let a = doc.append_element(Some(b), "a", Style::default(), None::<&str>);
+        doc.append_text(a, "cc");
+        vec![b, a]
+    });
+    assert_eq!(fragments, [(0, 50.0, 0.0), (0, 80.0, 0.0)]);
+}
+
+#[test]
+fn an_inline_element_after_a_block_moved_to_the_next_page_follows_its_line() {
+    // "aa", a block with `break-before: page`, then <span>"cc"</span>: the
+    // span is on the second page, on the line after the block.
+    let fragments = engine_fragments_of(|doc, body| {
+        doc.append_text(body, "aa");
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;break-before:page"),
+        );
+        doc.append_text(block, "bb");
+        let span = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+        doc.append_text(span, "cc");
+        vec![span]
+    });
+    assert_eq!(fragments, [(1, 0.0, 10.0)]);
+}

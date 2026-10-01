@@ -545,6 +545,9 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
 
     let mut nodes = Vec::new();
     let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
+    // The pieces of the inline elements of each root, moved with their lines
+    // by pagination: an inline element's rectangle is their union.
+    let mut ifc_pieces: HashMap<usize, Vec<InlineBoxPiece>> = HashMap::new();
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
     while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
         let Some(node) = document.get_node(node_id) else {
@@ -588,7 +591,39 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
                     abs_y + layout.border.top + layout.padding.top,
                 ),
             );
+            ifc_pieces.insert(node_id, node.ifc_inline_boxes().unwrap_or_default());
         }
+        // An inline element of an inline engine paragraph is where its pieces
+        // are on the lines; its recorded location is relative to its nearest
+        // inline ancestor and does not follow lines that pagination moved.
+        let (abs_x, abs_y, width, height) = if node.kind() == NodeKind::Element
+            && node.in_ifc_subtree()
+            && let Some(root) = document.ifc_root_of(node_id)
+            && let (Some(&(root_x, root_y)), Some(pieces)) =
+                (ifc_origin.get(&root), ifc_pieces.get(&root))
+            && let Some(rect) = pieces
+                .iter()
+                .filter(|piece| piece.node == node_id)
+                .map(|piece| piece.border_box)
+                .reduce(|a, b| {
+                    let x = a.x.min(b.x);
+                    let y = a.y.min(b.y);
+                    BoxRect {
+                        x,
+                        y,
+                        width: (a.x + a.width).max(b.x + b.width) - x,
+                        height: (a.y + a.height).max(b.y + b.height) - y,
+                    }
+                }) {
+            (
+                root_x + rect.x,
+                root_y + rect.y,
+                finite_nonnegative(rect.width),
+                finite_nonnegative(rect.height),
+            )
+        } else {
+            (abs_x, abs_y, width, height)
+        };
         if include && abs_x.is_finite() && abs_y.is_finite() {
             let ifc_lines = (node.kind() == NodeKind::Text)
                 .then(|| document.ifc_text_lines(node_id))

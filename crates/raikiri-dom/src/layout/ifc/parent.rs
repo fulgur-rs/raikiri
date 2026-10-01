@@ -29,6 +29,20 @@ impl Document {
         Some(parent)
     }
 
+    /// The nearest ancestor of `node` that is the root of an inline engine
+    /// paragraph.
+    #[doc(hidden)]
+    pub fn ifc_root_of(&self, node: usize) -> Option<usize> {
+        let mut current = self.parent_of(node);
+        while let Some(id) = current {
+            if self.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {
+                return Some(id);
+            }
+            current = self.parent_of(id);
+        }
+        None
+    }
+
     /// Whether the location of `node` is part of the position of its DOM
     /// children: `false` for an inline element of an inline engine paragraph,
     /// whose children are text and inline elements measured from the lines
