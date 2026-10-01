@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-dom"
 version = "0.1.0"
-description = "DOM data model + taffy/parley layout engine + PageStream/LayoutBuffer + GCPM runtime side (PageContext, TargetRegistry, PageBoxCache) for raikiri"
+description = "DOM data model + taffy block layout and shodo inline layout engine + PageStream/LayoutBuffer + GCPM runtime side (PageContext, TargetRegistry, PageBoxCache) for raikiri"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -14,12 +14,6 @@ snapshot-serde = ["logical-snapshot", "dep:serde"]
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 bitflags       = "2"
-# East Asian Width for CSS Text 3 §4.1.2 segment-break decisions (lone
-# breaks between inlines). Mirrors parley's own dependency spec exactly
-# (same version range, no default features, compiled_data) so feature
-# unification with the existing parley consumer is a no-op.
-icu_properties = { version = "2", default-features = false, features = ["compiled_data"] }
-parley         = { workspace = true }
 shodo          = { workspace = true }
 skrifa         = { workspace = true }
 raikiri-style  = { workspace = true }

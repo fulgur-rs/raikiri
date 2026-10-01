@@ -27,7 +27,6 @@ blitz-traits        = { workspace = true }
 anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
 tiny-skia           = { workspace = true }
-parley              = { workspace = true }
 raikiri-html        = { workspace = true }
 raikiri-dom         = { workspace = true }
 raikiri-traits      = { workspace = true }
