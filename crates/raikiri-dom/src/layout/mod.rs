@@ -100,6 +100,8 @@ pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
 pub use ifc::standalone::{StandaloneAlign, StandaloneStyle, StandaloneText};
 #[doc(hidden)]
 pub use ifc::style::relative_offset;
+/// Lines of the text nodes of a paragraph laid out by the inline engine.
+pub use ifc::text_lines::{IfcTextLine, IfcTextLines};
 pub use page::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
     PageMargins, first_page_name, page_content_insets, page_margins, resolve_initial_page_context,

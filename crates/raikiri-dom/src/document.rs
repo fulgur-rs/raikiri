@@ -728,6 +728,15 @@ impl Document {
         self.nodes.get(child)?.parent
     }
 
+    /// Lines of a text node inside a paragraph laid out by the inline engine,
+    /// in the paragraph root's content box.
+    ///
+    /// `None` for any other node, for a paragraph without lines, and for a
+    /// text node that has no glyph on any line.
+    pub fn ifc_text_lines(&self, node: usize) -> Option<crate::layout::IfcTextLines> {
+        crate::layout::ifc::text_lines::lines_of(self, node)
+    }
+
     /// Remove `child` from its current parent and return that parent's index.
     /// Return `None` for an unattached node (no-op).
     ///

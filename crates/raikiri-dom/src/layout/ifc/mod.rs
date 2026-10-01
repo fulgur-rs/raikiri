@@ -13,6 +13,7 @@ pub(crate) mod records;
 pub(crate) mod root;
 pub(crate) mod standalone;
 pub(crate) mod style;
+pub(crate) mod text_lines;
 
 #[cfg(test)]
 mod parity_tests;
