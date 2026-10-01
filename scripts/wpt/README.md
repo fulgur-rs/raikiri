@@ -276,13 +276,20 @@ now passes only after falling back to a run without local resources (the row det
 `passes only without local resources`). A weakened PASS is still a PASS, so it is reported
 separately rather than as a regression.
 
-`--ifc` lays out eligible paragraphs with the shodo inline engine. It is a temporary switch:
-text laid out that way is not painted yet, and documents with `@font-face` keep the parley
-path, so the report differs from a default run. The run refuses to start when the WPT font
-collection cannot be built, instead of silently measuring the parley path.
+Eligible paragraphs are laid out with the shodo inline engine by default; a paragraph the
+engine does not support stays on the parley path. The run refuses to start when the WPT font
+collection cannot be built (it does not fall back to the installed fonts, which would make
+the numbers machine-dependent). `--no-ifc` lays out every paragraph with the parley path and
+reproduces the runs taken before the engine became the default. `--ifc` is still accepted
+and changes nothing; when both are given, the last one wins.
 
-`--wpt-fonts` gives the parley path the same WPT font directories that `--ifc` uses, without
-switching the inline engine on. Diff an `--ifc` report against a `--wpt-fonts` report (not
-against a default one) to see the effect of the engine alone: the default run falls back to
-system fonts when no bundled font directory is found.
+`--wpt-fonts` gives the parley path the same WPT font directories the engine uses. With the
+engine on (the default) it changes nothing, because both paths already draw from those
+fonts. `--no-ifc --wpt-fonts` is the reference for the effect of the engine alone: diff a
+default report against it, not against a plain `--no-ifc` report, which falls back to the
+installed fonts when no bundled font directory is found.
+
+Outside `run-baseline-report` (unit tests, `run_pair`), the engine falls back to the
+installed fonts when no WPT font directory exists, as the parley path does, so a checkout
+without the fetched WPT fonts still runs the tests.
 

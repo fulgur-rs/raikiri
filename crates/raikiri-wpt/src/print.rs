@@ -72,6 +72,7 @@ pub fn render_print_url(
             inline_formatting: false,
             wpt_fonts: false,
             canvas_bitmaps: None,
+            require_inline_fonts: false,
         },
     )
     .map_err(|error| PrintRenderError::new(error.to_string()))

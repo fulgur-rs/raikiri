@@ -224,9 +224,11 @@ fn reftest_status(
     if pairs.is_empty() {
         return (Status::Error, "no reference pair".to_owned());
     }
+    // A baseline taken on the installed fonts would depend on the machine.
     let config = ReftestConfig {
         inline_formatting,
         wpt_fonts,
+        require_inline_fonts: true,
         ..ReftestConfig::default()
     };
     let results = pairs
@@ -327,7 +329,8 @@ fn parsing_status(wpt_root: &Path, id: &str) -> (Status, String) {
 /// known-issues prefix filter is deliberately not applied: it overlaps the
 /// baseline.
 pub fn run_id(wpt_root: &Path, id: &str) -> Row {
-    run_id_with_options(wpt_root, id, false, false)
+    let options = ReportOptions::default();
+    run_id_with_options(wpt_root, id, options.inline_formatting, options.wpt_fonts)
 }
 
 /// [`run_id`] with the shodo inline engine switched on or off.
@@ -426,9 +429,9 @@ pub struct ReportOptions {
     pub only: Vec<String>,
     /// Stop after this many ids.
     pub limit: Option<usize>,
-    /// Lay out with the shodo inline engine (a temporary switch).
+    /// Lay out with the shodo inline engine (on unless `--no-ifc`).
     pub inline_formatting: bool,
-    /// Give the parley path the WPT font directories (without `--ifc`).
+    /// Give the parley path the WPT font directories (with `--no-ifc`).
     pub wpt_fonts: bool,
 }
 
@@ -441,7 +444,7 @@ impl Default for ReportOptions {
             jobs: 1,
             only: Vec::new(),
             limit: None,
-            inline_formatting: false,
+            inline_formatting: true,
             wpt_fonts: false,
         }
     }
@@ -468,8 +471,14 @@ pub fn parse_report_args(args: &[String]) -> Result<ReportOptions, String> {
                 options.wpt_fonts = true;
                 index -= 1;
             }
+            // The engine is the default; `--ifc` is kept so older command
+            // lines still parse.
             "--ifc" => {
                 options.inline_formatting = true;
+                index -= 1;
+            }
+            "--no-ifc" => {
+                options.inline_formatting = false;
                 index -= 1;
             }
             "--only" => options.only.push(flag_value(args, index, flag)?.to_owned()),

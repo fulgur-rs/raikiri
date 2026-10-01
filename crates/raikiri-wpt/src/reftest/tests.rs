@@ -1030,10 +1030,57 @@ fn a_candidate_directory_with_ahem_builds_a_collection() {
 }
 
 #[test]
-fn the_default_run_searches_the_same_font_directories_as_before() {
+fn the_parley_path_keeps_the_historical_font_directories() {
+    // `--no-ifc` must reproduce the runs made before the engine was the
+    // default, so it searches the same directories as before.
     let off = font_candidates(false);
     assert_eq!(off, wpt_font_candidates().to_vec());
     assert!(off.iter().all(|p| !p.ends_with("target/wpt/fonts")));
+}
+
+#[test]
+fn the_default_reftest_config_uses_the_inline_engine() {
+    assert!(ReftestConfig::default().inline_formatting);
+}
+
+#[test]
+fn the_engine_falls_back_to_the_installed_fonts_when_no_font_directory_exists() {
+    // `require_inline_fonts` is off by default, so a checkout without the
+    // WPT fonts still renders, as the parley path does with
+    // `FontContext::new()`.
+    assert!(!ReftestConfig::default().require_inline_fonts);
+    let (collection, bundled_only) =
+        inline_engine_collection_from(&[PathBuf::from("/nonexistent-wpt-fonts")], false)
+            .expect("falls back");
+    assert_eq!(
+        collection.layer_handle().id(),
+        raikiri_dom::system_font_collection().layer_handle().id()
+    );
+    // The installed fonts load lazily: no parallel build over them.
+    assert!(!bundled_only);
+}
+
+#[test]
+fn the_baseline_report_does_not_fall_back_silently() {
+    // A baseline taken on the installed fonts would be machine-dependent.
+    assert!(
+        inline_engine_collection_from(&[PathBuf::from("/nonexistent-wpt-fonts")], true).is_err()
+    );
+}
+
+#[test]
+fn a_font_directory_gives_the_engine_a_bundled_layer() {
+    let dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../raikiri-dom/tests/data/text-autospace");
+    for require in [false, true] {
+        let (collection, bundled_only) =
+            inline_engine_collection_from(std::slice::from_ref(&dir), require).expect("collection");
+        assert!(bundled_only);
+        assert_ne!(
+            collection.layer_handle().id(),
+            raikiri_dom::system_font_collection().layer_handle().id()
+        );
+    }
 }
 
 #[test]
@@ -1088,6 +1135,7 @@ fn no_wait_scripts_mutate_before_comparison() {
         tolerance: Tolerance::EXACT,
         inline_formatting: false,
         wpt_fonts: false,
+        require_inline_fonts: false,
     };
     let result = run_pair(&pair, config).unwrap();
     assert!(
@@ -1129,6 +1177,7 @@ fn no_wait_canvas_paints_and_compares_pixels() {
         tolerance: Tolerance::EXACT,
         inline_formatting: false,
         wpt_fonts: false,
+        require_inline_fonts: false,
     };
     let paint = |color: &str| {
         format!(

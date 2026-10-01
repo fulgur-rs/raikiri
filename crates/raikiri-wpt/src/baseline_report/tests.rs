@@ -338,19 +338,36 @@ fn a_reftest_that_only_passes_without_local_images_carries_the_note() {
 }
 
 #[test]
-fn the_ifc_flag_is_parsed() {
-    let options = parse_report_args(&["--ifc".to_owned()]).expect("args");
-    assert!(options.inline_formatting);
+fn the_engine_is_on_unless_switched_off() {
     let options = parse_report_args(&[]).expect("args");
+    assert!(options.inline_formatting);
+    let options = parse_report_args(&["--no-ifc".to_owned()]).expect("args");
     assert!(!options.inline_formatting);
 }
 
 #[test]
-fn the_wpt_fonts_flag_is_parsed_independently_of_the_ifc_flag() {
-    let options = parse_report_args(&["--wpt-fonts".to_owned()]).expect("args");
+fn the_old_ifc_flag_still_parses_and_changes_nothing() {
+    let options = parse_report_args(&["--ifc".to_owned()]).expect("args");
+    assert!(options.inline_formatting);
+}
+
+#[test]
+fn the_last_of_ifc_and_no_ifc_wins() {
+    let options = parse_report_args(&["--no-ifc".to_owned(), "--ifc".to_owned()]).expect("args");
+    assert!(options.inline_formatting);
+    let options = parse_report_args(&["--ifc".to_owned(), "--no-ifc".to_owned()]).expect("args");
+    assert!(!options.inline_formatting);
+}
+
+#[test]
+fn the_wpt_fonts_flag_is_independent_of_the_engine_switch() {
+    let options =
+        parse_report_args(&["--no-ifc".to_owned(), "--wpt-fonts".to_owned()]).expect("args");
     assert!(options.wpt_fonts);
     assert!(!options.inline_formatting);
-    let options = parse_report_args(&["--ifc".to_owned()]).expect("args");
-    assert!(!options.wpt_fonts);
+    let options = parse_report_args(&["--wpt-fonts".to_owned()]).expect("args");
+    assert!(options.wpt_fonts);
     assert!(options.inline_formatting);
+    let options = parse_report_args(&[]).expect("args");
+    assert!(!options.wpt_fonts);
 }
