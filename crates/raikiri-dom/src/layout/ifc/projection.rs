@@ -452,14 +452,10 @@ pub(crate) fn project_ifc_text_builder(
     })
 }
 
-/// Walk the box `root` and fill a paragraph builder, without
-/// shaping. `fonts` is read for font-relative lengths (`ch`).
+/// [`project_ifc_builder_with`] with counters of its own.
 ///
 /// # Errors
-/// [`IfcError::InvalidNode`] for an unknown or detached node,
-/// [`IfcError::Unsupported`] for anything the first slice does not place, and
-/// [`IfcError::Limit`] when a shodo resource limit is exceeded while the
-/// content is pushed.
+/// As [`project_ifc_builder_with`].
 #[cfg(test)]
 pub(crate) fn project_ifc_builder(
     doc: &Document,
@@ -478,11 +474,16 @@ pub(crate) fn project_ifc_builder(
     )
 }
 
-/// [`project_ifc_builder`] with the document's counters shared between the
-/// paragraphs of one layout pass.
+/// Walk the box `root` and fill a paragraph builder, without shaping. `fonts`
+/// is read for font-relative lengths (`ch`); `counters` are the document's
+/// counters, shared between the paragraphs of one layout pass.
 ///
 /// # Errors
-/// As [`project_ifc_builder`].
+/// [`IfcError::InvalidNode`] for an unknown or detached node,
+/// [`IfcError::Unsupported`] for a root or a node the inline path does not
+/// project (an internal inconsistency: the assignment asks only for roots it
+/// accepts), and [`IfcError::Limit`] when a shodo resource limit is exceeded
+/// while the content is pushed.
 pub(crate) fn project_ifc_builder_with(
     doc: &Document,
     cascade: &CascadeResult,
