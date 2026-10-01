@@ -498,3 +498,59 @@ pub(crate) fn ahem_paragraph_in_text_only(
     let cascade = cascaded(&doc);
     (doc, cascade, parent)
 }
+
+/// `html > body > div(display:table; table_css) > div(display:table-row) >
+/// div(display:table-cell; cell_css)`, Ahem 10px with a 10px line height;
+/// `build` fills the cell. Returns the table, the row and the cell.
+pub(crate) fn ahem_table(
+    table_css: &str,
+    cell_css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, [usize; 3]) {
+    let (mut doc, body) = html_body();
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
+        )),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:table-cell;{cell_css}")),
+    );
+    build(&mut doc, cell);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, [table, row, cell])
+}
+
+/// `html > body > div(display:table; table_css)` holding only `text`, Ahem
+/// 10px with a 10px line height. Returns the table.
+pub(crate) fn ahem_table_with_only_text(
+    table_css: &str,
+    text: &str,
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
+        )),
+    );
+    doc.append_text(table, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, table)
+}

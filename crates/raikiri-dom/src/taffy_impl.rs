@@ -288,7 +288,13 @@ impl Document {
                 // flow as flex instead: they are exactly one anonymous
                 // cell's content, which the grid collector cannot represent.
                 let inline_flow = tree.nodes[idx].flags.contains(NodeFlags::IS_INLINE_ROOT);
-                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable) && !inline_flow {
+                // A table box that is an ifc root holds only inline content:
+                // the ifc branch below lays it out.
+                let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
+                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable)
+                    && !inline_flow
+                    && !ifc_root
+                {
                     return crate::layout::table::compute_table_layout(tree, node_id, inputs);
                 }
             }
@@ -302,10 +308,20 @@ impl Document {
             // block path below; only width:auto sizes to fit-content here.
             {
                 use raikiri_style::property::DisplayValue;
-                let inline_shrink_wrap = matches!(
+                // A table box laid out as an ifc root is an anonymous cell's
+                // content inside the table wrapper, whose auto width shrinks to
+                // fit as well (CSS 2.1 17.5.2.2).
+                let ifc_table = matches!(
                     tree.nodes[idx].display,
-                    DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
-                );
+                    DisplayValue::Table | DisplayValue::InlineTable
+                ) && tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
+                let inline_shrink_wrap = ifc_table
+                    || matches!(
+                        tree.nodes[idx].display,
+                        DisplayValue::InlineBlock
+                            | DisplayValue::InlineFlex
+                            | DisplayValue::InlineGrid
+                    );
                 if inline_shrink_wrap
                     && tree.nodes[idx].style.size.width.is_auto()
                     && (inputs.known_dimensions.width.is_none()

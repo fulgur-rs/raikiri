@@ -45,10 +45,12 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
 const FORM_CONTROL_TAGS: &[&str] = &["input", "button", "select", "textarea"];
 
 /// Whether `idx` is a box that lays its own inline content out in lines: a
-/// block container (`block`, `flow-root`, `inline-block`, `list-item`) or a
-/// blockified inline flex or grid item. Flex, grid and table boxes lay their
-/// children out by algorithms of their own, and a multicol container is
-/// refused by the caller.
+/// block container (`block`, `flow-root`, `inline-block`, `list-item`, a
+/// table cell), a blockified inline flex or grid item, or a table box holding
+/// only inline-level children. Flex and grid boxes and tables with rows lay
+/// their children out by algorithms of their own; the table algorithm places a
+/// caption only when the table is empty, so a caption is not a root either. A
+/// multicol container is refused by the caller.
 pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     // Images, inline SVG and form controls lay their content out by other
     // means: text inside them (an SVG `<title>`, a button label) is not a
@@ -63,15 +65,39 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
     {
         return false;
     }
-    generates_own_box(doc, cascade, idx)
-        && matches!(
-            cascade.computed[idx].display,
-            DisplayValue::Block
-                | DisplayValue::FlowRoot
-                | DisplayValue::InlineBlock
-                | DisplayValue::ListItem
-                | DisplayValue::Inline
-        )
+    if !generates_own_box(doc, cascade, idx) {
+        return false;
+    }
+    match cascade.computed[idx].display {
+        DisplayValue::Block
+        | DisplayValue::FlowRoot
+        | DisplayValue::InlineBlock
+        | DisplayValue::ListItem
+        | DisplayValue::Inline
+        | DisplayValue::TableCell => true,
+        // A table box whose children are all inline-level is one anonymous
+        // cell's content (CSS 2.1 17.2.1); one with rows, row groups or
+        // block children is laid out by the table algorithm.
+        DisplayValue::Table | DisplayValue::InlineTable => {
+            holds_only_inline_level_children(doc, cascade, idx)
+        }
+        _ => false,
+    }
+}
+
+/// Whether every in-document element child of `idx` is inline-level
+/// (`inline`, or an atomic `inline-block`), so its children form one run of
+/// inline content.
+fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    doc.nodes[idx].children.iter().all(|&child| {
+        let node = &doc.nodes[child];
+        node.kind() != NodeKind::Element
+            || !node.is_in_document()
+            || matches!(
+                cascade.computed[child].display,
+                DisplayValue::Inline | DisplayValue::InlineBlock | DisplayValue::None
+            )
+    })
 }
 
 fn is_horizontal(cascade: &CascadeResult, idx: usize) -> bool {

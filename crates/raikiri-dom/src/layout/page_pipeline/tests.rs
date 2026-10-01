@@ -5421,3 +5421,159 @@ fn an_inline_block_root_under_an_authored_width_shrinks_to_its_content() {
         (20.0, 0.0, 20.0, 10.0)
     );
 }
+
+// ── table cells ──────────────────────────────────────────────
+
+/// Border-box sizes of the table and the cell of [`ahem_table`].
+#[derive(Debug, PartialEq)]
+struct TableSizes {
+    table: (f32, f32),
+    cell: (f32, f32),
+}
+
+fn table_sizes(table_css: &str, cell_css: &str, text: &str, ifc: bool) -> TableSizes {
+    let (mut doc, cascade, [table, row, cell]) =
+        crate::layout::test_support::ahem_table(table_css, cell_css, |doc, cell| {
+            doc.append_text(cell, text);
+        });
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[cell].is_ifc_root(), ifc, "{cell_css}");
+    let size = |id: usize| {
+        let s = doc.nodes[id].unrounded_layout.size;
+        (s.width, s.height)
+    };
+    // The table algorithm lays out cells, not rows: a row keeps no layout of
+    // its own on either path (the parley path only grows its height in a
+    // post-layout pass that propagates text heights to every ancestor).
+    let _ = row;
+    TableSizes {
+        table: size(table),
+        cell: size(cell),
+    }
+}
+
+#[test]
+fn a_table_cell_becomes_an_ifc_root() {
+    let (mut doc, cascade, [table, row, cell]) =
+        crate::layout::test_support::ahem_table("", "", |doc, cell| {
+            doc.append_text(cell, "aaaa bbbb");
+        });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[cell].is_ifc_root());
+    // The table and the row hold rows and cells, not inline content: they
+    // are not candidates at all (not refused roots).
+    assert!(!doc.nodes[table].is_ifc_root());
+    assert!(!doc.nodes[row].is_ifc_root());
+    assert!(!crate::layout::ifc::assign::can_be_ifc_root(
+        &doc, &cascade, table
+    ));
+    assert!(!crate::layout::ifc::assign::can_be_ifc_root(
+        &doc, &cascade, row
+    ));
+}
+
+#[test]
+fn a_table_cell_is_laid_out_like_the_parley_path() {
+    for cell_css in ["", "width:50px"] {
+        assert_eq!(
+            table_sizes("", cell_css, "aaaa bbbb", true),
+            table_sizes("", cell_css, "aaaa bbbb", false),
+            "{cell_css}"
+        );
+    }
+    // Hand-computed, not an oracle: a one-cell table is as wide as
+    // "aaaa bbbb" (90px) and one 10px line tall.
+    assert_eq!(table_sizes("", "", "aaaa bbbb", true).cell, (90.0, 10.0));
+    // A 50px cell breaks it into two 40px words on two lines.
+    assert_eq!(
+        table_sizes("", "width:50px", "aaaa bbbb", true).cell,
+        (50.0, 20.0)
+    );
+}
+
+#[test]
+fn an_all_inline_table_box_is_laid_out_by_the_ifc_branch() {
+    // `display:table` whose children are all inline: the root's IFC branch
+    // runs, not compute_table_layout.
+    let (mut doc, cascade, table) =
+        crate::layout::test_support::ahem_table_with_only_text("", "aaaa bbbb");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(doc.nodes[table].is_ifc_root());
+    let size = doc.nodes[table].unrounded_layout.size;
+    // Hand-computed: the table shrinks to "aaaa bbbb", one 10px line.
+    assert_eq!((size.width, size.height), (90.0, 10.0));
+}
+
+#[test]
+fn parley_gives_an_all_inline_table_no_width() {
+    // The parley path flows the table's inline content in a line box of its
+    // own and leaves the table box 0px wide; CSS shrinks the table to its
+    // content (90px), as the engine does. Only the height agrees.
+    let (mut off, cascade, table) =
+        crate::layout::test_support::ahem_table_with_only_text("", "aaaa bbbb");
+    lay_out(&mut off, &cascade, false);
+    let parley = off.nodes[table].unrounded_layout.size;
+    assert_eq!((parley.width, parley.height), (0.0, 10.0));
+}
+
+#[test]
+fn a_table_cell_keeps_its_padding_and_border() {
+    // A 40px content box breaks "aaaa bbbb" into two 10px lines; 5px of
+    // padding and a 3px border on each side make a 56x36 cell.
+    let css = "width:40px;padding:5px;border:3px solid";
+    let on = table_sizes("", css, "aaaa bbbb", true);
+    assert_eq!(on.cell, (56.0, 36.0));
+    assert_eq!(on, table_sizes("", css, "aaaa bbbb", false));
+    let (mut doc, cascade, [_, _, cell]) =
+        crate::layout::test_support::ahem_table("", css, |doc, cell| {
+            doc.append_text(cell, "aaaa bbbb");
+        });
+    lay_out_with_switch(&mut doc, &cascade);
+    assert_eq!(stored_lines(&doc, cell).lines.len(), 2);
+}
+
+#[test]
+fn a_table_cell_with_mixed_block_and_inline_content_matches_parley() {
+    // "aaaa" then a block of "bbbb": the cell is a root with the block as a
+    // box of its paragraph, and the block is the root of its own text.
+    let sizes = |ifc: bool| {
+        let (mut doc, cascade, [table, _, cell]) =
+            crate::layout::test_support::ahem_table("", "", |doc, cell| {
+                doc.append_text(cell, "aaaa");
+                let block =
+                    doc.append_element(Some(cell), "div", Style::default(), Some("display:block"));
+                doc.append_text(block, "bbbb");
+            });
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[cell].is_ifc_root(), ifc);
+        let size = |id: usize| {
+            let s = doc.nodes[id].unrounded_layout.size;
+            (s.width, s.height)
+        };
+        (size(table), size(cell))
+    };
+    let on = sizes(true);
+    assert_eq!(on, sizes(false));
+    // Hand-computed: two 40px lines, one above the block and one in it.
+    assert_eq!(on.1, (40.0, 20.0));
+}
+
+#[test]
+fn bare_text_directly_in_a_table_is_laid_out_like_parley() {
+    // Text straight in a table box (no row or cell): one anonymous cell's
+    // content. The two paths agree on the height; the width is pinned by
+    // parley_gives_an_all_inline_table_no_width.
+    for (text, lines) in [("aaaa bbbb", 1.0), ("aaaa\nbbbb", 2.0)] {
+        let height = |ifc: bool| {
+            let (mut doc, cascade, table) = crate::layout::test_support::ahem_table_with_only_text(
+                "white-space:pre-line",
+                text,
+            );
+            lay_out(&mut doc, &cascade, ifc);
+            assert_eq!(doc.nodes[table].is_ifc_root(), ifc);
+            doc.nodes[table].unrounded_layout.size.height
+        };
+        assert_eq!(height(true), 10.0 * lines, "{text:?}");
+        assert_eq!(height(true), height(false), "{text:?}");
+    }
+}
