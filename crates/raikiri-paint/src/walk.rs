@@ -3315,6 +3315,17 @@ pub(crate) fn paint_page_margin_boxes(
     }
 }
 
+/// Height from an ifc root's border-box top that its painted lines reach:
+/// lines that overflow the box (overflow is visible) are still drawn, so a
+/// page that holds only those lines must not skip the root.
+fn ifc_paint_extent(node: &raikiri_dom::Node, layout: &taffy::Layout) -> f32 {
+    let lines = node.ifc_size().map_or(0.0, |(_, height)| height);
+    layout
+        .size
+        .height
+        .max(layout.border.top + layout.padding.top + lines)
+}
+
 fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> bool {
     if !y.is_finite() || !height.is_finite() || !page_top.is_finite() || !page_bottom.is_finite() {
         return false;
@@ -3808,8 +3819,18 @@ fn paint_document_impl(
                         && cv.transform.is_empty()
                         && cv.filter.is_empty(),
                 );
-                let own_shift =
-                    vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
+                // A box laid out on the lines of an inline engine paragraph
+                // already sits at its `vertical-align` position; shifting its
+                // content again would move it twice.
+                let placed_by_inline_engine = document
+                    .parent_of(node_id)
+                    .and_then(|parent| document.get_node(parent))
+                    .is_some_and(|parent| parent.is_ifc_root());
+                let own_shift = if placed_by_inline_engine {
+                    0.0
+                } else {
+                    vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size)
+                };
                 let child_shift_y = shift_y + own_shift;
                 // Taffy applies `inset` to inline-level boxes' layout locations,
                 // while the table-caption path still needs the paint-side
@@ -4610,7 +4631,12 @@ fn paint_document_impl(
                 if node.is_ifc_root()
                     && named_page_matches(ifc_page_probe)
                     && (ifc_inside_fixed
-                        || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
+                        || box_intersects_page(
+                            abs_y,
+                            ifc_paint_extent(node, &layout),
+                            page_top,
+                            page_bottom,
+                        ))
                 {
                     // The block's own background and border were painted
                     // above; its lines are drawn at the content-box origin,

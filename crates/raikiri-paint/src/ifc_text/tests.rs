@@ -1566,3 +1566,45 @@ fn bare_text_in_a_flex_container_is_painted() {
         10 * 64
     );
 }
+
+#[test]
+fn a_raised_inline_block_root_is_painted_where_the_engine_placed_it() {
+    // "aa" then an inline-block "bb" raised by `vertical-align:10px`. The
+    // inline engine places the raised box itself (CSS 2.1 10.8.1): the box's
+    // baseline (8px into it) sits 10px above the line's baseline, so the line
+    // box grows to put the outer baseline at 18 and the box at the top. The
+    // painter must not raise the box's text a second time.
+    let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        let block = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;vertical-align:10px"),
+        );
+        doc.append_text(block, "bb");
+    });
+    lay_out(&mut doc, &cascade, true);
+    let block = doc.get_node(root).expect("root").children[1];
+    assert!(doc.get_node(block).is_some_and(|n| n.is_ifc_root()));
+    let mut ys: Vec<i64> = ink(&painted(&doc, &cascade)).iter().map(|g| g.2).collect();
+    ys.sort_unstable();
+    assert_eq!(ys, [px(8), px(8), px(18), px(18)]);
+}
+
+#[test]
+fn lines_overflowing_a_short_root_are_painted_on_a_later_page() {
+    // A 10px-tall, 20px-wide root of 200 "aa" words: its lines overflow the
+    // box (overflow is visible) down to y = 2000. Painted for the page that
+    // starts at y = 1000, the line at y = 1000 has its baseline 8px below the
+    // page top, although the root's box ends on the first page.
+    let (mut doc, cascade, root) = paragraph("width:20px;height:10px", |doc, root| {
+        doc.append_text(root, "aa ".repeat(200));
+    });
+    lay_out(&mut doc, &cascade, true);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, PageBox::A4, 1000.0);
+    let ys: std::collections::BTreeSet<i64> = ink(&scene).iter().map(|g| g.2).collect();
+    assert!(ys.contains(&px(8)), "{ys:?}");
+}
