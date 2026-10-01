@@ -307,6 +307,14 @@ fn run_boxes(
                 y = line_y + height;
                 pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();
+                // A cleared `<br>` ends this line: the next one starts below
+                // the floats it clears (CSS 2.1 9.5.2).
+                if line.break_reason() == shodo::BreakReason::Forced
+                    && let Some(clear) = cleared_break(&line, &root.cleared_breaks)
+                    && let Some(threshold) = ctx.cleared_threshold(clear)
+                {
+                    y = y.max(threshold - top_edge);
+                }
                 lines.push(line);
                 // Floats that did not fit beside the line they are anchored
                 // in go at the start of the next line, before it is measured.
@@ -385,6 +393,20 @@ fn run_boxes(
         beside_floats: beside,
         escaping_margin,
     }
+}
+
+/// The `clear` of the cleared `<br>` that ends `line`, if any.
+fn cleared_break(line: &shodo::Line, cleared: &[(usize, taffy::Clear)]) -> Option<taffy::Clear> {
+    if cleared.is_empty() {
+        return None;
+    }
+    line.fragments().find_map(|fragment| match fragment {
+        shodo::Fragment::InlineBox(piece) => cleared
+            .iter()
+            .find(|(node, _)| *node == piece.node.0 as usize)
+            .map(|(_, clear)| *clear),
+        _ => None,
+    })
 }
 
 /// How many times one line is moved down past floats before it is accepted
@@ -588,6 +610,9 @@ fn layout_block_child(
     geometry: FlowGeometry,
     perform: bool,
 ) -> BlockChild {
+    if !in_the_roots_formatting_context(tree, node) {
+        return layout_formatting_context_child(tree, ctx, node, y, pending, geometry, perform);
+    }
     use taffy::LayoutBlockContainer;
     let mut margin = resolved_margins(tree, node, geometry.width);
     let stretch = (geometry.width - margin.left - margin.right).max(0.0);
@@ -606,7 +631,14 @@ fn layout_block_child(
     // Placed where its own top margin alone puts it. Margins that leave the
     // block through its first child are known only after it is laid out; they
     // move its box below, not the floats it placed inside.
-    let guess = y + pending.collapse_with_margin(margin.top).resolve();
+    // Clearance (CSS 2.1 9.5.2): a cleared block whose top border edge would
+    // sit above the floats it clears is placed below them, and its top
+    // margin no longer collapses with the margins above it.
+    let clear = tree.nodes[node].style.clear;
+    let clear_y = ctx
+        .cleared_threshold(clear)
+        .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
+    let guess = (y + pending.collapse_with_margin(margin.top).resolve()).max(clear_y);
     // The context measures from the root's border box; the insets are added
     // to the root's own. The right inset follows the used width, as in
     // taffy's own in-flow loop.
@@ -649,7 +681,12 @@ fn layout_block_child(
     let floats_bottom = child_ctx.floated_content_height_contribution();
     let top_set = output.top_margin.collapse_with_margin(margin.top);
     let bottom_set = output.bottom_margin.collapse_with_margin(margin.bottom);
-    let (top, after) = if output.margins_can_collapse_through {
+    let hypothetical = y + pending.collapse_with_set(top_set).resolve();
+    let has_clearance =
+        clear != taffy::Clear::None && (ctx.has_adjoining_float(clear) || hypothetical < clear_y);
+    let (top, after) = if has_clearance {
+        (clear_y, (clear_y + output.size.height, bottom_set))
+    } else if output.margins_can_collapse_through {
         // An empty block: its margins and the ones above it are one set, and
         // its box sits where that set would put the next box's top.
         let through = pending
@@ -675,6 +712,140 @@ fn layout_block_child(
         next_y: after.0,
         pending: after.1,
         floats_bottom: floats_bottom + (guess - top),
+    }
+}
+
+/// Whether the block child `node` takes part in the root's block formatting
+/// context, as taffy's block algorithm decides for an in-flow item: a block
+/// box that is not a scroll container. Flow roots, flex and grid containers
+/// and scroll containers establish formatting contexts of their own.
+fn in_the_roots_formatting_context(tree: &Document, node: usize) -> bool {
+    use taffy::{CoreStyle, LayoutBlockContainer};
+    let style = tree.get_block_container_style(taffy::NodeId::from(node));
+    let overflow = style.overflow();
+    style.is_block() && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container()
+}
+
+/// Lay out a block child that establishes a formatting context of its own
+/// the way taffy's block algorithm does (CSS 2.1 9.4.1, 9.5): its top margin
+/// collapses with the margins above it but not with its children's, and its
+/// border box does not overlap the floats beside it: it is placed beside
+/// them where it fits, narrowed to the room they leave, or below them.
+fn layout_formatting_context_child(
+    tree: &mut Document,
+    ctx: &mut BlockContext<'_>,
+    node: usize,
+    y: f32,
+    pending: CollapsibleMarginSet,
+    geometry: FlowGeometry,
+    perform: bool,
+) -> BlockChild {
+    let margin = resolved_margins(tree, node, geometry.width);
+    let style_margin = tree.nodes[node].style.margin;
+    let clear = tree.nodes[node].style.clear;
+    let own_width = used_block_width(tree, node, geometry.width);
+    let x_margins = margin.left + margin.right;
+    let min_y = geometry.top_edge + y + pending.collapse_with_margin(margin.top).resolve();
+    // `(stretch width, border-box position, whether floats narrowed it)`.
+
+    let (stretch, position, beside_floats) = if ctx.has_active_floats(min_y) {
+        let mut segment = None;
+        let slot = loop {
+            let slot = ctx.find_bfc_slot(
+                min_y,
+                [margin.left, margin.right],
+                taffy::Direction::Ltr,
+                clear,
+                segment,
+            );
+            let Some(id) = slot.segment_id else {
+                break slot;
+            };
+            let width = clamp_block_width(
+                tree,
+                node,
+                geometry.width,
+                own_width.unwrap_or(slot.stretch_width.max(-x_margins)),
+            );
+            if width <= slot.border_width + 0.001 {
+                break slot;
+            }
+            segment = Some(id);
+        };
+        (
+            slot.stretch_width.max(-x_margins),
+            taffy::Point {
+                x: slot.x,
+                y: slot.y,
+            },
+            true,
+        )
+    } else {
+        (
+            geometry.width - x_margins,
+            taffy::Point {
+                x: geometry.edges.0,
+                y: min_y,
+            },
+            false,
+        )
+    };
+    let width = clamp_block_width(tree, node, geometry.width, own_width.unwrap_or(stretch));
+    let inputs = LayoutInput {
+        run_mode: if perform {
+            RunMode::PerformLayout
+        } else {
+            RunMode::ComputeSize
+        },
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(width),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: true,
+        },
+        parent_size: Size {
+            width: Some(geometry.width),
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(stretch),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let output = tree.compute_child_layout(taffy::NodeId::from(node), inputs);
+    // `auto` side margins share the room the box leaves; beside floats the
+    // slot already holds the non-`auto` margins.
+    let free = (stretch - output.size.width).max(0.0);
+    let autos = u8::from(style_margin.left.is_auto()) + u8::from(style_margin.right.is_auto());
+    let auto_left = if style_margin.left.is_auto() {
+        free / f32::from(autos.max(1))
+    } else {
+        0.0
+    };
+    let extra_left = if beside_floats {
+        auto_left
+    } else {
+        margin.left + auto_left
+    };
+    let top = position.y - geometry.top_edge;
+    if perform {
+        let location = taffy::Point {
+            x: position.x + extra_left,
+            y: position.y,
+        };
+        commit_child_layout(tree, node, &output, location, geometry.width);
+    }
+    BlockChild {
+        top,
+        next_y: top + output.size.height,
+        pending: CollapsibleMarginSet::from_margin(margin.bottom),
+        // The box contains its own floats.
+        floats_bottom: f32::NEG_INFINITY,
     }
 }
 

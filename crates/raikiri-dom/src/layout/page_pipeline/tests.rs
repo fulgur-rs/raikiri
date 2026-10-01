@@ -6681,3 +6681,306 @@ fn a_definite_height_multicol_with_line_breaks_keeps_widows() {
     assert_eq!(xs, [0.0, 0.0, 0.0, 0.0, 140.0, 140.0, 280.0, 280.0, 280.0]);
     assert_eq!(geometry.container_height, 40.0);
 }
+
+// ── block-level boxes of every kind inside a paragraph ───────
+
+/// A 200px Ahem paragraph whose children `build` appends after an empty text
+/// node. Returns the document, its cascade and the root.
+fn paragraph_of(build: impl FnOnce(&mut Document, usize)) -> (Document, CascadeResult, usize) {
+    let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "");
+    build(&mut doc, root);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    (doc, cascade, root)
+}
+
+/// `root > ["aa ", div(inner) > [div(margin-top:10px) > "bb"], " cc"]`.
+/// Returns the document, the cascade, the root and the block child.
+fn paragraph_with_block_child(inner: &str) -> (Document, CascadeResult, usize, usize) {
+    let mut block = 0;
+    let (doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_text(root, "aa ");
+        block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{inner}")),
+        );
+        let first = doc.append_element(
+            Some(block),
+            "div",
+            Style::default(),
+            Some("display:block;margin-top:10px"),
+        );
+        doc.append_text(first, "bb");
+        doc.append_text(root, " cc");
+    });
+    (doc, cascade, root, block)
+}
+
+/// Border box of the block child of [`paragraph_with_block_child`] from the
+/// root's border box, and the root's height.
+fn block_child_geometry(inner: &str, ifc: bool) -> ((f32, f32, f32, f32), f32) {
+    let (mut doc, cascade, root, block) = paragraph_with_block_child(inner);
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{inner}");
+    let layout = doc.nodes[block].unrounded_layout;
+    (
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        ),
+        doc.nodes[root].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn block_level_boxes_of_every_inner_display_keep_the_root() {
+    for inner in [
+        "display:flow-root",
+        "display:flex",
+        "display:grid",
+        "display:list-item",
+        "overflow:hidden",
+        "clear:left",
+    ] {
+        let (mut doc, cascade, root, _) = paragraph_with_block_child(inner);
+        lay_out_with_switch(&mut doc, &cascade);
+        assert!(doc.nodes[root].is_ifc_root(), "{inner}");
+        assert_eq!(
+            block_child_geometry(inner, true),
+            block_child_geometry(inner, false),
+            "{inner}"
+        );
+    }
+}
+
+#[test]
+fn a_formatting_context_block_child_does_not_collapse_with_its_children() {
+    // Hand-computed: the "aa" line is 10px; a plain block lets its first
+    // child's 10px top margin through (its border box starts at 20 and holds
+    // one 10px line), a flow-root keeps it inside (it starts at 10 and is
+    // 20px tall).
+    assert_eq!(
+        block_child_geometry("display:flow-root", true).0,
+        (0.0, 10.0, 200.0, 20.0)
+    );
+    assert_eq!(block_child_geometry("", true).0, (0.0, 20.0, 200.0, 10.0));
+    assert_eq!(
+        block_child_geometry("display:flow-root;margin-top:10px", true),
+        block_child_geometry("display:flow-root;margin-top:10px", false)
+    );
+}
+
+/// `root > [div(float:left;width:20px;height:20px), "aa", div(css) > "bb"]`:
+/// the block child's border box from the root.
+fn block_after_float(float_css: &str, css: &str, ifc: bool) -> (f32, f32, f32, f32) {
+    let mut block = 0;
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;float:left;{float_css}")),
+        );
+        doc.append_text(root, "aa");
+        block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        );
+        doc.append_text(block, "bb");
+    });
+    lay_out(&mut doc, &cascade, ifc);
+    assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+    let layout = doc.nodes[block].unrounded_layout;
+    (
+        layout.location.x,
+        layout.location.y,
+        layout.size.width,
+        layout.size.height,
+    )
+}
+
+#[test]
+fn a_cleared_block_child_moves_below_the_float() {
+    let float = "width:20px;height:20px";
+    assert_eq!(
+        block_after_float(float, "clear:left", true),
+        block_after_float(float, "clear:left", false)
+    );
+    // Hand-computed: a 20px-tall left float precedes a 10px line; the cleared
+    // block starts at y = 20.
+    assert_eq!(block_after_float(float, "clear:left", true).1, 20.0);
+}
+
+#[test]
+fn parley_puts_an_auto_width_scroll_container_below_a_float() {
+    // Parley error: a pre-layout pass copies the root's authored 200px width
+    // into the auto-width block, which then no longer fits beside the float
+    // (CSS 2.1 9.5: its auto width is the room the float leaves).
+    assert_eq!(
+        block_after_float("width:50px;height:30px", "overflow:hidden", false),
+        (0.0, 30.0, 200.0, 10.0)
+    );
+}
+
+#[test]
+fn an_overflow_hidden_block_child_sits_beside_a_float() {
+    let float = "width:50px;height:30px";
+    // With a width of its own, both paths place it the same.
+    assert_eq!(
+        block_after_float(float, "overflow:hidden;width:100px", true),
+        block_after_float(float, "overflow:hidden;width:100px", false)
+    );
+    // Hand-computed: below the 10px line, beside the 50px float, as wide as
+    // the 150px left of it.
+    assert_eq!(
+        block_after_float(float, "overflow:hidden", true),
+        (50.0, 10.0, 150.0, 10.0)
+    );
+}
+
+#[test]
+fn a_flex_block_child_gets_its_own_height() {
+    for inner in [
+        "display:flex",
+        "display:grid",
+        "display:flex;flex-direction:column",
+    ] {
+        assert_eq!(
+            block_child_geometry(inner, true),
+            block_child_geometry(inner, false),
+            "{inner}"
+        );
+    }
+    // Hand-computed: the flex item keeps its 10px top margin inside the flex
+    // container, below the 10px "aa" line.
+    assert_eq!(
+        block_child_geometry("display:flex", true).0,
+        (0.0, 10.0, 200.0, 20.0)
+    );
+}
+
+#[test]
+fn a_table_block_child_is_laid_out_like_parley() {
+    // A table holding only text: one anonymous cell's content.
+    let geometry = |ifc: bool| {
+        let mut table = 0;
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            doc.append_text(root, "aa ");
+            table = doc.append_element(Some(root), "div", Style::default(), Some("display:table"));
+            doc.append_text(table, "bb");
+            doc.append_text(root, " cc");
+        });
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        let layout = doc.nodes[table].unrounded_layout;
+        (
+            layout.location.y,
+            layout.size.height,
+            doc.nodes[root].unrounded_layout.size.height,
+        )
+    };
+    assert_eq!(geometry(true), geometry(false));
+    // Hand-computed: between the "aa" and "cc" lines, one 10px line tall.
+    assert_eq!(geometry(true), (10.0, 10.0, 30.0));
+}
+
+#[test]
+fn a_list_item_block_child_collapses_like_a_block() {
+    // A list item is a block container in its parent's formatting context.
+    assert_eq!(
+        block_child_geometry("display:list-item", true),
+        block_child_geometry("", true)
+    );
+    assert_eq!(
+        block_child_geometry("display:list-item", true),
+        block_child_geometry("display:list-item", false)
+    );
+}
+
+#[test]
+fn a_cleared_line_break_moves_the_next_line_below_the_float() {
+    let lines = |ifc: bool| {
+        let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+            doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;float:left;width:20px;height:30px"),
+            );
+            doc.append_text(root, "aa");
+            doc.append_element(
+                Some(root),
+                "br",
+                Style::default(),
+                Some("display:inline;clear:left"),
+            );
+            doc.append_text(root, "bb");
+        });
+        lay_out(&mut doc, &cascade, ifc);
+        assert_eq!(doc.nodes[root].is_ifc_root(), ifc);
+        doc.nodes[root].unrounded_layout.size.height
+    };
+    // Hand-computed: "aa" beside the 30px float, then "bb" below it.
+    assert_eq!(lines(true), 40.0);
+    assert_eq!(lines(true), lines(false));
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:20px;height:30px"),
+        );
+        doc.append_text(root, "aa");
+        doc.append_element(
+            Some(root),
+            "br",
+            Style::default(),
+            Some("display:inline;clear:left"),
+        );
+        doc.append_text(root, "bb");
+    });
+    lay_out_with_switch(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(lines[1].block_offset(), 30.0);
+}
+
+#[test]
+fn logical_float_sides_and_clears_are_placed_like_the_parley_path() {
+    // The bridge maps the logical sides to none on both paths: such a box is
+    // not floated and does not clear.
+    for css in ["float:inline-start", "float:inline-end"] {
+        let geometry = |ifc: bool| {
+            let mut float = 0;
+            let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+                doc.append_text(root, "aa");
+                float = doc.append_element(
+                    Some(root),
+                    "div",
+                    Style::default(),
+                    Some(&format!("display:block;width:20px;height:20px;{css}")),
+                );
+                doc.append_text(root, "bb");
+            });
+            lay_out(&mut doc, &cascade, ifc);
+            assert_eq!(doc.nodes[root].is_ifc_root(), ifc, "{css}");
+            let layout = doc.nodes[float].unrounded_layout;
+            (
+                layout.location.x,
+                layout.location.y,
+                doc.nodes[root].unrounded_layout.size.height,
+            )
+        };
+        assert_eq!(geometry(true), geometry(false), "{css}");
+    }
+    assert_eq!(
+        block_after_float("width:20px;height:20px", "clear:inline-start", true),
+        block_after_float("width:20px;height:20px", "clear:inline-start", false)
+    );
+}

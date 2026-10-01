@@ -52,12 +52,7 @@ fn without_the_switch_no_root_is_assigned() {
 
 #[test]
 fn ineligible_shapes_stay_on_the_parley_path() {
-    let cases: [(&str, Build); 3] = [
-        ("flex child", |doc, root| {
-            doc.append_text(root, "aa");
-            let b = span(doc, root, "display:flex");
-            doc.append_text(b, "bb");
-        }),
+    let cases: [(&str, Build); 2] = [
         ("whitespace only", |doc, root| {
             doc.append_text(root, "   ");
         }),
@@ -80,9 +75,10 @@ fn reassignment_clears_stale_marks() {
     enable(&mut fixture);
     assign(&mut fixture);
     assert!(is_root(&fixture, fixture.root));
-    // The switch stays on but the root no longer projects: add a flex child.
-    let f = span(&mut fixture.doc, fixture.root, "display:flex");
-    fixture.doc.append_text(f, "x");
+    // The switch stays on but the root no longer generates a box.
+    fixture
+        .doc
+        .set_element_inline_style(fixture.root, Some("display:none".into()));
     fixture.doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&fixture.doc);
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
@@ -1404,10 +1400,10 @@ fn without_a_threshold_set_32_roots_are_needed_for_a_parallel_build() {
 }
 
 #[test]
-fn a_cleared_line_break_stays_on_the_parley_path() {
-    // `clear` on a `<br>` moves the next line below the floats; the forced
-    // break the engine receives carries no clearance.
-    assert_stays_on_parley("", |doc, root| {
+fn a_cleared_line_break_is_a_root() {
+    // `clear` on a `<br>` moves the next line below the floats; the line loop
+    // reads it from the paragraph.
+    let mut fixture = block_fixture("", |doc, root| {
         span(doc, root, "display:block;float:left;width:10px;height:10px");
         doc.append_element(
             Some(root),
@@ -1416,6 +1412,9 @@ fn a_cleared_line_break_stays_on_the_parley_path() {
             Some("display:inline;clear:both"),
         );
     });
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]

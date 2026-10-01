@@ -32,6 +32,9 @@ pub(crate) struct IfcRoot {
     /// Text nodes whose spaces are preserved: spaces of theirs that hang at
     /// the end of a line stay in their elements' boxes.
     pub(crate) preserved_spaces: Vec<usize>,
+    /// `<br>` elements with a physical `clear`: the line after each starts
+    /// below the floats it clears.
+    pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
     /// Line ranges of the last performed lines and where each range is drawn
     /// in the columns of a multicol container, when the lines are split
     /// across columns. `y` is the block offset the range's first line is
@@ -73,6 +76,7 @@ impl IfcRoot {
             rtl: projected.rtl,
             offsets: projected.offsets,
             preserved_spaces: projected.preserved_spaces,
+            cleared_breaks: projected.cleared_breaks,
             multicol_fragments: None,
         }
     }
@@ -88,6 +92,7 @@ impl IfcRoot {
             rtl: self.rtl,
             offsets: self.offsets.clone(),
             preserved_spaces: self.preserved_spaces.clone(),
+            cleared_breaks: self.cleared_breaks.clone(),
             multicol_fragments: None,
         }
     }

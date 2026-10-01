@@ -993,12 +993,21 @@ pub(crate) fn prepare_multicol_layout(
         if has_multicol_ancestor(doc, &parent_of, idx) {
             continue;
         }
-        // An inline-block that is an atomic inline of a paragraph laid out by
-        // the inline engine is placed on the lines by its used width, so an
-        // auto width must stay auto and shrink to fit (CSS 2.1 10.3.9).
-        let engine_atomic = cascade.computed[idx].display == DisplayValue::InlineBlock
-            && parent_of[idx].is_some_and(|parent| doc.nodes[parent].is_ifc_root());
-        if engine_atomic {
+        // A box of a paragraph laid out by the inline engine (a child of its
+        // root, or of an inline element of it) that the line loop sizes
+        // itself keeps an auto width: an inline-block shrinks to fit (CSS 2.1
+        // 10.3.9), and a block child that is a scroll container takes the
+        // room the floats beside it leave (CSS 2.1 9.5).
+        let cv = &cascade.computed[idx];
+        let engine_sized = cv.display == DisplayValue::InlineBlock
+            || cv.overflow.x != OverflowValue::Visible
+            || cv.overflow.y != OverflowValue::Visible;
+        let engine_box = engine_sized
+            && !doc.nodes[idx].in_ifc_subtree()
+            && parent_of[idx].is_some_and(|parent| {
+                doc.nodes[parent].is_ifc_root() || doc.nodes[parent].in_ifc_subtree()
+            });
+        if engine_box {
             continue;
         }
         if matches!(

@@ -84,10 +84,7 @@ fn display_none_children_are_skipped() {
 
 #[test]
 fn constructs_the_inline_path_cannot_place_yet_are_rejected() {
-    let cases: [(&str, &str); 2] = [
-        ("absolute", "display:inline;position:absolute"),
-        ("flex child", "display:flex"),
-    ];
+    let cases: [(&str, &str); 1] = [("absolute", "display:inline;position:absolute")];
     for (name, style) in cases {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");
@@ -396,22 +393,17 @@ fn a_float_child_is_recorded_as_a_box_and_anchored() {
 
 #[test]
 fn unsupported_floats_stay_unsupported() {
-    for css in [
-        "display:block;float:inline-start",
-        "display:block;float:left;clear:inline-start",
-        "display:block;float:left;position:absolute",
-    ] {
-        let fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "aa ");
-            let float = span(doc, root, css);
-            doc.append_text(float, "ff");
-        });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
-    }
+    let css = "display:block;float:left;position:absolute";
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa ");
+        let float = span(doc, root, css);
+        doc.append_text(float, "ff");
+    });
+    let error = project(&fixture).expect_err(css);
+    assert!(
+        matches!(error, IfcError::Unsupported { .. }),
+        "{css}: {error}"
+    );
 }
 
 #[test]
@@ -458,13 +450,6 @@ fn blocks_that_are_not_placed_yet_stay_unsupported() {
         ),
         ("absolute", "display:block;position:absolute", false),
         ("inside an inline element", "display:block", true),
-        // A block that has to avoid floats or clear them is placed by the
-        // parent's item loop in taffy, which this path replaces.
-        ("flow-root", "display:flow-root", false),
-        ("flex", "display:flex", false),
-        ("grid", "display:grid", false),
-        ("scroll container", "display:block;overflow:hidden", false),
-        ("clearing", "display:block;clear:left", false),
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");
@@ -496,7 +481,7 @@ fn an_absolutely_positioned_child_is_still_unsupported() {
 }
 
 #[test]
-fn a_block_level_image_or_svg_is_not_a_block_child() {
+fn a_block_level_image_or_svg_is_a_block_child() {
     for tag in ["img", "svg"] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
@@ -507,12 +492,57 @@ fn a_block_level_image_or_svg_is_not_a_block_child() {
                 Some("display:block;width:10px;height:10px"),
             );
         });
-        let error = project(&fixture).expect_err(tag);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{tag}: {error}"
-        );
+        let projected = project(&fixture).expect(tag);
+        assert_eq!(projected.boxes.len(), 1, "{tag}");
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{tag}");
     }
+}
+
+#[test]
+fn every_block_level_box_is_a_block_child() {
+    for css in [
+        "display:flow-root",
+        "display:flex",
+        "display:grid",
+        "display:table",
+        "display:list-item",
+        "display:block;overflow:hidden",
+        "display:block;clear:left",
+        // Logical float sides are not mapped: the box is not floated.
+        "display:block;float:inline-start",
+        "display:block;float:inline-end",
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let block = span(doc, root, css);
+            doc.append_text(block, "bb");
+        });
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{css}");
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
+    }
+}
+
+#[test]
+fn a_cleared_line_break_is_recorded_with_its_physical_side() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        for clear in ["left", "inline-start", "both"] {
+            doc.append_element(
+                Some(root),
+                "br",
+                taffy::Style::default(),
+                Some(format!("display:inline;clear:{clear}").as_str()),
+            );
+        }
+    });
+    let projected = project(&fixture).expect("project");
+    let sides: Vec<taffy::Clear> = projected
+        .cleared_breaks
+        .iter()
+        .map(|(_, clear)| *clear)
+        .collect();
+    assert_eq!(sides, [taffy::Clear::Left, taffy::Clear::Both]);
 }
 
 #[test]

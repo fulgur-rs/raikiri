@@ -16,8 +16,7 @@ use crate::Document;
 use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
 use crate::target::CounterSnapshot;
 use raikiri_style::property::{
-    ClearValue, Direction, DisplayValue, FloatValue, OverflowValue, PositionValue,
-    WhiteSpaceCollapse,
+    ClearValue, Direction, DisplayValue, FloatValue, PositionValue, WhiteSpaceCollapse,
 };
 use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
 use raikiri_traits::NodeKind;
@@ -59,6 +58,9 @@ pub(crate) struct ProjectedIfc {
     /// Text nodes whose spaces are preserved (not collapsed), in document
     /// order.
     pub(crate) preserved_spaces: Vec<usize>,
+    /// `<br>` elements with a physical `clear`: the line after each starts
+    /// below the floats it clears.
+    pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
 }
 
 /// Whether `node` or one of its ancestors has an authored vertical writing
@@ -207,7 +209,9 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     if node.kind() != NodeKind::Element {
         return None;
     }
-    if cv.float != FloatValue::None {
+    // Logical float sides are not mapped to physical ones: the box is laid
+    // out as not floated, as the taffy bridge maps it.
+    if matches!(cv.float, FloatValue::Left | FloatValue::Right) {
         return Some(IfcBoxKind::Float);
     }
     // An inline-level table is an atomic inline too (CSS 2.1 17.4).
@@ -224,21 +228,22 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     if inline_block || replaced {
         return Some(IfcBoxKind::Atomic);
     }
-    // `flow-root`, flex and grid boxes avoid floats as formatting contexts of
-    // their own; taffy places those in the parent's item loop, which this
-    // path does not run, so they stay unsupported.
-    // A block-level image or SVG is sized by its replaced-element path, which
-    // this path does not reproduce; it stays unsupported.
-    if cv.display == DisplayValue::Block && !ATOMIC_TAGS.contains(&tag) {
-        return Some(IfcBoxKind::Block);
-    }
-    // A table-internal box directly in a paragraph would be wrapped in an
-    // anonymous table (CSS 2.1 17.2.1), which raikiri does not create; it is
-    // laid out as a block between the lines, as the block algorithm lays it
-    // out on the parley path.
+    // Every block-level box is a block child: one in the paragraph's
+    // formatting context, or one that establishes its own (flow roots, flex,
+    // grid and table boxes, scroll containers), which the line loop places
+    // as taffy's block algorithm does. A table-internal box directly in a
+    // paragraph would be wrapped in an anonymous table (CSS 2.1 17.2.1),
+    // which raikiri does not create; it is laid out as a block between the
+    // lines, as the block algorithm lays it out on the parley path.
     if matches!(
         cv.display,
-        DisplayValue::TableRowGroup
+        DisplayValue::Block
+            | DisplayValue::FlowRoot
+            | DisplayValue::Flex
+            | DisplayValue::Grid
+            | DisplayValue::ListItem
+            | DisplayValue::Table
+            | DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup
             | DisplayValue::TableRow
@@ -250,23 +255,17 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     None
 }
 
-/// A float the inline engine can place: left or right, cleared by physical
-/// sides only, in normal position or relatively positioned.
+/// A float the inline engine can place: in normal position or relatively
+/// positioned. A float's logical `clear` sides are mapped to none, as the
+/// taffy bridge maps them.
 fn supported_float(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
-    let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    if !matches!(cv.float, FloatValue::Left | FloatValue::Right) {
-        return Err(unsupported("logical float sides are not placed yet"));
-    }
-    if !matches!(
-        cv.clear,
-        ClearValue::None | ClearValue::Left | ClearValue::Right | ClearValue::Both
-    ) {
-        return Err(unsupported("logical clear sides are not placed yet"));
-    }
     // A relatively positioned float is placed as a float and drawn offset
     // from that place by the painter, as a block box is.
     if !matches!(cv.position, PositionValue::Static | PositionValue::Relative) {
-        return Err(unsupported("positioned floats are not placed yet"));
+        return Err(IfcError::Unsupported {
+            node,
+            reason: "positioned floats are not placed yet",
+        });
     }
     Ok(())
 }
@@ -285,21 +284,28 @@ fn supported_atomic(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
 }
 
 /// A block child the inline engine can place between lines: in normal
-/// position, with no `auto` side margin, not a scroll container and not
-/// cleared. Its vertical margins collapse with those of the block children
-/// next to it and are added to the lines around it.
+/// position. Its vertical margins collapse with those of the block children
+/// next to it and are added to the lines around it; `clear` moves it below
+/// the floats it clears.
 fn supported_block(cv: &ComputedValues, node: usize) -> Result<(), IfcError> {
-    let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
     if cv.position != PositionValue::Static && !style::is_inert_relative(cv) {
-        return Err(unsupported("positioned blocks are not placed yet"));
-    }
-    if cv.overflow.x != OverflowValue::Visible || cv.overflow.y != OverflowValue::Visible {
-        return Err(unsupported("a block child that clips is not placed yet"));
-    }
-    if cv.clear != ClearValue::None {
-        return Err(unsupported("a cleared block child is not placed yet"));
+        return Err(IfcError::Unsupported {
+            node,
+            reason: "positioned blocks are not placed yet",
+        });
     }
     Ok(())
+}
+
+/// A physical `clear` side; `None` for `none` and the logical sides, which
+/// the taffy bridge maps to none.
+fn physical_clear(clear: ClearValue) -> Option<taffy::Clear> {
+    match clear {
+        ClearValue::Left => Some(taffy::Clear::Left),
+        ClearValue::Right => Some(taffy::Clear::Right),
+        ClearValue::Both => Some(taffy::Clear::Both),
+        _ => None,
+    }
 }
 
 /// Whether `text` holds a character of a right-to-left script or an explicit
@@ -348,6 +354,9 @@ pub(crate) struct ProjectedBuilder {
     /// Text nodes whose spaces are preserved (not collapsed), in document
     /// order.
     pub(crate) preserved_spaces: Vec<usize>,
+    /// `<br>` elements with a physical `clear`: the line after each starts
+    /// below the floats it clears.
+    pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
 }
 
 impl ProjectedBuilder {
@@ -369,6 +378,7 @@ impl ProjectedBuilder {
             rtl: self.rtl,
             offsets: self.offsets,
             preserved_spaces: self.preserved_spaces,
+            cleared_breaks: self.cleared_breaks,
         })
     }
 }
@@ -440,6 +450,7 @@ pub(crate) fn project_ifc_text_builder(
     let root_style = styled(doc, cascade, cv, text, fonts)?;
     let paragraph_style = style::paragraph_style(cv, text, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
+    let cleared_breaks = Vec::new();
     let preserved_spaces = if matches!(
         cv.effective_white_space_collapse,
         WhiteSpaceCollapse::Preserve | WhiteSpaceCollapse::PreserveSpaces
@@ -466,6 +477,7 @@ pub(crate) fn project_ifc_text_builder(
         rtl: cv.direction == Direction::Rtl,
         offsets: Vec::new(),
         preserved_spaces,
+        cleared_breaks,
     })
 }
 
@@ -531,6 +543,7 @@ pub(crate) fn project_ifc_builder_with(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut preserved_spaces = Vec::new();
+    let mut cleared_breaks = Vec::new();
     push_generated(
         &mut builder,
         doc,
@@ -646,7 +659,7 @@ pub(crate) fn project_ifc_builder_with(
                         "a box inside an inline element is located from the element, which is not modelled yet",
                     ));
                 }
-                if cv.float != FloatValue::None {
+                if box_kind(cascade, doc, id) == Some(IfcBoxKind::Float) {
                     supported_float(cv, id)?;
                     builder.push_out_of_flow(NodeId(id as u64), OutOfFlowKind::Float);
                     boxes.push(IfcBox {
@@ -704,10 +717,11 @@ pub(crate) fn project_ifc_builder_with(
                     offsets.push((id, style::relative_offset_in_lines(cv)));
                 }
                 // `clear` on a line break moves the next line below the
-                // floats (CSS 2.1, 9.5.2); the engine's forced break carries
-                // no clearance.
-                if tag == "br" && cv.clear != ClearValue::None {
-                    return Err(unsupported("a cleared line break is not placed yet"));
+                // floats (CSS 2.1, 9.5.2): the line loop looks for the break.
+                if tag == "br"
+                    && let Some(clear) = physical_clear(cv.clear)
+                {
+                    cleared_breaks.push((id, clear));
                 }
                 builder.open_inline(NodeId(id as u64), &inline_style, edges);
                 if tag == "br" {
@@ -761,6 +775,7 @@ pub(crate) fn project_ifc_builder_with(
         rtl: root_cv.direction == Direction::Rtl,
         offsets,
         preserved_spaces,
+        cleared_breaks,
     })
 }
 
