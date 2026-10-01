@@ -29,7 +29,27 @@ use raikiri_traits::{PageBox, RenderError};
 use crate::page_scene::build_page_scene;
 use crate::parse_html;
 
-/// Shared implementation for `html_to_png` and `html_to_png_with_fonts`.
+/// The inline engine's font layer and whether it holds bundled fonts only.
+type InlineFonts = (shodo::font::FontCollection, bool);
+
+/// The inline engine over the process-wide layer of the installed fonts.
+/// That layer loads faces lazily, so its paragraphs are built in sequence.
+fn system_inline_fonts() -> Option<InlineFonts> {
+    Some((raikiri_dom::system_font_collection(), false))
+}
+
+/// Switch the inline engine on for `dom` with `fonts`, or leave every
+/// paragraph on the parley path when `fonts` is `None`.
+fn enable_inline_engine(dom: &mut raikiri_dom::Document, fonts: Option<InlineFonts>) {
+    if let Some((collection, bundled_only)) = fonts {
+        dom.enable_inline_formatting(collection, shodo::limits::Limits::default());
+        // Only a layer without installed fonts loads every face up front, so
+        // only then may paragraphs be built on several threads.
+        dom.set_ifc_parallel_build(bundled_only);
+    }
+}
+
+/// Shared implementation for `html_to_png` and its font variants.
 /// Centralizing the VRT path (pinned `FontContext`) and production path
 /// (`FontContext::new()`) prevents their layout logic from drifting.
 ///
@@ -40,6 +60,7 @@ use crate::parse_html;
 pub(crate) fn html_to_png_impl<R: std::io::Read>(
     input: R,
     font_ctx: FontContext,
+    inline_fonts: Option<InlineFonts>,
 ) -> Result<Vec<u8>, RenderError> {
     // Default-equivalent ParseOptions: no extra stylesheets, network, or base URL.
     let opts = ParseOptions {
@@ -48,6 +69,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
         base_url: None,
     };
     let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
+    enable_inline_engine(&mut uncascaded.dom, inline_fonts);
 
     let page_box = PageBox::from_page_size(cascade.page.size());
     // `into_parts` takes ownership of the pieces, allowing `&mut` on the DOM
@@ -68,7 +90,10 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
 /// Rasterize an HTML byte stream to a PNG of the first page (A4 fallback).
 ///
 /// Delegate to `html_to_png_impl` with the system font resolver
-/// (`FontContext::new()`). This is the production runtime path.
+/// (`FontContext::new()`). This is the production runtime path. Paragraphs
+/// are laid out by the inline engine over the installed fonts
+/// ([`raikiri_dom::system_font_collection`]); a paragraph it does not
+/// support falls back to the parley path.
 ///
 /// # Errors
 /// - `RenderError::Parse(_)` — propagated from `parse_html` (IO / UTF-8 / html5ever)
@@ -78,10 +103,14 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
 /// The spec §L1118 gives the signature `(html: &str)`; this design instead
 /// accepts `impl Read` to match the existing `parse_html<R: Read>` API.
 pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
-    html_to_png_impl(input, FontContext::new())
+    html_to_png_impl(input, FontContext::new(), system_inline_fonts())
 }
 
 /// Font-aware variant that uses the supplied `FontContext` for layout.
+///
+/// Every paragraph is laid out by the parley path with `font_ctx`: the
+/// inline engine is not used, since it would need a font set built from the
+/// same fonts (see [`html_to_png_with_render_fonts`]).
 ///
 /// Intended for VRT tests that need cross-machine reproducibility. When
 /// `font_ctx` has been validated by `build_wpt_font_ctx`, this completely
@@ -97,7 +126,27 @@ pub fn html_to_png_with_fonts<R: std::io::Read>(
     input: R,
     font_ctx: FontContext,
 ) -> Result<Vec<u8>, RenderError> {
-    html_to_png_impl(input, font_ctx)
+    html_to_png_impl(input, font_ctx, None)
+}
+
+/// Like [`html_to_png_with_fonts`] with a font set both engines share.
+///
+/// Paragraphs are laid out by the inline engine with the shodo layer of
+/// `fonts`, and a paragraph it does not support falls back to the parley
+/// path with the parley context of `fonts`, so the whole page draws from one
+/// font set. Build `fonts` with
+/// [`FontContextBuilder::build_fonts`](crate::FontContextBuilder::build_fonts)
+/// for output that does not depend on the installed fonts.
+///
+/// # Errors
+/// Same as [`html_to_png`] (`RenderError::Parse` / `RenderError::Layout`).
+pub fn html_to_png_with_render_fonts<R: std::io::Read>(
+    input: R,
+    fonts: raikiri_html::RenderFonts,
+) -> Result<Vec<u8>, RenderError> {
+    let bundled_only = fonts.is_bundled_only();
+    let (context, collection) = fonts.into_parts();
+    html_to_png_impl(input, context, Some((collection, bundled_only)))
 }
 
 /// Like [`html_to_png`], but fetches, decodes, lays out, and paints `<img>`
@@ -128,6 +177,7 @@ where
         base_url: None,
     };
     let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
+    enable_inline_engine(&mut uncascaded.dom, system_inline_fonts());
     let page_box = PageBox::from_page_size(cascade.page.size());
     raikiri_dom::layout_single_page_with_resolver(
         &mut uncascaded.dom,

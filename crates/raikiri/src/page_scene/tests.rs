@@ -256,13 +256,16 @@ fn body_margin_lone_5px_collapses_to_8px() {
 
 /// Check that PageScene::rasterize returns the same PNG bytes as
 /// html_to_png. This tests verbatim reuse of the byte-identical sequence
-/// and pins the primary regression signal locally in this module.
+/// and pins the primary regression signal locally in this module. The
+/// fixture is laid out by the parley path with the installed fonts, so it is
+/// compared with the variant that lays out the same way.
 #[test]
 fn rasterize_matches_html_to_png_bytes() {
     let (dom, cascade) = hello_world_post_layout();
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     let via_scene = scene.rasterize(&dom, &cascade, PageBox::A4);
-    let via_umbrella = crate::html_to_png(&b"<p>Hi</p>"[..]).expect("html_to_png Ok");
+    let via_umbrella = crate::html_to_png_with_fonts(&b"<p>Hi</p>"[..], FontContext::new())
+        .expect("html_to_png_with_fonts Ok");
     assert_eq!(
         via_scene, via_umbrella,
         "PageScene::rasterize must produce byte-identical output to html_to_png"

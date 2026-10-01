@@ -29,6 +29,8 @@ tiny-skia           = { workspace = true }
 # FontContext for html_to_png_with_fonts. A direct dependency is needed
 # for the umbrella crate to expose `pub use parley::FontContext`.
 parley              = { workspace = true }
+# The inline engine's font layer, which html_to_png hands to the document.
+shodo               = { workspace = true }
 
 [dev-dependencies]
 cssparser   = { workspace = true }
@@ -43,8 +45,6 @@ raikiri-vrt = { path = "../raikiri-vrt" }
 tempfile    = { workspace = true }
 # Decode the output PNG and verify pixel values in img_element_basic.
 png         = { workspace = true }
-# Build the inline engine's font layer for the page scene tests.
-shodo       = { workspace = true }
 
 [lints]
 workspace = true

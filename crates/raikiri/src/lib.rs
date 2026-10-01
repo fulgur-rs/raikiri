@@ -34,11 +34,13 @@ pub use raikiri_html::{
 };
 
 pub use raikiri_html::{
-    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES,
+    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES, RenderFonts,
 };
 
 mod html_to_png;
-pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_resolver};
+pub use html_to_png::{
+    html_to_png, html_to_png_with_fonts, html_to_png_with_render_fonts, html_to_png_with_resolver,
+};
 
 // ── PageScene + PageDrawables dogfooding surface ───────
 // Implementation is growing incrementally from placeholder structs (empty
