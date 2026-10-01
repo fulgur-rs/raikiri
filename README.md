@@ -96,7 +96,7 @@ let png = html_to_png_with_render_fonts(Cursor::new(b"<p>Hello</p>"), fonts)?;
 | [`raikiri-traits`](crates/raikiri-traits) | Shared traits and types for the DOM, network, resolver, rendering, and page models |
 | [`raikiri-html`](crates/raikiri-html) | html5ever wrapper and HTML → uncascaded document pipeline |
 | [`raikiri-style`](crates/raikiri-style) | cssparser / selectors integration, rule tree, cascade, and computed values |
-| [`raikiri-dom`](crates/raikiri-dom) | DOM arena, taffy layout, parley text processing, and page state |
+| [`raikiri-dom`](crates/raikiri-dom) | DOM arena, taffy block layout, shodo inline (text) layout, and page state |
 | [`raikiri-net`](crates/raikiri-net) | `NetworkProvider`, image resolver, and PNG decoding |
 | [`raikiri-paint`](crates/raikiri-paint) | Builds anyrender paint scenes from page fragments |
 | [`raikiri-vrt`](crates/raikiri-vrt) | Fixtures and diff infrastructure for visual regression tests (private crate) |
