@@ -5868,3 +5868,83 @@ fn a_formatting_context_root_contains_its_last_block_childs_bottom_margin() {
     assert_eq!(height(true), 32.0);
     assert_eq!(height(true), height(false));
 }
+
+// ── engine-only mode and limits ──────────────────────────────
+
+/// A paragraph of 200 bytes of text with the engine limited to 10 bytes.
+fn over_the_text_limit() -> (Document, CascadeResult) {
+    let (mut doc, cascade, _) = ahem_paragraph(&"a ".repeat(100), "");
+    doc.enable_inline_formatting(
+        ifc_ahem_fonts(),
+        shodo::limits::Limits {
+            max_text_bytes: Some(10),
+            ..Default::default()
+        },
+    );
+    (doc, cascade)
+}
+
+#[test]
+fn engine_only_mode_reports_a_limit_overflow_as_an_error() {
+    let (mut doc, cascade) = over_the_text_limit();
+    doc.inline_formatting_engine_only(true);
+    let result = layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context());
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { .. })),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_limit_overflow_is_an_error_even_when_the_switch_is_not_engine_only() {
+    // A limit is not a refusal: there is no parley path to leave it to once
+    // the engine is the only one, so it is reported in every mode.
+    let (mut doc, cascade) = over_the_text_limit();
+    let result = layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context());
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { .. })),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn engine_only_mode_reports_a_refused_paragraph_as_an_error() {
+    // A paragraph inside a multicol container is refused for now.
+    let (mut doc, cascade, root) = ahem_paragraph_in("column-count:2", "", "aaaa bbbb");
+    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    doc.inline_formatting_engine_only(true);
+    let result = layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context());
+    assert!(
+        matches!(result, Err(LayoutError::IfcUnsupported { node, .. }) if node == root),
+        "{result:?}"
+    );
+    // Without the mode the paragraph is left to the parley path.
+    let (mut doc, cascade, root) = ahem_paragraph_in("column-count:2", "", "aaaa bbbb");
+    lay_out_with_switch(&mut doc, &cascade);
+    assert!(!doc.nodes[root].is_ifc_root());
+}
+
+#[test]
+fn a_shaping_limit_overflow_is_an_error_on_either_build_path() {
+    // The glyph budget is checked when a paragraph is shaped, after it is
+    // projected: the error has to come out of the build step, sequential or
+    // parallel.
+    for parallel in [false, true] {
+        let (mut doc, cascade, root) = ahem_paragraph(&"a ".repeat(100), "");
+        doc.enable_inline_formatting(
+            ifc_ahem_fonts(),
+            shodo::limits::Limits {
+                max_shaped_glyphs: Some(5),
+                ..Default::default()
+            },
+        );
+        doc.set_ifc_parallel_build(parallel);
+        doc.set_ifc_parallel_threshold(1);
+        let result =
+            layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context());
+        assert!(
+            matches!(result, Err(LayoutError::IfcLimitExceeded { node, .. }) if node == root),
+            "{parallel}: {result:?}"
+        );
+    }
+}

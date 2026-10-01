@@ -417,6 +417,18 @@ impl Document {
         }
     }
 
+    /// Require the inline engine for every paragraph: a paragraph it refuses
+    /// fails the layout with [`raikiri_traits::LayoutError::IfcUnsupported`]
+    /// instead of being laid out by the parley path. Off by default; no effect
+    /// without the inline engine.
+    #[doc(hidden)]
+    pub fn inline_formatting_engine_only(&mut self, engine_only: bool) {
+        if let Some(state) = self.ifc.as_mut() {
+            state.engine_only = engine_only;
+            self.layout_dirty = true;
+        }
+    }
+
     /// Whether paragraphs may be built on several threads (`false` without
     /// the inline engine).
     #[doc(hidden)]

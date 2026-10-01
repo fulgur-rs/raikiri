@@ -414,7 +414,7 @@ fn guarded_style_for(inline: &str) -> taffy::Style {
     let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     doc.nodes[p].style.clone()
 }
 

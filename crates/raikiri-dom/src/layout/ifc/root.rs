@@ -120,6 +120,9 @@ pub(crate) struct IfcState {
     pub(crate) parallel_build: bool,
     /// How the roots of the last layout pass were built.
     pub(crate) last_build: Option<IfcBuildMode>,
+    /// Every paragraph must be laid out by the engine: one it refuses is an
+    /// error instead of being left to the parley path.
+    pub(crate) engine_only: bool,
 }
 
 /// How a layout pass built its paragraphs.
@@ -146,6 +149,7 @@ impl IfcState {
             parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
             parallel_build: false,
             last_build: None,
+            engine_only: false,
         }
     }
 }

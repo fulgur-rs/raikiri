@@ -31,7 +31,7 @@ fn authored_containing_width_uses_the_resolved_ch_style_width() {
     let text = doc.append_text(container, "test");
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cascade);
+    apply_computed_to_style(&mut doc, &cascade).expect("styles");
 
     let mut fonts = FontContext::new();
     let mut layout_cx = LayoutContext::<()>::new();

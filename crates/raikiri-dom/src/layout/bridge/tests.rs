@@ -31,7 +31,7 @@ fn apply_computed_to_style_bridges_display_to_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert_eq!(doc.nodes[body].style.display, Display::None);
 
     let default_style = <taffy::Style as Default>::default();
@@ -62,7 +62,7 @@ fn apply_computed_to_style_tracks_logical_min_block_provenance() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert!(doc.nodes[avoided].has_logical_min_block_size);
     assert!(!doc.nodes[auto].has_logical_min_block_size);
     assert_eq!(
@@ -91,7 +91,7 @@ fn prepare_multicol_layout_splits_direct_text_lines_across_columns() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     let mut fonts = FontContext::new();
     let mut layout_cx = LayoutContext::<()>::new();
     preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 200.0, 200.0);
@@ -159,7 +159,7 @@ fn prepare_multicol_layout_projects_oversized_direct_br_children_as_wrapped_flex
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     prepare_multicol_layout(&mut doc, &cr, 200.0);
 
@@ -217,7 +217,7 @@ fn apply_computed_to_style_bridges_direction_to_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(doc.nodes[body].style.direction, taffy::Direction::Rtl);
 }
@@ -246,7 +246,7 @@ fn collapse_block_in_inline_margins_ignores_whitespace_between_blocks() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     collapse_block_in_inline_margins(&mut doc, inline, &cr);
 
@@ -282,7 +282,7 @@ fn establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(doc.nodes[p].style.display, Display::Flex);
     assert_eq!(doc.nodes[p].style.flex_direction, TaffyFlexDirection::Row);
@@ -327,7 +327,7 @@ fn establish_minimal_line_boxes_leaves_single_inline_child_container_on_block_pa
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -354,7 +354,7 @@ fn establish_minimal_line_boxes_leaves_mixed_block_and_inline_content_untouched(
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -381,7 +381,7 @@ fn establish_minimal_line_boxes_hidden_sibling_does_not_count_toward_threshold()
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // Only 1 *counted* inline-level child (the display:none sibling
     // doesn't count) — below the 2-child threshold.
@@ -402,7 +402,7 @@ fn establish_minimal_line_boxes_hidden_sibling_does_not_disqualify_when_threshol
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -443,7 +443,7 @@ fn qualifies_for_minimal_line_box_skips_not_in_document_sibling() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -474,7 +474,7 @@ fn establish_minimal_line_boxes_excludes_plain_inline_container() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(doc.nodes[b].style.display, Display::Block);
     assert!(!doc.nodes[b].flags.contains(NodeFlags::IS_INLINE_ROOT));
@@ -498,7 +498,7 @@ fn establish_minimal_line_boxes_bridges_nested_plain_inline_children() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert!(doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
     assert!(!doc.nodes[inner].flags.contains(NodeFlags::IS_INLINE_ROOT));
@@ -528,7 +528,7 @@ fn establish_minimal_line_boxes_scopes_autospace_to_the_inline_context() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert!(!doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
     assert_eq!(doc.nodes[outer].style.display, Display::Block);
@@ -553,7 +553,7 @@ fn establish_minimal_line_boxes_bridges_stylesheet_authored_inline_wrapper() {
     let mut rules = build_rule_tree(&doc);
     rules.add_stylesheet("x-inline { display: inline !important; }", Origin::Author);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert!(doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
     assert_eq!(doc.nodes[outer].style.display, Display::Flex);
@@ -577,7 +577,7 @@ fn establish_minimal_line_boxes_qualifies_inline_block_container() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -664,7 +664,7 @@ fn text_align_center_on_flex_line_box_uses_justify_content() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
@@ -719,7 +719,7 @@ fn establish_minimal_line_boxes_resets_conflicting_align_self() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -751,7 +751,7 @@ fn establish_minimal_line_boxes_br_switches_container_to_wrap_and_forces_full_ba
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(doc.nodes[p].style.display, Display::Flex);
     // cov:ignore: panic-message literal only executed on assertion
@@ -804,7 +804,7 @@ fn establish_minimal_line_boxes_display_none_br_does_not_switch_to_wrap() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(doc.nodes[p].style.display, Display::Flex);
     // cov:ignore: panic-message literal only executed on assertion
@@ -973,7 +973,7 @@ fn apply_computed_to_style_reserves_inside_list_marker_gutter() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(
         doc.nodes[inside].style.padding.left.into_raw().value(),
@@ -1017,7 +1017,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.margin
     }
 
@@ -1104,7 +1104,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.padding
     }
 
@@ -1182,7 +1182,7 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.size.width
     }
 
@@ -1239,7 +1239,7 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.size.height
     }
 
@@ -1278,7 +1278,7 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.min_size
     }
 
@@ -1325,7 +1325,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.max_size
     }
 
@@ -1404,7 +1404,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.border
     }
 
@@ -1534,7 +1534,7 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // border-style unset (initial `none`) must gate width to 0 all the way to taffy.
     assert_eq!(
@@ -1575,7 +1575,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     let style = &doc.nodes[body].style;
 
     // 2em × 20px = 40px (previously 0.0).
@@ -1629,7 +1629,7 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.box_sizing
     }
 
@@ -1724,7 +1724,7 @@ fn apply_page_content_box_clobbers_body_width_from_bridge() {
     let cr = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
 
     // Step 1: the bridge writes the author value (100px) to body.style.size.width.
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert_eq!(
         doc.nodes[body].style.size.width,
         Dimension::length(100.0),

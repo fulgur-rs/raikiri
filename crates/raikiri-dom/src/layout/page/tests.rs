@@ -1054,7 +1054,7 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
     crate::image_resolve::resolve_inline_svg_intrinsic_sizes(&mut doc);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade);
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("styles");
     for (sizing_mode, width, expected) in [
         (
             SizingMode::InherentSize,

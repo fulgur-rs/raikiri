@@ -215,7 +215,7 @@ pub fn layout_single_page(
     document.fragmentation_stack.clear();
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
-    apply_computed_to_style(document, cascade);
+    apply_computed_to_style(document, cascade)?;
 
     // Step 2: resolve the paper/content split before shaping.  Text wrapping
     // uses the content width, not the outer paper width.

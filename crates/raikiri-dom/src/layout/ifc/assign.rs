@@ -1,6 +1,7 @@
 //! Choose the blocks laid out by the shodo inline engine.
 
 use super::boxes::{IfcBox, IfcBoxKind};
+use super::error::IfcError;
 use super::projection::{
     ProjectedBuilder, ProjectedIfc, box_kind, project_ifc_builder, project_ifc_text_builder,
 };
@@ -16,7 +17,7 @@ use raikiri_style::property::{BackgroundImage, ColumnCountValue, DisplayValue, F
 use raikiri_style::property::{
     PositionValue, TextDecorationLine, TextTransform, VerticalAlign, VisualBox, WordSpaceTransform,
 };
-use raikiri_traits::NodeKind;
+use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
 
@@ -384,13 +385,47 @@ struct Candidate {
     projected: ProjectedBuilder,
 }
 
+/// A paragraph the engine does not lay out: an error when the engine is
+/// required for every paragraph, otherwise nothing (the paragraph stays on
+/// the parley path).
+fn refuse(engine_only: bool, node: usize, reason: &'static str) -> Result<(), LayoutError> {
+    if engine_only {
+        Err(LayoutError::IfcUnsupported { node, reason })
+    } else {
+        Ok(())
+    }
+}
+
+/// What a projection or shaping error of the paragraph `root` means for the
+/// layout: a limit is always an error (there is nothing to fall back to once
+/// the engine is the only path); a refusal is one only in engine-only mode.
+fn projection_error(engine_only: bool, root: usize, error: IfcError) -> Result<(), LayoutError> {
+    match error {
+        IfcError::Limit(limit) => Err(LayoutError::IfcLimitExceeded {
+            node: root,
+            limit: limit.to_string(),
+        }),
+        IfcError::Unsupported { node, reason } => refuse(engine_only, node, reason),
+        IfcError::InvalidNode(node) => refuse(engine_only, node, "the node is not in the document"),
+    }
+}
+
 /// Clear every IFC mark, then mark the eligible roots and their subtrees.
 ///
 /// Runs in three steps: a walk over the document that decides which blocks
 /// are paragraph roots and fills their builders, the shaping of those
 /// builders, which touches neither the document nor the cascade, and the
 /// writing of the shaped paragraphs and marks back, in document order.
-pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
+///
+/// # Errors
+/// [`LayoutError::IfcLimitExceeded`] when a paragraph exceeds a limit of the
+/// engine, and [`LayoutError::IfcUnsupported`] for a paragraph the engine
+/// refuses when [`Document::inline_formatting_engine_only`] is set. Nothing is
+/// marked then.
+pub(crate) fn assign_ifc_roots(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+) -> Result<(), LayoutError> {
     for node in &mut doc.nodes {
         node.flags
             .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
@@ -398,17 +433,19 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
     }
     // Take the engine state out so the walk can borrow the document.
     let Some(mut state) = doc.ifc.take() else {
-        return;
+        return Ok(());
     };
     // The roots are rebuilt on every pass, so a cached layout would skip the
     // measure callback that fills their lines.
     doc.layout_dirty = true;
-    let mut candidates = collect_candidates(doc, cascade, &state);
-    candidates.extend(collect_text_candidates(doc, cascade, &state));
-    candidates.sort_by_key(|candidate| candidate.idx);
-    let built = build_all(&mut state, candidates);
-    write_roots(doc, built);
+    let built = collect_candidates(doc, cascade, &state).and_then(|mut candidates| {
+        candidates.extend(collect_text_candidates(doc, cascade, &state)?);
+        candidates.sort_by_key(|candidate| candidate.idx);
+        build_all(&mut state, candidates)
+    });
+    let result = built.map(|built| write_roots(doc, built));
     doc.ifc = Some(state);
+    result
 }
 
 /// Walk the document in index order and return the eligible paragraphs, in
@@ -419,7 +456,12 @@ pub(crate) fn assign_ifc_roots(doc: &mut Document, cascade: &CascadeResult) {
 /// while the inside of its boxes is not taken and may hold roots of its own.
 /// So a paragraph that later fails to shape changes no other paragraph's
 /// eligibility.
-fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState) -> Vec<Candidate> {
+fn collect_candidates(
+    doc: &Document,
+    cascade: &CascadeResult,
+    state: &IfcState,
+) -> Result<Vec<Candidate>, LayoutError> {
+    let engine_only = state.engine_only;
     let mut candidates = Vec::new();
     let mut taken = vec![false; doc.nodes.len()];
     for idx in 0..doc.nodes.len() {
@@ -432,8 +474,14 @@ fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState)
             || !node.is_in_document()
             || taken[idx]
             || !can_be_ifc_root(doc, cascade, idx)
-            || !is_horizontal(cascade, idx)
+            || !has_inline_content(doc, cascade, idx, &state.fonts)
         {
+            continue;
+        }
+        // From here on the box is a paragraph: anything that keeps it from
+        // the engine is a refusal.
+        if !is_horizontal(cascade, idx) {
+            refuse(engine_only, idx, "vertical writing modes are not laid out")?;
             continue;
         }
         // The root itself counts: a multicol container is laid out by its own
@@ -449,30 +497,45 @@ fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState)
             }
             ancestor = doc.parent_of(id);
         }
-        if blocked
-            || !has_inline_content(doc, cascade, idx, &state.fonts)
-            || !paragraph_is_paintable(doc, cascade, idx)
-            || inside_unsized_fixed_box(doc, cascade, idx)
-            || decoration_meets_a_line_relative_inline(doc, cascade, idx)
-        {
-            continue;
-        }
-        let Ok(projected) = project_ifc_builder(doc, cascade, idx, &state.fonts, &state.limits)
-        else {
-            continue;
+        let refusal = if blocked {
+            Some("a paragraph in a multicol container is not laid out")
+        } else if !paragraph_is_paintable(doc, cascade, idx) {
+            Some("the paragraph has a style the painter does not draw from lines")
+        } else if inside_unsized_fixed_box(doc, cascade, idx) {
+            Some("a paragraph in a fixed box without a width is not laid out")
+        } else if decoration_meets_a_line_relative_inline(doc, cascade, idx) {
+            Some("a decoration across a line-relative vertical-align is not laid out")
+        } else {
+            None
         };
-        if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
+        if let Some(reason) = refusal {
+            refuse(engine_only, idx, reason)?;
             continue;
         }
-        if projected
+        let projected = match project_ifc_builder(doc, cascade, idx, &state.fonts, &state.limits) {
+            Ok(projected) => projected,
+            Err(error) => {
+                projection_error(engine_only, idx, error)?;
+                continue;
+            }
+        };
+        let refusal = if has_block_child_under_a_decoration(doc, cascade, idx, &projected.boxes) {
+            Some("a block child under a decoration is not laid out")
+        } else if projected
             .boxes
             .iter()
             .any(|b| box_has_a_page_break(doc, cascade, b.node))
         {
-            continue;
-        }
-        let has_own_floats = projected.boxes.iter().any(|b| b.kind == IfcBoxKind::Float);
-        if has_own_floats && has_float_beside(doc, cascade, idx) {
+            Some("a box with a forced page break inside a paragraph is not laid out")
+        } else if projected.boxes.iter().any(|b| b.kind == IfcBoxKind::Float)
+            && has_float_beside(doc, cascade, idx)
+        {
+            Some("a paragraph with floats beside an outer float is not laid out")
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            refuse(engine_only, idx, reason)?;
             continue;
         }
         let mut stack = doc.nodes[idx].children.clone();
@@ -486,7 +549,7 @@ fn collect_candidates(doc: &Document, cascade: &CascadeResult, state: &IfcState)
         taken[idx] = true;
         candidates.push(Candidate { idx, projected });
     }
-    candidates
+    Ok(candidates)
 }
 
 /// Whether `text` is laid out by a flex or grid container as an anonymous
@@ -524,7 +587,8 @@ fn collect_text_candidates(
     doc: &Document,
     cascade: &CascadeResult,
     state: &IfcState,
-) -> Vec<Candidate> {
+) -> Result<Vec<Candidate>, LayoutError> {
+    let engine_only = state.engine_only;
     let mut candidates = Vec::new();
     for idx in 0..doc.nodes.len() {
         if !is_anonymous_item_text(doc, cascade, idx) {
@@ -542,58 +606,79 @@ fn collect_text_candidates(
             }
             ancestor = doc.parent_of(id);
         }
-        if blocked
-            || !is_horizontal(cascade, idx)
-            || !is_paintable_element(cascade, parent)
-            || inside_unsized_fixed_box(doc, cascade, idx)
-        {
+        let refusal = if blocked {
+            Some("a paragraph in a multicol container is not laid out")
+        } else if !is_horizontal(cascade, idx) {
+            Some("vertical writing modes are not laid out")
+        } else if !is_paintable_element(cascade, parent) {
+            Some("the paragraph has a style the painter does not draw from lines")
+        } else if inside_unsized_fixed_box(doc, cascade, idx) {
+            Some("a paragraph in a fixed box without a width is not laid out")
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            refuse(engine_only, idx, reason)?;
             continue;
         }
-        let Ok(projected) =
-            project_ifc_text_builder(doc, cascade, idx, &state.fonts, &state.limits)
-        else {
-            continue;
-        };
-        candidates.push(Candidate { idx, projected });
+        match project_ifc_text_builder(doc, cascade, idx, &state.fonts, &state.limits) {
+            Ok(projected) => candidates.push(Candidate { idx, projected }),
+            Err(error) => projection_error(engine_only, idx, error)?,
+        }
     }
-    candidates
+    Ok(candidates)
 }
 
-/// Shape every candidate. A candidate that fails to shape is dropped and
-/// stays on the parley path.
+/// Shape every candidate. A candidate over a limit of the engine fails the
+/// layout (the first such candidate in document order is reported).
 ///
 /// With enough candidates, and when the document allowed it, the candidates
 /// are shaped on several threads: each worker owns a layout context (it is
 /// `Send` but not `Sync`) and the font collection is shared by reference.
 /// The result keeps the candidates' order either way.
-fn build_all(state: &mut IfcState, candidates: Vec<Candidate>) -> Vec<(usize, ProjectedIfc)> {
+fn build_all(
+    state: &mut IfcState,
+    candidates: Vec<Candidate>,
+) -> Result<Vec<(usize, ProjectedIfc)>, LayoutError> {
+    let built = |idx: usize, result: Result<ProjectedIfc, IfcError>| {
+        result
+            .map(|projected| (idx, projected))
+            .map_err(|error| match error {
+                IfcError::Limit(limit) => LayoutError::IfcLimitExceeded {
+                    node: idx,
+                    limit: limit.to_string(),
+                },
+                other => LayoutError::Internal {
+                    message: other.to_string(),
+                },
+            })
+    };
     if !state.parallel_build || candidates.len() < state.parallel_threshold {
         state.last_build = Some(IfcBuildMode::Sequential);
         return candidates
             .into_iter()
-            .filter_map(|candidate| {
-                candidate
-                    .projected
-                    .build(&mut state.layout_cx, &state.fonts)
-                    .ok()
-                    .map(|projected| (candidate.idx, projected))
+            .map(|candidate| {
+                built(
+                    candidate.idx,
+                    candidate
+                        .projected
+                        .build(&mut state.layout_cx, &state.fonts),
+                )
             })
             .collect();
     }
     state.last_build = Some(IfcBuildMode::Parallel);
     let fonts = &state.fonts;
+    // Collected in order, so the reported error is the first in document
+    // order whichever thread met it first.
     candidates
         .into_par_iter()
         .map_init(LayoutContext::new, |cx, candidate| {
-            candidate
-                .projected
-                .build(cx, fonts)
-                .ok()
-                .map(|projected| (candidate.idx, projected))
+            (candidate.idx, candidate.projected.build(cx, fonts))
         })
         .collect::<Vec<_>>()
         .into_iter()
-        .flatten()
+        .map(|(idx, result)| built(idx, result))
         .collect()
 }
 

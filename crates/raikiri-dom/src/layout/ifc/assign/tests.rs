@@ -14,7 +14,7 @@ fn enable(fixture: &mut crate::layout::ifc::test_support::Fixture) {
 }
 
 fn assign(fixture: &mut crate::layout::ifc::test_support::Fixture) {
-    assign_ifc_roots(&mut fixture.doc, &fixture.cascade);
+    assign_ifc_roots(&mut fixture.doc, &fixture.cascade).expect("assign");
 }
 
 fn is_root(fixture: &crate::layout::ifc::test_support::Fixture, id: usize) -> bool {
@@ -1068,9 +1068,10 @@ fn a_page_break_inside_a_box_of_the_paragraph_keeps_it_on_the_parley_path() {
 }
 
 #[test]
-fn a_paragraph_that_fails_to_build_stays_on_the_parley_path() {
+fn a_paragraph_that_fails_to_build_is_a_limit_error() {
     // One glyph is allowed per paragraph, so shaping "aa bb" fails after the
-    // builder step succeeded. Only that paragraph stays on the parley path.
+    // builder step succeeded. A limit is not a refusal: the layout fails with
+    // the paragraph's root, and nothing is marked.
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa bb");
     });
@@ -1094,7 +1095,11 @@ fn a_paragraph_that_fails_to_build_stays_on_the_parley_path() {
             .is_err()
     );
     fixture.doc.enable_inline_formatting(ahem_fonts(), limits);
-    assign(&mut fixture);
+    let result = assign_ifc_roots(&mut fixture.doc, &fixture.cascade);
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { node, .. }) if node == fixture.root),
+        "{result:?}"
+    );
     assert!(!is_root(&fixture, fixture.root));
     let text = fixture.doc.nodes[fixture.root].children[0];
     assert!(
@@ -1103,6 +1108,8 @@ fn a_paragraph_that_fails_to_build_stays_on_the_parley_path() {
             .contains(NodeFlags::IN_IFC_SUBTREE)
     );
     assert!(fixture.doc.nodes[fixture.root].ifc.is_none());
+    // The engine state is kept for the next pass.
+    assert!(fixture.doc.inline_formatting_enabled());
 }
 
 #[test]
@@ -1357,7 +1364,7 @@ fn a_cloned_document_keeps_the_build_policy() {
     // The record of the last build belongs to the original.
     assert_eq!(clone.ifc_last_build(), None);
     assert!(clone.ifc_parallel_build());
-    assign_ifc_roots(&mut clone, &fixture.cascade);
+    assign_ifc_roots(&mut clone, &fixture.cascade).expect("assign");
     assert_eq!(clone.ifc_last_build(), Some(IfcBuildMode::Parallel));
 }
 

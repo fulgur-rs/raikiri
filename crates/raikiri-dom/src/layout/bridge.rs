@@ -85,7 +85,15 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// ([`establish_minimal_line_boxes`]) scans the entire bridged tree and
 /// establishes a minimal inline formatting context in qualifying block
 /// containers. See that function's docs for the conditions and scope.
-pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
+///
+/// # Errors
+/// What [`crate::layout::ifc::assign::assign_ifc_roots`] returns: a paragraph
+/// over a limit of the inline engine, or one it refuses when it is required
+/// for every paragraph.
+pub(crate) fn apply_computed_to_style(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+) -> Result<(), LayoutError> {
     // Styles retain raw pointers to these payloads for Taffy's calc callback;
     // rebuild the arena for every cascade/layout pass.
     doc.calc_values.clear();
@@ -182,7 +190,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_grid(style, cv, &mut doc.layout_warnings);
     }
     refresh_order_modified_children(doc);
-    crate::layout::ifc::assign::assign_ifc_roots(doc, cascade);
+    crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;
     establish_minimal_line_boxes(doc, cascade);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
@@ -199,6 +207,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
     }
+    Ok(())
 }
 
 /// [`Direction`] → [`taffy::Direction`] mapping.

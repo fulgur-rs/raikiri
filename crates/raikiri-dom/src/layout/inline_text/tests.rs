@@ -3961,7 +3961,7 @@ fn anywhere_nbsp_adapter_keeps_inline_root_on_per_node_fallback() {
 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert!(doc.nodes[root].flags.contains(NodeFlags::IS_INLINE_ROOT));
 
     let mut fonts = FontContext::new();
@@ -4049,7 +4049,7 @@ fn word_space_transform_space_uses_wbr_own_computed_value() {
         let wbr = doc.append_element(Some(block), "wbr", Style::default(), override_style);
         doc.append_text(block, "b");
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
-        apply_computed_to_style(&mut doc, &cascade);
+        apply_computed_to_style(&mut doc, &cascade).expect("styles");
         let before = doc.nodes[wbr].style.size.width;
         preshape_text(
             &mut doc,
@@ -4104,7 +4104,7 @@ fn word_space_transform_ideographic_space_shapes_both_separator_kinds() {
         Some("word-space-transform:none"),
     );
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
-    apply_computed_to_style(&mut doc, &cascade);
+    apply_computed_to_style(&mut doc, &cascade).expect("styles");
     let disabled_width = doc.nodes[disabled_wbr].style.size.width;
     let mut fonts = FontContext::new();
     let mut layout_cx = LayoutContext::<()>::new();
@@ -4482,7 +4482,7 @@ fn nbsp_glue_keeps_image_group_together_on_overflow() {
 
     let rules = build_rule_tree(&doc);
     let cascade_result = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cascade_result);
+    apply_computed_to_style(&mut doc, &cascade_result).expect("styles");
     // cov:ignore: panic-message literal only executed on assertion failure.
     assert!(
         doc.nodes[block]
