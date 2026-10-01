@@ -627,6 +627,41 @@ pub(crate) enum MarginTextVerticalAlign {
     Bottom,
 }
 
+#[cfg(test)]
+thread_local! {
+    // Per thread, like the context itself: `cargo test` runs tests on several
+    // threads, and a process-wide counter would count their contexts too.
+    static PARLEY_CONTEXT_CREATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn parley_context_creations() -> usize {
+    PARLEY_CONTEXT_CREATIONS.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    static PARLEY_FONTS: std::cell::RefCell<Option<FontContext>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `body` with this thread's parley font context, created on first use.
+///
+/// System fonts are scanned when a context is created, so building one per
+/// call made every margin-box and generated-text measurement pay for the scan.
+/// The context registers no fonts and changes no generic family, so reusing it
+/// does not change what it resolves.
+fn with_parley_fonts<R>(body: impl FnOnce(&mut FontContext) -> R) -> R {
+    PARLEY_FONTS.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let fonts = slot.get_or_insert_with(|| {
+            #[cfg(test)]
+            PARLEY_CONTEXT_CREATIONS.with(|count| count.set(count.get() + 1));
+            FontContext::new()
+        });
+        body(fonts)
+    })
+}
+
 /// The engine's alignment for a parley alignment.
 fn standalone_align(alignment: Alignment) -> StandaloneAlign {
     match alignment {
@@ -685,15 +720,16 @@ pub(crate) fn draw_margin_text(
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(Some(width));
     layout.align(alignment, parley::AlignmentOptions::default());
 
@@ -759,15 +795,16 @@ pub(crate) fn measure_margin_text(
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(None);
     layout.width().max(0.0)
 }
@@ -803,15 +840,16 @@ pub(crate) fn measure_margin_text_advance(
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(None);
     layout
         .lines()
@@ -848,15 +886,16 @@ pub(crate) fn measure_margin_text_height(
     } else {
         16.0
     };
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
-    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
-    let mut layout = builder.build(content);
+    let mut layout = with_parley_fonts(|fonts| {
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(fonts, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+        builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        builder.build(content)
+    });
     layout.break_all_lines(None);
     layout.height().max(0.0)
 }
@@ -1286,9 +1325,9 @@ mod tests {
         AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationGeometry, DecorationPhase,
         DecorationSpec, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
         decoration_span, decoration_spans, decorations_for_element, draw_decoration_phase,
-        is_autospace_inline_box, measure_margin_text_advance, measure_margin_text_height,
-        paint_decoration_style, run_baseline_delta, standalone_run_baseline, synthetic_embolden,
-        text_align_last_delta,
+        is_autospace_inline_box, measure_margin_text, measure_margin_text_advance,
+        measure_margin_text_height, paint_decoration_style, run_baseline_delta,
+        standalone_run_baseline, synthetic_embolden, text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
     use kurbo::Vec2;
@@ -1815,5 +1854,30 @@ mod tests {
     fn synthetic_embolden_scales_and_caps_stroke_offset() {
         assert_eq!(synthetic_embolden(true, 10.0), Vec2::new(0.15125, 0.121));
         assert_eq!(synthetic_embolden(true, 100.0), Vec2::new(0.3, 0.3));
+    }
+
+    #[test]
+    fn the_parley_context_is_created_once_per_thread() {
+        // The counter is per thread (see `parley_context_creations`), so other
+        // tests running in parallel on other threads cannot disturb it.
+        let before = super::parley_context_creations();
+        for _ in 0..5 {
+            let _ = measure_margin_text(None, "abc", 16.0, "serif");
+            let _ = measure_margin_text_advance(None, "abc", 16.0, "serif");
+            let _ = measure_margin_text_height(None, "abc", 16.0, "serif");
+        }
+        // At most one creation (this thread may already have created it).
+        assert!(super::parley_context_creations() - before <= 1);
+    }
+
+    #[test]
+    fn a_reused_context_gives_the_same_measurements() {
+        let first = measure_margin_text(None, "abc def", 16.0, "serif");
+        let second = measure_margin_text(None, "abc def", 16.0, "serif");
+        assert_eq!(first, second);
+        assert_eq!(
+            measure_margin_text_advance(None, "abc ", 16.0, "serif"),
+            measure_margin_text_advance(None, "abc ", 16.0, "serif")
+        );
     }
 }
