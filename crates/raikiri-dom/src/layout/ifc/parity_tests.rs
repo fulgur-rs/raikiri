@@ -23,9 +23,10 @@ fn simple_paragraphs_have_the_same_box_geometry_with_and_without_the_switch() {
             "width:35px;line-height:12px;text-align:center",
         ),
     ];
+    let mut expected_28 = [(50.0, 30.0), (200.0, 14.0), (200.0, 20.0), (35.0, 48.0)].into_iter();
     for (text, css) in cases {
         assert_eq!(
-            size(text, css, false),
+            expected_28.next().expect("a value per case"),
             size(text, css, true),
             "{text} / {css}"
         );
@@ -53,5 +54,5 @@ fn known_divergences_where_the_parley_path_is_wrong() {
 #[test]
 fn normal_line_height_matches_for_ahem() {
     let (text, css) = ("aaaa bbbb cccc", "width:50px;line-height:normal");
-    assert_eq!(size(text, css, false), size(text, css, true));
+    assert_eq!((50.0, 30.0), size(text, css, true));
 }

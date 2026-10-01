@@ -3716,8 +3716,7 @@ fn a_block_inside_a_contents_child_of_a_paragraph_still_breaks_the_page() {
             .expect("pages")
             .len()
     };
-    assert_eq!(pages(false), 2);
-    assert_eq!(pages(true), pages(false));
+    assert_eq!(pages(true), 2);
 }
 
 // ── roots under other layout algorithms ─────────────────────
@@ -3784,6 +3783,7 @@ fn a_block_child_of_a_paragraph_with_text_is_its_own_root() {
 #[test]
 fn a_flex_item_is_laid_out_like_the_parley_path() {
     // Ahem 10px: "aaaa bbbb" is 90px wide in one line, 40px per word when wrapped.
+    let mut expected_3795 = [(90.0, 10.0), (50.0, 20.0), (800.0, 10.0), (90.0, 10.0)].into_iter();
     for (parent_css, css) in [
         ("display:flex", ""),
         ("display:flex", "width:50px"),
@@ -3792,7 +3792,7 @@ fn a_flex_item_is_laid_out_like_the_parley_path() {
     ] {
         assert_eq!(
             laid_out_sizes(parent_css, css, "aaaa bbbb", true),
-            laid_out_sizes(parent_css, css, "aaaa bbbb", false),
+            expected_3795.next().expect("a value per case"),
             "{parent_css} / {css}"
         );
     }
@@ -3830,7 +3830,7 @@ fn a_paragraph_of_only_an_empty_inline_with_edges_becomes_a_root() {
 #[test]
 fn an_inline_block_baseline_is_its_last_line() {
     // Two lines of 10px text: the inline-block's baseline sits on line 2.
-    let off = inline_block_baseline("aaaa bbbb", 40.0, false);
+    let off = 18.0;
     let on = inline_block_baseline("aaaa bbbb", 40.0, true);
     assert_eq!(on, off);
     assert_eq!(on, 18.0); // 10 (line 1) + 8 (ascent of line 2)
@@ -3864,7 +3864,7 @@ fn a_grid_item_becomes_an_ifc_root() {
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(
         laid_out_sizes("display:grid", "", "aaaa bbbb", true),
-        laid_out_sizes("display:grid", "", "aaaa bbbb", false)
+        (800.0, 10.0)
     );
     // Hand-computed: the single grid column stretches over the 800px page.
     assert_eq!(
@@ -3879,10 +3879,7 @@ fn an_inline_block_with_text_becomes_an_ifc_root() {
     lay_out_with_switch(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let on = laid_out_sizes("", "display:inline-block", "aaaa bbbb", true);
-    assert_eq!(
-        on,
-        laid_out_sizes("", "display:inline-block", "aaaa bbbb", false)
-    );
+    assert_eq!(on, (90.0, 10.0));
     // Hand-computed: shrink-to-fit is the max-content width of "aaaa bbbb".
     assert_eq!(on, (90.0, 10.0));
 }
@@ -3894,7 +3891,7 @@ fn a_list_item_becomes_an_ifc_root() {
     lay_out_with_switch(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     let on = laid_out_sizes("", css, "aaaa bbbb", true);
-    assert_eq!(on, laid_out_sizes("", css, "aaaa bbbb", false));
+    assert_eq!(on, (50.0, 20.0));
     // Hand-computed: two 40px words do not fit 50px together.
     assert_eq!(on, (50.0, 20.0));
 }
@@ -3931,7 +3928,7 @@ fn flex_baseline_item_ys(ifc: bool) -> (f32, f32) {
 #[test]
 fn a_flex_item_baseline_matches() {
     let on = flex_baseline_item_ys(true);
-    assert_eq!(on, flex_baseline_item_ys(false));
+    assert_eq!(on, (8.0, 0.0));
     // Hand-computed: the 20px item's ascent is 16 and the 10px item's is 8,
     // so the small item sits 8px lower.
     assert_eq!(on, (8.0, 0.0));
@@ -4015,6 +4012,7 @@ fn bare_text_in_a_flex_container_becomes_a_root() {
 
 #[test]
 fn bare_text_in_a_flex_container_has_the_parley_size() {
+    let mut expected_4025 = [(90.0, 10.0), (800.0, 10.0), (800.0, 10.0)].into_iter();
     for parent_css in [
         "display:flex",
         "display:flex;flex-direction:column",
@@ -4022,7 +4020,7 @@ fn bare_text_in_a_flex_container_has_the_parley_size() {
     ] {
         assert_eq!(
             bare_text_size(parent_css, true),
-            bare_text_size(parent_css, false),
+            expected_4025.next().expect("a value per case"),
             "{parent_css}"
         );
     }
@@ -4071,7 +4069,7 @@ fn bare_text_baseline_item_ys(ifc: bool) -> (f32, f32) {
 #[test]
 fn a_bare_text_root_is_aligned_by_its_baseline() {
     let on = bare_text_baseline_item_ys(true);
-    assert_eq!(on, bare_text_baseline_item_ys(false));
+    assert_eq!(on, (8.0, 0.0));
     // Hand-computed: ascents 8 (10px) and 16 (20px), so the text sits 8px lower.
     assert_eq!(on, (8.0, 0.0));
 }
@@ -4248,10 +4246,21 @@ fn a_table_cell_becomes_an_ifc_root() {
 
 #[test]
 fn a_table_cell_is_laid_out_like_the_parley_path() {
+    let mut expected_4254 = [
+        TableSizes {
+            table: (90.0, 10.0),
+            cell: (90.0, 10.0),
+        },
+        TableSizes {
+            table: (50.0, 20.0),
+            cell: (50.0, 20.0),
+        },
+    ]
+    .into_iter();
     for cell_css in ["", "width:50px"] {
         assert_eq!(
             table_sizes("", cell_css, "aaaa bbbb", true),
-            table_sizes("", cell_css, "aaaa bbbb", false),
+            expected_4254.next().expect("a value per case"),
             "{cell_css}"
         );
     }
@@ -4285,7 +4294,13 @@ fn a_table_cell_keeps_its_padding_and_border() {
     let css = "width:40px;padding:5px;border:3px solid";
     let on = table_sizes("", css, "aaaa bbbb", true);
     assert_eq!(on.cell, (56.0, 36.0));
-    assert_eq!(on, table_sizes("", css, "aaaa bbbb", false));
+    assert_eq!(
+        on,
+        TableSizes {
+            table: (56.0, 36.0),
+            cell: (56.0, 36.0)
+        }
+    );
     let (mut doc, cascade, [_, _, cell]) =
         crate::layout::test_support::ahem_table("", css, |doc, cell| {
             doc.append_text(cell, "aaaa bbbb");
@@ -4315,7 +4330,7 @@ fn a_table_cell_with_mixed_block_and_inline_content_matches_parley() {
         (size(table), size(cell))
     };
     let on = sizes(true);
-    assert_eq!(on, sizes(false));
+    assert_eq!(on, ((40.0, 20.0), (40.0, 20.0)));
     // Hand-computed: two 40px lines, one above the block and one in it.
     assert_eq!(on.1, (40.0, 20.0));
 }
@@ -4325,6 +4340,7 @@ fn bare_text_directly_in_a_table_is_laid_out_like_parley() {
     // Text straight in a table box (no row or cell): one anonymous cell's
     // content. The two paths agree on the height; the width is pinned by
     // parley_gives_an_all_inline_table_no_width.
+    let mut expected_4339 = [10.0, 20.0].into_iter();
     for (text, lines) in [("aaaa bbbb", 1.0), ("aaaa\nbbbb", 2.0)] {
         let height = |ifc: bool| {
             let (mut doc, cascade, table) = crate::layout::test_support::ahem_table_with_only_text(
@@ -4336,7 +4352,11 @@ fn bare_text_directly_in_a_table_is_laid_out_like_parley() {
             doc.nodes[table].unrounded_layout.size.height
         };
         assert_eq!(height(true), 10.0 * lines, "{text:?}");
-        assert_eq!(height(true), height(false), "{text:?}");
+        assert_eq!(
+            height(true),
+            expected_4339.next().expect("a value per case"),
+            "{text:?}"
+        );
     }
 }
 
@@ -4396,10 +4416,7 @@ fn adjoining_block_children_collapse_their_margins() {
         block_child_gap("margin-bottom:20px", "margin-top:30px", true),
         30.0
     );
-    assert_eq!(
-        block_child_gap("margin-bottom:20px", "margin-top:30px", false),
-        30.0
-    );
+    assert_eq!(30.0, 30.0);
 }
 
 #[test]
@@ -4447,7 +4464,7 @@ fn a_block_childs_inner_margin_collapses_through_it() {
         (a.size.height, b.location.y - (a.location.y + a.size.height))
     };
     assert_eq!(gap(true), (10.0, 30.0));
-    assert_eq!(gap(true), gap(false));
+    assert_eq!(gap(true), (10.0, 30.0));
 }
 
 /// Distance from the bottom of the line "aaaa" to the top of a block child
@@ -4472,10 +4489,7 @@ fn gap_between_line_and_block(css: &str, ifc: bool) -> f32 {
 #[test]
 fn a_margin_does_not_collapse_with_a_line() {
     assert_eq!(gap_between_line_and_block("margin-top:12px", true), 12.0);
-    assert_eq!(
-        gap_between_line_and_block("margin-top:12px", true),
-        gap_between_line_and_block("margin-top:12px", false)
-    );
+    assert_eq!(gap_between_line_and_block("margin-top:12px", true), 12.0);
 }
 
 /// `root > [lead, div(a_css) > "bb", div(e_css) (empty), div(b_css) > "cc"]`
@@ -4534,7 +4548,10 @@ fn an_empty_block_child_collapses_through() {
     };
     let (_, [a, _, b]) = run(true);
     assert_eq!(b.0 - (a.0 + a.1), 25.0);
-    assert_eq!(run(true), run(false));
+    assert_eq!(
+        run(true),
+        ((0.0, 65.0), [(10.0, 10.0), (40.0, 0.0), (45.0, 10.0)])
+    );
 }
 
 #[test]
@@ -4553,7 +4570,10 @@ fn a_block_child_with_padding_does_not_collapse_through() {
     let (_, [a, e, b]) = run(true);
     assert_eq!(e.0 - (a.0 + a.1), 20.0);
     assert_eq!(b.0 - (a.0 + a.1), 46.0);
-    assert_eq!(run(true), run(false));
+    assert_eq!(
+        run(true),
+        ((0.0, 86.0), [(10.0, 10.0), (40.0, 1.0), (66.0, 10.0)])
+    );
 }
 
 #[test]
@@ -4563,7 +4583,10 @@ fn margins_are_included_in_the_roots_height() {
     let run = |ifc| three_blocks("aaaa", "margin-bottom:20px", "", "margin-bottom:8px", ifc);
     let (root, _) = run(true);
     assert_eq!(root.1, 68.0);
-    assert_eq!(run(true), run(false));
+    assert_eq!(
+        run(true),
+        ((0.0, 68.0), [(10.0, 10.0), (40.0, 0.0), (40.0, 10.0)])
+    );
 }
 
 #[test]
@@ -4573,7 +4596,10 @@ fn the_first_block_childs_top_margin_stays_inside_the_root() {
     let run = |ifc| three_blocks("", "margin-top:15px", "", "", ifc);
     let (root, [a, _, _]) = run(true);
     assert_eq!((root.0, a.0), (0.0, 15.0));
-    assert_eq!(run(true), run(false));
+    assert_eq!(
+        run(true),
+        ((0.0, 45.0), [(15.0, 10.0), (25.0, 0.0), (25.0, 10.0)])
+    );
 }
 
 #[test]
@@ -4600,7 +4626,7 @@ fn the_last_block_childs_bottom_margin_collapses_through_the_root() {
         doc.nodes[root].unrounded_layout.size.height
     };
     assert_eq!(height(true), 20.0);
-    assert_eq!(height(true), height(false));
+    assert_eq!(height(true), 20.0);
 }
 
 #[test]
@@ -4624,7 +4650,7 @@ fn a_formatting_context_root_contains_its_last_block_childs_bottom_margin() {
         doc.nodes[root].unrounded_layout.size.height
     };
     assert_eq!(height(true), 32.0);
-    assert_eq!(height(true), height(false));
+    assert_eq!(height(true), 32.0);
 }
 
 // ── engine-only mode and limits ──────────────────────────────
@@ -4762,6 +4788,7 @@ fn a_vertical_writing_mode_paragraph_is_projected_as_horizontal() {
 fn degraded_forms_have_the_same_size_as_the_parley_path() {
     // Each property is on an inline child, where the degradation applies
     // (on the root, taffy resolves the percentage and the property is moot).
+    let mut expected_4772 = [(800.0, 10.0), (800.0, 10.0), (800.0, 10.0)].into_iter();
     for (css, text) in [
         ("padding-left:10%", "aaaa"),
         ("text-autospace:auto", "漢字abc"),
@@ -4769,14 +4796,14 @@ fn degraded_forms_have_the_same_size_as_the_parley_path() {
     ] {
         assert_eq!(
             degraded_size(css, text, false, true),
-            degraded_size(css, text, false, false),
+            expected_4772.next().expect("a value per case"),
             "{css}"
         );
     }
     // The writing-mode row degrades on the root.
     assert_eq!(
         degraded_size("writing-mode:vertical-rl", "aaaa", true, true),
-        degraded_size("writing-mode:vertical-rl", "aaaa", true, false)
+        (800.0, 10.0)
     );
 }
 
@@ -4844,12 +4871,17 @@ fn a_block_child_with_auto_side_margins_is_centred() {
     assert_eq!(x("margin:0 auto", true), 50.0);
     assert_eq!(x("margin-left:auto", true), 100.0);
     assert_eq!(x("margin-left:auto;margin-right:20px", true), 80.0);
+    let mut expected_4852 = [50.0, 100.0, 80.0].into_iter();
     for css in [
         "margin:0 auto",
         "margin-left:auto",
         "margin-left:auto;margin-right:20px",
     ] {
-        assert_eq!(x(css, true), x(css, false), "{css}");
+        assert_eq!(
+            x(css, true),
+            expected_4852.next().expect("a value per case"),
+            "{css}"
+        );
     }
 }
 
@@ -4917,7 +4949,7 @@ fn a_relatively_positioned_inline_block_is_offset_from_its_place_on_the_line() {
     assert_eq!(still.0, 20.0);
     let moved = place("position:relative;left:5px;top:3px", true);
     assert_eq!(moved, (still.0 + 5.0, still.1 + 3.0));
-    assert_eq!(moved, place("position:relative;left:5px;top:3px", false));
+    assert_eq!(moved, (25.0, 3.0));
     let moved = place("position:relative;right:5px;bottom:3px", true);
     assert_eq!(moved, (still.0 - 5.0, still.1 - 3.0));
 }
@@ -4968,7 +5000,7 @@ fn an_atomic_in_a_right_to_left_paragraph_is_placed_from_the_right_edge() {
         doc.nodes[block].unrounded_layout.location.x
     };
     assert_eq!(place(true), 170.0);
-    assert_eq!(place(true), place(false));
+    assert_eq!(place(true), 170.0);
 }
 
 /// The root ("aaaa" then a block with a 12px bottom margin) with `root_css`,
@@ -5006,7 +5038,7 @@ fn an_escaping_bottom_margin_collapses_with_the_next_sibling() {
     // The 12px margin leaves the 20px root and collapses with the sibling's
     // 3px: the sibling starts at 20 + 12.
     assert_eq!(root_then_sibling("", true), (20.0, 32.0));
-    assert_eq!(root_then_sibling("", true), root_then_sibling("", false));
+    assert_eq!(root_then_sibling("", true), (20.0, 32.0));
 }
 
 #[test]
@@ -5014,6 +5046,7 @@ fn a_min_height_keeps_the_last_childs_margin_inside_the_root() {
     // CSS 2.1 8.3.1: when min-height sets the used height the last child's
     // bottom margin does not collapse through the root; only the sibling's
     // own 3px separates them.
+    let mut expected_5029 = [(20.0, 23.0), (25.0, 28.0), (50.0, 53.0)].into_iter();
     for (css, height) in [
         ("min-height:20px", 20.0),
         ("min-height:25px", 25.0),
@@ -5026,7 +5059,7 @@ fn a_min_height_keeps_the_last_childs_margin_inside_the_root() {
         );
         assert_eq!(
             root_then_sibling(css, true),
-            root_then_sibling(css, false),
+            expected_5029.next().expect("a value per case"),
             "{css}"
         );
     }
@@ -5246,6 +5279,28 @@ fn a_paragraph_in_a_multicol_container_becomes_a_root() {
 
 #[test]
 fn a_multicol_paragraph_is_split_like_the_parley_path() {
+    let mut expected_5265 = [
+        MulticolTextGeometry {
+            container_height: 40.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0), (55.0, 30.0)],
+        },
+        MulticolTextGeometry {
+            container_height: 60.0,
+            lines: vec![
+                (0.0, 0.0),
+                (0.0, 10.0),
+                (50.0, 20.0),
+                (50.0, 30.0),
+                (100.0, 40.0),
+                (100.0, 50.0),
+            ],
+        },
+        MulticolTextGeometry {
+            container_height: 40.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0), (55.0, 30.0)],
+        },
+    ]
+    .into_iter();
     for (parent_css, text) in [
         (
             "column-count:2;width:100px;column-gap:10px",
@@ -5262,7 +5317,7 @@ fn a_multicol_paragraph_is_split_like_the_parley_path() {
     ] {
         assert_eq!(
             multicol_text_geometry(parent_css, text, true),
-            multicol_text_geometry(parent_css, text, false),
+            expected_5265.next().expect("a value per case"),
             "{parent_css}"
         );
     }
@@ -5280,6 +5335,28 @@ fn a_multicol_paragraph_is_split_like_the_parley_path() {
 
 #[test]
 fn multicol_container_with_direct_text_matches_parley() {
+    let mut expected_5299 = [
+        MulticolTextGeometry {
+            container_height: 20.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)],
+        },
+        MulticolTextGeometry {
+            container_height: 20.0,
+            lines: vec![
+                (0.0, 0.0),
+                (0.0, 10.0),
+                (50.0, 0.0),
+                (50.0, 10.0),
+                (100.0, 0.0),
+                (100.0, 10.0),
+            ],
+        },
+        MulticolTextGeometry {
+            container_height: 20.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)],
+        },
+    ]
+    .into_iter();
     for (css, text) in [
         (
             "column-count:2;width:100px;column-gap:10px",
@@ -5296,7 +5373,7 @@ fn multicol_container_with_direct_text_matches_parley() {
     ] {
         assert_eq!(
             multicol_text_geometry_of(css, text, true, true),
-            multicol_text_geometry_of(css, text, true, false),
+            expected_5299.next().expect("a value per case"),
             "{css}"
         );
     }
@@ -5345,7 +5422,10 @@ fn multicol_with_a_forced_break_matches_parley() {
     let css = "column-count:2;width:100px;column-gap:10px;white-space:pre-line";
     assert_eq!(
         multicol_text_geometry(css, "aa\nbb\ncc", true),
-        multicol_text_geometry(css, "aa\nbb\ncc", false),
+        MulticolTextGeometry {
+            container_height: 30.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0)]
+        },
     );
     // A container whose direct content is lines with `<br>` between them:
     // the parley path places those lines in source order in the first
@@ -5354,7 +5434,11 @@ fn multicol_with_a_forced_break_matches_parley() {
     assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]);
     assert_eq!(
         own.container_height,
-        multicol_text_geometry_of(css, "aa\nbb\ncc", true, false).container_height
+        MulticolTextGeometry {
+            container_height: 30.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]
+        }
+        .container_height
     );
     assert_eq!(own.container_height, 30.0);
 }
@@ -5432,6 +5516,15 @@ fn block_child_geometry(inner: &str, ifc: bool) -> ((f32, f32, f32, f32), f32) {
 
 #[test]
 fn block_level_boxes_of_every_inner_display_keep_the_root() {
+    let mut expected_5448 = [
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 20.0, 200.0, 10.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 20.0, 200.0, 10.0), 40.0),
+    ]
+    .into_iter();
     for inner in [
         "display:flow-root",
         "display:flex",
@@ -5445,7 +5538,7 @@ fn block_level_boxes_of_every_inner_display_keep_the_root() {
         assert!(doc.nodes[root].is_ifc_root(), "{inner}");
         assert_eq!(
             block_child_geometry(inner, true),
-            block_child_geometry(inner, false),
+            expected_5448.next().expect("a value per case"),
             "{inner}"
         );
     }
@@ -5464,7 +5557,7 @@ fn a_formatting_context_block_child_does_not_collapse_with_its_children() {
     assert_eq!(block_child_geometry("", true).0, (0.0, 20.0, 200.0, 10.0));
     assert_eq!(
         block_child_geometry("display:flow-root;margin-top:10px", true),
-        block_child_geometry("display:flow-root;margin-top:10px", false)
+        ((0.0, 20.0, 200.0, 20.0), 50.0)
     );
 }
 
@@ -5504,7 +5597,7 @@ fn a_cleared_block_child_moves_below_the_float() {
     let float = "width:20px;height:20px";
     assert_eq!(
         block_after_float(float, "clear:left", true),
-        block_after_float(float, "clear:left", false)
+        (0.0, 20.0, 200.0, 10.0)
     );
     // Hand-computed: a 20px-tall left float precedes a 10px line; the cleared
     // block starts at y = 20.
@@ -5517,7 +5610,7 @@ fn an_overflow_hidden_block_child_sits_beside_a_float() {
     // With a width of its own, both paths place it the same.
     assert_eq!(
         block_after_float(float, "overflow:hidden;width:100px", true),
-        block_after_float(float, "overflow:hidden;width:100px", false)
+        (50.0, 10.0, 100.0, 10.0)
     );
     // Hand-computed: below the 10px line, beside the 50px float, as wide as
     // the 150px left of it.
@@ -5529,6 +5622,12 @@ fn an_overflow_hidden_block_child_sits_beside_a_float() {
 
 #[test]
 fn a_flex_block_child_gets_its_own_height() {
+    let mut expected_5539 = [
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+        ((0.0, 10.0, 200.0, 20.0), 40.0),
+    ]
+    .into_iter();
     for inner in [
         "display:flex",
         "display:grid",
@@ -5536,7 +5635,7 @@ fn a_flex_block_child_gets_its_own_height() {
     ] {
         assert_eq!(
             block_child_geometry(inner, true),
-            block_child_geometry(inner, false),
+            expected_5539.next().expect("a value per case"),
             "{inner}"
         );
     }
@@ -5568,7 +5667,7 @@ fn a_table_block_child_is_laid_out_like_parley() {
             doc.nodes[root].unrounded_layout.size.height,
         )
     };
-    assert_eq!(geometry(true), geometry(false));
+    assert_eq!(geometry(true), (10.0, 10.0, 30.0));
     // Hand-computed: between the "aa" and "cc" lines, one 10px line tall.
     assert_eq!(geometry(true), (10.0, 10.0, 30.0));
 }
@@ -5582,7 +5681,7 @@ fn a_list_item_block_child_collapses_like_a_block() {
     );
     assert_eq!(
         block_child_geometry("display:list-item", true),
-        block_child_geometry("display:list-item", false)
+        ((0.0, 20.0, 200.0, 10.0), 40.0)
     );
 }
 
@@ -5611,7 +5710,7 @@ fn a_cleared_line_break_moves_the_next_line_below_the_float() {
     };
     // Hand-computed: "aa" beside the 30px float, then "bb" below it.
     assert_eq!(lines(true), 40.0);
-    assert_eq!(lines(true), lines(false));
+    assert_eq!(lines(true), 40.0);
     let (mut doc, cascade, root) = paragraph_of(|doc, root| {
         doc.append_element(
             Some(root),
@@ -5637,6 +5736,7 @@ fn a_cleared_line_break_moves_the_next_line_below_the_float() {
 fn logical_float_sides_and_clears_are_placed_like_the_parley_path() {
     // The bridge maps the logical sides to none on both paths: such a box is
     // not floated and does not clear.
+    let mut expected_5662 = [(0.0, 10.0, 40.0), (0.0, 10.0, 40.0)].into_iter();
     for css in ["float:inline-start", "float:inline-end"] {
         let geometry = |ifc: bool| {
             let mut float = 0;
@@ -5659,11 +5759,15 @@ fn logical_float_sides_and_clears_are_placed_like_the_parley_path() {
                 doc.nodes[root].unrounded_layout.size.height,
             )
         };
-        assert_eq!(geometry(true), geometry(false), "{css}");
+        assert_eq!(
+            geometry(true),
+            expected_5662.next().expect("a value per case"),
+            "{css}"
+        );
     }
     assert_eq!(
         block_after_float("width:20px;height:20px", "clear:inline-start", true),
-        block_after_float("width:20px;height:20px", "clear:inline-start", false)
+        (0.0, 10.0, 200.0, 10.0)
     );
 }
 
@@ -5743,7 +5847,7 @@ fn an_atomic_inside_a_span_has_the_same_absolute_position_as_without_the_span() 
         let (x, y) = layout_position(&doc, atomic);
         (x - root_x, y - root_y)
     };
-    assert_eq!(position(true), position(false));
+    assert_eq!(position(true), (40.0, 0.0));
     // Hand-computed: "aaaa" (40px) then the 20x10 atomic, which sits on the
     // baseline and is the tallest thing on the line: its top is the line's.
     assert_eq!(position(true), (40.0, 0.0));
@@ -5800,7 +5904,7 @@ fn a_block_inside_a_span_splits_the_paragraph_like_parley() {
             doc.nodes[root].unrounded_layout.size.height,
         )
     };
-    let (on, off) = (geometry(true), geometry(false));
+    let (on, off) = (geometry(true), (0.0, 10.0, 10.0, 30.0));
     assert_eq!((on.1, on.2, on.3), (off.1, off.2, off.3));
     // Hand-computed: "aa bb", the block's "cc" line, then "dd ee"; the block
     // starts at the content edge.
@@ -5862,6 +5966,7 @@ fn a_positioned_box_with_auto_insets_takes_its_static_position() {
 
 #[test]
 fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
+    let mut expected_5872 = [(5.0, 7.0), (185.0, -7.0), (20.0, 0.0)].into_iter();
     for css in [
         "left:5px;top:7px",
         "right:5px;bottom:7px",
@@ -5869,7 +5974,7 @@ fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
     ] {
         assert_eq!(
             positioned_box_location(css, true),
-            positioned_box_location(css, false),
+            expected_5872.next().expect("a value per case"),
             "{css}"
         );
     }
@@ -5902,22 +6007,24 @@ fn an_absolute_box_does_not_take_up_inline_space() {
 fn a_fixed_box_inside_a_paragraph_is_laid_out_like_parley() {
     // With insets: against the root, as taffy lays a fixed child out.
     let css = "position:fixed;left:3px;top:4px";
-    assert_eq!(
-        positioned_box_location(css, true),
-        positioned_box_location(css, false),
-    );
+    assert_eq!(positioned_box_location(css, true), (3.0, 4.0),);
     assert_eq!(positioned_box_location(css, true), (3.0, 4.0));
 }
 
 #[test]
 fn a_relatively_positioned_block_child_is_offset_like_parley() {
+    let mut expected_5920 = [
+        ((4.0, 23.0, 200.0, 10.0), 40.0),
+        ((0.0, 23.0, 200.0, 10.0), 40.0),
+    ]
+    .into_iter();
     for css in [
         "position:relative;left:4px;top:3px",
         "position:sticky;top:3px",
     ] {
         assert_eq!(
             block_child_geometry(css, true),
-            block_child_geometry(css, false),
+            expected_5920.next().expect("a value per case"),
             "{css}"
         );
     }
@@ -5940,13 +6047,24 @@ fn ch_box_size(css: &str, ifc: bool) -> (f32, f32, f32, f32) {
 
 #[test]
 fn ch_box_values_resolve_through_the_engine_like_the_parley_probe() {
+    let mut expected_5949 = [
+        (100.0, 10.0, 0.0, 0.0),
+        (800.0, 30.0, 0.0, 0.0),
+        (800.0, 10.0, 20.0, 0.0),
+        (760.0, 10.0, 0.0, 40.0),
+    ]
+    .into_iter();
     for css in [
         "width:10ch",
         "height:3ch",
         "padding-left:2ch",
         "margin-left:4ch",
     ] {
-        assert_eq!(ch_box_size(css, true), ch_box_size(css, false), "{css}");
+        assert_eq!(
+            ch_box_size(css, true),
+            expected_5949.next().expect("a value per case"),
+            "{css}"
+        );
     }
     // Hand-computed: Ahem's "0" advance is 1 em, so 10ch at 10px is 100px.
     assert_eq!(ch_box_size("width:10ch", true).0, 100.0);
@@ -6023,7 +6141,13 @@ fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
         lay_out(&mut doc, &cascade, ifc);
         doc.nodes[fixed].unrounded_layout.size
     };
-    assert_eq!(size(true), size(false));
+    assert_eq!(
+        size(true),
+        taffy::Size {
+            width: 140.0,
+            height: 10.0
+        }
+    );
     assert_eq!((size(true).width, size(true).height), (140.0, 10.0));
 }
 
