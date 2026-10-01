@@ -323,7 +323,10 @@ impl Document {
             {
                 return crate::layout::compute_multicol_layout(tree, node_id, inputs, block_ctx); // cov:ignore: exercised by ignored nested multicol WPT reftests
             }
-            let is_leaf = tree.nodes[idx].children.is_empty();
+            // An inline SVG root is replaced content: its children are drawn
+            // by the SVG renderer, not laid out, so it is measured as a leaf.
+            let is_leaf =
+                tree.nodes[idx].children.is_empty() || tree.nodes[idx].is_inline_svg_root();
             if tree.nodes[idx].is_inline_svg_root()
                 && tree.nodes[idx].attribute("width").is_none()
                 && tree.nodes[idx].attribute("height").is_none()

@@ -1641,7 +1641,6 @@ fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
 }
 
 #[test]
-#[ignore = "an inline <svg> with content of its own is laid out 0x0 as an atomic of a paragraph and not drawn"]
 fn html_inline_svg_stylesheet_opacity_groups_the_complete_root() {
     use raikiri_html::{ParseOptions, parse};
 
@@ -1679,7 +1678,6 @@ fn html_inline_svg_stylesheet_opacity_groups_the_complete_root() {
 }
 
 #[test]
-#[ignore = "an inline <svg> with content of its own is laid out 0x0 as an atomic of a paragraph and not drawn"]
 fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
     use raikiri_html::{ParseOptions, parse};
 
@@ -1716,7 +1714,6 @@ fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
 }
 
 #[test]
-#[ignore = "an inline <svg> with content of its own is laid out 0x0 as an atomic of a paragraph and not drawn"]
 fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
     use raikiri_html::{ParseOptions, parse};
 
@@ -1759,7 +1756,6 @@ fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
 }
 
 #[test]
-#[ignore = "an inline <svg> with content of its own is laid out 0x0 as an atomic of a paragraph and not drawn"]
 fn html_inline_svg_host_transparent_background_suppresses_source_background() {
     use raikiri_html::{ParseOptions, parse};
 

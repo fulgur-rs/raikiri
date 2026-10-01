@@ -1038,6 +1038,50 @@ fn ratio_only_inline_svg_uses_the_containing_width() {
 }
 
 #[test]
+fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
+    // An <svg> root is a replaced element whatever its content: its children
+    // are drawn by the SVG renderer, and its box takes the size its width and
+    // height attributes give (here 10x10), like an <svg> without children.
+    use raikiri_style::{build_rule_tree, cascade};
+    for (svg_style, with_content, expected) in [
+        ("display:inline", true, (10.0, 10.0)),
+        ("display:inline", false, (10.0, 10.0)),
+        // An authored width scales the height by the 1:1 ratio (CSS 2.1 10.6.2).
+        ("display:inline;width:30px", true, (30.0, 30.0)),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let paragraph =
+            doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        doc.append_text(paragraph, "aa");
+        let svg = doc.append_element(Some(paragraph), "svg", Style::default(), Some(svg_style));
+        doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+        doc.set_element_attributes(
+            svg,
+            vec![
+                ("width".into(), "10".into()),
+                ("height".into(), "10".into()),
+            ],
+        );
+        if with_content {
+            let rect = doc.append_element(Some(svg), "rect", Style::default(), None::<&str>);
+            doc.set_element_namespace(rect, Some("http://www.w3.org/2000/svg".into()));
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
+        let size = doc.nodes[svg].unrounded_layout.size;
+        assert_eq!(
+            (size.width, size.height),
+            expected,
+            "{svg_style} content:{with_content}"
+        );
+    }
+}
+
+#[test]
 fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::{AvailableSpace, LayoutInput, LayoutPartialTree, NodeId, Size, SizingMode};
