@@ -115,25 +115,49 @@ fn a_generic_keyword_resolves_in_the_document_layer() {
 }
 
 #[test]
-fn the_engine_declines_what_it_cannot_draw() {
+fn the_engine_declines_only_empty_text_and_unusable_sizes() {
     let doc = enabled();
     let declined = |text: &str, size: f32| {
         doc.shape_standalone_text(text, &ahem(size), None, StandaloneAlign::Start)
             .is_none()
     };
     assert!(declined("", 10.0), "empty text");
-    assert!(declined("ab \u{5d0}", 10.0), "a right-to-left character");
     assert!(declined("ab", 0.0), "no size");
     assert!(declined("ab", f32::NAN), "a non-finite size");
+    assert!(!declined("ab \u{5d0}", 10.0), "a right-to-left character");
 }
 
 #[test]
-fn without_the_switch_there_is_no_engine() {
+fn a_right_to_left_run_keeps_its_glyphs_inside_its_line() {
+    // Ahem has no Hebrew glyphs: the two letters take its 1em notdef, so the
+    // line is five 10px glyphs wide whatever order the letters are drawn in.
+    let doc = enabled();
+    let text = shape(&doc, "ab \u{5d0}\u{5d1}", None);
+    assert_eq!(text.width(), 50.0);
+    let mut xs: Vec<f32> = text.lines()[0]
+        .fragments()
+        .filter_map(|fragment| match fragment {
+            shodo::Fragment::GlyphRun(run) => Some(
+                (0..run.glyphs().count())
+                    .filter_map(|index| run.glyph_origin(index).map(|(x, _)| x))
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    xs.sort_by(f32::total_cmp);
+    assert_eq!(xs, vec![0.0, 10.0, 20.0, 30.0, 40.0]);
+}
+
+#[test]
+fn a_document_that_was_never_laid_out_shapes_with_the_installed_fonts() {
     let doc = Document::new();
-    assert!(
-        doc.shape_standalone_text("abc", &ahem(10.0), None, StandaloneAlign::Start)
-            .is_none()
-    );
+    let text = doc
+        .shape_standalone_text("abc", &ahem(10.0), None, StandaloneAlign::Start)
+        .expect("the installed fonts lay the run out");
+    assert_eq!(text.lines().len(), 1);
+    assert!(text.width() > 0.0);
 }
 
 #[test]
@@ -198,7 +222,7 @@ fn eligibility_matches_what_shaping_accepts() {
     for (text, size, expected) in [
         ("abc", 10.0, true),
         ("", 10.0, false),
-        ("ab \u{5d0}", 10.0, false),
+        ("ab \u{5d0}", 10.0, true),
         ("abc", 0.0, false),
         ("abc", -1.0, false),
         ("abc", f32::NAN, false),
@@ -216,7 +240,7 @@ fn eligibility_matches_what_shaping_accepts() {
             "{text:?} {size}"
         );
     }
-    assert!(!Document::new().standalone_text_eligible("abc", 10.0));
+    assert!(Document::new().standalone_text_eligible("abc", 10.0));
 }
 
 /// Byte length of the font of each glyph run on the first line: tells the

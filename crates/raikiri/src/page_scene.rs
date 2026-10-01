@@ -206,11 +206,11 @@ impl PageScene {
     ///
     /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) have their
     /// minimal fields populated, but paint has not switched to consuming them.
-    /// Glyph runs (their actual shapes and positions) still live in
-    /// `parley::Layout`, outside the field-type policy for [`crate::entries`]
-    /// (which excludes raikiri-style/parley types). The source of truth for
-    /// paint therefore remains post-layout `Node.text_layout` in the DOM arena,
-    /// which [`raikiri_paint::paint_single_page`] consumes by DFS. To maintain
+    /// Glyph runs (their actual shapes and positions) still live on the
+    /// paragraph roots of the DOM arena as shodo lines, outside the field-type
+    /// policy for [`crate::entries`] (which excludes raikiri-style and shodo
+    /// types). The source of truth for paint therefore remains the post-layout
+    /// arena, which [`raikiri_paint::paint_single_page`] consumes by DFS. To maintain
     /// byte-identical output, rasterize still passes `dom` and `cascade` through
     /// to the existing paint pipeline verbatim. Reworking `paint_single_page`
     /// to consume `PageDrawables` (achieving actual snapshot semantics and
@@ -244,7 +244,7 @@ impl PageScene {
     ///   another document.
     ///
     /// Passing a pre-layout Document produces a PNG with missing glyphs because
-    /// `Node.text_layout` is empty. Behavior is undefined; callers must wait
+    /// no paragraph has lines yet. Behavior is undefined; callers must wait
     /// for `layout_single_page` to complete.
     #[must_use]
     pub fn rasterize(&self, dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> Vec<u8> {

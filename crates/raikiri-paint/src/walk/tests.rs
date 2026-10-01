@@ -1,7 +1,7 @@
 use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
-use raikiri_dom::Document;
+use raikiri_dom::{Document, StandaloneAlign};
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
@@ -1445,7 +1445,7 @@ fn fixed_margin_spec() -> MarginBoxPaintSpec {
         text_color: Color::from_rgba8(0, 0, 0, 255),
         font_size: 16.0,
         font_family: String::new(),
-        alignment: parley::Alignment::Start,
+        alignment: StandaloneAlign::Start,
         vertical_align: text::MarginTextVerticalAlign::Top,
         vertical_writing: false,
     }
@@ -1460,7 +1460,7 @@ fn paint_margin_row(
     let mut warnings = Vec::new();
     paint_horizontal_margin_boxes(
         &mut scene,
-        None,
+        &Document::new(),
         specs,
         top,
         PageBox::A4.width,
@@ -3112,7 +3112,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut warnings = Vec::new();
     paint_margin_box(
         &mut scene,
-        None,
+        &Document::new(),
         &spec,
         0.0,
         0.0,
@@ -3130,7 +3130,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut unsupported_warnings = Vec::new();
     paint_margin_box(
         &mut unsupported_scene,
-        None,
+        &Document::new(),
         &unsupported,
         0.0,
         0.0,
@@ -3378,12 +3378,12 @@ fn a_margin_box_width_follows_the_document_font() {
     spec.content = "abc".to_owned();
     spec.font_family = "serif".to_owned();
     spec.font_size = 10.0;
-    assert_eq!(margin_box_text_width(Some(&doc), &spec), 30.0);
+    assert_eq!(margin_box_text_width(&doc, &spec), 30.0);
     assert_eq!(doc.standalone_text_calls(), 1);
-    // A vertical box is measured by the old path, never by the engine.
+    // A vertical box is measured by the engine too, as horizontal text.
     spec.vertical_writing = true;
-    let _ = margin_box_text_width(Some(&doc), &spec);
-    assert_eq!(doc.standalone_text_calls(), 1);
+    assert_eq!(margin_box_text_width(&doc, &spec), 30.0);
+    assert_eq!(doc.standalone_text_calls(), 2);
 }
 
 struct NoImages;
@@ -3459,58 +3459,20 @@ fn margin_boxes_are_measured_and_drawn_by_the_engine() {
 }
 
 #[test]
-fn a_vertical_writing_margin_box_stays_on_the_parley_path() {
+fn a_vertical_writing_margin_box_is_drawn_by_the_engine_like_a_horizontal_one() {
+    // Vertical writing is laid out as horizontal text: the vertical box is
+    // shaped by the engine and its glyphs land where the horizontal box's do.
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "abc".to_owned();
     spec.font_family = "Ahem".to_owned();
     spec.font_size = 10.0;
-    let draw = |spec: &MarginBoxPaintSpec| {
+    let glyphs = |spec: &MarginBoxPaintSpec| -> Vec<(f64, f64)> {
         let mut scene = Scene::new();
         paint_margin_box(
             &mut scene,
-            Some(&doc),
+            &doc,
             spec,
-            0.0,
-            0.0,
-            200.0,
-            40.0,
-            None,
-            &mut Vec::new(),
-        );
-        scene
-    };
-    // Control: the same box in horizontal writing is drawn by the engine, once.
-    let _ = draw(&spec);
-    assert_eq!(doc.standalone_text_calls(), 1);
-    spec.vertical_writing = true;
-    let scene = draw(&spec);
-    assert_eq!(doc.standalone_text_calls(), 1, "no new engine result");
-    assert!(
-        scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
-        "parley still draws it"
-    );
-}
-
-#[test]
-fn a_vertical_ahem_margin_box_keeps_the_baseline_correction_of_the_parley_path() {
-    // The vertical box is drawn by parley even when the document has the
-    // engine, so it keeps the correction that path applies to Ahem.
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc".to_owned();
-    spec.font_family = "Ahem".to_owned();
-    spec.font_size = 10.0;
-    spec.vertical_writing = true;
-    let glyph_ys = |document: Option<&Document>| -> Vec<f64> {
-        let mut scene = Scene::new();
-        paint_margin_box(
-            &mut scene,
-            document,
-            &spec,
             0.0,
             0.0,
             200.0,
@@ -3522,14 +3484,19 @@ fn a_vertical_ahem_margin_box_keeps_the_baseline_correction_of_the_parley_path()
             .commands
             .iter()
             .filter_map(|command| match command {
-                RenderCommand::GlyphRun(run) => Some(run.transform.translation().y),
+                RenderCommand::GlyphRun(run) => Some(run.transform.translation()),
                 _ => None,
             })
+            .map(|origin| (origin.x, origin.y))
             .collect()
     };
-    let without = glyph_ys(None);
-    assert!(!without.is_empty());
-    assert_eq!(glyph_ys(Some(&doc)), without);
+    let horizontal = glyphs(&spec);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    spec.vertical_writing = true;
+    let vertical = glyphs(&spec);
+    assert_eq!(doc.standalone_text_calls(), 2, "the engine drew it");
+    assert!(!vertical.is_empty());
+    assert_eq!(vertical, horizontal);
 }
 
 #[test]
@@ -3566,7 +3533,6 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
         &mut parsed.dom,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
     )
     .unwrap();
     let mut scene = Scene::new();
@@ -3629,7 +3595,6 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
         &mut parsed.dom,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
     )
     .unwrap();
     let mut scene = Scene::new();
@@ -3675,7 +3640,6 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
         &mut parsed.dom,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
     )
     .unwrap();
     let mut scene = Scene::new();
@@ -3717,7 +3681,6 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
         &mut parsed.dom,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
     )
     .unwrap();
     let mut scene = Scene::new();
@@ -3764,7 +3727,6 @@ fn canvas_object_fit_variants_all_paint() {
             &mut parsed.dom,
             &cascade,
             PageBox::A4,
-            parley::FontContext::new(),
         )
         .unwrap();
         let mut scene = Scene::new();
@@ -3812,7 +3774,6 @@ fn canvas_hidden_overflow_clips_to_content_box() {
         &mut parsed.dom,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
     )
     .unwrap();
     let mut scene = Scene::new();
@@ -3843,7 +3804,6 @@ fn canvas_zero_bitmap_size_paints_nothing() {
         &mut parsed.dom,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
     )
     .unwrap();
     let mut scene = Scene::new();
@@ -4214,7 +4174,7 @@ const FONT_DIR: &str = concat!(
 );
 
 /// Lay out and record a document with generated content, with the inline
-/// engine on or off. Both the parley context and the engine's layer hold Ahem.
+/// engine on or off. The engine's layer holds Ahem.
 fn generated_scene(
     css: &str,
     build: impl FnOnce(&mut Document, usize),
@@ -4324,7 +4284,7 @@ fn list_fixture_with_engine() -> (Document, CascadeResult, usize) {
 #[test]
 fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
     // The marker text is "1. " (three glyphs, the last one a space). Its width
-    // is 20 (the trailing space is left out, as parley does), so an outside
+    // is 20 (the trailing space is left out of the width), so an outside
     // marker starts at 0 + 0 - 20 - 4 = -24: glyphs at -24, -14 and -4.
     let (document, cascade, first) = list_fixture_with_engine();
     let mut scene = Scene::new();

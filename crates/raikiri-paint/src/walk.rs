@@ -2,27 +2,12 @@
 //!
 //! `paint_document` walks with an iterative `PaintFrame` stack, following
 //! the pattern of cascade / find_body and avoiding stack overflow for deep DOMs.
-//! It handles each kind inline: Element pushes children, Text calls
-//! draw_text_node, and display:none skips a subtree. A matching `PopClip`
-//! frame closes each overflow clip after the subtree.
-//! See the `vertical_align_shift_px` docs for `parent_font_size` / `shift_y`.
-//!
-//! Once inline formatting context is implemented, the Element branch will
-//! walk its own inline layout instead of pushing children; the Text branch
-//! will become unreachable (the current text_layout choice is provisional).
-//!
-//! **This missing inline formatting context also limits how
-//! `vertical_align_shift_px` applies shifts.** Currently, even elements with
-//! `display: inline` are stacked by taffy as separate lines, like blocks
-//! (`bridge_display` maps `DisplayValue::Inline` to `taffy::Display::Block`).
-//! Thus "H", "2", and "O" in `<p>H<sub>2</sub>O</p>` still paint on three
-//! lines: the `vertical_align_shift_px` offset moves `2` slightly within
-//! its separate line, not back onto the same line as `H` and `O`.
-//! Painting adds this offset **after** taffy has fixed box positions; taffy
-//! does not inspect `vertical_align`. The shift does not affect box-model
-//! calculations and is not clipped anywhere. For example, near the top
-//! of a page, `vertical-align: super` may paint into the margin area.
-//! This remains a known rendering limitation.
+//! It handles each kind inline: an Element pushes its children (a paragraph
+//! root draws its lines, then pushes the boxes of its paragraph), a Text node
+//! that is a paragraph of its own draws its lines, and display:none skips a
+//! subtree. A matching `PopClip` frame closes each overflow clip after the
+//! subtree. See the `vertical_align_shift_px` docs for `parent_font_size` /
+//! `shift_y`.
 //!
 //! find_body duplicates raikiri-dom::layout::find_body, but keeping this
 //! five-line helper here is cleaner than exporting it across crate boundaries.
@@ -31,7 +16,7 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
 use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
-use raikiri_dom::{CounterSnapshot, Document};
+use raikiri_dom::{CounterSnapshot, Document, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
     ColumnCountValue, ConicGradient, ContentComponent, CounterStyle, CssColor, CssPosition,
@@ -801,7 +786,7 @@ struct MarginBoxPaintSpec {
     text_color: Color,
     font_size: f32,
     font_family: String,
-    alignment: parley::Alignment,
+    alignment: StandaloneAlign,
     vertical_align: text::MarginTextVerticalAlign,
     /// Whether authored margin-box writing-mode makes newline-separated
     /// content advance across vertical columns rather than down lines.
@@ -1570,7 +1555,7 @@ fn generated_pseudo_text_advance(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_advance(Some(document), &content, computed.font_size.px(), &family)
+    text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family)
 }
 
 fn generated_flow_height(
@@ -1687,7 +1672,7 @@ fn generated_pseudo_text_height(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_height(Some(document), &content, computed.font_size.px(), &family)
+    text::measure_margin_text_height(document, &content, computed.font_size.px(), &family)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1719,14 +1704,10 @@ fn paint_generated_pseudo(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    let advance = text::measure_margin_text_advance(
-        Some(document),
-        &content,
-        computed.font_size.px(),
-        &family,
-    );
+    let advance =
+        text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family);
     text::draw_margin_text(
-        Some(document),
+        document,
         scene,
         &content,
         x,
@@ -1736,7 +1717,7 @@ fn paint_generated_pseudo(
         css_color(computed.color),
         computed.font_size.px(),
         &family,
-        parley::Alignment::Start,
+        StandaloneAlign::Start,
         text::MarginTextVerticalAlign::Top,
     );
     advance
@@ -1836,7 +1817,7 @@ fn paint_list_marker_with_snapshots(
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
     let marker_width =
-        text::measure_margin_text(Some(document), &content, computed.font_size.px(), &family);
+        text::measure_margin_text(document, &content, computed.font_size.px(), &family);
     if marker_width <= 0.0 {
         return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
     }
@@ -1854,7 +1835,7 @@ fn paint_list_marker_with_snapshots(
         _ => paint_x + padding_left - marker_width - MARKER_GAP,
     };
     text::draw_margin_text(
-        Some(document),
+        document,
         scene,
         &content,
         marker_x, // cov:ignore: argument mapping has no executable location
@@ -1864,7 +1845,7 @@ fn paint_list_marker_with_snapshots(
         css_color(computed.color),
         computed.font_size.px(),
         &family,
-        parley::Alignment::Start,
+        StandaloneAlign::Start,
         text::MarginTextVerticalAlign::Top, // cov:ignore: argument mapping has no executable location
     );
 }
@@ -2201,10 +2182,10 @@ fn margin_box_spec(
         })
         .or_else(|| root_computed(document, cascade).map(|computed| computed.text_align));
     let alignment = match inherited_text_align {
-        Some(TextAlign::Right | TextAlign::End) => parley::Alignment::Right,
-        Some(TextAlign::Center) => parley::Alignment::Center,
-        Some(TextAlign::Left) => parley::Alignment::Left,
-        _ => parley::Alignment::Start,
+        Some(TextAlign::Right | TextAlign::End) => StandaloneAlign::Right,
+        Some(TextAlign::Center) => StandaloneAlign::Center,
+        Some(TextAlign::Left) => StandaloneAlign::Left,
+        _ => StandaloneAlign::Start,
     };
     // `top`/`bottom` are margin-box-specific keywords and are not yet part of
     // the element `vertical-align` grammar.  Treat the supported explicit
@@ -2266,7 +2247,7 @@ fn margin_box_spec(
 #[allow(clippy::too_many_arguments)]
 fn paint_margin_box(
     scene: &mut impl PaintScene,
-    document: Option<&Document>,
+    document: &Document,
     spec: &MarginBoxPaintSpec,
     x: f32,
     y: f32,
@@ -2390,26 +2371,14 @@ fn paint_margin_box(
         let border_top = spec.border_top.map(|(width, _)| width).unwrap_or(0.0);
         let border_bottom = spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
         let content_x = x + border_left + spec.padding[3];
-        // The correction aligns the parley path's fallback fonts with Ahem;
-        // the engine shapes with the document's Ahem itself.
-        let ahem_baseline_adjust = if !margin_box_uses_engine(document, spec)
-            && spec
-                .font_family
-                .split(',')
-                .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
-        {
-            -1.0
-        } else {
-            0.0
-        };
-        let content_y = y + border_top + spec.padding[0] + ahem_baseline_adjust;
+        let content_y = y + border_top + spec.padding[0];
         let content = if spec.vertical_writing {
             spec.content.replace('\n', "")
         } else {
             spec.content.clone()
         };
         text::draw_margin_text(
-            margin_box_document(document, spec),
+            document,
             scene,
             &content,
             content_x,
@@ -2429,7 +2398,7 @@ fn paint_margin_box(
             + spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
             + spec.padding[3]
             + text::measure_margin_text(
-                margin_box_document(document, spec),
+                document,
                 &spec.content,
                 spec.font_size,
                 &spec.font_family,
@@ -2504,59 +2473,14 @@ fn margin_box_margin_height(spec: &MarginBoxPaintSpec) -> f32 {
     spec.margin[0] + spec.margin[2]
 }
 
-/// `document` unless the box is vertical (the engine has no writing-mode
-/// mapping), in which case `None`: both its measurement and its drawing then
-/// stay on the parley path.
-fn margin_box_document<'a>(
-    document: Option<&'a Document>,
-    spec: &MarginBoxPaintSpec,
-) -> Option<&'a Document> {
-    if spec.vertical_writing {
-        None
-    } else {
-        document
-    }
-}
-
-/// Whether the inline engine will shape this margin box's text. The Ahem
-/// baseline correction exists for the parley path's fallback fonts only.
-fn margin_box_uses_engine(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> bool {
-    margin_box_document(document, spec).is_some_and(|document| {
-        document.standalone_text_eligible(
-            &spec.content,
-            crate::standalone_text::usable_size(spec.font_size),
-        )
-    })
-}
-
-fn margin_box_text_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
-    let measured = text::measure_margin_text(
-        margin_box_document(document, spec),
-        &spec.content,
-        spec.font_size,
-        &spec.font_family,
-    );
-    // The bundled WPT Ahem face is loaded by the document shaping pass, but
-    // the small intrinsic-measure helper owns a separate font context.  Use
-    // Ahem's one-em-per-glyph advance as a deterministic fallback there.
-    let ahem_width = if spec
-        .font_family
-        .split(',')
-        .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
-    {
-        spec.content
-            .split('\n')
-            .map(|line| line.chars().count() as f32 * spec.font_size.max(0.0))
-            .fold(0.0, f32::max)
-    } else {
-        0.0
-    };
+fn margin_box_text_width(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
+    let measured =
+        text::measure_margin_text(document, &spec.content, spec.font_size, &spec.font_family);
     let non_collapsible_content = spec
         .content
         .chars()
         .any(|character| !character.is_whitespace() || character == '\u{a0}');
     measured
-        .max(ahem_width)
         .max(if non_collapsible_content {
             spec.font_size.max(0.0)
         } else {
@@ -2565,7 +2489,7 @@ fn margin_box_text_width(document: Option<&Document>, spec: &MarginBoxPaintSpec)
         .max(0.0)
 }
 
-fn margin_box_intrinsic_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
+fn margin_box_intrinsic_width(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
     (margin_box_text_width(document, spec)
         + margin_box_border_width(spec)
         + margin_box_padding_width(spec)
@@ -2617,7 +2541,7 @@ fn margin_box_outer_height(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn paint_horizontal_margin_boxes(
     scene: &mut impl PaintScene,
-    document: Option<&Document>,
+    document: &Document,
     specs: &[MarginBoxPaintSpec],
     top: bool,
     page_width: f32,
@@ -2778,7 +2702,7 @@ fn paint_horizontal_margin_boxes(
 #[allow(clippy::too_many_arguments)]
 fn paint_vertical_margin_boxes(
     scene: &mut impl PaintScene,
-    document: Option<&Document>,
+    document: &Document,
     specs: &[MarginBoxPaintSpec],
     left: bool,
     page_width: f32,
@@ -3025,7 +2949,7 @@ pub(crate) fn paint_page_margin_boxes(
 
     paint_horizontal_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         true,
         page_box.width,
@@ -3036,7 +2960,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_horizontal_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         false,
         page_box.width,
@@ -3047,7 +2971,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         true,
         page_box.width,
@@ -3058,7 +2982,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         false,
         page_box.width,
@@ -3119,7 +3043,7 @@ pub(crate) fn paint_page_margin_boxes(
         };
         paint_margin_box(
             scene,
-            Some(document),
+            document,
             spec,
             x,
             y,
@@ -4362,7 +4286,7 @@ fn paint_document_impl(
                         .map(|family| family.as_str().to_string())
                         .unwrap_or_else(|| "serif".to_string());
                     let collapsed_space = text::measure_margin_text_advance(
-                        Some(document),
+                        document,
                         " ",
                         cv.font_size.px(),
                         &family,

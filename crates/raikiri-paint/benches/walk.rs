@@ -38,9 +38,8 @@
 //! sink `crate::tests` already uses elsewhere in this crate, chosen over
 //! `anyrender::NullScenePainter` because `NullScenePainter`'s `draw_glyphs`
 //! ignores its `glyphs` parameter without iterating it, which would silently
-//! skip the per-glyph `parley::Glyph → anyrender::Glyph` conversion
-//! (`crate::text::draw_text_node`'s `.map(to_anyrender_glyph)`) that a real
-//! backend always drives to completion.
+//! skip the per-glyph conversion into `anyrender::Glyph` that a real backend
+//! always drives to completion.
 //!
 //! # Workload shape
 //!

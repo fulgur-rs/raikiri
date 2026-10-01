@@ -143,7 +143,7 @@ fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
     assert!(body_entry.visible);
 
     // At least one paragraph entry must have shaped lines (the "Hi" text
-    // node) — proves text_layout() is actually read, not defaulted.
+    // node) — proves the paragraph's lines are actually read, not defaulted.
     assert!(
         scene
             .drawables
@@ -597,7 +597,7 @@ fn build_page_scene_for_page_splits_tall_content_across_pages() {
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4)
         .expect("layout Ok");
 
     // Derive page 1's origin from the same public page-geometry API the
@@ -684,7 +684,7 @@ fn build_page_scene_for_page_named_attaches_name_and_landscape() {
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
     let page_box = PageBox::from_page_size(cascade.page.size());
-    raikiri_dom::layout_single_page(&mut dom, &cascade, page_box, FontContext::new())
+    raikiri_dom::layout_single_page(&mut dom, &cascade, page_box)
         .expect("layout Ok");
     let scene = build_page_scene_for_page_named(
         &dom,

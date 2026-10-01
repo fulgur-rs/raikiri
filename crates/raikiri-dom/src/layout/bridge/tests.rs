@@ -891,7 +891,7 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(style.as_str()));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("apply Ok");
         doc.nodes[body].style.box_sizing
     }
     assert_eq!(
@@ -922,7 +922,7 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
     );
     let var_rules = build_rule_tree(&var_doc);
     let var_cr = cascade(&var_doc, &var_rules).expect("cascade Ok");
-    apply_computed_to_style(&mut var_doc, &var_cr);
+    apply_computed_to_style(&mut var_doc, &var_cr).expect("apply Ok");
 }
 
 #[test]

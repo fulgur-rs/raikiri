@@ -275,24 +275,6 @@ fn physical_clear(clear: ClearValue) -> Option<taffy::Clear> {
     }
 }
 
-/// Whether `text` holds a character of a right-to-left script or an explicit
-/// bidi control.
-pub(crate) fn has_rtl_char(text: &str) -> bool {
-    text.chars().any(|c| {
-        matches!(
-            c as u32,
-            0x0590..=0x08FF
-                | 0xFB1D..=0xFDFF
-                | 0xFE70..=0xFEFF
-                | 0x10800..=0x10FFF
-                | 0x1E800..=0x1EFFF
-                | 0x200E..=0x200F
-                | 0x202A..=0x202E
-                | 0x2066..=0x2069
-        )
-    })
-}
-
 enum Step {
     /// A node to project.
     Enter(usize),

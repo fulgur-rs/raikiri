@@ -135,7 +135,8 @@ fn cumulative_offset(
 /// Draw the glyph runs of an ifc root.
 ///
 /// Per line, underlines and overlines of every run come first, then the
-/// glyphs, then the line-throughs, which is the order the parley path uses.
+/// glyphs, then the line-throughs (CSS Text Decoration 3 §3: underlines and
+/// overlines below the text, line-throughs over it).
 pub(crate) fn draw_ifc_lines(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -372,7 +373,7 @@ struct ShadowRun<'a, 'b> {
 /// CSS Text Decoration 3 §4 paints the shadows below the text, the first one
 /// on top, so the list is drawn in reverse. A blurred shadow is drawn inside a
 /// filter layer clipped to the lines grown by three times the blur radius,
-/// which is how the parley path isolates the blur.
+/// which isolates the blur from the rest of the page.
 fn draw_shadows(
     scene: &mut impl PaintScene,
     run: &ShadowRun<'_, '_>,

@@ -18,7 +18,7 @@
 //!
 //! # Field-type policy
 //!
-//! Field types avoid **direct raikiri-style, taffy, or parley types**, using
+//! Field types avoid **direct raikiri-style, taffy, or shodo types**, using
 //! only `f32`, `bool`, `u8` tuples, `Option<String>`, [`NodeId`], and
 //! `Vec<NodeId>`. This avoids redoing the work if a future crate-topology
 //! decision moves PageDrawables/entries to raikiri-traits. Raikiri-traits
@@ -124,20 +124,19 @@ impl Default for BlockEntry {
 ///
 /// Use Fulgur's `ParagraphEntry` shape (drawables.rs:183-191: `lines`,
 /// `opacity`, `visible`, `id`) but select minimal fields compatible with
-/// raikiri's current text model. There is no inline formatting context:
-/// [`raikiri_dom::Node::text_layout`] belongs to the Text node itself (see
-/// `crates/raikiri-paint/src/walk.rs` module docs).
+/// raikiri's current text model: a text node's lines belong to the paragraph
+/// that lays it out ([`raikiri_dom::Document::ifc_text_lines`]).
 ///
 /// `build_page_scene` (crate::page_scene) constructs this for every
 /// post-layout Text node and inserts it into `PageDrawables::paragraphs`.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ParagraphEntry {
-    /// Number of shaped lines (`parley::Layout::lines().count()`). The actual
-    /// glyph-run positions (Fulgur's `Vec<ShapedLine>`) live in
-    /// `parley::Layout<()>`, which is deliberately excluded by the module's
-    /// field-type policy. Paint still reads [`raikiri_dom::Node::text_layout`]
-    /// directly; this field is only a lightweight count.
+    /// Number of lines that hold this text node's glyphs (0 for a text node
+    /// outside every paragraph). The glyph runs themselves (Fulgur's
+    /// `Vec<ShapedLine>`) stay on the paragraph root, as shodo types the
+    /// module's field-type policy excludes; paint reads them there, and this
+    /// field is only a lightweight count.
     pub line_count: usize,
     /// `opacity`: always the CSS initial value `1.0`, for the same reason
     /// as [`BlockEntry::opacity`].

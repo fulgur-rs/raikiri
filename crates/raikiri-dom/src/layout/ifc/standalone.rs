@@ -3,11 +3,14 @@
 //! document's fonts.
 //!
 //! The callers know only a font list, a size and an alignment, so the style
-//! is the same small one the parley path reads: weight 400, normal, line
-//! height `normal`, spaces preserved, no spacing or transform.
+//! is a small fixed one: weight 400, normal, line height `normal`, spaces
+//! preserved, no spacing or transform. The paragraph is left to right; a
+//! right-to-left run inside it is reordered by the engine, and its glyph
+//! origins stay inside the line.
 
-use super::root::IfcState;
 use crate::Document;
+use shodo::font::FontCollection;
+use shodo::limits::Limits;
 use shodo::style::{
     FontFamily, GenericFamily, InlineStyle, LineHeight, LineOptions, ParagraphStyle, TextAlign,
     TextWrapMode, WhiteSpaceCollapse,
@@ -67,15 +70,14 @@ impl StandaloneText {
     /// to be aligned without its trailing blanks.
     ///
     /// shodo keeps the trailing blanks that fit on the last line and before a
-    /// forced break inside the aligned content, while parley hangs them
-    /// outside it: a right-aligned or centred `"ab "` would otherwise sit
-    /// (half) a space to the left of where parley puts it.
+    /// forced break inside the aligned content; these blanks hang outside the
+    /// aligned content instead, or a right-aligned or centred `"ab "` would
+    /// sit (half) a space too far to the left.
     pub fn hang_shift(&self, index: usize) -> f32 {
         self.hang_shifts.get(index).copied().unwrap_or(0.0)
     }
 
-    /// Widest line without its trailing blanks (space, tab, U+00A0), the
-    /// meaning of parley's `Layout::width`.
+    /// Widest line without its trailing blanks (space, tab, U+00A0).
     pub fn width(&self) -> f32 {
         self.width
     }
@@ -121,7 +123,7 @@ fn align_of(align: StandaloneAlign) -> TextAlign {
 }
 
 /// `text` with the blanks (space, tab, U+00A0) removed from the end of every
-/// line. parley leaves these out of `Layout::width`.
+/// line, which [`StandaloneText::width`] leaves out.
 fn without_trailing_blanks(text: &str) -> String {
     text.split('\n')
         .map(|line| line.trim_end_matches([' ', '\t', '\u{a0}']))
@@ -131,7 +133,8 @@ fn without_trailing_blanks(text: &str) -> String {
 
 /// Break `text` into lines with the document's engine and fonts.
 fn shape_lines(
-    state: &IfcState,
+    fonts: &FontCollection,
+    limits: &Limits,
     text: &str,
     style: &StandaloneStyle,
     width: Option<f32>,
@@ -153,12 +156,12 @@ fn shape_lines(
         root: inline.clone(),
         ..ParagraphStyle::default()
     };
-    // The layout context is per call: the parley path also builds one per
-    // call, and the document's shared one needs `&mut`.
+    // The layout context is per call: the document's shared one needs
+    // `&mut`.
     let mut cx = LayoutContext::new();
-    let paragraph = RichText::with_limits(&paragraph_style, &state.limits)
+    let paragraph = RichText::with_limits(&paragraph_style, limits)
         .push(text, &inline)
-        .build(&mut cx, &state.fonts)
+        .build(&mut cx, fonts)
         .ok()?;
     let options = LineOptions {
         text_align: align_of(align),
@@ -178,24 +181,19 @@ fn widest(lines: &[Line]) -> f32 {
 
 impl Document {
     /// Whether [`Document::shape_standalone_text`] would take this text and
-    /// size: the engine is on, the text is not empty, the size is usable and
-    /// there is no right-to-left character. A shodo limit error is the one
-    /// case this cannot foresee.
+    /// size: the text is not empty and the size is usable. A shodo limit
+    /// error is the one case this cannot foresee.
     #[doc(hidden)]
     pub fn standalone_text_eligible(&self, text: &str, font_size: f32) -> bool {
-        self.ifc.is_some()
-            && !text.is_empty()
-            && font_size.is_finite()
-            && font_size > 0.0
-            && !super::projection::has_rtl_char(text)
+        !text.is_empty() && font_size.is_finite() && font_size > 0.0
     }
 
-    /// Shape `text` with the inline engine and the document's fonts.
+    /// Shape `text` with the inline engine and the document's fonts, or the
+    /// installed fonts for a document that was never laid out.
     ///
-    /// `None` when the engine is off, the text is empty or has right-to-left
-    /// characters, the size is unusable (see
-    /// [`Document::standalone_text_eligible`]), or a limit is exceeded: the
-    /// caller then uses its own path.
+    /// `None` when the text is empty, the size is unusable (see
+    /// [`Document::standalone_text_eligible`]), or a limit is exceeded: there
+    /// is then nothing to draw.
     #[doc(hidden)]
     pub fn shape_standalone_text(
         &self,
@@ -207,19 +205,26 @@ impl Document {
         if !self.standalone_text_eligible(text, style.font_size) {
             return None;
         }
-        let state = self.ifc.as_ref()?;
-        let lines = shape_lines(state, text, style, width, align)?;
+        let installed;
+        let (fonts, limits) = match &self.ifc {
+            Some(state) => (&state.fonts, &state.limits),
+            None => {
+                installed = (crate::fonts::system_font_collection(), Limits::default());
+                (&installed.0, &installed.1)
+            }
+        };
+        let lines = shape_lines(fonts, limits, text, style, width, align)?;
         // shodo keeps the trailing spaces that fit on the last line and before
-        // a forced break inside `inline_size`; parley's width leaves them out.
-        // The width and the alignment shift therefore use a copy without
-        // trailing blanks.
+        // a forced break inside `inline_size`; the width leaves them out. The
+        // width and the alignment shift therefore use a copy without trailing
+        // blanks.
         let stripped = without_trailing_blanks(text);
         let ink_lines = if stripped == text {
             None
         } else if stripped.is_empty() {
             Some(Vec::new())
         } else {
-            Some(shape_lines(state, &stripped, style, width, align)?)
+            Some(shape_lines(fonts, limits, &stripped, style, width, align)?)
         };
         let line_width = widest(ink_lines.as_deref().unwrap_or(&lines));
         // Start-like alignments put the content at the same place with or
@@ -246,7 +251,9 @@ impl Document {
             .first()
             .map_or(line_width, |line| line.inline_size() + line.hang_end());
         let height = lines.iter().map(Line::block_size).sum();
-        state.standalone_calls.fetch_add(1, Ordering::Relaxed);
+        if let Some(state) = &self.ifc {
+            state.standalone_calls.fetch_add(1, Ordering::Relaxed);
+        }
         Some(StandaloneText {
             lines,
             hang_shifts,

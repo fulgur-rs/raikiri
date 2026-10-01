@@ -1104,9 +1104,8 @@ fn paint_single_page_vertical_align_sub_on_block_level_element_does_not_shift() 
 
 #[test]
 fn paint_single_page_skips_empty_text() {
-    // A Text node whose text_layout is None (empty text) must silently skip
-    // `draw_glyphs`. This mirrors `preshape_text`, which leaves text_layout
-    // as None for empty text.
+    // An empty Text node has no glyph on any line and must silently skip
+    // `draw_glyphs`.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
