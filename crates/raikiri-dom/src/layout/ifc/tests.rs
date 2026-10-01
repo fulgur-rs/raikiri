@@ -174,3 +174,50 @@ fn a_huge_font_size_or_line_height_lays_out_in_bounded_time() {
         assert!(laid_out);
     }
 }
+
+/// The block-direction offset of a 2px square `tag` element that is the only
+/// child of a zero-margin body (plus `text` after it), in a document of the
+/// given quirks mode.
+fn replaced_offset_y(mode: raikiri_traits::QuirksMode, tag: &str, text: &str) -> f32 {
+    use taffy::Style;
+    let mut doc = Document::new();
+    doc.set_quirks_mode(mode);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_text(body, " ");
+    let replaced = doc.append_element(
+        Some(body),
+        tag,
+        Style::default(),
+        Some("width:2px;height:2px"),
+    );
+    doc.append_text(body, text);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+    doc.nodes[replaced].unrounded_layout.location.y
+}
+
+#[test]
+fn quirks_mode_line_of_only_replaced_elements_has_no_strut() {
+    use raikiri_traits::QuirksMode;
+    // Quirks Mode Standard 3.3: a paragraph holding no text other than
+    // collapsed white space does not make room for the root inline box's
+    // strut, so a short replaced element sits at the top of its line.
+    for mode in [QuirksMode::Quirks, QuirksMode::LimitedQuirks] {
+        for tag in ["video", "img", "canvas"] {
+            assert_eq!(replaced_offset_y(mode, tag, " "), 0.0, "{tag} in {mode:?}");
+        }
+    }
+    // In no-quirks mode the strut keeps the element on the baseline, below
+    // the top of the line.
+    assert!(replaced_offset_y(QuirksMode::NoQuirks, "video", " ") > 1.0);
+    // Text in the paragraph keeps the strut in quirks mode as well.
+    assert!(replaced_offset_y(QuirksMode::Quirks, "video", "x") > 1.0);
+}

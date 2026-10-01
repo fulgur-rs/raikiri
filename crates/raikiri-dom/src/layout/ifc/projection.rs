@@ -123,6 +123,100 @@ pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
     None
 }
 
+/// Whether the line height calculation quirk applies to the document: it is
+/// in quirks or limited-quirks mode (Quirks Mode Standard, 3.3).
+fn line_height_quirk(doc: &Document) -> bool {
+    matches!(
+        doc.quirks_mode(),
+        raikiri_traits::QuirksMode::Quirks | raikiri_traits::QuirksMode::LimitedQuirks
+    )
+}
+
+/// Whether the inline content of `element` that belongs to this paragraph
+/// holds text other than collapsed white space. Atomic inlines, floats,
+/// out-of-flow boxes and block children lay out their own content, so their
+/// text is not counted. A `<br>` and generated text count as text, which keeps
+/// the strut wherever the content is not plainly text-free.
+fn has_paragraph_text(doc: &Document, cascade: &CascadeResult, element: usize) -> bool {
+    if has_in_flow_generated_text(cascade, element) {
+        return true;
+    }
+    let Some(node) = doc.get_node(element) else {
+        return false;
+    };
+    let mut stack: Vec<usize> = node.children.clone();
+    while let Some(id) = stack.pop() {
+        let Some(child) = doc.get_node(id) else {
+            continue;
+        };
+        if !child.is_in_document() {
+            continue;
+        }
+        match child.kind() {
+            NodeKind::Text => {
+                let Some(text) = child.text_content() else {
+                    continue;
+                };
+                let collapsed = cascade.computed.get(id).is_none_or(|cv| {
+                    matches!(
+                        cv.effective_white_space_collapse,
+                        WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
+                    )
+                });
+                let only_white_space = text
+                    .chars()
+                    .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}'));
+                if !(collapsed && only_white_space) {
+                    return true;
+                }
+            }
+            NodeKind::Element => {
+                let Some(cv) = cascade.computed.get(id) else {
+                    continue;
+                };
+                if matches!(
+                    cv.display,
+                    DisplayValue::None | DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+                ) || child.is_non_rendered_html_element()
+                    || box_kind(cascade, doc, id).is_some()
+                {
+                    continue;
+                }
+                if child.tag_name() == Some("br") || has_in_flow_generated_text(cascade, id) {
+                    return true;
+                }
+                stack.extend(child.children.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The line height calculation quirk (Quirks Mode Standard, 3.3) for the
+/// root inline box: in quirks and limited-quirks mode, a root inline box whose
+/// paragraph contains no text other than collapsed white space does not make
+/// room for its strut, so a line holding only atomic inlines is as tall as
+/// they are. The standard words this as a `line-height` of zero; browsers drop
+/// the box from the line height calculation altogether, which the engine
+/// expresses as a zero font size and line height on the root style: the strut
+/// shrinks to the baseline. Children aligned with `middle`, `text-top`,
+/// `text-bottom`, `sub` or `super` are then aligned against zero font metrics
+/// instead of the root font's. The text test covers the whole paragraph rather
+/// than each line, so a text-free line keeps its strut when another line of the
+/// paragraph has text. Inline elements are not covered.
+fn apply_line_height_quirk(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    style: &mut shodo::style::InlineStyle,
+) {
+    if line_height_quirk(doc) && !has_paragraph_text(doc, cascade, root) {
+        style.font_size = 0.0;
+        style.line_height = shodo::style::LineHeight::Px(0.0);
+    }
+}
+
 /// The counters of the document, computed once per layout pass and only when
 /// some paragraph lays out generated text.
 #[derive(Default)]
@@ -491,7 +585,8 @@ pub(crate) fn project_ifc_builder_with(
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
     let (options, indent) = style::line_options(root_cv, root, fonts)?;
-    let root_style = styled(doc, cascade, root_cv, root, fonts)?;
+    let mut root_style = styled(doc, cascade, root_cv, root, fonts)?;
+    apply_line_height_quirk(doc, cascade, root, &mut root_style);
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
