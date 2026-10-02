@@ -271,15 +271,11 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
 ///   border and padding keep `i`'s 7px top margin from collapsing through
 ///   it (CSS 2.1 §8.3.1), so `i`'s border edge sits 5 + 7 = 12 below `o`'s
 ///   top padding edge and 5 (the left padding) right of its left one.
-/// - `o.offsetTop`/`o.offsetLeft` are both 10, `o`'s own margin, because
-///   its offsetParent is the body and the result is relative to the
-///   initial containing block. CSS 2.1 with the UA stylesheet's
-///   `body { margin: 8px }` gives 10 at the top only through margin
-///   collapsing (max(8, 10)) and 8 + 10 = 18 at the left, but this layout
-///   places the body box at the origin with the viewport's full size, so
-///   the body's margins never reach the geometry (a lone `margin: 5px`
-///   block sits at 5, not 8). The measured values are pinned so a layout
-///   change there is noticed.
+/// - `o.offsetTop` is 10 because its top margin collapses with the body's
+///   8px top margin (max(8, 10)); `o.offsetLeft` is 18 because the body's
+///   8px left margin and `o`'s 10px left margin add. Since the body is `o`'s
+///   offsetParent, CSSOM View measures from the body's padding edge.
+///   The measured values are pinned so a layout change there is noticed.
 /// - `i` (100 x 200) fits horizontally inside `o`'s 110px padding box, so
 ///   `scrollWidth` is the padding box width. Vertically, `i`'s border box
 ///   ends 5 + 7 + 200 = 212 below `o`'s top padding edge, and scrollable
@@ -301,7 +297,7 @@ fn cssom_view_metrics_follow_the_css_box_model() {
         ("i.offsetTop", 12.0),
         ("i.offsetLeft", 5.0),
         ("o.offsetTop", 10.0),
-        ("o.offsetLeft", 10.0),
+        ("o.offsetLeft", 18.0),
         ("o.offsetWidth", 116.0),
         ("o.offsetHeight", 66.0),
         ("o.clientTop", 3.0),
