@@ -139,6 +139,86 @@ fn math_dummy_selection_is_type_aware() {
 }
 
 #[test]
+fn math_dummy_preserves_unicode_comments_and_number_types() {
+    for text in ["é", "日本語", "🦀"] {
+        for expression in ["calc(1)", "min(1, 2)", "max(1, 2)", "clamp(1, 2, 3)"] {
+            for source in [
+                format!("{expression}/*{text}*/"),
+                format!("/*{text}*/{expression}"),
+            ] {
+                assert!(parse_entire(&source, "width").is_none(), "{source}");
+                assert!(parse_entire(&source, "flex-grow").is_some(), "{source}");
+            }
+        }
+    }
+}
+
+#[test]
+fn math_dummy_recognizes_escaped_function_tokens() {
+    for source in [
+        r"c\61lc(1)",
+        r"m\69n(1, 2)",
+        "CALC(1)",
+        "calc((1))",
+        "calc(1",
+    ] {
+        assert!(parse_entire(source, "width").is_none(), "{source}");
+        assert!(parse_entire(source, "flex-grow").is_some(), "{source}");
+    }
+}
+
+#[test]
+fn math_dummy_handles_nested_blocks_and_refuses_deferred_reentry() {
+    assert!(deferred_dummy_is_valid_for_property(
+        r"rgb(c\61lc(1) 0 0)",
+        "color"
+    ));
+    assert!(deferred_dummy_is_valid_for_property(
+        r#""é calc(1) 🦀""#,
+        "content"
+    ));
+    for source in [
+        "var(--x)",
+        "foo(calc(1))",
+        "[calc(1)]",
+        "{calc(1)}",
+        "(calc(1))",
+    ] {
+        assert!(
+            !deferred_dummy_is_valid_for_property(source, "width"),
+            "{source}"
+        );
+    }
+    let nested = format!("{}calc(1){}", "[".repeat(130), "]".repeat(130));
+    assert!(!deferred_dummy_is_valid_for_property(&nested, "width"));
+    let oversized = format!("calc(1)/*{}*/", "a".repeat(MAX_SUBSTITUTED_VALUE_BYTES));
+    assert!(!deferred_dummy_is_valid_for_property(&oversized, "width"));
+}
+
+#[test]
+fn math_dummy_preserves_token_boundaries_and_literal_contents() {
+    for source in ["calc(1)px", "calc(1)e2", "calc(1)%", "calc(1)calc(2)"] {
+        assert!(
+            !deferred_dummy_is_valid_for_property(source, "width"),
+            "{source}"
+        );
+        assert!(
+            !deferred_dummy_is_valid_for_property(source, "flex-grow"),
+            "{source}"
+        );
+    }
+    for source in ["calc(1/*)*/)/*é*/", "/* calc( */calc(1)"] {
+        assert!(parse_entire(source, "flex-grow").is_some(), "{source}");
+    }
+    for source in [r#""calc(1)""#, "foocalc(1)", "#calc(1)", "@calc(1)"] {
+        assert!(
+            !deferred_dummy_is_valid_for_property(source, "flex-grow"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn keyword_and_grid_shorthand_parsers_are_reachable_from_parse_value() {
     let accepted = [
         ("start", "text-align-all"),

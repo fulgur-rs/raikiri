@@ -11144,11 +11144,15 @@ pub(crate) fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> b
     };
 
     for dummy_value in dummies {
-        let dummy = replace_math_with_dummy_and_number(value, dummy_value);
+        let Some(dummy) = replace_math_with_dummy_and_number(value, dummy_value) else {
+            continue;
+        };
         let mut input = ParserInput::new(&dummy);
         let mut parser = Parser::new(&mut input);
-        // Avoid recursion into deferred path: dummy contains no deferred
-        // function, so parse_value goes to normal dispatch.
+        // Never re-enter deferred validation if an unsupported function remains.
+        if contains_deferred_function(&mut parser) {
+            continue;
+        }
         if parse_value(prop, &mut parser).is_some() && parser.expect_exhausted().is_ok() {
             return true;
         }
@@ -11156,55 +11160,63 @@ pub(crate) fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> b
     false
 }
 
-/// [`replace_math_with_dummy_and_number`] generalized over the dummy payload.
-fn replace_math_with_dummy_and_number(input: &str, dummy: &str) -> String {
-    let mut result = String::new();
-    let mut i = 0;
-    let lower = input.to_ascii_lowercase();
-    let bytes = input.as_bytes();
-    while i < bytes.len() {
-        let mut matched = None;
-        for func in MATH_FUNCTIONS.iter() {
-            if lower[i..].starts_with(func) {
-                let after = i + func.len();
-                if after < bytes.len() && bytes[after] == b'(' {
-                    matched = Some(*func);
-                    break;
-                }
-            }
+/// Replace real math function tokens while preserving all other source bytes.
+fn replace_math_with_dummy_and_number(input: &str, dummy: &str) -> Option<String> {
+    fn replace<'i>(
+        parser: &mut Parser<'i, '_>,
+        dummy: &str,
+        depth: usize,
+        copied_until: &mut SourcePosition,
+        result: &mut String,
+    ) -> Result<(), ParseError<'i, ()>> {
+        if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
+            return Err(parser.new_custom_error(()));
         }
-        if let Some(func) = matched {
-            let mut depth = 0;
-            let mut j = i + func.len();
-            let mut found_end = None;
-            while j < bytes.len() {
-                match bytes[j] {
-                    b'(' => depth += 1,
-                    b')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            found_end = Some(j);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-                j += 1;
-            }
-            if let Some(end) = found_end {
-                result.push_str(dummy);
-                i = end + 1;
-                continue;
-            } else {
-                result.push_str(&input[i..]);
+        loop {
+            let start = parser.position();
+            let Ok(token) = parser.next_including_whitespace_and_comments().cloned() else {
                 break;
+            };
+            match token {
+                Token::Function(name)
+                    if MATH_FUNCTIONS.iter().any(|f| name.eq_ignore_ascii_case(f)) =>
+                {
+                    result.push_str(parser.slice(*copied_until..start));
+                    // Separators keep adjacent identifiers and numbers from merging
+                    // with the replacement into a different CSS token.
+                    result.push(' ');
+                    result.push_str(dummy);
+                    result.push(' ');
+                    parser.parse_nested_block(|nested| {
+                        while nested.next_including_whitespace_and_comments().is_ok() {}
+                        Ok::<_, ParseError<'_, ()>>(())
+                    })?;
+                    *copied_until = parser.position();
+                }
+                Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock => {
+                    parser.parse_nested_block(|nested| {
+                        replace(nested, dummy, depth + 1, copied_until, result)
+                    })?;
+                }
+                _ => {}
             }
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
         }
+        Ok(())
     }
-    result
+
+    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
+        return None;
+    }
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    let mut copied_until = parser.position();
+    let mut result = String::with_capacity(input.len());
+    replace(&mut parser, dummy, 0, &mut copied_until, &mut result).ok()?;
+    result.push_str(parser.slice(copied_until..parser.position()));
+    Some(result)
 }
 
 pub(crate) fn contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
