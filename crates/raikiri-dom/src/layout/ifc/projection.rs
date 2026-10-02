@@ -129,6 +129,47 @@ fn line_height_quirk(doc: &Document) -> bool {
     )
 }
 
+fn has_noncollapsed_text(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let Some(text) = doc.get_node(id).and_then(|node| node.text_content()) else {
+        return false;
+    };
+    let collapsed = cascade.computed.get(id).is_none_or(|cv| {
+        matches!(
+            cv.effective_white_space_collapse,
+            WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
+        )
+    });
+    let only_white_space = text
+        .chars()
+        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}'));
+    !(collapsed && only_white_space)
+}
+
+/// Whether this inline box contains text itself, excluding descendant boxes.
+fn has_direct_inline_text(doc: &Document, cascade: &CascadeResult, element: usize) -> bool {
+    if has_in_flow_generated_text(cascade, element) {
+        return true;
+    }
+    doc.get_node(element).is_some_and(|node| {
+        node.children.iter().copied().any(|id| {
+            let Some(child) = doc.get_node(id).filter(|child| child.is_in_document()) else {
+                return false;
+            };
+            match child.kind() {
+                NodeKind::Text => has_noncollapsed_text(doc, cascade, id),
+                NodeKind::Element => {
+                    child.tag_name() == Some("br")
+                        && cascade
+                            .computed
+                            .get(id)
+                            .is_some_and(|cv| cv.display != DisplayValue::None)
+                }
+                _ => false,
+            }
+        })
+    })
+}
+
 /// Whether the inline content of `element` that belongs to this paragraph
 /// holds text other than collapsed white space. Atomic inlines, floats,
 /// out-of-flow boxes and block children lay out their own content, so their
@@ -151,19 +192,7 @@ fn has_paragraph_text(doc: &Document, cascade: &CascadeResult, element: usize) -
         }
         match child.kind() {
             NodeKind::Text => {
-                let Some(text) = child.text_content() else {
-                    continue;
-                };
-                let collapsed = cascade.computed.get(id).is_none_or(|cv| {
-                    matches!(
-                        cv.effective_white_space_collapse,
-                        WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
-                    )
-                });
-                let only_white_space = text
-                    .chars()
-                    .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}'));
-                if !(collapsed && only_white_space) {
+                if has_noncollapsed_text(doc, cascade, id) {
                     return true;
                 }
             }
@@ -190,25 +219,12 @@ fn has_paragraph_text(doc: &Document, cascade: &CascadeResult, element: usize) -
     false
 }
 
-/// The line height calculation quirk (Quirks Mode Standard, 3.3) for the
-/// root inline box: in quirks and limited-quirks mode, a root inline box whose
-/// paragraph contains no text other than collapsed white space does not make
-/// room for its strut, so a line holding only atomic inlines is as tall as
-/// they are. The standard words this as a `line-height` of zero; browsers drop
-/// the box from the line height calculation altogether, which the engine
-/// expresses as a zero font size and line height on the root style: the strut
-/// shrinks to the baseline. Children aligned with `middle`, `text-top`,
-/// `text-bottom`, `sub` or `super` are then aligned against zero font metrics
-/// instead of the root font's. The text test covers the whole paragraph rather
-/// than each line, so a text-free line keeps its strut when another line of the
-/// paragraph has text. Inline elements are not covered.
-fn apply_line_height_quirk(
-    doc: &Document,
-    cascade: &CascadeResult,
-    root: usize,
-    style: &mut shodo::style::InlineStyle,
-) {
-    if line_height_quirk(doc) && !has_paragraph_text(doc, cascade, root) {
+/// Remove an empty root or inline box from line height calculation in quirks
+/// and limited-quirks mode (Quirks Mode Standard, 3.3-3.4). The zero font
+/// metrics let aligned children use the same baseline without the empty box's
+/// strut. Text presence is decided for the entire box, across its lines.
+fn apply_line_height_quirk(doc: &Document, has_text: bool, style: &mut shodo::style::InlineStyle) {
+    if line_height_quirk(doc) && !has_text {
         style.font_size = 0.0;
         style.line_height = shodo::style::LineHeight::Px(0.0);
     }
@@ -570,7 +586,7 @@ pub(crate) fn project_ifc_builder_with(
     // `-internal-center` in the computed `text-align` values.
     let (options, indent) = style::line_options(root_cv, root, fonts)?;
     let mut root_style = styled(doc, cascade, root_cv, root, fonts)?;
-    apply_line_height_quirk(doc, cascade, root, &mut root_style);
+    apply_line_height_quirk(doc, has_paragraph_text(doc, cascade, root), &mut root_style);
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
@@ -717,8 +733,19 @@ pub(crate) fn project_ifc_builder_with(
                 if cv.display != DisplayValue::Inline {
                     return Err(unsupported("only inline-level boxes are projected"));
                 }
-                let inline_style = styled(doc, cascade, cv, id, fonts)?;
                 let edges = style::inline_edges(cv, id, fonts)?;
+                let mut inline_style = styled(doc, cascade, cv, id, fonts)?;
+                if edges.border.inline_start == 0.0
+                    && edges.border.inline_end == 0.0
+                    && edges.padding.inline_start == 0.0
+                    && edges.padding.inline_end == 0.0
+                {
+                    apply_line_height_quirk(
+                        doc,
+                        has_direct_inline_text(doc, cascade, id),
+                        &mut inline_style,
+                    );
+                }
                 // The eligibility check keeps every offset that is not a plain
                 // length out of the paragraph.
                 if cv.position == PositionValue::Relative {

@@ -221,3 +221,145 @@ fn quirks_mode_line_of_only_replaced_elements_has_no_strut() {
     // Text in the paragraph keeps the strut in quirks mode as well.
     assert!(replaced_offset_y(QuirksMode::Quirks, "video", "x") > 1.0);
 }
+
+fn image_line_geometry(
+    mode: raikiri_traits::QuirksMode,
+    wrapper_css: Option<&str>,
+    vertical_align: &str,
+    second_line_text: bool,
+) -> (f32, Vec<f32>) {
+    use taffy::Style;
+    let mut doc = Document::new();
+    doc.set_quirks_mode(mode);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font-size:20px;line-height:20px"),
+    );
+    let parent = if let Some(css) = wrapper_css {
+        doc.append_element(Some(body), "span", Style::default(), Some(css))
+    } else {
+        body
+    };
+    let image = doc.append_element(
+        Some(parent),
+        "img",
+        Style::default(),
+        Some(&format!(
+            "width:2px;height:2px;vertical-align:{vertical_align}"
+        )),
+    );
+    if second_line_text {
+        doc.append_element(Some(body), "br", Style::default(), None::<&str>);
+        doc.append_text(body, "x");
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+    let heights = doc.nodes[body]
+        .ifc_lines()
+        .expect("body lines")
+        .iter()
+        .map(shodo::Line::block_size)
+        .collect();
+    (doc.nodes[image].unrounded_layout.location.y, heights)
+}
+
+#[test]
+fn quirks_mode_text_free_inline_wrapper_has_no_strut() {
+    use raikiri_traits::QuirksMode;
+    for mode in [QuirksMode::Quirks, QuirksMode::LimitedQuirks] {
+        let direct = image_line_geometry(mode, None, "baseline", false);
+        let wrapped = image_line_geometry(mode, Some(""), "baseline", false);
+        assert_eq!(wrapped, direct, "{mode:?}");
+    }
+    let standards = image_line_geometry(QuirksMode::NoQuirks, Some(""), "baseline", false);
+    assert!(standards.1[0] > 2.0, "{standards:?}");
+}
+
+#[test]
+fn quirks_mode_vertical_align_uses_zero_root_metrics() {
+    use raikiri_traits::QuirksMode;
+    for align in ["middle", "text-top", "text-bottom", "sub", "super"] {
+        let direct = image_line_geometry(QuirksMode::Quirks, None, align, false);
+        let wrapped = image_line_geometry(QuirksMode::Quirks, Some(""), align, false);
+        assert_eq!(wrapped, direct, "{align}");
+        let standards = image_line_geometry(QuirksMode::NoQuirks, None, align, false);
+        assert!(
+            standards.1[0] >= direct.1[0],
+            "{align}: {standards:?} vs {direct:?}"
+        );
+    }
+}
+
+#[test]
+fn quirks_mode_uses_paragraph_text_across_lines() {
+    use raikiri_traits::QuirksMode;
+    let empty = image_line_geometry(QuirksMode::Quirks, None, "baseline", false);
+    let mixed = image_line_geometry(QuirksMode::Quirks, None, "baseline", true);
+    assert_eq!(mixed.1.len(), 2);
+    assert!(mixed.1[0] > empty.1[0], "{mixed:?} vs {empty:?}");
+    assert!(mixed.0 > empty.0, "{mixed:?} vs {empty:?}");
+    let standards = image_line_geometry(QuirksMode::NoQuirks, None, "baseline", true);
+    assert_eq!(mixed.1[0], standards.1[0]);
+}
+
+#[test]
+fn quirks_mode_inline_axis_padding_preserves_its_line_height() {
+    use raikiri_traits::QuirksMode;
+    let empty = image_line_geometry(QuirksMode::Quirks, Some(""), "baseline", false);
+    let inline_padded = image_line_geometry(
+        QuirksMode::Quirks,
+        Some("padding-left:1px"),
+        "baseline",
+        false,
+    );
+    assert!(
+        inline_padded.1[0] > empty.1[0],
+        "{inline_padded:?} vs {empty:?}"
+    );
+    let block_padded = image_line_geometry(
+        QuirksMode::Quirks,
+        Some("padding-top:1px"),
+        "baseline",
+        false,
+    );
+    assert_eq!(block_padded.1[0], empty.1[0]);
+}
+
+fn nested_inline_line_height(mode: raikiri_traits::QuirksMode) -> f32 {
+    use taffy::Style;
+    let mut doc = Document::new();
+    doc.set_quirks_mode(mode);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font-size:20px;line-height:20px"),
+    );
+    let outer = doc.append_element(
+        Some(body),
+        "span",
+        Style::default(),
+        Some("line-height:40px"),
+    );
+    let inner = doc.append_element(Some(outer), "b", Style::default(), Some("line-height:10px"));
+    doc.append_text(inner, "x");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+    let line = &doc.nodes[body].ifc_lines().expect("lines")[0];
+    line.block_size()
+}
+
+#[test]
+fn quirks_mode_parent_inline_without_direct_text_has_no_strut() {
+    use raikiri_traits::QuirksMode;
+    assert_eq!(nested_inline_line_height(QuirksMode::Quirks), 20.0);
+    assert_eq!(nested_inline_line_height(QuirksMode::NoQuirks), 40.0);
+}
