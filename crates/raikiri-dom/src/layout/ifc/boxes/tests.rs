@@ -7,6 +7,39 @@ use crate::layout::test_support::{
 };
 
 #[test]
+fn unprojected_root_has_no_fragmentainer_tail() {
+    let mut doc = Document::new();
+    let geometry = FlowGeometry {
+        width: 100.0,
+        edges: (0.0, 0.0),
+        top_edge: 0.0,
+    };
+    let ordinary = layout_with_boxes_in(&mut doc, 0, geometry, None, false, false);
+    assert!(ordinary.lines.is_empty());
+    assert_eq!(ordinary.unfragmented_tail_column, None);
+    let fragmented = layout_with_boxes_in_fragmentainers(
+        &mut doc,
+        0,
+        geometry,
+        FragmentationContext {
+            available_width: 100.0,
+            available_height: Some(10.0),
+            column_width: 100.0,
+            column_count: 1,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        },
+        false,
+    );
+    assert!(fragmented.lines.is_empty());
+    assert_eq!(fragmented.unfragmented_tail_column, None);
+}
+
+#[test]
 fn final_unfragmented_column_records_only_real_line_overflow() {
     let text = "A\n".repeat(1_030);
     let (mut doc, cascade, root) =
