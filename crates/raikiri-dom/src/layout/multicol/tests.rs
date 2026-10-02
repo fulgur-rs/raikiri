@@ -2,6 +2,29 @@ use super::*;
 use taffy::Style;
 
 #[test]
+fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
+    let context = FragmentationContext {
+        available_width: 200.0,
+        available_height: None,
+        column_width: 100.0,
+        column_count: 2,
+        column_gap: 0.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 1,
+    };
+
+    assert_eq!(balanced_column_height(&[], context), None);
+    assert_eq!(
+        balanced_column_height(&[(0.0, 10.0)], context.in_column(2, 200.0, 0.0)),
+        None
+    );
+    assert_eq!(balanced_column_height(&[(10.0, 0.0)], context), None);
+}
+
+#[test]
 fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
     let context = FragmentationContext {
         available_width: 300.0,
@@ -325,6 +348,46 @@ fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_defin
         "b.y={}, expected step={step}",
         doc.nodes[b].unrounded_layout.location.y
     );
+}
+
+#[test]
+fn balanced_auto_multicol_updates_its_container_fragment_height() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;column-count:2;column-gap:0;background:green"),
+    );
+    for (height, extra) in [(25, ""), (50, ""), (25, ";break-before:avoid"), (50, "")] {
+        doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:{height}px{extra}")),
+        );
+    }
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    assert_eq!(doc.nodes[container].unrounded_layout.size.height, 100.0);
+    let fragment = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .find(|fragment| fragment.node_id == container)
+        .expect("multicol container fragment");
+    assert_eq!(fragment.rect.height, 100.0);
 }
 
 #[test]

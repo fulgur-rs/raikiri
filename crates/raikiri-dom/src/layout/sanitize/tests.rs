@@ -1628,6 +1628,51 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
 }
 
 #[test]
+fn img_presentational_dimensions_override_its_intrinsic_aspect_ratio() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    struct SquareImageResolver;
+    impl raikiri_traits::ReplacedResolver for SquareImageResolver {
+        fn resolve(
+            &self,
+            _req: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            Ok(raikiri_traits::ResolvedIntrinsic {
+                intrinsic: raikiri_traits::IntrinsicBox::new(20.0, 20.0).with_aspect_ratio(1.0),
+                disposition: raikiri_traits::ResolveDisposition::Ok,
+            })
+        }
+    }
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let img = doc.append_element(
+        Some(body),
+        "img",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    doc.set_element_attributes(
+        img,
+        vec![
+            ("src".into(), "file:///square.png".into()),
+            ("width".into(), "420".into()),
+            ("height".into(), "20".into()),
+        ],
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page_with_resolver(&mut doc, &cascade, PageBox::A4, &SquareImageResolver)
+        .expect("layout Ok");
+
+    let layout = doc.nodes[img].unrounded_layout;
+    assert_eq!((layout.size.width, layout.size.height), (420.0, 20.0));
+}
+
+#[test]
 fn with_resolver_refreshes_membership_before_the_image_pre_pass() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

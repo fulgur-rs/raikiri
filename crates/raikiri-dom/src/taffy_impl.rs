@@ -694,13 +694,6 @@ fn measure_ifc_root(
                 crate::fragment::FragmentationContext::resolve(width, measure.column_height, style)
             })
     };
-    // An auto-height container whose lines end in `<br>` children keeps them
-    // all in its first column: without a definite column height there is no
-    // height at which to break them over columns.
-    let in_one_column = measure.column_height.is_none()
-        && tree.nodes[idx].children.iter().any(|&child| {
-            tree.nodes[child].is_in_document() && tree.nodes[child].tag_name() == Some("br")
-        });
     let geometry = flow::FlowGeometry {
         width: if nested_fragmentation.is_some() {
             width
@@ -732,8 +725,7 @@ fn measure_ifc_root(
         .clone()
         .map(|fragments| (fragments, lines.height))
         .or_else(|| {
-            fragmentation
-                .map(|context| crate::layout::root_column_fragments(&lines, context, in_one_column))
+            fragmentation.map(|context| crate::layout::root_column_fragments(&lines, context))
         });
     let content_height = fragments
         .as_ref()

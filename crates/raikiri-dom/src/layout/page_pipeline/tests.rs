@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout::test_support::with_ahem;
+use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
 // ── layout_single_page driver (Task 7) ──────────────────────
@@ -22,6 +22,94 @@ fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     (doc, cr)
+}
+
+#[test]
+fn balanced_multicol_text_that_fits_uses_one_page() {
+    use shodo::limits::Limits;
+
+    let text = std::iter::repeat_n("x xx xxx xxxx xxxxx", 11)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (mut doc, cascade, root) = ahem_paragraph_with(
+        "width:600px;column-count:6;column-gap:0;font:20px/1 Ahem",
+        |doc, root| {
+            doc.append_text(root, text);
+        },
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), Limits::default());
+
+    let pages = layout_pages(&mut doc, &cascade, page_box_800x600()).expect("pagination");
+
+    assert_eq!(
+        pages.len(),
+        1,
+        "a balanced six-column paragraph fits one page"
+    );
+    assert_eq!(
+        doc.nodes[root]
+            .ifc_multicol_fragments()
+            .expect("column fragments")
+            .len(),
+        6
+    );
+
+    let text_node = doc.nodes[root].children[0];
+    let owned = doc.ifc_text_lines(text_node).expect("owned lines");
+    let positioned = positioned_text_line_bounds(&doc, text_node).expect("positioned lines");
+    let fragments = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .and_then(|ifc| ifc.multicol_fragments.as_ref())
+        .expect("column fragments");
+    for fragment in fragments {
+        let owned_index = owned
+            .lines
+            .iter()
+            .position(|line| line.line == fragment.line_start)
+            .expect("the text node owns each fragment's first line");
+        assert!(
+            (positioned[owned_index].0 - fragment.y).abs() < 0.001,
+            "line {} starts at {:?}, fragment starts at {}",
+            fragment.line_start,
+            positioned[owned_index],
+            fragment.y
+        );
+    }
+}
+
+#[test]
+fn pagination_keeps_multicol_inline_text_in_its_column() {
+    let text = "XXXX XXXX XXXX XXXX XXXX XXXX XXXX";
+    let (mut doc, cascade, root) = ahem_paragraph_with(
+        "width:360px;column-count:3;column-gap:0;font:20px/1 Ahem",
+        |doc, root| {
+            for color in ["purple", "orange", "blue"] {
+                let span = doc.append_element(
+                    Some(root),
+                    "span",
+                    Style::default(),
+                    Some(&format!("display:inline;color:{color}")),
+                );
+                doc.append_text(span, text);
+            }
+        },
+    );
+    doc.set_font_collection(ifc_ahem_fonts());
+
+    let pages = layout_pages(&mut doc, &cascade, page_box_800x600()).expect("pagination");
+
+    assert_eq!(pages.len(), 1);
+    let lines = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .and_then(|ifc| ifc.lines.as_ref())
+        .expect("paragraph lines");
+    assert!(
+        lines.shifts.iter().all(|(_, delta)| *delta >= 0.0),
+        "pagination must not move later column text above its source position: {:?}",
+        lines.shifts
+    );
 }
 
 #[test]
@@ -5214,6 +5302,31 @@ fn multicol_text_geometry(parent_css: &str, text: &str) -> MulticolTextGeometry 
 }
 
 #[test]
+fn balanced_multicol_text_fills_each_column_to_the_minimum_height() {
+    let text = std::iter::repeat_n("x xx xxx xxxx xxxxx", 11)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (mut doc, cascade, root) = ahem_paragraph(
+        &text,
+        "width:600px;column-count:6;column-gap:0;font:20px/1 Ahem",
+    );
+    lay_out(&mut doc, &cascade);
+    let ifc = doc.nodes[root].ifc.as_ref().unwrap();
+    let ranges = ifc
+        .multicol_fragments
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|fragment| (fragment.line_start, fragment.line_end))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ranges,
+        vec![(0, 8), (8, 16), (16, 24), (24, 32), (32, 40), (40, 44)]
+    );
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 160.0);
+}
+
+#[test]
 fn a_paragraph_in_a_multicol_container_becomes_a_root() {
     let (mut doc, cascade, p) =
         ahem_paragraph_in("column-count:2;width:100px", "", "aaaa bbbb cccc dddd");
@@ -5368,20 +5481,11 @@ fn multicol_with_a_forced_break_is_laid_out() {
             lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0)]
         },
     );
-    // A container whose direct content is lines with `<br>` between them:
-    // those lines are placed in source order in the first
-    // column, and the container is as tall as all of them.
+    // A container whose direct content is lines with `<br>` between them is
+    // balanced across its auto-height columns in source order.
     let own = multicol_text_geometry_of(css, "aa\nbb\ncc", true);
-    assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]);
-    assert_eq!(
-        own.container_height,
-        MulticolTextGeometry {
-            container_height: 30.0,
-            lines: vec![(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)]
-        }
-        .container_height
-    );
-    assert_eq!(own.container_height, 30.0);
+    assert_eq!(own.lines, [(0.0, 0.0), (0.0, 10.0), (55.0, 0.0)]);
+    assert_eq!(own.container_height, 20.0);
 }
 
 #[test]
