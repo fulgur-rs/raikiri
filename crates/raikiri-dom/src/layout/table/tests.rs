@@ -1578,7 +1578,7 @@ fn collect_rows_inner_no_reorder_keeps_dom_order_for_nested_call() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows_inner(&doc, table, &mut rows, &mut cells, &mut n_cols, false);
+    super::collect_rows_inner(&doc, table, &mut rows, &mut cells, &mut n_cols, false).unwrap();
 
     assert_eq!(cells.len(), 2);
     assert_eq!(
