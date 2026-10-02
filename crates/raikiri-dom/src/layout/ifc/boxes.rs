@@ -57,6 +57,12 @@ struct RunBoxesOutcome {
     atomic_outputs: Vec<(usize, taffy::LayoutOutput)>,
 }
 
+struct FragmentedFloatOutput<'a> {
+    perform: bool,
+    fragmentainer: Option<usize>,
+    placements: &'a mut Vec<IfcBoxFragment>,
+}
+
 /// [`layout_with_boxes_in`] for a root whose margins stay inside it.
 #[cfg(test)]
 pub(crate) fn layout_with_boxes(
@@ -611,9 +617,11 @@ fn run_boxes_segment(
                             float,
                             line_y,
                             geometry,
-                            perform,
-                            fragmentainer,
-                            &mut fragment_box_placements,
+                            FragmentedFloatOutput {
+                                perform,
+                                fragmentainer,
+                                placements: &mut fragment_box_placements,
+                            },
                         ));
                     }
                 }
@@ -636,9 +644,11 @@ fn run_boxes_segment(
                         float,
                         line_y,
                         geometry,
-                        perform,
-                        fragmentainer,
-                        &mut fragment_box_placements,
+                        FragmentedFloatOutput {
+                            perform,
+                            fragmentainer,
+                            placements: &mut fragment_box_placements,
+                        },
                     ));
                 }
                 withdrawn.clear();
@@ -669,9 +679,11 @@ fn run_boxes_segment(
                         float,
                         y,
                         geometry,
-                        perform,
-                        fragmentainer,
-                        &mut fragment_box_placements,
+                        FragmentedFloatOutput {
+                            perform,
+                            fragmentainer,
+                            placements: &mut fragment_box_placements,
+                        },
                     ));
                 }
             }
@@ -685,9 +697,11 @@ fn run_boxes_segment(
                         float,
                         line_y,
                         geometry,
-                        perform,
-                        fragmentainer,
-                        &mut fragment_box_placements,
+                        FragmentedFloatOutput {
+                            perform,
+                            fragmentainer,
+                            placements: &mut fragment_box_placements,
+                        },
                     ));
                 }
                 block_line_starts.push((node.0 as usize, lines.len()));
@@ -733,9 +747,11 @@ fn run_boxes_segment(
                 float,
                 y,
                 geometry,
-                perform,
-                fragmentainer,
-                &mut fragment_box_placements,
+                FragmentedFloatOutput {
+                    perform,
+                    fragmentainer,
+                    placements: &mut fragment_box_placements,
+                },
             );
         }
     }
@@ -778,10 +794,13 @@ fn commit_fragmented_float(
     float: TentativeFloat,
     y: f32,
     geometry: FlowGeometry,
-    perform: bool,
-    fragmentainer: Option<usize>,
-    placements: &mut Vec<IfcBoxFragment>,
+    output: FragmentedFloatOutput<'_>,
 ) -> f32 {
+    let FragmentedFloatOutput {
+        perform,
+        fragmentainer,
+        placements,
+    } = output;
     let node = float.node;
     let top = commit_float(tree, ctx, float, y, geometry, perform);
     if perform && let Some(fragmentainer) = fragmentainer {
