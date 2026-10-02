@@ -1,4 +1,54 @@
 use super::*;
+use raikiri_traits::LimitKind;
+
+#[test]
+fn parse_html_with_limits_rejects_dom_node_count_above_cap() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let limits = RenderLimits::builder().max_dom_nodes(Some(5)).build();
+
+    let err = parse_html_with_limits(&b"<p>Hi</p>"[..], &opts, limits)
+        .expect_err("six DOM nodes must exceed a five-node cap");
+    assert!(matches!(
+        err,
+        RenderError::LimitExceeded {
+            kind: LimitKind::DomNodes,
+            limit: 5,
+            actual: 6,
+        }
+    ));
+}
+
+#[test]
+fn parse_html_with_limits_accepts_dom_node_count_at_cap() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let limits = RenderLimits::builder().max_dom_nodes(Some(6)).build();
+
+    let doc = parse_html_with_limits(&b"<p>Hi</p>"[..], &opts, limits)
+        .expect("six DOM nodes must fit a six-node cap");
+    assert_eq!(doc.dom().node_count(), 6);
+}
+
+#[test]
+fn parse_html_with_limits_none_max_dom_nodes_disables_cap() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let limits = RenderLimits::builder().max_dom_nodes(None).build();
+
+    let doc = parse_html_with_limits(&b"<p>Hi</p>"[..], &opts, limits)
+        .expect("explicit opt-out must allow the document");
+    assert_eq!(doc.dom().node_count(), 6);
+}
 
 #[test]
 fn parse_html_returns_html_document_with_cascade_populated() {
