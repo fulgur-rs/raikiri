@@ -83,26 +83,6 @@ fn display_none_children_are_skipped() {
 }
 
 #[test]
-fn constructs_the_inline_path_cannot_place_yet_are_rejected() {
-    let cases: [(&str, &str); 2] = [
-        ("absolute", "display:inline;position:absolute"),
-        ("flex child", "display:flex"),
-    ];
-    for (name, style) in cases {
-        let fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "aa");
-            let child = span(doc, root, style);
-            doc.append_text(child, "bb");
-        });
-        let error = project(&fixture).expect_err(name);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{name}: {error}"
-        );
-    }
-}
-
-#[test]
 fn an_inline_block_is_recorded_as_an_atomic_box() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
@@ -140,36 +120,66 @@ fn an_img_and_an_inline_svg_are_atomic() {
 }
 
 #[test]
-fn atomics_that_are_not_placed_yet_stay_unsupported() {
-    for (tag, css) in [
-        ("span", "display:inline-table"),
-        ("span", "display:inline-block;position:relative"),
+fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
+    for (tag, css, kind) in [
+        ("video", "display:inline", IfcBoxKind::Atomic),
+        ("iframe", "display:inline", IfcBoxKind::Atomic),
+        ("canvas", "display:inline", IfcBoxKind::Atomic),
+        ("audio", "display:inline", IfcBoxKind::Atomic),
+        ("object", "display:inline", IfcBoxKind::Atomic),
+        ("embed", "display:inline", IfcBoxKind::Atomic),
+        ("math", "display:inline", IfcBoxKind::Atomic),
+        ("input", "display:inline", IfcBoxKind::Atomic),
+        ("button", "display:inline", IfcBoxKind::Atomic),
+        ("textarea", "display:inline", IfcBoxKind::Atomic),
         (
-            "span",
-            "display:inline-block;vertical-align:middle;position:absolute",
+            "input",
+            "display:inline-block;width:20px;height:10px",
+            IfcBoxKind::Atomic,
         ),
-        ("img", "display:inline;position:relative"),
-        ("video", "display:inline"),
-        ("iframe", "display:inline"),
-        ("input", "display:inline"),
-        ("button", "display:inline"),
-        // An author rule can make a form control `inline-block`; the tag is
-        // what decides, not the display.
-        ("input", "display:inline-block;width:20px;height:10px"),
-        ("button", "display:inline-block;width:20px;height:10px"),
-        ("select", "display:inline-block"),
-        // A floated form control is refused as well, before the float check.
-        ("input", "display:block;float:left;width:20px;height:10px"),
+        ("select", "display:inline-block", IfcBoxKind::Atomic),
+        (
+            "input",
+            "display:block;float:left;width:20px;height:10px",
+            IfcBoxKind::Float,
+        ),
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
             doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
         });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{tag} {css}: {error}"
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{tag} {css}");
+        assert_eq!(projected.boxes[0].kind, kind, "{tag} {css}");
+    }
+}
+
+#[test]
+fn positioned_boxes_of_every_kind_are_out_of_flow_boxes() {
+    // An absolutely positioned or fixed box takes no room on the lines,
+    // whatever its display and float (CSS 2.1 9.7).
+    for (tag, css) in [
+        (
+            "span",
+            "display:inline-block;vertical-align:middle;position:absolute",
+        ),
+        ("img", "display:inline;position:fixed"),
+        ("span", "display:inline;position:absolute"),
+        ("span", "display:block;position:absolute"),
+        ("span", "display:block;float:left;position:absolute"),
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa ");
+            doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
+        });
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{tag} {css}");
+        assert_eq!(
+            projected.boxes[0].kind,
+            IfcBoxKind::OutOfFlow,
+            "{tag} {css}"
         );
+        assert_eq!(line_texts(&projected, 500.0), ["aa"], "{tag} {css}");
     }
 }
 
@@ -201,7 +211,7 @@ fn an_invalid_root_is_reported() {
 }
 
 #[test]
-fn generated_content_is_rejected_instead_of_ignored() {
+fn generated_text_of_the_root_is_projected_before_its_content() {
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::Style;
     let mut doc = crate::Document::new();
@@ -221,7 +231,7 @@ fn generated_content_is_rejected_instead_of_ignored() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     let mut cx = LayoutContext::new();
-    let error = project_ifc(
+    let projected = project_ifc(
         &doc,
         &cascade,
         root,
@@ -229,8 +239,8 @@ fn generated_content_is_rejected_instead_of_ignored() {
         &ahem_fonts(),
         &Limits::default(),
     )
-    .expect_err("generated content");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    .expect("generated content");
+    assert_eq!(projected.paragraph.text(), "xaa");
 }
 
 #[test]
@@ -373,26 +383,6 @@ fn a_float_child_is_recorded_as_a_box_and_anchored() {
 }
 
 #[test]
-fn unsupported_floats_stay_unsupported() {
-    for css in [
-        "display:block;float:inline-start",
-        "display:block;float:left;clear:inline-start",
-        "display:block;float:left;position:relative",
-    ] {
-        let fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "aa ");
-            let float = span(doc, root, css);
-            doc.append_text(float, "ff");
-        });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
-    }
-}
-
-#[test]
 fn a_block_child_is_recorded_as_a_block_box() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
@@ -409,58 +399,25 @@ fn a_block_child_is_recorded_as_a_block_box() {
 }
 
 #[test]
-fn blocks_that_are_not_placed_yet_stay_unsupported() {
-    for (name, css, nested) in [
-        ("vertical margin", "display:block;margin-top:5px", false),
-        ("bottom margin", "display:block;margin-bottom:5px", false),
-        ("percentage margin", "display:block;margin-top:10%", false),
-        ("auto side margin", "display:block;margin-left:auto", false),
-        (
-            "positioned",
-            "display:block;position:relative;top:3px",
-            false,
-        ),
-        ("absolute", "display:block;position:absolute", false),
-        ("inside an inline element", "display:block", true),
-        // A block that has to avoid floats or clear them is placed by the
-        // parent's item loop in taffy, which this path replaces.
-        ("flow-root", "display:flow-root", false),
-        ("flex", "display:flex", false),
-        ("grid", "display:grid", false),
-        ("scroll container", "display:block;overflow:hidden", false),
-        ("clearing", "display:block;clear:left", false),
+fn a_block_child_with_vertical_margins_is_a_box_of_the_paragraph() {
+    for css in [
+        "display:block;margin-top:5px",
+        "display:block;margin-bottom:-5px",
+        "display:block;margin-top:10%",
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");
-            let parent = if nested {
-                span(doc, root, "display:inline")
-            } else {
-                root
-            };
-            let block = span(doc, parent, css);
+            let block = span(doc, root, css);
             doc.append_text(block, "bb");
         });
-        let error = project(&fixture).expect_err(name);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{name}: {error}"
-        );
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{css}");
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
     }
 }
 
 #[test]
-fn an_absolutely_positioned_child_is_still_unsupported() {
-    let fixture = block_fixture("", |doc, root| {
-        doc.append_text(root, "aa ");
-        let child = span(doc, root, "display:block;position:absolute;top:0");
-        doc.append_text(child, "bb");
-    });
-    let error = project(&fixture).expect_err("abspos");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
-}
-
-#[test]
-fn a_block_level_image_or_svg_is_not_a_block_child() {
+fn a_block_level_image_or_svg_is_a_block_child() {
     for tag in ["img", "svg"] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
@@ -471,12 +428,57 @@ fn a_block_level_image_or_svg_is_not_a_block_child() {
                 Some("display:block;width:10px;height:10px"),
             );
         });
-        let error = project(&fixture).expect_err(tag);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{tag}: {error}"
-        );
+        let projected = project(&fixture).expect(tag);
+        assert_eq!(projected.boxes.len(), 1, "{tag}");
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{tag}");
     }
+}
+
+#[test]
+fn every_block_level_box_is_a_block_child() {
+    for css in [
+        "display:flow-root",
+        "display:flex",
+        "display:grid",
+        "display:table",
+        "display:list-item",
+        "display:block;overflow:hidden",
+        "display:block;clear:left",
+        // Logical float sides are not mapped: the box is not floated.
+        "display:block;float:inline-start",
+        "display:block;float:inline-end",
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let block = span(doc, root, css);
+            doc.append_text(block, "bb");
+        });
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.len(), 1, "{css}");
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
+    }
+}
+
+#[test]
+fn a_cleared_line_break_is_recorded_with_its_physical_side() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aa");
+        for clear in ["left", "inline-start", "both"] {
+            doc.append_element(
+                Some(root),
+                "br",
+                taffy::Style::default(),
+                Some(format!("display:inline;clear:{clear}").as_str()),
+            );
+        }
+    });
+    let projected = project(&fixture).expect("project");
+    let sides: Vec<taffy::Clear> = projected
+        .cleared_breaks
+        .iter()
+        .map(|(_, clear)| *clear)
+        .collect();
+    assert_eq!(sides, [taffy::Clear::Left, taffy::Clear::Both]);
 }
 
 #[test]
@@ -493,49 +495,50 @@ fn a_relative_block_child_with_no_offset_is_accepted() {
 }
 
 #[test]
-fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_rejected() {
+fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_a_block_child() {
+    // It is laid out in place and moved by its offsets.
     for css in [
         "display:block;position:relative;top:3px",
         "display:block;position:relative;right:1px",
         "display:block;position:relative;bottom:-2px",
         "display:block;position:relative;left:calc(10% + 1px)",
         "display:block;position:relative;z-index:2",
+        "display:block;position:sticky;top:2px",
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");
             let b = span(doc, root, css);
             doc.append_text(b, "bb");
         });
-        assert!(
-            matches!(project(&fixture), Err(IfcError::Unsupported { .. })),
-            "{css}"
-        );
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
     }
 }
 
 #[test]
-fn a_float_inside_an_inline_element_is_rejected() {
-    // A box inside an inline element would be located relative to the
-    // element, whose layout is no longer zero; it stays on the parley path.
+fn a_float_inside_an_inline_element_is_a_box_of_the_paragraph() {
+    // A box inside an inline element is laid out relative to the root.
     let fixture = block_fixture("", |doc, root| {
         let inner = span(doc, root, "display:inline");
         doc.append_text(inner, "a");
         let float = span(doc, inner, "float:left;width:10px;height:10px");
         doc.append_text(float, "x");
     });
-    let error = project(&fixture).expect_err("a float inside an inline");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    let projected = project(&fixture).expect("a float inside an inline");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Float);
 }
 
 #[test]
-fn an_atomic_inside_an_inline_element_is_rejected() {
+fn an_atomic_inside_an_inline_element_is_a_box_of_the_paragraph() {
     let fixture = block_fixture("", |doc, root| {
         let inner = span(doc, root, "display:inline");
         doc.append_text(inner, "a");
         span(doc, inner, "display:inline-block;width:10px;height:10px");
     });
-    let error = project(&fixture).expect_err("an atomic inside an inline");
-    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+    let projected = project(&fixture).expect("an atomic inside an inline");
+    assert_eq!(projected.boxes.len(), 1);
+    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Atomic);
 }
 
 #[test]
@@ -550,8 +553,9 @@ fn a_float_and_an_atomic_directly_under_the_root_are_still_projected() {
 }
 
 #[test]
-fn a_contents_element_with_generated_content_is_rejected() {
-    // The overlay of `::before` is painted by the parley path.
+fn generated_text_of_a_contents_element_is_projected_in_place() {
+    // A `display: contents` element has no box, but its pseudo-elements do:
+    // they sit before and after its children (CSS Display 3, 2.5).
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::Style;
     let mut doc = crate::Document::new();
@@ -577,7 +581,7 @@ fn a_contents_element_with_generated_content_is_rejected() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    let error = project_ifc(
+    let projected = project_ifc(
         &doc,
         &cascade,
         root,
@@ -585,21 +589,14 @@ fn a_contents_element_with_generated_content_is_rejected() {
         &ahem_fonts(),
         &Limits::default(),
     )
-    .expect_err("generated content on a contents element");
-    assert!(
-        matches!(
-            error,
-            IfcError::Unsupported {
-                reason: "generated content is painted as an overlay",
-                ..
-            }
-        ),
-        "{error}"
-    );
+    .expect("generated content on a contents element");
+    assert_eq!(projected.paragraph.text(), "aaxbb");
 }
 
 #[test]
-fn a_contents_element_that_is_floated_or_positioned_is_rejected() {
+fn a_contents_element_that_is_floated_or_positioned_is_still_transparent() {
+    // `float` and `position` apply to a box; a contents element has none, so
+    // its children are part of the paragraph as for any contents element.
     for css in [
         "display:contents;float:left",
         "display:contents;position:absolute",
@@ -609,53 +606,37 @@ fn a_contents_element_that_is_floated_or_positioned_is_rejected() {
             let wrapper = span(doc, root, css);
             doc.append_text(wrapper, "bb");
         });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
+        let projected = project(&fixture).expect(css);
+        assert!(projected.boxes.is_empty(), "{css}");
+        assert_eq!(line_texts(&projected, 500.0), ["aabb"], "{css}");
     }
 }
 
 #[test]
-fn a_contents_element_passes_nesting_on_to_its_children() {
-    // A box inside a contents element inside an inline element is still a
-    // box inside an inline element.
-    for css in ["display:block", "display:inline-block"] {
-        let fixture = block_fixture("", |doc, root| {
-            let inner = span(doc, root, "display:inline");
-            doc.append_text(inner, "a");
-            let wrapper = span(doc, inner, "display:contents");
-            span(doc, wrapper, css);
-        });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
-    }
-}
-
-#[test]
-fn a_box_inside_a_contents_child_of_the_root_is_rejected() {
-    // The contents element is part of the paragraph's subtree while the box
-    // is not; the passes that skip the subtree (pagination candidates, the
-    // layout check) would then never reach the box.
+fn boxes_inside_inline_and_contents_elements_are_boxes_of_the_paragraph() {
+    // Wherever a box sits below the root's inline content, it is laid out
+    // relative to the root: under an inline element, a contents element, or
+    // both.
     for css in [
         "display:inline-block;width:10px;height:10px",
         "float:left;width:10px;height:10px",
         "display:block",
     ] {
-        let fixture = block_fixture("", |doc, root| {
-            doc.append_text(root, "a");
-            let wrapper = span(doc, root, "display:contents");
-            span(doc, wrapper, css);
-        });
-        let error = project(&fixture).expect_err(css);
-        assert!(
-            matches!(error, IfcError::Unsupported { .. }),
-            "{css}: {error}"
-        );
+        for wrappers in [
+            ["display:contents", ""],
+            ["display:inline", "display:contents"],
+        ] {
+            let fixture = block_fixture("", |doc, root| {
+                doc.append_text(root, "a");
+                let mut parent = root;
+                for wrapper in wrappers.iter().filter(|w| !w.is_empty()) {
+                    parent = span(doc, parent, wrapper);
+                }
+                span(doc, parent, css);
+            });
+            let projected = project(&fixture).expect(css);
+            assert_eq!(projected.boxes.len(), 1, "{css} in {wrappers:?}");
+        }
     }
 }
 
@@ -669,4 +650,115 @@ fn a_contents_child_contributes_its_text() {
     });
     let projected = project(&fixture).expect("project");
     assert_eq!(line_texts(&projected, 500.0), ["aabbcc"]);
+}
+
+fn project_in_two_steps(fixture: &Fixture) -> Result<ProjectedIfc, IfcError> {
+    let fonts = ahem_fonts();
+    let limits = Limits::default();
+    let projected = project_ifc_builder(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &fonts,
+        &limits,
+    )?;
+    let mut cx = LayoutContext::new();
+    projected.build(&mut cx, &fonts)
+}
+
+#[test]
+fn building_in_two_steps_gives_the_same_paragraph() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "aaaa ");
+        let inner = span(doc, root, "display:inline");
+        doc.append_text(inner, "bbbb cccc");
+    });
+    let whole = project(&fixture).expect("project");
+    let split = project_in_two_steps(&fixture).expect("project in two steps");
+    assert_eq!(line_texts(&split, 50.0), line_texts(&whole, 50.0));
+    assert_eq!(line_texts(&split, 500.0), line_texts(&whole, 500.0));
+    assert_eq!(split.rtl, whole.rtl);
+    assert_eq!(split.boxes.len(), whole.boxes.len());
+}
+
+#[test]
+fn a_builder_can_cross_threads() {
+    // A builder is plain data: it may be built on another thread while the
+    // document stays where it is.
+    fn assert_send<T: Send>() {}
+    assert_send::<ProjectedBuilder>();
+    assert_send::<shodo::ParagraphBuilder>();
+}
+
+#[test]
+fn a_builder_error_is_reported_before_any_shaping() {
+    // An unsupported shape is refused while the builder is made, so a caller
+    // never pays for shaping a paragraph it will not use.
+    let fixture = block_fixture("display:inline", |doc, root| {
+        doc.append_text(root, "aa");
+    });
+    let fonts = ahem_fonts();
+    let error = project_ifc_builder(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &fonts,
+        &Limits::default(),
+    )
+    .err()
+    .expect("refused");
+    assert!(matches!(error, IfcError::Unsupported { .. }), "{error}");
+}
+
+#[test]
+fn a_text_node_projects_as_a_paragraph_of_its_own() {
+    let fixture = block_fixture("display:flex", |doc, root| {
+        doc.append_text(root, "aaaa bbbb cccc");
+    });
+    let text = fixture.doc.nodes[fixture.root].children[0];
+    let mut cx = LayoutContext::new();
+    let projected = project_ifc_text(
+        &fixture.doc,
+        &fixture.cascade,
+        text,
+        &mut cx,
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .expect("project");
+    assert!(projected.boxes.is_empty());
+    assert_eq!(line_texts(&projected, 50.0), ["aaaa", "bbbb", "cccc"]);
+    // An element is not a text node.
+    let mut cx = LayoutContext::new();
+    assert!(matches!(
+        project_ifc_text(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &mut cx,
+            &ahem_fonts(),
+            &Limits::default(),
+        ),
+        Err(IfcError::InvalidNode(_))
+    ));
+}
+
+#[test]
+fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
+    for (css, kind) in [
+        ("display:inline-table", Some(IfcBoxKind::Atomic)),
+        ("display:table-row", Some(IfcBoxKind::Block)),
+        ("display:table-cell", Some(IfcBoxKind::Block)),
+        ("display:table-caption", Some(IfcBoxKind::Block)),
+        ("display:table-row-group", Some(IfcBoxKind::Block)),
+        ("display:table-column", None),
+    ] {
+        let fixture = block_fixture("", |doc, root| {
+            doc.append_text(root, "aa");
+            let child = span(doc, root, css);
+            doc.append_text(child, "bb");
+        });
+        let projected = project(&fixture).expect(css);
+        assert_eq!(projected.boxes.first().map(|b| b.kind), kind, "{css}");
+    }
 }

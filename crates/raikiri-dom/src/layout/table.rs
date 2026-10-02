@@ -42,6 +42,7 @@ use taffy::{
 };
 
 use crate::document::Document;
+use taffy::util::ResolveOrZero;
 
 // ---------------------------------------------------------------------------
 // Depth cap — fail-closed for nested tables.
@@ -128,7 +129,7 @@ fn is_vertical_writing_mode(mode: WritingMode) -> bool {
     )
 }
 
-fn layout_empty_table_caption(
+fn layout_table_caption(
     doc: &mut Document,
     table_idx: usize,
     parent_width: f32,
@@ -263,15 +264,6 @@ pub fn compute_table_layout(
     };
 
     if grid.n_cols == 0 || grid.rows.is_empty() {
-        // A table with ordinary flow content generates anonymous row/cell
-        // boxes (CSS 2.1 §17.2.1). This is especially important when a table
-        // is used as a flex item: its direct text must still contribute an
-        // intrinsic block size even though it is not an explicit table row.
-        let direct_content_height = doc.nodes[table_idx]
-            .children
-            .iter()
-            .filter_map(|&child| doc.nodes[child].text_layout().map(|layout| layout.height()))
-            .sum::<f32>();
         // Empty tables shrink-wrap like the main path below: a specified
         // width wins; otherwise the container width is only a cap over the
         // padding/border extents (never stretch-to-fill).
@@ -306,7 +298,7 @@ pub fn compute_table_layout(
                 }
             })
         };
-        let caption_size = layout_empty_table_caption(
+        let caption_size = layout_table_caption(
             doc,
             table_idx,
             effective_known
@@ -327,7 +319,7 @@ pub fn compute_table_layout(
             effective_known
                 .height
                 .unwrap_or(0.0)
-                .max(direct_content_height + padding_border_size.height)
+                .max(padding_border_size.height)
                 .max(
                     caption_size.map(|size| size.height).unwrap_or(0.0)
                         + padding_border_size.height,
@@ -586,6 +578,10 @@ pub fn compute_table_layout(
             y_origin,
         );
     }
+    // The caption box gets the table's width and the table's top edge. It
+    // is not placed above the rows (the caption-side box of CSS 2.1 17.4):
+    // the rows keep their place, so a caption overlaps the first row.
+    layout_table_caption(doc, table_idx, final_size.width, inputs.parent_size.height);
 
     LayoutOutput::from_outer_size(final_size)
 }
@@ -1427,6 +1423,22 @@ fn place_cells(
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         );
+        // A cell laid out by the inline engine has no child layouts: its
+        // lines are drawn from its content box, which its own border and
+        // padding (as the engine measured them) place inside the cell.
+        let (padding, border) = if doc.nodes[cell.node_id].is_ifc_root() {
+            let style = &doc.nodes[cell.node_id].style;
+            (
+                style
+                    .padding
+                    .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
+                style
+                    .border
+                    .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
+            )
+        } else {
+            (Rect::ZERO, Rect::ZERO)
+        };
         let layout = TaffyLayout {
             order: order as u32,
             location: Point {
@@ -1439,8 +1451,8 @@ fn place_cells(
             },
             scrollable_overflow_rect: output.scrollable_overflow_rect,
             scrollbar_size: Size::ZERO,
-            padding: Rect::ZERO,
-            border: Rect::ZERO,
+            padding,
+            border,
             margin: Rect::ZERO,
         };
         cell.resolved = Some(layout);

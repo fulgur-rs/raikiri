@@ -154,93 +154,6 @@ use super::*;
 /// any depth of 1 / 3 / 4 / 6 (no hang / OOM / panic).
 pub(crate) const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 
-/// Upper limit (px) of `font-size` passed to parley.
-///
-/// This is separated from taffy geometry ([`MAX_TAFFY_MAGNITUDE`]) to comply with CSS Values 4 §5, which
-/// states that "the supported range may differ per property / context" (the policy is not to make it
-/// uniform because the target context differs per site). The target context for font-size is the parley →
-/// skrifa glyph scaler, and its valid range differs from that of geometry.
-///
-/// # Value Determination (1e6 px)
-///
-/// Upper **measured** limit: The dependency chain's `skrifa` passes through
-/// `Fixed::from_bits((ppem * 64.) as i32)` when converting font size to 16.16 fixed-point (for
-/// compatibility with `skrifa-0.42.1/src/instance.rs`'s `Size::fixed_linear_scale` and FreeType's
-/// `FT_Set_Pixel_Size`). Therefore, the conversion saturates at `i32::MAX / 64 ≈ 3.36e7` ppem where
-/// `ppem * 64.0` no longer fits within `i32` (Rust's `f32 as i32` is a saturating cast, so it's not UB,
-/// but the scale factor becomes a meaningless value).
-///
-/// This implementation adopts `1e6`, which is more than one order of magnitude lower. The difference is
-/// reserved as a margin for the coefficient that parley multiplies by font-size (`line-height`'s unitless
-/// multiplier, the `metric / units_per_em` ratio of ascent / descent) — `layout/data.rs` of
-/// `parley-0.10.0` calculates `LineHeight::FontSizeRelative(value) * font_size` and
-/// `font_size / units_per_em`.
-///
-/// A 1e6 px glyph is about 890 times the height of A4 and has no typographic meaning, so it does not
-/// impose a practical constraint.
-///
-/// # The harm on this site is not "value corruption" but **hang** (measured).
-///
-/// The consequences for downstream sinks were initially uncharacterized as a plausible risk, but were
-/// measured during the implementation of this guard: replacing `sanitize_finite` with an identity function
-/// and running `nonfinite_font_size_is_clamped_before_parley` alone **does not terminate even after 25
-/// seconds**. This means that non-finite font-sizes prevent parley's shaping from completing in bounded
-/// time.
-///
-/// In contrast, the taffy-side tests for sites 1-4 **with this test input** immediately fail with an
-/// assertion (only the value is corrupted). This is not a general proposition that "taffy does not hang
-/// with non-finite values" — only 5 inputs were measured. The behavior of taffy's internal used values
-/// remains a separate characterization task for the downstream sink.
-///
-/// Since it is reached by 1 element of untrusted author CSS (`<p style="font-size: 1e40px">`), **the guard
-/// on this site is a requirement for availability, not correctness**. Do not delete or bypass it.
-///
-/// Regression detection is **bounded** by `nonfinite_font_size_is_clamped_before_parley` with worker
-/// thread + `recv_timeout`. We do not rely on CI timeouts (only `timeout-minutes` per job unit of
-/// `.github/workflows/ci.yml`, there is no nextest setting) — job kills cannot be distinguished from infra
-/// flakes, and the results of subsequent tests in the same test binary are also lost.
-pub(crate) const MAX_FONT_SIZE_PX: f32 = 1e6;
-
-/// Unitless multiplier for `line-height` to pass to parley
-/// (`ComputedLineHeight::Number` → `parley::LineHeight::FontSizeRelative`)
-/// Upper limit.
-///
-/// # Determining the value (1e6, avoiding overflow based on actual measurements)
-///
-/// parley calculates `FontSizeRelative(value) * font_size` (line height calculation within `push_run` of
-/// `parley-0.10.0/src/layout/data.rs`). Since `font_size` is already clamped to [`MAX_FONT_SIZE_PX`]
-/// (`1e6`) or less when it is passed here, if the `value` side is also limited to the same `1e6`, the
-/// product will be at most `1e12` — there is a margin of 26 digits or more from `f32::MAX` (`≈3.4e38`), so
-/// multiplication of finite × finite will not overflow and become `+Inf`.
-///
-/// The reason this margin is necessary has been confirmed by actual measurements: if `value = f32::MAX` is
-/// passed through as is, `f32::MAX * font_size` (as long as `font_size` exceeds `1.0`) will overflow and
-/// become `+Inf`, and `+Inf` line height will enter the hang path mentioned in `sanitize_line_height`'s
-/// doc. The specific numerical value `1e6` itself has no other basis; any "finite upper limit that is
-/// confirmed not to overflow" would suffice — the reason for adopting the same value as
-/// [`MAX_FONT_SIZE_PX`] is that both are similarly excessive safety margins when viewed from a
-/// typographically meaningful line-height multiplier (which is at most single-digit in practice).
-///
-/// # Compile-time check of the combination
-///
-/// The above argument that overflow does not occur depends on the combination itself, namely that "both
-/// constants are the same `1e6`"; if either one is rewritten, the argument breaks. The
-/// `const _: () = assert!(...)` immediately below fixes the relational expression of the above paragraph
-/// itself, "the product is at most `1e12`", at compile time. Since the current product itself is checked
-/// as a band, rather than immediately below `f32::MAX`, if either constant is changed in a direction that
-/// **increases** the product, the build will fail (changing it in a direction that decreases it only
-/// widens the safe range, so it passes through). Do not simply loosen the value to pass; review both
-/// constants and the overflow argument together. The valid range of [`MAX_FONT_SIZE_PX`] itself is
-/// separately fixed by `clamp_limits_are_in_the_documented_range` (test) with a check of the same form.
-pub(crate) const MAX_LINE_HEIGHT_NUMBER: f32 = 1e6;
-
-// The product is taken with `f64` to prevent this check from being affected by a difference of less than
-// 1 ULP, which determines which side of the `1e12` boundary the product of both constants rounded to
-// `f32` rounds to (even if the product of `f32` overflows, it does not trap but merely saturates to
-// `+Inf`, and `+Inf <= 1e12` is correctly evaluated as false. The concern here is not overflow but the
-// precision of the rounding boundary).
-const _: () = assert!((MAX_LINE_HEIGHT_NUMBER as f64) * (MAX_FONT_SIZE_PX as f64) <= 1e12);
-
 /// Converts non-finite f32 to the finite value of `[min, max]`.
 ///
 /// - **NaN → 0.0**. `f32::clamp` returns NaN **as NaN** (`NaN.clamp(a, b)` is NaN), so clamping alone
@@ -404,10 +317,7 @@ pub(crate) enum LayoutWarn {
     /// finite in-range value before being handed to one of this module's
     /// sink boundaries: `taffy::Style` or the `Node.unrounded_layout` arena
     /// field (sites 1-5, `sanitize_finite` / `sanitize_taffy` /
-    /// `sanitize_taffy_layout`),
-    /// `parley::FontWeight::new` (site 6, `sanitize_font_weight`), or
-    /// `StyleProperty::LineHeight`'s two numeric sub-values (sites 7-8,
-    /// `sanitize_line_height`). Only
+    /// `sanitize_taffy_layout`). Only
     /// emitted when clamping actually changed the
     /// value (not on every call) so ordinary in-range layouts stay silent —
     /// the "warn+skip" shape `FontWarn` uses, not a per-node trace.

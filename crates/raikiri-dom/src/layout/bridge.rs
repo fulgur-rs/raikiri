@@ -81,11 +81,17 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 ///   `grid-column-start` / `grid-column-end` → [`taffy::Style`]'s matching
 ///   grid container/item fields (CSS Grid Layout Module Level 1)
 ///
-/// After the per-node bridge loop, a second pass
-/// ([`establish_minimal_line_boxes`]) scans the entire bridged tree and
-/// establishes a minimal inline formatting context in qualifying block
-/// containers. See that function's docs for the conditions and scope.
-pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
+/// After the per-node bridge loop, the paragraphs of the inline engine are
+/// assigned ([`crate::layout::ifc::assign::assign_ifc_roots`]).
+///
+/// # Errors
+/// What [`crate::layout::ifc::assign::assign_ifc_roots`] returns: a paragraph
+/// over a limit of the inline engine, or one it refuses when it is required
+/// for every paragraph.
+pub(crate) fn apply_computed_to_style(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+) -> Result<(), LayoutError> {
     // Styles retain raw pointers to these payloads for Taffy's calc callback;
     // rebuild the arena for every cascade/layout pass.
     doc.calc_values.clear();
@@ -182,8 +188,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_grid(style, cv, &mut doc.layout_warnings);
     }
     refresh_order_modified_children(doc);
-    crate::layout::ifc::assign::assign_ifc_roots(doc, cascade);
-    establish_minimal_line_boxes(doc, cascade);
+    crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -199,13 +204,14 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
     }
+    Ok(())
 }
 
 /// [`Direction`] → [`taffy::Direction`] mapping.
 ///
 /// Taffy uses this field for horizontal block alignment, table/grid ordering,
-/// and overflow direction.  Keep it separate from text shaping: parley does
-/// not expose the CSS base direction through the bridge used by this crate.
+/// and overflow direction.  Text direction is mapped separately, into the
+/// paragraph style of the inline engine.
 fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
     style.direction = match cv.direction {
         Direction::Ltr => TaffyDirection::Ltr,

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
-use parley::FontContext;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_paint::paint_single_page_with_images;
 use raikiri_style::{DisplayValue, build_rule_tree, cascade};
@@ -48,8 +47,7 @@ fn inline_relative_image_uses_taffy_inset_once_when_painted() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade succeeds");
-    layout_single_page(&mut document, &cascade, PageBox::A4, FontContext::new())
-        .expect("layout succeeds");
+    layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout succeeds");
 
     let body_location = document.get_node(body).unwrap().unrounded_layout.location;
     let container_location = document

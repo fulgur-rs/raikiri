@@ -9,6 +9,7 @@ use shodo::limits::Limits;
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Line, Paragraph};
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 /// A block laid out as one shodo paragraph.
@@ -31,6 +32,16 @@ pub(crate) struct IfcRoot {
     /// Text nodes whose spaces are preserved: spaces of theirs that hang at
     /// the end of a line stay in their elements' boxes.
     pub(crate) preserved_spaces: Vec<usize>,
+    /// `<br>` elements with a physical `clear`: the line after each starts
+    /// below the floats it clears.
+    pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
+    /// The root is a fixed box: its containing block is the page area.
+    pub(crate) fixed: bool,
+    /// Line ranges of the last performed lines and where each range is drawn
+    /// in the columns of a multicol container, when the lines are split
+    /// across columns. `y` is the block offset the range's first line is
+    /// drawn at.
+    pub(crate) multicol_fragments: Option<Vec<crate::node::MulticolTextFragment>>,
 }
 
 /// Lines broken for one content-box width.
@@ -38,15 +49,52 @@ pub(crate) struct IfcRoot {
 pub(crate) struct IfcLines {
     /// Content-box width the lines were broken at.
     pub(crate) width: f32,
-    pub(crate) lines: Vec<Line>,
+    /// Shared, so cloning a root or a document does not copy them.
+    pub(crate) lines: Arc<Vec<Line>>,
     /// Sum of the line advances.
     pub(crate) height: f32,
     /// True when some line was laid out beside a float (its space was
     /// narrower than the content box or did not start at the content start).
     pub(crate) beside_floats: bool,
+    /// Bottom margins of a last block child that collapse through the root's
+    /// bottom edge with the root's own (CSS 2.1 8.3.1); not in `height`.
+    pub(crate) escaping_margin: taffy::CollapsibleMarginSet,
+    /// Each block child of the root with the index of the first line after
+    /// it.
+    pub(crate) block_line_starts: Vec<(usize, usize)>,
+    /// Block offsets added to the lines by pagination: `(first line, delta)`
+    /// moves that line and every later one down by `delta`, when a box of the
+    /// paragraph was moved to a later page.
+    pub(crate) shifts: Vec<(usize, f32)>,
+}
+
+impl IfcLines {
+    /// How far pagination moved line `index` down.
+    pub(crate) fn shift_of(&self, index: usize) -> f32 {
+        self.shifts
+            .iter()
+            .filter(|(first, _)| *first <= index)
+            .map(|(_, delta)| delta)
+            .sum()
+    }
+
+    /// The block offset of line `index` from the content-box top, with the
+    /// pagination shift.
+    pub(crate) fn line_top(&self, index: usize) -> f32 {
+        self.lines
+            .get(index)
+            .map_or(0.0, |line| line.block_offset())
+            + self.shift_of(index)
+    }
 }
 
 impl IfcRoot {
+    /// Baseline of the last line of the last performed layout, from the
+    /// content-box top.
+    pub(crate) fn last_baseline(&self) -> Option<f32> {
+        self.lines.as_ref().and_then(super::flow::last_baseline)
+    }
+
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
         Self {
             paragraph: projected.paragraph,
@@ -57,11 +105,13 @@ impl IfcRoot {
             rtl: projected.rtl,
             offsets: projected.offsets,
             preserved_spaces: projected.preserved_spaces,
+            cleared_breaks: projected.cleared_breaks,
+            fixed: projected.fixed,
+            multicol_fragments: None,
         }
     }
 
-    /// A copy without the stored lines, for measuring: the paragraph is a
-    /// cheap clone, the lines are not.
+    /// A copy without the stored lines, for measuring with lines of its own.
     pub(crate) fn without_lines(&self) -> Self {
         Self {
             paragraph: self.paragraph.clone(),
@@ -72,6 +122,9 @@ impl IfcRoot {
             rtl: self.rtl,
             offsets: self.offsets.clone(),
             preserved_spaces: self.preserved_spaces.clone(),
+            cleared_breaks: self.cleared_breaks.clone(),
+            fixed: self.fixed,
+            multicol_fragments: None,
         }
     }
 }
@@ -91,7 +144,7 @@ pub(crate) fn with_state<R>(
     Some(result)
 }
 
-/// Document-level engine handles, present only when the switch is on.
+/// Document-level engine handles, present once the document has fonts.
 pub(crate) struct IfcState {
     pub(crate) fonts: FontCollection,
     pub(crate) limits: Limits,
@@ -99,7 +152,34 @@ pub(crate) struct IfcState {
     /// Results produced by `Document::shape_standalone_text` for this
     /// document. Atomic because shaping takes `&Document`.
     pub(crate) standalone_calls: AtomicUsize,
+    /// Paragraphs are built on several threads when there are at least this
+    /// many roots and `parallel_build` is set.
+    pub(crate) parallel_threshold: usize,
+    /// The font collection is known to hold no system faces that are loaded
+    /// on first use. Only then does building on several threads give the same
+    /// paragraphs as building in sequence: the face chosen when no family
+    /// covers a character depends on the order in which such faces were
+    /// loaded. Off by default.
+    pub(crate) parallel_build: bool,
+    /// How the roots of the last layout pass were built.
+    pub(crate) last_build: Option<IfcBuildMode>,
+    /// Width of the page area of the current layout pass: the containing
+    /// block of fixed boxes.
+    pub(crate) page_width: Option<f32>,
 }
+
+/// How a layout pass built its paragraphs.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IfcBuildMode {
+    /// One after the other, on the calling thread.
+    Sequential,
+    /// On several threads, one layout context per worker.
+    Parallel,
+}
+
+/// Below this many paragraphs the thread overhead outweighs the gain.
+pub(crate) const DEFAULT_PARALLEL_THRESHOLD: usize = 32;
 
 impl IfcState {
     pub(crate) fn new(fonts: FontCollection, limits: Limits) -> Self {
@@ -108,6 +188,10 @@ impl IfcState {
             limits,
             layout_cx: LayoutContext::new(),
             standalone_calls: AtomicUsize::new(0),
+            parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
+            parallel_build: false,
+            last_build: None,
+            page_width: None,
         }
     }
 }
@@ -133,6 +217,8 @@ impl fmt::Debug for IfcLines {
             .field("lines", &self.lines.len())
             .field("height", &self.height)
             .field("beside_floats", &self.beside_floats)
+            .field("escaping_margin", &self.escaping_margin.resolve())
+            .field("shifts", &self.shifts)
             .finish()
     }
 }
@@ -145,11 +231,16 @@ impl fmt::Debug for IfcState {
     }
 }
 
-// The layout context is per-owner scratch space and the call count belongs
-// to its document, so a clone starts fresh.
+// The layout context is per-owner scratch space and the call count and the
+// last build belong to its document, so a clone starts fresh. The build
+// policy is kept: a clone holds the same font collection.
 impl Clone for IfcState {
     fn clone(&self) -> Self {
-        Self::new(self.fonts.clone(), self.limits.clone())
+        Self {
+            parallel_threshold: self.parallel_threshold,
+            parallel_build: self.parallel_build,
+            ..Self::new(self.fonts.clone(), self.limits.clone())
+        }
     }
 }
 

@@ -1,52 +1,19 @@
 use super::*;
 
-/// Re-shape text runs for a page-specific containing-block width.
+/// Break the lines of every paragraph again for a page-specific
+/// containing-block width.
 ///
 /// Pagination can change the page geometry after the first layout pass. This
-/// helper refreshes only text layouts, leaving taffy's already computed box
+/// helper refreshes only line breaking, leaving taffy's already computed box
 /// geometry intact, so a page-aware painter can use the correct line breaks for
 /// the page it is about to paint. It is intentionally separate from
 /// [`layout_single_page`] because callers must opt into this narrow
 /// post-pagination operation.
 ///
-/// Paragraphs laid out by the shodo inline engine are broken again at the
-/// width the parley path would re-shape their text at: the content width of
-/// the nearest ancestor with an authored width, otherwise `max_advance`. Their
-/// box geometry is left as laid out.
-pub fn relayout_text_for_width(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    max_advance: f32,
-    page_width: f32,
-    mut font_ctx: FontContext,
-) {
+/// Each paragraph is broken at the content width of the nearest ancestor
+/// with an authored width, otherwise at `max_advance`.
+pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult, max_advance: f32) {
     document.page_projection.clear();
-    for node in document.nodes.iter_mut() {
-        if let Some(text) = node.data.as_text_mut() {
-            text.text_layout = None;
-            text.text_line_offsets = None;
-            text.text_indent_px = None;
-            text.text_indent_hanging = false;
-            text.text_indent_each_line = false;
-            text.text_indent_rebreak = false;
-        }
-    }
-    let mut layout_cx = LayoutContext::<()>::new();
-    preshape_text(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        max_advance,
-        page_width,
-    );
-    prepare_text_indent_before_taffy(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        max_advance,
-    );
     crate::layout::ifc::flow::rebreak_roots(document, cascade, max_advance);
 }
 
@@ -137,38 +104,32 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 
 /// Lay out a Document on one A4 page (or the specified PageBox).
 ///
+/// Text is laid out by the inline engine with the fonts the Document holds
+/// ([`Document::set_font_collection`]). A Document that was given no fonts
+/// takes the process-wide layer of the installed fonts
+/// ([`crate::system_font_collection`]) on its first layout.
+///
 /// # In-place changes
-/// - Clear every Node.text_layout to `None` (re-entrance safety)
-/// - Bridge computed values to taffy::Style with `apply_computed_to_style` (currently a no-op)
-/// - Shape every Text node with `preshape_text` and store it in Node.text_layout
+/// - Bridge computed values to taffy::Style with `apply_computed_to_style`
+///   and assign the paragraphs of the inline engine
 /// - Set body.style.size to the page content box with `apply_page_content_box_to_body`
 /// - Run taffy with `compute_root_layout` and store results in Node.unrounded_layout
 ///
 /// # Errors
 /// - `LayoutError::Internal` — no `<body>` element found (fragment parses
 ///   are not supported yet) or an internal taffy error
-///
-///   parley shaping (`preshape_text`) **cannot fail**
-///   (see the documentation for that function).
+/// - `LayoutError::IfcUnsupported` / `LayoutError::IfcLimitExceeded` — a
+///   paragraph the inline engine cannot lay out, or one over its limits
 ///
 /// # Current non-goals
-/// - Calling this repeatedly on one Document is safe (text_layout is cleared
-///   each time), but incremental recomputation is planned for later.
+/// - Calling this repeatedly on one Document is safe (per-pass state is
+///   cleared each time), but incremental recomputation is planned for later.
 /// - Consumer PageBox overrides will be handled by future per-page PageBox support.
 /// - Fragment parses (without `<body>`) will be supported later.
-/// # API compatibility
-///
-/// The signature deliberately changed from three arguments
-/// `(document, cascade, page_box)` to four arguments
-/// `(document, cascade, page_box, font_ctx)` (breaking change, choice β).
-/// After weighing choice α (dual API: old three-argument API plus
-/// a new `_with_fonts`), all raikiri-dom callers proved to be in-repo
-/// (12 sites: one production, 11 tests). Explicit internal DI and a unified signature are easier to maintain long-term.
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    mut font_ctx: FontContext,
 ) -> Result<(), LayoutError> {
     document.page_projection.clear();
     // At this observation-side entry point, synchronize membership.
@@ -191,21 +152,13 @@ pub fn layout_single_page(
         document.layout_dirty = true;
     }
     document.layout_cascade_generation = None;
-
-    // Step 0: text_layout re-entrance clear
-    for node in document.nodes.iter_mut() {
-        if let Some(t) = node.data.as_text_mut() {
-            t.text_layout = None;
-            t.text_line_offsets = None;
-            t.multicol_fragments = None; // cov:ignore: reset is exercised by repeated ignored WPT layouts.
-            t.text_indent_px = None;
-            t.text_indent_hanging = false;
-            t.text_indent_each_line = false;
-            t.text_indent_rebreak = false;
-        }
+    // Fonts are only read when a document is laid out: one that was given
+    // none takes the installed fonts here, not when it is created.
+    if document.ifc.is_none() {
+        document.set_font_collection(crate::fonts::system_font_collection());
     }
-    // Step 0b: layout_warnings re-entrance clear —
-    // same rationale as the text_layout clear above: this Vec is populated
+
+    // Step 0: layout_warnings re-entrance clear: this Vec is populated
     // over the course of a pass (bridges below, then the taffy compute step
     // via `set_unrounded_layout`) and drained near the end of this function,
     // but an early `?` return (Step 3) would otherwise leave a previous call's
@@ -215,7 +168,7 @@ pub fn layout_single_page(
     document.fragmentation_stack.clear();
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
-    apply_computed_to_style(document, cascade);
+    apply_computed_to_style(document, cascade)?;
 
     // Step 2: resolve the paper/content split before shaping.  Text wrapping
     // uses the content width, not the outer paper width.
@@ -227,28 +180,9 @@ pub fn layout_single_page(
     let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
 
-    // Step 2b: pre-shape all text with parley
-    // The caller constructs font_ctx (FontContext::new() for system fonts,
-    // or raikiri_dom::fonts::build_wpt_font_ctx for verified VRT fonts).
-    let mut layout_cx = LayoutContext::<()>::new();
-    prepare_ch_box_values_before_taffy(document, cascade, &mut font_ctx, &mut layout_cx);
-    preshape_text(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        content_width,
-        page_box.width,
-    );
-    // Resolve font-metric `text-indent: ch` before Taffy so leaf heights use
-    // the same indent that the post-layout realignment will paint.
-    prepare_text_indent_before_taffy(
-        document,
-        cascade,
-        &mut font_ctx,
-        &mut layout_cx,
-        content_width,
-    );
+    // Step 2b: resolve `ch` lengths of box properties with the inline
+    // engine's fonts before taffy sizes the boxes.
+    prepare_ch_box_values_before_taffy(document, cascade);
     // Establish the foundational multicolumn fragmentainer projection after
     // text shaping, so direct text can be split by its actual line count.
     // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
@@ -292,6 +226,10 @@ pub fn layout_single_page(
     // taffy already shrink-wraps direct-body and nested absolute boxes alike.
     // See the §10.3.7 note on the layout helpers for the removed fill override.
 
+    // Fixed boxes laid out by the inline engine shrink against the page area.
+    if let Some(state) = document.ifc.as_mut() {
+        state.page_width = Some(content_width);
+    }
     // Step 5: taffy compute
     compute_root_layout(
         document,
@@ -301,13 +239,11 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(content_height),
         },
     );
-    realign_inline_replaced_children(document, cascade); // cov:ignore: resource-enabled ignored WPT path.
-    realign_single_empty_inline_block_indent(document, cascade);
-    // Step 5a: realign text using taffy’s final width (`text-align: center`, etc.).
-    // This changes only glyph offsets, not box geometry, so it could run before or
-    // after invariant checks; put it immediately after compute to use the final width.
+    // Step 5a: post-layout corrections taffy does not make: the static
+    // position of auto-placed grid abspos items, and auto-height ancestors of
+    // floats.
     realign_grid_abspos_static_positions(document, cascade);
-    realign_text_after_layout(document, cascade, &mut font_ctx, &mut layout_cx);
+    propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
     // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only
@@ -377,14 +313,134 @@ pub struct PageSlice {
 /// without corresponding pagination support. The projection is deterministic
 /// and keeps source-node identity stable, so a consumer can select
 /// continuation lines without re-running pagination.
+/// Resolve `ch` lengths on box properties to px in the taffy style, with
+/// the fonts the inline engine lays the text out with.
+pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &CascadeResult) {
+    // `ch` is measured with the inline engine's fonts, the ones the text is
+    // laid out with.
+    let Some(fonts) = doc.ifc.as_ref().map(|state| state.fonts.clone()) else {
+        return;
+    };
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        let cv = &cascade.computed[idx];
+        let measure = |provenance: &Option<ChLengthProvenance>| {
+            provenance.as_ref().map(|provenance| {
+                let used = provenance.factor
+                    * crate::layout::ifc::ch::ch_advance(&fonts, &provenance.font);
+                if used.is_nan() {
+                    0.0
+                } else {
+                    used.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+                }
+            })
+        };
+        let width = measure(&cv.width_ch).map(|value| value.max(0.0));
+        let height = measure(&cv.height_ch).map(|value| value.max(0.0));
+        let padding = (
+            measure(&cv.padding_ch.top).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.right).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.bottom).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.left).map(|value| value.max(0.0)),
+        );
+        let margin = (
+            measure(&cv.margin_ch.top),
+            measure(&cv.margin_ch.right),
+            measure(&cv.margin_ch.bottom),
+            measure(&cv.margin_ch.left),
+        );
+        let style = &mut doc.nodes[idx].style;
+        if let Some(width) = width {
+            style.size.width = Dimension::length(width);
+        }
+        if let Some(height) = height {
+            style.size.height = Dimension::length(height);
+        }
+        if let Some(top) = padding.0 {
+            style.padding.top = LengthPercentage::length(top);
+        }
+        if let Some(right) = padding.1 {
+            style.padding.right = LengthPercentage::length(right);
+        }
+        if let Some(bottom) = padding.2 {
+            style.padding.bottom = LengthPercentage::length(bottom);
+        }
+        if let Some(left) = padding.3 {
+            style.padding.left = LengthPercentage::length(left);
+        }
+        if let Some(top) = margin.0 {
+            style.margin.top = LengthPercentageAuto::length(top);
+        }
+        if let Some(right) = margin.1 {
+            style.margin.right = LengthPercentageAuto::length(right);
+        }
+        if let Some(bottom) = margin.2 {
+            style.margin.bottom = LengthPercentageAuto::length(bottom);
+        }
+        if let Some(left) = margin.3 {
+            style.margin.left = LengthPercentageAuto::length(left);
+        }
+    }
+}
+
+/// Grow every auto-height ancestor of a left or right float to the float's
+/// bottom edge, including the ancestor's bottom border.
+///
+/// Taffy does not include floated descendants in an auto-height containing
+/// block's used height. This keeps following flow from moving upward after a
+/// fragmented flex item with a float descendant.
+pub(crate) fn propagate_float_bottoms_to_auto_height_ancestors(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+) {
+    // Parent map: the arena has no parent pointers, so derive them from children.
+    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+    for idx in 0..doc.nodes.len() {
+        for &c in &doc.nodes[idx].children {
+            if c < parent_of.len() {
+                parent_of[c] = Some(idx);
+            }
+        }
+    }
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element
+            || !doc.nodes[idx].is_in_document()
+            || !matches!(
+                cascade.computed[idx].float,
+                FloatValue::Left | FloatValue::Right
+            )
+        {
+            continue;
+        }
+        let mut child = idx;
+        while let Some(parent) = parent_of[child] {
+            if matches!(
+                cascade.computed[parent].height,
+                ComputedLengthPercentageOrAuto::Auto
+            ) {
+                let child_bottom = doc.nodes[child].unrounded_layout.location.y
+                    + doc.nodes[child].unrounded_layout.size.height
+                    + cascade.computed[parent].border.bottom.width().px();
+                doc.nodes[parent].unrounded_layout.size.height = doc.nodes[parent]
+                    .unrounded_layout
+                    .size
+                    .height
+                    .max(child_bottom);
+            }
+            child = parent;
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn layout_page_fragments(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
 ) -> Result<Vec<PageFragment>, LayoutError> {
-    let slices = layout_pages(document, cascade, page_box, font_ctx)?;
+    let slices = layout_pages(document, cascade, page_box)?;
     Ok(page_fragments_from_slices(
         document, cascade, page_box, &slices,
     ))
@@ -431,6 +487,24 @@ pub(crate) fn resolve_page_fragment_geometry(
         content_box,
         orientation,
     )
+}
+
+/// Block-start and block-end edges of the lines of a text node, from its own
+/// block-start. A text node of an ifc paragraph has no layout of its own, so
+/// its lines come from the paragraph root, measured from its first line; any
+/// other text node has none.
+fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
+    if let Some(owned) = document.ifc_text_lines(node_id) {
+        let first_top = owned.lines.first().map_or(0.0, |l| l.top);
+        return Some(
+            owned
+                .lines
+                .iter()
+                .map(|l| (l.top - first_top, l.bottom - first_top))
+                .collect(),
+        );
+    }
+    None
 }
 
 /// Project an already-paginated document using one fixed geometry for all pages.
@@ -515,6 +589,10 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
     }
 
     let mut nodes = Vec::new();
+    let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
+    // The pieces of the inline elements of each root, moved with their lines
+    // by pagination: an inline element's rectangle is their union.
+    let mut ifc_pieces: HashMap<usize, Vec<InlineBoxPiece>> = HashMap::new();
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
     while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
         let Some(node) = document.get_node(node_id) else {
@@ -547,18 +625,87 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
             NodeKind::Element => true,
             _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
+        if node.is_ifc_root() {
+            // The content-box origin of a paragraph laid out by the inline
+            // engine: its text nodes have no layout of their own, and their
+            // lines are measured from here. A root is visited before its text.
+            ifc_origin.insert(
+                node_id,
+                (
+                    abs_x + layout.border.left + layout.padding.left,
+                    abs_y + layout.border.top + layout.padding.top,
+                ),
+            );
+            ifc_pieces.insert(node_id, node.ifc_inline_boxes().unwrap_or_default());
+        }
+        // An inline element of an inline engine paragraph is where its pieces
+        // are on the lines; its recorded location is relative to its nearest
+        // inline ancestor and does not follow lines that pagination moved.
+        let (abs_x, abs_y, width, height) = if node.kind() == NodeKind::Element
+            && node.in_ifc_subtree()
+            && let Some(root) = document.ifc_root_of(node_id)
+            && let (Some(&(root_x, root_y)), Some(pieces)) =
+                (ifc_origin.get(&root), ifc_pieces.get(&root))
+            && let Some(rect) = pieces
+                .iter()
+                .filter(|piece| piece.node == node_id)
+                .map(|piece| piece.border_box)
+                .reduce(|a, b| {
+                    let x = a.x.min(b.x);
+                    let y = a.y.min(b.y);
+                    BoxRect {
+                        x,
+                        y,
+                        width: (a.x + a.width).max(b.x + b.width) - x,
+                        height: (a.y + a.height).max(b.y + b.height) - y,
+                    }
+                }) {
+            (
+                root_x + rect.x,
+                root_y + rect.y,
+                finite_nonnegative(rect.width),
+                finite_nonnegative(rect.height),
+            )
+        } else {
+            (abs_x, abs_y, width, height)
+        };
         if include && abs_x.is_finite() && abs_y.is_finite() {
-            let line_metrics = (node.kind() == NodeKind::Text).then(|| {
-                node.text_layout()
-                    .into_iter()
-                    .flat_map(|layout| {
-                        layout.lines().map(|line| {
-                            let metrics = line.metrics();
-                            (metrics.block_min_coord, metrics.block_max_coord)
-                        })
-                    })
-                    .collect()
-            });
+            let ifc_lines = (node.kind() == NodeKind::Text)
+                .then(|| document.ifc_text_lines(node_id))
+                .flatten();
+            let (abs_x, abs_y, width, height, line_metrics) = match ifc_lines {
+                // A text node of an ifc paragraph starts at the first line it
+                // owns, in the root's content box; its line metrics are
+                // measured from that line.
+                Some(owned) => {
+                    let (root_x, root_y) = ifc_origin
+                        .get(&owned.root)
+                        .copied()
+                        .unwrap_or((abs_x, abs_y));
+                    let first_top = owned.lines.first().map_or(0.0, |l| l.top);
+                    let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
+                    let metrics: Vec<(f32, f32)> = owned
+                        .lines
+                        .iter()
+                        .map(|l| (l.top - first_top, l.bottom - first_top))
+                        .collect();
+                    (
+                        root_x,
+                        root_y + first_top,
+                        finite_nonnegative(owned.width),
+                        finite_nonnegative(last_bottom - first_top),
+                        Some(metrics),
+                    )
+                }
+                None => (
+                    abs_x,
+                    abs_y,
+                    width,
+                    height,
+                    // A text node outside every paragraph has no lines.
+                    (node.kind() == NodeKind::Text).then(Vec::new),
+                ),
+            };
             nodes.push(PageFragmentSource {
                 node_id: NodeId::new(node_id as u64),
                 node_kind: node.kind(),
@@ -573,8 +720,15 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
         } // cov:ignore: layout sanitization normally keeps source coordinates finite.
 
         if node.kind() == NodeKind::Element {
+            // The children of an inline element of an inline engine paragraph
+            // are located from the paragraph's root, not from the element.
+            let (base_x, base_y) = if document.contributes_layout_offset(node_id) {
+                (abs_x, abs_y)
+            } else {
+                (parent_abs_x, parent_abs_y)
+            };
             for &child_id in node.children.iter().rev() {
-                stack.push((child_id, abs_x, abs_y, is_repeat));
+                stack.push((child_id, base_x, base_y, is_repeat));
             }
         }
     }
@@ -860,7 +1014,7 @@ fn finite_nonnegative(value: f32) -> f32 {
     }
 }
 
-fn page_break_is_forced(value: BreakBetween) -> bool {
+pub(super) fn page_break_is_forced(value: BreakBetween) -> bool {
     matches!(value, BreakBetween::Page)
 }
 
@@ -899,9 +1053,8 @@ pub fn layout_pages(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_steps(document, cascade, page_box, font_ctx, &[])
+    layout_pages_with_page_steps(document, cascade, page_box, &[])
 }
 
 /// Like [`layout_pages`], but first use `resolver` to resolve the intrinsic
@@ -912,10 +1065,9 @@ pub fn layout_pages_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_resolver_and_base_url(document, cascade, page_box, font_ctx, resolver, None)
+    layout_pages_with_resolver_and_base_url(document, cascade, page_box, resolver, None)
 }
 
 /// [`layout_pages_with_resolver`] with relative image URLs resolved against a
@@ -924,7 +1076,6 @@ pub fn layout_pages_with_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
@@ -937,7 +1088,7 @@ pub fn layout_pages_with_resolver_and_base_url(
         None => crate::image_resolve::resolve_images(document, resolver),
     }
     .map_err(LayoutError::Resolver)?;
-    layout_pages(document, cascade, page_box, font_ctx)
+    layout_pages(document, cascade, page_box)
 }
 
 /// Like [`layout_pages_with_page_geometry`], but first use `resolver` to
@@ -946,7 +1097,6 @@ pub fn layout_pages_with_page_geometry_and_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
     page_widths: &[f32],
     resolver: &dyn ReplacedResolver,
@@ -955,7 +1105,6 @@ pub fn layout_pages_with_page_geometry_and_resolver(
         document,
         cascade,
         page_box,
-        font_ctx,
         page_steps,
         page_widths,
         resolver,
@@ -969,7 +1118,6 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
     page_widths: &[f32],
     resolver: &dyn ReplacedResolver,
@@ -984,14 +1132,7 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
         None => crate::image_resolve::resolve_images(document, resolver),
     }
     .map_err(LayoutError::Resolver)?;
-    layout_pages_with_page_geometry(
-        document,
-        cascade,
-        page_box,
-        font_ctx,
-        page_steps,
-        page_widths,
-    )
+    layout_pages_with_page_geometry(document, cascade, page_box, page_steps, page_widths)
 }
 
 /// Layout ordinary block flow with an optional per-page content-height schedule.
@@ -1003,10 +1144,9 @@ pub fn layout_pages_with_page_steps(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_geometry(document, cascade, page_box, font_ctx, page_steps, &[])
+    layout_pages_with_page_geometry(document, cascade, page_box, page_steps, &[])
 }
 
 /// Layout ordinary block flow with per-page content heights and widths.
@@ -1020,11 +1160,10 @@ pub fn layout_pages_with_page_geometry(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     page_steps: &[f32],
     page_widths: &[f32],
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_single_page(document, cascade, page_box, font_ctx)?;
+    layout_single_page(document, cascade, page_box)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
@@ -1179,7 +1318,9 @@ pub fn layout_pages_with_page_geometry(
         let mut guard = 0_usize;
         while guard <= parent_of.len() {
             y += document.nodes[id].unrounded_layout.location.y;
-            let Some(parent_id) = parent_of[id] else {
+            // A box of an inline engine paragraph is located from the root,
+            // not from the inline elements around it.
+            let Some(parent_id) = parent_of[id].and_then(|_| document.layout_parent_of(id)) else {
                 break;
             };
             id = parent_id;
@@ -1204,6 +1345,80 @@ pub fn layout_pages_with_page_geometry(
         let delta = desired_y - actual_y;
         if delta.is_finite() {
             document.nodes[node_id].unrounded_layout.location.y += delta;
+            follow_moved_ifc_block(document, node_id, delta);
+        }
+    }
+
+    /// The lines of the text `text` of the paragraph `root` start a later
+    /// page: they, the lines after them and the paragraph's boxes below their
+    /// top move down by `delta`.
+    fn follow_moved_ifc_text(document: &mut Document, root: usize, text: usize, delta: f32) {
+        if delta == 0.0 || !delta.is_finite() {
+            return;
+        }
+        let Some(first) = document
+            .ifc_text_lines(text)
+            .and_then(|owned| owned.lines.first().copied())
+        else {
+            return;
+        };
+        let layout = document.nodes[root].unrounded_layout;
+        let old_top = layout.border.top + layout.padding.top + first.top;
+        let Some(ifc) = document.nodes[root].ifc.as_mut() else {
+            return;
+        };
+        let Some(lines) = ifc.lines.as_mut() else {
+            return;
+        };
+        lines.shifts.push((first.line, delta));
+        let boxes: Vec<usize> = ifc.boxes.iter().map(|b| b.node).collect();
+        for b in boxes {
+            let location = &mut document.nodes[b].unrounded_layout.location;
+            if location.y >= old_top - 0.01 {
+                location.y += delta;
+            }
+        }
+    }
+
+    /// A block child of a paragraph laid out by the inline engine was moved
+    /// by `delta` (to a later page): the lines after it and the paragraph's
+    /// boxes below it move with it, as the content that follows a block
+    /// follows it in the block's formatting context. Lines and boxes above
+    /// it stay where they are.
+    fn follow_moved_ifc_block(document: &mut Document, node_id: usize, delta: f32) {
+        if delta == 0.0 || !delta.is_finite() || document.nodes[node_id].in_ifc_subtree() {
+            return;
+        }
+        let Some(root) = document.layout_parent_of(node_id) else {
+            return;
+        };
+        let old_bottom = document.nodes[node_id].unrounded_layout.location.y - delta
+            + document.nodes[node_id].unrounded_layout.size.height;
+        let Some(ifc) = document.nodes[root].ifc.as_mut() else {
+            return;
+        };
+        let Some(lines) = ifc.lines.as_mut() else {
+            return;
+        };
+        let Some(&(_, first_after)) = lines
+            .block_line_starts
+            .iter()
+            .find(|(block, _)| *block == node_id)
+        else {
+            return;
+        };
+        lines.shifts.push((first_after, delta));
+        let boxes: Vec<usize> = ifc
+            .boxes
+            .iter()
+            .map(|b| b.node)
+            .filter(|&b| b != node_id)
+            .collect();
+        for b in boxes {
+            let location = &mut document.nodes[b].unrounded_layout.location;
+            if location.y >= old_bottom - 0.01 {
+                location.y += delta;
+            }
         }
     }
 
@@ -1274,6 +1489,10 @@ pub fn layout_pages_with_page_geometry(
         /// An inline canvas with a named page is a boundary marker, but its
         /// inline-level box does not itself establish the named page type.
         inline_named_page: bool,
+        /// For a text node of an ifc paragraph: the paragraph root and the
+        /// text's offset below the root's border-box top. The root's lines
+        /// are painted from the root, so the text moves by moving the root.
+        ifc_root: Option<(usize, f32)>,
     }
 
     fn has_nested_named_page_descendant(
@@ -1347,10 +1566,36 @@ pub fn layout_pages_with_page_geometry(
                         crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
                     )
                 {
+                    // A text node of an ifc paragraph has no layout of its own:
+                    // it stands for the lines it owns, measured from the root's
+                    // content box. The inline elements between the root and
+                    // the text pass the root's border-box y down unchanged, so
+                    // `parent_abs_y` is the root's. A text node that is a root
+                    // itself (an anonymous flex or grid item) has a box of its
+                    // own, located like any other.
+                    let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
+                        Some(owned) if owned.root != node_id => {
+                            let root_layout = document.nodes[owned.root].unrounded_layout;
+                            let first_top = owned.lines.first().map_or(0.0, |l| l.top);
+                            let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
+                            let offset =
+                                root_layout.border.top + root_layout.padding.top + first_top;
+                            (
+                                parent_abs_y + offset,
+                                (last_bottom - first_top).max(0.0),
+                                Some((owned.root, offset)),
+                            )
+                        }
+                        _ => (
+                            parent_abs_y + node.unrounded_layout.location.y,
+                            node.unrounded_layout.size.height.max(0.0),
+                            None,
+                        ),
+                    };
                     out.push(PageCandidate {
                         node_id,
-                        raw_y: parent_abs_y + node.unrounded_layout.location.y,
-                        height: node.unrounded_layout.size.height.max(0.0),
+                        raw_y,
+                        height,
                         is_text: true,
                         is_direct_body_text: direct_body_child,
                         is_direct_body_element: false,
@@ -1362,6 +1607,7 @@ pub fn layout_pages_with_page_geometry(
                         page_name: inherited_page_name,
                         deferred_named_break_after: false,
                         inline_named_page: false,
+                        ifc_root,
                     });
                 }
             }
@@ -1371,9 +1617,37 @@ pub fn layout_pages_with_page_geometry(
                 }
                 // An element inside a paragraph laid out by the inline engine
                 // moves with the paragraph's lines; breaking at it on its own
-                // would leave the lines where they are. The flag is set only
-                // when the inline engine is switched on.
+                // would leave the lines where they are. Its text stands for
+                // lines of the root and the boxes inside it are located from
+                // the root, like the root's own children, so both are
+                // collected as if they were. The flag is set only when the
+                // inline engine is switched on.
                 if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+                    for &child_id in &node.children {
+                        if matches!(
+                            document.nodes[child_id].kind(),
+                            NodeKind::Element | NodeKind::Text
+                        ) {
+                            collect_candidates(
+                                document,
+                                cascade,
+                                child_id,
+                                parent_abs_y,
+                                direct_body_child,
+                                body_id,
+                                parent_height,
+                                page_step,
+                                inherited_page_name.clone(),
+                                inside_table,
+                                flex_column_parent,
+                                grid_single_column_parent,
+                                inside_flex,
+                                inside_float,
+                                inside_out_of_flow,
+                                out,
+                            );
+                        }
+                    }
                     return;
                 }
                 let raw_y = parent_abs_y + node.unrounded_layout.location.y;
@@ -1493,6 +1767,7 @@ pub fn layout_pages_with_page_geometry(
                         page_name: page_name.clone(),
                         deferred_named_break_after,
                         inline_named_page,
+                        ifc_root: None,
                     });
                 }
                 let child_is_direct_body = node_id == body_id;
@@ -1593,8 +1868,24 @@ pub fn layout_pages_with_page_geometry(
     let mut page_names = vec![current_page_name.clone()];
 
     let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
+    // Paragraphs laid out by the inline engine that already had a candidate
+    // inside them. Only the first candidate of a paragraph may move its root:
+    // a later one would move again what the earlier ones placed.
+    let mut entered_ifc_roots = HashSet::new();
     for candidate in candidates {
         let node_id = candidate.node_id;
+        let moves_ifc_root = {
+            let mut first = true;
+            let mut current = parent_of.get(node_id).copied().flatten();
+            while let Some(id) = current {
+                if document.nodes[id].is_ifc_root() && !entered_ifc_roots.insert(id) {
+                    first = false;
+                }
+                current = parent_of.get(id).copied().flatten();
+            }
+            first
+        };
+        let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
         if let Some((ancestor_id, correction)) = pending_underflow
             && !is_descendant_or_self(document, node_id, ancestor_id, &parent_of)
         {
@@ -1638,8 +1929,11 @@ pub fn layout_pages_with_page_geometry(
             // block fragmentation for monolithic content while leaving tall
             // blocks and already-forced page transitions to the existing
             // fragment logic.
-            let direct_block_parent = parent_of[node_id]
-                .and_then(|parent_id| (parent_of[parent_id] == Some(body_id)).then_some(parent_id));
+            // A block inside an inline element of an inline engine paragraph
+            // is laid out from the paragraph's root, as a direct child is.
+            let direct_block_parent = parent_of[node_id].and_then(|parent_id| {
+                (document.layout_parent_of(parent_id) == Some(body_id)).then_some(parent_id)
+            });
             if let Some(block_id) = direct_block_parent
                 && checked_block_text.insert(block_id)
                 && style_dimension_length(document.nodes[block_id].style.size.height)
@@ -1674,24 +1968,17 @@ pub fn layout_pages_with_page_geometry(
             }
             // `orphans` and `widows` constrain breaks between line boxes, not
             // breaks between block-level children.  The current paginator keeps
-            // a text run in one `parley::Layout`, so the safe first step is to
+            // a paragraph in one piece, so the safe first step is to
             // move a fitting direct block as a unit when its natural split would
             // violate either constraint.  Oversized blocks stay on the
             // existing whole-box path; their line-level fragment map is a
             // separate concern.
             if let Some(block_id) = direct_block_parent
                 && checked_orphans_widows.insert(block_id)
-                && let Some(text_layout) = document.nodes[node_id].text_layout()
+                && let Some(line_metrics) = text_line_bounds(document, node_id)
             {
                 let page_start = page_origin(current_page);
                 let page_end = page_start + page_step_at(current_page);
-                let line_metrics: Vec<(f32, f32)> = text_layout
-                    .lines()
-                    .map(|line| {
-                        let metrics = line.metrics();
-                        (metrics.block_min_coord, metrics.block_max_coord)
-                    })
-                    .collect();
                 let total_lines = line_metrics.len();
                 let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
                     let top = effective_y + line_top;
@@ -1722,6 +2009,23 @@ pub fn layout_pages_with_page_geometry(
                     }
                 }
             }
+            if let Some((ifc_root, offset)) = ifc_root {
+                materialize_y(document, ifc_root, effective_y - offset, &parent_of);
+            } else if let Some((root, _)) = candidate.ifc_root
+                && let Some(first) = document
+                    .ifc_text_lines(node_id)
+                    .and_then(|owned| owned.lines.first().copied())
+            {
+                // A later text of a paragraph whose root already moved: its
+                // lines go where the flow puts them, and the ones after
+                // follow (an earlier box of the paragraph may have grown).
+                let layout = document.nodes[root].unrounded_layout;
+                let current = current_abs_y(document, root, &parent_of)
+                    + layout.border.top
+                    + layout.padding.top
+                    + first.top;
+                follow_moved_ifc_text(document, root, node_id, effective_y - current);
+            }
             materialize_y(document, node_id, effective_y, &parent_of);
             let named_page_change = saw_child
                 && height > 0.0
@@ -1747,7 +2051,17 @@ pub fn layout_pages_with_page_geometry(
                     let node_delta = target_y - effective_y;
                     let shift_delta = target_y - effective_y;
                     if node_delta.is_finite() && shift_delta.is_finite() {
-                        document.nodes[node_id].unrounded_layout.location.y += node_delta;
+                        // The text of an ifc paragraph is painted from its
+                        // root, so the root carries the movement.
+                        let moved = ifc_root.map_or(node_id, |(root, _)| root);
+                        document.nodes[moved].unrounded_layout.location.y += node_delta;
+                        // A later text of a paragraph whose root already
+                        // moved: its lines, and the ones after, move alone.
+                        if ifc_root.is_none()
+                            && let Some((root, _)) = candidate.ifc_root
+                        {
+                            follow_moved_ifc_text(document, root, node_id, node_delta);
+                        }
                         flow_shift += shift_delta;
                         effective_y += shift_delta;
                     }
@@ -1985,6 +2299,7 @@ pub fn layout_pages_with_page_geometry(
                     });
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
+                    follow_moved_ifc_block(document, node_id, node_delta);
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
@@ -2156,12 +2471,9 @@ pub fn layout_single_page_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
 ) -> Result<(), LayoutError> {
-    layout_single_page_with_resolver_and_base_url(
-        document, cascade, page_box, font_ctx, resolver, None,
-    )
+    layout_single_page_with_resolver_and_base_url(document, cascade, page_box, resolver, None)
 }
 
 /// [`layout_single_page_with_resolver`] with document-relative image URLs.
@@ -2169,7 +2481,6 @@ pub fn layout_single_page_with_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<(), LayoutError> {
@@ -2184,7 +2495,7 @@ pub fn layout_single_page_with_resolver_and_base_url(
         None => crate::image_resolve::resolve_images(document, resolver),
     }
     .map_err(LayoutError::Resolver)?;
-    layout_single_page(document, cascade, page_box, font_ctx)
+    layout_single_page(document, cascade, page_box)
 }
 
 #[cfg(test)]

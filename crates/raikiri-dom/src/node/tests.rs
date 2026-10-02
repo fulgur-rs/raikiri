@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::test_support::with_ahem;
 
 #[cfg(test)]
 mod flags_tests {
@@ -51,8 +52,6 @@ mod flags_tests {
         );
         // tag_name returns None for a Comment (not an Element).
         assert_eq!(n.tag_name(), None);
-        // text_layout returns None for a Comment (not Text).
-        assert!(n.text_layout().is_none());
     }
 
     #[test]
@@ -64,7 +63,6 @@ mod flags_tests {
         assert_eq!(n.kind(), NodeKind::ProcessingInstruction);
         assert!(n.is_in_document());
         assert_eq!(n.tag_name(), None);
-        assert!(n.text_layout().is_none());
     }
 
     #[test]
@@ -75,19 +73,18 @@ mod flags_tests {
         // marking; the constructor itself defaults to true.
         assert!(n.is_in_document());
         assert_eq!(n.tag_name(), None);
-        assert!(n.text_layout().is_none());
     }
 
     #[test]
     fn node_flags_bit_values_match_blitz_raw() {
         // Regression check: blitz `NodeFlags` must match the raw bit values
         // defined in blitz-dom/src/node/node.rs:50-58:
-        //   IS_INLINE_ROOT = 0b001, IS_TABLE_ROOT = 0b010, IS_IN_DOCUMENT = 0b100
+        //   IS_TABLE_ROOT = 0b010, IS_IN_DOCUMENT = 0b100 (bit 0, blitz's
+        //   IS_INLINE_ROOT, is unused here)
         //
         // This makes future blitz-compat conversion a trivial
         // `NodeFlags::from_bits(x)` cast. Add future bits at the same positions
         // as blitz.
-        assert_eq!(NodeFlags::IS_INLINE_ROOT.bits(), 0b001);
         assert_eq!(NodeFlags::IS_TABLE_ROOT.bits(), 0b010);
         assert_eq!(NodeFlags::IS_IN_DOCUMENT.bits(), 0b100);
     }
@@ -264,19 +261,13 @@ fn an_ifc_root_exposes_no_layout_children() {
 #[test]
 fn a_laid_out_ifc_root_exposes_its_lines() {
     use crate::layout::layout_single_page;
-    use crate::layout::test_support::{
-        ahem_font_context, ahem_paragraph, ifc_ahem_fonts, page_box_800x600,
-    };
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts, page_box_800x600};
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
-    // Off: the block is not an ifc root and holds no lines.
-    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
-        .expect("layout");
-    assert!(!doc.nodes[root].is_ifc_root());
+    // Before a layout the block holds no lines.
     assert!(doc.nodes[root].ifc_lines().is_none());
-    // On: three 10px lines.
-    doc.enable_inline_formatting(ifc_ahem_fonts(), shodo::limits::Limits::default());
-    layout_single_page(&mut doc, &cascade, page_box_800x600(), ahem_font_context())
-        .expect("layout");
+    // After it: three 10px lines.
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].ifc_lines().map(<[_]>::len), Some(3));
 }

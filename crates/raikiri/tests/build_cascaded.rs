@@ -924,7 +924,7 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
 
 #[test]
 fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
-    // Acceptance: the 6 §flow-content-3 (15.3.3)
+    // Acceptance: the 7 §flow-content-3 (15.3.3)
     // display:block selector members that were previously untracked
     // now resolve to display: block end-to-end.
     // center/listing/plaintext/xmp are HTML LS §16.2 "entirely obsolete"
@@ -943,7 +943,15 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
     // `hr_is_display_block_border_inset_and_margin_via_ua_css` (the
     // raikiri-html::lib textual scan only confirms the rule text exists,
     // not that cssparser actually accepts it end-to-end).
-    for tag in ["address", "center", "listing", "plaintext", "search", "xmp"] {
+    for tag in [
+        "address",
+        "center",
+        "listing",
+        "plaintext",
+        "pre",
+        "search",
+        "xmp",
+    ] {
         let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
         let doc = parse_html(&html);
         let result = build_cascaded(&doc);

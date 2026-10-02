@@ -70,7 +70,21 @@ std::fs::write("output.png", png)?;
 ```
 
 `html_to_png` renders the first page only. It uses A4 when no `@page` size is specified.
-Use `html_to_png_with_fonts` when reproducible fonts are required for VRT.
+`html_to_png` and `html_to_png_with_resolver` lay text out with the shodo inline
+engine over the installed fonts. For reproducible output (the path the VRT uses),
+build a font set from your own font bytes:
+
+```rust,no_run
+use std::io::Cursor;
+use raikiri::{html_to_png_with_render_fonts, FontCollectionBuilder};
+
+let font_bytes = std::fs::read("MyFont.ttf")?;
+let fonts = FontCollectionBuilder::new()
+    .font_bytes("My Font", font_bytes)
+    .build()?;
+let png = html_to_png_with_render_fonts(Cursor::new(b"<p>Hello</p>"), fonts)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## For developers
 
@@ -82,7 +96,7 @@ Use `html_to_png_with_fonts` when reproducible fonts are required for VRT.
 | [`raikiri-traits`](crates/raikiri-traits) | Shared traits and types for the DOM, network, resolver, rendering, and page models |
 | [`raikiri-html`](crates/raikiri-html) | html5ever wrapper and HTML → uncascaded document pipeline |
 | [`raikiri-style`](crates/raikiri-style) | cssparser / selectors integration, rule tree, cascade, and computed values |
-| [`raikiri-dom`](crates/raikiri-dom) | DOM arena, taffy layout, parley text processing, and page state |
+| [`raikiri-dom`](crates/raikiri-dom) | DOM arena, taffy block layout, shodo inline (text) layout, and page state |
 | [`raikiri-net`](crates/raikiri-net) | `NetworkProvider`, image resolver, and PNG decoding |
 | [`raikiri-paint`](crates/raikiri-paint) | Builds anyrender paint scenes from page fragments |
 | [`raikiri-vrt`](crates/raikiri-vrt) | Fixtures and diff infrastructure for visual regression tests (private crate) |

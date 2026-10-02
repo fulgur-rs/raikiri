@@ -1,5 +1,5 @@
 use crate::text::{measure_margin_text, measure_margin_text_advance, measure_margin_text_height};
-use raikiri_dom::Document;
+use raikiri_dom::{Document, StandaloneAlign};
 use shodo::limits::Limits;
 
 const FONT_DIR: &str = concat!(
@@ -11,57 +11,17 @@ fn engine_document() -> Document {
     let mut doc = Document::new();
     let collection = raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR))
         .expect("the Ahem layer");
-    doc.enable_inline_formatting(collection, Limits::default());
+    doc.set_font_collection_with_limits(collection, Limits::default());
     doc
 }
 
 #[test]
 fn measurements_use_the_document_font_when_the_engine_is_on() {
     let doc = engine_document();
-    assert_eq!(measure_margin_text(Some(&doc), "ab ", 10.0, "Ahem"), 20.0);
-    assert_eq!(
-        measure_margin_text_advance(Some(&doc), "ab ", 10.0, "Ahem"),
-        30.0
-    );
-    assert_eq!(
-        measure_margin_text_height(Some(&doc), "abc", 10.0, "Ahem"),
-        10.0
-    );
+    assert_eq!(measure_margin_text(&doc, "ab ", 10.0, "Ahem"), 20.0);
+    assert_eq!(measure_margin_text_advance(&doc, "ab ", 10.0, "Ahem"), 30.0);
+    assert_eq!(measure_margin_text_height(&doc, "abc", 10.0, "Ahem"), 10.0);
     assert_eq!(doc.standalone_text_calls(), 3);
-}
-
-#[test]
-fn a_document_without_the_engine_measures_like_no_document() {
-    // A pin: `shape` returns `None` for a document without the engine, so the
-    // old path measures. It does not show that the old path ignores `document`.
-    let off = Document::new();
-    for content in ["abc", "ab ", ""] {
-        assert_eq!(
-            measure_margin_text(Some(&off), content, 16.0, "serif"),
-            measure_margin_text(None, content, 16.0, "serif")
-        );
-        assert_eq!(
-            measure_margin_text_advance(Some(&off), content, 16.0, "serif"),
-            measure_margin_text_advance(None, content, 16.0, "serif")
-        );
-        assert_eq!(
-            measure_margin_text_height(Some(&off), content, 16.0, "serif"),
-            measure_margin_text_height(None, content, 16.0, "serif")
-        );
-    }
-    assert_eq!(off.standalone_text_calls(), 0);
-}
-
-#[test]
-fn what_the_engine_declines_is_measured_by_the_old_path() {
-    let doc = engine_document();
-    let hebrew = "ab \u{5d0}";
-    assert_eq!(
-        measure_margin_text(Some(&doc), hebrew, 16.0, "serif"),
-        measure_margin_text(None, hebrew, 16.0, "serif")
-    );
-    assert_eq!(measure_margin_text(Some(&doc), "", 10.0, "Ahem"), 0.0);
-    assert_eq!(doc.standalone_text_calls(), 0);
 }
 
 #[test]
@@ -70,7 +30,7 @@ fn a_family_list_string_is_split_and_unquoted() {
     // Callers pass one family name, so the split is defensive. `Ahem` is the
     // second family here, in quotes.
     assert_eq!(
-        measure_margin_text(Some(&doc), "abc", 10.0, "No Such, 'Ahem'"),
+        measure_margin_text(&doc, "abc", 10.0, "No Such, 'Ahem'"),
         30.0
     );
 }
@@ -79,13 +39,10 @@ fn a_family_list_string_is_split_and_unquoted() {
 fn an_unusable_font_size_falls_back_to_sixteen_like_before() {
     let doc = engine_document();
     // Ahem is one em per glyph, so the width follows the size actually used.
+    assert_eq!(measure_margin_text(&doc, "abc", f32::NAN, "Ahem"), 48.0);
+    assert_eq!(measure_margin_text(&doc, "abc", 0.0, "Ahem"), 48.0);
     assert_eq!(
-        measure_margin_text(Some(&doc), "abc", f32::NAN, "Ahem"),
-        48.0
-    );
-    assert_eq!(measure_margin_text(Some(&doc), "abc", 0.0, "Ahem"), 48.0);
-    assert_eq!(
-        measure_margin_text(Some(&doc), "abc", f32::INFINITY, "Ahem"),
+        measure_margin_text(&doc, "abc", f32::INFINITY, "Ahem"),
         48.0
     );
 }
@@ -110,12 +67,12 @@ fn glyph_positions(scene: &Scene) -> Vec<(f64, f64)> {
 
 fn draw(
     doc: &Document,
-    align: parley::Alignment,
+    align: StandaloneAlign,
     vertical: crate::text::MarginTextVerticalAlign,
 ) -> Vec<(f64, f64)> {
     let mut scene = Scene::new();
     crate::text::draw_margin_text(
-        Some(doc),
+        doc,
         &mut scene,
         "abc",
         5.0,
@@ -135,7 +92,7 @@ fn draw(
 fn the_text_sits_at_the_baseline_of_its_vertical_alignment() {
     use crate::text::MarginTextVerticalAlign::{Bottom, Middle, Top};
     let doc = engine_document();
-    let y = |vertical| draw(&doc, parley::Alignment::Start, vertical)[0].1;
+    let y = |vertical| draw(&doc, StandaloneAlign::Start, vertical)[0].1;
     assert_eq!(y(Top), 15.0);
     assert_eq!(y(Middle), 30.0);
     assert_eq!(y(Bottom), 45.0);
@@ -146,10 +103,10 @@ fn the_text_is_aligned_inside_the_box_width() {
     use crate::text::MarginTextVerticalAlign::Top;
     let doc = engine_document();
     let xs = |align| -> Vec<f64> { draw(&doc, align, Top).into_iter().map(|(x, _)| x).collect() };
-    assert_eq!(xs(parley::Alignment::Start), [5.0, 15.0, 25.0]);
-    assert_eq!(xs(parley::Alignment::Center), [40.0, 50.0, 60.0]);
-    assert_eq!(xs(parley::Alignment::End), [75.0, 85.0, 95.0]);
-    assert_eq!(xs(parley::Alignment::Right), [75.0, 85.0, 95.0]);
+    assert_eq!(xs(StandaloneAlign::Start), [5.0, 15.0, 25.0]);
+    assert_eq!(xs(StandaloneAlign::Center), [40.0, 50.0, 60.0]);
+    assert_eq!(xs(StandaloneAlign::End), [75.0, 85.0, 95.0]);
+    assert_eq!(xs(StandaloneAlign::Right), [75.0, 85.0, 95.0]);
 }
 
 #[test]
@@ -157,7 +114,7 @@ fn the_colour_is_the_colour_the_caller_gave() {
     let doc = engine_document();
     let mut scene = Scene::new();
     crate::text::draw_margin_text(
-        Some(&doc),
+        &doc,
         &mut scene,
         "a",
         0.0,
@@ -167,7 +124,7 @@ fn the_colour_is_the_colour_the_caller_gave() {
         Color::from_rgba8(255, 0, 0, 255),
         10.0,
         "Ahem",
-        parley::Alignment::Start,
+        StandaloneAlign::Start,
         crate::text::MarginTextVerticalAlign::Top,
     );
     let red = anyrender::Paint::Solid(Color::from_rgba8(255, 0, 0, 255));
@@ -184,53 +141,11 @@ fn the_colour_is_the_colour_the_caller_gave() {
 }
 
 #[test]
-fn text_the_engine_declines_is_drawn_by_the_old_path() {
-    let doc = engine_document();
-    let mut scene = Scene::new();
-    crate::text::draw_margin_text(
-        Some(&doc),
-        &mut scene,
-        "ab \u{5d0}",
-        0.0,
-        0.0,
-        100.0,
-        20.0,
-        Color::from_rgba8(0, 0, 0, 255),
-        10.0,
-        "Ahem",
-        parley::Alignment::Start,
-        crate::text::MarginTextVerticalAlign::Top,
-    );
-    assert_eq!(doc.standalone_text_calls(), 0);
-    assert!(!glyph_positions(&scene).is_empty(), "parley still draws it");
-}
-
-#[test]
-fn without_a_document_the_old_path_draws() {
-    let mut scene = Scene::new();
-    crate::text::draw_margin_text(
-        None,
-        &mut scene,
-        "abc",
-        0.0,
-        0.0,
-        100.0,
-        20.0,
-        Color::from_rgba8(0, 0, 0, 255),
-        16.0,
-        "serif",
-        parley::Alignment::Start,
-        crate::text::MarginTextVerticalAlign::Top,
-    );
-    assert!(!glyph_positions(&scene).is_empty());
-}
-
-#[test]
 fn a_second_line_is_drawn_one_line_below_the_first() {
     let doc = engine_document();
     let mut scene = Scene::new();
     crate::text::draw_margin_text(
-        Some(&doc),
+        &doc,
         &mut scene,
         "a\nb",
         0.0,
@@ -240,7 +155,7 @@ fn a_second_line_is_drawn_one_line_below_the_first() {
         Color::from_rgba8(0, 0, 0, 255),
         10.0,
         "Ahem",
-        parley::Alignment::Start,
+        StandaloneAlign::Start,
         crate::text::MarginTextVerticalAlign::Top,
     );
     // Baselines at the ascent (8) of each 10px line.
@@ -248,10 +163,10 @@ fn a_second_line_is_drawn_one_line_below_the_first() {
 }
 
 /// Glyph x positions of `content` drawn in a 100-wide box at x = 5.
-fn aligned_xs(doc: &Document, content: &str, align: parley::Alignment) -> Vec<f64> {
+fn aligned_xs(doc: &Document, content: &str, align: StandaloneAlign) -> Vec<f64> {
     let mut scene = Scene::new();
     crate::text::draw_margin_text(
-        Some(doc),
+        doc,
         &mut scene,
         content,
         5.0,
@@ -272,25 +187,54 @@ fn aligned_xs(doc: &Document, content: &str, align: parley::Alignment) -> Vec<f6
 
 #[test]
 fn trailing_blanks_hang_when_the_text_is_aligned() {
-    // parley hangs trailing blanks outside the aligned content, so "ab " is
+    // Trailing blanks hang outside the aligned content, so "ab " is
     // placed like "ab" (right-aligned at 5 + 80, centred at 5 + 40) and its
     // space glyph follows past the end.
     let doc = engine_document();
     assert_eq!(
-        aligned_xs(&doc, "ab ", parley::Alignment::Right),
+        aligned_xs(&doc, "ab ", StandaloneAlign::Right),
         [85.0, 95.0, 105.0]
     );
     assert_eq!(
-        aligned_xs(&doc, "ab ", parley::Alignment::Center),
+        aligned_xs(&doc, "ab ", StandaloneAlign::Center),
         [45.0, 55.0, 65.0]
     );
     // A line before a forced break hangs its blanks too; "b" is not moved.
     assert_eq!(
-        aligned_xs(&doc, "a  \nb", parley::Alignment::End),
+        aligned_xs(&doc, "a  \nb", StandaloneAlign::End),
         [95.0, 105.0, 115.0, 95.0]
     );
     assert_eq!(
-        aligned_xs(&doc, "ab ", parley::Alignment::Start),
+        aligned_xs(&doc, "ab ", StandaloneAlign::Start),
         [5.0, 15.0, 25.0]
     );
+}
+
+#[test]
+fn standalone_text_is_laid_out_by_the_engine_only() {
+    // A document that was never laid out has no fonts of its own: the run is
+    // still shaped by the engine, over the installed fonts. There is no other
+    // path to fall back to.
+    let doc = Document::new();
+    let run = super::shape(&doc, "abc", 16.0, "serif", None, StandaloneAlign::Start)
+        .expect("the engine shapes the run");
+    let glyphs: usize = run.lines()[0]
+        .fragments()
+        .map(|fragment| match fragment {
+            shodo::Fragment::GlyphRun(run) => run.glyphs().count(),
+            _ => 0,
+        })
+        .sum();
+    assert!(glyphs >= 3, "{glyphs}");
+}
+
+#[test]
+fn a_right_to_left_run_is_drawn_by_the_engine_inside_its_box() {
+    // Ahem draws the two Hebrew letters with its 1em notdef: five 10px glyphs
+    // starting at the box's left edge (x = 5), whatever their visual order.
+    let doc = engine_document();
+    let mut xs = aligned_xs(&doc, "ab \u{5d0}\u{5d1}", StandaloneAlign::Start);
+    xs.sort_by(f64::total_cmp);
+    assert_eq!(xs, [5.0, 15.0, 25.0, 35.0, 45.0]);
+    assert_eq!(doc.standalone_text_calls(), 1);
 }

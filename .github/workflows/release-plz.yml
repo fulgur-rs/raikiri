@@ -28,8 +28,9 @@ jobs:
         run: rustup update stable
 
       - name: Install system dependencies
-        # cargo-semver-checks builds raikiri-paint docs; fontique/parley requires
-        # fontconfig development files and pkg-config.
+        # cargo-semver-checks builds raikiri-paint docs; fontique (through
+        # shodo's `system-fonts` feature) links libfontconfig, so the build
+        # needs the fontconfig development files and pkg-config.
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Create repository-scoped GitHub App token

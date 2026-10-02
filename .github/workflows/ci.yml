@@ -86,11 +86,13 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - name: Install system dependencies
-        # yeslogic-fontconfig-sys (used by fontique/parley) needs libfontconfig
-        # and pkg-config. ubuntu-latest has the fontconfig runtime but not the
-        # development headers, so the build script failed at pkg-config in the
-        # initial CI run. Add platform-specific installation if macOS/Windows
-        # jobs are introduced.
+        # yeslogic-fontconfig-sys needs libfontconfig and pkg-config. It is
+        # linked by fontique's `system` feature, which shodo's `system-fonts`
+        # feature enables for the inline engine (and which the blitz crates
+        # used as the WPT oracle enable too). ubuntu-latest has the fontconfig
+        # runtime but not the development headers, so the build script failed
+        # at pkg-config in the initial CI run. Add platform-specific
+        # installation if macOS/Windows jobs are introduced.
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Cache cargo registry + target

@@ -1,110 +1,6 @@
 use super::*;
 use taffy::Style;
 
-fn embedded_ic_font_dir() -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().expect("temporary embedded ic font directory");
-    for (name, bytes) in [
-        (
-            "Ahem.ttf",
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/data/text-autospace/Ahem.ttf"
-            )) as &[u8],
-        ),
-        (
-            "CanvasTest-nospace.ttf",
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/data/text-autospace/CanvasTest-nospace.ttf"
-            )) as &[u8],
-        ),
-    ] {
-        std::fs::write(tmp.path().join(name), bytes).expect("write embedded font");
-    }
-    for (name, bytes) in [
-        (
-            "ZeroWidth",
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/data/text-autospace/IcTestZeroWidth.woff2"
-            )) as &[u8],
-        ),
-        (
-            "HalfWidth",
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/data/text-autospace/IcTestHalfWidth.woff2"
-            )) as &[u8],
-        ),
-        (
-            "FullWidth",
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/data/text-autospace/IcTestFullWidth.woff2"
-            )) as &[u8],
-        ),
-    ] {
-        let decoded = wuff::decompress_woff2(bytes).expect("decode embedded ic fixture");
-        std::fs::write(tmp.path().join(format!("IcTest{name}.ttf")), decoded)
-            .expect("write decoded embedded ic fixture");
-    }
-    tmp
-}
-
-#[test]
-fn collapse_single_node_break_becomes_space_and_lone_wide_break_drops() {
-    use raikiri_style::{build_rule_tree, cascade};
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    // Single-node wide neighbors also follow the segment-break rule;
-    // this is handled before the generic whitespace merge.
-    let t = doc.append_text(p, "\u{FF24}\u{FF26}\n\u{FF24}\u{FF26}");
-    // Split nodes around a lone break: wide/fullwidth neighbors drop
-    // it (CSS Text 3 §4.1.2; WPT rules-001), narrow neighbors migrate
-    // a space (rules-004 shape).
-    let q = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    let w1 = doc.append_text(q, "\u{FF24}");
-    let wb = doc.append_text(q, "\n");
-    let w2 = doc.append_text(q, "\u{FF24}");
-    let r = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    let n1 = doc.append_text(r, "a");
-    let nb = doc.append_text(r, "\n");
-    let n2 = doc.append_text(r, "b");
-    doc.mark_in_document_flags();
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
-    for idx in 0..doc.nodes.len() {
-        for &c in &doc.nodes[idx].children.clone() {
-            if c < parent_of.len() {
-                parent_of[c] = Some(idx);
-            }
-        }
-    }
-    let collapse = |idx: usize, text: &str| {
-        collapse_text_for_shaping(
-            &doc,
-            &cr,
-            &parent_of,
-            idx,
-            text,
-            cr.computed[idx].white_space,
-        )
-    };
-    let out = collapse(t, "\u{FF24}\u{FF26}\n\u{FF24}\u{FF26}");
-    assert_eq!(out.text, "\u{FF24}\u{FF26}\u{FF24}\u{FF26}");
-    assert_eq!(out.migrate_count, 0);
-    let out = collapse(wb, "\n");
-    assert_eq!(out.text, "");
-    assert_eq!(out.migrate_count, 0);
-    let out = collapse(nb, "\n");
-    assert_eq!(out.text, "");
-    assert_eq!(out.migrate_count, 1);
-    let _ = (w1, w2, n1, n2);
-}
-
 #[test]
 fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
     let mut doc = Document::new();
@@ -124,277 +20,9 @@ fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
     );
 }
 
-#[test]
-fn text_align_center_offsets_glyphs_to_container_middle() {
-    // Minimal regression check for `text-align: center`: In a block container of a single Text (`<p>` + 1
-    // Text is below the 2-child threshold for a minimal line box, so it's a plain block path), the leading x
-    // of the glyph run should be centered near the container width.
-    use parley::{FontContext, PositionedLayoutItem};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display: block; text-align: center"),
-    );
-    let t = doc.append_text(p, "Hello");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let p_width = doc.nodes[p].unrounded_layout.size.width;
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    let first_x: f32 = layout
-        .lines()
-        .next()
-        .expect("one line")
-        .items()
-        .filter_map(|it| match it {
-            PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
-            _ => None,
-        })
-        .next()
-        .expect("glyph");
-    let text_w = layout.width();
-    let expected = (p_width - text_w) * 0.5;
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (first_x - expected).abs() < 2.0,
-        "centered glyph x={} must be near (container-text)/2={} (p_w={} text_w={})",
-        first_x,
-        expected,
-        p_width,
-        text_w
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        first_x > 10.0,
-        "centered text must not sit at the left edge, got x={}",
-        first_x
-    );
-}
-
-#[test]
-fn text_indent_px_offsets_first_line() {
-    // Regression check for `text-indent` basic wiring: In a block container of a single Text, the leading x
-    // of the first line should be shifted to the right by the indent amount. Via parley `set_text_indent`
-    // (basic only — hanging/each-line are always default due to parse layer drop).
-    use parley::{FontContext, PositionedLayoutItem};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display: block; text-indent: 20px"),
-    );
-    let t = doc.append_text(p, "Hello");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    let first_x: f32 = layout
-        .lines()
-        .next()
-        .expect("one line")
-        .items()
-        .filter_map(|it| match it {
-            PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
-            _ => None,
-        })
-        .next()
-        .expect("glyph");
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (first_x - 20.0).abs() < 2.0,
-        "indented first glyph x={} must be near indent 20px",
-        first_x
-    );
-}
-
-#[test]
-fn text_indent_amount_bounds_nonfinite_values() {
-    assert_eq!(
-        bounded_text_indent_amount(ComputedTextIndent::Px(f32::INFINITY), 100.0, None,),
-        MAX_TAFFY_MAGNITUDE
-    );
-    assert_eq!(
-        bounded_text_indent_amount(ComputedTextIndent::Px(f32::NEG_INFINITY), 100.0, None,),
-        -MAX_TAFFY_MAGNITUDE
-    );
-    assert_eq!(
-        bounded_text_indent_amount(ComputedTextIndent::Px(f32::NAN), 100.0, None),
-        0.0
-    );
-    assert_eq!(
-        bounded_text_indent_amount(
-            ComputedTextIndent::Px(1.0),
-            100.0,
-            Some(MAX_TAFFY_MAGNITUDE * 2.0),
-        ),
-        MAX_TAFFY_MAGNITUDE
-    );
-    assert_eq!(
-        bounded_text_indent_amount(
-            ComputedTextIndent::Calc(CalcLengthPercentage {
-                percent: 25.0,
-                px: 10.0,
-            }),
-            200.0,
-            None,
-        ),
-        60.0
-    );
-}
-
-#[test]
-fn text_indent_negative_protrudes_before_box() {
-    // Negative indent protrudes before the start of the box (CSS Text 3 §8.1).
-    use parley::{FontContext, PositionedLayoutItem};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display: block; margin-left: 20px; text-indent: -20px"),
-    );
-    let t = doc.append_text(p, "Hello");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    let first_x: f32 = layout
-        .lines()
-        .next()
-        .expect("one line")
-        .items()
-        .filter_map(|it| match it {
-            PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
-            _ => None,
-        })
-        .next()
-        .expect("glyph");
-    // glyph x is layout-local at -20 (paint adds to box origin x=20 for a final x=0).
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (first_x + 20.0).abs() < 2.0,
-        "negative-indented first glyph run-local x={} must be near -20",
-        first_x
-    );
-}
-
-#[test]
-fn text_indent_zero_leaves_first_line_at_edge() {
-    // No indent means it remains as preshape (does not go through the indent path of realign).
-    use parley::{FontContext, PositionedLayoutItem};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let t = doc.append_text(p, "Hello");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let layout = doc.nodes[t].text_layout().expect("text shaped");
-    let first_x: f32 = layout
-        .lines()
-        .next()
-        .expect("one line")
-        .items()
-        .filter_map(|it| match it {
-            PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
-            _ => None,
-        })
-        .next()
-        .expect("glyph");
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        first_x.abs() < 2.0,
-        "unindented first glyph x={} must be near the left edge",
-        first_x
-    );
-}
-
-#[test]
-fn tab_replacement_without_tabs_preserves_text() {
-    let (text, ranges, _) = replace_tabs_with_styled_spaces("plain", 20.0, 10.0, |_| 10.0);
-    assert_eq!(text, "plain");
-    assert!(ranges.is_empty());
-}
-
-#[test]
-fn tab_replacement_measures_prefix_and_ranges_the_gap() {
-    let (text, ranges, _) =
-        replace_tabs_with_styled_spaces("ab\tc", 20.0, 10.0, |segment| segment.len() as f32 * 6.0);
-    assert_eq!(text, "ab c");
-    assert_eq!(ranges, vec![(2..3, -2.0)]);
-}
-
-#[test]
-fn tab_replacement_resets_its_cursor_after_newline() {
-    let (text, ranges, _) = replace_tabs_with_styled_spaces("ab\n\tc", 20.0, 10.0, |segment| {
-        segment.len() as f32 * 6.0
-    });
-    assert_eq!(text, "ab\n c");
-    assert_eq!(ranges, vec![(3..4, 10.0)]);
-}
-
-#[test]
-fn tab_replacement_with_zero_interval_removes_tabs() {
-    let (text, ranges, _) = replace_tabs_with_styled_spaces("a\tb", 0.0, 10.0, |_| 10.0);
-    assert_eq!(text, "ab");
-    assert!(ranges.is_empty());
-}
-
-#[test]
-#[ignore] // Explicitly run with cargo test -- --ignored
-fn font_context_new_cost_is_reasonable() {
-    let start = std::time::Instant::now();
-    for _ in 0..10 {
-        let _ = parley::FontContext::new();
-    }
-    let elapsed = start.elapsed();
-    // If 10 total calls take less than 5 seconds, the current per-call new() implementation is acceptable (to
-    // prevent the 10-run determinism test from timing out).
-    assert!(
-        elapsed.as_secs() < 5,
-        "FontContext::new() too slow: 10x = {:?}",
-        elapsed
-    );
-}
-
 // ── Non-finite f32 guard ────────
 //
-// Check that +Inf / NaN from untrusted author CSS does not reach taffy / parley on **all 5 sites**. The
+// Check that +Inf / NaN from untrusted author CSS does not reach taffy on **all 5 sites**. The
 // reproducer comes from the original probe comment.
 //
 // The expected value should be written as the **specific value after clamping**, not "not non-finite" —
@@ -414,7 +42,7 @@ fn guarded_style_for(inline: &str) -> taffy::Style {
     let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     doc.nodes[p].style.clone()
 }
 
@@ -520,263 +148,9 @@ fn nonfinite_border_width_is_clamped_before_taffy() {
     );
 }
 
-/// site 5 — `cv.font_size.px()` of `preshape_text` → parley
-/// `StyleProperty::FontSize`.
-///
-/// Observation is `Layout::height()` after shaping — if font-size is non-finite, line metrics are
-/// corrupted and height also becomes non-finite.
-///
-/// # Removing the guard causes a **hang** instead of a fail
-///
-/// Observed (running `sanitize_finite` alone after replacing it with an identity function): sites 1-4
-/// immediately fail with an assert, but this site does not terminate even after 25 seconds. The mechanism
-/// is that `if next_x <= max_advance` of `parley-0.10.0/src/layout/line_break.rs` becomes always false in
-/// `next_x = inf`, and `while self.break_next().is_some() {}` does not advance (shaping itself is
-/// complete, and it is `break_all_lines` that spins).
-///
-/// Therefore, this test is **bounded by a worker thread + `recv_timeout`** — if the guard disappears, it
-/// will crash as an **assert failure** instead of "CI job killed in 20 minutes" (which is
-/// indistinguishable from an infra flake and also loses the results of subsequent tests for the same
-/// binary).
-#[test]
-fn nonfinite_font_size_is_clamped_before_parley() {
-    // Pass parent/child inline styles separately — `em` of `font-size` is based on the **parent's** computed
-    // font-size (CSS Values 4 §6.1.1), so to create NaN (`0 * inf`), the multiplier `font-size: 0px` must be
-    // on the parent side. Sites 1-4 can be created with one element because the multiplier is on the same
-    // element, but font-size alone requires two elements.
-    fn shaped_height(parent_inline: Option<&str>, child_inline: &str) -> f32 {
-        use parley::{FontContext, LayoutContext};
-        use raikiri_style::{build_rule_tree, cascade};
-
-        let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), parent_inline);
-        let p = doc.append_element(Some(body), "p", Style::default(), Some(child_inline));
-        let text = doc.append_text(p, "Hi");
-        let rules = build_rule_tree(&doc);
-        let cr = cascade(&doc, &rules).expect("cascade Ok");
-        let mut fonts = FontContext::new();
-        let mut layout_cx = LayoutContext::<()>::new();
-        preshape_text(
-            &mut doc,
-            &cr,
-            &mut fonts,
-            &mut layout_cx,
-            PageBox::A4.width,
-            PageBox::A4.width,
-        );
-        doc.nodes[text].text_layout().unwrap().height()
-    }
-
-    /// A wrapper that changes a hang when a guard disappears into a **bounded-time failure**.
-    ///
-    /// What is bounded is the **test**, not the process — even if it times out, the worker thread remains
-    /// spinning (because parley has no cancellation, and there is no way to interrupt `break_all_lines`).
-    /// There is no practical harm as the entire process crashes when the test binary exits, but this is the
-    /// extent of what "bounded" means.
-    fn shaped_height_bounded(parent_inline: Option<&str>, child_inline: &str) -> f32 {
-        use std::sync::mpsc::RecvTimeoutError;
-
-        let parent = parent_inline.map(str::to_owned);
-        let child = child_inline.to_owned();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(shaped_height(parent.as_deref(), &child));
-        });
-        // Do not confuse `Timeout` with `Disconnected` — `shaped_height` contains `.expect("cascade Ok")` /
-        // `.unwrap()`, so if the worker panics, `tx` is dropped and `Disconnected` returns **in a few ms**.
-        // Reporting this as "did not finish in 30 seconds" would cause a cascade regression to be investigated as
-        // a guard disappearance, which is the inverse of the purpose of introducing this wrapper (to distinguish
-        // hangs from normal failures).
-        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
-            Ok(h) => h,
-            Err(RecvTimeoutError::Timeout) => panic!(
-                "parley shaping が 30 秒で終わらなかった — font-size の非有限 \
-                     guard (sanitize_finite) が外れると break_all_lines が spin \
-                     する"
-            ),
-            Err(RecvTimeoutError::Disconnected) => {
-                panic!("worker thread が panic した (hang ではない、上の stderr を参照)")
-            }
-        }
-    }
-
-    // (a) +Inf font-size. `1e40px` is +Inf due to f64→f32 conversion in cssparser.
-    let inf_px = shaped_height_bounded(None, "font-size: 1e40px");
-    assert!(
-        inf_px.is_finite(),
-        "font-size +Inf (px 由来) が parley に届いた: {inf_px}"
-    );
-
-    // (b) +Inf font-size (from em compounding). The parent is the initial 16px, so `16.0 * inf = +Inf` —
-    // **not NaN**.
-    let inf_em = shaped_height_bounded(None, "font-size: 1e40em");
-    assert!(
-        inf_em.is_finite(),
-        "font-size +Inf (em 由来) が parley に届いた: {inf_em}"
-    );
-
-    // (c) **NaN** font-size — `0.0 * inf` (IEEE 754). `em` of `font-size` is based on the **parent's**
-    // computed font-size (CSS Values 4 §6.1.1), so the multiplier `font-size: 0px` is applied to the parent.
-    // Sites 1-4 can be created with one element because the multiplier is applied to the same element, but
-    // font-size requires two elements.
-    //
-    // **The `is_nan()` branch deletion mutation does not die in this case (measured).** As long as the guard
-    // is alive, parley receives 0.0, not NaN, so **even if parley's NaN tolerance changes, it won't be
-    // noticed here** (it's not an "upstream canary"). Detecting mutations that kill the `is_nan()` branch
-    // requires 4 e2e tests from sites 1-4 and `sanitize_finite_maps_nan_to_zero`, for a total of 5 tests
-    // (measured by mutation testing).
-    //
-    // There are two reasons to still include it:
-    //   1. Pinning that one path to create NaN (parent `0px` × child `em`) can be constructed with e2e.
-    //      Unlike sites 1-4, it cannot be created with one element.
-    //   2. Insurance against a compound regression of "guard disappearance × upstream NaN tolerance change"
-    //      (individually, other tests would catch both).
-    let nan = shaped_height_bounded(Some("font-size: 0px"), "font-size: 1e40em");
-    assert!(nan.is_finite(), "font-size NaN が parley に届いた: {nan}");
-    assert_eq!(
-        nan, 0.0,
-        "guard 後の font-size 0.0 に対する parley の height (上流変更の canary)",
-    );
-}
-
-/// Shapes `"Hi"` via parley **directly**
-/// (bypassing `preshape_text` / `sanitize_finite` entirely, not just
-/// disabling them) with a raw `font_size`, bounded via worker-thread +
-/// `recv_timeout`. Shared by the two `#[test]` fns below it: one pins the
-/// (fast, cheap) "does not hang" cases, the other — `#[ignore]`d, see its
-/// own doc — pins the one case that does.
-fn shape_raw_bounded(font_size: f32, bound: std::time::Duration) -> Result<(), &'static str> {
-    use std::sync::mpsc::RecvTimeoutError;
-
-    fn shape_raw(font_size: f32) {
-        let mut fonts = FontContext::new();
-        let mut layout_cx = LayoutContext::<()>::new();
-        let mut builder = layout_cx.ranged_builder(&mut fonts, "Hi", 1.0, true);
-        builder.push_default(StyleProperty::FontSize(font_size));
-        let mut layout: Layout<()> = builder.build("Hi");
-        // A4 width in px, matching `PageBox::A4.width` — the same
-        // `max_advance` `preshape_text` would pass in production.
-        layout.break_all_lines(Some(793.7008_f32));
-    }
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(move || shape_raw(font_size));
-        let _ = tx.send(result.is_ok());
-    });
-    // cov:ignore: every call site of this helper (both this file's
-    // tests) completes normally within its bound — the Err arms are
-    // diagnostics for failure modes (panic, timeout, worker-disconnect)
-    // this module's tests don't hit.
-    match rx.recv_timeout(bound) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err("panicked"),
-        Err(RecvTimeoutError::Timeout) => Err("timeout"),
-        Err(RecvTimeoutError::Disconnected) => Err("panicked"),
-    }
-}
-
-/// Narrower half of a paired characterization — pins that `NaN`,
-/// `-Inf`, and a merely-huge finite `font_size` (`1e9`) **do not** hang
-/// parley's `break_all_lines`, at the same raw (guard-bypassing) call
-/// site the `#[ignore]`d `+Inf` test below uses. Cheap (each sub-case
-/// resolves in well under the 5s bound; no leaked spinning thread since
-/// none of them hang), so — unlike the `+Inf` case — this runs in every
-/// default `cargo test`.
-///
-/// # Why this exists as assertions, not just prose
-///
-/// The doc comment on `MAX_FONT_SIZE_PX` ("removing the guard... does not terminate even after 25
-/// seconds") reads as "non-finite font-size ⇒ hang" in general —
-/// but that claim was written from a manual repro that only ever
-/// exercised `+Inf` (the first sub-case its guarded test tries) before
-/// hanging; it never got to see whether `NaN` or `-Inf` behave the same
-/// way. They do not: only `+Inf` hangs, via the specific mechanism
-/// documented on `MAX_FONT_SIZE_PX`
-/// (`parley-0.10.0/src/layout/line_break.rs`'s `if next_x <= max_advance`
-/// becoming permanently false once `next_x = +Inf`, so
-/// `while self.break_next().is_some() {}` never terminates — for `NaN`
-/// and `-Inf`, `next_x` does not end up stuck the same way). This test
-/// turns "narrower than the prose it formalizes" from an unverified
-/// assertion in a code comment into something a future `cargo test` run
-/// keeps honest.
-#[test]
-fn parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size() {
-    for (label, font_size) in [
-        ("NaN", f32::NAN),
-        ("-Inf", f32::NEG_INFINITY),
-        ("1e9 (finite, 3 decades past MAX_FONT_SIZE_PX)", 1e9_f32),
-    ] {
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(
-            shape_raw_bounded(font_size, std::time::Duration::from_secs(5)),
-            Ok(()),
-            "parley::Layout::break_all_lines(font_size = {label}) did not complete within 5s (bypassing raikiri's guard, same as the +Inf case) — this module's characterization that only +Inf hangs no longer holds for {label}; re-characterize rather than deleting this case"
-        );
-    }
-}
-
-/// `+Inf` half of the paired characterization — formalizes into an
-/// automated regression test the manual measurement recorded in
-/// `MAX_FONT_SIZE_PX`'s doc comment ("removing the guard... does not terminate even after 25 seconds"):
-/// `font_size = +Inf` reaching parley directly (bypassing
-/// `preshape_text` / `sanitize_finite`, not just disabling them)
-/// reproducibly hangs `break_all_lines`. See
-/// `parley_break_all_lines_completes_for_nan_neg_inf_and_huge_finite_font_size`
-/// for why `NaN`/`-Inf`/huge-finite do *not* share this behavior (this is
-/// the one case that does, and it's the one this module's own
-/// repro — `1e40px`, `1e40em` compounding — actually produces).
-///
-/// # Why `#[ignore]` (unlike every other test added alongside it)
-///
-/// Every other characterization test in this pair resolves in
-/// well under a second because the sink under test either doesn't hang
-/// or fails fast. This one is different **in the passing case**: parley
-/// has no shaping-cancellation mechanism (documented on `MAX_FONT_SIZE_PX`
-/// and above), so confirming the hang costs the full `bound` below on
-/// every run, *and* the spawned worker thread is never joined — it spins
-/// at ~100% CPU on one core for the rest of this test binary's process
-/// lifetime, degrading every test that runs after it in the same binary.
-/// That's an acceptable one-time characterization cost but not a
-/// standing tax worth imposing on every `cargo test --workspace` from
-/// every future session — hence `#[ignore]`, matching this repo's
-/// existing convention for exactly this trade-off
-/// (`crates/raikiri/tests/hello_world_vrt.rs`'s doc comment). Run
-/// explicitly with:
-///
-/// ```text
-/// cargo test -p raikiri-dom --lib \
-///   layout::tests::parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard \
-///   -- --ignored
-/// ```
-// cov:ignore: this whole test body never runs under default `cargo
-// test` (it's `#[ignore]`d — a genuine ~10s hang + leaked thread, see
-// the doc comment above); it's exercised explicitly via `-- --ignored`
-// (verified separately to run and pass), which
-// llvm-cov's default `cargo test` invocation doesn't capture.
-#[test]
-#[ignore = "confirms a genuine ~10s hang + leaks a spinning worker thread for the rest \
-                of the process; run explicitly, see doc comment"]
-fn parley_break_all_lines_hangs_on_raw_infinite_font_size_bypassing_the_guard() {
-    assert_eq!(
-        shape_raw_bounded(f32::INFINITY, std::time::Duration::from_secs(10)),
-        Err("timeout"),
-        "parley::Layout::break_all_lines(font_size = +Inf) did not hang within 10s \
-             — the line_break.rs livelock this test pins no longer reproduces in parley 0.10.0; \
-             re-characterize rather than deleting this test (and consider whether \
-             raikiri-dom's own MAX_FONT_SIZE_PX guard is still load-bearing for this \
-             specific sink if parley itself now handles it). If this instead reports \
-             \"panicked\", the worker thread panicked rather than hanging — that's a \
-             different (and likely worse, since panics propagate less predictably than \
-             a bounded hang) finding, not a pass"
-    );
-}
-
 // ── Unit test for the guard function itself ───────────────────────────────────
 //
-// E2E tests can cause site 5 to hang, and each test involves FontContext construction. The guard's
+// E2E tests can cause site 5 to hang. The guard's
 // arithmetic is a pure function, so it's called directly (a few ms, cannot hang).
 
 #[test]
@@ -784,10 +158,7 @@ fn sanitize_finite_maps_nan_to_zero() {
     // `f32::clamp` returns NaN as NaN, so without this branch, NaN would pass through.
     let mut diag = Vec::new();
     assert_eq!(sanitize_finite(f32::NAN, -1.0, 1.0, "test", &mut diag), 0.0);
-    assert_eq!(
-        sanitize_finite(f32::NAN, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
-        0.0
-    );
+    assert_eq!(sanitize_finite(f32::NAN, 0.0, 1e6, "test", &mut diag), 0.0);
     // Since both were actually clamped (NaN != 0.0), 1 event each of `LayoutWarn::NonFiniteClamped` will be
     // accumulated.
     assert_eq!(
@@ -811,8 +182,8 @@ fn sanitize_finite_maps_nan_to_zero() {
 fn sanitize_finite_clamps_infinities_to_bounds() {
     let mut diag = Vec::new();
     assert_eq!(
-        sanitize_finite(f32::INFINITY, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
-        MAX_FONT_SIZE_PX
+        sanitize_finite(f32::INFINITY, 0.0, 1e6, "test", &mut diag),
+        1e6
     );
     assert_eq!(
         sanitize_finite(
@@ -826,7 +197,7 @@ fn sanitize_finite_clamps_infinities_to_bounds() {
     );
     // At sites with a lower bound of 0.0 (font-size), -Inf falls to 0.0.
     assert_eq!(
-        sanitize_finite(f32::NEG_INFINITY, 0.0, MAX_FONT_SIZE_PX, "test", &mut diag),
+        sanitize_finite(f32::NEG_INFINITY, 0.0, 1e6, "test", &mut diag),
         0.0
     );
     assert_eq!(diag.len(), 3, "3 回とも clamp が発火する (全て非有限入力)");
@@ -862,93 +233,6 @@ fn sanitize_taffy_passes_through_in_range_values() {
         diag.is_empty(),
         "in-range value must not push a LayoutWarn: {diag:?}"
     );
-}
-
-#[test]
-fn sanitize_line_height_clamps_non_finite_and_out_of_range_number() {
-    // site 7: `ComputedLineHeight::Number` — grammar `<number [0,∞]>`
-    // So the lower bound is 0.0, and the upper bound is `MAX_LINE_HEIGHT_NUMBER`. NaN inherits the
-    // `sanitize_finite` fallback of `0.0`, similar to other length-related sites (reason why a dedicated
-    // fallback like font-weight is not needed: `0` is a grammatically valid value for line-height's unitless
-    // number, and line-height does not have the `400.0` circumstances of font-weight — `0.0` being outside
-    // the valid range).
-    let mut diag = Vec::new();
-    assert_eq!(
-        sanitize_line_height(ComputedLineHeight::Number(f32::NAN), &mut diag),
-        ComputedLineHeight::Number(0.0)
-    );
-    assert_eq!(
-        sanitize_line_height(ComputedLineHeight::Number(f32::INFINITY), &mut diag),
-        ComputedLineHeight::Number(MAX_LINE_HEIGHT_NUMBER)
-    );
-    assert_eq!(
-        sanitize_line_height(ComputedLineHeight::Number(f32::NEG_INFINITY), &mut diag),
-        ComputedLineHeight::Number(0.0)
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        sanitize_line_height(ComputedLineHeight::Number(-5.0), &mut diag),
-        ComputedLineHeight::Number(0.0),
-        "negative multiplier is out of the [0,∞] grammar range and must clamp to 0.0"
-    );
-    assert_eq!(diag.len(), 4);
-    for event in &diag {
-        match event {
-            LayoutWarn::NonFiniteClamped { site, .. } => {
-                assert_eq!(*site, "line-height (number)");
-            }
-            // cov:ignore: `diag` in this test only ever accumulates
-            // `NonFiniteClamped` events pushed by `sanitize_line_height`
-            // above — `LayoutWarn::Truncated` is pushed elsewhere
-            // (the `layout_single_page` cap-limiting path), never by
-            // this function, so this arm is unreachable with this
-            // test's inputs; it exists only for the match's
-            // exhaustiveness.
-            other => panic!("unexpected LayoutWarn variant: {other:?}"),
-        }
-    }
-}
-
-#[test]
-fn sanitize_line_height_clamps_non_finite_and_out_of_range_length() {
-    // site 8: `ComputedLineHeight::Length` — grammar
-    // Percentages in `<length-percentage [0,∞]>` are already absolute in px at the computed layer (see
-    // `ComputedLineHeight::Length` documentation), so here we only look at the valid range for px.
-    let mut diag = Vec::new();
-    assert_eq!(
-        sanitize_line_height(
-            ComputedLineHeight::Length(ComputedLength(f32::NAN)),
-            &mut diag
-        ),
-        ComputedLineHeight::Length(ComputedLength(0.0))
-    );
-    assert_eq!(
-        sanitize_line_height(
-            ComputedLineHeight::Length(ComputedLength(f32::INFINITY)),
-            &mut diag
-        ),
-        ComputedLineHeight::Length(ComputedLength(MAX_FONT_SIZE_PX))
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        sanitize_line_height(ComputedLineHeight::Length(ComputedLength(-10.0)), &mut diag),
-        ComputedLineHeight::Length(ComputedLength(0.0)),
-        "negative absolute line-height is out of the [0,∞] grammar range and must clamp to 0.0"
-    );
-    assert_eq!(diag.len(), 3);
-    for event in &diag {
-        match event {
-            LayoutWarn::NonFiniteClamped { site, .. } => {
-                assert_eq!(*site, "line-height (length)");
-            }
-            // cov:ignore: same unreachable-exhaustiveness arm as the
-            // sibling `Number` test above — `diag` here never
-            // accumulates a `Truncated` event.
-            other => panic!("unexpected LayoutWarn variant: {other:?}"),
-        }
-    }
 }
 
 // ── generalized diagnostic channel via crate::diag ──
@@ -1062,33 +346,6 @@ fn layout_warn_display_is_human_readable() {
     );
 }
 
-/// Pin that the clamp constant is **within the range asserted by the doc**.
-///
-/// Do not use `assert_eq!` with a literal, as it is tautological — if the constant is rewritten, the test
-/// will also be rewritten, detecting nothing. Write the **relational expression** that the doc cites as
-/// its basis.
-#[test]
-fn clamp_limits_are_in_the_documented_range() {
-    // Taffy geometry: that it is within the LayoutUnit upper bound range (1e7-1e8 px) of implementations
-    // reported by CSSWG issue #4552.
-    assert!(
-        (1e7..=1e8).contains(&MAX_TAFFY_MAGNITUDE),
-        "MAX_TAFFY_MAGNITUDE は CSSWG #4552 の 1e7..=1e8 px 帯に収まること: {MAX_TAFFY_MAGNITUDE}"
-    );
-    // The doc asserts more strongly that "taking the **lower bound** of the range = below the upper limit of
-    // any of the 3 engines." The minimum is old-Edge's `2^31 / 100 ≈ 2.15e7 px`.
-    assert!(
-        MAX_TAFFY_MAGNITUDE <= (i32::MAX / 100) as f32,
-        "MAX_TAFFY_MAGNITUDE は 3 engine の最小上限 (2^31/100 ≈ 2.15e7 px) 以下であること: {MAX_TAFFY_MAGNITUDE}"
-    );
-    // Font-size: **more than 1 digit** below `i32::MAX / 64 ≈ 3.36e7` ppem where skrifa's 16.16 fixed
-    // conversion saturates (as asserted by the doc).
-    assert!(
-        MAX_FONT_SIZE_PX * 10.0 < (i32::MAX / 64) as f32,
-        "MAX_FONT_SIZE_PX は skrifa の saturation 点より 1 桁以上下であること: {MAX_FONT_SIZE_PX}"
-    );
-}
-
 // Output guard: nested percentage
 //
 // While the input guard (sites 1-4 above) makes the f32 values entering the bridge finite, percentages
@@ -1137,11 +394,8 @@ fn layout_all_finite(l: &TaffyLayout) -> bool {
 /// [`layout_single_page`], and return the `unrounded_layout` for **each level** in order from shallowest
 /// to deepest.
 ///
-/// The starting point is the depth range test setup for the probe material, but **we do not recreate the
-/// document for each depth** — the chain for depth `N` already contains nodes for each depth from 1 to
-/// `N`, and there is no reason to pay the `FontContext::new()` (checking
-/// `font_context_new_cost_is_reasonable` 10 times in less than 5 seconds = not cheap at all) for each
-/// depth, which the probe used to pay.
+/// The document is not recreated for each depth: the chain for depth `N`
+/// already contains nodes for each depth from 1 to `N`.
 fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
@@ -1155,7 +409,7 @@ fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
     }
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     ids.into_iter()
         .map(|i| doc.nodes[i].unrounded_layout)
         .collect()
@@ -1603,17 +857,17 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
         Some(body),
         "div",
         Style::default(),
-        Some("width: 50px; height: 50px;"),
+        Some("display: block; width: 50px; height: 50px;"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
         Style::default(),
-        Some("width: 200px; height: 200px; margin-left: -30px;"),
+        Some("display: block; width: 200px; height: 200px; margin-left: -30px;"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -2141,7 +1395,7 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -2223,7 +1477,7 @@ fn saturated_positive_margin_percentage_child_is_not_reset() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -2308,116 +1562,6 @@ fn deep_nested_negative_percentage_margin_saturating_location_is_not_reset() {
 }
 
 #[test]
-fn preshape_text_uses_mapped_ic_width_for_autospace_boxes() {
-    use parley::{LayoutContext, PositionedLayoutItem};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let tmp = embedded_ic_font_dir();
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let block = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;font-family:IcTestHalfWidth;font-size:16px;text-autospace:normal"),
-    );
-    let text = doc.append_text(block, "水A");
-    let noauto = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some(
-            "display:block;font-family:IcTestHalfWidth;font-size:16px;text-autospace:no-autospace",
-        ),
-    );
-    let _noauto_text = doc.append_text(noauto, "水A");
-    let oblique = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;font-family:IcTestHalfWidth;font-size:16px;font-style:oblique;text-autospace:normal"),
-        );
-    let _oblique_text = doc.append_text(oblique, "水A");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    let mut fonts = crate::fonts::build_wpt_font_ctx(tmp.path()).expect("register WPT fonts");
-    let mut layout_cx = LayoutContext::<()>::new();
-    preshape_text(
-        &mut doc,
-        &cr,
-        &mut fonts,
-        &mut layout_cx,
-        PageBox::A4.width,
-        PageBox::A4.width,
-    );
-
-    let boxes: Vec<f32> = doc.nodes[text]
-        .text_layout()
-        .expect("text should be shaped")
-        .lines()
-        .flat_map(|line| line.items())
-        .filter_map(|item| match item {
-            PositionedLayoutItem::InlineBox(inline_box) => Some(inline_box.width),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(boxes.len(), 1, "水|A should have one autospace box");
-    assert!(
-        // cov:ignore: panic-message text is only executed when the assertion fails.
-        (boxes[0] - 1.0).abs() < 0.001,
-        // cov:ignore: panic-message text is only executed when the assertion fails.
-        "expected 1px half-width ic gap, got {boxes:?}"
-    );
-}
-
-#[test]
-fn preshape_text_applies_negative_word_spacing_in_rayon_path() {
-    use parley::{FontContext, LayoutContext};
-    use raikiri_style::{build_rule_tree, cascade};
-
-    fn first_shaped_width(inline_style: &str) -> f32 {
-        let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
-        // `preshape_text` switches to Rayon at 32 jobs; 33 eligible text nodes
-        // ensure this assertion exercises the parallel builder path.
-        let mut text_nodes = Vec::new();
-        for _ in 0..33 {
-            text_nodes.push(doc.append_text(p, "A B"));
-        }
-        let rules = build_rule_tree(&doc);
-        let cr = cascade(&doc, &rules).expect("cascade Ok");
-        let mut fonts = FontContext::new();
-        let mut layout_cx = LayoutContext::<()>::new();
-        preshape_text(
-            &mut doc,
-            &cr,
-            &mut fonts,
-            &mut layout_cx,
-            PageBox::A4.width,
-            PageBox::A4.width,
-        );
-        doc.nodes[text_nodes[0]]
-            .text_layout()
-            .expect("text should be shaped")
-            .full_width()
-    }
-
-    let normal = first_shaped_width("word-spacing: 0px");
-    let negative = first_shaped_width("word-spacing: -4px");
-    // cov:ignore: assertion text is evaluated only when this test fails.
-    assert!(
-        negative < normal - 1.0,
-        "negative non-ch word spacing should reduce parallel shaped width: normal={normal}, negative={negative}"
-    );
-}
-
-#[test]
 fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -2462,7 +1606,6 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
         &mut doc,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
         &FixedSizeResolver(64.0, 32.0),
     )
     .unwrap();
@@ -2477,7 +1620,6 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
         &mut doc,
         &cascade,
         PageBox::A4,
-        parley::FontContext::new(),
         &FixedSizeResolver(48.0, 24.0),
     )
     .unwrap();
@@ -2519,14 +1661,8 @@ fn with_resolver_refreshes_membership_before_the_image_pre_pass() {
         "test premise: membership flags are stale entering layout"
     );
 
-    layout_single_page_with_resolver(
-        &mut doc,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-        &NeverCalledResolver,
-    )
-    .expect("layout Ok");
+    layout_single_page_with_resolver(&mut doc, &cascade, PageBox::A4, &NeverCalledResolver)
+        .expect("layout Ok");
 
     assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
 }
@@ -2536,13 +1672,13 @@ fn layout_page_fragments_clips_long_block_into_split_fragments() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let tall = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width:20px;height:120px"),
+        Some("display:block;width:20px;height:120px"),
     );
     doc.append_text(tall, "tall");
     let rules = build_rule_tree(&doc);
@@ -2551,7 +1687,7 @@ fn layout_page_fragments_clips_long_block_into_split_fragments() {
     page.width = 100.0;
     page.height = 50.0;
 
-    let pages = layout_page_fragments(&mut doc, &cascade, page, FontContext::new())
+    let pages = layout_page_fragments(&mut doc, &cascade, page)
         .expect("page fragment layout should succeed");
     let fragments: Vec<_> = pages
         .iter()
@@ -2585,7 +1721,7 @@ fn layout_page_fragments_exposes_text_line_ranges_for_continuations() {
         Some(body),
         "p",
         Style::default(),
-        Some("width:20px;font-size:10px;line-height:10px"),
+        Some("display:block;width:20px;font-size:10px;line-height:10px"),
     );
     let text = doc.append_text(paragraph, "a ".repeat(200));
     let rules = build_rule_tree(&doc);
@@ -2594,7 +1730,7 @@ fn layout_page_fragments_exposes_text_line_ranges_for_continuations() {
     page.width = 100.0;
     page.height = 50.0;
 
-    let pages = layout_page_fragments(&mut doc, &cascade, page, FontContext::new())
+    let pages = layout_page_fragments(&mut doc, &cascade, page)
         .expect("page fragment layout should succeed");
     let mut text_items: Vec<_> = pages
         .iter()
@@ -2616,7 +1752,7 @@ fn layout_page_fragments_exposes_text_line_ranges_for_continuations() {
             .last()
             .and_then(|item| item.line_range)
             .map(|range| range.end),
-        Some(doc.nodes[text].text_layout().expect("text shaped").len() as u32)
+        Some(doc.ifc_text_lines(text).expect("text lines").lines.len() as u32)
     );
     assert!(text_items.windows(2).all(|items| {
         items[0].line_range.expect("range").end <= items[1].line_range.expect("range").start
@@ -2630,30 +1766,38 @@ fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
 
     fn paginate(style: &str) -> (usize, f32, f32, usize) {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
         // Leave room for exactly two 10px lines on page zero.
-        let _lead = doc.append_element(Some(body), "div", Style::default(), Some("height:30px"));
+        let _lead = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
         let paragraph = doc.append_element(Some(body), "p", Style::default(), Some(style));
         let text = doc.append_text(paragraph, "a\nb\nc");
-        let following =
-            doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+        let following = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
 
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 50.0;
-        let slices = layout_pages(&mut doc, &cascade, page, parley::FontContext::new())
-            .expect("pagination Ok");
+        let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
         let paragraph_y = doc.nodes[paragraph].unrounded_layout.location.y;
         let following_y = doc.nodes[following].unrounded_layout.location.y;
-        let line_count = doc.nodes[text].text_layout().expect("text shaped").len();
+        let line_count = doc.ifc_text_lines(text).expect("text lines").lines.len();
         (slices.len(), paragraph_y, following_y, line_count)
     }
 
-    let common = "font-size:10px;line-height:10px;white-space:pre-line";
+    let common = "display:block;font-size:10px;line-height:10px;white-space:pre-line";
     let (pages, paragraph_y, following_y, line_count) =
         paginate(&format!("{common};orphans:3;widows:1"));
     assert_eq!(pages, 2, "the paragraph should continue on page two");
@@ -2672,171 +1816,6 @@ fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
         paragraph_y >= 50.0 - 0.001,
         "widows:2 should also move a 3-line fitting paragraph when only one line would remain, got y={paragraph_y}"
     );
-}
-
-#[test]
-fn autospace_edges_cross_plain_inline_elements() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let left = doc.append_text(div, "国");
-    let span = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
-    let right = doc.append_text(span, "A");
-    // An atomic inline nested at the neighbor's edge stops the search
-    // instead of being looked past.
-    let atomic_div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let atomic_left = doc.append_text(atomic_div, "国");
-    let outer = doc.append_element(
-        Some(atomic_div),
-        "span",
-        Style::default(),
-        Some("display:inline"),
-    );
-    let atomic = doc.append_element(
-        Some(outer),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
-    let _ = doc.append_text(atomic, "B");
-    let _ = doc.append_text(outer, "A");
-    doc.mark_in_document_flags();
-
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            parent_of[child] = Some(parent);
-        }
-    }
-    assert_eq!(
-        autospace_adjacent_edge_char(&doc, &cascade, &parent_of, right, -1),
-        Some('国')
-    );
-    assert_eq!(
-        autospace_adjacent_edge_char(&doc, &cascade, &parent_of, left, 1),
-        Some('A')
-    );
-    assert_eq!(
-        autospace_adjacent_edge_char(&doc, &cascade, &parent_of, atomic_left, 1),
-        None
-    );
-}
-
-#[test]
-fn layout_owns_cross_inline_autospace_once() {
-    use parley::{FontContext, PositionedLayoutItem};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("font-family:Ahem;font-size:40px;text-autospace:normal"),
-    );
-    let left = doc.append_text(div, "国");
-    let span = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
-    let right = doc.append_text(span, "A");
-
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let inline_box_count = |idx: usize| {
-        doc.nodes[idx]
-            .text_layout()
-            .expect("text shaped")
-            .lines()
-            .flat_map(|line| line.items())
-            .filter(|item| matches!(item, PositionedLayoutItem::InlineBox(_)))
-            .count()
-    };
-    assert_eq!(inline_box_count(left), 0);
-    assert_eq!(inline_box_count(right), 1);
-}
-
-#[test]
-fn autospace_boxes_follow_tab_rewrites() {
-    use parley::{FontContext, PositionedLayoutItem};
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let style = "display:block;font-size:40px;text-autospace:normal;white-space:pre";
-    let mut run = |tab_size: &str, text: &str, with_sibling: bool| {
-        let block = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some(format!("{style};tab-size:{tab_size}")),
-        );
-        let text = doc.append_text(block, text);
-        if with_sibling {
-            let sibling = doc.append_element(
-                Some(block),
-                "span",
-                Style::default(),
-                Some("display:inline"),
-            );
-            let _ = doc.append_text(sibling, "x");
-        }
-        text
-    };
-    // A lone text run in a `pre` block drops the tab for `tab-size:0`.
-    let dropped = run("0", "\t国A", false);
-    let dropped_ref = run("0", "国A", false);
-    // With an inline sibling the tab expands to two spaces, which moves
-    // the boundary by one byte and would otherwise land inside `国`.
-    let expanded = run("2", "\t国A", true);
-    let expanded_ref = run("2", "  国A", true);
-
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let box_x = |idx: usize| {
-        doc.nodes[idx]
-            .text_layout()
-            .expect("text shaped")
-            .lines()
-            .flat_map(|line| line.items())
-            .filter_map(|item| match item {
-                PositionedLayoutItem::InlineBox(inline_box) => Some(inline_box.x),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(box_x(dropped).len(), 1);
-    assert_eq!(box_x(dropped), box_x(dropped_ref));
-    assert_eq!(box_x(expanded).len(), 1);
-    assert_eq!(box_x(expanded), box_x(expanded_ref));
-}
-
-#[test]
-fn text_autospace_boxes_skip_default_ignorables_for_boundaries() {
-    use raikiri_style::property::TextAutospace;
-
-    let variation_selector = text_autospace_boxes("国\u{fe00}A", TextAutospace::Normal, "", 40.0);
-    assert_eq!(
-        variation_selector
-            .iter()
-            .map(|inline_box| inline_box.index)
-            .collect::<Vec<_>>(),
-        vec![6]
-    );
-
-    let disabled = text_autospace_boxes("国A", TextAutospace::NoAutospace, "", 40.0);
-    assert!(disabled.is_empty());
 }
 
 /// An element below an ifc root carries the bounding box of its line pieces,

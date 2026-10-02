@@ -63,7 +63,8 @@ impl PageFragmentPageGeometry {
 ///
 /// The producer is `raikiri-dom`'s pagination layer. The type deliberately
 /// carries only CSS-px geometry and neutral identifiers; it does not expose
-/// Taffy, Parley, `raikiri_style`, or a renderer-specific drawable payload.
+/// Taffy, the inline engine, `raikiri_style`, or a renderer-specific drawable
+/// payload.
 /// Its [`items`](Self::items) are ordered deterministically by the
 /// pagination producer.
 #[derive(Debug, Default, Clone, PartialEq)]

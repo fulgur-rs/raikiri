@@ -10,7 +10,7 @@
 - **Author style**: inline `color: red` + `font-size: 24px` + `margin: 20px`
   (color / font-size / margin の paint pipeline consume を hello-world 段階で
   最低 1 property ずつカバー)
-- **Consumer path**: `raikiri::html_to_png_with_fonts(input_bytes, font_ctx)`
+- **Consumer path**: `raikiri::html_to_png_with_render_fonts(input_bytes, fonts)`
   (旧 `html_to_png` 経路は system font 依存で
   cross-machine 非決定的だったため置き換え)
 - **Test**: `crates/raikiri/tests/hello_world_vrt.rs::hello_world_renders_pixel_exact`
@@ -18,9 +18,10 @@
 ## Font
 
 hello-world VRT は **cross-machine 決定性**
-のため WPT bundled fonts (`target/wpt/fonts/`) 経由の pin `FontContext` を
-使う。cascade default `font-family: "serif"` は `raikiri_dom::fonts::build_wpt_font_ctx`
-の generic alias remap で **Ahem** に解決される。
+のため WPT bundled fonts (`target/wpt/fonts/`) の `Ahem.ttf` だけから
+`raikiri::FontCollectionBuilder` で作った font set を使う。cascade default
+`font-family: "serif"` は builder の generic family の割り当て (登録順) で
+**Ahem** に解決される。
 
 - `scripts/wpt/fetch.sh` を先に実行して `target/wpt/fonts/` を準備しておくこと
 - 未 fetch なら test は "run scripts/wpt/fetch.sh first" で panic する

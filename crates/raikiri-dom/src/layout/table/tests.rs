@@ -1,5 +1,4 @@
 use crate::document::Document;
-use parley::FontContext;
 use raikiri_style::property::DisplayValue;
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -65,8 +64,7 @@ fn table_simple_2x2_columns_and_rows() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade");
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new())
-        .expect("layout");
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
     let td_idxs: Vec<usize> = doc
         .nodes
         .iter()
@@ -152,8 +150,7 @@ fn table_vertical_writing_mode_maps_columns_to_inline_axis() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade");
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new())
-        .expect("layout");
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
 
     let first_layout = doc.nodes[first].unrounded_layout;
     let second_layout = doc.nodes[second].unrounded_layout;
@@ -201,8 +198,7 @@ fn empty_table_caption_is_laid_out_and_painted() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade");
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new())
-        .expect("layout");
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
 
     let caption_layout = doc.nodes[caption].unrounded_layout;
     let table_layout = doc.nodes[table].unrounded_layout;
@@ -260,7 +256,7 @@ fn table_colspan_wide_equals_sum_of_spanned_columns() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let wide = doc.nodes[td_wide].unrounded_layout;
     let a = doc.nodes[td_a].unrounded_layout;
     let b = doc.nodes[td_b].unrounded_layout;
@@ -321,7 +317,7 @@ fn table_rowspan_distributes_height() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     // rowspan cell should span at least as tall as two rows combined
     let span = doc.nodes[td_span].unrounded_layout;
     let a = doc.nodes[td1].unrounded_layout;
@@ -370,7 +366,7 @@ fn nested_table_depth_cap_does_not_panic() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    let res = crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new());
+    let res = crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4);
     assert!(res.is_ok(), "nested table should not panic");
 }
 
@@ -408,7 +404,7 @@ fn table_with_tbody_anonymization() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let td_l = doc.nodes[td].unrounded_layout;
     assert!(
         td_l.size.width > 1.0 && td_l.size.height > 1.0,
@@ -444,7 +440,7 @@ fn table_parse_path_via_raikiri_html_uses_ua_display() {
         raikiri_style::property::DisplayValue::Table,
         "UA should set table display"
     );
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let tds: Vec<usize> = doc
         .nodes
         .iter()
@@ -509,7 +505,7 @@ fn fixed_layout_honors_first_row_widths_and_ignores_content() {
         cr.computed[table_idx].table_layout,
         raikiri_style::property::TableLayoutValue::Fixed
     );
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let l0 = doc.nodes[td1].unrounded_layout;
     let l1 = doc.nodes[td2].unrounded_layout;
     assert!(
@@ -580,7 +576,7 @@ fn fixed_layout_ignores_non_first_row_widths() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let l0 = doc.nodes[td1].unrounded_layout;
     let l1 = doc.nodes[td2].unrounded_layout;
     assert!(
@@ -637,7 +633,7 @@ fn collapse_overlaps_adjoining_borders_by_pairwise_min() {
         cr.computed[table_idx].border_collapse,
         raikiri_style::property::BorderCollapseValue::Collapse
     );
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let l0 = doc.nodes[td1].unrounded_layout;
     let l1 = doc.nodes[td2].unrounded_layout;
@@ -693,7 +689,7 @@ fn separate_cells_abut_without_overlap() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let l0 = doc.nodes[td1].unrounded_layout;
     let l1 = doc.nodes[td2].unrounded_layout;
     let overlap = (l0.location.x + l0.size.width) - l1.location.x;
@@ -735,7 +731,7 @@ fn explicit_single_row_height_resolves_percentage_child() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let cell_layout = doc.nodes[cell].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -781,7 +777,7 @@ fn explicit_table_height_respects_box_sizing() {
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
-        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
         let table_layout = doc.nodes[table].unrounded_layout;
         assert!(
             (table_layout.size.height - expected_outer).abs() < 1.0,
@@ -830,7 +826,7 @@ fn table_min_size_respects_box_sizing() {
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
-        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
         let tl = doc.nodes[table].unrounded_layout;
         let cl = doc.nodes[td].unrounded_layout;
         assert!(
@@ -946,7 +942,7 @@ fn table_colspan_percent_distribution_uses_definite_table_width() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let wide_layout = doc.nodes[wide].unrounded_layout;
     let left_layout = doc.nodes[left].unrounded_layout;
     let right_layout = doc.nodes[right].unrounded_layout;
@@ -988,7 +984,7 @@ fn absolute_auto_table_uses_definite_containing_block_width() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let table_layout = doc.nodes[table].unrounded_layout;
     assert!(
         (table_layout.size.width - 100.0).abs() < 1.0,
@@ -2056,7 +2052,7 @@ fn compute_table_layout_empty_table_as_flex_item_uses_container_width() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let table_layout = doc.nodes[table].unrounded_layout;
     assert!(
@@ -2102,7 +2098,7 @@ fn compute_table_layout_max_width_never_shrinks_below_intrinsic_content() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let table_layout = doc.nodes[table].unrounded_layout;
     assert!(
@@ -2146,7 +2142,7 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let td_layout = doc.nodes[td].unrounded_layout;
     assert!(
@@ -2234,7 +2230,7 @@ fn fixed_auto_width_shrink_wraps_to_content() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let table_layout = doc.nodes[table].unrounded_layout;
     assert!(
         (table_layout.size.width - 50.0).abs() < 2.0,
@@ -2278,7 +2274,7 @@ fn fixed_specified_width_fills_to_specified_width() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let table_layout = doc.nodes[table].unrounded_layout;
     assert!(
         (table_layout.size.width - 400.0).abs() < 2.0,
@@ -2321,7 +2317,7 @@ fn auto_width_shrink_wraps_to_content_baseline() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     let table_layout = doc.nodes[table].unrounded_layout;
     assert!(
         (table_layout.size.width - 50.0).abs() < 2.0,

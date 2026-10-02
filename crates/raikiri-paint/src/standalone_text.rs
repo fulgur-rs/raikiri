@@ -1,6 +1,6 @@
 //! Text that is not part of a paragraph (page margin boxes, generated
-//! pseudo-element text, list markers), shaped by the inline engine when the
-//! document has one.
+//! pseudo-element text, list markers), shaped by the inline engine with the
+//! document's fonts.
 
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::Affine;
@@ -18,7 +18,8 @@ fn families(list: &str) -> Vec<String> {
         .collect()
 }
 
-/// The size the parley path uses for an unusable value.
+/// The font size a run is shaped at: `font_size`, or 16px when it is not
+/// finite and positive.
 pub(crate) fn usable_size(font_size: f32) -> f32 {
     if font_size.is_finite() && font_size > 0.0 {
         font_size
@@ -27,10 +28,10 @@ pub(crate) fn usable_size(font_size: f32) -> f32 {
     }
 }
 
-/// The shaped run when the document's engine takes `content`, else `None`:
-/// the caller then uses the parley path.
+/// The shaped run, or `None` when there is nothing to draw: `content` is
+/// empty or exceeds the engine's limits.
 pub(crate) fn shape(
-    document: Option<&Document>,
+    document: &Document,
     content: &str,
     font_size: f32,
     font_family: &str,
@@ -41,13 +42,13 @@ pub(crate) fn shape(
         families: families(font_family),
         font_size: usable_size(font_size),
     };
-    document?.shape_standalone_text(content, &style, width, align)
+    document.shape_standalone_text(content, &style, width, align)
 }
 
 /// Draw the glyph runs of a shaped run with its origin at (`x`, `y`).
 ///
-/// Glyph origins come from the engine's lines, which are left to right here:
-/// right-to-left text never reaches the engine.
+/// Glyph origins come from the engine's lines, relative to the line's left
+/// edge; a right-to-left run is already in visual order.
 pub(crate) fn draw(
     scene: &mut impl PaintScene,
     shaped: &StandaloneText,

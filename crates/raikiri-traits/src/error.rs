@@ -464,6 +464,22 @@ pub enum LayoutError {
     /// Failed to resolve a replaced element such as `<img>`
     /// (`ReplacedResolver::resolve` returned `Err`).
     Resolver(ResolverError),
+    /// The inline formatting engine was required for every paragraph and a
+    /// paragraph uses something it does not lay out.
+    IfcUnsupported {
+        /// DOM node id of the element or text the refusal is about.
+        node: usize,
+        /// What the inline engine does not lay out.
+        reason: &'static str,
+    },
+    /// A paragraph exceeded a resource limit of the inline formatting engine
+    /// (its text length, item count or nesting depth).
+    IfcLimitExceeded {
+        /// DOM node id of the paragraph root.
+        node: usize,
+        /// Which limit, with its configured and observed values.
+        limit: String,
+    },
 }
 
 impl std::fmt::Display for LayoutError {
@@ -471,6 +487,12 @@ impl std::fmt::Display for LayoutError {
         match self {
             Self::Internal { message } => write!(f, "Layout internal error: {message}"),
             Self::Resolver(e) => write!(f, "Layout resolver error: {e}"),
+            Self::IfcUnsupported { node, reason } => {
+                write!(f, "Layout inline engine refused node {node}: {reason}")
+            }
+            Self::IfcLimitExceeded { node, limit } => {
+                write!(f, "Layout inline engine limit at node {node}: {limit}")
+            }
         }
     }
 }

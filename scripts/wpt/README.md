@@ -276,13 +276,13 @@ now passes only after falling back to a run without local resources (the row det
 `passes only without local resources`). A weakened PASS is still a PASS, so it is reported
 separately rather than as a regression.
 
-`--ifc` lays out eligible paragraphs with the shodo inline engine. It is a temporary switch:
-text laid out that way is not painted yet, and documents with `@font-face` keep the parley
-path, so the report differs from a default run. The run refuses to start when the WPT font
-collection cannot be built, instead of silently measuring the parley path.
+Text is laid out by the shodo inline engine; a paragraph it cannot lay out fails its test
+with an error. The run refuses to start when the WPT font collection cannot be built (it
+does not fall back to the installed fonts, which would make the numbers
+machine-dependent). `--wpt-fonts` names that default and changes nothing; the former
+`--ifc` and `--no-ifc` flags are rejected.
 
-`--wpt-fonts` gives the parley path the same WPT font directories that `--ifc` uses, without
-switching the inline engine on. Diff an `--ifc` report against a `--wpt-fonts` report (not
-against a default one) to see the effect of the engine alone: the default run falls back to
-system fonts when no bundled font directory is found.
+Outside `run-baseline-report` (unit tests, `run_pair`), the engine falls back to the
+installed fonts when no WPT font directory exists, so a checkout
+without the fetched WPT fonts still runs the tests.
 

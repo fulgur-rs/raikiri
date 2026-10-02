@@ -1,10 +1,10 @@
-//! raikiri-dom — DOM data model + layout engine (taffy + parley) + GCPM runtime side.
+//! raikiri-dom — DOM data model + layout engine (taffy + the shodo inline engine) + GCPM runtime side.
 //!
 //! Implements the node arena, taffy 6 trait implementations, and raikiri_traits::Dom co-design.
 //! For details, see §4, raikiri-dom scope, in the original design.
 
 // Public module rustdoc cross-links some crate-private helpers (e.g.
-// `crate::layout::preshape_text`, `Document::flags_dirty`) which resolve fine
+// `Document::flags_dirty`) which resolve fine
 // under `--document-private-items` but trip the strict public build.  Preserve
 // the cross-links; the linker's audience is intra-crate readers.
 #![allow(rustdoc::private_intra_doc_links)]
@@ -17,8 +17,10 @@
 //! - [`dom_impl`] — `raikiri_traits::{Dom, Node, Element}` +
 //!   `raikiri_style::{StyleDom, StyleNode, StyleElement}` impls + `NodeRef` /
 //!   `ElementRef` types (both trait families over one arena, see file header)
-//! - [`fonts`] — constructs a cross-machine deterministic `FontContext` from the
-//!   WPT bundled font directory (`build_wpt_font_ctx`)
+//! - [`fonts`] — font collections for the inline engine: a cross-machine
+//!   deterministic one from the WPT bundled font directory
+//!   (`build_wpt_font_collection`), bundled bytes, the installed fonts, and
+//!   the `@font-face` document layer
 //!
 //! # Flat tree membership
 //!
@@ -45,6 +47,7 @@
 
 mod diag;
 mod fragment;
+pub mod generated_content;
 mod image_resolve;
 mod node;
 mod page_projection;
@@ -61,12 +64,14 @@ pub mod taffy_impl;
 pub use document::{Document, DomMutationError};
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{
-    FontError, FontFaceApplyReport, FontFaceLoader, FontWarn, apply_font_faces,
-    build_inline_document_fonts, build_wpt_font_collection, build_wpt_font_ctx,
-    build_wpt_font_ctx_with_observer, expand_font_face_aliases, register_font_face_sources,
+    BundledFace, FontError, FontFaceApplyReport, FontFaceLoader, FontWarn,
+    build_bundled_font_collection, build_inline_document_fonts, build_wpt_font_collection,
+    system_font_collection,
 };
 #[doc(hidden)]
-pub use layout::{BoxRect, InlineBoxPiece, relative_offset};
+pub use layout::{
+    BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, relative_offset,
+};
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
     PageMargins, PageSlice, first_page_name, layout_pages, layout_pages_with_page_geometry,

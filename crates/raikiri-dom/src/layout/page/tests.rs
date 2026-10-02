@@ -8,10 +8,15 @@ fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     // Equivalent to parsing (built manually instead; future umbrella integration handles raikiri-html).
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("color:red"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;color:red"),
+    );
     let _text = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -309,7 +314,7 @@ fn page_length_to_px_resolves_percent_against_the_given_basis() {
 fn layout_single_page_hello_world_produces_body_at_page_width() {
     use raikiri_traits::PageBox;
     let (mut doc, cr) = hello_world_doc();
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     // The body layout size.width matches the A4 width (793.7008).
     let body_id = find_body(&doc).expect("body exists");
     let body_size = doc.nodes[body_id].unrounded_layout.size;
@@ -329,14 +334,14 @@ fn layout_single_page_hello_world_produces_body_at_page_width() {
 fn layout_single_page_can_be_called_multiple_times() {
     use raikiri_traits::PageBox;
     let (mut doc, cr) = hello_world_doc();
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("first call Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("first call Ok");
     let body_id = find_body(&doc).expect("body exists");
     let first_size = doc.nodes[body_id].unrounded_layout.size;
 
-    // Second call — check that clearing text_layout for re-entry and rerunning layout
+    // Second call — check that resetting per-pass state and rerunning layout
     // produce the same result (detect a silent regression from future incremental
     // optimizations).
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("second call Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("second call Ok");
     let second_size = doc.nodes[body_id].unrounded_layout.size;
 
     assert!((first_size.width - second_size.width).abs() < 0.001);
@@ -562,7 +567,6 @@ fn resolved_image_intrinsic_size_changes_flex_grid_column_count_and_page_order()
             &mut doc,
             &cascade,
             PageBox::A4,
-            FontContext::new(),
             &FixedImageResolver(image_width),
             None,
         )
@@ -610,8 +614,7 @@ fn first_page_name_ignores_resolved_order_from_an_older_cascade() {
     doc.mark_in_document_flags();
     let old_rules = build_rule_tree(&doc);
     let old_cascade = cascade(&doc, &old_rules).expect("initial cascade Ok");
-    layout_single_page(&mut doc, &old_cascade, PageBox::A4, FontContext::new())
-        .expect("initial layout Ok");
+    layout_single_page(&mut doc, &old_cascade, PageBox::A4).expect("initial layout Ok");
     assert!(!doc.layout_dirty);
     assert!(document_has_resolved_pagination_order(&doc, &old_cascade));
     assert_eq!(doc.nodes[flex].layout_children(), &[narrow, wide]);
@@ -656,8 +659,7 @@ fn first_page_name_ignores_resolved_grid_rows_from_an_older_cascade() {
     doc.mark_in_document_flags();
     let old_rules = build_rule_tree(&doc);
     let old_cascade = cascade(&doc, &old_rules).expect("initial cascade Ok");
-    layout_single_page(&mut doc, &old_cascade, PageBox::A4, FontContext::new())
-        .expect("initial layout Ok");
+    layout_single_page(&mut doc, &old_cascade, PageBox::A4).expect("initial layout Ok");
     assert!(document_has_resolved_pagination_order(&doc, &old_cascade));
     assert_eq!(
         first_page_name(&doc, &old_cascade).as_deref(),
@@ -702,8 +704,7 @@ fn first_page_name_ignores_resolved_grid_rows_from_an_older_cascade() {
 
     assert_eq!(first_page_name(&doc, &new_cascade).as_deref(), Some("wide"));
 
-    layout_single_page(&mut doc, &new_cascade, PageBox::A4, FontContext::new())
-        .expect("updated layout Ok");
+    layout_single_page(&mut doc, &new_cascade, PageBox::A4).expect("updated layout Ok");
     assert!(document_has_resolved_pagination_order(&doc, &new_cascade));
     assert_eq!(first_page_name(&doc, &new_cascade).as_deref(), Some("wide"));
 }
@@ -795,8 +796,7 @@ fn layout_pages_orders_implicit_and_repeated_single_column_grids() {
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
         assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("narrow"));
 
-        let slices = layout_pages(&mut doc, &cascade, PageBox::A4, FontContext::new())
-            .expect("pagination Ok");
+        let slices = layout_pages(&mut doc, &cascade, PageBox::A4).expect("pagination Ok");
         assert_eq!(doc.nodes[body].grid_column_count, 1);
         assert_eq!(slices.len(), 2);
         assert_eq!(slices[0].page_name.as_deref(), Some("narrow"));
@@ -917,7 +917,7 @@ fn pagination_child_order_falls_back_when_grid_row_details_are_incomplete() {
     );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     assert_eq!(doc.nodes[grid].grid_column_count, 1);
     doc.nodes[grid].grid_item_row_starts = Vec::new().into_boxed_slice();
 
@@ -953,7 +953,7 @@ fn stretched_column_flex_image_keeps_the_known_cross_size() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
-    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).unwrap();
+    layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
     assert_eq!(
         doc.nodes[image].unrounded_layout.size,
         taffy::Size {
@@ -1026,13 +1026,57 @@ fn ratio_only_inline_svg_uses_the_containing_width() {
         let cascade = cascade(&doc, &rules).unwrap();
         let mut page = PageBox::new();
         page.width = 800.0;
-        layout_single_page(&mut doc, &cascade, page, FontContext::new()).unwrap();
+        layout_single_page(&mut doc, &cascade, page).unwrap();
         assert_eq!(
             doc.nodes[svg].unrounded_layout.size,
             taffy::Size {
                 width: expected_width,
                 height: expected_height
             }
+        );
+    }
+}
+
+#[test]
+fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
+    // An <svg> root is a replaced element whatever its content: its children
+    // are drawn by the SVG renderer, and its box takes the size its width and
+    // height attributes give (here 10x10), like an <svg> without children.
+    use raikiri_style::{build_rule_tree, cascade};
+    for (svg_style, with_content, expected) in [
+        ("display:inline", true, (10.0, 10.0)),
+        ("display:inline", false, (10.0, 10.0)),
+        // An authored width scales the height by the 1:1 ratio (CSS 2.1 10.6.2).
+        ("display:inline;width:30px", true, (30.0, 30.0)),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let paragraph =
+            doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        doc.append_text(paragraph, "aa");
+        let svg = doc.append_element(Some(paragraph), "svg", Style::default(), Some(svg_style));
+        doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+        doc.set_element_attributes(
+            svg,
+            vec![
+                ("width".into(), "10".into()),
+                ("height".into(), "10".into()),
+            ],
+        );
+        if with_content {
+            let rect = doc.append_element(Some(svg), "rect", Style::default(), None::<&str>);
+            doc.set_element_namespace(rect, Some("http://www.w3.org/2000/svg".into()));
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
+        let size = doc.nodes[svg].unrounded_layout.size;
+        assert_eq!(
+            (size.width, size.height),
+            expected,
+            "{svg_style} content:{with_content}"
         );
     }
 }
@@ -1054,7 +1098,7 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
     crate::image_resolve::resolve_inline_svg_intrinsic_sizes(&mut doc);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade);
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("styles");
     for (sizing_mode, width, expected) in [
         (
             SizingMode::InherentSize,

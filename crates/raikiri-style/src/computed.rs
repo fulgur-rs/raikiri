@@ -329,10 +329,8 @@ pub struct ComputedValues {
     /// §2.2.1 relative-weight table. Changing this field's type removed that
     /// known divergence.
     ///
-    /// The `raikiri-dom` layout passes this field directly to
-    /// `parley::FontWeight::new(f32)` without a cast. Immediately before that
-    /// call, `sanitize_font_weight` (`crates/raikiri-dom/src/layout.rs`) guards
-    /// the sink boundary.
+    /// The `raikiri-dom` layout passes this field directly to the inline
+    /// engine's font query without a cast.
     ///
     /// # Caller contract: finite and within `[1, 1000]` (no field-level guard)
     ///
@@ -505,13 +503,12 @@ pub struct ComputedValues {
     pub text_spacing_trim: TextSpacingTrim,
     /// `text-justify` (CSS Text 3 §6.2). **Inherited**; initial: `auto`.
     /// This keyword's computed value equals its specified value (copied by
-    /// value; `Copy`). Legacy `distribute` is accepted and treated like
-    /// `Justify` by Parley, which does not distinguish inter-word,
-    /// inter-character, and distribute justification.
+    /// value; `Copy`). Legacy `distribute` is accepted; the inline engine
+    /// lays it out as `inter-character`.
     pub text_justify: TextJustify,
     /// `text-align-last` (CSS Text 3 §6.1). **Inherited**; initial: `auto`.
     /// This keyword's computed value equals its specified value (copied by
-    /// value; `Copy`). The consumer (`raikiri-dom` realignment) resolves `auto`
+    /// value; `Copy`). The consumer (the inline engine in `raikiri-dom`) resolves `auto`
     /// (`justify` → `start`; otherwise follow `text-align`) rather than
     /// coupling the two properties in the cascade layer.
     pub text_align_last: TextAlignLast,

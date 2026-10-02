@@ -1,12 +1,9 @@
 //! Fixtures shared by the layout tests that need Ahem and a full page pass.
 
 use crate::Document;
-use crate::layout::ifc::test_support::{AHEM, Fixture, block_fixture};
-use parley::FontContext;
-use parley::fontique::Blob;
+use crate::layout::ifc::test_support::{Fixture, block_fixture};
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
-use std::sync::Arc;
 
 /// A `<div>` of Ahem text under `html > body`, with a fixed 10px line height.
 ///
@@ -59,14 +56,12 @@ pub(crate) fn absolute_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32)
 /// Font declarations shared by the Ahem paragraph fixtures.
 const AHEM_FAMILY_CSS: &str = "font-family:Ahem;font-size:10px;";
 
-/// A parley font context holding only Ahem.
-pub(crate) fn ahem_font_context() -> FontContext {
-    let mut ctx = FontContext::new();
-    let registered = ctx
-        .collection
-        .register_fonts(Blob::new(Arc::new(AHEM.to_vec()) as _), None);
-    assert!(!registered.is_empty(), "Ahem must register");
-    ctx
+/// `doc` with the Ahem font layer, unless it already has fonts.
+pub(crate) fn with_ahem(doc: &mut Document) -> &mut Document {
+    if !doc.has_font_collection() {
+        doc.set_font_collection(ifc_ahem_fonts());
+    }
+    doc
 }
 
 /// An 800x600 page with no margins.
@@ -290,4 +285,267 @@ pub(crate) fn ahem_paragraph_with_atomic(
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     (doc, cascade, atomic, root)
+}
+
+/// `html > body` with `display:block` on both, ready for a test's own content.
+/// Returns `(doc, body)`.
+fn html_body() -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    (doc, body)
+}
+
+/// Mark the flags of `doc` and cascade it.
+fn cascaded(doc: &Document) -> CascadeResult {
+    let rules = raikiri_style::build_rule_tree(doc);
+    raikiri_style::cascade(doc, &rules).expect("cascade")
+}
+
+/// `html > body > div(parent_css) > div(css) > text`: an Ahem paragraph with a
+/// 10px line height under a parent of any display. The inner div is a block
+/// unless `css` says otherwise. Returns the inner div.
+pub(crate) fn ahem_paragraph_in(
+    parent_css: &str,
+    css: &str,
+    text: &str,
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:block;{AHEM_FAMILY_CSS}{parent_css}")),
+    );
+    let root = doc.append_element(
+        Some(parent),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:block;line-height:10px;{css}")),
+    );
+    doc.append_text(root, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, root)
+}
+
+/// `html > body > div(display:flex) > span > text`: the span keeps its
+/// initial `display:inline` and is a flex item only through taffy's
+/// blockification. Returns the span.
+pub(crate) fn flex_container_with_inline_item(text: &str) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:flex;align-items:flex-start;{AHEM_FAMILY_CSS}line-height:10px"
+        )),
+    );
+    let item = doc.append_element(Some(flex), "span", taffy::Style::default(), None::<&str>);
+    doc.append_text(item, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, item)
+}
+
+/// `html > body > [text, div(display:block) > inner]`: body holds inline text
+/// and a block child. Returns `(doc, cascade, body, div)`.
+pub(crate) fn body_with_text_and_block_child(
+    text: &str,
+    inner: &str,
+) -> (Document, CascadeResult, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some(&format!("display:block;{AHEM_FAMILY_CSS}line-height:10px")),
+    );
+    doc.append_text(body, text);
+    let div = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    doc.append_text(div, inner);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, body, div)
+}
+
+/// `html > body > div(root)` whose content is built by `build`; the root is an
+/// Ahem block with a 10px line height and `root_css`.
+fn ahem_root_with(
+    root_css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:block;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
+        )),
+    );
+    build(&mut doc, root);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, root)
+}
+
+/// A paragraph whose only content is one inline-block span (`atomic_css`)
+/// without text.
+pub(crate) fn paragraph_with_only_atomic(atomic_css: &str) -> (Document, CascadeResult, usize) {
+    ahem_root_with("", |doc, root| {
+        doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some(atomic_css),
+        );
+    })
+}
+
+/// A paragraph whose only content is `count` `<br>` elements.
+pub(crate) fn paragraph_with_only_br(count: usize) -> (Document, CascadeResult, usize) {
+    ahem_root_with("", |doc, root| {
+        for _ in 0..count {
+            doc.append_element(
+                Some(root),
+                "br",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+        }
+    })
+}
+
+/// A paragraph whose only content is one empty inline span (`span_css`).
+pub(crate) fn paragraph_with_only_an_empty_span(
+    span_css: &str,
+) -> (Document, CascadeResult, usize) {
+    ahem_root_with("", |doc, root| {
+        doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some(&format!("display:inline;{span_css}")),
+        );
+    })
+}
+
+/// `html > body > div(root, width:200px) > ["x", span(inline-block, width) > text]`.
+/// Returns `(doc, cascade, root, inline_block)`.
+pub(crate) fn paragraph_with_inline_block(
+    text: &str,
+    width: f32,
+) -> (Document, CascadeResult, usize, usize) {
+    let mut inline_block = 0;
+    let (doc, cascade, root) = ahem_root_with("width:200px", |doc, root| {
+        doc.append_text(root, "x");
+        inline_block = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some(&format!("display:inline-block;width:{width}px")),
+        );
+        doc.append_text(inline_block, text);
+    });
+    (doc, cascade, root, inline_block)
+}
+
+/// `html > body > div(parent_css) > text`: Ahem text with a 10px line height
+/// directly in a container of any display. Returns the container.
+pub(crate) fn ahem_paragraph_in_text_only(
+    parent_css: &str,
+    text: &str,
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:block;{AHEM_FAMILY_CSS}line-height:10px;{parent_css}"
+        )),
+    );
+    doc.append_text(parent, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, parent)
+}
+
+/// `html > body > div(display:table; table_css) > div(display:table-row) >
+/// div(display:table-cell; cell_css)`, Ahem 10px with a 10px line height;
+/// `build` fills the cell. Returns the table, the row and the cell.
+pub(crate) fn ahem_table(
+    table_css: &str,
+    cell_css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, [usize; 3]) {
+    let (mut doc, body) = html_body();
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
+        )),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "div",
+        taffy::Style::default(),
+        Some(&format!("display:table-cell;{cell_css}")),
+    );
+    build(&mut doc, cell);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, [table, row, cell])
+}
+
+/// `html > body > div(display:table; table_css)` holding only `text`, Ahem
+/// 10px with a 10px line height. Returns the table.
+pub(crate) fn ahem_table_with_only_text(
+    table_css: &str,
+    text: &str,
+) -> (Document, CascadeResult, usize) {
+    let (mut doc, body) = html_body();
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
+        )),
+    );
+    doc.append_text(table, text);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    (doc, cascade, table)
 }

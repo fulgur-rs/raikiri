@@ -57,9 +57,6 @@ taffy = { version = "0.14", default-features = false, features = [
     "detailed_layout_info",
 ] }
 
-# ── Text (parley) ──────────────────────────────────────────────────────
-parley = { version = "0.11", default-features = false, features = ["std", "system"] }
-
 # ── Text (shodo) ───────────────────────────────────────────────────────
 # Exact pin: the 0.0.x line may change its public API in any release.
 shodo  = { version = "=0.0.4", default-features = false, features = ["system-fonts"] }

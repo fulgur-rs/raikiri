@@ -31,7 +31,7 @@ fn apply_computed_to_style_bridges_display_to_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert_eq!(doc.nodes[body].style.display, Display::None);
 
     let default_style = <taffy::Style as Default>::default();
@@ -62,64 +62,12 @@ fn apply_computed_to_style_tracks_logical_min_block_provenance() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert!(doc.nodes[avoided].has_logical_min_block_size);
     assert!(!doc.nodes[auto].has_logical_min_block_size);
     assert_eq!(
         doc.nodes[avoided].style.min_size.height,
         LengthPercentageAuto::length(40.0)
-    );
-}
-
-#[test]
-fn prepare_multicol_layout_splits_direct_text_lines_across_columns() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let container = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some(
-                "column-count:2;column-gap:20px;width:200px;font-size:10px;line-height:10px;white-space:pre-line",
-            ),
-        );
-    let text = doc.append_text(container, "a\nb\nc\nd");
-
-    doc.mark_in_document_flags();
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-    let mut fonts = FontContext::new();
-    let mut layout_cx = LayoutContext::<()>::new();
-    preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 200.0, 200.0);
-    assert_eq!(
-        doc.nodes[text].text_layout().expect("text shaped").len(),
-        4,
-        "sanity: four pre-line segments produce four lines"
-    );
-
-    prepare_multicol_layout(&mut doc, &cr, 200.0);
-
-    // width 200 / 2 columns with a 20px gap: (200 - 20) / 2 = 90.
-    let fragments = doc.nodes[text]
-        .multicol_fragments()
-        .expect("direct text under a multicol container gets explicit line fragments")
-        .to_vec();
-    assert_eq!(fragments.len(), 2);
-    assert_eq!(fragments[0].line_start, 0);
-    assert_eq!(fragments[0].line_end, 2);
-    assert!((fragments[0].x - 0.0).abs() < 0.001);
-    assert_eq!(fragments[1].line_start, 2);
-    assert_eq!(fragments[1].line_end, 4);
-    assert!((fragments[1].x - 110.0).abs() < 0.001);
-    assert_eq!(doc.nodes[text].style.size.width, Dimension::length(90.0));
-    // 2 lines per column * 10px line-height.
-    assert_eq!(
-        doc.nodes[container].style.size.height,
-        Dimension::length(20.0)
     );
 }
 
@@ -159,7 +107,7 @@ fn prepare_multicol_layout_projects_oversized_direct_br_children_as_wrapped_flex
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     prepare_multicol_layout(&mut doc, &cr, 200.0);
 
@@ -217,734 +165,9 @@ fn apply_computed_to_style_bridges_direction_to_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(doc.nodes[body].style.direction, taffy::Direction::Rtl);
-}
-
-#[test]
-fn collapse_block_in_inline_margins_ignores_whitespace_between_blocks() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let inline = doc.append_element(Some(body), "div", Style::default(), Some("display:inline"));
-    let before = doc.append_element(
-        Some(inline),
-        "div",
-        Style::default(),
-        Some("display:block; margin:16px 0"),
-    );
-    doc.append_text(inline, "\n   ");
-    let after = doc.append_element(
-        Some(inline),
-        "div",
-        Style::default(),
-        Some("display:block; margin:16px 0"),
-    );
-    doc.mark_in_document_flags();
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    collapse_block_in_inline_margins(&mut doc, inline, &cr);
-
-    assert_eq!(
-        doc.nodes[before].style.margin.bottom,
-        LengthPercentageAuto::length(16.0)
-    );
-    assert_eq!(
-        doc.nodes[after].style.margin.top,
-        LengthPercentageAuto::length(0.0)
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    // `build_rule_tree` deliberately excludes UA CSS (its own doc:
-    // "Exclude UA CSS": `raikiri_html::parse` injects the UA stylesheet.
-    // during real HTML parsing, which this hand-built-arena test
-    // fixture bypasses). So every element's own display is declared
-    // explicitly via inline style below, rather than relying on a
-    // `p { display: block }` / `b { display: inline }` UA default
-    // that would not actually be present in this fixture.
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _a = doc.append_text(p, "A ");
-    let b = doc.append_element(Some(p), "b", Style::default(), Some("display: inline"));
-    let _b_text = doc.append_text(b, "B");
-    let _c = doc.append_text(p, " C");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    assert_eq!(doc.nodes[p].style.display, Display::Flex);
-    assert_eq!(doc.nodes[p].style.flex_direction, TaffyFlexDirection::Row);
-    assert_eq!(doc.nodes[p].style.flex_wrap, TaffyFlexWrap::NoWrap);
-    assert_eq!(
-        doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::FLEX_START)
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        doc.nodes[p].flags.contains(NodeFlags::IS_INLINE_ROOT),
-        "qualifying container must have IS_INLINE_ROOT set"
-    );
-    // Participating children get flex_grow/flex_shrink pinned to 0 so
-    // they neither grow nor compress narrower than their own shaped
-    // content (see this pass's doc, "flex-shrink hazard").
-    for &c in &doc.nodes[p].children {
-        assert_eq!(doc.nodes[c].style.flex_grow, 0.0);
-        assert_eq!(doc.nodes[c].style.flex_shrink, 0.0);
-    }
-
-    // `b` is a plain `inline` element (not `block`/`inline-block`), so
-    // it does not itself qualify regardless of its own child count —
-    // covered separately by
-    // `establish_minimal_line_boxes_excludes_plain_inline_container`.
-    // Here it just needs to remain block-container-shaped (i.e. its
-    // own single Text child is laid out exactly as before this pass).
-    assert_eq!(doc.nodes[b].style.display, Display::Block);
-    assert!(!doc.nodes[b].flags.contains(NodeFlags::IS_INLINE_ROOT));
-}
-
-#[test]
-fn establish_minimal_line_boxes_leaves_single_inline_child_container_on_block_path() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _a = doc.append_text(p, "A");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[p].style.display,
-        Display::Block,
-        "a single inline-level child is geometrically degenerate \
-             (nothing to place beside it) — must be left on the plain \
-             block path, not upgraded to a 1-item flex row"
-    );
-    assert!(!doc.nodes[p].flags.contains(NodeFlags::IS_INLINE_ROOT));
-}
-
-#[test]
-fn establish_minimal_line_boxes_leaves_mixed_block_and_inline_content_untouched() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _text = doc.append_text(p, "A");
-    let _div = doc.append_element(Some(p), "div", Style::default(), Some("display: block"));
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[p].style.display,
-        Display::Block,
-        "a block-level sibling among inline-level content must \
-             disqualify minimal-line-box treatment (mixed content is out \
-             of scope for this pass)"
-    );
-    assert!(!doc.nodes[p].flags.contains(NodeFlags::IS_INLINE_ROOT));
-}
-
-#[test]
-fn establish_minimal_line_boxes_hidden_sibling_does_not_count_toward_threshold() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _a = doc.append_text(p, "A");
-    let _hidden = doc.append_element(Some(p), "span", Style::default(), Some("display:none"));
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    // Only 1 *counted* inline-level child (the display:none sibling
-    // doesn't count) — below the 2-child threshold.
-    assert_eq!(doc.nodes[p].style.display, Display::Block);
-}
-
-#[test]
-fn establish_minimal_line_boxes_hidden_sibling_does_not_disqualify_when_threshold_met() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _a = doc.append_text(p, "A");
-    let _hidden = doc.append_element(Some(p), "span", Style::default(), Some("display:none"));
-    let _c = doc.append_text(p, "C");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[p].style.display,
-        Display::Flex,
-        "a display:none sibling must not block qualification once the \
-             2 visible-inline-level threshold is otherwise met"
-    );
-}
-
-#[test]
-fn qualifies_for_minimal_line_box_skips_not_in_document_sibling() {
-    // Regression check for the `if !doc.nodes[c].is_in_document() {
-    // continue; }` guard in `qualifies_for_minimal_line_box`: a
-    // Comment sibling is reachable in the raw arena tree but always
-    // has `IS_IN_DOCUMENT` cleared by `mark_in_document_flags`
-    // (`NodeData::Comment`'s doc) — it must be skipped entirely
-    // (neither counted nor disqualifying) while the 2 real Text
-    // children still meet the threshold.
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _a = doc.append_text(p, "A");
-    let comment = doc.append_comment(Some(p), "not rendered");
-    let _c = doc.append_text(p, "C");
-    doc.mark_in_document_flags();
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        !doc.nodes[comment].is_in_document(),
-        "fixture precondition: the comment sibling must actually be \
-             not-in-document for this test to exercise the guard"
-    );
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[p].style.display,
-        Display::Flex,
-        "a not-in-document sibling (e.g. a Comment) must be skipped \
-             entirely by the is_in_document() guard — neither counted \
-             nor disqualifying — while the 2 real Text children still \
-             meet the threshold"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_excludes_plain_inline_container() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    // 2 text children, but `b` itself must not qualify: a plain
-    // `inline` node's content flows into its ancestor's line box, it
-    // does not get its own (this module's doc, "does not qualify
-    // here even with 2+ inline-level children").
-    let b = doc.append_element(Some(body), "b", Style::default(), Some("display: inline"));
-    let _x = doc.append_text(b, "X");
-    let _y = doc.append_text(b, "Y");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    assert_eq!(doc.nodes[b].style.display, Display::Block);
-    assert!(!doc.nodes[b].flags.contains(NodeFlags::IS_INLINE_ROOT));
-}
-
-#[test]
-fn establish_minimal_line_boxes_bridges_nested_plain_inline_children() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let outer = doc.append_element(
-        Some(body),
-        "span",
-        Style::default(),
-        Some("display: inline"),
-    );
-    let inner = doc.append_element(Some(outer), "b", Style::default(), Some("display: inline"));
-    let _text = doc.append_text(inner, "永X");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    assert!(doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
-    assert!(!doc.nodes[inner].flags.contains(NodeFlags::IS_INLINE_ROOT));
-    assert_eq!(doc.nodes[outer].style.display, Display::Flex);
-    assert_eq!(doc.nodes[inner].style.display, Display::Block);
-}
-
-#[test]
-fn establish_minimal_line_boxes_scopes_autospace_to_the_inline_context() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let trigger = doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
-    let _trigger_text = doc.append_text(trigger, "永X");
-
-    let unrelated = doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
-    let outer = doc.append_element(
-        Some(unrelated),
-        "span",
-        Style::default(),
-        Some("display: inline; text-autospace: no-autospace"),
-    );
-    let inner = doc.append_element(Some(outer), "b", Style::default(), Some("display: inline"));
-    let _text = doc.append_text(inner, "永X");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    assert!(!doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
-    assert_eq!(doc.nodes[outer].style.display, Display::Block);
-}
-
-#[test]
-fn establish_minimal_line_boxes_bridges_stylesheet_authored_inline_wrapper() {
-    use raikiri_style::{Origin, build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let outer = doc.append_element(Some(body), "x-inline", Style::default(), None::<&str>);
-    let inner = doc.append_element(
-        Some(outer),
-        "span",
-        Style::default(),
-        Some("display: inline"),
-    );
-    let _text = doc.append_text(inner, "永X");
-
-    let mut rules = build_rule_tree(&doc);
-    rules.add_stylesheet("x-inline { display: inline !important; }", Origin::Author);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    assert!(doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
-    assert_eq!(doc.nodes[outer].style.display, Display::Flex);
-}
-
-#[test]
-fn establish_minimal_line_boxes_qualifies_inline_block_container() {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let ib = doc.append_element(
-        Some(body),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
-    let _x = doc.append_text(ib, "X");
-    let _y = doc.append_text(ib, "Y");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[ib].style.display,
-        Display::Flex,
-        "inline-block generates a block container for its own content, \
-             same as block — it must qualify just like a block container"
-    );
-    assert!(doc.nodes[ib].flags.contains(NodeFlags::IS_INLINE_ROOT));
-}
-
-#[test]
-fn establish_minimal_line_boxes_lays_out_children_side_by_side_not_stacked() {
-    // End-to-end check (via the full `layout_single_page` pipeline, not
-    // just `apply_computed_to_style` in isolation) that qualifying
-    // inline-level siblings actually end up beside each other, not
-    // independently stacked — the concrete geometry bug this pass
-    // fixes.
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let a = doc.append_text(p, "AAAA");
-    let c = doc.append_text(p, "CCCC");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let a_loc = doc.nodes[a].unrounded_layout;
-    let c_loc = doc.nodes[c].unrounded_layout;
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (a_loc.location.y - c_loc.location.y).abs() < 1e-3,
-        "both text children must sit on the same line (same y), got \
-             a.y={} c.y={}",
-        a_loc.location.y,
-        c_loc.location.y
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        c_loc.location.x >= a_loc.location.x + a_loc.size.width - 1e-3,
-        "second child must start at or after the first child's right \
-             edge (side-by-side placement), got a.x={} a.w={} c.x={}",
-        a_loc.location.x,
-        a_loc.size.width,
-        c_loc.location.x
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        c_loc.location.x > 0.0,
-        "second child must not sit at x=0 — that would mean it's \
-             still being independently stacked below the first child \
-             rather than placed beside it"
-    );
-}
-
-#[test]
-fn text_align_center_on_flex_line_box_uses_justify_content() {
-    // Center a qualifying container (2+ inline-level children) using its
-    // `justify_content: Center` property, rather than Parley alignment.
-    // The flex layout handles this; see `realign_text_after_layout`'s docs.
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display: block; text-align: center"),
-    );
-    let _a = doc.append_text(p, "AAAA");
-    let _c = doc.append_text(p, "CCCC");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[p].style.justify_content,
-        Some(TaffyAlignContent::CENTER),
-        "centered line-box container must center via flex justify_content"
-    );
-
-    // End-to-end: the entire line box is centered within its container.
-    use parley::FontContext;
-    use raikiri_traits::PageBox;
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-    let p_w = doc.nodes[p].unrounded_layout.size.width;
-    let a_loc = doc.nodes[_a].unrounded_layout;
-    let c_loc = doc.nodes[_c].unrounded_layout;
-    let total = (c_loc.location.x + c_loc.size.width) - a_loc.location.x;
-    let expected_left = (p_w - total) * 0.5;
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (a_loc.location.x - expected_left).abs() < 2.0,
-        "centered line box must start near (p_w-total)/2, got a.x={} expected={} (p_w={} total={})",
-        a_loc.location.x,
-        expected_left,
-        p_w,
-        total
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_resets_conflicting_align_self() {
-    // Regression check for the `align_self: None` reset documented on
-    // `establish_minimal_line_boxes`. `b` below carries an explicit
-    // `align-self: flex-end` — inert while `p` was a plain block
-    // container, a live cross-axis override once `p` qualifies here,
-    // absent this reset (it would otherwise diverge from the
-    // container's own `align_items: FlexStart`).
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _a = doc.append_text(p, "A");
-    let b = doc.append_element(
-        Some(p),
-        "b",
-        Style::default(),
-        Some("display: inline; align-self: flex-end"),
-    );
-    let _c = doc.append_text(b, "B");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[b].style.align_self, None,
-        "`b`'s explicit align-self:flex-end must be reset to None \
-             (= auto) once `p` qualifies for minimal-line-box treatment, \
-             so `b` falls back to `p`'s own align_items:FlexStart \
-             instead of diverging from it"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_br_switches_container_to_wrap_and_forces_full_basis() {
-    // Unit-level check for the "`<br>` forced break" mechanism documented
-    // on `establish_minimal_line_boxes`: a qualifying container with a
-    // participating `<br>` switches from `flex_wrap: NoWrap` to `Wrap`,
-    // and only the `<br>` child (not its siblings) gets its flex_basis
-    // forced to 100%.
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let a = doc.append_text(p, "A");
-    let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
-    let c = doc.append_text(p, "C");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    assert_eq!(doc.nodes[p].style.display, Display::Flex);
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[p].style.flex_wrap,
-        TaffyFlexWrap::Wrap,
-        "a qualifying container with a participating <br> must enable \
-             flex_wrap so taffy's own line-packing algorithm can place the \
-             <br> (and anything after it) onto a new line"
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[br].style.flex_basis,
-        Dimension::percent(1.0),
-        "<br> itself must get flex_basis:100% — the hypothetical main \
-             size that never fits alongside a non-empty line, forcing it \
-             (and everything after it) onto a new line"
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[a].style.flex_basis,
-        Dimension::auto(),
-        "a plain sibling text node must keep the ordinary content-based \
-             flex_basis — only <br> itself gets the 100% override"
-    );
-    assert_eq!(doc.nodes[c].style.flex_basis, Dimension::auto());
-}
-
-#[test]
-fn establish_minimal_line_boxes_display_none_br_does_not_switch_to_wrap() {
-    // A `display:none` `<br>` generates no box at all (CSS Display 4
-    // §2's "the element and its descendants generate no boxes"), so it
-    // must not be treated as a forced break — otherwise a container
-    // with no visually-effective `<br>` would still gain
-    // `flex_wrap: Wrap`, silently enabling size-based wrapping
-    // (`establish_minimal_line_boxes`'s Non-goals doc) for content that
-    // never asked for it.
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
-    let _a = doc.append_text(p, "A");
-    let _br = doc.append_element(Some(p), "br", Style::default(), Some("display: none"));
-    let _c = doc.append_text(p, "C");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
-
-    assert_eq!(doc.nodes[p].style.display, Display::Flex);
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        doc.nodes[p].style.flex_wrap,
-        TaffyFlexWrap::NoWrap,
-        "a display:none <br> must not count as a forced break"
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_br_line_stays_zero_height_under_explicit_tall_container_height() {
-    // Regression check for a property-leak this pass must guard against:
-    // `bridge_size` unconditionally copies an author `height` into
-    // `style.size.height`, and `bridge_alignment` unconditionally
-    // copies an author `align-content` into `style.align_content`
-    // (`None` when unauthored). Once this container becomes a
-    // multi-line flex container (this pass's "`<br>` forced break"),
-    // an explicit `height` taller than the natural content height
-    // leaves leftover cross space that taffy's own default
-    // (`align_content: Stretch` when unset) would distribute across
-    // ALL flex lines — including the zero-height line the `<br>`
-    // alone occupies — growing it above 0 and inserting a visible gap
-    // between the two real text lines. This container's own
-    // `align_content` must be reset (mirroring the `align_items`
-    // reset a few lines up) so that leftover space is not distributed
-    // onto lines at all.
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display: block; height: 200px"),
-    );
-    let a = doc.append_text(p, "AAAA");
-    let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
-    let c = doc.append_text(p, "CCCC");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let p_loc = doc.nodes[p].unrounded_layout;
-    let a_loc = doc.nodes[a].unrounded_layout;
-    let br_loc = doc.nodes[br].unrounded_layout;
-    let c_loc = doc.nodes[c].unrounded_layout;
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (p_loc.size.height - 200.0).abs() < 1e-3,
-        "fixture precondition: explicit height:200px must actually \
-             take effect (and exceed the two text lines' natural height), \
-             got p.h={}",
-        p_loc.size.height
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        br_loc.size.height, 0.0,
-        "the <br>'s own line must stay at 0 height even when the \
-             container's explicit height leaves leftover cross space — \
-             that space must not stretch onto any line, got br.h={}",
-        br_loc.size.height
-    );
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (c_loc.location.y - (a_loc.location.y + a_loc.size.height)).abs() < 1e-3,
-        "no visible gap between the two real lines: the second \
-             line's top must sit exactly at the first line's bottom \
-             edge, got a.y={} a.h={} c.y={}",
-        a_loc.location.y,
-        a_loc.size.height,
-        c_loc.location.y
-    );
-}
-
-#[test]
-fn establish_minimal_line_boxes_br_forces_second_line_on_inline_block_container() {
-    // Same forced-break geometry as
-    // `establish_minimal_line_boxes_br_forces_second_line_end_to_end`,
-    // but on a qualifying `inline-block` container rather than `block`
-    // — pins that the mechanism does not depend on which of the two
-    // qualifying display values establishes the line box (this crate's
-    // block layout gives both a definite available main size from
-    // their own containing block; see `bridge_display`'s doc, neither
-    // display value gets shrink-to-fit sizing here).
-    use parley::FontContext;
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::PageBox;
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let ib = doc.append_element(
-        Some(body),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
-    let a = doc.append_text(ib, "AAAA");
-    let br = doc.append_element(Some(ib), "br", Style::default(), None::<&str>);
-    let c = doc.append_text(ib, "CCCCCCCCCCCCCCCCCCCC");
-
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
-
-    let a_loc = doc.nodes[a].unrounded_layout;
-    let br_loc = doc.nodes[br].unrounded_layout;
-    let c_loc = doc.nodes[c].unrounded_layout;
-    let ib_loc = doc.nodes[ib].unrounded_layout;
-
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        c_loc.location.y >= a_loc.location.y + a_loc.size.height - 1e-3,
-        "got a.y={} a.h={} c.y={}",
-        a_loc.location.y,
-        a_loc.size.height,
-        c_loc.location.y
-    );
-    assert_eq!(br_loc.size.height, 0.0);
-    // cov:ignore: panic-message literal only executed on assertion
-    // failure, which doesn't happen while this test passes.
-    assert!(
-        (ib_loc.size.height - (a_loc.size.height + c_loc.size.height)).abs() < 1e-3,
-        "got ib.h={} a.h={} c.h={}",
-        ib_loc.size.height,
-        a_loc.size.height,
-        c_loc.size.height
-    );
 }
 
 #[test]
@@ -973,7 +196,7 @@ fn apply_computed_to_style_reserves_inside_list_marker_gutter() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(
         doc.nodes[inside].style.padding.left.into_raw().value(),
@@ -1017,7 +240,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.margin
     }
 
@@ -1104,7 +327,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.padding
     }
 
@@ -1182,7 +405,7 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.size.width
     }
 
@@ -1239,7 +462,7 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.size.height
     }
 
@@ -1278,7 +501,7 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.min_size
     }
 
@@ -1325,7 +548,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
         let p = doc.append_element(Some(body), "p", Style::default(), inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[p].style.max_size
     }
 
@@ -1404,7 +627,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.border
     }
 
@@ -1534,7 +757,7 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     // border-style unset (initial `none`) must gate width to 0 all the way to taffy.
     assert_eq!(
@@ -1575,7 +798,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     let style = &doc.nodes[body].style;
 
     // 2em × 20px = 40px (previously 0.0).
@@ -1629,7 +852,7 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("styles");
         doc.nodes[body].style.box_sizing
     }
 
@@ -1668,7 +891,7 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
         let body = doc.append_element(Some(html), "body", Style::default(), Some(style.as_str()));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        apply_computed_to_style(&mut doc, &cr);
+        apply_computed_to_style(&mut doc, &cr).expect("apply Ok");
         doc.nodes[body].style.box_sizing
     }
     assert_eq!(
@@ -1699,7 +922,7 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
     );
     let var_rules = build_rule_tree(&var_doc);
     let var_cr = cascade(&var_doc, &var_rules).expect("cascade Ok");
-    apply_computed_to_style(&mut var_doc, &var_cr);
+    apply_computed_to_style(&mut var_doc, &var_cr).expect("apply Ok");
 }
 
 #[test]
@@ -1724,7 +947,7 @@ fn apply_page_content_box_clobbers_body_width_from_bridge() {
     let cr = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
 
     // Step 1: the bridge writes the author value (100px) to body.style.size.width.
-    apply_computed_to_style(&mut doc, &cr);
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert_eq!(
         doc.nodes[body].style.size.width,
         Dimension::length(100.0),
@@ -1778,7 +1001,7 @@ fn layout_single_page_bridges_display_flow_root() {
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     assert_eq!(
         doc.nodes[flow_root].style.display,
@@ -1822,7 +1045,7 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -2096,7 +1319,7 @@ fn align_self_normal_stretches_even_when_parent_align_items_is_center() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let child_height = doc.nodes[normal_child].unrounded_layout.size.height;
     // cov:ignore: panic-message literal only executed on assertion
@@ -2157,7 +1380,7 @@ fn flex_direction_column_stacks_children_vertically() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let a_loc = doc.nodes[child_a].unrounded_layout.location;
     let b_loc = doc.nodes[child_b].unrounded_layout.location;
@@ -2214,7 +1437,7 @@ fn flex_grow_absorbs_free_space() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let grower_width = doc.nodes[grower].unrounded_layout.size.width;
     let fixed_width = doc.nodes[fixed].unrounded_layout.size.width;
@@ -2306,7 +1529,7 @@ fn floated_box_with_explicit_width_is_positioned_at_the_containing_block_edge() 
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let loc = doc.nodes[float_child].unrounded_layout.location;
     let size = doc.nodes[float_child].unrounded_layout.size;
@@ -2423,7 +1646,7 @@ fn gap_adds_space_between_flex_items() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let a_loc = doc.nodes[child_a].unrounded_layout.location;
     let b_loc = doc.nodes[child_b].unrounded_layout.location;
@@ -2472,7 +1695,7 @@ fn justify_content_flex_end_pushes_children_to_container_end() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let a_loc = doc.nodes[child_a].unrounded_layout.location;
     let b_loc = doc.nodes[child_b].unrounded_layout.location;
@@ -2526,7 +1749,7 @@ fn layout_single_page_bridges_display_grid_to_taffy_grid() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -2884,7 +2107,7 @@ fn grid_template_columns_actually_sizes_columns_through_taffy_grid_algorithm() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let a_loc = doc.nodes[cell_a].unrounded_layout.location;
     let b_loc = doc.nodes[cell_b].unrounded_layout.location;
@@ -2944,7 +2167,7 @@ fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
-    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let a_loc = doc.nodes[cell_a].unrounded_layout.location;
     let b_loc = doc.nodes[cell_b].unrounded_layout.location;

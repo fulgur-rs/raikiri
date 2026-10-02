@@ -338,19 +338,17 @@ fn a_reftest_that_only_passes_without_local_images_carries_the_note() {
 }
 
 #[test]
-fn the_ifc_flag_is_parsed() {
-    let options = parse_report_args(&["--ifc".to_owned()]).expect("args");
-    assert!(options.inline_formatting);
-    let options = parse_report_args(&[]).expect("args");
-    assert!(!options.inline_formatting);
+fn the_baseline_runner_rejects_the_removed_ifc_flags() {
+    for flag in ["--ifc", "--no-ifc"] {
+        let error = parse_report_args(&[flag.to_owned()]).expect_err(flag);
+        assert!(error.contains(flag), "{flag}: {error}");
+    }
 }
 
 #[test]
-fn the_wpt_fonts_flag_is_parsed_independently_of_the_ifc_flag() {
+fn the_wpt_fonts_flag_still_parses_and_changes_nothing() {
+    // The WPT fonts are always used; the flag names that default.
+    let default = parse_report_args(&[]).expect("args");
     let options = parse_report_args(&["--wpt-fonts".to_owned()]).expect("args");
-    assert!(options.wpt_fonts);
-    assert!(!options.inline_formatting);
-    let options = parse_report_args(&["--ifc".to_owned()]).expect("args");
-    assert!(!options.wpt_fonts);
-    assert!(options.inline_formatting);
+    assert_eq!(options, default);
 }

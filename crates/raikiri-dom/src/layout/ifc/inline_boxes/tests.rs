@@ -36,7 +36,7 @@ fn root_and_lines_of(
     )
     .expect("project");
     let root = IfcRoot::new(projected);
-    let lines = break_lines(&root, &mut cx, width).lines;
+    let lines = break_lines(&root, &mut cx, width).lines.to_vec();
     (root, lines)
 }
 

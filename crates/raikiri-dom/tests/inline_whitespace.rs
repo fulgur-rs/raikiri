@@ -1,6 +1,5 @@
 //! Public-layout regression coverage for whitespace between inline boxes.
 
-use parley::FontContext;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -31,15 +30,24 @@ fn public_layout_preserves_collapsed_whitespace_between_inline_boxes() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade should succeed");
-    layout_single_page(&mut document, &cascade, PageBox::A4, FontContext::new())
+    layout_single_page(&mut document, &cascade, PageBox::A4)
         .expect("single-page layout should succeed");
 
-    let width = document
-        .layout_style(whitespace)
-        .expect("whitespace node style")
-        .size
-        .width
-        .into_option()
-        .expect("preserved whitespace should have a width");
-    assert!(width > 0.0, "preserved whitespace width was {width}");
+    // The collapsible white space between the spans is one space on the
+    // line: the second span starts after the first one plus that space.
+    let _ = whitespace;
+    let pieces = document
+        .get_node(block)
+        .and_then(|node| node.ifc_inline_boxes())
+        .expect("the block is a paragraph of the inline engine");
+    let piece = |node: usize| {
+        pieces
+            .iter()
+            .find(|piece| piece.node == node)
+            .expect("a piece of the span")
+            .border_box
+    };
+    let (left, right) = (piece(left), piece(right));
+    let gap = right.x - (left.x + left.width);
+    assert!(gap > 0.0, "preserved whitespace width was {gap}");
 }

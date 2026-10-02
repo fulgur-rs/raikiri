@@ -10,8 +10,8 @@
  *
  * Scope: the minimal rule set required for a hello-world visual
  * regression test (<p style="color:red">Hi</p> → PNG) to succeed. Form
- * controls, <pre>'s display, and <table> presentation are deliberately
- * deferred. Margins are only partially landed (`hr` and the
+ * controls and <table> presentation are deliberately deferred. Margins
+ * are only partially landed (`hr` and the
  * `blockquote`/`figure`/`listing`/`p`/`plaintext`/`pre`/`xmp` group below)
  * — most other elements' margins (headings and form controls, etc.) remain deferred.
  */
@@ -57,7 +57,7 @@ hr         { display: block; }
 
 /* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) — remaining
  * display:block members of the flow-content selector not covered above.
- * address and search are current conforming elements. center/listing/
+ * address, pre and search are current conforming elements. center/listing/
  * plaintext/xmp are each classified "entirely obsolete, and must not be
  * used by authors" under HTML LS §16.2 "Non-conforming features"
  * (https://html.spec.whatwg.org/multipage/obsolete.html#non-conforming-
@@ -85,6 +85,7 @@ address   { display: block; }
 center    { display: block; }
 listing   { display: block; }
 plaintext { display: block; }
+pre       { display: block; }
 search    { display: block; }
 xmp       { display: block; }
 
@@ -214,9 +215,8 @@ hr { color: gray; border: 1px inset; margin-block: 0.5em; margin-inline: auto; o
  * not the other five selector members), both implemented below verbatim
  * using the CSS Logical Properties and Values 1 §4.2 shorthands.
  *
- * pre itself still has no `display: block` rule anywhere in this file
- * (see file header's `<pre>` scope note) — a separate, pre-existing gap
- * this margin rule does not touch or depend on.
+ * pre's own `display: block` (the same §flow-content-3 group selector)
+ * is in the `address`/`center`/... group above.
  *
  * HTML LS §15.3.9 "Margin collapsing quirks" separately requires, in
  * quirks mode, that "elements with default margins" (its own defined
@@ -378,8 +378,8 @@ abbr[title], acronym[title] { text-decoration: dotted underline; }
  *   code, kbd, samp, tt { font-family: monospace; }
  *
  * font-family (`ComputedValues.font_family`, parsed by `parse_font_family`
- * in property.rs) is fully implemented end to end: raikiri-dom's layout.rs
- * hands the computed family list to parley, which resolves the CSS keyword
+ * in property.rs) is fully implemented end to end: raikiri-dom hands the
+ * computed family list to the inline engine, which resolves the CSS keyword
  * `monospace` as a generic family rather than looking up a font literally
  * named "monospace", so this rule lands verbatim. */
 code, kbd, samp, tt { font-family: monospace; }

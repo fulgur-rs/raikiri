@@ -140,11 +140,9 @@ impl Document {
     /// Replace a Text / Comment / ProcessingInstruction node's character
     /// data. Errs for an out-of-range `id` or any other node kind.
     ///
-    /// A Text node's rewrite invalidates the layout cache: layout caches a
-    /// parley shaping of the old character data
-    /// ([`crate::node::TextData::text_layout`]), and the next layout pass
-    /// must reshape from the new string instead of reusing that stale
-    /// glyph run.
+    /// A Text node's rewrite invalidates the layout cache: the next layout
+    /// pass must lay its paragraph out again from the new string instead of
+    /// reusing lines shaped from the old one.
     pub fn set_character_data(&mut self, id: usize, data: &str) -> Result<(), String> {
         let Some(node) = self.nodes.get_mut(id) else {
             return Err(format!("character data target index {id} is out of range"));

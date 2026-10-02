@@ -8,11 +8,13 @@ pub(crate) mod error;
 pub(crate) mod flow;
 pub(crate) mod font;
 pub(crate) mod inline_boxes;
+pub(crate) mod parent;
 pub(crate) mod projection;
 pub(crate) mod records;
 pub(crate) mod root;
 pub(crate) mod standalone;
 pub(crate) mod style;
+pub(crate) mod text_lines;
 
 #[cfg(test)]
 mod parity_tests;

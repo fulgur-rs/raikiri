@@ -2,27 +2,12 @@
 //!
 //! `paint_document` walks with an iterative `PaintFrame` stack, following
 //! the pattern of cascade / find_body and avoiding stack overflow for deep DOMs.
-//! It handles each kind inline: Element pushes children, Text calls
-//! draw_text_node, and display:none skips a subtree. A matching `PopClip`
-//! frame closes each overflow clip after the subtree.
-//! See the `vertical_align_shift_px` docs for `parent_font_size` / `shift_y`.
-//!
-//! Once inline formatting context is implemented, the Element branch will
-//! walk its own inline layout instead of pushing children; the Text branch
-//! will become unreachable (the current text_layout choice is provisional).
-//!
-//! **This missing inline formatting context also limits how
-//! `vertical_align_shift_px` applies shifts.** Currently, even elements with
-//! `display: inline` are stacked by taffy as separate lines, like blocks
-//! (`bridge_display` maps `DisplayValue::Inline` to `taffy::Display::Block`).
-//! Thus "H", "2", and "O" in `<p>H<sub>2</sub>O</p>` still paint on three
-//! lines: the `vertical_align_shift_px` offset moves `2` slightly within
-//! its separate line, not back onto the same line as `H` and `O`.
-//! Painting adds this offset **after** taffy has fixed box positions; taffy
-//! does not inspect `vertical_align`. The shift does not affect box-model
-//! calculations and is not clipped anywhere. For example, near the top
-//! of a page, `vertical-align: super` may paint into the margin area.
-//! This remains a known rendering limitation.
+//! It handles each kind inline: an Element pushes its children (a paragraph
+//! root draws its lines, then pushes the boxes of its paragraph), a Text node
+//! that is a paragraph of its own draws its lines, and display:none skips a
+//! subtree. A matching `PopClip` frame closes each overflow clip after the
+//! subtree. See the `vertical_align_shift_px` docs for `parent_font_size` /
+//! `shift_y`.
 //!
 //! find_body duplicates raikiri-dom::layout::find_body, but keeping this
 //! five-line helper here is cleaner than exporting it across crate boundaries.
@@ -31,7 +16,7 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
 use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
-use raikiri_dom::{CounterSnapshot, Document};
+use raikiri_dom::{CounterSnapshot, Document, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
     ColumnCountValue, ConicGradient, ContentComponent, CounterStyle, CssColor, CssPosition,
@@ -56,6 +41,10 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use taffy::CompactLength;
 
 use crate::text;
+use raikiri_dom::generated_content::{
+    apply_counter_directives_to_snapshot, format_counter, format_counter_component,
+    format_counters_component,
+};
 
 /// Canvas background fill site — minimal CSS Backgrounds 3 §2.11 canvas propagation.
 ///
@@ -797,7 +786,7 @@ struct MarginBoxPaintSpec {
     text_color: Color,
     font_size: f32,
     font_family: String,
-    alignment: parley::Alignment,
+    alignment: StandaloneAlign,
     vertical_align: text::MarginTextVerticalAlign,
     /// Whether authored margin-box writing-mode makes newline-separated
     /// content advance across vertical columns rather than down lines.
@@ -922,60 +911,6 @@ fn inherited_margin_box_font(
     (font_size.max(0.1), family)
 }
 
-fn apply_counter_directives_to_snapshot(
-    snapshot: &mut CounterSnapshot,
-    computed: &raikiri_style::ComputedValues,
-) {
-    // Apply pseudo directives to the local content snapshot. `::before`
-    // scope propagation to descendants is handled by
-    // `raikiri_dom::counter_snapshots`; this clone resolves the pseudo's own
-    // generated content before the scope is used by later real children.
-    let mut reset_values = std::collections::HashMap::new();
-    for (name, value) in computed.counter_reset.iter() {
-        reset_values.insert(name.as_str(), *value);
-    }
-    for (name, value) in reset_values {
-        snapshot
-            .entry(raikiri_traits::Symbol::new(name))
-            .or_default()
-            .push(value);
-    }
-    for (name, delta) in computed.counter_increment.iter() {
-        let stack = snapshot
-            .entry(raikiri_traits::Symbol::new(name.as_str()))
-            .or_default();
-        if let Some(top) = stack.last_mut() {
-            *top = top.saturating_add(*delta);
-        } else {
-            stack.push(*delta);
-        }
-    }
-    for (name, value) in computed.counter_set.iter() {
-        let stack = snapshot
-            .entry(raikiri_traits::Symbol::new(name.as_str()))
-            .or_default();
-        if let Some(top) = stack.last_mut() {
-            *top = *value;
-        } else {
-            stack.push(*value);
-        }
-    }
-}
-
-fn format_counter_component(
-    snapshot: &CounterSnapshot,
-    name: &str,
-    style: &CounterStyle,
-    registry: &CounterStyleRegistry,
-) -> String {
-    let value = snapshot
-        .get(&raikiri_traits::Symbol::new(name))
-        .and_then(|values| values.last())
-        .copied()
-        .unwrap_or(0);
-    format_counter(value, style, registry)
-}
-
 fn list_item_counter_value(counters: &CounterSnapshot, ordinal: u32) -> i32 {
     counters
         .get(&raikiri_traits::Symbol::new("list-item"))
@@ -986,110 +921,6 @@ fn list_item_counter_value(counters: &CounterSnapshot, ordinal: u32) -> i32 {
 
 fn list_item_marker_ordinal(counters: &CounterSnapshot, ordinal: u32) -> u32 {
     list_item_counter_value(counters, ordinal).max(0) as u32
-}
-
-fn format_counters_component(
-    snapshot: &CounterSnapshot,
-    name: &str,
-    separator: &str,
-    style: &CounterStyle,
-    registry: &CounterStyleRegistry,
-) -> String {
-    snapshot
-        .get(&raikiri_traits::Symbol::new(name))
-        .map(|values| {
-            values
-                .iter()
-                .map(|value| format_counter(*value, style, registry))
-                .collect::<Vec<_>>()
-                .join(separator)
-        })
-        .unwrap_or_default()
-}
-
-fn content_components_to_text_with_quotes<T: AsRef<str>>(
-    document: &Document,
-    node_id: usize,
-    components: &[ContentComponent],
-    quotes: &[(T, T)],
-    quotes_auto: bool,
-    counters: &CounterSnapshot,
-    registry: &CounterStyleRegistry,
-) -> Option<String> {
-    if components.is_empty() {
-        return None;
-    }
-    let mut text = String::new();
-    let mut depth = 0_usize;
-    for component in components {
-        match component {
-            ContentComponent::Literal(value) => text.push_str(value.as_str()),
-            ContentComponent::Attr { name } => {
-                if let Some(node) = document.get_node(node_id) {
-                    text.push_str(node.attribute(name.as_str()).unwrap_or_default());
-                }
-            }
-            ContentComponent::AttrFallback { name, fallback } => {
-                let value = document
-                    .get_node(node_id)
-                    .and_then(|node| node.attribute(name.as_str()))
-                    .map(str::to_owned)
-                    .or_else(|| fallback.as_ref().map(|value| value.to_string()))
-                    .unwrap_or_default();
-                text.push_str(&value);
-            }
-            ContentComponent::Counter { name, style } => {
-                text.push_str(&format_counter_component(
-                    counters,
-                    name.as_str(),
-                    style,
-                    registry,
-                ));
-            }
-            ContentComponent::Counters {
-                name,
-                separator,
-                style,
-            } => {
-                text.push_str(&format_counters_component(
-                    counters,
-                    name.as_str(),
-                    separator.as_str(),
-                    style,
-                    registry,
-                ));
-            }
-            ContentComponent::Quote(keyword) => match keyword {
-                QuoteKeyword::OpenQuote => {
-                    if let Some((open, _)) = quotes.get(depth) {
-                        text.push_str(open.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(match depth {
-                            0 => "“",
-                            _ => "‘",
-                        });
-                    }
-                    depth = depth.saturating_add(1);
-                }
-                QuoteKeyword::CloseQuote => {
-                    depth = depth.saturating_sub(1);
-                    if let Some((_, close)) = quotes.get(depth) {
-                        text.push_str(close.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(match depth {
-                            0 => "”",
-                            _ => "’",
-                        });
-                    }
-                }
-                QuoteKeyword::NoOpenQuote => depth = depth.saturating_add(1),
-                QuoteKeyword::NoCloseQuote => depth = depth.saturating_sub(1),
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-    Some(text)
 }
 
 fn counter_reset_value(value: Option<&PropertyValue>, name: &str) -> Option<i32> {
@@ -1254,46 +1085,6 @@ fn inherited_margin_box_quotes(
         .iter()
         .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
         .collect()
-}
-
-fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
-    match style {
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("lower-roman") => {
-            if value <= 0 {
-                return value.to_string();
-            }
-            let mut n = value;
-            let mut result = String::new();
-            for (unit, glyph) in [
-                (1000, "m"),
-                (900, "cm"),
-                (500, "d"),
-                (400, "cd"),
-                (100, "c"),
-                (90, "xc"),
-                (50, "l"),
-                (40, "xl"),
-                (10, "x"),
-                (9, "ix"),
-                (5, "v"),
-                (4, "iv"),
-                (1, "i"),
-            ] {
-                while n >= unit {
-                    result.push_str(glyph);
-                    n -= unit;
-                }
-            }
-            result
-        }
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("upper-roman") => {
-            format_counter(value, &CounterStyle::Named("lower-roman".into()), registry)
-                .to_uppercase()
-        }
-        CounterStyle::Named(name) => resolve_custom_counter(registry, name.as_str(), value)
-            .unwrap_or_else(|| value.to_string()),
-        _ => value.to_string(),
-    }
 }
 
 fn element_string_value(document: &Document, root: usize) -> String {
@@ -1723,21 +1514,22 @@ fn generated_pseudo_content_with_snapshots<'a>(
     pseudo: raikiri_style::PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
-    let computed = cascade
-        .pseudo
-        .get(&(raikiri_style::StyleNodeId::new(node_id as u64), pseudo))?;
-    let mut counters = snapshots.get(node_id).cloned().unwrap_or_default();
-    apply_counter_directives_to_snapshot(&mut counters, computed);
-    let content = content_components_to_text_with_quotes(
-        document,
-        node_id,
-        &computed.content,
-        &computed.quotes,
-        computed.quotes_auto,
-        &counters,
-        &cascade.counter_styles,
-    )?;
-    Some((computed, content))
+    raikiri_dom::generated_content::generated_text(document, cascade, node_id, pseudo, snapshots)
+}
+
+/// Whether the inline engine laid the `pseudo` of `node_id` out as text of
+/// the paragraph `node_id` roots: it is drawn from the lines, not as an
+/// overlay, and the root's layout already holds its height.
+fn laid_out_in_lines(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    pseudo: raikiri_style::PseudoElem,
+) -> bool {
+    document
+        .get_node(node_id)
+        .is_some_and(|node| node.is_ifc_root())
+        && raikiri_dom::generated_content::is_in_flow_generated_text(cascade, node_id, pseudo)
 }
 
 fn generated_pseudo_text_advance(
@@ -1747,6 +1539,9 @@ fn generated_pseudo_text_advance(
     pseudo: raikiri_style::PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
+    if laid_out_in_lines(document, cascade, node_id, pseudo) {
+        return 0.0;
+    }
     let Some((computed, content)) =
         generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
@@ -1760,7 +1555,7 @@ fn generated_pseudo_text_advance(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_advance(Some(document), &content, computed.font_size.px(), &family)
+    text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family)
 }
 
 fn generated_flow_height(
@@ -1861,6 +1656,9 @@ fn generated_pseudo_text_height(
     pseudo: raikiri_style::PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
+    if laid_out_in_lines(document, cascade, node_id, pseudo) {
+        return 0.0;
+    }
     let Some((computed, content)) =
         generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
@@ -1874,7 +1672,7 @@ fn generated_pseudo_text_height(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_height(Some(document), &content, computed.font_size.px(), &family)
+    text::measure_margin_text_height(document, &content, computed.font_size.px(), &family)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1890,6 +1688,9 @@ fn paint_generated_pseudo(
     height: f32,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
+    if laid_out_in_lines(document, cascade, node_id, pseudo) {
+        return 0.0;
+    }
     let Some((computed, content)) =
         generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
@@ -1903,14 +1704,10 @@ fn paint_generated_pseudo(
         .first()
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
-    let advance = text::measure_margin_text_advance(
-        Some(document),
-        &content,
-        computed.font_size.px(),
-        &family,
-    );
+    let advance =
+        text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family);
     text::draw_margin_text(
-        Some(document),
+        document,
         scene,
         &content,
         x,
@@ -1920,7 +1717,7 @@ fn paint_generated_pseudo(
         css_color(computed.color),
         computed.font_size.px(),
         &family,
-        parley::Alignment::Start,
+        StandaloneAlign::Start,
         text::MarginTextVerticalAlign::Top,
     );
     advance
@@ -2020,7 +1817,7 @@ fn paint_list_marker_with_snapshots(
         .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
     let marker_width =
-        text::measure_margin_text(Some(document), &content, computed.font_size.px(), &family);
+        text::measure_margin_text(document, &content, computed.font_size.px(), &family);
     if marker_width <= 0.0 {
         return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
     }
@@ -2038,7 +1835,7 @@ fn paint_list_marker_with_snapshots(
         _ => paint_x + padding_left - marker_width - MARKER_GAP,
     };
     text::draw_margin_text(
-        Some(document),
+        document,
         scene,
         &content,
         marker_x, // cov:ignore: argument mapping has no executable location
@@ -2048,7 +1845,7 @@ fn paint_list_marker_with_snapshots(
         css_color(computed.color),
         computed.font_size.px(),
         &family,
-        parley::Alignment::Start,
+        StandaloneAlign::Start,
         text::MarginTextVerticalAlign::Top, // cov:ignore: argument mapping has no executable location
     );
 }
@@ -2385,10 +2182,10 @@ fn margin_box_spec(
         })
         .or_else(|| root_computed(document, cascade).map(|computed| computed.text_align));
     let alignment = match inherited_text_align {
-        Some(TextAlign::Right | TextAlign::End) => parley::Alignment::Right,
-        Some(TextAlign::Center) => parley::Alignment::Center,
-        Some(TextAlign::Left) => parley::Alignment::Left,
-        _ => parley::Alignment::Start,
+        Some(TextAlign::Right | TextAlign::End) => StandaloneAlign::Right,
+        Some(TextAlign::Center) => StandaloneAlign::Center,
+        Some(TextAlign::Left) => StandaloneAlign::Left,
+        _ => StandaloneAlign::Start,
     };
     // `top`/`bottom` are margin-box-specific keywords and are not yet part of
     // the element `vertical-align` grammar.  Treat the supported explicit
@@ -2450,7 +2247,7 @@ fn margin_box_spec(
 #[allow(clippy::too_many_arguments)]
 fn paint_margin_box(
     scene: &mut impl PaintScene,
-    document: Option<&Document>,
+    document: &Document,
     spec: &MarginBoxPaintSpec,
     x: f32,
     y: f32,
@@ -2574,26 +2371,14 @@ fn paint_margin_box(
         let border_top = spec.border_top.map(|(width, _)| width).unwrap_or(0.0);
         let border_bottom = spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
         let content_x = x + border_left + spec.padding[3];
-        // The correction aligns the parley path's fallback fonts with Ahem;
-        // the engine shapes with the document's Ahem itself.
-        let ahem_baseline_adjust = if !margin_box_uses_engine(document, spec)
-            && spec
-                .font_family
-                .split(',')
-                .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
-        {
-            -1.0
-        } else {
-            0.0
-        };
-        let content_y = y + border_top + spec.padding[0] + ahem_baseline_adjust;
+        let content_y = y + border_top + spec.padding[0];
         let content = if spec.vertical_writing {
             spec.content.replace('\n', "")
         } else {
             spec.content.clone()
         };
         text::draw_margin_text(
-            margin_box_document(document, spec),
+            document,
             scene,
             &content,
             content_x,
@@ -2613,7 +2398,7 @@ fn paint_margin_box(
             + spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
             + spec.padding[3]
             + text::measure_margin_text(
-                margin_box_document(document, spec),
+                document,
                 &spec.content,
                 spec.font_size,
                 &spec.font_family,
@@ -2688,59 +2473,14 @@ fn margin_box_margin_height(spec: &MarginBoxPaintSpec) -> f32 {
     spec.margin[0] + spec.margin[2]
 }
 
-/// `document` unless the box is vertical (the engine has no writing-mode
-/// mapping), in which case `None`: both its measurement and its drawing then
-/// stay on the parley path.
-fn margin_box_document<'a>(
-    document: Option<&'a Document>,
-    spec: &MarginBoxPaintSpec,
-) -> Option<&'a Document> {
-    if spec.vertical_writing {
-        None
-    } else {
-        document
-    }
-}
-
-/// Whether the inline engine will shape this margin box's text. The Ahem
-/// baseline correction exists for the parley path's fallback fonts only.
-fn margin_box_uses_engine(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> bool {
-    margin_box_document(document, spec).is_some_and(|document| {
-        document.standalone_text_eligible(
-            &spec.content,
-            crate::standalone_text::usable_size(spec.font_size),
-        )
-    })
-}
-
-fn margin_box_text_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
-    let measured = text::measure_margin_text(
-        margin_box_document(document, spec),
-        &spec.content,
-        spec.font_size,
-        &spec.font_family,
-    );
-    // The bundled WPT Ahem face is loaded by the document shaping pass, but
-    // the small intrinsic-measure helper owns a separate font context.  Use
-    // Ahem's one-em-per-glyph advance as a deterministic fallback there.
-    let ahem_width = if spec
-        .font_family
-        .split(',')
-        .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
-    {
-        spec.content
-            .split('\n')
-            .map(|line| line.chars().count() as f32 * spec.font_size.max(0.0))
-            .fold(0.0, f32::max)
-    } else {
-        0.0
-    };
+fn margin_box_text_width(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
+    let measured =
+        text::measure_margin_text(document, &spec.content, spec.font_size, &spec.font_family);
     let non_collapsible_content = spec
         .content
         .chars()
         .any(|character| !character.is_whitespace() || character == '\u{a0}');
     measured
-        .max(ahem_width)
         .max(if non_collapsible_content {
             spec.font_size.max(0.0)
         } else {
@@ -2749,7 +2489,7 @@ fn margin_box_text_width(document: Option<&Document>, spec: &MarginBoxPaintSpec)
         .max(0.0)
 }
 
-fn margin_box_intrinsic_width(document: Option<&Document>, spec: &MarginBoxPaintSpec) -> f32 {
+fn margin_box_intrinsic_width(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
     (margin_box_text_width(document, spec)
         + margin_box_border_width(spec)
         + margin_box_padding_width(spec)
@@ -2801,7 +2541,7 @@ fn margin_box_outer_height(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn paint_horizontal_margin_boxes(
     scene: &mut impl PaintScene,
-    document: Option<&Document>,
+    document: &Document,
     specs: &[MarginBoxPaintSpec],
     top: bool,
     page_width: f32,
@@ -2962,7 +2702,7 @@ fn paint_horizontal_margin_boxes(
 #[allow(clippy::too_many_arguments)]
 fn paint_vertical_margin_boxes(
     scene: &mut impl PaintScene,
-    document: Option<&Document>,
+    document: &Document,
     specs: &[MarginBoxPaintSpec],
     left: bool,
     page_width: f32,
@@ -3209,7 +2949,7 @@ pub(crate) fn paint_page_margin_boxes(
 
     paint_horizontal_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         true,
         page_box.width,
@@ -3220,7 +2960,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_horizontal_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         false,
         page_box.width,
@@ -3231,7 +2971,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         true,
         page_box.width,
@@ -3242,7 +2982,7 @@ pub(crate) fn paint_page_margin_boxes(
     );
     paint_vertical_margin_boxes(
         scene,
-        Some(document),
+        document,
         &specs,
         false,
         page_box.width,
@@ -3303,7 +3043,7 @@ pub(crate) fn paint_page_margin_boxes(
         };
         paint_margin_box(
             scene,
-            Some(document),
+            document,
             spec,
             x,
             y,
@@ -3313,6 +3053,17 @@ pub(crate) fn paint_page_margin_boxes(
             warnings,
         );
     }
+}
+
+/// Height from an ifc root's border-box top that its painted lines reach:
+/// lines that overflow the box (overflow is visible) are still drawn, so a
+/// page that holds only those lines must not skip the root.
+fn ifc_paint_extent(node: &raikiri_dom::Node, layout: &taffy::Layout) -> f32 {
+    let lines = node.ifc_size().map_or(0.0, |(_, height)| height);
+    layout
+        .size
+        .height
+        .max(layout.border.top + layout.padding.top + lines)
 }
 
 fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> bool {
@@ -3808,8 +3559,19 @@ fn paint_document_impl(
                         && cv.transform.is_empty()
                         && cv.filter.is_empty(),
                 );
-                let own_shift =
-                    vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
+                // A box laid out on the lines of an inline engine paragraph
+                // already sits at its `vertical-align` position; shifting its
+                // content again would move it twice.
+                let placed_by_inline_engine = document
+                    .layout_parent_of(node_id)
+                    .and_then(|parent| document.get_node(parent))
+                    .is_some_and(|parent| parent.is_ifc_root())
+                    && !node.in_ifc_subtree();
+                let own_shift = if placed_by_inline_engine {
+                    0.0
+                } else {
+                    vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size)
+                };
                 let child_shift_y = shift_y + own_shift;
                 // Taffy applies `inset` to inline-level boxes' layout locations,
                 // while the table-caption path still needs the paint-side
@@ -4524,7 +4286,7 @@ fn paint_document_impl(
                         .map(|family| family.as_str().to_string())
                         .unwrap_or_else(|| "serif".to_string());
                     let collapsed_space = text::measure_margin_text_advance(
-                        Some(document),
+                        document,
                         " ",
                         cv.font_size.px(),
                         &family,
@@ -4593,11 +4355,10 @@ fn paint_document_impl(
                 // other supported relative boxes retain the paint-side offset.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
-                // A paragraph inside a fixed box repeats on every page and is
-                // not clipped like flowed text, as the text branch below does.
-                // (A fixed block is never an ifc root itself: see the
-                // eligibility rules.)
-                let ifc_inside_fixed = inside_fixed;
+                // A paragraph inside a fixed box, or a fixed box that is a
+                // paragraph itself, repeats on every page and is not clipped
+                // like flowed text, as the text branch below does.
+                let ifc_inside_fixed = inside_fixed || fixed_in_viewport;
                 // The page a text node belongs to is looked up on the text node
                 // itself; the block's own page value can differ (an absolutely
                 // positioned box named for a page), so ask as the first text
@@ -4610,7 +4371,12 @@ fn paint_document_impl(
                 if node.is_ifc_root()
                     && named_page_matches(ifc_page_probe)
                     && (ifc_inside_fixed
-                        || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
+                        || box_intersects_page(
+                            abs_y,
+                            ifc_paint_extent(node, &layout),
+                            page_top,
+                            page_bottom,
+                        ))
                 {
                     // The block's own background and border were painted
                     // above; its lines are drawn at the content-box origin,
@@ -4752,18 +4518,25 @@ fn paint_document_impl(
                     if let Some(clip) = &text_clip {
                         scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                     }
-                    text::draw_text_node(
-                        scene,
-                        node,
-                        cascade,
-                        node_id,
-                        text::TextPosition {
-                            abs_x: abs_x + page_offset_x + transform_x,
-                            abs_y: abs_y + page_offset_y + transform_y,
-                            shift_y,
-                        },
-                        &decorations,
-                    );
+                    if node.is_ifc_root() {
+                        // A text node laid out as an anonymous flex or grid
+                        // item is a paragraph of its own: its lines start at
+                        // its own box, which has no edges.
+                        crate::ifc_text::draw_ifc_lines(
+                            scene,
+                            document,
+                            cascade,
+                            node_id,
+                            crate::ifc_text::IfcPosition {
+                                x: abs_x + page_offset_x + transform_x,
+                                y: abs_y + page_offset_y + transform_y,
+                                shift_y,
+                            },
+                            &decorations,
+                        );
+                    }
+                    // Any other text node lies outside every paragraph and
+                    // has no lines to draw.
                     if text_clip.is_some() {
                         scene.pop_layer();
                     }
@@ -5234,8 +5007,8 @@ fn paint_inline_svg(
 }
 
 /// Pixel offset contributed by `vertical-align` to an inline-level box's
-/// position. Positive values move downward, as does `draw_text_node`'s
-/// `abs_y` in the downward-growing Y coordinate system.
+/// position. Positive values move downward, as does a box's `abs_y` in the
+/// downward-growing Y coordinate system.
 ///
 /// # Supported behavior
 ///

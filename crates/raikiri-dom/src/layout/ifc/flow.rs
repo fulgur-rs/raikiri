@@ -175,8 +175,11 @@ pub(crate) fn place_lines(
     IfcLines {
         width: first_width.unwrap_or(0.0),
         height: lines.iter().map(|line| line.block_size()).sum(),
-        lines,
+        lines: std::sync::Arc::new(lines),
         beside_floats: false,
+        escaping_margin: taffy::CollapsibleMarginSet::ZERO,
+        block_line_starts: Vec::new(),
+        shifts: Vec::new(),
     }
 }
 
@@ -196,9 +199,9 @@ pub(crate) fn last_baseline(lines: &IfcLines) -> Option<f32> {
         .map(|line| line.block_offset() + line.baseline(BaselineKind::Alphabetic))
 }
 
-/// Break every ifc root again at the width its text would be re-shaped at on
-/// the parley path: the content width of the nearest authored-width ancestor
-/// of its text, else `max_advance`. Box geometry is not touched.
+/// Break every ifc root again at a page-specific width: the content width of
+/// the nearest authored-width ancestor of its text, else `max_advance`. Box
+/// geometry is not touched.
 pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_advance: f32) {
     let Some(mut state) = doc.ifc.take() else {
         return;
@@ -208,8 +211,8 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         .filter(|&id| doc.nodes[id].ifc.is_some())
         .collect();
     for id in roots {
-        // The parley rule starts at the parent of the text, so the root's
-        // first text node is the starting point.
+        // The search starts at the parent of the text, so the root's first
+        // text node is the starting point.
         let width = first_text_node(doc, id)
             .and_then(|text| {
                 crate::layout::authored_containing_width_with_resolved_ch(
@@ -227,8 +230,12 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         // Lines laid out beside floats depend on the float context of the
         // performed layout, which is gone here; breaking them again at the
         // full width would run them under the floats. The positions of a
-        // root's own boxes are tied to the lines they were placed with.
-        if !root.boxes.is_empty() || root.lines.as_ref().is_some_and(|lines| lines.beside_floats) {
+        // root's own boxes are tied to the lines they were placed with, and
+        // lines split in columns to the column width.
+        if !root.boxes.is_empty()
+            || root.multicol_fragments.is_some()
+            || root.lines.as_ref().is_some_and(|lines| lines.beside_floats)
+        {
             continue;
         }
         let lines = break_lines(root, &mut state.layout_cx, width);
@@ -245,7 +252,12 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
             ),
             top_edge: layout.padding.top + layout.border.top,
         };
-        if let Some(lines) = doc.nodes[id].ifc_lines().map(<[shodo::Line]>::to_vec) {
+        let lines = doc.nodes[id]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .map(|lines| std::sync::Arc::clone(&lines.lines));
+        if let Some(lines) = lines {
             super::records::record_inline_boxes(doc, id, &ifc, &lines, &geometry);
         }
     }

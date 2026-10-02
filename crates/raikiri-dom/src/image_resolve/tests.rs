@@ -253,8 +253,7 @@ fn ignores_non_img_elements() {
 fn re_resolving_after_src_becomes_unresolvable_clears_stale_value() {
     // Regression check for the re-entrance reset: a node that previously
     // resolved to `Some` must not keep that value once its `src` is
-    // mutated to something unresolvable and `resolve_images` runs again
-    // (mirrors `preshape_text`'s Step-0 `text_layout = None` clear).
+    // mutated to something unresolvable and `resolve_images` runs again.
     let mut doc = Document::new();
     let root = doc.root_index();
     let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);

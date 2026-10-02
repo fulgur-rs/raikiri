@@ -25,13 +25,7 @@ fn same_font_runs_share_a_baseline_on_autospace_lines() {
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    layout_single_page(
-        &mut document,
-        &cascade,
-        PageBox::A4,
-        parley::FontContext::new(),
-    )
-    .expect("layout Ok");
+    layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &document, &cascade, PageBox::A4);

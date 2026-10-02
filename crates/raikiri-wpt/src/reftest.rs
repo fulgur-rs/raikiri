@@ -100,14 +100,13 @@ pub(crate) struct PrintRenderResources<'a> {
     pub(crate) image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
     pub(crate) font_loader: Option<&'a dyn raikiri_dom::FontFaceLoader>,
     pub(crate) prepare_cascade_images: Option<&'a dyn Fn(&mut raikiri_style::CascadeResult)>,
-    /// Route eligible paragraphs through the shodo inline engine.
-    pub(crate) inline_formatting: bool,
-    /// Use the engine's font directories for the parley path.
-    pub(crate) wpt_fonts: bool,
     /// Live canvas bitmaps in tree order, from [`crate::reftest::dynamic`]'s
     /// sidecar transfer. Restored onto the reparsed document before layout so
     /// `innerHTML` round-tripping does not drop script-painted pixels.
     pub(crate) canvas_bitmaps: Option<&'a [raikiri_dom::CanvasBitmap]>,
+    /// Fail instead of falling back to the installed fonts when the inline
+    /// engine cannot get the WPT fonts.
+    pub(crate) require_inline_fonts: bool,
 }
 
 /// One inclusive, one-based page range from `reftest-pages` metadata.
@@ -224,15 +223,12 @@ pub struct ReftestConfig {
     pub height: u32,
     /// Pixel tolerance for comparison.
     pub tolerance: Tolerance,
-    /// Lay out eligible paragraphs with the shodo inline engine.
+    /// Refuse to render when the inline engine cannot get the WPT fonts.
     ///
-    /// Documents with `@font-face` rules keep the parley path. Text laid out
-    /// this way is not painted yet, so results differ from the default path.
-    pub inline_formatting: bool,
-    /// Give the parley path the WPT font directories the inline engine uses,
-    /// without switching the engine on. A baseline taken this way separates
-    /// the effect of the font set from the effect of the engine.
-    pub wpt_fonts: bool,
+    /// Off (the default), the engine falls back to the installed fonts, so a
+    /// checkout without the WPT fonts still renders. The baseline report turns it on:
+    /// numbers taken on the installed fonts would depend on the machine.
+    pub require_inline_fonts: bool,
 }
 
 impl Default for ReftestConfig {
@@ -241,8 +237,7 @@ impl Default for ReftestConfig {
             width: DEFAULT_REFTTEST_WIDTH,
             height: DEFAULT_REFTTEST_HEIGHT,
             tolerance: Tolerance::EXACT,
-            inline_formatting: false,
-            wpt_fonts: false,
+            require_inline_fonts: false,
         }
     }
 }
@@ -1600,7 +1595,9 @@ pub(crate) struct LiveWptSetup {
     pub document_base_url: Option<raikiri::Url>,
     pub page_resource_base: Option<PathBuf>,
     pub font_face_tree: raikiri_style::RuleTree,
-    pub font_context: raikiri::FontContext,
+    /// The WPT fonts with the document's `@font-face` faces, which every
+    /// layout of the live document uses.
+    pub fonts: shodo::font::FontCollection,
     pub media_context: raikiri::MediaContext,
     pub page_query: raikiri::PageContextQuery,
     pub page_box: raikiri::PageBox,
@@ -1648,16 +1645,15 @@ pub(crate) fn prepare_wpt_live_document(
     // from this live JavaScript path.
     let media_context = MediaContext::screen();
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let mut font_context = resolve_font_ctx();
     let font_loader = WptFontLoader::discover(page_base.as_deref())
         .or_else(|| WptFontLoader::discover(wpt_root.as_deref()));
-    if let Some(loader) = font_loader.as_ref() {
-        raikiri_dom::register_font_face_sources(
-            &mut font_context,
-            font_face_tree.font_faces(),
-            loader,
-        );
-    }
+    let (fonts, _) = wpt_document_fonts(
+        font_face_tree.font_faces(),
+        font_loader
+            .as_ref()
+            .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
+        false,
+    )?;
 
     let page_query = PageContextQuery::default();
     let mut page_box = PageBox::new();
@@ -1671,7 +1667,7 @@ pub(crate) fn prepare_wpt_live_document(
         document_base_url,
         page_resource_base: page_base,
         font_face_tree,
-        font_context,
+        fonts,
         media_context,
         page_query,
         page_box,
@@ -1794,15 +1790,18 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
     }
     setup.uncascaded.stylesheet_sources = stylesheet_sources;
     setup.font_face_tree = raikiri::build_rule_tree(&setup.uncascaded);
-    setup.font_context = resolve_font_ctx();
     let font_loader = WptFontLoader::discover(setup.page_resource_base.as_deref())
         .or_else(|| WptFontLoader::discover(Some(wpt_root)));
-    if let Some(loader) = font_loader.as_ref() {
-        raikiri_dom::register_font_face_sources(
-            &mut setup.font_context,
-            setup.font_face_tree.font_faces(),
-            loader,
-        );
+    // The installed fonts stand in when the WPT fonts are missing, so this
+    // cannot fail.
+    if let Ok((fonts, _)) = wpt_document_fonts(
+        setup.font_face_tree.font_faces(),
+        font_loader
+            .as_ref()
+            .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
+        false,
+    ) {
+        setup.fonts = fonts;
     }
 }
 
@@ -1852,10 +1851,25 @@ fn render_raikiri_pages_inner(
         height,
         resource_base,
         font_base,
-        false,
-        false,
+        InlineEngineChoice {
+            require_inline_fonts: false,
+        },
         None,
     )
+}
+
+/// The fonts of one rendering.
+#[derive(Clone, Copy)]
+struct InlineEngineChoice {
+    require_inline_fonts: bool,
+}
+
+impl InlineEngineChoice {
+    fn of(config: &ReftestConfig) -> Self {
+        Self {
+            require_inline_fonts: config.require_inline_fonts,
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1865,8 +1879,7 @@ fn render_raikiri_pages_inner_with_canvases(
     height: u32,
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
-    inline_formatting: bool,
-    wpt_fonts: bool,
+    engine: InlineEngineChoice,
     canvas_bitmaps: Option<&[raikiri_dom::CanvasBitmap]>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     // URL construction requires an absolute directory. Normalize caller
@@ -1907,8 +1920,7 @@ fn render_raikiri_pages_inner_with_canvases(
                 .as_ref()
                 .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
             prepare_cascade_images: None,
-            inline_formatting,
-            wpt_fonts,
+            require_inline_fonts: engine.require_inline_fonts,
             canvas_bitmaps,
         },
     )
@@ -1959,36 +1971,27 @@ pub(crate) fn render_raikiri_pages_with_resources(
     if let Some(base_url) = base_url {
         crate::http_resources::absolutize_img_sources(&mut uncascaded.dom, base_url);
     }
-    // @font-face preparation: register `url(...)`
-    // faces into the font context once, then expand `local(...)` aliases
-    // into every cascade built below. Without @font-face rules both calls
-    // are no-ops (empty registry early-returns).
+    // The document's `@font-face` faces go into a layer of their own over
+    // the WPT fonts, under their authored family names.
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let mut font_ctx = resolve_font_ctx_for(resources.inline_formatting || resources.wpt_fonts);
-    // A collection that cannot be built is an error, never a silent fallback
-    // that would measure the parley path and report no difference.
-    if resources.inline_formatting {
-        let shared = wpt_font_collection_from(&inline_engine_font_candidates())?;
-        let faces = font_face_tree.font_faces();
-        let fonts = if faces.is_empty() {
-            shared
-        } else {
-            // The faces are registered in a layer of their own under their
-            // authored family names, so the inline engine needs no rewriting
-            // of computed `font-family` lists.
-            let loader: &dyn raikiri_dom::FontFaceLoader = match resources.font_loader {
-                Some(loader) => loader,
-                None => &NoFaceLoader,
-            };
-            raikiri_dom::build_inline_document_fonts(&shared, faces, loader).0
-        };
-        uncascaded
-            .dom
-            .enable_inline_formatting(fonts, shodo::limits::Limits::default());
-    }
-    if let Some(loader) = resources.font_loader {
-        raikiri_dom::register_font_face_sources(&mut font_ctx, font_face_tree.font_faces(), loader);
-    }
+    let (fonts, bundled_only) = wpt_document_fonts(
+        font_face_tree.font_faces(),
+        resources.font_loader,
+        resources.require_inline_fonts,
+    )?;
+    // Every document this rendering lays out (this one, and the reparse below
+    // when the page geometry varies) takes the same fonts.
+    let use_fonts = |dom: &mut raikiri_dom::Document| {
+        dom.set_font_collection(fonts.clone());
+        // The WPT collection is built with system fonts off, and the
+        // `@font-face` layer above it only holds the document's own faces, so
+        // no face is loaded on first use: building paragraphs on several
+        // threads gives the same result as building them in sequence. The
+        // installed fonts load faces on first use, so the fallback builds in
+        // sequence.
+        dom.set_ifc_parallel_build(bundled_only);
+    };
+    use_fonts(&mut uncascaded.dom);
     let mut first_query = PageContextQuery::default();
     first_query.is_first = true;
     first_query.is_right = true;
@@ -1998,11 +2001,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
     if let Some(prepare) = prepare_cascade_images {
         prepare(&mut default_cascade);
     }
-    raikiri_dom::expand_font_face_aliases(
-        &mut default_cascade.computed,
-        font_face_tree.font_faces(),
-        &mut font_ctx,
-    );
     // Page progression follows the root direction: in RTL the first page is
     // the left/verso page, while LTR starts on the right/recto page.
     let direction_node = {
@@ -2050,11 +2048,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
     if let Some(prepare) = prepare_cascade_images {
         prepare(&mut first_cascade);
     }
-    raikiri_dom::expand_font_face_aliases(
-        &mut first_cascade.computed,
-        font_face_tree.font_faces(),
-        &mut font_ctx,
-    );
 
     // Keep the established 800×600 (or caller-supplied) test setup dimensions as
     // the fallback.  Only an authored page size changes the paper box.
@@ -2068,7 +2061,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
         first_query.page_name.as_ref().map(ToString::to_string),
         first_cascade,
         first_page_box,
-        font_ctx.clone(),
         raikiri_dom::InitialPageProbeResources::new(image_resolver, base_url),
         |page_name| {
             first_query.page_name = page_name.map(Atom::from);
@@ -2080,44 +2072,27 @@ pub(crate) fn render_raikiri_pages_with_resources(
             if let Some(prepare) = prepare_cascade_images {
                 prepare(&mut cascade);
             }
-            let mut recascade_font_ctx = font_ctx.clone();
-            raikiri_dom::expand_font_face_aliases(
-                &mut cascade.computed,
-                font_face_tree.font_faces(),
-                &mut recascade_font_ctx,
-            );
             let page_box = if page_has_explicit_dimensions(&cascade) {
                 page_box_from_cascade(&cascade, fallback_page_box)
             } else {
                 fallback_page_box
             };
-            (cascade, page_box, recascade_font_ctx)
+            (cascade, page_box)
         },
     )
     .map_err(|error| format!("initial page context: {error:?}"))?;
     let first_cascade = initial_context.cascade;
     let first_page_box = initial_context.page_box;
-    font_ctx = initial_context.font_context;
-    // `font_ctx` is still needed below (fresh-cascade expansion, per-slice
-    // expansion, relayout), so the layout passes get clones — cheaper than
-    // the fresh `resolve_font_ctx()` builds these replaced (no file re-read,
-    // no re-registration).
     let provisional_slices = if let Some(resolver) = image_resolver {
         layout_pages_with_resolver_and_base_url(
             &mut uncascaded.dom,
             &first_cascade,
             first_page_box,
-            font_ctx.clone(),
             resolver,
             base_url,
         )
     } else {
-        layout_pages(
-            &mut uncascaded.dom,
-            &first_cascade,
-            first_page_box,
-            font_ctx.clone(),
-        )
+        layout_pages(&mut uncascaded.dom, &first_cascade, first_page_box)
     }
     .map_err(|e| format!("layout: {e:?}"))?;
     // A first-page-only layout cannot know that a later `@page` context has a
@@ -2181,16 +2156,12 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(base_url) = base_url {
             crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
         }
+        use_fonts(&mut fresh.dom);
         let mut fresh_cascade =
             build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
         if let Some(prepare) = prepare_cascade_images {
             prepare(&mut fresh_cascade);
         }
-        raikiri_dom::expand_font_face_aliases(
-            &mut fresh_cascade.computed,
-            font_face_tree.font_faces(),
-            &mut font_ctx,
-        );
         let fresh_slices = if let Some(resolver) = image_resolver {
             // The geometry-varying path reparses the source, so the image
             // intrinsic pre-pass must run on the fresh DOM as well.
@@ -2198,7 +2169,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 &mut fresh.dom,
                 &fresh_cascade,
                 first_page_box,
-                font_ctx.clone(),
                 &page_steps,
                 &page_widths,
                 resolver,
@@ -2209,7 +2179,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 &mut fresh.dom,
                 &fresh_cascade,
                 first_page_box,
-                font_ctx.clone(),
                 &page_steps,
                 &page_widths,
             )? // cov:ignore: the layout API's standalone error edge is not reachable from valid reftest documents
@@ -2239,11 +2208,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(prepare) = prepare_cascade_images {
             prepare(&mut cascade);
         }
-        raikiri_dom::expand_font_face_aliases(
-            &mut cascade.computed,
-            font_face_tree.font_faces(),
-            &mut font_ctx,
-        );
         let paired_page_increment = if query.is_right {
             let mut paired_query = query.clone();
             paired_query.is_first = false;
@@ -2282,13 +2246,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 .copied()
                 .filter(|width| width.is_finite() && *width > 0.0)
                 .unwrap_or_else(|| page_margins(&cascade, page_box).content_width(page_box));
-            relayout_text_for_width(
-                &mut uncascaded.dom,
-                &cascade,
-                page_width,
-                page_box.width,
-                font_ctx.clone(),
-            );
+            relayout_text_for_width(&mut uncascaded.dom, &cascade, page_width);
         }
         let active_page_name = slice.page_name.clone();
         let page_width = page_box.width.ceil() as u32;
@@ -2419,22 +2377,15 @@ impl raikiri_dom::FontFaceLoader for WptFontLoader {
     }
 }
 
-/// Directories searched for the WPT bundled fonts by the parley path.
-fn wpt_font_candidates() -> [PathBuf; 3] {
-    [
+/// Directories searched for the WPT bundled fonts: the in-repo checkouts,
+/// then the fetched WPT checkout.
+fn inline_engine_font_candidates() -> Vec<PathBuf> {
+    vec![
         PathBuf::from("wpt/fonts"),
         PathBuf::from("../wpt/fonts"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../wpt/fonts"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt/fonts"),
     ]
-}
-
-/// Directories searched by the shodo inline engine: the parley candidates,
-/// then the fetched WPT checkout. Kept separate so the parley path keeps
-/// resolving fonts exactly as before.
-fn inline_engine_font_candidates() -> Vec<PathBuf> {
-    let mut candidates = wpt_font_candidates().to_vec();
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt/fonts"));
-    candidates
 }
 
 /// Build the shodo font collection from the first candidate directory that
@@ -2455,6 +2406,25 @@ pub(crate) fn wpt_font_collection_from(
     Err("no WPT font directory produced a shodo font collection".to_owned())
 }
 
+/// The inline engine's font layer from the first candidate directory that
+/// works, and whether it holds bundled fonts only.
+///
+/// Without such a directory the layer of the installed fonts is used, unless
+/// `require` is set.
+///
+/// # Errors
+/// No candidate directory produced a collection and `require` is set.
+pub(crate) fn inline_engine_collection_from(
+    candidates: &[PathBuf],
+    require: bool,
+) -> Result<(shodo::font::FontCollection, bool), String> {
+    match wpt_font_collection_from(candidates) {
+        Ok(collection) => Ok((collection, true)),
+        Err(error) if require => Err(error),
+        Err(_) => Ok((raikiri_dom::system_font_collection(), false)),
+    }
+}
+
 /// A loader that fetches nothing: without a resource base, `url()` faces stay
 /// unavailable and only `local()` faces register.
 struct NoFaceLoader;
@@ -2473,38 +2443,32 @@ pub fn check_inline_formatting_fonts() -> Result<(), String> {
     wpt_font_collection_from(&inline_engine_font_candidates()).map(|_| ())
 }
 
-/// Font directories for one run. The default run keeps the historical list;
-/// a run with the inline engine switched on searches the engine's list for the
-/// parley path too, so both paths draw from one font set.
-fn font_candidates(inline_formatting: bool) -> Vec<PathBuf> {
-    font_candidates_for(inline_formatting, false)
-}
-
-/// [`font_candidates`] with the font set also selectable on its own.
-fn font_candidates_for(inline_formatting: bool, wpt_fonts: bool) -> Vec<PathBuf> {
-    if inline_formatting || wpt_fonts {
-        inline_engine_font_candidates()
-    } else {
-        wpt_font_candidates().to_vec()
+/// The fonts a WPT document is laid out with: the WPT bundled fonts (the
+/// installed fonts when they are missing, unless `require` is set) under a
+/// document layer of the document's `@font-face` faces, fetched with
+/// `loader` (none when `loader` is `None`). The flag tells whether the
+/// collection holds bundled fonts only, so paragraphs may be built on several
+/// threads.
+///
+/// # Errors
+/// The WPT fonts are missing and `require` is set.
+pub(crate) fn wpt_document_fonts(
+    faces: &raikiri_style::FontFaceRegistry,
+    loader: Option<&dyn raikiri_dom::FontFaceLoader>,
+    require: bool,
+) -> Result<(shodo::font::FontCollection, bool), String> {
+    let (shared, bundled_only) =
+        inline_engine_collection_from(&inline_engine_font_candidates(), require)?;
+    if faces.is_empty() {
+        return Ok((shared, bundled_only));
     }
-}
-
-pub(crate) fn resolve_font_ctx() -> raikiri::FontContext {
-    resolve_font_ctx_for(false)
-}
-
-fn resolve_font_ctx_for(inline_formatting: bool) -> raikiri::FontContext {
-    // Try WPT bundled fonts: `<workspace>/wpt/fonts` or `<workspace>/../wpt/fonts`
-    // Fallback to system fonts.
-    let candidates = font_candidates(inline_formatting);
-    for cand in candidates {
-        if cand.is_dir()
-            && let Ok(ctx) = raikiri_dom::build_wpt_font_ctx(&cand)
-        {
-            return ctx;
-        }
-    }
-    raikiri::FontContext::new()
+    // The faces are registered in a layer of their own under their authored
+    // family names, so computed `font-family` lists need no rewriting.
+    let loader = loader.unwrap_or(&NoFaceLoader);
+    Ok((
+        raikiri_dom::build_inline_document_fonts(&shared, faces, loader).0,
+        bundled_only,
+    ))
 }
 
 // ── Rendering: blitz ───────────────────────────────────────────────────
@@ -2786,8 +2750,7 @@ where
             None
         },
         pair.test.parent(),
-        config.inline_formatting,
-        config.wpt_fonts,
+        InlineEngineChoice::of(&config),
         Some(&test_prepared.canvases),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
@@ -2801,8 +2764,7 @@ where
             None
         },
         pair.reference.parent(),
-        config.inline_formatting,
-        config.wpt_fonts,
+        InlineEngineChoice::of(&config),
         Some(&ref_prepared.canvases),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
