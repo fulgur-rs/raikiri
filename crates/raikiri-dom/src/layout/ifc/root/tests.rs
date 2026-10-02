@@ -4,6 +4,33 @@ use crate::layout::ifc::test_support::ahem_fonts;
 use crate::layout::test_support::with_ahem;
 
 #[test]
+fn debug_reports_fragment_box_placement_count() {
+    let lines = IfcLines {
+        width: 100.0,
+        lines: std::sync::Arc::new(Vec::new()),
+        height: 0.0,
+        beside_floats: false,
+        escaping_margin: taffy::CollapsibleMarginSet::ZERO,
+        block_line_starts: Vec::new(),
+        shifts: Vec::new(),
+        fragment_box_placements: vec![IfcBoxFragment {
+            node_id: 1,
+            fragmentainer: 0,
+            rect: crate::fragment::FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 20.0,
+            },
+        }],
+        fragmentainer_line_ranges: None,
+        unfragmented_tail_column: None,
+    };
+
+    assert!(format!("{lines:?}").contains("fragment_box_placements: 1"));
+}
+
+#[test]
 fn a_document_opts_in_explicitly() {
     let mut doc = Document::new();
     assert!(!doc.has_font_collection());

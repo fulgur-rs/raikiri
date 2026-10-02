@@ -398,6 +398,15 @@ class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
         self.assertEqual(uncovered, [])
         self.assertEqual(exempted, [])
 
+    def test_attribute_added_line_is_not_uncovered_without_lcov_record(self) -> None:
+        # Rust attributes describe compiler and documentation metadata;
+        # they do not produce runtime instructions for coverage to count.
+        uncovered, exempted = classify_no_lcov_record_lines(
+            added_lines=[1], file_lines=["#[doc(hidden)]"], exempt=set()
+        )
+        self.assertEqual(uncovered, [])
+        self.assertEqual(exempted, [])
+
     def test_module_declaration_lines_are_not_uncovered(self) -> None:
         file_lines = [
             "mod absolutize;",

@@ -50,3 +50,8 @@ fn layout_error_resolver_variant_converts_to_render_error_resolver() {
     let render_err: RenderError = le.into();
     assert!(matches!(render_err, RenderError::Resolver(_)));
 }
+#[test]
+fn fragment_limit_error_reports_the_aggregate_cap() {
+    let error = LayoutError::FragmentLimitExceeded { limit: 65_536 };
+    assert_eq!(error.to_string(), "Layout fragment limit exceeded: 65536");
+}

@@ -144,6 +144,7 @@ pub(crate) fn draw_ifc_lines(
     root_id: usize,
     position: IfcPosition,
     base_decorations: &DecorationContext,
+    fragmentainer: Option<usize>,
 ) {
     let Some(lines) = document.get_node(root_id).and_then(|n| n.ifc_lines()) else {
         return;
@@ -158,13 +159,23 @@ pub(crate) fn draw_ifc_lines(
     {
         Some(fragments) => {
             for fragment in fragments {
+                if fragmentainer.is_some_and(|requested| requested != fragment.fragmentainer) {
+                    continue;
+                }
                 let Some(first) = lines.get(fragment.line_start) else {
                     continue;
                 };
                 let dy = fragment.y - first.block_offset();
                 let end = fragment.line_end.min(lines.len());
                 for offset in &mut line_offsets[fragment.line_start.min(end)..end] {
-                    *offset = Some((fragment.x, dy));
+                    *offset = Some((
+                        if fragmentainer.is_some() {
+                            0.0
+                        } else {
+                            fragment.x
+                        },
+                        dy,
+                    ));
                 }
             }
         }

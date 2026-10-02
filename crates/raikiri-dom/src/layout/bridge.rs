@@ -156,7 +156,7 @@ pub(crate) fn apply_computed_to_style(
             }
         }
         doc.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
-            && !matches!(cv.break_inside, raikiri_style::property::BreakInside::Auto);
+            && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv);
         bridge_display(style, cv);

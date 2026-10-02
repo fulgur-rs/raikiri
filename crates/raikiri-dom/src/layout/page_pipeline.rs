@@ -120,6 +120,7 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 ///   are not supported yet) or an internal taffy error
 /// - `LayoutError::IfcUnsupported` / `LayoutError::IfcLimitExceeded` — a
 ///   paragraph the inline engine cannot lay out, or one over its limits
+/// - `LayoutError::FragmentLimitExceeded` — aggregate fragment budget exhausted
 ///
 /// # Current non-goals
 /// - Calling this repeatedly on one Document is safe (per-pass state is
@@ -239,11 +240,17 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(content_height),
         },
     );
+    if document.fragment_tree.limit_exceeded {
+        return Err(LayoutError::FragmentLimitExceeded {
+            limit: document.fragment_tree.limit,
+        });
+    }
     // Step 5a: post-layout corrections taffy does not make: the static
     // position of auto-placed grid abspos items, and auto-height ancestors of
     // floats.
     realign_grid_abspos_static_positions(document, cascade);
     propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
+    refresh_projected_multicol_text_fragments(document);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
     // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only
@@ -251,6 +258,7 @@ pub fn layout_single_page(
     // `enforce_layout_invariants` documentation. Events enter the same
     // `document.layout_warnings` buffer as Steps 1 / 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
+    document.fragment_tree.finalize();
 
     // Step 6: replay buffered LayoutWarn events.
     //

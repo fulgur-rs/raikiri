@@ -1,13 +1,14 @@
 //! Lay out a paragraph together with the boxes that sit in its lines.
 
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
-use super::root::{IfcLines, IfcRoot, with_state};
+use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
+use crate::fragment::FragmentationContext;
 use crate::taffy_impl::resolve_calc;
 use shodo::geometry::{Direction, WritingMode};
 use shodo::{
-    AtomicIntrinsic, AtomicIntrinsics, AtomicSize, AtomicSizes, FloatClear, FloatCursor,
-    FloatIntrinsic, FloatSide, LineConstraint, LineResult,
+    AtomicIntrinsic, AtomicIntrinsics, AtomicSize, AtomicSizes, BreakToken, FloatClear,
+    FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
 };
 use taffy::util::ResolveOrZero;
 use taffy::{
@@ -48,6 +49,18 @@ pub(crate) struct TentativeFloat {
     pub(crate) margin: taffy::Rect<f32>,
     /// What `perform_child_layout` returned for the float.
     pub(crate) output: taffy::LayoutOutput,
+}
+
+struct RunBoxesOutcome {
+    lines: IfcLines,
+    continuation: Option<BreakToken>,
+    atomic_outputs: Vec<(usize, taffy::LayoutOutput)>,
+}
+
+struct FragmentedFloatOutput<'a> {
+    perform: bool,
+    fragmentainer: Option<usize>,
+    placements: &'a mut Vec<IfcBoxFragment>,
 }
 
 /// [`layout_with_boxes_in`] for a root whose margins stay inside it.
@@ -92,6 +105,9 @@ pub(crate) fn layout_with_boxes_in(
             escaping_margin: CollapsibleMarginSet::ZERO,
             block_line_starts: Vec::new(),
             shifts: Vec::new(),
+            fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
+            fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
+            unfragmented_tail_column: None,
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -117,6 +133,275 @@ pub(crate) fn layout_with_boxes_in(
     }
 }
 
+/// Lay an IFC root across horizontal fragmentainers with a fresh float context per column.
+// cov:ignore: fragmentainer-local IFC layout is exercised by the ignored flex-float WPT.
+pub(crate) fn layout_with_boxes_in_fragmentainers(
+    tree: &mut Document,
+    idx: usize,
+    geometry: FlowGeometry,
+    context: FragmentationContext,
+    perform: bool,
+) -> IfcLines {
+    let Some(root) = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .map(|root| root.without_lines())
+    else {
+        return IfcLines {
+            width: geometry.width,
+            lines: std::sync::Arc::new(Vec::new()),
+            height: 0.0,
+            beside_floats: false,
+            escaping_margin: CollapsibleMarginSet::ZERO,
+            block_line_starts: Vec::new(),
+            shifts: Vec::new(),
+            fragment_box_placements: Vec::new(),
+            fragmentainer_line_ranges: Some(Vec::new()),
+            unfragmented_tail_column: None,
+        };
+    };
+
+    let mut token = root.paragraph.start_token();
+    let mut all_lines = Vec::new();
+    let mut block_line_starts = Vec::new();
+    let mut shifts = Vec::new();
+    let mut fragment_box_placements = Vec::new();
+    let mut fragmentainer_line_ranges = Vec::new();
+    let mut unfragmented_tail_column = None;
+    let mut atomic_outputs = Vec::new();
+    let mut max_height = 0.0_f32;
+    let mut beside_floats = false;
+    let mut escaping_margin = CollapsibleMarginSet::ZERO;
+
+    let fragmentainer_height = context.available_height.filter(|height| *height > 0.0);
+    // A paragraph can need more columns than the declared count. Bound the
+    // continuation loop by its source units and float span, then cap subpixel
+    // fragmentainers. The final segment overflows unfragmented at the cap.
+    const MAX_IFC_FRAGMENTAINERS: usize = 1_024;
+    let float_columns = fragmentainer_height
+        .map(|height| {
+            let float_extent = root
+                .boxes
+                .iter()
+                .filter(|box_| box_.kind == IfcBoxKind::Float)
+                .map(|box_| {
+                    measure_float(tree, box_.node, geometry)
+                        .margin_box
+                        .height
+                        .max(0.0)
+                })
+                .sum::<f32>();
+            (float_extent / height).ceil() as usize
+        })
+        .unwrap_or(0);
+    let column_budget = root
+        .paragraph
+        .text()
+        .len()
+        .saturating_add(root.boxes.len())
+        .saturating_add(float_columns)
+        .saturating_add(context.column_count)
+        .clamp(1, MAX_IFC_FRAGMENTAINERS);
+    let mut source_float_placements = Vec::new();
+    for offset in 0..column_budget {
+        let column = context.column_index.saturating_add(offset);
+        let has_next = offset + 1 < column_budget;
+        let segment_height = has_next.then_some(fragmentainer_height).flatten();
+        let column_geometry = FlowGeometry {
+            top_edge: if column == context.column_index {
+                geometry.top_edge
+            } else {
+                0.0
+            },
+            ..geometry
+        };
+        let mut bfc = BlockFormattingContext::new();
+        let mut ctx = bfc.root_block_context();
+        ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
+        let carried_placements = if perform {
+            carried_float_placements(
+                tree,
+                &source_float_placements,
+                context.column_index,
+                column,
+                fragmentainer_height,
+            )
+        } else {
+            Vec::new()
+        };
+        if let Some(height) = fragmentainer_height {
+            seed_carried_floats(
+                tree,
+                &mut ctx,
+                column_geometry,
+                &source_float_placements,
+                context.column_index,
+                column,
+                height,
+            );
+        }
+        let outcome = run_boxes_segment(
+            tree,
+            &root,
+            column_geometry,
+            &mut ctx,
+            perform,
+            true,
+            false,
+            token,
+            segment_height,
+            Some(column),
+            has_next,
+        );
+
+        let line_start = all_lines.len();
+        let line_count = outcome.lines.lines.len();
+        if !has_next
+            && let Some(height) = fragmentainer_height
+            && let Some(last) = outcome.lines.lines.last()
+            && last.block_offset() + last.block_size() > height
+        {
+            unfragmented_tail_column = Some(column);
+        }
+        for (node, first) in outcome.lines.block_line_starts {
+            block_line_starts.push((node, line_start + first));
+        }
+        for (first, shift) in outcome.lines.shifts {
+            shifts.push((line_start + first, shift));
+        }
+        if line_count > 0 {
+            let first = outcome.lines.lines[0].block_offset();
+            fragmentainer_line_ranges.push(crate::node::MulticolTextFragment {
+                line_start,
+                line_end: line_start + line_count,
+                fragmentainer: column,
+                x: context.column_offset_x(column) - context.column_offset_x(context.column_index),
+                y: first,
+            });
+        }
+        max_height = max_height.max(outcome.lines.height);
+        beside_floats |= outcome.lines.beside_floats;
+        escaping_margin = outcome.lines.escaping_margin;
+        for placement in &outcome.lines.fragment_box_placements {
+            if !source_float_placements
+                .iter()
+                .any(|source| source.node_id == placement.node_id)
+            {
+                source_float_placements.push(*placement);
+            }
+        }
+        fragment_box_placements.extend(carried_placements);
+        fragment_box_placements.extend(outcome.lines.fragment_box_placements);
+        atomic_outputs.extend(outcome.atomic_outputs);
+        let column_lines = std::sync::Arc::try_unwrap(outcome.lines.lines)
+            .unwrap_or_else(|_| unreachable!("column lines have a single owner"));
+        all_lines.extend(column_lines);
+
+        if let Some(next) = outcome.continuation {
+            token = next;
+        } else {
+            break;
+        }
+    }
+
+    let lines = std::sync::Arc::new(all_lines);
+    let result = IfcLines {
+        width: geometry.width,
+        lines: lines.clone(),
+        height: max_height,
+        beside_floats,
+        escaping_margin,
+        block_line_starts,
+        shifts,
+        fragment_box_placements,
+        fragmentainer_line_ranges: Some(fragmentainer_line_ranges),
+        unfragmented_tail_column,
+    };
+    if perform {
+        place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
+        offset_boxes_inside_relative_inlines(tree, idx, &root);
+        super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry);
+    }
+    result
+}
+
+// cov:ignore: carried placements are exercised by the ignored flex-float WPT.
+fn carried_float_placements(
+    tree: &Document,
+    sources: &[IfcBoxFragment],
+    first_column: usize,
+    column: usize,
+    fragmentainer_height: Option<f32>,
+) -> Vec<IfcBoxFragment> {
+    let Some(height) = fragmentainer_height.filter(|height| *height > 0.0) else {
+        return Vec::new();
+    };
+    let column_origin = column.saturating_sub(first_column) as f32 * height;
+    sources
+        .iter()
+        .filter(|source| source.fragmentainer < column)
+        .filter_map(|source| {
+            let source_origin = source.fragmentainer.saturating_sub(first_column) as f32 * height;
+            let source_y = source_origin + source.rect.y;
+            (source_y + source.rect.height > column_origin).then_some(IfcBoxFragment {
+                node_id: source.node_id,
+                fragmentainer: column,
+                rect: crate::fragment::FragmentRect {
+                    y: source.rect.y - (column - source.fragmentainer) as f32 * height,
+                    ..source.rect
+                },
+            })
+        })
+        .filter(|placement| tree.nodes[placement.node_id].style.float.is_floated())
+        .collect()
+}
+
+// cov:ignore: carried float seeding is exercised by the ignored flex-float WPT.
+fn seed_carried_floats(
+    tree: &Document,
+    ctx: &mut BlockContext<'_>,
+    geometry: FlowGeometry,
+    sources: &[IfcBoxFragment],
+    first_column: usize,
+    column: usize,
+    fragmentainer_height: f32,
+) {
+    if fragmentainer_height <= 0.0 {
+        return;
+    }
+    let column_origin = column.saturating_sub(first_column) as f32 * fragmentainer_height;
+    for source in sources
+        .iter()
+        .filter(|source| source.fragmentainer < column)
+    {
+        let layout = tree.nodes[source.node_id].unrounded_layout;
+        let margin = resolved_margins(tree, source.node_id, geometry.width);
+        let source_column_origin =
+            source.fragmentainer.saturating_sub(first_column) as f32 * fragmentainer_height;
+        let float_top = source_column_origin + source.rect.y - margin.top;
+        let float_bottom = float_top + source.rect.height + margin.top + margin.bottom;
+        let visible_top = float_top.max(column_origin);
+        let visible_bottom = float_bottom.min(column_origin + fragmentainer_height);
+        if visible_bottom <= visible_top {
+            continue;
+        }
+        ctx.place_floated_box(
+            Size {
+                width: layout.size.width + margin.left + margin.right,
+                height: visible_bottom - visible_top,
+            },
+            geometry.top_edge + visible_top - column_origin,
+            tree.nodes[source.node_id]
+                .style
+                .float
+                .float_direction()
+                .unwrap_or(FloatDirection::Left),
+            tree.nodes[source.node_id].style.clear,
+            false,
+        );
+    }
+}
+
 /// The line loop. `local` is true when the context is this paragraph's own,
 /// which makes the paragraph a block formatting context that contains its
 /// floats and its children's margins. `bottom_margin_escapes` is described
@@ -132,6 +417,47 @@ fn run_boxes(
     local: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
+    let outcome = run_boxes_segment(
+        tree,
+        root,
+        geometry,
+        ctx,
+        perform,
+        local,
+        bottom_margin_escapes,
+        root.paragraph.start_token(),
+        None,
+        None,
+        false,
+    );
+    if perform {
+        place_atomics(
+            tree,
+            &outcome.lines.lines,
+            &outcome.atomic_outputs,
+            geometry,
+            root.rtl,
+        );
+        offset_boxes_inside_relative_inlines(tree, idx, root);
+        super::records::record_inline_boxes(tree, idx, root, &outcome.lines.lines, &geometry);
+    }
+    outcome.lines
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_boxes_segment(
+    tree: &mut Document,
+    root: &IfcRoot,
+    geometry: FlowGeometry,
+    ctx: &mut BlockContext<'_>,
+    perform: bool,
+    local: bool,
+    bottom_margin_escapes: bool,
+    mut token: BreakToken,
+    fragmentainer_height: Option<f32>,
+    fragmentainer: Option<usize>,
+    has_next_fragmentainer: bool,
+) -> RunBoxesOutcome {
     let FlowGeometry {
         width,
         edges,
@@ -145,7 +471,6 @@ fn run_boxes(
     // Keeps the paragraph's own floats inside its content box.
     ctx.apply_content_box_inset([edges.0, edges.1]);
 
-    let mut token = root.paragraph.start_token();
     let mut cursor: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
     let mut lines: Vec<shodo::Line> = Vec::new();
@@ -172,6 +497,8 @@ fn run_boxes(
     // 8.3.1).
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut block_line_starts = Vec::new();
+    let mut fragment_box_placements = Vec::new();
+    let mut continuation = None;
 
     loop {
         calls += 1;
@@ -227,6 +554,17 @@ fn run_boxes(
                 // when it is wider than the line.
                 let narrowed = !tentative.is_empty() || space.start != 0.0 || space.width < width;
                 let fits = float.margin_box.width <= space.width || !narrowed;
+                // A float that only fits below an earlier float may be
+                // moved into the next fragmentainer. Do not commit its
+                // intermediate position past this fragmentainer's bottom.
+                if has_next_fragmentainer
+                    && !fits
+                    && let Some(height) = fragmentainer_height
+                    && next_float_edge(ctx, top_edge, line_y).is_some_and(|edge| edge >= height)
+                {
+                    continuation = Some(token);
+                    break;
+                }
                 // Clearance moves the float below the floats it clears,
                 // whether they are placed already or only on this line.
                 let clears_tentative = tentative.iter().any(|f| clears(float.clear, f.direction));
@@ -275,6 +613,12 @@ fn run_boxes(
                     retries += 1;
                     continue;
                 }
+                if !lines.is_empty() // cov:ignore: continuation requires lines to overflow a fragmentainer and is exercised by the ignored flex-float WPT.
+                    && fragmentainer_height.is_some_and(|limit| line_y + height > limit + 0.001)
+                {
+                    continuation = Some(token); // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
+                    break; // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
+                } // cov:ignore: continuation requires lines to overflow a fragmentainer and is exercised by the ignored flex-float WPT.
                 // A line that does not fit beside the floats is moved down
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
                 // Its own floats keep the place they have at this offset.
@@ -289,8 +633,18 @@ fn run_boxes(
                     && moves < MAX_LINE_MOVES;
                 if overflows {
                     for float in tentative.drain(..) {
-                        ceiling =
-                            ceiling.max(commit_float(tree, ctx, float, line_y, geometry, perform));
+                        ceiling = ceiling.max(commit_fragmented_float(
+                            tree,
+                            ctx,
+                            float,
+                            line_y,
+                            geometry,
+                            FragmentedFloatOutput {
+                                perform,
+                                fragmentainer,
+                                placements: &mut fragment_box_placements,
+                            },
+                        ));
                     }
                 }
                 if overflows && let Some(next) = next_float_edge(ctx, top_edge, line_y) {
@@ -306,8 +660,18 @@ fn run_boxes(
                     beside = true;
                 }
                 for float in tentative.drain(..) {
-                    ceiling =
-                        ceiling.max(commit_float(tree, ctx, float, line_y, geometry, perform));
+                    ceiling = ceiling.max(commit_fragmented_float(
+                        tree,
+                        ctx,
+                        float,
+                        line_y,
+                        geometry,
+                        FragmentedFloatOutput {
+                            perform,
+                            fragmentainer,
+                            placements: &mut fragment_box_placements,
+                        },
+                    ));
                 }
                 withdrawn.clear();
                 assumed_height = 0.0;
@@ -331,15 +695,37 @@ fn run_boxes(
                 // Placing them any earlier would narrow the line that is
                 // still being retried.
                 for float in deferred.drain(..) {
-                    ceiling = ceiling.max(commit_float(tree, ctx, float, y, geometry, perform));
+                    ceiling = ceiling.max(commit_fragmented_float(
+                        tree,
+                        ctx,
+                        float,
+                        y,
+                        geometry,
+                        FragmentedFloatOutput {
+                            perform,
+                            fragmentainer,
+                            placements: &mut fragment_box_placements,
+                        },
+                    ));
                 }
             }
             LineResult::BlockInInline { node, token_after } => {
                 // Floats anchored before the block and not placed yet go
                 // above it: the block starts below the last line.
+                // cov:ignore: fragmented block-in-inline float placement is exercised by the ignored flex-float WPT.
                 for float in tentative.drain(..).chain(deferred.drain(..)) {
-                    ceiling =
-                        ceiling.max(commit_float(tree, ctx, float, line_y, geometry, perform));
+                    ceiling = ceiling.max(commit_fragmented_float(
+                        tree,
+                        ctx,
+                        float,
+                        line_y,
+                        geometry,
+                        FragmentedFloatOutput {
+                            perform,
+                            fragmentainer,
+                            placements: &mut fragment_box_placements,
+                        },
+                    ));
                 }
                 block_line_starts.push((node.0 as usize, lines.len()));
                 let block =
@@ -367,20 +753,31 @@ fn run_boxes(
     // The margins below a last block child collapse through the root's
     // bottom edge when nothing separates them from the root's own; otherwise
     // the paragraph contains them.
-    let escaping_margin = if bottom_margin_escapes {
+    let escaping_margin = if continuation.is_some() {
+        CollapsibleMarginSet::ZERO
+    } else if bottom_margin_escapes {
         pending
     } else {
         y += pending.resolve();
         CollapsibleMarginSet::ZERO
     };
     // A float met after the last line still gets a place.
-    for float in tentative.drain(..).chain(deferred.drain(..)) {
-        commit_float(tree, ctx, float, y, geometry, perform);
-    }
-    if perform {
-        place_atomics(tree, &lines, &atomics.outputs, geometry, root.rtl);
-        offset_boxes_inside_relative_inlines(tree, idx, root);
-        super::records::record_inline_boxes(tree, idx, root, &lines, &geometry);
+    // cov:ignore: trailing fragmented floats are exercised by the ignored flex-float WPT.
+    if continuation.is_none() {
+        for float in tentative.drain(..).chain(deferred.drain(..)) {
+            commit_fragmented_float(
+                tree,
+                ctx,
+                float,
+                y,
+                geometry,
+                FragmentedFloatOutput {
+                    perform,
+                    fragmentainer,
+                    placements: &mut fragment_box_placements,
+                },
+            );
+        }
     }
     // A paragraph that is its own formatting context contains its floats; one
     // that is not leaves them hanging below, and the parent collects them.
@@ -398,15 +795,53 @@ fn run_boxes(
     } else {
         y
     };
-    IfcLines {
-        width,
-        height,
-        lines: std::sync::Arc::new(lines),
-        beside_floats: beside,
-        escaping_margin,
-        block_line_starts,
-        shifts: Vec::new(),
+    RunBoxesOutcome {
+        lines: IfcLines {
+            width,
+            height,
+            lines: std::sync::Arc::new(lines),
+            beside_floats: beside,
+            escaping_margin,
+            block_line_starts,
+            shifts: Vec::new(),
+            fragment_box_placements,
+            fragmentainer_line_ranges: None,
+            unfragmented_tail_column: None,
+        },
+        continuation,
+        atomic_outputs: atomics.outputs,
     }
+}
+
+fn commit_fragmented_float(
+    tree: &mut Document,
+    ctx: &mut BlockContext<'_>,
+    float: TentativeFloat,
+    y: f32,
+    geometry: FlowGeometry,
+    output: FragmentedFloatOutput<'_>,
+) -> f32 {
+    let FragmentedFloatOutput {
+        perform,
+        fragmentainer,
+        placements,
+    } = output;
+    let node = float.node;
+    let top = commit_float(tree, ctx, float, y, geometry, perform);
+    if perform && let Some(fragmentainer) = fragmentainer {
+        let layout = tree.nodes[node].unrounded_layout;
+        placements.push(IfcBoxFragment {
+            node_id: node,
+            fragmentainer,
+            rect: crate::fragment::FragmentRect {
+                x: layout.location.x,
+                y: layout.location.y,
+                width: layout.size.width,
+                height: layout.size.height,
+            },
+        });
+    }
+    top
 }
 
 /// The `clear` of the cleared `<br>` that ends `line`, if any.

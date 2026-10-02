@@ -4392,3 +4392,101 @@ fn vertical_margin_row_distributes_auto_width_using_wrapped_columns() {
         .collect();
     assert_eq!(widths, [150.0, 50.0]);
 }
+
+fn fragmented_flex_float_paint_fixture() -> (Document, CascadeResult, Scene, usize) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let multicol = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:300px;columns:100px auto;max-height:160px;border:3px solid pink"),
+    );
+    let flex = document.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:flex"),
+    );
+    let flex_item = document.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("border:4px solid teal;outline:4px solid blue"),
+    );
+    document.append_element(
+        Some(flex_item),
+        "div",
+        Style::default(),
+        Some("float:left;border:3px solid black;height:500px;width:100px;background:yellow"),
+    );
+    document.append_element(Some(flex_item), "br", Style::default(), None::<&str>);
+    let second_float = document.append_element(
+        Some(flex_item),
+        "div",
+        Style::default(),
+        Some("float:left;background:cyan;width:100px"),
+    );
+    document.append_element(
+        Some(second_float),
+        "div",
+        Style::default(),
+        Some("display:inline-block;width:30px;height:30px;background:purple"),
+    );
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut page = raikiri_traits::PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    raikiri_dom::layout_single_page(&mut document, &cascade, page).expect("layout Ok");
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &document, &cascade, page);
+    (document, cascade, scene, second_float)
+}
+
+#[test]
+fn paint_document_uses_each_nested_float_fragment_once() {
+    let (_, _, scene, _) = fragmented_flex_float_paint_fixture();
+    let cyan = anyrender::Paint::Solid(peniko::Color::from_rgba8(0, 255, 255, 255));
+    let cyan_fills: Vec<_> = scene
+        .commands
+        .iter()
+        .enumerate()
+        .filter_map(|(index, command)| match command {
+            RenderCommand::Fill(fill) if fill.brush == cyan => Some((index, fill)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cyan_fills.len(), 1, "the float background paints once");
+    let (fill_index, fill) = cyan_fills[0];
+    let fill_bounds = kurbo::Shape::bounding_box(&fill.shape);
+    let fill_origin = fill.transform * fill_bounds.origin();
+    assert!(
+        fill_origin.x > 150.0,
+        "the cyan float should be painted in column two, at x={}, not its unfragmented location",
+        fill_origin.x
+    );
+    assert!(
+        fill_origin.y < 200.0,
+        "the stale y=510 placement must not be painted: y={}",
+        fill_origin.y
+    );
+
+    let column_clip = scene.commands[..fill_index]
+        .iter()
+        .rev()
+        .find_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => {
+                let bounds = kurbo::Shape::bounding_box(&clip.clip);
+                ((bounds.width() - 142.0).abs() < 0.01 && (bounds.height() - 160.0).abs() < 0.01)
+                    .then_some((clip, bounds))
+            }
+            _ => None,
+        })
+        .expect("the second column clips the float fragment");
+    let clip_origin = column_clip.0.transform * column_clip.1.origin();
+    assert!(clip_origin.x <= fill_origin.x);
+    assert!(clip_origin.x + 142.0 >= fill_origin.x + fill_bounds.width());
+}

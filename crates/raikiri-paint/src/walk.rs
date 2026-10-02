@@ -16,7 +16,7 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
 use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
-use raikiri_dom::{CounterSnapshot, Document, StandaloneAlign};
+use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
     ColumnCountValue, ConicGradient, ContentComponent, CounterStyle, CssColor, CssPosition,
@@ -3321,6 +3321,17 @@ fn paint_document_impl(
             text::decorations_for_element(&empty_decorations, &cascade.computed[html_id], 0.0)
         })
         .unwrap_or_else(|| empty_decorations.clone());
+    let layout_fragments = document.layout_fragments();
+    let mut fragments_by_parent_and_node =
+        std::collections::HashMap::<(Option<usize>, usize), Vec<usize>>::new();
+    let mut fragmented_nodes = std::collections::HashSet::new();
+    for (fragment_id, fragment) in layout_fragments.iter().enumerate() {
+        fragmented_nodes.insert(fragment.node_id);
+        fragments_by_parent_and_node
+            .entry((fragment.parent, fragment.node_id))
+            .or_default()
+            .push(fragment_id);
+    }
     enum PaintFrame {
         Visit {
             node_id: usize,
@@ -3331,6 +3342,13 @@ fn paint_document_impl(
             transform_x: f32,
             transform_y: f32,
             fragment_clip_height: Option<f32>,
+            fragment_id: Option<usize>,
+            fragment_origin_x: f32,
+            fragment_origin_y: f32,
+            fragmentainer: Option<usize>,
+            fragment_rect: Option<FragmentRect>,
+            fragment_clip: Option<FragmentRect>,
+            is_fragment_visit: bool,
             inside_fixed: bool,
             inside_fixed_containing_block: bool,
             decorations: text::DecorationContext,
@@ -3473,6 +3491,13 @@ fn paint_document_impl(
         transform_x: 0.0,
         transform_y: 0.0,
         fragment_clip_height: None,
+        fragment_id: None,
+        fragment_origin_x: 0.0,
+        fragment_origin_y: 0.0,
+        fragmentainer: None,
+        fragment_rect: None,
+        fragment_clip: None,
+        is_fragment_visit: false,
         inside_fixed: false,
         inside_fixed_containing_block: false,
         decorations: root_decorations,
@@ -3505,6 +3530,13 @@ fn paint_document_impl(
             transform_x,
             transform_y,
             fragment_clip_height,
+            fragment_id,
+            fragment_origin_x,
+            fragment_origin_y,
+            fragmentainer,
+            fragment_rect,
+            fragment_clip,
+            is_fragment_visit,
             inside_fixed,
             inside_fixed_containing_block,
             decorations,
@@ -3549,6 +3581,13 @@ fn paint_document_impl(
                 transform_x,
                 transform_y,
                 fragment_clip_height,
+                fragment_id,
+                fragment_origin_x,
+                fragment_origin_y,
+                fragmentainer,
+                fragment_rect,
+                fragment_clip,
+                is_fragment_visit,
                 inside_fixed,
                 inside_fixed_containing_block,
                 decorations,
@@ -3561,6 +3600,13 @@ fn paint_document_impl(
                 transform_x,
                 transform_y,
                 fragment_clip_height,
+                fragment_id,
+                fragment_origin_x,
+                fragment_origin_y,
+                fragmentainer,
+                fragment_rect,
+                fragment_clip,
+                is_fragment_visit,
                 inside_fixed,
                 inside_fixed_containing_block,
                 decorations,
@@ -3569,10 +3615,60 @@ fn paint_document_impl(
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
+        if let Some(fragment_ids) = fragments_by_parent_and_node.get(&(fragment_id, node_id)) {
+            for &current_fragment_id in fragment_ids.iter().rev() {
+                let fragment = layout_fragments[current_fragment_id];
+                let node_abs_x = if fragment.parent.is_some() {
+                    fragment_origin_x + fragment.rect.x
+                } else {
+                    parent_abs_x + node.unrounded_layout.location.x + fragment.rect.x
+                };
+                let node_abs_y = if fragment.parent.is_some() {
+                    fragment_origin_y + fragment.rect.y
+                } else {
+                    parent_abs_y + node.unrounded_layout.location.y + fragment.rect.y
+                };
+                let fragment_clip = fragment.fragmentainer_clip.map(|clip| FragmentRect {
+                    x: clip.x - fragment.rect.x,
+                    y: clip.y - fragment.rect.y,
+                    width: clip.width,
+                    height: clip.height,
+                });
+                stack.push(PaintFrame::Visit {
+                    node_id,
+                    parent_abs_x: node_abs_x - node.unrounded_layout.location.x,
+                    parent_abs_y: node_abs_y - node.unrounded_layout.location.y,
+                    parent_font_size,
+                    shift_y,
+                    transform_x,
+                    transform_y,
+                    fragment_clip_height,
+                    fragment_id: Some(current_fragment_id),
+                    fragment_origin_x: node_abs_x,
+                    fragment_origin_y: node_abs_y,
+                    fragmentainer: Some(fragment.fragmentainer),
+                    fragment_rect: Some(fragment.rect),
+                    fragment_clip,
+                    is_fragment_visit: true,
+                    inside_fixed,
+                    inside_fixed_containing_block,
+                    decorations: decorations.clone(),
+                });
+            }
+            continue;
+        }
+        if fragmented_nodes.contains(&node_id) && !is_fragment_visit {
+            continue;
+        }
         // Skip template descendants and future inert subtrees consistently.
         // Use an explicit gate independent of any UA CSS display:none rule.
         if !node.is_in_document() {
             continue;
+        }
+        let mut node_layout = node.unrounded_layout;
+        if let Some(rect) = fragment_rect {
+            node_layout.size.width = rect.width;
+            node_layout.size.height = rect.height;
         }
         // Do not paint subtrees of HTML hidden elements (metadata, raw text,
         // or fallback parentheses for ruby).
@@ -3592,7 +3688,7 @@ fn paint_document_impl(
                 if node.is_display_none() {
                     continue;
                 }
-                let layout = node.unrounded_layout;
+                let layout = node_layout;
                 let abs_x = parent_abs_x + layout.location.x;
                 let abs_y = parent_abs_y + layout.location.y;
                 let cv = &cascade.computed[node_id];
@@ -3706,6 +3802,7 @@ fn paint_document_impl(
                 let mut paint_height = layout.size.height;
                 let mut paint_background_height = layout.size.height;
                 let mut multicol_clip_pushed = false;
+                let mut fragmentainer_clip_pushed = false;
                 if let Some(clip_height) =
                     fragment_clip_height.filter(|height| height.is_finite() && *height >= 0.0)
                 {
@@ -3721,6 +3818,16 @@ fn paint_document_impl(
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     multicol_clip_pushed = true;
+                }
+                if let Some(clip) = fragment_clip {
+                    let clip = Rect::new(
+                        (paint_x + clip.x) as f64,
+                        (paint_y + clip.y) as f64,
+                        (paint_x + clip.x + clip.width) as f64,
+                        (paint_y + clip.y + clip.height) as f64,
+                    );
+                    scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    fragmentainer_clip_pushed = true;
                 }
                 // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
                 let mut paint_background_width = layout.size.width;
@@ -4222,6 +4329,9 @@ fn paint_document_impl(
                 if multicol_clip_pushed {
                     stack.push(PaintFrame::PopClip);
                 }
+                if fragmentainer_clip_pushed {
+                    stack.push(PaintFrame::PopClip);
+                }
                 // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
                 // the padding box. Min edges are floored outward so a fractional
                 // padding-box origin does not antialias-cut pixel-snapped descendant
@@ -4471,6 +4581,7 @@ fn paint_document_impl(
                             shift_y: child_shift_y,
                         },
                         &child_decorations,
+                        fragmentainer,
                     );
                     if text_clip.is_some() {
                         scene.pop_layer();
@@ -4553,6 +4664,13 @@ fn paint_document_impl(
                         transform_x: child_transform_x,
                         transform_y: child_transform_y,
                         fragment_clip_height: child_fragment_clip_height,
+                        fragment_id,
+                        fragment_origin_x,
+                        fragment_origin_y,
+                        fragmentainer,
+                        fragment_rect: None,
+                        fragment_clip: None,
+                        is_fragment_visit: false,
                         inside_fixed: inside_fixed || fixed_in_viewport,
                         inside_fixed_containing_block: inside_fixed_containing_block
                             || establishes_fixed_containing_block,
@@ -4561,7 +4679,7 @@ fn paint_document_impl(
                 }
             }
             NodeKind::Text => {
-                let layout = node.unrounded_layout;
+                let layout = node_layout;
                 let abs_x = parent_abs_x + layout.location.x;
                 let abs_y = parent_abs_y + layout.location.y;
                 if named_page_matches(node_id)
@@ -4587,6 +4705,7 @@ fn paint_document_impl(
                                 shift_y,
                             },
                             &decorations,
+                            fragmentainer,
                         );
                     }
                     // Any other text node lies outside every paragraph and
@@ -7211,7 +7330,19 @@ fn sort_paint_children(
         } else {
             0
         };
-        (stack, order)
+        let float_paint_order = if !order_sensitive_container
+            && matches!(
+                computed.float,
+                FloatValue::Left
+                    | FloatValue::Right
+                    | FloatValue::InlineStart
+                    | FloatValue::InlineEnd
+            ) {
+            1
+        } else {
+            0
+        };
+        (stack, float_paint_order, order)
     });
 }
 

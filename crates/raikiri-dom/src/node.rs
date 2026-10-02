@@ -232,6 +232,8 @@ pub struct MulticolTextFragment {
     pub line_start: usize,
     /// Exclusive last line in the shaped layout.
     pub line_end: usize,
+    /// Fragmentainer/column index that owns this line range.
+    pub fragmentainer: usize,
     /// Horizontal offset from the text node's normal origin.
     pub x: f32,
     /// Vertical offset from the text node's normal origin.
@@ -281,7 +283,7 @@ pub struct Node {
     /// Authored writing mode retained for layout features that need the logical axes.
     pub(crate) authored_writing_mode: Option<WritingMode>,
     /// Whether this node has an authored logical `min-block-size` constraint
-    /// paired with a non-auto `break-inside` value. The used value is bridged
+    /// paired with `break-inside: avoid`. The used value is bridged
     /// to Taffy's physical min-size fields, while fragmentation needs the
     /// provenance to avoid changing physical `min-height` behavior.
     pub(crate) has_logical_min_block_size: bool,

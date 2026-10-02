@@ -775,6 +775,12 @@ impl Document {
         self.nodes.get(child)?.parent
     }
 
+    /// Fragments emitted by the most recent layout pass.
+    #[doc(hidden)]
+    pub fn layout_fragments(&self) -> &[crate::fragment::LayoutFragment] {
+        &self.fragment_tree.fragments
+    }
+
     /// Lines of a text node inside a paragraph laid out by the inline engine,
     /// in the paragraph root's content box.
     ///

@@ -93,7 +93,7 @@ impl FragmentationContext {
     /// Return a child context translated into one of this container's columns.
     pub(crate) fn in_column(self, column_index: usize, origin_x: f32, origin_y: f32) -> Self {
         Self {
-            column_index: column_index.min(self.column_count.saturating_sub(1)),
+            column_index,
             origin_x,
             origin_y,
             ..self
@@ -117,51 +117,100 @@ pub(crate) struct BreakToken {
     pub(crate) line_index: usize,
 }
 
-/// Physical box or text-range fragment emitted by a layout strategy.
+/// Physical position and size of one fragment in its parent's coordinate space.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct LayoutFragment {
-    /// Source DOM node.
-    pub(crate) node_id: usize,
-    /// Parent fragment in the fragment tree, if any.
-    pub(crate) parent: Option<usize>,
-    /// Fragmentainer/column index local to the owning multicol context.
-    pub(crate) fragmentainer: usize,
-    /// Physical position and size relative to the owning layout box.
-    pub(crate) x: f32,
-    /// Block-axis position relative to the owning layout box.
-    pub(crate) y: f32,
-    /// Fragment inline size.
-    pub(crate) width: f32,
-    /// Fragment block size.
-    pub(crate) height: f32,
-    /// Optional text line range. `None` denotes an element/box fragment.
-    pub(crate) line_start: Option<usize>,
-    /// Exclusive text line end when `line_start` is set.
-    pub(crate) line_end: Option<usize>,
+#[doc(hidden)]
+pub struct FragmentRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
+/// Physical box or text-range fragment emitted by a layout strategy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
+pub struct LayoutFragment {
+    /// Source DOM node.
+    pub node_id: usize,
+    /// Parent fragment in the fragment tree, if any.
+    pub parent: Option<usize>,
+    /// Fragmentainer/column index local to the owning multicol context.
+    pub fragmentainer: usize,
+    /// Physical position and size relative to the parent fragment's origin.
+    pub rect: FragmentRect,
+    /// Clip for the owning fragmentainer in the parent fragment's space.
+    pub fragmentainer_clip: Option<FragmentRect>,
+    /// Zero-based order among fragments of this source node.
+    pub fragment_index: usize,
+    /// Total number of fragments for this source node.
+    pub fragment_count: usize,
+    /// Optional text line range. `None` denotes an element/box fragment.
+    pub line_start: Option<usize>,
+    /// Exclusive text line end when `line_start` is set.
+    pub line_end: Option<usize>,
+}
+
+// The fixed cap bounds fragment amplification before paint construction.
+const MAX_LAYOUT_FRAGMENTS: usize = 65_536;
+
 /// Per-layout-pass fragment storage.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct FragmentTree {
     pub(crate) fragments: Vec<LayoutFragment>,
     /// Break points retained for a later incremental/reflow consumer.
     pub(crate) break_tokens: Vec<BreakToken>,
+    /// Aggregate cap for one layout pass, including all source nodes.
+    pub(crate) limit: usize,
+    /// Set when a fragment would exceed `limit`.
+    pub(crate) limit_exceeded: bool,
+}
+
+impl Default for FragmentTree {
+    fn default() -> Self {
+        Self {
+            fragments: Vec::new(),
+            break_tokens: Vec::new(),
+            limit: MAX_LAYOUT_FRAGMENTS,
+            limit_exceeded: false,
+        }
+    }
 }
 
 impl FragmentTree {
     pub(crate) fn clear(&mut self) {
         self.fragments.clear();
         self.break_tokens.clear();
+        self.limit_exceeded = false;
     }
 
-    pub(crate) fn push(&mut self, fragment: LayoutFragment) -> usize {
+    pub(crate) fn try_push(&mut self, fragment: LayoutFragment) -> Option<usize> {
+        if self.fragments.len() >= self.limit {
+            self.limit_exceeded = true;
+            return None;
+        }
         let id = self.fragments.len();
         self.fragments.push(fragment);
-        id
+        Some(id)
     }
 
     pub(crate) fn record_break(&mut self, token: BreakToken) {
         self.break_tokens.push(token);
+    }
+
+    /// Assign stable source-node order and total counts after layout finishes.
+    pub(crate) fn finalize(&mut self) {
+        let mut counts = std::collections::HashMap::<usize, usize>::new();
+        for fragment in &self.fragments {
+            *counts.entry(fragment.node_id).or_default() += 1;
+        }
+        let mut next = std::collections::HashMap::<usize, usize>::new();
+        for fragment in &mut self.fragments {
+            let index = next.entry(fragment.node_id).or_default();
+            fragment.fragment_index = *index;
+            fragment.fragment_count = counts[&fragment.node_id];
+            *index += 1;
+        }
     }
 
     /// Attach a nested container root emitted during its recursive layout to
@@ -176,120 +225,4 @@ impl FragmentTree {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolves_count_and_percentage_gap_against_used_width() {
-        let context = FragmentationContext::resolve(
-            100.0,
-            Some(60.0),
-            MulticolStyle {
-                count: Some(2),
-                width: None,
-                gap: 0.0,
-                gap_percent: Some(10.0),
-                height_definite: true,
-                horizontal: true,
-                orphans: 2,
-                widows: 2,
-            },
-        )
-        .expect("positive used width should resolve");
-        assert_eq!(context.column_count, 2);
-        assert!((context.column_gap - 10.0).abs() < f32::EPSILON);
-        assert!((context.column_width - 45.0).abs() < f32::EPSILON);
-        let second = context.in_column(1, context.column_offset_x(1), 12.0);
-        assert_eq!(second.column_index, 1);
-        assert_eq!(second.origin_y, 12.0);
-        assert!(
-            FragmentationContext::resolve(
-                0.0,
-                None,
-                MulticolStyle {
-                    count: None,
-                    width: None,
-                    gap: 0.0,
-                    gap_percent: None,
-                    height_definite: false,
-                    horizontal: true,
-                    orphans: 2,
-                    widows: 2,
-                },
-            )
-            .is_none()
-        );
-        let inferred = FragmentationContext::resolve(
-            100.0,
-            None,
-            MulticolStyle {
-                count: None,
-                width: Some(30.0),
-                gap: 5.0,
-                gap_percent: None,
-                height_definite: false,
-                horizontal: true,
-                orphans: 2,
-                widows: 2,
-            },
-        )
-        .expect("auto count should derive from width");
-        assert_eq!(inferred.column_count, 3);
-        let non_finite_gap = FragmentationContext::resolve(
-            100.0,
-            None,
-            MulticolStyle {
-                count: Some(1),
-                width: None,
-                gap: f32::NAN,
-                gap_percent: None,
-                height_definite: false,
-                horizontal: true,
-                orphans: 2,
-                widows: 2,
-            },
-        )
-        .expect("non-finite gap should fail closed to zero");
-        assert_eq!(non_finite_gap.column_gap, 0.0);
-    }
-
-    #[test]
-    fn fragment_tree_retains_break_points_until_clear() {
-        let mut tree = FragmentTree::default();
-        let parent = tree.push(LayoutFragment {
-            node_id: 1,
-            parent: None,
-            fragmentainer: 0,
-            x: 0.0,
-            y: 0.0,
-            width: 40.0,
-            height: 20.0,
-            line_start: None,
-            line_end: None,
-        });
-        assert_eq!(parent, 0);
-        let nested = tree.push(LayoutFragment {
-            node_id: 2,
-            parent: None,
-            fragmentainer: 0,
-            x: 0.0,
-            y: 0.0,
-            width: 20.0,
-            height: 10.0,
-            line_start: None,
-            line_end: None,
-        });
-        tree.reparent_roots(2, parent);
-        assert_eq!(tree.fragments[nested].parent, Some(parent));
-        tree.record_break(BreakToken {
-            node_id: 1,
-            child_index: 2,
-            line_index: 0,
-        });
-        assert_eq!(tree.fragments.len(), 2);
-        assert_eq!(tree.break_tokens.len(), 1);
-        tree.clear();
-        assert!(tree.fragments.is_empty());
-        assert!(tree.break_tokens.is_empty());
-    }
-}
+mod tests;
