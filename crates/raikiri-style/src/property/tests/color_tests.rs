@@ -43,6 +43,7 @@ fn color_recursion_depth_bounds_every_recursive_wrapper() {
         ("rgb(from ", " r g b)"),
         ("lab(from ", " l a b)"),
         ("color(from ", " srgb r g b)"),
+        ("color-layers(", ", blue)"),
     ] {
         let source = nested_color_wrapper(prefix, suffix, MAX_COLOR_MIX_NESTING_DEPTH + 1);
         assert_eq!(parse_color_entire(&source), None, "{prefix}");
@@ -63,6 +64,7 @@ fn color_recursion_preserves_boundary_and_ordinary_controls() {
         "color(from red srgb r g b)",
         "rgb(from red calc(r + 1) g b)",
         "color-mix(in srgb, contrast-color(red), light-dark(red, blue))",
+        "color-layers(red, blue)",
     ] {
         assert!(parse_color_entire(source).is_some(), "{source}");
     }
