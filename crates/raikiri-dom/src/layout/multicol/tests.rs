@@ -2,6 +2,29 @@ use super::*;
 use taffy::Style;
 
 #[test]
+fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
+    let context = FragmentationContext {
+        available_width: 200.0,
+        available_height: None,
+        column_width: 100.0,
+        column_count: 2,
+        column_gap: 0.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 1,
+    };
+
+    assert_eq!(balanced_column_height(&[], context), None);
+    assert_eq!(
+        balanced_column_height(&[(0.0, 10.0)], context.in_column(2, 200.0, 0.0)),
+        None
+    );
+    assert_eq!(balanced_column_height(&[(10.0, 0.0)], context), None);
+}
+
+#[test]
 fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
     let context = FragmentationContext {
         available_width: 300.0,
