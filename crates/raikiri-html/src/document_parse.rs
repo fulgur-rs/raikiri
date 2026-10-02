@@ -4,7 +4,7 @@
 //! Equivalent to the public API in spec §L1060. Internal pipeline:
 //! [`crate::parse`](fn@crate::parse) → rule-tree build and first-page cascade → assemble.
 //! The cascade currently always returns `Ok`,
-//! so only `RenderError::Parse` can propagate.
+//! so parse and limit errors can propagate.
 //!
 //! # Input byte cap
 //!
@@ -43,8 +43,8 @@ use crate::cascade::build_rule_tree;
 /// A thin wrapper around [`parse_html_with_limits`] that passes
 /// [`RenderLimits::default()`]. The existing `parse_html` API therefore
 /// enforces the default 32 MiB input cap
-/// (`RenderLimits::default().max_input_bytes = Some(32 * 1024 * 1024)`),
-/// closing SEC-HIGH through a bounded, fail-closed path.
+/// (`RenderLimits::default().max_input_bytes = Some(32 * 1024 * 1024)`)
+/// and the default 1,000,000-node DOM cap.
 ///
 /// # Errors
 ///
@@ -53,6 +53,8 @@ use crate::cascade::build_rule_tree;
 /// - `RenderError::Parse(ParseError::*)`: html5ever returned a parse error.
 /// - `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`:
 ///   input byte count exceeds [`RenderLimits::max_input_bytes`].
+/// - `RenderError::LimitExceeded { kind: LimitKind::DomNodes, .. }`:
+///   parsed DOM node count exceeds [`RenderLimits::max_dom_nodes`].
 ///
 /// The cascade is currently infallible (unwrapped with `.expect`).
 ///
@@ -85,9 +87,10 @@ pub fn parse_html<R: Read>(
 /// byte cap, this does not stop early. Excess errors are dropped, and one
 /// synthetic warning is added instead.
 ///
-/// Other `limits.*` fields (`max_dom_nodes` / `max_aggregate_bytes` / etc.)
-/// are **not consulted** by `parse_html_with_limits` yet; they are reserved
-/// for downstream renderer and cascade layers.
+/// [`RenderLimits::max_dom_nodes`] is checked after parsing and before rule-tree
+/// construction or cascading. `None` disables this check.
+/// Other `limits.*` fields (`max_aggregate_bytes` / etc.) are **not consulted**
+/// by `parse_html_with_limits` yet; they are reserved for downstream layers.
 ///
 /// # Implementation
 ///
@@ -108,6 +111,9 @@ pub fn parse_html<R: Read>(
 ///   input bytes exceeded `limits.max_input_bytes.unwrap()`. `limit` is
 ///   the configured cap; `actual` only establishes that the cap was exceeded.
 ///   The true input size is unknown because detection stops just past the cap.
+/// - `RenderError::LimitExceeded { kind: LimitKind::DomNodes, limit, actual }`:
+///   the parsed DOM node count exceeded `limits.max_dom_nodes.unwrap()`.
+///   `actual` is the full arena node count, including the virtual root.
 pub fn parse_html_with_limits<R: Read>(
     mut input: R,
     options: &ParseOptions<'_>,
@@ -150,6 +156,16 @@ pub fn parse_html_with_limits<R: Read>(
     // one memcpy; a second allocation is unavoidable, but the cap bounds memory use.
     let sink = RaikiriTreeSink::new(limits.max_parse_warnings);
     let uncascaded = parse_with_sink(buf.as_slice(), sink, options).map_err(RenderError::Parse)?;
+    if let Some(limit) = limits.max_dom_nodes {
+        let actual = uncascaded.dom.node_count() as u64;
+        if actual > limit {
+            return Err(RenderError::LimitExceeded {
+                kind: LimitKind::DomNodes,
+                limit,
+                actual,
+            });
+        }
+    }
     let effective_base_url = effective_document_base_url(&uncascaded, options.base_url.as_ref());
     let mut first_page = PageContextQuery::default();
     first_page.is_first = true;

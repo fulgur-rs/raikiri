@@ -45,6 +45,8 @@ fn use_fonts(dom: &mut raikiri_dom::Document, fonts: Option<raikiri_html::Render
 ///
 /// # Errors
 /// - `RenderError::Parse(_)` — propagated from `parse_html` (IO / UTF-8 / html5ever)
+/// - `RenderError::LimitExceeded` — propagated from `parse_html` when input
+///   bytes or parsed DOM nodes exceed their default limits
 /// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
 ///   `<body>` / inline layout / taffy internals)
 pub(crate) fn html_to_png_impl<R: std::io::Read>(
@@ -84,6 +86,8 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
 ///
 /// # Errors
 /// - `RenderError::Parse(_)` — propagated from `parse_html` (IO / UTF-8 / html5ever)
+/// - `RenderError::LimitExceeded` — propagated from `parse_html` when input
+///   bytes or parsed DOM nodes exceed their default limits
 /// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
 ///   `<body>` / inline layout / taffy internals)
 ///
@@ -101,7 +105,8 @@ pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
 /// cross-machine reproducibility.
 ///
 /// # Errors
-/// Same as [`html_to_png`] (`RenderError::Parse` / `RenderError::Layout`).
+/// Same as [`html_to_png`] (`RenderError::Parse` /
+/// `RenderError::LimitExceeded` / `RenderError::Layout`).
 pub fn html_to_png_with_render_fonts<R: std::io::Read>(
     input: R,
     fonts: raikiri_html::RenderFonts,
