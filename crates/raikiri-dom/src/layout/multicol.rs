@@ -528,6 +528,8 @@ fn record_nested_ifc_box_fragments(
     let mut pending = vec![subtree_root];
     while let Some(node_id) = pending.pop() {
         let nested_row_flex_scope = nested_row_flex_float_scope(tree, node_id);
+        let nested_logical_minimum_scope =
+            nested_logical_min_block_size_scope(tree, node_id, subtree_root);
         let lines = tree.nodes[node_id]
             .ifc
             .as_ref()
@@ -537,7 +539,10 @@ fn record_nested_ifc_box_fragments(
             .as_ref()
             .map(|lines| lines.fragment_box_placements.clone())
             .unwrap_or_default();
-        let line_ranges = (nested_row_flex_scope || !subtree_has_float)
+        // Non-float nested text needs explicit ranges only when lines cross
+        // columns. Break-avoided logical minimum children keep block placement.
+        let line_ranges = (nested_row_flex_scope
+            || (!subtree_has_float && !nested_logical_minimum_scope))
             .then(|| {
                 lines
                     .as_ref()
@@ -549,7 +554,8 @@ fn record_nested_ifc_box_fragments(
                             .and_then(|root| root.multicol_fragments.clone())
                     })
             })
-            .flatten();
+            .flatten()
+            .filter(|ranges| nested_row_flex_scope || ranges.len() > 1);
         // A subpixel column height can make one tall float span millions of
         // fragmentainers. Cap expanded placements before building paint paths.
         const MAX_NESTED_FLOAT_FRAGMENTS: usize = 1_024;
@@ -842,6 +848,24 @@ fn multicol_subtree_has_float(tree: &Document, subtree_root: usize) -> bool {
             return true;
         }
         pending.extend(node.children.iter().copied());
+    }
+    false
+}
+
+fn nested_logical_min_block_size_scope(
+    tree: &Document,
+    node_id: usize,
+    subtree_root: usize,
+) -> bool {
+    let mut current = Some(node_id);
+    while let Some(ancestor) = current {
+        if tree.nodes[ancestor].has_logical_min_block_size {
+            return true;
+        }
+        if ancestor == subtree_root {
+            return false;
+        }
+        current = tree.parent_of(ancestor);
     }
     false
 }
