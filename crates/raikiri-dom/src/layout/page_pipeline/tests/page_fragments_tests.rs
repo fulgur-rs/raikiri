@@ -1,11 +1,191 @@
 //! Page projection contracts.
 
 use super::super::super::*;
-use crate::layout::test_support::with_ahem;
+use crate::layout::test_support::{absolute_rect, ahem_paragraph_with, with_ahem};
 use raikiri_style::{Origin, build_rule_tree, cascade};
 use raikiri_traits::{NodeId, PageBox};
 use smol_str::SmolStr;
 use taffy::Style;
+
+#[test]
+fn many_sibling_inline_boxes_project_within_two_seconds() {
+    use std::time::{Duration, Instant};
+
+    let (mut document, cascade, root) = ahem_paragraph_with("width:800px", |doc, root| {
+        for _ in 0..30_000 {
+            doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;padding:1px"),
+            );
+        }
+    });
+    layout_single_page(with_ahem(&mut document), &cascade, PageBox::A4).expect("layout");
+    assert_eq!(
+        document.nodes[root]
+            .ifc_inline_boxes()
+            .expect("pieces")
+            .len(),
+        30_000
+    );
+
+    let slice = PageSlice {
+        page_index: 0,
+        content_origin_y: 0.0,
+        page_name: None,
+    };
+    let started = Instant::now();
+    let pages = page_fragments_from_slices(
+        &document,
+        &cascade,
+        PageBox::A4,
+        std::slice::from_ref(&slice),
+    );
+    let elapsed = started.elapsed();
+    assert_eq!(pages.len(), 1);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "projecting 30,000 sibling inline boxes took {elapsed:?}"
+    );
+}
+
+#[test]
+fn many_sibling_text_nodes_project_within_two_seconds() {
+    use std::time::{Duration, Instant};
+
+    let (mut document, cascade, root) = ahem_paragraph_with("width:100000px", |doc, root| {
+        for _ in 0..20_000 {
+            doc.append_text(root, "a");
+            doc.append_comment(Some(root), "");
+        }
+    });
+    layout_single_page(with_ahem(&mut document), &cascade, PageBox::A4).expect("layout");
+    assert!(document.nodes[root].is_ifc_root());
+
+    let slice = PageSlice {
+        page_index: 0,
+        content_origin_y: 0.0,
+        page_name: None,
+    };
+    let started = Instant::now();
+    let pages = page_fragments_from_slices(
+        &document,
+        &cascade,
+        PageBox::A4,
+        std::slice::from_ref(&slice),
+    );
+    let elapsed = started.elapsed();
+    assert_eq!(pages.len(), 1);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "projecting 20,000 sibling text nodes took {elapsed:?}"
+    );
+}
+
+#[test]
+fn separate_ifc_roots_project_their_own_wrapped_pieces_and_text_lines() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = document.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let mut owners = Vec::new();
+    for padding in [3, 7] {
+        let css = format!(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;\
+             width:40px;padding-left:{padding}px"
+        );
+        let root = document.append_element(Some(body), "div", Style::default(), Some(&css));
+        let span = document.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;padding:0 1px"),
+        );
+        let text = document.append_text(span, "aaaa bbbb");
+        owners.push((root, span, text));
+    }
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    layout_single_page(with_ahem(&mut document), &cascade, PageBox::A4).expect("layout");
+
+    let pages = page_fragments_from_slices(
+        &document,
+        &cascade,
+        PageBox::A4,
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+    );
+    assert_eq!(pages.len(), 1);
+    for (root, span, text) in owners {
+        let node = &document.nodes[root];
+        assert!(node.is_ifc_root());
+        let expected_box = node
+            .ifc_inline_boxes()
+            .expect("pieces")
+            .into_iter()
+            .filter(|piece| piece.node == span)
+            .map(|piece| piece.border_box)
+            .reduce(|a, b| {
+                let x = a.x.min(b.x);
+                let y = a.y.min(b.y);
+                BoxRect {
+                    x,
+                    y,
+                    width: (a.x + a.width).max(b.x + b.width) - x,
+                    height: (a.y + a.height).max(b.y + b.height) - y,
+                }
+            })
+            .expect("wrapped span pieces");
+        let owned = document.ifc_text_lines(text).expect("text lines");
+        assert_eq!(owned.root, root);
+        assert!(owned.lines.len() >= 2);
+        let (root_x, root_y, _, _) = absolute_rect(&document, root);
+        let content_x =
+            root_x + node.unrounded_layout.border.left + node.unrounded_layout.padding.left;
+        let content_y =
+            root_y + node.unrounded_layout.border.top + node.unrounded_layout.padding.top;
+        let span_item = pages[0]
+            .items
+            .iter()
+            .find(|item| item.node_id == NodeId::new(span as u64))
+            .expect("span fragment");
+        assert_eq!(
+            (
+                span_item.rect.x,
+                span_item.rect.y,
+                span_item.rect.width,
+                span_item.rect.height
+            ),
+            (
+                content_x + expected_box.x,
+                content_y + expected_box.y,
+                expected_box.width,
+                expected_box.height,
+            )
+        );
+        let text_item = pages[0]
+            .items
+            .iter()
+            .find(|item| item.node_id == NodeId::new(text as u64))
+            .expect("text fragment");
+        assert_eq!(text_item.rect.x, content_x);
+        assert_eq!(text_item.rect.y, content_y + owned.lines[0].top);
+        assert_eq!(text_item.rect.width, owned.width);
+        assert_eq!(
+            text_item.rect.height,
+            owned.lines.last().expect("last line").bottom - owned.lines[0].top
+        );
+    }
+}
 
 #[test]
 fn public_page_fragment_snapshot_is_node_ordered() {

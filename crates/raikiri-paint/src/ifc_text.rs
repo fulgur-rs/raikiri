@@ -190,6 +190,12 @@ pub(crate) fn draw_ifc_lines(
         .get_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
+    let mut pieces_by_line = vec![Vec::new(); lines.len()];
+    for piece in pieces {
+        if let Some(line_pieces) = pieces_by_line.get_mut(piece.line) {
+            line_pieces.push(piece);
+        }
+    }
     let offsets = document
         .get_node(root_id)
         .map(|node| node.ifc_relative_offsets())
@@ -210,7 +216,7 @@ pub(crate) fn draw_ifc_lines(
         // The boxes of the inline elements on this line go below its text
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
-        for piece in pieces.iter().filter(|piece| piece.line == line_index) {
+        for piece in &pieces_by_line[line_index] {
             let Some(cv) = computed_for_id(cascade, piece.node) else {
                 continue;
             };
