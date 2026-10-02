@@ -35,6 +35,49 @@ fn lay_out(doc: &mut Document, cascade: &raikiri_style::CascadeResult) {
     layout_single_page(doc, cascade, PageBox::A4).expect("layout");
 }
 
+#[test]
+fn many_inline_pieces_on_separate_lines_paint_within_three_seconds() {
+    use std::time::{Duration, Instant};
+
+    let (mut doc, cascade, root) = paragraph("width:20px", |doc, root| {
+        for _ in 0..12_000 {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;background-color:red"),
+            );
+            doc.append_text(span, "a");
+            doc.append_element(Some(root), "br", Style::default(), None::<&str>);
+        }
+    });
+    lay_out(&mut doc, &cascade);
+    let node = doc.get_node(root).expect("root");
+    assert!(node.ifc_lines().expect("lines").len() >= 12_000);
+    assert!(node.ifc_inline_boxes().expect("pieces").len() >= 12_000);
+
+    let mut scene = Scene::new();
+    let started = Instant::now();
+    draw_ifc_lines(
+        &mut scene,
+        &doc,
+        &cascade,
+        root,
+        IfcPosition {
+            x: 0.0,
+            y: 0.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+    );
+    let elapsed = started.elapsed();
+    assert!(!scene.commands.is_empty());
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "painting 12,000 separate inline pieces took {elapsed:?}"
+    );
+}
+
 /// `(glyph id, absolute x, absolute y, brush)` of every recorded glyph.
 fn glyphs(scene: &Scene) -> Vec<(u32, f64, f64, anyrender::Paint)> {
     let mut out = Vec::new();
@@ -1282,6 +1325,43 @@ fn all_fills(scene: &Scene) -> Vec<(String, [i64; 4])> {
 /// In 1/64px, so expectations read like pixels.
 fn px(v: i64) -> i64 {
     v * 64
+}
+
+#[test]
+fn inline_background_pieces_keep_source_order_within_and_across_lines() {
+    let colors = ["red", "blue", "green"];
+    let (mut doc, cascade, root) = paragraph("width:80px", |doc, root| {
+        for (index, color) in colors.into_iter().enumerate() {
+            if index == 2 {
+                doc.append_element(Some(root), "br", Style::default(), None::<&str>);
+            }
+            let style = format!("display:inline;background-color:{color}");
+            let span = doc.append_element(Some(root), "span", Style::default(), Some(&style));
+            doc.append_text(span, "aa");
+        }
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(
+        doc.get_node(root)
+            .and_then(|node| node.ifc_lines())
+            .expect("lines")
+            .len()
+            >= 2
+    );
+
+    let scene = painted(&doc, &cascade);
+    let expected = [
+        format!("{:?}", solid(255, 0, 0)),
+        format!("{:?}", solid(0, 0, 255)),
+        format!("{:?}", solid(0, 128, 0)),
+    ];
+    let mut drawn: Vec<_> = all_fills(&scene)
+        .into_iter()
+        .map(|(brush, _)| brush)
+        .filter(|brush| expected.contains(brush))
+        .collect();
+    drawn.dedup();
+    assert_eq!(drawn, expected);
 }
 
 const BOX_EDGES: &str = "background-color:rgb(255,0,0);padding:0 3px;\

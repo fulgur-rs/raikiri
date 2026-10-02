@@ -590,9 +590,10 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
 
     let mut nodes = Vec::new();
     let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
-    // The pieces of the inline elements of each root, moved with their lines
-    // by pagination: an inline element's rectangle is their union.
-    let mut ifc_pieces: HashMap<usize, Vec<InlineBoxPiece>> = HashMap::new();
+    // Each inline element's rectangle is the union of its pieces after
+    // pagination moves their lines.
+    let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, BoxRect>> = HashMap::new();
+    let mut ifc_text_lines = HashMap::new();
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
     while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
         let Some(node) = document.get_node(node_id) else {
@@ -636,7 +637,25 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
                     abs_y + layout.border.top + layout.padding.top,
                 ),
             );
-            ifc_pieces.insert(node_id, node.ifc_inline_boxes().unwrap_or_default());
+            let mut bounds_by_node: HashMap<usize, BoxRect> = HashMap::new();
+            for piece in node.ifc_inline_boxes().unwrap_or_default() {
+                bounds_by_node
+                    .entry(piece.node)
+                    .and_modify(|bounds| {
+                        let rect = piece.border_box;
+                        let x = bounds.x.min(rect.x);
+                        let y = bounds.y.min(rect.y);
+                        *bounds = BoxRect {
+                            x,
+                            y,
+                            width: (bounds.x + bounds.width).max(rect.x + rect.width) - x,
+                            height: (bounds.y + bounds.height).max(rect.y + rect.height) - y,
+                        };
+                    })
+                    .or_insert(piece.border_box);
+            }
+            ifc_piece_bounds.insert(node_id, bounds_by_node);
+            ifc_text_lines.extend(document.ifc_text_lines_by_node(node_id));
         }
         // An inline element of an inline engine paragraph is where its pieces
         // are on the lines; its recorded location is relative to its nearest
@@ -644,22 +663,10 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
         let (abs_x, abs_y, width, height) = if node.kind() == NodeKind::Element
             && node.in_ifc_subtree()
             && let Some(root) = document.ifc_root_of(node_id)
-            && let (Some(&(root_x, root_y)), Some(pieces)) =
-                (ifc_origin.get(&root), ifc_pieces.get(&root))
-            && let Some(rect) = pieces
-                .iter()
-                .filter(|piece| piece.node == node_id)
-                .map(|piece| piece.border_box)
-                .reduce(|a, b| {
-                    let x = a.x.min(b.x);
-                    let y = a.y.min(b.y);
-                    BoxRect {
-                        x,
-                        y,
-                        width: (a.x + a.width).max(b.x + b.width) - x,
-                        height: (a.y + a.height).max(b.y + b.height) - y,
-                    }
-                }) {
+            && let (Some(&(root_x, root_y)), Some(bounds_by_node)) =
+                (ifc_origin.get(&root), ifc_piece_bounds.get(&root))
+            && let Some(rect) = bounds_by_node.get(&node_id)
+        {
             (
                 root_x + rect.x,
                 root_y + rect.y,
@@ -671,7 +678,7 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
         };
         if include && abs_x.is_finite() && abs_y.is_finite() {
             let ifc_lines = (node.kind() == NodeKind::Text)
-                .then(|| document.ifc_text_lines(node_id))
+                .then(|| ifc_text_lines.remove(&node_id))
                 .flatten();
             let (abs_x, abs_y, width, height, line_metrics) = match ifc_lines {
                 // A text node of an ifc paragraph starts at the first line it
