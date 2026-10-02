@@ -268,6 +268,65 @@ fn image_line_geometry(
     (doc.nodes[image].unrounded_layout.location.y, heights)
 }
 
+fn mixed_image_line_geometry(
+    mode: raikiri_traits::QuirksMode,
+    wrapped: bool,
+    vertical_aligns: &[&str],
+) -> (Vec<f32>, Vec<(f32, f32)>) {
+    use taffy::Style;
+    let mut doc = Document::new();
+    doc.set_quirks_mode(mode);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font-size:20px;line-height:20px"),
+    );
+    let mut images = Vec::new();
+    for (line, vertical_align) in vertical_aligns.iter().enumerate() {
+        if matches!(line, 1 | 3) {
+            doc.append_text(body, "x");
+        }
+        let parent = if wrapped {
+            doc.append_element(Some(body), "span", Style::default(), None::<&str>)
+        } else {
+            body
+        };
+        let image = doc.append_element(
+            Some(parent),
+            "img",
+            Style::default(),
+            Some(&format!(
+                "width:2px;height:2px;vertical-align:{}",
+                vertical_align
+            )),
+        );
+        images.push(image);
+        if line == 3 {
+            doc.append_text(body, "x");
+        }
+        if line != 4 {
+            doc.append_element(Some(body), "br", Style::default(), None::<&str>);
+        }
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+    let positions = images
+        .into_iter()
+        .map(|image| doc.nodes[image].unrounded_layout.location.y)
+        .collect();
+    let lines = doc.nodes[body]
+        .ifc_lines()
+        .expect("body lines")
+        .iter()
+        .map(|line| (line.block_offset(), line.block_size()))
+        .collect();
+    (positions, lines)
+}
+
 #[test]
 fn quirks_mode_text_free_inline_wrapper_has_no_strut() {
     use raikiri_traits::QuirksMode;
@@ -293,6 +352,23 @@ fn quirks_mode_vertical_align_uses_zero_root_metrics() {
             "{align}: {standards:?} vs {direct:?}"
         );
     }
+}
+
+#[test]
+fn quirks_mode_mixed_lines_keep_wrapped_images_in_their_direct_positions() {
+    use raikiri_traits::QuirksMode;
+    let mut mismatches = Vec::new();
+    let alignments = ["middle", "text-top", "text-bottom", "sub", "super"];
+    for mode in [QuirksMode::Quirks, QuirksMode::NoQuirks] {
+        let direct = mixed_image_line_geometry(mode, false, &alignments);
+        let wrapped = mixed_image_line_geometry(mode, true, &alignments);
+        assert_eq!(direct.0.len(), 5, "{mode:?}: {direct:?}");
+        assert_eq!(direct.1.len(), 5, "{mode:?}: {direct:?}");
+        if wrapped != direct {
+            mismatches.push((mode, direct, wrapped));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:?}");
 }
 
 #[test]

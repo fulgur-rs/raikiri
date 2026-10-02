@@ -222,13 +222,28 @@ fn has_paragraph_text(doc: &Document, cascade: &CascadeResult, element: usize) -
     false
 }
 
-/// Remove an empty root or inline box from line height calculation in quirks
-/// and limited-quirks mode (Quirks Mode Standard, 3.3-3.4). The zero font
-/// metrics let aligned children use the same baseline without the empty box's
-/// strut. Text presence is decided for the entire box, across its lines.
+/// Remove an empty paragraph root from line height calculation in quirks and
+/// limited-quirks mode (Quirks Mode Standard, 3.3-3.4). Text presence is
+/// decided for the entire paragraph, across its lines.
 fn apply_line_height_quirk(doc: &Document, has_text: bool, style: &mut shodo::style::InlineStyle) {
     if line_height_quirk(doc) && !has_text {
         style.font_size = 0.0;
+        style.line_height = shodo::style::LineHeight::Px(0.0);
+    }
+}
+
+/// Remove an empty inline child's strut while retaining the font metrics its
+/// replaced descendants use for vertical alignment.
+fn apply_inline_line_height_quirk(
+    doc: &Document,
+    has_text: bool,
+    paragraph_has_text: bool,
+    style: &mut shodo::style::InlineStyle,
+) {
+    if line_height_quirk(doc) && !has_text {
+        if !paragraph_has_text {
+            style.font_size = 0.0;
+        }
         style.line_height = shodo::style::LineHeight::Px(0.0);
     }
 }
@@ -588,8 +603,9 @@ pub(crate) fn project_ifc_builder_with(
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
     let (options, indent) = style::line_options(root_cv, root, fonts)?;
+    let paragraph_has_text = has_paragraph_text(doc, cascade, root);
     let mut root_style = styled(doc, cascade, root_cv, root, fonts)?;
-    apply_line_height_quirk(doc, has_paragraph_text(doc, cascade, root), &mut root_style);
+    apply_line_height_quirk(doc, paragraph_has_text, &mut root_style);
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
@@ -743,9 +759,10 @@ pub(crate) fn project_ifc_builder_with(
                     && edges.padding.inline_start == 0.0
                     && edges.padding.inline_end == 0.0
                 {
-                    apply_line_height_quirk(
+                    apply_inline_line_height_quirk(
                         doc,
                         has_direct_inline_text(doc, cascade, id),
+                        paragraph_has_text,
                         &mut inline_style,
                     );
                 }
