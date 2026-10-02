@@ -518,19 +518,26 @@ fn positioned_text_line_bounds(document: &Document, node_id: usize) -> Option<Ve
     let owned = document.ifc_text_lines(node_id)?;
     let root = document.nodes.get(owned.root)?.ifc.as_ref()?;
     let root_lines = root.lines.as_ref()?;
+    let fragments = root.multicol_fragments.as_deref();
+    let mut fragment_cursor = 0;
     Some(
         owned
             .lines
             .iter()
             .map(|line| {
-                let offset = root
-                    .multicol_fragments
-                    .as_deref()
-                    .and_then(|fragments| {
-                        fragments.iter().find(|fragment| {
-                            fragment.line_start <= line.line && line.line < fragment.line_end
-                        })
+                // Both line owners and fragments are ordered by source line.
+                let fragment = fragments.and_then(|fragments| {
+                    while fragments
+                        .get(fragment_cursor)
+                        .is_some_and(|fragment| fragment.line_end <= line.line)
+                    {
+                        fragment_cursor += 1;
+                    }
+                    fragments.get(fragment_cursor).filter(|fragment| {
+                        fragment.line_start <= line.line && line.line < fragment.line_end
                     })
+                });
+                let offset = fragment
                     .and_then(|fragment| {
                         root_lines
                             .lines

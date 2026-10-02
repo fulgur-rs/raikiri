@@ -53,6 +53,29 @@ fn balanced_multicol_text_that_fits_uses_one_page() {
             .len(),
         6
     );
+
+    let text_node = doc.nodes[root].children[0];
+    let owned = doc.ifc_text_lines(text_node).expect("owned lines");
+    let positioned = positioned_text_line_bounds(&doc, text_node).expect("positioned lines");
+    let fragments = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .and_then(|ifc| ifc.multicol_fragments.as_ref())
+        .expect("column fragments");
+    for fragment in fragments {
+        let owned_index = owned
+            .lines
+            .iter()
+            .position(|line| line.line == fragment.line_start)
+            .expect("the text node owns each fragment's first line");
+        assert!(
+            (positioned[owned_index].0 - fragment.y).abs() < 0.001,
+            "line {} starts at {:?}, fragment starts at {}",
+            fragment.line_start,
+            positioned[owned_index],
+            fragment.y
+        );
+    }
 }
 
 #[test]
