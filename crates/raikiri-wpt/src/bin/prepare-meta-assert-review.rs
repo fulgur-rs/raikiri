@@ -19,7 +19,7 @@ use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use raikiri_wpt::reftest::parse_reftest_links;
@@ -64,6 +64,7 @@ impl Default for Args {
 #[derive(Debug)]
 struct Candidate {
     test_id: String,
+    relative_path: PathBuf,
     source: String,
     assert_text: String,
 }
@@ -115,8 +116,9 @@ fn run() -> Result<(), String> {
     let mut errors = 0usize;
 
     for candidate in candidates {
-        let html_rel = Path::new("html").join(&candidate.test_id);
-        let screenshot_rel = Path::new("screenshots").join(format!("{}.png", candidate.test_id));
+        let html_rel = Path::new("html").join(&candidate.relative_path);
+        let mut screenshot_rel = Path::new("screenshots").join(&candidate.relative_path);
+        screenshot_rel.as_mut_os_string().push(".png");
         let html_path = args.output.join(&html_rel);
         let screenshot_path = args.output.join(&screenshot_rel);
         if let Some(parent) = html_path.parent() {
@@ -145,8 +147,8 @@ fn run() -> Result<(), String> {
             &mut manifest,
             &candidate,
             &ManifestEntry {
-                html_path: &html_rel,
-                screenshot_path: &screenshot_rel,
+                html_path: &format!("html/{}", candidate.test_id),
+                screenshot_path: &format!("screenshots/{}.png", candidate.test_id),
                 wpt_sha: &wpt_sha,
                 width: args.width,
                 height: args.height,
@@ -276,7 +278,7 @@ fn discover_candidates(
         if !is_html_like(&path) {
             continue;
         }
-        let test_id = path_to_string(&path);
+        let test_id = path_to_string(&path)?;
         if let Some(prefix) = path_prefix
             && !matches_path_prefix(&test_id, prefix)
         {
@@ -300,6 +302,7 @@ fn discover_candidates(
         }
         candidates.push(Candidate {
             test_id,
+            relative_path: path,
             source,
             assert_text,
         });
@@ -335,8 +338,16 @@ fn has_path_component(path: &str, component: &str) -> bool {
     path.split('/').any(|part| part == component)
 }
 
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+fn path_to_string(path: &Path) -> Result<String, String> {
+    path.components()
+        .map(|component| match component {
+            Component::Normal(name) => name
+                .to_str()
+                .ok_or_else(|| format!("non-UTF-8 artifact path: {}", path.display())),
+            _ => Err(format!("non-relative artifact path: {}", path.display())),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|components| components.join("/"))
 }
 
 fn extract_meta_assert(html: &str) -> Option<String> {
@@ -440,8 +451,8 @@ fn git_head(wpt_root: &Path) -> Option<String> {
 }
 
 struct ManifestEntry<'a> {
-    html_path: &'a Path,
-    screenshot_path: &'a Path,
+    html_path: &'a str,
+    screenshot_path: &'a str,
     wpt_sha: &'a str,
     width: u32,
     height: u32,
@@ -450,14 +461,12 @@ struct ManifestEntry<'a> {
 }
 
 fn write_manifest_entry(output: &mut String, candidate: &Candidate, entry: &ManifestEntry<'_>) {
-    let html_path = path_to_string(entry.html_path);
-    let screenshot_path = path_to_string(entry.screenshot_path);
     let _ = write!(
         output,
         "{{\"schema\":1,\"test_id\":{},\"html\":{},\"screenshot\":{},\"assert\":{},\"wpt_sha\":{},\"viewport\":{{\"width\":{},\"height\":{}}},\"renderer\":\"raikiri\",\"font_source\":\"wpt-root/fonts\",\"status\":{}",
         json_string(&candidate.test_id),
-        json_string(&html_path),
-        json_string(&screenshot_path),
+        json_string(entry.html_path),
+        json_string(entry.screenshot_path),
         json_string(&candidate.assert_text),
         json_string(entry.wpt_sha),
         entry.width,
@@ -491,59 +500,5 @@ fn json_string(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extracts_assert_with_attributes_in_either_order() {
-        assert_eq!(
-            extract_meta_assert(r#"<meta name='assert' content='one & two'>"#),
-            Some("one & two".to_owned())
-        );
-        assert_eq!(
-            extract_meta_assert(r#"<meta content="three" NAME="assert">"#),
-            Some("three".to_owned())
-        );
-        assert_eq!(
-            extract_meta_assert("<meta name='author' content='x'>"),
-            None
-        );
-    }
-
-    #[test]
-    fn identifies_only_exact_parsing_path_components() {
-        assert!(has_path_component("css/foo/parsing/a.html", "parsing"));
-        assert!(!has_path_component(
-            "css/foo/parsing-extra/a.html",
-            "parsing"
-        ));
-    }
-
-    #[test]
-    fn path_prefix_matches_a_directory_without_matching_similar_names() {
-        assert!(matches_path_prefix(
-            "css/css-backgrounds/test.html",
-            "css/css-backgrounds/"
-        ));
-        assert!(matches_path_prefix(
-            "css/css-backgrounds",
-            "css/css-backgrounds"
-        ));
-        assert!(!matches_path_prefix(
-            "css/css-backgrounds-extra/test.html",
-            "css/css-backgrounds"
-        ));
-    }
-
-    #[test]
-    fn json_string_escapes_manifest_values() {
-        assert_eq!(json_string("a\"b\\c\n"), r#""a\"b\\c\n""#);
-    }
-
-    #[test]
-    fn html_extension_filter_includes_wpt_variants() {
-        assert!(is_html_like(Path::new("a.html")));
-        assert!(is_html_like(Path::new("a.xht")));
-        assert!(!is_html_like(Path::new("a.js")));
-    }
-}
+#[path = "prepare-meta-assert-review/tests.rs"]
+mod tests;
