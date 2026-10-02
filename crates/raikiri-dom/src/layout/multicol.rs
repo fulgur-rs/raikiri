@@ -364,9 +364,6 @@ fn relayout_nested_multicol_children(
                 tree.nodes[child].cache.clear();
             }
             let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
-            if tree.fragment_tree.limit_exceeded {
-                return fallback_height;
-            }
             let layout = tree.nodes[child].unrounded_layout;
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;

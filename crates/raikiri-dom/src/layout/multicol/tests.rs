@@ -1022,6 +1022,80 @@ fn nested_float_fragment_budget_returns_a_layout_error() {
 }
 
 #[test]
+fn zero_fragment_budget_rejects_the_first_multicol_fragment() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let (mut doc, _, _) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    doc.fragment_tree.limit = 0;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+
+    assert!(matches!(
+        layout_single_page(&mut doc, &cascade, page),
+        Err(LayoutError::FragmentLimitExceeded { limit: 0 })
+    ));
+    assert!(doc.fragment_tree.fragments.is_empty());
+}
+
+#[test]
+fn nested_multicol_child_stops_when_the_shared_fragment_budget_is_exhausted() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let mut saw_limit_error = false;
+    for limit in [1, 2, 3, 4, 5, 6, 8, 12, 16, 24, 32, 64] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:300px;columns:2;max-height:80px"),
+        );
+        let inner = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px;columns:2;max-height:80px"),
+        );
+        let flex = doc.append_element(
+            Some(inner),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:row"),
+        );
+        let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("float:left;width:100px;height:500px"),
+        );
+        doc.fragment_tree.limit = limit;
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+
+        let result = layout_single_page(&mut doc, &cascade, page);
+        if matches!(result, Err(LayoutError::FragmentLimitExceeded { .. })) {
+            saw_limit_error = true;
+            assert_eq!(doc.fragment_tree.fragments.len(), limit);
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            assert!(doc.fragment_tree.fragments.len() <= limit);
+        }
+    }
+    assert!(saw_limit_error);
+}
+
+#[test]
 fn nested_float_fragment_budget_accumulates_across_items() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::{LayoutError, PageBox};
