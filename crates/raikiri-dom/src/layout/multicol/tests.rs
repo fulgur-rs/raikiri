@@ -84,6 +84,42 @@ fn nested_row_flex_float_scope_returns_false_without_a_multicol_ancestor() {
 }
 
 #[test]
+fn nested_logical_min_block_size_scope_stops_at_the_subtree_root() {
+    let mut doc = Document::new();
+    let outer = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let subtree_root = doc.append_element(Some(outer), "div", Style::default(), None::<&str>);
+    let child = doc.append_element(Some(subtree_root), "div", Style::default(), None::<&str>);
+    doc.nodes[outer].has_logical_min_block_size = true;
+
+    assert!(!nested_logical_min_block_size_scope(
+        &doc,
+        child,
+        subtree_root
+    ));
+
+    doc.nodes[subtree_root].has_logical_min_block_size = true;
+    assert!(nested_logical_min_block_size_scope(
+        &doc,
+        child,
+        subtree_root
+    ));
+}
+
+#[test]
+fn nested_logical_min_block_size_scope_returns_false_for_an_unrelated_node() {
+    let mut doc = Document::new();
+    let subtree_root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let unrelated = doc.append_element(None, "div", Style::default(), None::<&str>);
+    doc.nodes[subtree_root].has_logical_min_block_size = true;
+
+    assert!(!nested_logical_min_block_size_scope(
+        &doc,
+        unrelated,
+        subtree_root
+    ));
+}
+
+#[test]
 fn layout_offset_from_ancestor_sums_layout_parent_offsets() {
     let mut doc = Document::new();
     let ancestor = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
