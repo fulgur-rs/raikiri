@@ -784,13 +784,9 @@ struct MarginBoxPaintSpec {
     width: Option<f32>,
     height: Option<f32>,
     text_color: Color,
-    font_size: f32,
-    font_family: String,
+    text_style: raikiri_dom::StandaloneStyle,
     alignment: StandaloneAlign,
     vertical_align: text::MarginTextVerticalAlign,
-    /// Whether authored margin-box writing-mode makes newline-separated
-    /// content advance across vertical columns rather than down lines.
-    vertical_writing: bool,
 }
 
 fn margin_box_property(
@@ -2182,7 +2178,9 @@ fn margin_box_spec(
         })
         .or_else(|| root_computed(document, cascade).map(|computed| computed.text_align));
     let alignment = match inherited_text_align {
-        Some(TextAlign::Right | TextAlign::End) => StandaloneAlign::Right,
+        Some(TextAlign::Right) => StandaloneAlign::Right,
+        Some(TextAlign::End) => StandaloneAlign::End,
+        Some(TextAlign::Justify) => StandaloneAlign::Justify,
         Some(TextAlign::Center) => StandaloneAlign::Center,
         Some(TextAlign::Left) => StandaloneAlign::Left,
         _ => StandaloneAlign::Start,
@@ -2205,15 +2203,39 @@ fn margin_box_spec(
         Some(VerticalAlign::TextTop) => text::MarginTextVerticalAlign::Top,
         _ => text::MarginTextVerticalAlign::Top,
     };
-    let vertical_writing = matches!(
-        margin_box_property(rule, PropertyKey::WritingMode),
-        Some(PropertyValue::WritingMode(
-            WritingMode::VerticalRl
-                | WritingMode::VerticalLr
-                | WritingMode::SidewaysRl
-                | WritingMode::SidewaysLr,
-        ))
-    );
+    let inherited = |key| margin_box_property(rule, key).or_else(|| page_property(cascade, key));
+    let root = root_computed(document, cascade).unwrap_or(&initial);
+    let mode = match inherited(PropertyKey::WritingMode) {
+        Some(PropertyValue::WritingMode(mode)) => *mode,
+        _ => root.cssom_writing_mode,
+    };
+    let orientation = match inherited(PropertyKey::TextOrientation) {
+        Some(PropertyValue::TextOrientation(value)) => *value,
+        _ => root.text_orientation,
+    };
+    let direction = match inherited(PropertyKey::Direction) {
+        Some(PropertyValue::Direction(value)) => *value,
+        _ => root.direction,
+    };
+    let mut text_style = crate::standalone_text::style(font_size, &font_family);
+    text_style.writing_mode = match mode {
+        WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
+        WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
+        WritingMode::SidewaysRl => shodo::geometry::WritingMode::SidewaysRl,
+        WritingMode::SidewaysLr => shodo::geometry::WritingMode::SidewaysLr,
+        _ => shodo::geometry::WritingMode::HorizontalTb,
+    };
+    text_style.text_orientation = match orientation {
+        raikiri_style::property::TextOrientation::Upright => shodo::style::TextOrientation::Upright,
+        raikiri_style::property::TextOrientation::Sideways => {
+            shodo::style::TextOrientation::Sideways
+        }
+        _ => shodo::style::TextOrientation::Mixed,
+    };
+    text_style.direction = match direction {
+        raikiri_style::property::Direction::Rtl => shodo::geometry::Direction::Rtl,
+        _ => shodo::geometry::Direction::Ltr,
+    };
     Some(MarginBoxPaintSpec {
         slot: rule.slot,
         content,
@@ -2236,11 +2258,9 @@ fn margin_box_spec(
         width,
         height,
         text_color: inherited_margin_box_color(document, cascade, rule),
-        font_size,
-        font_family,
+        text_style,
         alignment,
         vertical_align,
-        vertical_writing,
     })
 }
 
@@ -2372,22 +2392,16 @@ fn paint_margin_box(
         let border_bottom = spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
         let content_x = x + border_left + spec.padding[3];
         let content_y = y + border_top + spec.padding[0];
-        let content = if spec.vertical_writing {
-            spec.content.replace('\n', "")
-        } else {
-            spec.content.clone()
-        };
-        text::draw_margin_text(
+        text::draw_margin_text_styled(
             document,
             scene,
-            &content,
+            &spec.content,
             content_x,
             content_y,
             (width - border_left - border_right - spec.padding[1] - spec.padding[3]).max(0.0),
             (height - border_top - border_bottom - spec.padding[0] - spec.padding[2]).max(0.0),
             spec.text_color,
-            spec.font_size,
-            &spec.font_family,
+            &spec.text_style,
             spec.alignment,
             spec.vertical_align,
         );
@@ -2397,12 +2411,14 @@ fn paint_margin_box(
         let image_x = (x
             + spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
             + spec.padding[3]
-            + text::measure_margin_text(
-                document,
-                &spec.content,
-                spec.font_size,
-                &spec.font_family,
-            ))
+            + document
+                .shape_standalone_text(
+                    &spec.content,
+                    &spec.text_style,
+                    None,
+                    StandaloneAlign::Start,
+                )
+                .map_or(0.0, |text| text.width()))
         .round();
         let image_rect = Rect::new(
             image_x as f64,
@@ -2473,31 +2489,57 @@ fn margin_box_margin_height(spec: &MarginBoxPaintSpec) -> f32 {
     spec.margin[0] + spec.margin[2]
 }
 
-fn margin_box_text_width(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
-    let measured =
-        text::measure_margin_text(document, &spec.content, spec.font_size, &spec.font_family);
+fn margin_box_text_width(
+    document: &Document,
+    spec: &MarginBoxPaintSpec,
+    content_height: Option<f32>,
+) -> f32 {
+    let inline_size = if spec.text_style.writing_mode.is_vertical() {
+        content_height.or(spec.height)
+    } else {
+        None
+    };
+    let measured = document
+        .shape_standalone_text(
+            &spec.content,
+            &spec.text_style,
+            inline_size,
+            StandaloneAlign::Start,
+        )
+        .map_or(0.0, |text| text.width());
     let non_collapsible_content = spec
         .content
         .chars()
         .any(|character| !character.is_whitespace() || character == '\u{a0}');
     measured
         .max(if non_collapsible_content {
-            spec.font_size.max(0.0)
+            spec.text_style.font_size.max(0.0)
         } else {
             0.0
         })
         .max(0.0)
 }
 
-fn margin_box_intrinsic_width(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
-    (margin_box_text_width(document, spec)
+fn margin_box_intrinsic_width(
+    document: &Document,
+    spec: &MarginBoxPaintSpec,
+    available_height: f32,
+) -> f32 {
+    // Match the actual content height used by the horizontal margin strip.
+    // Vertical text may need multiple columns within that inline constraint.
+    let content_height = (margin_box_outer_height(spec, available_height).min(available_height)
+        - margin_box_margin_height(spec)
+        - margin_box_border_height(spec)
+        - margin_box_padding_height(spec))
+    .max(0.0);
+    (margin_box_text_width(document, spec, Some(content_height))
         + margin_box_border_width(spec)
         + margin_box_padding_width(spec)
         + margin_box_margin_width(spec))
     .max(0.0)
 }
 
-fn margin_box_intrinsic_height(spec: &MarginBoxPaintSpec) -> f32 {
+fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
     if spec.content.is_empty() {
         return 0.0;
     }
@@ -2507,7 +2549,19 @@ fn margin_box_intrinsic_height(spec: &MarginBoxPaintSpec) -> f32 {
         .split('\n')
         .count()
         .max(1) as f32;
-    (line_count * spec.font_size.max(0.0)
+    let text_height = if spec.text_style.writing_mode.is_vertical() {
+        document
+            .shape_standalone_text(
+                &spec.content,
+                &spec.text_style,
+                None,
+                StandaloneAlign::Start,
+            )
+            .map_or(0.0, |text| text.height())
+    } else {
+        line_count * spec.text_style.font_size.max(0.0)
+    };
+    (text_height
         + margin_box_border_height(spec)
         + margin_box_padding_height(spec)
         + margin_box_margin_height(spec))
@@ -2590,7 +2644,7 @@ fn paint_horizontal_margin_boxes(
             if spec.width.is_some() {
                 0.0
             } else {
-                margin_box_intrinsic_width(document, spec)
+                margin_box_intrinsic_width(document, spec, row_height)
             }
         })
         .collect();
@@ -2751,7 +2805,7 @@ fn paint_vertical_margin_boxes(
             if spec.height.is_some() {
                 0.0
             } else {
-                margin_box_intrinsic_height(spec)
+                margin_box_intrinsic_height(document, spec)
             }
         })
         .collect();

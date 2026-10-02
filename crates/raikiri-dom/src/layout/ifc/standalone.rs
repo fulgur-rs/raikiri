@@ -2,18 +2,16 @@
 //! pseudo-element text, list markers) with the inline engine and the
 //! document's fonts.
 //!
-//! The callers know only a font list, a size and an alignment, so the style
-//! is a small fixed one: weight 400, normal, line height `normal`, spaces
-//! preserved, no spacing or transform. The paragraph is left to right; a
-//! right-to-left run inside it is reordered by the engine, and its glyph
-//! origins stay inside the line.
+//! Font selection and line breaking use a small fixed style (normal weight,
+//! preserved spaces), with the caller's writing mode, orientation and direction.
 
 use crate::Document;
 use shodo::font::FontCollection;
+use shodo::geometry::{Direction, PhysicalSize, WritingMode};
 use shodo::limits::Limits;
 use shodo::style::{
     FontFamily, GenericFamily, InlineStyle, LineHeight, LineOptions, ParagraphStyle, TextAlign,
-    TextWrapMode, WhiteSpaceCollapse,
+    TextOrientation, TextWrapMode, WhiteSpaceCollapse,
 };
 use shodo::{AtomicSizes, LayoutContext, Line, RichText};
 use std::sync::atomic::Ordering;
@@ -29,9 +27,27 @@ pub struct StandaloneStyle {
     pub families: Vec<String>,
     /// Font size in px; must be finite and positive.
     pub font_size: f32,
+    /// Block and inline flow of the text.
+    pub writing_mode: WritingMode,
+    /// Orientation of characters in vertical flow.
+    pub text_orientation: TextOrientation,
+    /// Base inline direction; upright vertical text uses the engine's LTR flow.
+    pub direction: Direction,
 }
 
-/// Horizontal alignment inside the given width.
+impl Default for StandaloneStyle {
+    fn default() -> Self {
+        Self {
+            families: Vec::new(),
+            font_size: 16.0,
+            writing_mode: WritingMode::HorizontalTb,
+            text_orientation: TextOrientation::Mixed,
+            direction: Direction::Ltr,
+        }
+    }
+}
+
+/// Alignment along the inline axis inside the given inline size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StandaloneAlign {
     /// The inline-start edge (left in left-to-right text).
@@ -42,7 +58,7 @@ pub enum StandaloneAlign {
     Left,
     /// The right edge.
     Right,
-    /// Centred in the width.
+    /// Centred in the inline extent.
     Center,
     /// Justified; the last line is aligned to the start.
     Justify,
@@ -51,17 +67,18 @@ pub enum StandaloneAlign {
 /// Lines of one shaped run.
 pub struct StandaloneText {
     lines: Vec<Line>,
-    /// Per line, how far its content moves right when its trailing blanks
+    /// Per line, how far content moves along the logical inline axis when blanks
     /// hang instead of being aligned.
     hang_shifts: Vec<f32>,
-    width: f32,
+    inline_size: f32,
     advance: f32,
-    height: f32,
+    block_size: f32,
+    writing_mode: WritingMode,
+    container: PhysicalSize,
 }
 
 impl StandaloneText {
-    /// The lines in order; glyph origins are relative to the line, and
-    /// `Line::block_offset` places each line below the first.
+    /// The lines in order; glyph origins are line-local logical coordinates.
     pub fn lines(&self) -> &[Line] {
         &self.lines
     }
@@ -77,9 +94,28 @@ impl StandaloneText {
         self.hang_shifts.get(index).copied().unwrap_or(0.0)
     }
 
-    /// Widest line without its trailing blanks (space, tab, U+00A0).
+    /// Longest line without trailing blanks (space, tab, U+00A0).
+    pub fn inline_size(&self) -> f32 {
+        self.inline_size
+    }
+
+    /// Sum of line block advances.
+    pub fn block_size(&self) -> f32 {
+        self.block_size
+    }
+
+    /// Physical content width, excluding inline trailing blanks.
     pub fn width(&self) -> f32 {
-        self.width
+        if self.writing_mode.is_vertical() {
+            self.block_size
+        } else {
+            self.inline_size
+        }
+    }
+
+    /// Physical layout container, including the supplied inline constraint.
+    pub fn container(&self) -> PhysicalSize {
+        self.container
     }
 
     /// First line including hanging trailing spaces.
@@ -87,9 +123,13 @@ impl StandaloneText {
         self.advance
     }
 
-    /// Sum of the line advances.
+    /// Physical content height, excluding inline trailing blanks.
     pub fn height(&self) -> f32 {
-        self.height
+        if self.writing_mode.is_vertical() {
+            self.inline_size
+        } else {
+            self.block_size
+        }
     }
 }
 
@@ -147,6 +187,8 @@ fn shape_lines(
             .map(|name| family_from_css(name))
             .collect(),
         font_size: style.font_size,
+        direction: style.direction,
+        text_orientation: style.text_orientation,
         line_height: LineHeight::Normal,
         white_space_collapse: WhiteSpaceCollapse::Preserve,
         text_wrap_mode: TextWrapMode::Wrap,
@@ -154,6 +196,8 @@ fn shape_lines(
     };
     let paragraph_style = ParagraphStyle {
         root: inline.clone(),
+        writing_mode: style.writing_mode,
+        direction: style.direction,
         ..ParagraphStyle::default()
     };
     // The layout context is per call: the document's shared one needs
@@ -191,6 +235,7 @@ impl Document {
     /// Shape `text` with the inline engine and the document's fonts, or the
     /// installed fonts for a document that was never laid out.
     ///
+    /// `width` constrains the logical inline size (physical height in vertical flow).
     /// `None` when the text is empty, the size is unusable (see
     /// [`Document::standalone_text_eligible`]), or a limit is exceeded: there
     /// is then nothing to draw.
@@ -230,10 +275,15 @@ impl Document {
         // Start-like alignments put the content at the same place with or
         // without its trailing blanks; the copy's lines pair with the text's
         // lines by index (stripping only shortens line ends).
+        let rtl = lines
+            .first()
+            .is_some_and(|line| line.used_direction() == Direction::Rtl);
         let factor = match align {
-            StandaloneAlign::End | StandaloneAlign::Right => 1.0,
+            StandaloneAlign::End => 1.0,
+            StandaloneAlign::Right if !rtl => 1.0,
+            StandaloneAlign::Left if rtl => 1.0,
             StandaloneAlign::Center => 0.5,
-            StandaloneAlign::Start | StandaloneAlign::Left | StandaloneAlign::Justify => 0.0,
+            _ => 0.0,
         };
         let hang_shifts = match &ink_lines {
             Some(ink) if factor > 0.0 => lines
@@ -250,16 +300,30 @@ impl Document {
         let advance = lines
             .first()
             .map_or(line_width, |line| line.inline_size() + line.hang_end());
-        let height = lines.iter().map(Line::block_size).sum();
+        let block_size = lines.iter().map(Line::block_size).sum();
+        let inline_extent = width.unwrap_or(line_width).max(0.0);
+        let container = if style.writing_mode.is_vertical() {
+            PhysicalSize {
+                width: block_size,
+                height: inline_extent,
+            }
+        } else {
+            PhysicalSize {
+                width: inline_extent,
+                height: block_size,
+            }
+        };
         if let Some(state) = &self.ifc {
             state.standalone_calls.fetch_add(1, Ordering::Relaxed);
         }
         Some(StandaloneText {
             lines,
             hang_shifts,
-            width: line_width.max(0.0),
+            inline_size: line_width.max(0.0),
             advance: advance.max(0.0),
-            height,
+            block_size,
+            writing_mode: style.writing_mode,
+            container,
         })
     }
 

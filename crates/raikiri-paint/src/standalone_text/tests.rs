@@ -238,3 +238,243 @@ fn a_right_to_left_run_is_drawn_by_the_engine_inside_its_box() {
     assert_eq!(xs, [5.0, 15.0, 25.0, 35.0, 45.0]);
     assert_eq!(doc.standalone_text_calls(), 1);
 }
+
+fn styled_scene(
+    content: &str,
+    mode: shodo::geometry::WritingMode,
+    orientation: shodo::style::TextOrientation,
+    direction: shodo::geometry::Direction,
+    align: StandaloneAlign,
+    cross_align: crate::text::MarginTextVerticalAlign,
+) -> Scene {
+    let doc = engine_document();
+    let mut style = super::style(10.0, "Ahem");
+    style.writing_mode = mode;
+    style.text_orientation = orientation;
+    style.direction = direction;
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text_styled(
+        &doc,
+        &mut scene,
+        content,
+        5.0,
+        7.0,
+        100.0,
+        40.0,
+        Color::from_rgba8(0, 0, 0, 255),
+        &style,
+        align,
+        cross_align,
+    );
+    scene
+}
+
+#[test]
+fn vertical_columns_preserve_newlines_and_rotate_outlines() {
+    use crate::text::MarginTextVerticalAlign::Top;
+    use shodo::geometry::{Direction::Ltr, WritingMode::*};
+    use shodo::style::TextOrientation::Mixed;
+    for (mode, dx, dy, matrix) in [
+        (VerticalRl, -10.0, 10.0, [0.0, 1.0, -1.0, 0.0, 0.0, 0.0]),
+        (VerticalLr, 10.0, 10.0, [0.0, 1.0, -1.0, 0.0, 0.0, 0.0]),
+        (SidewaysRl, -10.0, 10.0, [0.0, 1.0, -1.0, 0.0, 0.0, 0.0]),
+        (SidewaysLr, 10.0, -10.0, [0.0, -1.0, 1.0, 0.0, 0.0, 0.0]),
+    ] {
+        let scene = styled_scene("ab\ncd", mode, Mixed, Ltr, StandaloneAlign::Start, Top);
+        let positions = glyph_positions(&scene);
+        assert_eq!(positions.len(), 4, "{mode:?}");
+        assert_eq!(positions[1].0, positions[0].0);
+        assert_eq!(positions[1].1 - positions[0].1, dy, "{mode:?}");
+        assert_eq!(positions[2].0 - positions[0].0, dx, "{mode:?}");
+        assert_eq!(positions[2].1, positions[0].1);
+        for command in &scene.commands {
+            if let RenderCommand::GlyphRun(run) = command {
+                assert_eq!(run.glyph_transform.unwrap().as_coeffs(), matrix, "{mode:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn upright_vertical_outlines_are_not_rotated_or_mirrored() {
+    use shodo::geometry::{Direction::Rtl, WritingMode::VerticalRl};
+    use shodo::style::TextOrientation::Upright;
+    let scene = styled_scene(
+        "ab",
+        VerticalRl,
+        Upright,
+        Rtl,
+        StandaloneAlign::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    let positions = glyph_positions(&scene);
+    assert_eq!(positions[1].1 - positions[0].1, 10.0);
+    for command in &scene.commands {
+        if let RenderCommand::GlyphRun(run) = command {
+            assert!(run.glyph_transform.is_none());
+        }
+    }
+}
+
+#[test]
+fn trailing_blanks_do_not_move_aligned_content_in_any_flow() {
+    use crate::text::MarginTextVerticalAlign::Top;
+    use shodo::geometry::{Direction::*, WritingMode::*};
+    use shodo::style::TextOrientation::Mixed;
+    for mode in [HorizontalTb, VerticalRl, VerticalLr, SidewaysRl, SidewaysLr] {
+        for direction in [Ltr, Rtl] {
+            for align in [
+                StandaloneAlign::Start,
+                StandaloneAlign::End,
+                StandaloneAlign::Left,
+                StandaloneAlign::Right,
+                StandaloneAlign::Center,
+            ] {
+                let bare = glyph_positions(&styled_scene("ab", mode, Mixed, direction, align, Top));
+                for suffix in [" ", "\u{a0}", "\t"] {
+                    let padded = glyph_positions(&styled_scene(
+                        &format!("ab{suffix}"),
+                        mode,
+                        Mixed,
+                        direction,
+                        align,
+                        Top,
+                    ));
+                    // Ahem ASCII remains a single LTR run inside an RTL paragraph.
+                    assert_eq!(
+                        &padded[..2],
+                        bare.as_slice(),
+                        "{mode:?} {direction:?} {align:?} {suffix:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_cross_alignment_uses_the_available_width() {
+    use crate::text::MarginTextVerticalAlign::{Bottom, Middle, Top};
+    use shodo::geometry::{Direction::Ltr, WritingMode::*};
+    use shodo::style::TextOrientation::Mixed;
+    for (mode, sign) in [
+        (VerticalRl, -1.0),
+        (VerticalLr, 1.0),
+        (SidewaysRl, -1.0),
+        (SidewaysLr, 1.0),
+    ] {
+        let at = |cross| {
+            glyph_positions(&styled_scene(
+                "ab",
+                mode,
+                Mixed,
+                Ltr,
+                StandaloneAlign::Start,
+                cross,
+            ))[0]
+                .0
+        };
+        assert_eq!(at(Middle) - at(Top), sign * 45.0, "{mode:?}");
+        assert_eq!(at(Bottom) - at(Top), sign * 90.0, "{mode:?}");
+    }
+}
+
+#[test]
+fn rtl_start_and_end_align_to_opposite_physical_edges_without_mirroring() {
+    use shodo::geometry::{Direction::Rtl, WritingMode::HorizontalTb};
+    use shodo::style::TextOrientation::Mixed;
+    for (align, x) in [
+        (StandaloneAlign::Start, 85.0),
+        (StandaloneAlign::End, 5.0),
+        (StandaloneAlign::Left, 5.0),
+        (StandaloneAlign::Right, 85.0),
+        (StandaloneAlign::Center, 45.0),
+    ] {
+        let scene = styled_scene(
+            "ab",
+            HorizontalTb,
+            Mixed,
+            Rtl,
+            align,
+            crate::text::MarginTextVerticalAlign::Top,
+        );
+        assert_eq!(glyph_positions(&scene), [(x, 15.0), (x + 10.0, 15.0)]);
+        for command in &scene.commands {
+            if let RenderCommand::GlyphRun(run) = command {
+                assert!(run.glyph_transform.is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_text_wraps_to_the_box_height_not_its_width() {
+    use shodo::geometry::{Direction::Ltr, WritingMode::VerticalRl};
+    use shodo::style::TextOrientation::Mixed;
+    let scene = styled_scene(
+        "abc def",
+        VerticalRl,
+        Mixed,
+        Ltr,
+        StandaloneAlign::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    let positions = glyph_positions(&scene);
+    let mut xs: Vec<_> = positions.iter().map(|p| p.0).collect();
+    xs.sort_by(f64::total_cmp);
+    xs.dedup();
+    assert_eq!(xs.len(), 2);
+    assert_eq!(xs[1] - xs[0], 10.0);
+}
+
+#[test]
+fn overflowing_rl_columns_keep_the_first_column_at_the_right_edge() {
+    use crate::text::MarginTextVerticalAlign::Top;
+    use shodo::geometry::{
+        Direction::Ltr,
+        WritingMode::{SidewaysRl, VerticalRl},
+    };
+    use shodo::style::TextOrientation::Mixed;
+    for mode in [VerticalRl, SidewaysRl] {
+        let one = glyph_positions(&styled_scene(
+            "a",
+            mode,
+            Mixed,
+            Ltr,
+            StandaloneAlign::Start,
+            Top,
+        ));
+        let many = glyph_positions(&styled_scene(
+            &vec!["a"; 11].join("\n"),
+            mode,
+            Mixed,
+            Ltr,
+            StandaloneAlign::Start,
+            Top,
+        ));
+        assert_eq!(one[0], many[0], "{mode:?}");
+        assert_eq!(many[10].0, one[0].0 - 100.0);
+    }
+}
+
+#[test]
+fn hebrew_run_stays_at_the_rtl_start_edge_without_mirroring() {
+    use shodo::geometry::{Direction::Rtl, WritingMode::HorizontalTb};
+    use shodo::style::TextOrientation::Mixed;
+    let scene = styled_scene(
+        "\u{5d0}\u{5d1}",
+        HorizontalTb,
+        Mixed,
+        Rtl,
+        StandaloneAlign::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    let mut positions = glyph_positions(&scene);
+    positions.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(positions, [(85.0, 15.0), (95.0, 15.0)]);
+    for command in &scene.commands {
+        if let RenderCommand::GlyphRun(run) = command {
+            assert!(run.glyph_transform.is_none());
+        }
+    }
+}

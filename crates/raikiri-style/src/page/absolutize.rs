@@ -13,7 +13,7 @@ use crate::property::{
     LengthPercentageCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
     TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
     TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
-    resolve_overflow, resolve_writing_mode,
+    resolve_overflow,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -889,7 +889,9 @@ pub(super) fn absolutize_in_page_context(
         ),
         PropertyValue::Overflow(pair) => PropertyValue::Overflow(resolve_overflow(pair)),
         // ── writing-mode ─────────────────────────────────────────────────
-        PropertyValue::WritingMode(v) => PropertyValue::WritingMode(resolve_writing_mode(v)),
+        // Standalone margin text supports all writing modes. Keep the computed
+        // keyword so the page context can pass it to its margin boxes.
+        PropertyValue::WritingMode(v) => PropertyValue::WritingMode(v),
         PropertyValue::RubyPosition(v) => PropertyValue::RubyPosition(v),
         // ── letter-spacing / word-spacing ───────────────────────────────────
         PropertyValue::LetterSpacing(v) => {

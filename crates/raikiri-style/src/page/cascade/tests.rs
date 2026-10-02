@@ -2712,10 +2712,9 @@ fn absolutize_in_page_context_covers_tab_size_arm() {
     }
 }
 
-/// CSS Writing Modes resolution currently maps all supported writing
-/// modes to the horizontal-tb computed value.
+/// Page context preserves writing modes for standalone margin text.
 #[test]
-fn absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb() {
+fn absolutize_in_page_context_preserves_writing_mode() {
     let fs = ComputedLength(20.0);
     let ctx = ResolveContext::new(ComputedLength(16.0));
     let styles = Sides::all(BorderStyle::None);
@@ -2739,7 +2738,7 @@ fn absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb() {
                 OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
-            PropertyValue::WritingMode(WritingMode::HorizontalTb),
+            PropertyValue::WritingMode(specified),
             "writing-mode: {specified:?}",
         );
     }
@@ -3014,7 +3013,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 159;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 160;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3025,7 +3024,7 @@ fn phase_3_transformed_variants() -> usize {
 /// accounting for phase-2 resolution and keyword-only phase-3 transforms.
 /// The count is used to check that page declarations expose computed
 /// values rather than unresolved specified values.
-const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
+const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 4;
 
 fn raw_corpus_residue_variants() -> usize {
     // The five raw page-only inherit markers add specified-layer residue
@@ -3516,19 +3515,7 @@ property_key_samples! {
     OutlineStyle => PropertyValue::OutlineStyle(OutlineStyle::Solid),
     OutlineColor => PropertyValue::OutlineColor(OutlineColor::Resolved(GREEN)),
     OutlineOffset => PropertyValue::OutlineOffset(Length::Em(0.5)),
-    // `VerticalRl` is deliberately the "worst case" here — it is one of
-    // the 4 keywords `resolve_writing_mode` actually rewrites (->
-    // `HorizontalTb`), same reasoning as `Overflow`'s `Visible` sample
-    // above. Unlike `Direction`, `writing-mode` *does* have a
-    // specified/computed distinction in this crate (`WritingMode` doc's
-    // Non-goal section) — picking `HorizontalTb` here would make it
-    // indistinguishable from a pass-through and silently defeat the
-    // phase-3 transform classification this corpus drives. Placed last
-    // to match `PropertyKey`'s own declaration order (`property.rs`),
-    // per this macro's `property_key_samples!` doc contract.
-    // Future work: when vertical writing-mode support keeps the specified
-    // value at the computed layer, revisit both the worst-case justification
-    // for this sample and `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`.
+    // Non-initial writing mode remains available to margin-box layout.
     WritingMode => PropertyValue::WritingMode(WritingMode::VerticalRl),
     RubyPosition => PropertyValue::RubyPosition(RubyPosition::Over),
     // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 — keyword-only,
@@ -4734,11 +4721,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `ZIndexValue` above.
             | PropertyValue::Orphans(_)
             | PropertyValue::Widows(_)
-            // `WritingMode` carries no length either. Its identity-collapse
-            // to `HorizontalTb` (`resolve_writing_mode`) is real phase-3
-            // work, same as `OverflowX`/`OverflowY`'s cross-axis coupling
-            // above — but that collapse has nothing to do with *length*
-            // residue, which is all this detector checks.
+            // Writing mode is a keyword with no length residue.
             | PropertyValue::WritingMode(_)
             | PropertyValue::RubyPosition(_)
             // `background-repeat`/`background-attachment`/`background-clip`/
@@ -4761,7 +4744,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // it reports `None` unconditionally regardless of the value's
             // range. The `[0,1]` clamp is real phase-3 work
             // (`absolutize_in_page_context`'s `Opacity` arm), same as
-            // `OverflowX`/`WritingMode` above — see
+            // `OverflowX`/`OverflowY` above — see
             // `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE`'s doc for how that
             // is accounted for.
             | PropertyValue::Opacity(_)
