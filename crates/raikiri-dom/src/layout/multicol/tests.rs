@@ -875,6 +875,80 @@ fn tiny_fragmentainers_keep_terminal_text_lines_visible() {
 }
 
 #[test]
+fn direct_nested_text_root_records_each_column_range() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;columns:2;column-gap:0;max-height:40px"),
+    );
+    let paragraph = doc.append_element(
+        Some(multicol),
+        "p",
+        Style::default(),
+        Some("display:block;margin:0;font-size:10px;line-height:10px"),
+    );
+    for _ in 0..8 {
+        doc.append_text(paragraph, "line");
+        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+    }
+
+    layout_nested_flex_float_fixture(&mut doc);
+    let lines = doc.nodes[paragraph].ifc_lines().expect("paragraph lines");
+    let fragments: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == paragraph && fragment.line_start.is_some())
+        .collect();
+    assert!(fragments.len() >= 2, "text must span columns");
+    assert_eq!(
+        fragments.last().expect("last fragment").line_end,
+        Some(lines.len())
+    );
+}
+
+#[test]
+fn projected_multicol_inline_child_refreshes_text_ranges() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;columns:2;column-gap:0;height:20px"),
+    );
+    let first = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block;height:30px;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(first, "one");
+    doc.append_element(Some(first), "br", Style::default(), None::<&str>);
+    let second = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(second, "two");
+    doc.append_element(Some(second), "br", Style::default(), None::<&str>);
+
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[multicol].style.display, Display::Flex);
+    assert!(doc.nodes[first].is_ifc_root(), "first child must own lines");
+    assert!(
+        doc.nodes[first].ifc_multicol_fragments().is_some(),
+        "projected text ranges must be assigned"
+    );
+}
+
+#[test]
 fn reused_fragment_clip_expands_to_later_child_overflow() {
     let mut fragment = crate::fragment::LayoutFragment {
         node_id: 0,
