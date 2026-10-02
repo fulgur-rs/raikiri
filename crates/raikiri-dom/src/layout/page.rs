@@ -31,16 +31,31 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     None
 }
 
+/// Return the document's direct `<html>` root only when it contains the selected body.
+pub(crate) fn find_html_root_containing_body(doc: &Document, body_id: usize) -> Option<usize> {
+    let mut ancestor = doc.nodes.get(body_id)?.parent;
+    while let Some(node_id) = ancestor {
+        let node = &doc.nodes[node_id];
+        if node.parent == Some(doc.root) && node.tag_name() == Some("html") {
+            return Some(node_id);
+        }
+        if node_id == doc.root {
+            break;
+        }
+        ancestor = node.parent;
+    }
+    None
+}
+
 /// Force the `<body>` taffy::Style.size to the PageBox width / height (CSS px).
 ///
-/// CSS Paged Media defines initial containing block = @page size. Since @page is
-/// not yet supported, the current implementation injects it into body.style.size.
-/// When @page cascade + per-page PageBox arrive, move this site to the `<html>` root style.
+/// Legacy helper retained for its unit test while page sizing is installed on
+/// the `<html>` initial containing block by the active layout pipeline.
 #[cfg_attr(
     not(test),
     expect(
         dead_code,
-        reason = "superseded in the layout pipeline by apply_page_content_box_to_body; \
+        reason = "superseded in the layout pipeline by apply_page_content_box_to_root; \
                   kept for its unit tests and the intra-doc links that describe it"
     )
 )]
@@ -51,9 +66,9 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
     };
 }
 
-pub(crate) fn apply_page_content_box_to_body(
+pub(crate) fn apply_page_content_box_to_root(
     doc: &mut Document,
-    body_id: usize,
+    root_id: usize,
     page_box: PageBox,
     margins: PageMargins,
     insets: PageContentInsets,
@@ -62,7 +77,7 @@ pub(crate) fn apply_page_content_box_to_body(
     // establish a narrower inline containing block for document flow.  Keep
     // the initial containing-block width at the margin content width; the
     // paint walk applies the horizontal inset when positioning the flow.
-    doc.nodes[body_id].style.size = Size {
+    doc.nodes[root_id].style.size = Size {
         width: Dimension::length(margins.content_width(page_box).max(0.0)),
         height: Dimension::length(
             (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0),

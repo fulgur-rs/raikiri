@@ -27,14 +27,13 @@ use parley::{
     TextWrapMode as ParleyTextWrapMode, WordBreak as ParleyWordBreak,
 };
 use raikiri_style::property::{
-    AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
-    CalcLengthPercentage, ClearValue, ColumnCountValue, ContentAlignmentValue, Direction,
-    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
-    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length,
-    LengthOrAuto, LineBreak, OverflowValue, OverflowWrap, PositionValue, PropertyKey,
-    PropertyValue, RubyPosition, SelfAlignmentValue, TextAlign, TextAutospace, TextJustify,
-    TextTransform, TextWrapMode, VerticalAlign, WhiteSpace, WordBreak, WordSpaceTransform,
-    WritingMode,
+    AlignSelfValue, BoxSizing as StyleBoxSizing, BreakBetween, CalcLengthPercentage, ClearValue,
+    ColumnCountValue, ContentAlignmentValue, Direction, DisplayValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, FontStyle as StyleFontStyle, GridAutoFlowValue, GridLineValue,
+    GridRepeatCount, GridTemplateAreasValue, Hyphens, Length, LengthOrAuto, LineBreak,
+    OverflowValue, OverflowWrap, PositionValue, PropertyKey, PropertyValue, RubyPosition,
+    SelfAlignmentValue, TextAlign, TextAutospace, TextJustify, TextTransform, TextWrapMode,
+    VerticalAlign, WhiteSpace, WordBreak, WordSpaceTransform, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,

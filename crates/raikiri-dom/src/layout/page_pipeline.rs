@@ -134,7 +134,7 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 /// - Clear every Node.text_layout to `None` (re-entrance safety)
 /// - Bridge computed values to taffy::Style with `apply_computed_to_style` (currently a no-op)
 /// - Shape every Text node with `preshape_text` and store it in Node.text_layout
-/// - Set body.style.size to the page content box with `apply_page_content_box_to_body`
+/// - Set the html initial containing block to the page content box
 /// - Run taffy with `compute_root_layout` and store results in Node.unrounded_layout
 ///
 /// # Errors
@@ -250,35 +250,15 @@ pub fn layout_single_page(
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
 
-    // The minimal UA sheet contributes the usual 8px body margin.  The body
-    // is also used as the synthetic page root, so feeding that UA margin into
-    // taffy would apply it twice to ordinary element children.  Keep the
-    // computed value for the page cursor/paint walk and remove only the exact
-    // UA-origin sides from the synthetic root style.  The origin metadata is
-    // needed because an authored `margin: 8px` is otherwise indistinguishable
-    // from the UA rule after value computation.
-    {
-        let used = cascade.computed[body_id].margin;
-        let style_margin = &mut document.nodes[body_id].style.margin;
-        let non_ua = cascade.non_ua_margin_sides.get(body_id);
-        let is_ua_default = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
-        if is_ua_default(used.top) && !non_ua.is_some_and(|sides| sides.top) {
-            style_margin.top = LengthPercentageAuto::length(0.0);
-        }
-        if is_ua_default(used.right) && !non_ua.is_some_and(|sides| sides.right) {
-            style_margin.right = LengthPercentageAuto::length(0.0);
-        }
-        if is_ua_default(used.bottom) && !non_ua.is_some_and(|sides| sides.bottom) {
-            style_margin.bottom = LengthPercentageAuto::length(0.0);
-        }
-        if is_ua_default(used.left) && !non_ua.is_some_and(|sides| sides.left) {
-            style_margin.left = LengthPercentageAuto::length(0.0);
-        }
-    }
+    // The body participates in normal block layout below the html initial
+    // containing block. This lets Taffy apply UA and authored body margins to
+    // the body box and its children instead of dropping the UA sides because
+    // body was being used as the synthetic root.
+    let layout_root_id = find_html_root_containing_body(document, body_id).unwrap_or(body_id);
 
-    // Step 4: force body.style.size to the page content box, not the full paper size.
-    // Page margins are painted/represented outside this taffy root.
-    apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
+    // Step 4: establish the page content box on the html initial containing
+    // block. Page margins are painted/represented outside this Taffy root.
+    apply_page_content_box_to_root(document, layout_root_id, page_box, margins, insets);
     // Taffy's static-position absolute fallback does not account for a
     // resolved horizontal margin when width/left/right are all auto. Resolve
     // that narrow case before compute so descendants are shaped against the
@@ -288,7 +268,7 @@ pub fn layout_single_page(
     // Step 5: taffy compute
     compute_root_layout(
         document,
-        TaffyNodeId::from(body_id),
+        TaffyNodeId::from(layout_root_id),
         taffy::Size {
             width: AvailableSpace::Definite(content_width),
             height: AvailableSpace::Definite(content_height),
@@ -307,7 +287,7 @@ pub fn layout_single_page(
     // finite values. This check therefore sits one layer above it; see the
     // `enforce_layout_invariants` documentation. Events enter the same
     // `document.layout_warnings` buffer as Steps 1 / 2; Step 6 drains it.
-    enforce_layout_invariants(document, body_id);
+    enforce_layout_invariants(document, layout_root_id);
 
     // Step 6: replay buffered LayoutWarn events.
     //
@@ -1020,15 +1000,12 @@ pub fn layout_pages_with_page_geometry(
     })?;
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    // The current single-page bridge collapses the root box to zero size, so
-    // html/body block-start margins are not represented in descendant
-    // coordinates. Carry both margins into the initial fragmentainer cursor
-    // instead of treating the first text run as page-zero content.
-    let html_margin_top = document.nodes[document.root]
-        .children
-        .iter()
-        .copied()
-        .find(|&node_id| document.nodes[node_id].tag_name() == Some("html"))
+    // The Taffy root has a fixed page box, so its own block-start margin is
+    // absent from its layout location. Carry the html root margin into the
+    // initial fragmentainer cursor; the body's margin is already represented
+    // by the body box location below that root.
+    let html_id = find_html_root_containing_body(document, body_id);
+    let html_margin_top = html_id
         .and_then(|html_id| {
             used_style_length_percentage_auto(
                 document.nodes[html_id].style.margin.top,
@@ -1043,34 +1020,18 @@ pub fn layout_pages_with_page_geometry(
             .map(|value| value.max(0.0))
         })
         .unwrap_or(0.0);
-    let body_has_element_child = document.nodes[body_id]
-        .children
-        .iter()
-        .any(|&child_id| document.nodes[child_id].kind() == NodeKind::Element);
-    let body_has_canvas_background = {
-        let body = &cascade.computed[body_id];
-        body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
-    };
-    let body_has_direct_text = document.nodes[body_id].children.iter().any(|&child_id| {
-        document.nodes[child_id].kind() == NodeKind::Text
-            && document.nodes[child_id].unrounded_layout.size.height > 0.0
-    });
-    let body_top_is_non_ua = cascade
-        .non_ua_margin_sides
-        .get(body_id)
-        .is_some_and(|sides| sides.top);
-    let body_margin_top = if body_top_is_non_ua
-        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
-    {
-        let used = if body_top_is_non_ua {
-            used_style_length_percentage_auto(
-                document.nodes[body_id].style.margin.top,
-                margins.content_width(page_box),
-            )
-        } else {
-            None
-        };
-        used.or_else(|| {
+    // With an html root, the body's normal block layout already carries its
+    // margin (including collapse with its first in-flow child) into the body
+    // box location. Candidate collection starts at body, so only the html
+    // root's own margin remains an explicit flow offset. The body-only
+    // fallback retains the previous synthetic-root behavior for direct DOM
+    // callers that provide no html element.
+    let body_root_fallback_margin = if html_id.is_none() {
+        used_style_length_percentage_auto(
+            document.nodes[body_id].style.margin.top,
+            margins.content_width(page_box),
+        )
+        .or_else(|| {
             used_computed_length_percentage_or_auto(
                 cascade.computed[body_id].margin.top,
                 margins.content_width(page_box),
@@ -1081,7 +1042,7 @@ pub fn layout_pages_with_page_geometry(
     } else {
         0.0
     };
-    let root_margin_top = html_margin_top + body_margin_top;
+    let root_margin_top = html_margin_top + body_root_fallback_margin;
     // Keep the scheduled inline size identical to the first layout pass;
     // page border/padding are applied as a paint offset, not as a narrower
     // containing block.

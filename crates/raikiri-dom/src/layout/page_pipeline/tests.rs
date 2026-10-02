@@ -1,6 +1,193 @@
 use super::*;
 use taffy::Style;
 
+#[test]
+fn paged_body_auto_width_uses_cascaded_horizontal_margins() {
+    use raikiri_style::{Origin, build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    fn measure(body_style: Option<&str>) -> (f32, f32) {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), body_style);
+        let child = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+        let mut rules = build_rule_tree(&doc);
+        rules.add_stylesheet("body { margin: 8px; }", Origin::UserAgent);
+        rules.add_stylesheet("@page { size: 800px 400px; margin: 0; }", Origin::Author);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        page.height = 400.0;
+        layout_single_page(&mut doc, &cascade, page, FontContext::new()).expect("layout Ok");
+        let body_x = doc.nodes[body].unrounded_layout.location.x;
+        let layout = doc.nodes[child].unrounded_layout;
+        (body_x + layout.location.x, layout.size.width)
+    }
+
+    let cases = [
+        ("UA body margin", None, 8.0, 784.0),
+        ("authored margin: 0", Some("margin:0"), 0.0, 800.0),
+        ("authored margin: 8px", Some("margin:8px"), 8.0, 784.0),
+        (
+            "authored left side with UA right side",
+            Some("margin-left:12px"),
+            12.0,
+            780.0,
+        ),
+    ];
+    for (label, body_style, expected_x, expected_width) in cases {
+        let (actual_x, actual_width) = measure(body_style);
+        assert!(
+            (actual_x - expected_x).abs() < 0.01,
+            "{label}: expected child x={expected_x}, got {actual_x}"
+        );
+        assert!(
+            (actual_width - expected_width).abs() < 0.01,
+            "{label}: expected child width={expected_width}, got {actual_width}"
+        );
+    }
+}
+
+#[test]
+fn paged_body_outside_html_uses_body_as_layout_root() {
+    use raikiri_style::{Origin, build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(0), "body", Style::default(), None::<&str>);
+    let child = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let mut rules = build_rule_tree(&doc);
+    rules.add_stylesheet(
+        "html, body, div { display: block; } body { margin: 8px; }",
+        Origin::UserAgent,
+    );
+    rules.add_stylesheet("@page { size: 800px 400px; margin: 0; }", Origin::Author);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 400.0;
+
+    layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    assert_eq!(doc.nodes[child].unrounded_layout.size.height, 10.0);
+}
+
+#[test]
+fn paged_body_margin_collapses_with_first_block_child() {
+    use raikiri_style::{Origin, build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    for (child_margin, expected_top) in [(4.0, 8.0), (16.0, 16.0)] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let child = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("margin-top:{child_margin}px;height:10px")),
+        );
+        let mut rules = build_rule_tree(&doc);
+        rules.add_stylesheet(
+            "html, body, div { display: block; } body { margin: 8px; }",
+            Origin::UserAgent,
+        );
+        rules.add_stylesheet("@page { size: 800px 400px; margin: 0; }", Origin::Author);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        page.height = 400.0;
+
+        layout_single_page(&mut doc, &cascade, page, FontContext::new()).expect("layout Ok");
+        let body_top = doc.nodes[body].unrounded_layout.location.y;
+        let child_top = body_top + doc.nodes[child].unrounded_layout.location.y;
+        assert!(
+            (child_top - expected_top).abs() < 0.01,
+            "body margin 8px and first child margin {child_margin}px should collapse to {expected_top}px, got {child_top}"
+        );
+    }
+}
+
+#[test]
+fn paged_direct_body_text_retains_ua_margin_with_canvas_background() {
+    use raikiri_style::{Origin, build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("background-color:red"),
+    );
+    let text = doc.append_text(body, "direct body text");
+    let mut rules = build_rule_tree(&doc);
+    rules.add_stylesheet(
+        "html, body { display: block; } body { margin: 8px; }",
+        Origin::UserAgent,
+    );
+    rules.add_stylesheet("@page { size: 800px 400px; margin: 0; }", Origin::Author);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 400.0;
+
+    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    assert_eq!(slices.len(), 1);
+    let body_layout = doc.nodes[body].unrounded_layout;
+    let text_layout = doc.nodes[text].unrounded_layout;
+    assert!((body_layout.location.x - 8.0).abs() < 0.01);
+    assert!((body_layout.location.y - 8.0).abs() < 0.01);
+    assert!(
+        text_layout.size.height > 0.0,
+        "direct body text must still lay out"
+    );
+    assert_ne!(cascade.computed[body].background_color.a, 0);
+}
+
+#[test]
+fn paged_body_margin_applies_to_first_page_only_across_forced_break() {
+    use raikiri_style::{Origin, build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let second = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("break-before:page;height:10px"),
+    );
+    let mut rules = build_rule_tree(&doc);
+    rules.add_stylesheet(
+        "html, body, div { display: block; } body { margin: 8px; }",
+        Origin::UserAgent,
+    );
+    rules.add_stylesheet("@page { size: 800px 100px; margin: 0; }", Origin::Author);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 100.0;
+
+    let slices = layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+    assert_eq!(slices.len(), 2);
+    let first_top =
+        doc.nodes[body].unrounded_layout.location.y + doc.nodes[first].unrounded_layout.location.y;
+    let second_top =
+        doc.nodes[body].unrounded_layout.location.y + doc.nodes[second].unrounded_layout.location.y;
+    assert!(
+        (first_top - 8.0).abs() < 0.01,
+        "first page body margin: {first_top}"
+    );
+    assert!(
+        (second_top - 100.0).abs() < 0.01,
+        "second page starts at page origin: {second_top}"
+    );
+}
+
 // ── layout_single_page driver (Task 7) ──────────────────────
 
 fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
