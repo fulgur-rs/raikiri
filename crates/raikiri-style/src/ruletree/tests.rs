@@ -142,25 +142,147 @@ fn declarations_after_a_nested_rule_keep_their_cascade_position() {
 #[test]
 fn each_nesting_selector_expands_over_the_parent_list() {
     assert_eq!(
-        combine_nested_selectors(".a, .b", "& + &"),
+        combine_nested_selectors(".a, .b", "& + &", &mut NestingBudget::new()).unwrap(),
         ".a + .a, .a + .b, .b + .a, .b + .b"
     );
     assert_eq!(
-        combine_nested_selectors(".a", "> span, &:hover"),
+        combine_nested_selectors(".a", "> span, &:hover", &mut NestingBudget::new()).unwrap(),
         ".a > span, .a:hover"
     );
     // `&` inside a string or escaped is not a nesting selector.
     assert_eq!(
-        combine_nested_selectors(".a", r#"&[title="x&y"]"#),
+        combine_nested_selectors(".a", r#"&[title="x&y"]"#, &mut NestingBudget::new()).unwrap(),
         r#".a[title="x&y"]"#
     );
-    assert_eq!(combine_nested_selectors(".a", r"&.x\&y"), r".a.x\&y");
+    assert_eq!(
+        combine_nested_selectors(".a", r"&.x\&y", &mut NestingBudget::new()).unwrap(),
+        r".a.x\&y"
+    );
+}
+
+#[test]
+fn excessive_nesting_expansion_does_not_partially_apply_a_stylesheet() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("p { color: red }", Origin::Author);
+    let source = format!(
+        "before {{color:blue}} .a, .b {{ {} {{color:green}} }} after {{color:blue}}",
+        vec!["&"; 14].join(" + ")
+    );
+    tree.add_stylesheet(&source, Origin::Author);
+    assert_eq!(tree.style_rules.len(), 1);
+    tree.add_stylesheet("q { color: green }", Origin::Author);
+    assert_eq!(tree.style_rules.len(), 2);
+}
+
+#[test]
+fn nesting_budget_checks_bytes_before_copying() {
+    let mut budget = NestingBudget {
+        bytes: 4,
+        items: 10,
+    };
+    let mut output = String::new();
+    budget.append(&mut output, "éé").unwrap();
+    assert_eq!(budget.bytes, 0);
+    assert!(budget.append(&mut output, "x").is_err());
+    assert_eq!(output, "éé");
+}
+
+#[test]
+fn nesting_budget_covers_implicit_products_and_single_parent_length() {
+    let mut items = NestingBudget {
+        bytes: 4096,
+        items: 6,
+    };
+    assert!(combine_nested_selectors(".a,.b", ".c,.d", &mut items).is_err());
+    let mut bytes = NestingBudget {
+        bytes: 128,
+        items: 4096,
+    };
+    assert!(combine_nested_selectors(".long-parent", "& & & & & &", &mut bytes).is_err());
+}
+
+#[test]
+fn nesting_budget_bounds_length_amplification_across_multiple_levels() {
+    let mut source = "color:red;".to_owned();
+    for _ in 0..12 {
+        source = format!("& & {{{source}}}");
+    }
+    let source = format!(".long-parent {{{source}}}");
+    let mut limited = NestingBudget {
+        bytes: 4096,
+        items: MAX_NESTING_ITEMS,
+    };
+    assert!(expand_css_nesting_at_depth(&source, &mut limited, 0).is_err());
+}
+
+#[test]
+fn nesting_budget_is_shared_across_siblings_and_wrappers() {
+    let source = ".a { & { color: red } }";
+    let mut measured = NestingBudget::new();
+    expand_css_nesting_at_depth(source, &mut measured, 0).unwrap();
+    let cost = MAX_NESTING_ITEMS - measured.items;
+    let mut exact = NestingBudget {
+        bytes: MAX_NESTING_WORK_BYTES,
+        items: cost,
+    };
+    assert!(expand_css_nesting_at_depth(source, &mut exact, 0).is_ok());
+    assert_eq!(exact.items, 0);
+    for doubled in [
+        format!("{source}{source}"),
+        format!("@media all {{{source}}} @future {{{source}}}"),
+        format!("@layer example {{{source}{source}}}"),
+    ] {
+        let mut limited = NestingBudget {
+            bytes: MAX_NESTING_WORK_BYTES,
+            items: cost,
+        };
+        assert!(expand_css_nesting_at_depth(&doubled, &mut limited, 0).is_err());
+    }
+}
+
+#[test]
+fn nesting_budget_counts_repeated_declaration_output() {
+    let source = ".long-parent { color:red; & {} color:blue; & {} color:green; }";
+    let mut measured = NestingBudget::new();
+    let output = expand_css_nesting_at_depth(source, &mut measured, 0).unwrap();
+    // Three declaration runs and the two empty nested rules each repeat the selector.
+    assert_eq!(output.matches(".long-parent{").count(), 5);
+    let cost = MAX_NESTING_WORK_BYTES - measured.bytes;
+    let mut exact = NestingBudget {
+        bytes: cost,
+        items: MAX_NESTING_ITEMS,
+    };
+    assert_eq!(
+        expand_css_nesting_at_depth(source, &mut exact, 0).unwrap(),
+        output
+    );
+    let mut short = NestingBudget {
+        bytes: cost - 1,
+        items: MAX_NESTING_ITEMS,
+    };
+    assert!(expand_css_nesting_at_depth(source, &mut short, 0).is_err());
+}
+
+#[test]
+fn nesting_depth_is_bounded_for_qualified_and_at_rule_recursion() {
+    for opener in ["@future {", ".a {"] {
+        let source = format!(
+            "{}p {{ color:red }}{}",
+            opener.repeat(MAX_NESTING_DEPTH + 2),
+            "}".repeat(MAX_NESTING_DEPTH + 2)
+        );
+        assert!(expand_css_nesting(&source).is_err());
+    }
 }
 
 #[test]
 fn nested_selector_split_handles_quotes_parentheses_and_brackets() {
     assert_eq!(
-        split_top_level_selector_list(r#":is(.a, .b), [data-x="a\,b"], [data-x="c,d"]"#),
+        split_top_level_selector_list(
+            r#":is(.a, .b), [data-x="a\,b"], [data-x="c,d"]"#,
+            &mut NestingBudget::new()
+        )
+        .unwrap(),
         vec![
             ":is(.a, .b)".to_owned(),
             r#"[data-x="a\,b"]"#.to_owned(),

@@ -75,37 +75,87 @@ fn expand_supports(source: &str) -> String {
 /// rule tree. The parser intentionally keeps this pass source-based: it handles
 /// nested qualified rules, preserves at-rules, and leaves declaration values,
 /// strings, comments, and function arguments opaque to the brace scanner.
-fn expand_css_nesting(source: &str) -> String {
-    let mut output = String::with_capacity(source.len());
+fn expand_css_nesting(source: &str) -> Result<String, ()> {
+    expand_css_nesting_at_depth(source, &mut NestingBudget::new(), 0)
+}
+
+// One stylesheet shares these limits across siblings, wrappers, and every
+// recursive expansion. Charge scans and copies before allocating their output.
+const MAX_NESTING_WORK_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NESTING_ITEMS: usize = 4096;
+const MAX_NESTING_DEPTH: usize = 512;
+
+struct NestingBudget {
+    bytes: usize,
+    items: usize,
+}
+
+impl NestingBudget {
+    fn new() -> Self {
+        Self {
+            bytes: MAX_NESTING_WORK_BYTES,
+            items: MAX_NESTING_ITEMS,
+        }
+    }
+
+    fn consume_bytes(&mut self, bytes: usize) -> Result<(), ()> {
+        self.bytes = self.bytes.checked_sub(bytes).ok_or(())?;
+        Ok(())
+    }
+
+    fn consume_items(&mut self, items: usize) -> Result<(), ()> {
+        self.items = self.items.checked_sub(items).ok_or(())?;
+        Ok(())
+    }
+
+    fn append(&mut self, output: &mut String, value: &str) -> Result<(), ()> {
+        self.consume_bytes(value.len())?;
+        output.push_str(value);
+        Ok(())
+    }
+}
+
+fn expand_css_nesting_at_depth(
+    source: &str,
+    budget: &mut NestingBudget,
+    depth: usize,
+) -> Result<String, ()> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(());
+    }
+    budget.consume_bytes(source.len())?;
+    let mut output = String::new();
     let mut cursor = 0;
     while let Some((kind, index)) = next_css_top_level_construct(source, cursor) {
         match kind {
             b';' => {
-                output.push_str(&source[cursor..=index]);
+                budget.append(&mut output, &source[cursor..=index])?;
                 cursor = index + 1;
             }
             b'{' => {
                 let Some(close) = matching_brace(source, index) else {
-                    output.push_str(&source[cursor..]);
-                    return output;
+                    budget.append(&mut output, &source[cursor..])?;
+                    return Ok(output);
                 };
                 let prelude = &source[cursor..index];
                 let body = &source[index + 1..close];
                 if prelude.trim_start().starts_with('@') {
-                    output.push_str(prelude);
-                    output.push('{');
-                    output.push_str(&expand_css_nesting(body));
-                    output.push('}');
+                    budget.append(&mut output, prelude)?;
+                    budget.append(&mut output, "{")?;
+                    let expanded = expand_css_nesting_at_depth(body, budget, depth + 1)?;
+                    budget.append(&mut output, &expanded)?;
+                    budget.append(&mut output, "}")?;
                 } else {
-                    output.push_str(&flatten_css_style_rule(prelude, body));
+                    let expanded = flatten_css_style_rule(prelude, body, budget, depth)?;
+                    budget.append(&mut output, &expanded)?;
                 }
                 cursor = close + 1;
             }
             _ => unreachable!("next_css_top_level_construct only returns ; or {{"), // cov:ignore: helper returns only semicolon or block-opener tags.
         }
     }
-    output.push_str(&source[cursor..]);
-    output
+    budget.append(&mut output, &source[cursor..])?;
+    Ok(output)
 }
 
 /// Return the next top-level declaration terminator or block opener.
@@ -163,27 +213,36 @@ fn next_css_top_level_construct(source: &str, from: usize) -> Option<(u8, usize)
     None
 }
 
-fn flatten_css_style_rule(prelude: &str, body: &str) -> String {
-    let unchanged = || {
-        let mut unchanged = String::with_capacity(prelude.len() + body.len() + 2);
-        unchanged.push_str(prelude);
-        unchanged.push('{');
-        unchanged.push_str(body);
-        unchanged.push('}');
-        unchanged
+fn flatten_css_style_rule(
+    prelude: &str,
+    body: &str,
+    budget: &mut NestingBudget,
+    depth: usize,
+) -> Result<String, ()> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(());
+    }
+    budget.consume_bytes(body.len())?;
+    let unchanged = |budget: &mut NestingBudget| {
+        let mut unchanged = String::new();
+        budget.append(&mut unchanged, prelude)?;
+        budget.append(&mut unchanged, "{")?;
+        budget.append(&mut unchanged, body)?;
+        budget.append(&mut unchanged, "}")?;
+        Ok(unchanged)
     };
-    let Some(segments) = split_css_nested_body(body) else {
-        return unchanged();
+    let Some(segments) = split_css_nested_body(body, budget)? else {
+        return unchanged(budget);
     };
     let selector = prelude.trim();
     // cov:ignore: callers only pass qualified-rule preludes; at-rules are routed elsewhere.
     if selector.is_empty() || selector.starts_with('@') {
-        return unchanged(); // cov:ignore: see above.
+        return unchanged(budget); // cov:ignore: see above.
     }
 
     let leading_len = prelude.len() - prelude.trim_start().len();
-    let mut output = String::with_capacity(prelude.len() + body.len() + 32);
-    output.push_str(&prelude[..leading_len]);
+    let mut output = String::new();
+    budget.append(&mut output, &prelude[..leading_len])?;
     for segment in segments {
         match segment {
             // Declarations keep their source position relative to nested
@@ -194,19 +253,20 @@ fn flatten_css_style_rule(prelude: &str, body: &str) -> String {
                 if declarations.trim().is_empty() {
                     continue;
                 }
-                output.push_str(selector);
-                output.push('{');
-                output.push_str(&declarations);
-                output.push_str("}\n");
+                budget.append(&mut output, selector)?;
+                budget.append(&mut output, "{")?;
+                budget.append(&mut output, &declarations)?;
+                budget.append(&mut output, "}\n")?;
             }
             NestedSegment::Rule(nested_selector, nested_body) => {
-                let combined = combine_nested_selectors(selector, &nested_selector);
-                output.push_str(&flatten_css_style_rule(&combined, &nested_body));
-                output.push('\n');
+                let combined = combine_nested_selectors(selector, &nested_selector, budget)?;
+                let expanded = flatten_css_style_rule(&combined, &nested_body, budget, depth + 1)?;
+                budget.append(&mut output, &expanded)?;
+                budget.append(&mut output, "\n")?;
             }
         }
     }
-    output
+    Ok(output)
 }
 
 /// A rule body split in source order.
@@ -220,7 +280,10 @@ enum NestedSegment {
 /// Split a rule body into declaration runs and nested qualified-rule blocks,
 /// in source order. Returns `None` when the body has no nested rules or
 /// contains a nested construct outside this pass's qualified-rule subset.
-fn split_css_nested_body(body: &str) -> Option<Vec<NestedSegment>> {
+fn split_css_nested_body(
+    body: &str,
+    budget: &mut NestingBudget,
+) -> Result<Option<Vec<NestedSegment>>, ()> {
     let mut segments = Vec::new();
     let mut has_nested_rule = false;
     let mut segment_start = 0;
@@ -229,12 +292,15 @@ fn split_css_nested_body(body: &str) -> Option<Vec<NestedSegment>> {
         match kind {
             b';' => cursor = index + 1,
             b'{' => {
-                let close = matching_brace(body, index)?;
+                let Some(close) = matching_brace(body, index) else {
+                    return Ok(None);
+                };
                 let nested_selector = body[cursor..index].trim();
                 // cov:ignore: at-rules and empty nested preludes remain opaque to this qualified-rule pass.
                 if nested_selector.is_empty() || nested_selector.starts_with('@') {
-                    return None;
+                    return Ok(None);
                 }
+                budget.consume_items(2)?;
                 segments.push(NestedSegment::Declarations(
                     body[segment_start..cursor].to_owned(),
                 ));
@@ -250,12 +316,13 @@ fn split_css_nested_body(body: &str) -> Option<Vec<NestedSegment>> {
         }
     }
     if !has_nested_rule {
-        return None;
+        return Ok(None);
     }
+    budget.consume_items(1)?;
     segments.push(NestedSegment::Declarations(
         body[segment_start..].to_owned(),
     ));
-    Some(segments)
+    Ok(Some(segments))
 }
 
 /// Resolve a nested selector list against its parent selector list.
@@ -266,36 +333,67 @@ fn split_css_nested_body(body: &str) -> Option<Vec<NestedSegment>> {
 /// four pairings. Matching is equivalent; specificity differs from `:is()`
 /// only when the parent list mixes selectors of different specificity. A
 /// nested selector without `&` is relative to the parent as a descendant.
-fn combine_nested_selectors(parent: &str, nested: &str) -> String {
-    let parents = split_top_level_selector_list(parent);
+fn combine_nested_selectors(
+    parent: &str,
+    nested: &str,
+    budget: &mut NestingBudget,
+) -> Result<String, ()> {
+    let parents = split_top_level_selector_list(parent, budget)?;
     let mut combined = Vec::new();
-    for nested in split_top_level_selector_list(nested) {
-        let pieces = split_on_nesting_selector(&nested);
+    for nested in split_top_level_selector_list(nested, budget)? {
+        let pieces = split_on_nesting_selector(&nested, budget)?;
         if pieces.len() == 1 {
+            budget.consume_items(parents.len())?;
             for parent in &parents {
+                budget.consume_bytes(
+                    parent
+                        .len()
+                        .checked_add(nested.len())
+                        .and_then(|len| len.checked_add(1))
+                        .ok_or(())?,
+                )?;
                 combined.push(format!("{parent} {nested}"));
             }
             continue;
         }
+        budget.consume_items(1)?;
+        budget.consume_bytes(pieces[0].len())?;
         let mut expansions = vec![pieces[0].to_owned()];
         for piece in &pieces[1..] {
-            expansions = expansions
-                .iter()
-                .flat_map(|prefix| {
-                    parents
-                        .iter()
-                        .map(move |parent| format!("{prefix}{parent}{piece}"))
-                })
-                .collect();
+            let count = expansions.len().checked_mul(parents.len()).ok_or(())?;
+            budget.consume_items(count)?;
+            let mut next = Vec::new();
+            for prefix in &expansions {
+                for parent in &parents {
+                    let length = prefix
+                        .len()
+                        .checked_add(parent.len())
+                        .and_then(|len| len.checked_add(piece.len()))
+                        .ok_or(())?;
+                    budget.consume_bytes(length)?;
+                    next.push(format!("{prefix}{parent}{piece}"));
+                }
+            }
+            expansions = next;
         }
         combined.extend(expansions);
     }
-    combined.join(", ")
+    let separators = combined.len().saturating_sub(1).checked_mul(2).ok_or(())?;
+    let length = combined
+        .iter()
+        .try_fold(separators, |len, value| len.checked_add(value.len()))
+        .ok_or(())?;
+    budget.consume_bytes(length)?;
+    Ok(combined.join(", "))
 }
 
 /// Split `selector` around each nesting selector `&`, skipping `&` inside
 /// quoted strings and escaped `\&`.
-fn split_on_nesting_selector(selector: &str) -> Vec<&str> {
+fn split_on_nesting_selector<'a>(
+    selector: &'a str,
+    budget: &mut NestingBudget,
+) -> Result<Vec<&'a str>, ()> {
+    budget.consume_bytes(selector.len())?;
     let bytes = selector.as_bytes();
     let mut pieces = Vec::new();
     let mut start = 0;
@@ -312,6 +410,7 @@ fn split_on_nesting_selector(selector: &str) -> Vec<&str> {
             Some(_) => {}
             None if byte == b'\'' || byte == b'"' => quote = Some(byte),
             None if byte == b'&' => {
+                budget.consume_items(1)?;
                 pieces.push(&selector[start..index]);
                 start = index + 1;
             }
@@ -319,11 +418,16 @@ fn split_on_nesting_selector(selector: &str) -> Vec<&str> {
         }
         index += 1;
     }
+    budget.consume_items(1)?;
     pieces.push(&selector[start.min(selector.len())..]);
-    pieces
+    Ok(pieces)
 }
 
-fn split_top_level_selector_list(value: &str) -> Vec<String> {
+fn split_top_level_selector_list(
+    value: &str,
+    budget: &mut NestingBudget,
+) -> Result<Vec<String>, ()> {
+    budget.consume_bytes(value.len())?;
     let mut result = Vec::new();
     let mut start = 0;
     let mut index = 0;
@@ -355,6 +459,8 @@ fn split_top_level_selector_list(value: &str) -> Vec<String> {
                 b',' if paren_depth == 0 && bracket_depth == 0 => {
                     let item = value[start..index].trim();
                     if !item.is_empty() {
+                        budget.consume_items(1)?;
+                        budget.consume_bytes(item.len())?;
                         result.push(item.to_owned());
                     }
                     start = index + 1;
@@ -366,9 +472,11 @@ fn split_top_level_selector_list(value: &str) -> Vec<String> {
     }
     let item = value[start..].trim();
     if !item.is_empty() {
+        budget.consume_items(1)?;
+        budget.consume_bytes(item.len())?;
         result.push(item.to_owned());
     }
-    result
+    Ok(result)
 }
 
 fn supports_condition(raw: &str) -> bool {
@@ -1111,8 +1219,14 @@ impl RuleTree {
     ///   same-name collision from other origins appears in `counter_styles`, whereas
     ///   the former Author-only gate used to drop it unconditionally.
     ///
+    /// CSS nesting preprocessing is bounded by cumulative work bytes, generated
+    /// items, and recursion depth. A stylesheet that exceeds a preprocessing
+    /// limit is discarded before any of its rules are added to this tree.
+    ///
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
-        let source = expand_css_nesting(&expand_supports(source));
+        let Ok(source) = expand_css_nesting(&expand_supports(source)) else {
+            return;
+        };
         for (layer_order, chunk) in expand_cascade_layers(&source) {
             self.add_stylesheet_chunk(&chunk, origin, layer_order);
         }
