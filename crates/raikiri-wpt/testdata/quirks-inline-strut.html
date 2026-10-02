@@ -4,6 +4,7 @@
 <style>
 body { margin: 0; font-size: 20px; line-height: 20px; }
 .row { height: 30px; }
+.flow { font-size: 20px; line-height: 20px; }
 img { width: 2px; height: 2px; background: green; }
 </style>
 </head>
@@ -15,5 +16,11 @@ img { width: 2px; height: 2px; background: green; }
 <div class="row"><span><img style="vertical-align:sub"></span></div>
 <div class="row"><span><img style="vertical-align:super"></span></div>
 <div class="row"><span><img></span><br>x</div>
+<div class="flow"><span><img></span><br>
+x<span><img style="vertical-align:middle"></span><br>
+<span><img style="vertical-align:text-top"></span><br>
+x<span><img style="vertical-align:text-bottom"></span><br>
+<span><img style="vertical-align:sub"></span><br>
+x<span><img style="vertical-align:super"></span></div>
 </body>
 </html>
