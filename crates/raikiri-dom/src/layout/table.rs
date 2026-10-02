@@ -580,7 +580,7 @@ fn compute_table_layout_checked(
         &row_heights,
         &col_origins,
         &row_origins,
-    )?;
+    )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
     if vertical_writing {
         reposition_cells_for_vertical_writing(
             doc,
