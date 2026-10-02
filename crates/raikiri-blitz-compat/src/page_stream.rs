@@ -462,8 +462,18 @@ mod tests {
         let body_id = scene.body_id.unwrap();
         let body_frags = scene.fragments.get(&body_id).expect("body fragment exists");
         assert_eq!(body_frags.len(), 1);
-        assert!((body_frags[0].width - PageBox::A4.width).abs() < 1.0);
-        assert!((body_frags[0].height - PageBox::A4.height).abs() < 1.0);
+        // The UA body margin is 8 CSS px on each inline side, so the body
+        // auto width is narrower than the page content box by 16 CSS px.
+        assert!(
+            (body_frags[0].width - (PageBox::A4.width - 16.0)).abs() < 1.0,
+            "body auto width should preserve its UA inline margins: got {}",
+            body_frags[0].width,
+        );
+        assert!(
+            body_frags[0].height > 0.0 && body_frags[0].height < PageBox::A4.height,
+            "receipt body should have positive content height within one page: got {}",
+            body_frags[0].height,
+        );
     }
 
     #[test]

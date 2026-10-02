@@ -81,12 +81,14 @@ fn paged_body_margin_collapses_with_first_block_child() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        doc.append_text(body, "\n    ");
         let child = doc.append_element(
             Some(body),
             "div",
             Style::default(),
             Some(&format!("margin-top:{child_margin}px;height:10px")),
         );
+        doc.append_text(body, "\n    ");
         let mut rules = build_rule_tree(&doc);
         rules.add_stylesheet(
             "html, body, div { display: block; } body { margin: 8px; }",

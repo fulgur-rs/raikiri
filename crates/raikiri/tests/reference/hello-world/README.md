@@ -7,6 +7,7 @@
   (v1 の bare fragment から structured HTML5 に更新)
 - **PageBox**: `PageBox::A4` = 793.7008 × 1122.5197 CSS px → 794 × 1123 px raster
 - **UA CSS**: bundled UA (`p { display: block; }` を含む)
+- **UA body style**: default `margin: 8px` を保持
 - **Author style**: inline `color: red` + `font-size: 24px` + `margin: 20px`
   (color / font-size / margin の paint pipeline consume を hello-world 段階で
   最低 1 property ずつカバー)
@@ -32,9 +33,10 @@ glyph で描画されず gap として残る**。Ahem は WPT
 test font で、`X` が 1em×1em の solid square と定義され、"most other US-ASCII
 characters" (英字・数字・comma 含む) が同 glyph を共有、space (U+0020) が
 唯一の documented transparent 例外である (Ahem spec
-https://web-platform-tests.org/writing-tests/ahem.html)。実際 PNG は 2 つの
-solid red block (`Hello,` 6-em + `world!` 6-em) が 20px margin offset + space
-1-em gap で並ぶ形。
+https://web-platform-tests.org/writing-tests/ahem.html)。UA body margin 8px と
+段落margin 20pxのfirst-child vertical collapseにより、red blockは縦20pxに
+始まる。水平marginはcollapseしないため、実際 PNG は2つのsolid red block
+(`Hello,` 6-em + `world!` 6-em) が28pxの左offset + space 1-em gapで並ぶ形。
 注: "hello-world" という fixture name は semantic なもので、実際の visual
 rendering は WPT-style em-box red square 列 (space のみ gap) であり、認識可能な
 letterform ではない。過去の system serif 版とは bitmap が異なる (2026-07-18 に

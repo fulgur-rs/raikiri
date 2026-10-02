@@ -62,7 +62,66 @@ impl TaffyChildIter<'_> {
         doc.nodes[usize::from(parent)].layout_children()
     }
 
-    fn includes(doc: &Document, parent: NodeId, child: usize) -> bool {
+    fn is_collapsible_whitespace_text(node: &crate::node::Node) -> bool {
+        node.text_content().is_some_and(|text| {
+            text.chars()
+                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+                // Preserve whitespace that shaping turned into a visible line,
+                // such as newlines under `white-space: pre-line`.
+                && !node
+                    .text_layout()
+                    .is_some_and(|layout| layout.width() > 0.0 || layout.height() > 0.0)
+        })
+    }
+
+    fn is_inline_level_sibling(node: &crate::node::Node) -> bool {
+        match &node.data {
+            NodeData::Text(_) => true,
+            NodeData::Element(_) => matches!(
+                node.display,
+                DisplayValue::Inline
+                    | DisplayValue::InlineBlock
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::InlineGrid
+                    | DisplayValue::InlineTable
+            ),
+            _ => false,
+        }
+    }
+
+    fn is_block_flow_edge_whitespace(doc: &Document, parent: NodeId, child_index: usize) -> bool {
+        let children = Self::children(doc, parent);
+        let classify_sibling = |sibling: usize| {
+            let node = &doc.nodes[sibling];
+            if !node.is_in_document()
+                || node.is_non_rendered_html_element()
+                || node.is_display_none()
+                || Self::is_collapsible_whitespace_text(node)
+            {
+                None
+            } else {
+                Some(Self::is_inline_level_sibling(node))
+            }
+        };
+        let previous_is_inline = children[..child_index]
+            .iter()
+            .rev()
+            .find_map(|&sibling| classify_sibling(sibling))
+            == Some(true);
+        let next_is_inline = children[child_index + 1..]
+            .iter()
+            .find_map(|&sibling| classify_sibling(sibling))
+            == Some(true);
+
+        // A whitespace-only text node forms a visible separator only between
+        // two inline-level runs. At either edge of a block's inline content,
+        // or next to a block child, CSS whitespace collapsing removes it;
+        // keeping it as a Taffy child also prevents first-child margins from
+        // collapsing through parsed source indentation.
+        !(previous_is_inline && next_is_inline)
+    }
+
+    fn includes(doc: &Document, parent: NodeId, child_index: usize, child: usize) -> bool {
         let child_node = &doc.nodes[child];
         let is_template_element = child_node.tag_name() == Some("template");
         if !child_node.is_in_document()
@@ -77,19 +136,20 @@ impl TaffyChildIter<'_> {
         // are explicit zero-content inline items whose collapsed advance was
         // measured by `preshape_text` and stored in their style.
         let parent_node = &doc.nodes[usize::from(parent)];
-        if !matches!(parent_node.style.display, Display::Flex | Display::Grid)
-            || parent_node.flags.contains(NodeFlags::IS_INLINE_ROOT)
-        {
+        let is_inline_root = parent_node.flags.contains(NodeFlags::IS_INLINE_ROOT);
+        let is_collapsible_whitespace = Self::is_collapsible_whitespace_text(child_node);
+        if is_inline_root || !is_collapsible_whitespace {
             return true;
         }
-        !matches!(
-            &doc.nodes[child].data,
-            NodeData::Text(text)
-                if text
-                    .text_content
-                    .chars()
-                    .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
-        )
+        if matches!(parent_node.style.display, Display::Flex | Display::Grid) {
+            return false;
+        }
+        if parent_node.style.display == Display::Block
+            && Self::is_block_flow_edge_whitespace(doc, parent, child_index)
+        {
+            return false;
+        }
+        true
     }
 }
 
@@ -98,8 +158,8 @@ impl Iterator for TaffyChildIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let doc = self.doc;
         let parent = self.parent;
-        for &child in self.inner.by_ref() {
-            if Self::includes(doc, parent, child) {
+        for (child_index, &child) in self.inner.by_ref().enumerate() {
+            if Self::includes(doc, parent, child_index, child) {
                 return Some(NodeId::from(child));
             }
         }
@@ -122,7 +182,8 @@ impl TraversePartialTree for Document {
         // Must match the filter: count only in-document children.
         TaffyChildIter::children(self, node_id)
             .iter()
-            .filter(|&&c| TaffyChildIter::includes(self, node_id, c))
+            .enumerate()
+            .filter(|(index, child)| TaffyChildIter::includes(self, node_id, *index, **child))
             .count()
     }
 
@@ -131,7 +192,11 @@ impl TraversePartialTree for Document {
         let idx = TaffyChildIter::children(self, node_id)
             .iter()
             .copied()
-            .filter(|&c| TaffyChildIter::includes(self, node_id, c))
+            .enumerate()
+            .filter(|(child_index, child)| {
+                TaffyChildIter::includes(self, node_id, *child_index, *child)
+            })
+            .map(|(_, child)| child)
             .nth(index)
             .expect("get_child_id: index out of range");
         NodeId::from(idx)
@@ -716,8 +781,11 @@ impl LayoutGridContainer for Document {
         let parent = usize::from(node_id);
         let children = TaffyChildIter::children(self, node_id)
             .iter()
-            .copied()
-            .filter(|&child| TaffyChildIter::includes(self, node_id, child))
+            .enumerate()
+            .filter(|(child_index, child)| {
+                TaffyChildIter::includes(self, node_id, *child_index, **child)
+            })
+            .map(|(_, child)| *child)
             .filter(|&child| {
                 let style = &self.nodes[child].style;
                 style.box_generation_mode() != BoxGenerationMode::None
