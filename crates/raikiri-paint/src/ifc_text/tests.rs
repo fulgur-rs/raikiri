@@ -69,6 +69,7 @@ fn many_inline_pieces_on_separate_lines_paint_within_three_seconds() {
             shift_y: 0.0,
         },
         &crate::text::DecorationContext::default(),
+        None,
     );
     let elapsed = started.elapsed();
     assert!(!scene.commands.is_empty());

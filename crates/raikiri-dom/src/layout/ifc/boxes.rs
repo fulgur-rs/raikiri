@@ -170,32 +170,39 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut beside_floats = false;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
 
-    let fragmentainer_height = context.available_height;
-    let column_limit = fragmentainer_height.map_or(context.column_count, |height| {
-        let float_extent = root
-            .boxes
-            .iter()
-            .filter(|box_| box_.kind == IfcBoxKind::Float)
-            .map(|box_| {
-                measure_float(tree, box_.node, geometry)
-                    .margin_box
-                    .height
-                    .max(0.0)
-            })
-            .sum::<f32>();
-        let flow_extent = tree.nodes[idx]
-            .unrounded_layout
-            .size
-            .height
-            .max(float_extent);
-        let needed = (flow_extent / height).ceil().max(1.0) as usize;
-        context
-            .column_count
-            .max(context.column_index.saturating_add(needed))
-    });
+    let fragmentainer_height = context.available_height.filter(|height| *height > 0.0);
+    // A paragraph can need more columns than the declared count. Bound the
+    // continuation loop by its source units and float span; the final segment
+    // overflows unfragmented if this defensive budget is exhausted.
+    let float_columns = fragmentainer_height
+        .map(|height| {
+            let float_extent = root
+                .boxes
+                .iter()
+                .filter(|box_| box_.kind == IfcBoxKind::Float)
+                .map(|box_| {
+                    measure_float(tree, box_.node, geometry)
+                        .margin_box
+                        .height
+                        .max(0.0)
+                })
+                .sum::<f32>();
+            (float_extent / height).ceil() as usize
+        })
+        .unwrap_or(0);
+    let column_budget = root
+        .paragraph
+        .text()
+        .len()
+        .saturating_add(root.boxes.len())
+        .saturating_add(float_columns)
+        .saturating_add(context.column_count)
+        .max(1);
     let mut source_float_placements = Vec::new();
-    for column in context.column_index..column_limit {
-        let has_next = column + 1 < column_limit;
+    for offset in 0..column_budget {
+        let column = context.column_index.saturating_add(offset);
+        let has_next = offset + 1 < column_budget;
+        let segment_height = has_next.then_some(fragmentainer_height).flatten();
         let column_geometry = FlowGeometry {
             top_edge: if column == context.column_index {
                 geometry.top_edge
@@ -238,7 +245,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             true,
             false,
             token,
-            context.available_height,
+            segment_height,
             Some(column),
             has_next,
         );

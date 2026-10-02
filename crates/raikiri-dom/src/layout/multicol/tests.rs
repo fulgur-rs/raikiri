@@ -712,6 +712,50 @@ fn relayout_nested_flex_float_records_column_local_geometry() {
 }
 
 #[test]
+fn nested_flex_float_continues_text_past_declared_columns() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:40px;column-count:2;column-gap:0"),
+    );
+    let flex = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:row"),
+    );
+    let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+    doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("float:left;width:1px;height:1px"),
+    );
+    for _ in 0..12 {
+        doc.append_text(item, "line");
+        doc.append_element(Some(item), "br", Style::default(), None::<&str>);
+    }
+
+    layout_nested_flex_float_fixture(&mut doc);
+    let lines = doc.nodes[item].ifc_lines().expect("item lines");
+    assert!(
+        lines.len() >= 12,
+        "all source lines must survive fragmentation"
+    );
+    let ranges = doc.nodes[item]
+        .ifc_multicol_fragments()
+        .expect("fragmentainer ranges");
+    assert!(
+        ranges.iter().any(|range| range.fragmentainer >= 2),
+        "text must continue beyond the two declared columns"
+    );
+}
+
+#[test]
 fn relayout_nested_flex_float_records_only_committed_positions() {
     let (mut doc, _, second_float) = nested_flex_float_fixture("row", "horizontal-tb", 160);
     layout_nested_flex_float_fixture(&mut doc);
