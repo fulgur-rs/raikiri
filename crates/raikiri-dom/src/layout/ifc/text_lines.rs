@@ -4,6 +4,7 @@ use crate::Document;
 use crate::node::NodeFlags;
 use raikiri_traits::NodeKind;
 use shodo::Fragment;
+use std::collections::HashMap;
 
 /// One line of a text node of an ifc paragraph, in the root's content box.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -79,6 +80,58 @@ pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
         width: lines.width,
         lines: owned,
     })
+}
+
+impl Document {
+    /// Collect the text-line owners of an inline formatting root in one scan.
+    /// Each text node owns a line once even if it has multiple glyph runs on it.
+    #[doc(hidden)]
+    pub fn ifc_text_lines_by_node(&self, root: usize) -> HashMap<usize, IfcTextLines> {
+        let mut by_node = HashMap::new();
+        let Some(lines) = self
+            .nodes
+            .get(root)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+        else {
+            return by_node;
+        };
+        for (index, line) in lines.lines.iter().enumerate() {
+            let top = lines.line_top(index);
+            let owned = IfcTextLine {
+                line: index,
+                top,
+                bottom: top + line.block_size(),
+            };
+            for fragment in line.fragments() {
+                let Fragment::GlyphRun(run) = fragment else {
+                    continue;
+                };
+                let Some(owner) = run.node().map(|node| node.0 as usize) else {
+                    continue; // cov:ignore: Raikiri assigns node ids to every projected glyph source; anonymous Shodo runs have no DOM owner.
+                };
+                let Some(candidate) = self.nodes.get(owner) else {
+                    continue;
+                };
+                if candidate.kind() != NodeKind::Text
+                    || !candidate
+                        .flags
+                        .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
+                {
+                    continue;
+                }
+                let entry = by_node.entry(owner).or_insert_with(|| IfcTextLines {
+                    root,
+                    width: lines.width,
+                    lines: Vec::new(),
+                });
+                if entry.lines.last().is_none_or(|last| last.line != index) {
+                    entry.lines.push(owned);
+                }
+            }
+        }
+        by_node
+    }
 }
 
 #[cfg(test)]

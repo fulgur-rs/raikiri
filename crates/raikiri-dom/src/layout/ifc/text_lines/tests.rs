@@ -57,6 +57,61 @@ fn a_line_shared_by_two_text_nodes_belongs_to_both() {
 }
 
 #[test]
+fn a_root_indexes_each_text_owner_once_per_line() {
+    let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
+    let first = doc.append_text(root, "aa");
+    let span = doc.append_element(
+        Some(root),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline"),
+    );
+    let inner = doc.append_text(span, "bb cc");
+    let cascade = recascade(&mut doc);
+    lay_out(&mut doc, &cascade);
+
+    let indexed = doc.ifc_text_lines_by_node(root);
+    assert_eq!(indexed.len(), 2);
+    assert_eq!(
+        indexed[&first]
+            .lines
+            .iter()
+            .map(|line| (line.line, line.top, line.bottom))
+            .collect::<Vec<_>>(),
+        [(0, 0.0, 10.0)]
+    );
+    assert_eq!(
+        indexed[&inner]
+            .lines
+            .iter()
+            .map(|line| (line.line, line.top, line.bottom))
+            .collect::<Vec<_>>(),
+        [(0, 0.0, 10.0), (1, 10.0, 20.0)]
+    );
+    assert_eq!(indexed[&first].root, root);
+    assert_eq!(indexed[&inner].width, 40.0);
+}
+
+#[test]
+fn a_root_without_layout_has_no_indexed_text_lines() {
+    let (doc, _cascade, root) = ahem_paragraph("aa", "width:40px");
+    assert!(doc.ifc_text_lines_by_node(root).is_empty());
+}
+
+#[test]
+fn a_text_node_no_longer_in_the_ifc_subtree_is_not_indexed() {
+    use crate::node::NodeFlags;
+
+    let (mut doc, cascade, root) = ahem_paragraph("aa", "width:40px");
+    lay_out(&mut doc, &cascade);
+    let text = doc.nodes[root].children[0];
+    assert!(doc.ifc_text_lines_by_node(root).contains_key(&text));
+
+    doc.nodes[text].flags.remove(NodeFlags::IN_IFC_SUBTREE);
+    assert!(!doc.ifc_text_lines_by_node(root).contains_key(&text));
+}
+
+#[test]
 fn a_node_outside_an_ifc_paragraph_has_no_lines() {
     // A paragraph that is not rendered is not laid out at all.
     let (mut doc, cascade, root) = ahem_paragraph("aaaa", "width:40px;display:none");
