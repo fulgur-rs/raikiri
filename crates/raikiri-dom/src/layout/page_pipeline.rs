@@ -1623,8 +1623,8 @@ pub fn layout_pages_with_page_geometry(
                     let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
                         Some(owned) if owned.root != node_id => {
                             let root_layout = document.nodes[owned.root].unrounded_layout;
-                            // cov:ignore: ifc_text_lines returns Some only when these root line records exist.
                             let positioned = positioned_text_line_bounds(document, node_id)
+                                // cov:ignore: ifc_text_lines returns Some only when these root line records exist.
                                 .unwrap_or_else(|| {
                                     owned
                                         .lines
