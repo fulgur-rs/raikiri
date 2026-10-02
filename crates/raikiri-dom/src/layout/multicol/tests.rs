@@ -776,7 +776,7 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
         Some(flex),
         "div",
         Style::default(),
-        Some("font-size:0;line-height:0"),
+        Some("font-size:0;line-height:0;margin-top:30px"),
     );
     let float = doc.append_element(
         Some(item),
@@ -804,7 +804,7 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
         .expect("last float fragment");
     let last_clip = last_float.fragmentainer_clip.expect("last float clip");
     assert!(
-        last_float.fragmentainer as f32 * 0.001 + last_clip.height >= 2.0,
+        last_float.fragmentainer as f32 * 0.001 + last_clip.height >= 32.0,
         "the final float fragment must paint the remaining height"
     );
     let mut parent = last_float.parent;

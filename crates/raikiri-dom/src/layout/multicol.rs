@@ -603,6 +603,10 @@ fn record_nested_ifc_box_fragments(
                 current = parent;
             }
             path.reverse();
+            let node_offset_y = path
+                .iter()
+                .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)
+                .sum::<f32>();
 
             for column in columns {
                 let column_x =
@@ -623,11 +627,13 @@ fn record_nested_ifc_box_fragments(
                 let tail_line_bottom = lines
                     .as_ref()
                     .filter(|lines| lines.unfragmented_tail_column == Some(column))
-                    .map(|_| line_bottom)
+                    .map(|_| node_offset_y + line_bottom)
                     .unwrap_or(0.0);
-                let column_clip_height = height
-                    .max(tail_line_bottom)
-                    .max(overflow_clip_heights.get(&column).copied().unwrap_or(0.0));
+                let overflow_float_bottom = overflow_clip_heights
+                    .get(&column)
+                    .map(|bottom| node_offset_y + bottom)
+                    .unwrap_or(0.0);
+                let column_clip_height = height.max(tail_line_bottom).max(overflow_float_bottom);
                 let column_delta = column.saturating_sub(context.column_index) as f32 * height;
                 let mut parent = parent_fragment;
                 let mut parent_offset = Point::ZERO;
