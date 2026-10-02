@@ -244,6 +244,7 @@ pub fn layout_single_page(
     // floats.
     realign_grid_abspos_static_positions(document, cascade);
     propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
+    refresh_projected_multicol_text_fragments(document);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
     // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only

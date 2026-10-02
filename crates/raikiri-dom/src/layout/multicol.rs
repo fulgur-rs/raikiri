@@ -500,6 +500,7 @@ fn record_nested_ifc_box_fragments(
     let Some(height) = context.available_height.filter(|height| *height > 0.0) else {
         return;
     };
+    let subtree_has_float = multicol_subtree_has_float(tree, subtree_root);
     let mut existing_fragments = std::collections::HashMap::<(usize, usize), usize>::new();
     let mut pending = vec![subtree_root];
     while let Some(node_id) = pending.pop() {
@@ -513,7 +514,7 @@ fn record_nested_ifc_box_fragments(
             .as_ref()
             .map(|lines| lines.fragment_box_placements.clone())
             .unwrap_or_default();
-        let line_ranges = nested_row_flex_scope
+        let line_ranges = (nested_row_flex_scope || !subtree_has_float)
             .then(|| {
                 lines
                     .as_ref()
@@ -581,6 +582,60 @@ fn record_nested_ifc_box_fragments(
                 let column_delta = column.saturating_sub(context.column_index) as f32 * height;
                 let mut parent = parent_fragment;
                 let mut parent_offset = Point::ZERO;
+                if node_id == subtree_root
+                    && let Some(range) = line_range
+                    && tree.fragment_tree.fragments[parent_fragment].node_id == node_id
+                {
+                    let base = tree.fragment_tree.fragments[parent_fragment];
+                    let fragment_index = line_ranges
+                        .as_ref()
+                        .and_then(|ranges| {
+                            ranges.iter().position(|candidate| {
+                                candidate.fragmentainer == column
+                                    && candidate.line_start == range.line_start
+                            })
+                        })
+                        .unwrap_or(0);
+                    let fragment_count = line_ranges.as_ref().map_or(1, Vec::len);
+                    let fragment_height = lines
+                        .as_ref()
+                        .and_then(|lines| {
+                            let first = lines.lines.get(range.line_start)?;
+                            let last = lines.lines.get(range.line_end.checked_sub(1)?)?;
+                            Some(last.block_offset() + last.block_size() - first.block_offset())
+                        })
+                        .unwrap_or(base.rect.height)
+                        .max(0.0);
+                    let fragment_id = if base.fragmentainer == column {
+                        let fragment = &mut tree.fragment_tree.fragments[parent_fragment];
+                        fragment.rect.height = fragment_height;
+                        fragment.line_start = Some(range.line_start);
+                        fragment.line_end = Some(range.line_end);
+                        fragment.fragment_index = fragment_index;
+                        fragment.fragment_count = fragment_count;
+                        parent_fragment
+                    } else {
+                        tree.fragment_tree.push(crate::fragment::LayoutFragment {
+                            node_id,
+                            parent: base.parent,
+                            fragmentainer: column,
+                            rect: crate::fragment::FragmentRect {
+                                x: base.rect.x + context.column_offset_x(column)
+                                    - context.column_offset_x(base.fragmentainer),
+                                y: 0.0,
+                                width: base.rect.width,
+                                height: fragment_height,
+                            },
+                            fragmentainer_clip: None,
+                            fragment_index,
+                            fragment_count,
+                            line_start: Some(range.line_start),
+                            line_end: Some(range.line_end),
+                        })
+                    };
+                    existing_fragments.insert((node_id, column), fragment_id);
+                    parent = fragment_id;
+                }
                 for &ancestor in &path {
                     let layout = tree.nodes[ancestor].unrounded_layout;
                     let is_flex_item = tree
@@ -685,6 +740,21 @@ fn record_nested_ifc_box_fragments(
                 }),
         );
     }
+}
+
+fn multicol_subtree_has_float(tree: &Document, subtree_root: usize) -> bool {
+    let mut pending = vec![subtree_root];
+    while let Some(node_id) = pending.pop() {
+        let node = &tree.nodes[node_id];
+        if !node.is_in_document() || node.style.display == Display::None {
+            continue;
+        }
+        if node.style.float.is_floated() {
+            return true;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    false
 }
 
 /// Split lines, given by their block-start and block-end offsets, over the
@@ -915,6 +985,142 @@ fn nested_row_flex_float_scope(tree: &Document, node_id: usize) -> bool {
         ancestor = tree.parent_of(current);
     }
     false
+}
+
+// The foundational projection turns a block multicol container with inline
+// children into a flex row. Its IFC descendants are not reached by the nested
+// multicol dispatcher, so assign their line ranges after flex has placed them.
+pub(crate) fn refresh_projected_multicol_text_fragments(tree: &mut Document) {
+    let containers: Vec<usize> = tree
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(node_id, node)| {
+            (node.multicol.is_some()
+                && node.display == raikiri_style::property::DisplayValue::Block
+                && node.style.display == Display::Flex
+                && !node.is_ifc_root())
+            .then_some(node_id)
+        })
+        .collect();
+
+    for container_id in containers {
+        let Some(style) = tree.nodes[container_id].multicol else {
+            continue;
+        };
+        let container_layout = tree.nodes[container_id].unrounded_layout;
+        let (parent_width, parent_height) = tree
+            .layout_parent_of(container_id)
+            .map(|parent| {
+                let layout = tree.nodes[parent].unrounded_layout;
+                (Some(layout.size.width), Some(layout.size.height))
+            })
+            .unwrap_or((None, None));
+        let content_width = multicol_content_width(
+            tree,
+            container_id,
+            container_layout.size.width,
+            parent_width,
+        );
+        let available_height = if style.height_definite {
+            multicol_definite_dimension(
+                tree,
+                tree.nodes[container_id].style.size.height,
+                parent_height,
+            )
+        } else {
+            None
+        }
+        .or_else(|| {
+            multicol_max_fragmentainer_height(
+                tree,
+                container_id,
+                container_layout.size.height,
+                parent_height,
+                parent_width,
+            )
+        });
+        let Some(context) = FragmentationContext::resolve(content_width, available_height, style)
+        else {
+            continue;
+        };
+        let column_step = context.column_width + context.column_gap;
+        if !column_step.is_finite() || column_step <= 0.0 {
+            continue;
+        }
+
+        let mut pending = tree.nodes[container_id].children.clone();
+        while let Some(node_id) = pending.pop() {
+            let node = &tree.nodes[node_id];
+            if !node.is_in_document() || node.style.display == Display::None {
+                continue;
+            }
+            if node_id != container_id && node.multicol.is_some() {
+                continue;
+            }
+            if node.is_ifc_root() {
+                let committed_ranges = node
+                    .ifc
+                    .as_ref()
+                    .and_then(|root| root.lines.as_ref())
+                    .and_then(|lines| lines.fragmentainer_line_ranges.clone());
+                if node
+                    .ifc
+                    .as_ref()
+                    .is_some_and(|root| root.multicol_fragments.is_none())
+                    && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
+                {
+                    let extents: Vec<(f32, f32)> = lines
+                        .lines
+                        .iter()
+                        .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
+                        .collect();
+                    let ranges = if let Some(committed) = committed_ranges {
+                        committed
+                    } else if !extents.is_empty()
+                        && let Some(inline_offset) =
+                            layout_offset_from_ancestor(tree, node_id, container_id)
+                    {
+                        let first_column = ((inline_offset.max(0.0) / column_step).floor()
+                            as usize)
+                            .min(context.column_count.saturating_sub(1));
+                        let local_context = context.in_column(
+                            first_column,
+                            context.origin_x + context.column_offset_x(first_column),
+                            context.origin_y,
+                        );
+                        line_ranges_in_columns(&extents, local_context, false)
+                            .into_iter()
+                            .map(|(start, end, column)| MulticolTextFragment {
+                                line_start: start,
+                                line_end: end,
+                                fragmentainer: column,
+                                x: context.column_offset_x(column)
+                                    - context.column_offset_x(first_column),
+                                y: extents[start].0,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
+                        root.multicol_fragments = Some(ranges);
+                    }
+                }
+            }
+            pending.extend(tree.nodes[node_id].children.iter().copied());
+        }
+    }
+}
+
+fn layout_offset_from_ancestor(tree: &Document, node_id: usize, ancestor: usize) -> Option<f32> {
+    let mut current = node_id;
+    let mut inline_offset = 0.0;
+    while current != ancestor {
+        inline_offset += tree.nodes[current].unrounded_layout.location.x;
+        current = tree.layout_parent_of(current)?;
+    }
+    Some(inline_offset)
 }
 
 #[derive(Clone, Copy, Debug)]
