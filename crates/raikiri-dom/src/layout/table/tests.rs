@@ -5,6 +5,138 @@ use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
+fn oversized_columns_document(explicit_row: bool, columns: bool) -> Document {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(Some(body), "div", Style::default(), Some("display: table"));
+    let parent = if explicit_row {
+        doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some("display: table-row"),
+        )
+    } else {
+        table
+    };
+    for _ in 0..66 {
+        let cell = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some(if columns {
+                "display: table-column"
+            } else {
+                "display: table-cell"
+            }),
+        );
+        doc.set_element_attributes(
+            cell,
+            vec![(
+                if columns { "span" } else { "colspan" }.into(),
+                "1000".into(),
+            )],
+        );
+    }
+    doc.mark_in_document_flags();
+    doc
+}
+
+fn assert_oversized_table_is_rejected(explicit_row: bool, columns: bool) {
+    let mut doc = oversized_columns_document(explicit_row, columns);
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    let result = crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4);
+    assert!(matches!(
+        result,
+        Err(raikiri_traits::LayoutError::Internal { .. })
+    ));
+}
+
+#[test]
+fn oversized_explicit_table_columns_return_layout_error() {
+    assert_oversized_table_is_rejected(true, false);
+}
+
+#[test]
+fn oversized_anonymous_table_columns_return_layout_error() {
+    assert_oversized_table_is_rejected(false, false);
+}
+
+#[test]
+fn oversized_column_element_spans_return_layout_error() {
+    assert_oversized_table_is_rejected(false, true);
+}
+
+#[test]
+fn table_column_grid_accepts_exact_representable_boundary() {
+    for (explicit, columns) in [(true, false), (false, false), (false, true)] {
+        let mut doc = oversized_columns_document(explicit, columns);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
+        let table = 3;
+        let last = doc.nodes.len() - 1;
+        let attribute = if columns { "span" } else { "colspan" };
+        doc.set_element_attributes(last, vec![(attribute.into(), "535".into())]);
+        let grid = super::build_table_grid(&doc, table).unwrap();
+        assert_eq!(grid.n_cols, u16::MAX);
+        if columns {
+            assert_eq!(grid.col_widths.len(), usize::from(u16::MAX));
+        } else {
+            let cell = grid.cells.last().unwrap();
+            assert_eq!(
+                super::cell_column_range(cell, usize::from(grid.n_cols)).unwrap(),
+                65000..65535
+            );
+        }
+        doc.set_element_attributes(last, vec![(attribute.into(), "536".into())]);
+        assert!(super::build_table_grid(&doc, table).is_err());
+    }
+}
+
+#[test]
+fn rejected_table_layout_cannot_be_reused_from_cache_and_recovers_after_repair() {
+    let mut doc = oversized_columns_document(true, false);
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    for _ in 0..2 {
+        assert!(crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).is_err());
+    }
+    for cell in 5..doc.nodes.len() {
+        doc.set_element_attributes(cell, vec![("colspan".into(), "1".into())]);
+    }
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+    assert!(doc.table_layout_error.is_none());
+}
+
+#[test]
+fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
+    let mut doc = Document::new();
+    for (start, span) in [(2, 1), (1, 2), (0, 0)] {
+        let mut grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![0],
+            cells: vec![fixed_cell(0, start, span, Dimension::auto())],
+            col_widths: vec![],
+        };
+        assert!(super::resolve_row_heights(&mut doc, &grid, &[1.0, 1.0]).is_err());
+        assert!(
+            super::place_cells(
+                &mut doc,
+                &mut grid,
+                &[1.0, 1.0],
+                &[1.0],
+                &[0.0, 1.0, 2.0],
+                &[0.0, 1.0]
+            )
+            .is_err()
+        );
+    }
+}
+
 fn build_simple_2x2() -> Document {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -1368,7 +1500,7 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
     doc.nodes[col_c].display = DisplayValue::TableColumn;
 
     doc.mark_in_document_flags();
-    let sizing = super::collect_col_widths(&doc, table);
+    let sizing = super::collect_col_widths(&doc, table).unwrap();
 
     assert_eq!(sizing.len(), 4, "col_a + col_b(span=2) + col_c = 4 entries");
     assert_eq!(sizing[0].width, Dimension::length(40.0));
@@ -1393,7 +1525,7 @@ fn collect_rows_wraps_bare_cells_in_anonymous_row() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(rows.len(), 1, "bare cells wrap into a single anonymous row");
     assert_eq!(cells.len(), 2);
@@ -1430,7 +1562,7 @@ fn collect_rows_floats_first_header_group_to_top() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(cells.len(), 2);
     assert_eq!(
@@ -1475,7 +1607,7 @@ fn collect_rows_inner_skips_character_data_between_rows() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(
         rows.len(),
@@ -1501,7 +1633,7 @@ fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 1);
@@ -1520,7 +1652,7 @@ fn flush_pending_assigns_sequential_columns_respecting_colspan() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols);
+    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert!(pending.is_empty());
     assert_eq!(rows, vec![td_a]);
@@ -1537,7 +1669,7 @@ fn flush_pending_on_empty_pending_is_noop() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols);
+    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols).unwrap();
     assert!(rows.is_empty());
     assert!(cells.is_empty());
     assert_eq!(n_cols, 0);
