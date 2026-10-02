@@ -57,6 +57,7 @@ fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_c
     );
     assert!(line_ranges_in_columns(&[], context, false).is_empty());
     assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), false).is_empty());
+    assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), true).is_empty());
 }
 
 #[test]

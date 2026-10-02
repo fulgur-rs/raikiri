@@ -594,12 +594,11 @@ fn run_boxes_segment(
                     retries += 1;
                     continue;
                 }
-                // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
                 if !lines.is_empty()
                     && fragmentainer_height.is_some_and(|limit| line_y + height > limit + 0.001)
                 {
-                    continuation = Some(token);
-                    break;
+                    continuation = Some(token); // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
+                    break; // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
                 }
                 // A line that does not fit beside the floats is moved down
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
