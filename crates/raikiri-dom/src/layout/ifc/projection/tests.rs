@@ -762,3 +762,28 @@ fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
         assert_eq!(projected.boxes.first().map(|b| b.kind), kind, "{css}");
     }
 }
+#[test]
+fn direct_inline_text_probe_handles_missing_and_detached_children() {
+    use super::*;
+    use taffy::Style;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+    doc.append_text(span, " ");
+    let br = doc.append_element(Some(span), "br", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+
+    assert!(!has_noncollapsed_text(&doc, &cascade, usize::MAX));
+    assert!(!has_direct_inline_text(&doc, &cascade, usize::MAX));
+    assert!(has_direct_inline_text(&doc, &cascade, span));
+
+    doc.nodes[br].set_in_document(false);
+    assert!(!has_direct_inline_text(&doc, &cascade, span));
+    doc.nodes[br].set_in_document(true);
+    cascade.computed.truncate(br);
+    assert!(!has_direct_inline_text(&doc, &cascade, span));
+}
