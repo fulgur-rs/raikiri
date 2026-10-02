@@ -1002,6 +1002,92 @@ fn relayout_nested_flex_float_records_only_committed_positions() {
 }
 
 #[test]
+fn nested_float_fragment_budget_returns_a_layout_error() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let (mut doc, _, _) = nested_flex_float_fixture("row", "horizontal-tb", 1);
+    doc.fragment_tree.limit = 8;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+
+    assert!(matches!(
+        layout_single_page(&mut doc, &cascade, page),
+        Err(LayoutError::FragmentLimitExceeded { limit: 8 })
+    ));
+    assert_eq!(doc.fragment_tree.fragments.len(), 8);
+}
+
+#[test]
+fn nested_float_fragment_budget_accumulates_across_items() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let (mut doc, multicol, _) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    let body = doc.parent_of(multicol).expect("body");
+    let mut siblings = Vec::new();
+    for _ in 0..8 {
+        let sibling = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:300px;columns:100px auto;max-height:160px"),
+        );
+        siblings.push(sibling);
+        let flex = doc.append_element(
+            Some(sibling),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:row"),
+        );
+        let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("float:left;width:100px;height:500px"),
+        );
+    }
+    doc.fragment_tree.limit = 16;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+
+    let result = layout_single_page(&mut doc, &cascade, page);
+    assert!(
+        matches!(
+            result,
+            Err(LayoutError::FragmentLimitExceeded { limit: 16 })
+        ),
+        "result: {result:?}, fragments: {}",
+        doc.fragment_tree.fragments.len()
+    );
+    assert_eq!(doc.fragment_tree.fragments.len(), 16);
+    assert!(
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .any(|fragment| siblings.contains(&fragment.node_id))
+    );
+    let source_count = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .map(|fragment| fragment.node_id)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    assert!(
+        source_count > 2,
+        "fragments must span multiple source nodes"
+    );
+}
+
+#[test]
 fn relayout_nested_flex_float_replaces_old_fragment_records() {
     let (mut doc, multicol, second_float) = nested_flex_float_fixture("row", "horizontal-tb", 160);
     layout_nested_flex_float_fixture(&mut doc);

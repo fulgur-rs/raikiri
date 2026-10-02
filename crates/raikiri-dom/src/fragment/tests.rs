@@ -77,39 +77,43 @@ fn resolves_count_and_percentage_gap_against_used_width() {
 #[test]
 fn fragment_tree_retains_break_points_until_clear() {
     let mut tree = FragmentTree::default();
-    let parent = tree.push(LayoutFragment {
-        node_id: 1,
-        parent: None,
-        fragmentainer: 0,
-        rect: FragmentRect {
-            x: 0.0,
-            y: 0.0,
-            width: 40.0,
-            height: 20.0,
-        },
-        fragmentainer_clip: None,
-        fragment_index: 0,
-        fragment_count: 1,
-        line_start: None,
-        line_end: None,
-    });
+    let parent = tree
+        .try_push(LayoutFragment {
+            node_id: 1,
+            parent: None,
+            fragmentainer: 0,
+            rect: FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 40.0,
+                height: 20.0,
+            },
+            fragmentainer_clip: None,
+            fragment_index: 0,
+            fragment_count: 1,
+            line_start: None,
+            line_end: None,
+        })
+        .expect("first fragment");
     assert_eq!(parent, 0);
-    let nested = tree.push(LayoutFragment {
-        node_id: 2,
-        parent: None,
-        fragmentainer: 0,
-        rect: FragmentRect {
-            x: 0.0,
-            y: 0.0,
-            width: 20.0,
-            height: 10.0,
-        },
-        fragmentainer_clip: None,
-        fragment_index: 0,
-        fragment_count: 1,
-        line_start: None,
-        line_end: None,
-    });
+    let nested = tree
+        .try_push(LayoutFragment {
+            node_id: 2,
+            parent: None,
+            fragmentainer: 0,
+            rect: FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 10.0,
+            },
+            fragmentainer_clip: None,
+            fragment_index: 0,
+            fragment_count: 1,
+            line_start: None,
+            line_end: None,
+        })
+        .expect("nested fragment");
     tree.reparent_roots(2, parent);
     assert_eq!(tree.fragments[nested].parent, Some(parent));
     tree.record_break(BreakToken {
@@ -122,4 +126,48 @@ fn fragment_tree_retains_break_points_until_clear() {
     tree.clear();
     assert!(tree.fragments.is_empty());
     assert!(tree.break_tokens.is_empty());
+}
+
+#[test]
+fn fragment_tree_budget_is_shared_across_nodes_and_resets_on_clear() {
+    let mut tree = FragmentTree {
+        limit: 2,
+        ..FragmentTree::default()
+    };
+    let fragment = LayoutFragment {
+        node_id: 1,
+        parent: None,
+        fragmentainer: 0,
+        rect: FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        },
+        fragmentainer_clip: None,
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    assert_eq!(tree.try_push(fragment), Some(0));
+    assert_eq!(
+        tree.try_push(LayoutFragment {
+            node_id: 2,
+            ..fragment
+        }),
+        Some(1)
+    );
+    assert_eq!(
+        tree.try_push(LayoutFragment {
+            node_id: 3,
+            ..fragment
+        }),
+        None
+    );
+    assert_eq!(tree.fragments.len(), 2);
+    assert!(tree.limit_exceeded);
+    tree.clear();
+    assert!(!tree.limit_exceeded);
+    assert_eq!(tree.try_push(fragment), Some(0));
 }

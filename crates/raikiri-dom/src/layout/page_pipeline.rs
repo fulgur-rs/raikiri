@@ -120,6 +120,7 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 ///   are not supported yet) or an internal taffy error
 /// - `LayoutError::IfcUnsupported` / `LayoutError::IfcLimitExceeded` — a
 ///   paragraph the inline engine cannot lay out, or one over its limits
+/// - `LayoutError::FragmentLimitExceeded` — aggregate fragment budget exhausted
 ///
 /// # Current non-goals
 /// - Calling this repeatedly on one Document is safe (per-pass state is
@@ -239,6 +240,11 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(content_height),
         },
     );
+    if document.fragment_tree.limit_exceeded {
+        return Err(LayoutError::FragmentLimitExceeded {
+            limit: document.fragment_tree.limit,
+        });
+    }
     // Step 5a: post-layout corrections taffy does not make: the static
     // position of auto-placed grid abspos items, and auto-height ancestors of
     // floats.

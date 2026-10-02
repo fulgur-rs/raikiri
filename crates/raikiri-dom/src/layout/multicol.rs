@@ -14,6 +14,9 @@ pub(crate) fn compute_multicol_layout(
     block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let index = usize::from(node_id);
+    if tree.fragment_tree.limit_exceeded {
+        return compute_block_layout(tree, node_id, inputs, block_ctx);
+    }
     let Some(style) = tree.nodes[index].multicol else {
         return compute_block_layout(tree, node_id, inputs, block_ctx);
     };
@@ -69,6 +72,10 @@ pub(crate) fn compute_multicol_layout(
     let stack_depth = tree.fragmentation_stack.len();
     tree.fragmentation_stack.push(context);
     let mut output = compute_block_layout(tree, node_id, inputs, block_ctx);
+    if tree.fragment_tree.limit_exceeded {
+        tree.fragmentation_stack.truncate(stack_depth);
+        return output;
+    }
     let fragmentainer_height = available_height.or_else(|| {
         multicol_max_fragmentainer_height(
             tree,
@@ -292,22 +299,27 @@ fn relayout_nested_multicol_children(
             tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None
         })
         .collect();
-    let container_fragment = tree.fragment_tree.push(crate::fragment::LayoutFragment {
-        node_id: index,
-        parent: None,
-        fragmentainer: context.column_index,
-        rect: crate::fragment::FragmentRect {
-            x: context.origin_x,
-            y: context.origin_y,
-            width: context.available_width,
-            height: fallback_height,
-        },
-        fragmentainer_clip: None,
-        fragment_index: 0,
-        fragment_count: 1,
-        line_start: None,
-        line_end: None,
-    });
+    let Some(container_fragment) = tree
+        .fragment_tree
+        .try_push(crate::fragment::LayoutFragment {
+            node_id: index,
+            parent: None,
+            fragmentainer: context.column_index,
+            rect: crate::fragment::FragmentRect {
+                x: context.origin_x,
+                y: context.origin_y,
+                width: context.available_width,
+                height: fallback_height,
+            },
+            fragmentainer_clip: None,
+            fragment_index: 0,
+            fragment_count: 1,
+            line_start: None,
+            line_end: None,
+        })
+    else {
+        return fallback_height;
+    };
     // This tranche models `column-fill:auto`: source-order children consume
     // the current definite fragmentainer before the next column starts.
     // Balancing remains on the foundational direct-text path.
@@ -352,6 +364,9 @@ fn relayout_nested_multicol_children(
                 tree.nodes[child].cache.clear();
             }
             let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
+            if tree.fragment_tree.limit_exceeded {
+                return fallback_height;
+            }
             let layout = tree.nodes[child].unrounded_layout;
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
@@ -416,6 +431,9 @@ fn relayout_nested_multicol_children(
                     tree.nodes[child].cache.clear();
                 }
                 let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
+                if tree.fragment_tree.limit_exceeded {
+                    return fallback_height;
+                }
                 refresh_nested_text_fragments(tree, child, context);
                 let layout = tree.nodes[child].unrounded_layout;
                 let margin_top = layout.margin.top;
@@ -456,24 +474,31 @@ fn relayout_nested_multicol_children(
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
         refresh_nested_text_fragments(tree, child, column_context);
-        let child_fragment = tree.fragment_tree.push(crate::fragment::LayoutFragment {
-            node_id: child,
-            parent: Some(container_fragment),
-            fragmentainer: column_context.column_index,
-            rect: crate::fragment::FragmentRect {
-                x: child_layout.location.x,
-                y: cursor + margin_top,
-                width: child_output.size.width,
-                height: child_output.size.height,
-            },
-            fragmentainer_clip: None,
-            fragment_index: 0,
-            fragment_count: 1,
-            line_start: None,
-            line_end: None,
-        });
+        let Some(child_fragment) = tree
+            .fragment_tree
+            .try_push(crate::fragment::LayoutFragment {
+                node_id: child,
+                parent: Some(container_fragment),
+                fragmentainer: column_context.column_index,
+                rect: crate::fragment::FragmentRect {
+                    x: child_layout.location.x,
+                    y: cursor + margin_top,
+                    width: child_output.size.width,
+                    height: child_output.size.height,
+                },
+                fragmentainer_clip: None,
+                fragment_index: 0,
+                fragment_count: 1,
+                line_start: None,
+                line_end: None,
+            })
+        else {
+            return fallback_height;
+        };
         tree.fragment_tree.reparent_roots(child, child_fragment);
-        record_nested_ifc_box_fragments(tree, child, child_fragment, context);
+        if record_nested_ifc_box_fragments(tree, child, child_fragment, context).is_none() {
+            return fallback_height;
+        }
         cursor = y + child_output.size.height + margin_bottom;
         if tree.nodes[child].kind() == NodeKind::Element {
             avoid_column_break_after_previous =
@@ -497,9 +522,9 @@ fn record_nested_ifc_box_fragments(
     subtree_root: usize,
     parent_fragment: usize,
     context: FragmentationContext,
-) {
+) -> Option<()> {
     let Some(height) = context.available_height.filter(|height| *height > 0.0) else {
-        return;
+        return Some(());
     };
     let subtree_has_float = multicol_subtree_has_float(tree, subtree_root);
     let mut existing_fragments = std::collections::HashMap::<(usize, usize), usize>::new();
@@ -670,23 +695,24 @@ fn record_nested_ifc_box_fragments(
                         fragment.fragment_count = fragment_count;
                         parent_fragment
                     } else {
-                        tree.fragment_tree.push(crate::fragment::LayoutFragment {
-                            node_id,
-                            parent: base.parent,
-                            fragmentainer: column,
-                            rect: crate::fragment::FragmentRect {
-                                x: base.rect.x + context.column_offset_x(column)
-                                    - context.column_offset_x(base.fragmentainer),
-                                y: 0.0,
-                                width: base.rect.width,
-                                height: fragment_height,
-                            },
-                            fragmentainer_clip: None,
-                            fragment_index,
-                            fragment_count,
-                            line_start: Some(range.line_start),
-                            line_end: Some(range.line_end),
-                        })
+                        tree.fragment_tree
+                            .try_push(crate::fragment::LayoutFragment {
+                                node_id,
+                                parent: base.parent,
+                                fragmentainer: column,
+                                rect: crate::fragment::FragmentRect {
+                                    x: base.rect.x + context.column_offset_x(column)
+                                        - context.column_offset_x(base.fragmentainer),
+                                    y: 0.0,
+                                    width: base.rect.width,
+                                    height: fragment_height,
+                                },
+                                fragmentainer_clip: None,
+                                fragment_index,
+                                fragment_count,
+                                line_start: Some(range.line_start),
+                                line_end: Some(range.line_end),
+                            })?
                     };
                     existing_fragments.insert((node_id, column), fragment_id);
                     parent = fragment_id;
@@ -709,46 +735,47 @@ fn record_nested_ifc_box_fragments(
                             fragment_id
                         } else {
                             let fragment_id =
-                                tree.fragment_tree.push(crate::fragment::LayoutFragment {
-                                    node_id: ancestor,
-                                    parent: Some(parent),
-                                    fragmentainer: column,
-                                    rect: crate::fragment::FragmentRect {
-                                        x: layout.location.x
-                                            + if parent == parent_fragment {
+                                tree.fragment_tree
+                                    .try_push(crate::fragment::LayoutFragment {
+                                        node_id: ancestor,
+                                        parent: Some(parent),
+                                        fragmentainer: column,
+                                        rect: crate::fragment::FragmentRect {
+                                            x: layout.location.x
+                                                + if parent == parent_fragment {
+                                                    column_x
+                                                } else {
+                                                    0.0
+                                                },
+                                            y: if ancestor == subtree_root || is_flex_item {
+                                                layout.location.y
+                                            } else {
+                                                layout.location.y - column_delta
+                                            },
+                                            width: layout.size.width,
+                                            height: layout.size.height,
+                                        },
+                                        fragmentainer_clip: Some(crate::fragment::FragmentRect {
+                                            x: if parent == parent_fragment {
                                                 column_x
                                             } else {
-                                                0.0
+                                                -parent_offset.x
                                             },
-                                        y: if ancestor == subtree_root || is_flex_item {
-                                            layout.location.y
-                                        } else {
-                                            layout.location.y - column_delta
-                                        },
-                                        width: layout.size.width,
-                                        height: layout.size.height,
-                                    },
-                                    fragmentainer_clip: Some(crate::fragment::FragmentRect {
-                                        x: if parent == parent_fragment {
-                                            column_x
-                                        } else {
-                                            -parent_offset.x
-                                        },
-                                        y: -parent_offset.y,
-                                        width: context.column_width,
-                                        height: column_clip_height,
-                                    }),
-                                    fragment_index: 0,
-                                    fragment_count: 1,
-                                    line_start: (ancestor == node_id)
-                                        .then_some(line_range)
-                                        .flatten()
-                                        .map(|range| range.line_start),
-                                    line_end: (ancestor == node_id)
-                                        .then_some(line_range)
-                                        .flatten()
-                                        .map(|range| range.line_end),
-                                });
+                                            y: -parent_offset.y,
+                                            width: context.column_width,
+                                            height: column_clip_height,
+                                        }),
+                                        fragment_index: 0,
+                                        fragment_count: 1,
+                                        line_start: (ancestor == node_id)
+                                            .then_some(line_range)
+                                            .flatten()
+                                            .map(|range| range.line_start),
+                                        line_end: (ancestor == node_id)
+                                            .then_some(line_range)
+                                            .flatten()
+                                            .map(|range| range.line_end),
+                                    })?;
                             existing_fragments.insert((ancestor, column), fragment_id);
                             fragment_id
                         };
@@ -761,26 +788,28 @@ fn record_nested_ifc_box_fragments(
                     .iter()
                     .filter(|placement| placement.fragmentainer == column)
                 {
-                    let fragment_id = tree.fragment_tree.push(crate::fragment::LayoutFragment {
-                        node_id: placement.node_id,
-                        parent: Some(parent),
-                        fragmentainer: column,
-                        rect: placement.rect,
-                        fragmentainer_clip: Some(crate::fragment::FragmentRect {
-                            x: if parent == parent_fragment {
-                                column_x
-                            } else {
-                                -parent_offset.x
-                            },
-                            y: -parent_offset.y,
-                            width: context.column_width,
-                            height: column_clip_height,
-                        }),
-                        fragment_index: 0,
-                        fragment_count: 1,
-                        line_start: None,
-                        line_end: None,
-                    });
+                    let fragment_id =
+                        tree.fragment_tree
+                            .try_push(crate::fragment::LayoutFragment {
+                                node_id: placement.node_id,
+                                parent: Some(parent),
+                                fragmentainer: column,
+                                rect: placement.rect,
+                                fragmentainer_clip: Some(crate::fragment::FragmentRect {
+                                    x: if parent == parent_fragment {
+                                        column_x
+                                    } else {
+                                        -parent_offset.x
+                                    },
+                                    y: -parent_offset.y,
+                                    width: context.column_width,
+                                    height: column_clip_height,
+                                }),
+                                fragment_index: 0,
+                                fragment_count: 1,
+                                line_start: None,
+                                line_end: None,
+                            })?;
                     existing_fragments.insert((placement.node_id, column), fragment_id);
                 }
             }
@@ -796,6 +825,7 @@ fn record_nested_ifc_box_fragments(
                 }),
         );
     }
+    Some(())
 }
 
 fn extend_fragment_clip(fragment: &mut crate::fragment::LayoutFragment, height: f32) {

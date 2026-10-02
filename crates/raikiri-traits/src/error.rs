@@ -480,6 +480,11 @@ pub enum LayoutError {
         /// Which limit, with its configured and observed values.
         limit: String,
     },
+    /// One layout pass would create more fragments than the aggregate cap.
+    FragmentLimitExceeded {
+        /// Maximum number of retained fragments in one layout pass.
+        limit: usize,
+    },
 }
 
 impl std::fmt::Display for LayoutError {
@@ -492,6 +497,9 @@ impl std::fmt::Display for LayoutError {
             }
             Self::IfcLimitExceeded { node, limit } => {
                 write!(f, "Layout inline engine limit at node {node}: {limit}")
+            }
+            Self::FragmentLimitExceeded { limit } => {
+                write!(f, "Layout fragment limit exceeded: {limit}")
             }
         }
     }
