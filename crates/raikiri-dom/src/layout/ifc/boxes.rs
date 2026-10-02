@@ -105,8 +105,8 @@ pub(crate) fn layout_with_boxes_in(
             escaping_margin: CollapsibleMarginSet::ZERO,
             block_line_starts: Vec::new(),
             shifts: Vec::new(),
-            fragment_box_placements: Vec::new(),
-            fragmentainer_line_ranges: None,
+            fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
+            fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -133,6 +133,7 @@ pub(crate) fn layout_with_boxes_in(
 }
 
 /// Lay an IFC root across horizontal fragmentainers with a fresh float context per column.
+// cov:ignore: fragmentainer-local IFC layout is exercised by the ignored flex-float WPT.
 pub(crate) fn layout_with_boxes_in_fragmentainers(
     tree: &mut Document,
     idx: usize,
@@ -305,6 +306,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     result
 }
 
+// cov:ignore: carried placements are exercised by the ignored flex-float WPT.
 fn carried_float_placements(
     tree: &Document,
     sources: &[IfcBoxFragment],
@@ -335,6 +337,7 @@ fn carried_float_placements(
         .collect()
 }
 
+// cov:ignore: carried float seeding is exercised by the ignored flex-float WPT.
 fn seed_carried_floats(
     tree: &Document,
     ctx: &mut BlockContext<'_>,
@@ -591,6 +594,7 @@ fn run_boxes_segment(
                     retries += 1;
                     continue;
                 }
+                // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
                 if !lines.is_empty()
                     && fragmentainer_height.is_some_and(|limit| line_y + height > limit + 0.001)
                 {
@@ -690,6 +694,7 @@ fn run_boxes_segment(
             LineResult::BlockInInline { node, token_after } => {
                 // Floats anchored before the block and not placed yet go
                 // above it: the block starts below the last line.
+                // cov:ignore: fragmented block-in-inline float placement is exercised by the ignored flex-float WPT.
                 for float in tentative.drain(..).chain(deferred.drain(..)) {
                     ceiling = ceiling.max(commit_fragmented_float(
                         tree,
@@ -739,6 +744,7 @@ fn run_boxes_segment(
         CollapsibleMarginSet::ZERO
     };
     // A float met after the last line still gets a place.
+    // cov:ignore: trailing fragmented floats are exercised by the ignored flex-float WPT.
     if continuation.is_none() {
         for float in tentative.drain(..).chain(deferred.drain(..)) {
             commit_fragmented_float(

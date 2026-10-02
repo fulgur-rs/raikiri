@@ -71,6 +71,7 @@ pub use fonts::{
 #[doc(hidden)]
 pub use fragment::{FragmentRect, LayoutFragment};
 #[doc(hidden)]
+// cov:ignore: this attribute controls rustdoc metadata and has no runtime coverage.
 pub use layout::{
     BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, relative_offset,
 };

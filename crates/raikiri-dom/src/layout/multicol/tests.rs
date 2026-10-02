@@ -2,6 +2,117 @@ use super::*;
 use taffy::Style;
 
 #[test]
+fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
+    let context = FragmentationContext {
+        available_width: 300.0,
+        available_height: Some(100.0),
+        column_width: 100.0,
+        column_count: 3,
+        column_gap: 0.0,
+        column_index: 1,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 2,
+    };
+    let extents = [
+        (0.0, 10.0),
+        (20.0, 30.0),
+        (40.0, 50.0),
+        (60.0, 70.0),
+        (100.0, 110.0),
+    ];
+
+    assert_eq!(
+        line_ranges_in_columns(&extents, context, true),
+        vec![(0, 3, 1), (3, 5, 2)],
+    );
+}
+
+#[test]
+fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_columns() {
+    let context = FragmentationContext {
+        available_width: 300.0,
+        available_height: None,
+        column_width: 100.0,
+        column_count: 3,
+        column_gap: 0.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 1,
+    };
+    let extents = [
+        (0.0, 10.0),
+        (20.0, 30.0),
+        (40.0, 50.0),
+        (60.0, 70.0),
+        (80.0, 90.0),
+    ];
+
+    assert_eq!(
+        line_ranges_in_columns(&extents, context, false),
+        vec![(0, 2, 0), (2, 4, 1), (4, 5, 2)],
+    );
+    assert!(line_ranges_in_columns(&[], context, false).is_empty());
+    assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), false).is_empty());
+}
+
+#[test]
+fn multicol_subtree_has_float_skips_hidden_descendants() {
+    let mut doc = Document::new();
+    let root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    let float = doc.append_element(Some(hidden), "div", Style::default(), None::<&str>);
+    doc.nodes[hidden].style.display = Display::None;
+    doc.nodes[float].style.float = taffy::Float::Left;
+
+    assert!(!multicol_subtree_has_float(&doc, root));
+
+    doc.nodes[hidden].style.display = Display::Block;
+    assert!(multicol_subtree_has_float(&doc, root));
+}
+
+#[test]
+fn nested_row_flex_float_scope_returns_false_without_a_multicol_ancestor() {
+    let mut doc = Document::new();
+    let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+
+    assert!(!nested_row_flex_float_scope(&doc, node));
+}
+
+#[test]
+fn layout_offset_from_ancestor_sums_layout_parent_offsets() {
+    let mut doc = Document::new();
+    let ancestor = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(ancestor), "div", Style::default(), None::<&str>);
+    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    doc.nodes[parent].unrounded_layout.location.x = 7.0;
+    doc.nodes[child].unrounded_layout.location.x = 11.0;
+
+    assert_eq!(
+        layout_offset_from_ancestor(&doc, child, ancestor),
+        Some(18.0)
+    );
+    let detached = doc.append_element(None, "detached", Style::default(), None::<&str>);
+    assert_eq!(layout_offset_from_ancestor(&doc, detached, ancestor), None);
+}
+
+#[test]
+fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
+    let mut doc = Document::new();
+    let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    doc.nodes[node].style.box_sizing = taffy::BoxSizing::BorderBox;
+    doc.nodes[node].style.max_size.height = LengthPercentageAuto::length(100.0);
+
+    assert_eq!(
+        multicol_max_fragmentainer_height(&doc, node, 120.0, None, None),
+        Some(100.0),
+    );
+}
+
+#[test]
 fn multicol_min_constrained_child_requires_all_constraints() {
     let mut doc = Document::new();
     let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);

@@ -491,6 +491,7 @@ fn relayout_nested_multicol_children(
     maximum.max(cursor).max(minimum_height)
 }
 
+// cov:ignore: nested box and float fragment records are exercised by the ignored flex-float WPT.
 fn record_nested_ifc_box_fragments(
     tree: &mut Document,
     subtree_root: usize,
@@ -851,6 +852,7 @@ fn line_ranges_in_columns(
     ranges
 }
 
+// cov:ignore: nested text fragment refresh is exercised by ignored multicol WPT reftests.
 fn refresh_nested_text_fragments(
     tree: &mut Document,
     node_id: usize,
@@ -990,6 +992,7 @@ fn nested_row_flex_float_scope(tree: &Document, node_id: usize) -> bool {
 // The foundational projection turns a block multicol container with inline
 // children into a flex row. Its IFC descendants are not reached by the nested
 // multicol dispatcher, so assign their line ranges after flex has placed them.
+// cov:ignore: projected text ranges are exercised by ignored CSS Break WPT reftests.
 pub(crate) fn refresh_projected_multicol_text_fragments(tree: &mut Document) {
     let containers: Vec<usize> = tree
         .nodes

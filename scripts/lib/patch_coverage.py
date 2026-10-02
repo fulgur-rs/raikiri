@@ -427,33 +427,32 @@ def classify_no_lcov_record_lines(
     `(uncovered, exempted)`.
 
     When there *is* a `DA:` table to consult (the normal branch in
-    `main()`), a blank or pure-comment added line is filtered out before
-    the `exempt` check even runs, simply because such a line never has a
-    `DA:` record in the first place (`if ln not in da_map: continue`) — it
-    was never "executable", so it was never eligible to be "uncovered".
-    With no `DA:` table at all, that filter can't be expressed the same
-    way; this function reconstructs the same outcome structurally, using
-    the same `COMMENT_LINE_RE` `compute_exempt_lines()` uses to recognize
-    a comment line, plus a blank-line check. A line skipped this way is
-    reported in neither list — deliberate parity with the normal branch,
-    where such a line doesn't appear in `uncovered`/`exempted` either (it
-    still counts toward the file's `added_lines` total, same as there).
+    `main()`), a blank, pure-comment, or Rust attribute added line is
+    filtered out before the `exempt` check even runs, simply because such
+    a line never has a `DA:` record in the first place (`if ln not in
+    da_map: continue`) — it was never "executable", so it was never
+    eligible to be "uncovered". With no `DA:` table at all, that filter
+    can't be expressed the same way; this function reconstructs the same
+    outcome structurally, using `COMMENT_LINE_RE`, `ATTRIBUTE_LINE_RE`,
+    and a blank-line check. A line skipped this way is reported in neither
+    list — deliberate parity with the normal branch, where such a line
+    doesn't appear in `uncovered`/`exempted` either (it still counts toward
+    the file's `added_lines` total, same as there).
 
     `// cov:ignore:` still exempts a *code* line exactly as before; this
-    function doesn't touch that path. It only stops a comment/blank line
-    from being misclassified as uncovered in a file that had no
-    executable-line table to filter it out with — a comment line was
-    never something `cov:ignore:` needed to reach, since it was never
-    going to be "uncovered" to begin with.
+    function doesn't touch that path. It only stops comments, blank lines,
+    attributes, and module declarations from being misclassified as
+    uncovered in a file that had no executable-line table to filter them
+    out with.
 
     Known limitation, not fixed here: a non-comment, non-blank *added*
     line that also happens to be non-executable in real Rust (e.g. a
     `pub bar: u32,` struct field, a bare `}` closing a block) is still
     classified `uncovered` unless `cov:ignore:`-annotated. Distinguishing
     "syntactically code-shaped" from "actually executable" in general
-    requires a real Rust parser, not a regex; `COMMENT_LINE_RE` only
-    catches the comment/blank case this function exists to fix. Files
-    that mix zero-SF-record status with genuinely new field/variant
+    requires a real Rust parser, not a regex; the structural checks here
+    cover only comments, blanks, attributes, and module declarations.
+    Files that mix zero-SF-record status with genuinely new field/variant
     declarations will still need a `// cov:ignore:` or an escalation for
     those specific lines, same as before this fix.
     """
@@ -461,7 +460,12 @@ def classify_no_lcov_record_lines(
     exempted: list[int] = []
     for ln in added_lines:
         raw = file_lines[ln - 1] if 0 <= ln - 1 < len(file_lines) else ""
-        if not raw.strip() or COMMENT_LINE_RE.match(raw) or MODULE_DECL_LINE_RE.match(raw):
+        if (
+            not raw.strip()
+            or COMMENT_LINE_RE.match(raw)
+            or MODULE_DECL_LINE_RE.match(raw)
+            or ATTRIBUTE_LINE_RE.match(raw)
+        ):
             continue
         if ln in exempt:
             exempted.append(ln)

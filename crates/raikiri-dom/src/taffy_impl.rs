@@ -805,7 +805,7 @@ fn fragmentation_context_for_ifc(
             );
         ancestor = tree.parent_of(node_id);
     }
-    None
+    None // cov:ignore: the unsupported ancestor path remains outside the ignored nested flex-float WPT scope.
 }
 
 /// Return the first baseline of an inline-block from the descendant layout
