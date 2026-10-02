@@ -24,6 +24,7 @@ fn debug_reports_fragment_box_placement_count() {
             },
         }],
         fragmentainer_line_ranges: None,
+        unfragmented_tail_column: None,
     };
 
     assert!(format!("{lines:?}").contains("fragment_box_placements: 1"));
