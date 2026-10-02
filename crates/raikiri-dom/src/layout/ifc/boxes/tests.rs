@@ -2,8 +2,54 @@ use super::*;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::test_support::with_ahem;
 use crate::layout::test_support::{
-    ahem_paragraph_with_atomic, ahem_paragraph_with_float, ifc_ahem_fonts, line_start_x,
+    ahem_paragraph, ahem_paragraph_with_atomic, ahem_paragraph_with_float, ifc_ahem_fonts,
+    line_start_x,
 };
+
+#[test]
+fn final_unfragmented_column_records_only_real_line_overflow() {
+    let text = "A\n".repeat(1_030);
+    let (mut doc, cascade, root) =
+        ahem_paragraph(&text, "white-space:pre;font-size:10px;line-height:10px");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .expect("layout");
+    let geometry = FlowGeometry {
+        width: 100.0,
+        edges: (0.0, 0.0),
+        top_edge: 0.0,
+    };
+    let context = FragmentationContext {
+        available_width: 100.0,
+        available_height: Some(0.001),
+        column_width: 100.0,
+        column_count: 1,
+        column_gap: 0.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 1,
+    };
+    let overflow = layout_with_boxes_in_fragmentainers(&mut doc, root, geometry, context, false);
+    assert!(overflow.lines.len() >= 1_030);
+    assert_eq!(overflow.unfragmented_tail_column, Some(1_023));
+    let fitting = layout_with_boxes_in_fragmentainers(
+        &mut doc,
+        root,
+        geometry,
+        FragmentationContext {
+            available_height: Some(20.0),
+            ..context
+        },
+        false,
+    );
+    assert_eq!(fitting.unfragmented_tail_column, None);
+}
 
 #[test]
 fn a_probe_stores_nothing_and_a_performed_layout_does() {
