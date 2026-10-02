@@ -202,6 +202,23 @@ fn nesting_budget_covers_implicit_products_and_single_parent_length() {
 }
 
 #[test]
+fn nesting_budget_rejects_implicit_copy_before_allocating_and_preserves_malformed_body() {
+    let mut budget = NestingBudget {
+        bytes: 5,
+        items: MAX_NESTING_ITEMS,
+    };
+    // Scanning and splitting exhaust the budget before product allocation.
+    assert!(combine_nested_selectors("a", "b", &mut budget).is_err());
+    assert!(
+        split_css_nested_body("& { color:red", &mut NestingBudget::new())
+            .unwrap()
+            .is_none()
+    );
+    let source = ".a { & { color:red";
+    assert_eq!(expand_css_nesting(source).unwrap(), source);
+}
+
+#[test]
 fn nesting_budget_bounds_length_amplification_across_multiple_levels() {
     let mut source = "color:red;".to_owned();
     for _ in 0..12 {
