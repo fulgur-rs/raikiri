@@ -67,6 +67,8 @@ pub(crate) struct IfcLines {
     pub(crate) fragment_box_placements: Vec<IfcBoxFragment>,
     /// Line ranges already assigned to fragmentainers by a fragmenting IFC layout.
     pub(crate) fragmentainer_line_ranges: Option<Vec<crate::node::MulticolTextFragment>>,
+    /// Column whose final line range overflowed the fragmentainer budget.
+    pub(crate) unfragmented_tail_column: Option<usize>,
 }
 
 /// Placement of an IFC-owned box accepted in one fragmentainer.

@@ -107,6 +107,7 @@ pub(crate) fn layout_with_boxes_in(
             shifts: Vec::new(),
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
+            unfragmented_tail_column: None,
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -156,6 +157,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             shifts: Vec::new(),
             fragment_box_placements: Vec::new(),
             fragmentainer_line_ranges: Some(Vec::new()),
+            unfragmented_tail_column: None,
         };
     };
 
@@ -165,6 +167,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut shifts = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut fragmentainer_line_ranges = Vec::new();
+    let mut unfragmented_tail_column = None;
     let mut atomic_outputs = Vec::new();
     let mut max_height = 0.0_f32;
     let mut beside_floats = false;
@@ -253,6 +256,13 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();
+        if !has_next
+            && let Some(height) = fragmentainer_height
+            && let Some(last) = outcome.lines.lines.last()
+            && last.block_offset() + last.block_size() > height
+        {
+            unfragmented_tail_column = Some(column);
+        }
         for (node, first) in outcome.lines.block_line_starts {
             block_line_starts.push((node, line_start + first));
         }
@@ -305,6 +315,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         shifts,
         fragment_box_placements,
         fragmentainer_line_ranges: Some(fragmentainer_line_ranges),
+        unfragmented_tail_column,
     };
     if perform {
         place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
@@ -795,6 +806,7 @@ fn run_boxes_segment(
             shifts: Vec::new(),
             fragment_box_placements,
             fragmentainer_line_ranges: None,
+            unfragmented_tail_column: None,
         },
         continuation,
         atomic_outputs: atomics.outputs,

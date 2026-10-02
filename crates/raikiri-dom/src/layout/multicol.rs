@@ -620,8 +620,13 @@ fn record_nested_ifc_box_fragments(
                             .map(|line| line.block_offset() + line.block_size())
                     })
                     .unwrap_or(0.0);
+                let tail_line_bottom = lines
+                    .as_ref()
+                    .filter(|lines| lines.unfragmented_tail_column == Some(column))
+                    .map(|_| line_bottom)
+                    .unwrap_or(0.0);
                 let column_clip_height = height
-                    .max(line_bottom)
+                    .max(tail_line_bottom)
                     .max(overflow_clip_heights.get(&column).copied().unwrap_or(0.0));
                 let column_delta = column.saturating_sub(context.column_index) as f32 * height;
                 let mut parent = parent_fragment;
