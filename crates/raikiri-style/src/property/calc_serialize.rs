@@ -21,6 +21,45 @@ pub(crate) enum CalcNode {
     Unresolved(String),
 }
 
+// Intentional stricter resource limits (decision raikiri-spike-afrl3):
+// bound trees before boxing, including error-path destruction. A shared
+// work allowance also bounds parser retries and AST-free wrapper chains.
+const MAX_CALC_TREE_DEPTH: usize = 128;
+const MAX_CALC_PARSE_WORK: usize = 4096;
+
+struct CalcParseBudget {
+    remaining: usize,
+}
+
+impl CalcParseBudget {
+    fn consume(&mut self) -> Option<()> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        Some(())
+    }
+}
+
+struct BoundedCalcNode {
+    node: CalcNode,
+    height: usize,
+}
+
+impl BoundedCalcNode {
+    fn binary(
+        left: Self,
+        right: Self,
+        construct: impl FnOnce(Box<CalcNode>, Box<CalcNode>) -> CalcNode,
+    ) -> Option<Self> {
+        let height = left.height.max(right.height) + 1;
+        if height > MAX_CALC_TREE_DEPTH {
+            return None;
+        }
+        Some(Self {
+            node: construct(Box::new(left.node), Box::new(right.node)),
+            height,
+        })
+    }
+}
+
 fn angle_to_degrees(value: f64, unit: &str) -> Option<f64> {
     match unit.to_ascii_lowercase().as_str() {
         "deg" => Some(value),
@@ -33,7 +72,16 @@ fn angle_to_degrees(value: f64, unit: &str) -> Option<f64> {
 
 /// Parses one `<calc-value>`: a leaf (number/percentage/angle/infinity/NaN/
 /// sign()/an unresolved dimension) or a parenthesized sub-expression.
-fn parse_calc_value(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Option<CalcNode> {
+fn parse_calc_value(
+    input: &mut Parser<'_, '_>,
+    unit_kind: CalcUnitKind,
+    budget: &mut CalcParseBudget,
+    nesting: usize,
+) -> Option<BoundedCalcNode> {
+    if nesting > MAX_CALC_TREE_DEPTH {
+        return None;
+    }
+    budget.consume()?;
     input.skip_whitespace();
     let start = input.position();
     let token = input.next().ok()?.clone();
@@ -71,35 +119,54 @@ fn parse_calc_value(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Opti
         Token::Function(ref name) if name.eq_ignore_ascii_case("sign") => {
             let inner = input
                 .parse_nested_block(
-                    |nested| -> Result<CalcNode, cssparser::ParseError<'_, ()>> {
-                        parse_calc_sum(nested, CalcUnitKind::Number)
+                    |nested| -> Result<BoundedCalcNode, cssparser::ParseError<'_, ()>> {
+                        parse_calc_sum(nested, CalcUnitKind::Number, budget, nesting + 1)
                             .ok_or_else(|| nested.new_custom_error(()))
                     },
                 )
                 .ok()?;
-            Some(CalcNode::Sign(Box::new(inner)))
+            let height = inner.height + 1;
+            if height > MAX_CALC_TREE_DEPTH {
+                return None;
+            }
+            return Some(BoundedCalcNode {
+                node: CalcNode::Sign(Box::new(inner.node)),
+                height,
+            });
         }
-        Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => input
-            .parse_nested_block(
-                |nested| -> Result<CalcNode, cssparser::ParseError<'_, ()>> {
-                    parse_calc_sum(nested, unit_kind).ok_or_else(|| nested.new_custom_error(()))
-                },
-            )
-            .ok(),
-        Token::ParenthesisBlock => input
-            .parse_nested_block(
-                |nested| -> Result<CalcNode, cssparser::ParseError<'_, ()>> {
-                    parse_calc_sum(nested, unit_kind).ok_or_else(|| nested.new_custom_error(()))
-                },
-            )
-            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => {
+            return input
+                .parse_nested_block(
+                    |nested| -> Result<BoundedCalcNode, cssparser::ParseError<'_, ()>> {
+                        parse_calc_sum(nested, unit_kind, budget, nesting + 1)
+                            .ok_or_else(|| nested.new_custom_error(()))
+                    },
+                )
+                .ok();
+        }
+        Token::ParenthesisBlock => {
+            return input
+                .parse_nested_block(
+                    |nested| -> Result<BoundedCalcNode, cssparser::ParseError<'_, ()>> {
+                        parse_calc_sum(nested, unit_kind, budget, nesting + 1)
+                            .ok_or_else(|| nested.new_custom_error(()))
+                    },
+                )
+                .ok();
+        }
         _ => None,
     }
+    .map(|node| BoundedCalcNode { node, height: 1 })
 }
 
 /// `<calc-product> = <calc-value> [ [ '*' | '/' ] <calc-value> ]*`
-fn parse_calc_product(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Option<CalcNode> {
-    let mut node = parse_calc_value(input, unit_kind)?;
+fn parse_calc_product(
+    input: &mut Parser<'_, '_>,
+    unit_kind: CalcUnitKind,
+    budget: &mut CalcParseBudget,
+    nesting: usize,
+) -> Option<BoundedCalcNode> {
+    let mut node = parse_calc_value(input, unit_kind, budget, nesting)?;
     loop {
         input.skip_whitespace();
         let is_multiply = if input.try_parse(|i| i.expect_delim('*')).is_ok() {
@@ -109,26 +176,34 @@ fn parse_calc_product(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Op
         } else {
             break;
         };
+        budget.consume()?;
         // CSS calc() multiplication only requires that *one* side resolve
         // to a plain `<number>` — the other can keep `unit_kind` (e.g.
         // `sign(1em - 10px) * 10%`, where the percentage is the right-hand
         // side). Try `unit_kind` first, fall back to a plain number.
         let rhs_start = input.state();
-        let rhs = match parse_calc_value(input, unit_kind) {
+        let rhs = match parse_calc_value(input, unit_kind, budget, nesting) {
             Some(node) => node,
             None => {
                 input.reset(&rhs_start);
-                parse_calc_value(input, CalcUnitKind::Number)?
+                parse_calc_value(input, CalcUnitKind::Number, budget, nesting)?
             }
         };
-        node = CalcNode::Product(Box::new(node), Box::new(rhs), is_multiply);
+        node = BoundedCalcNode::binary(node, rhs, |left, right| {
+            CalcNode::Product(left, right, is_multiply)
+        })?;
     }
     Some(node)
 }
 
 /// `<calc-sum> = <calc-product> [ [ '+' | '-' ] <calc-product> ]*`
-fn parse_calc_sum(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Option<CalcNode> {
-    let mut node = parse_calc_product(input, unit_kind)?;
+fn parse_calc_sum(
+    input: &mut Parser<'_, '_>,
+    unit_kind: CalcUnitKind,
+    budget: &mut CalcParseBudget,
+    nesting: usize,
+) -> Option<BoundedCalcNode> {
+    let mut node = parse_calc_product(input, unit_kind, budget, nesting)?;
     loop {
         input.skip_whitespace();
         let is_add = if input.try_parse(|i| i.expect_delim('+')).is_ok() {
@@ -138,8 +213,10 @@ fn parse_calc_sum(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Option
         } else {
             break;
         };
-        let rhs = parse_calc_product(input, unit_kind)?;
-        node = CalcNode::Sum(Box::new(node), Box::new(rhs), is_add);
+        budget.consume()?;
+        let rhs = parse_calc_product(input, unit_kind, budget, nesting)?;
+        node =
+            BoundedCalcNode::binary(node, rhs, |left, right| CalcNode::Sum(left, right, is_add))?;
     }
     Some(node)
 }
@@ -151,7 +228,10 @@ pub(crate) fn parse_calc_or_plain(
     input: &mut Parser<'_, '_>,
     unit_kind: CalcUnitKind,
 ) -> Option<CalcNode> {
-    parse_calc_value(input, unit_kind)
+    let mut budget = CalcParseBudget {
+        remaining: MAX_CALC_PARSE_WORK,
+    };
+    parse_calc_value(input, unit_kind, &mut budget, 0).map(|node| node.node)
 }
 
 /// Serializes a CSS `<number>`: the shortest decimal that round-trips,
@@ -378,132 +458,4 @@ fn serialize_calc_sum_or_product(node: &CalcNode) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use cssparser::ParserInput;
-
-    use super::*;
-
-    fn parse(source: &str, unit_kind: CalcUnitKind) -> Option<CalcNode> {
-        let mut input = ParserInput::new(source);
-        let mut parser = Parser::new(&mut input);
-        parse_calc_or_plain(&mut parser, unit_kind)
-    }
-
-    #[test]
-    fn parses_a_bare_number() {
-        assert!(matches!(
-            parse("50", CalcUnitKind::Number),
-            Some(CalcNode::Number(v)) if v == 50.0
-        ));
-    }
-
-    #[test]
-    fn parses_a_bare_percentage() {
-        assert!(matches!(
-            parse("50%", CalcUnitKind::Percentage),
-            Some(CalcNode::Percentage(v)) if v == 50.0
-        ));
-    }
-
-    #[test]
-    fn parses_a_bare_angle_and_normalizes_units_to_degrees() {
-        assert!(matches!(
-            parse("380deg", CalcUnitKind::Angle),
-            Some(CalcNode::Angle(v)) if (v - 380.0).abs() < 1e-9
-        ));
-        assert!(matches!(
-            parse("1.28rad", CalcUnitKind::Angle),
-            Some(CalcNode::Angle(v)) if (v - 73.3386).abs() < 1e-3
-        ));
-    }
-
-    #[test]
-    fn parses_calc_with_a_simple_product() {
-        let node = parse("calc(50 * 3)", CalcUnitKind::Number).unwrap();
-        assert!(matches!(node, CalcNode::Product(..)));
-    }
-
-    #[test]
-    fn parses_calc_with_a_sign_function() {
-        let node = parse("calc(sign(1em - 10px) * 10)", CalcUnitKind::Number).unwrap();
-        let CalcNode::Product(left, right, true) = node else {
-            panic!("expected a multiplication product");
-        };
-        assert!(matches!(*left, CalcNode::Sign(_)));
-        assert!(matches!(*right, CalcNode::Number(v) if v == 10.0));
-    }
-
-    #[test]
-    fn parses_infinity_and_nan_keywords() {
-        assert!(matches!(
-            parse("calc(infinity)", CalcUnitKind::Number),
-            Some(CalcNode::Infinity)
-        ));
-        assert!(matches!(
-            parse("calc(-infinity)", CalcUnitKind::Number),
-            Some(CalcNode::NegInfinity)
-        ));
-        assert!(matches!(
-            parse("calc(NaN)", CalcUnitKind::Number),
-            Some(CalcNode::Nan)
-        ));
-    }
-
-    #[test]
-    fn returns_none_for_unsupported_math_functions() {
-        assert!(parse("calc(min(1, 2))", CalcUnitKind::Number).is_none());
-    }
-
-    #[test]
-    fn folds_a_fully_constant_product() {
-        let node = parse("calc(50 * 3)", CalcUnitKind::Number).unwrap();
-        assert_eq!(serialize_calc_node(&node), "calc(150)");
-    }
-
-    #[test]
-    fn folds_a_fully_constant_difference() {
-        let node = parse("calc(0.5 - 1)", CalcUnitKind::Number).unwrap();
-        assert_eq!(serialize_calc_node(&node), "calc(-0.5)");
-    }
-
-    #[test]
-    fn reorders_a_sign_call_multiplied_by_a_literal() {
-        let node = parse("calc(sign(1em - 10px) * 10)", CalcUnitKind::Number).unwrap();
-        assert_eq!(serialize_calc_node(&node), "calc(10 * sign(1em - 10px))");
-    }
-
-    #[test]
-    fn reorders_a_percentage_variant_the_same_way() {
-        let node = parse("calc(sign(1em - 10px) * 10%)", CalcUnitKind::Percentage).unwrap();
-        assert_eq!(serialize_calc_node(&node), "calc(10% * sign(1em - 10px))");
-    }
-
-    #[test]
-    fn preserves_addition_operand_order_around_an_unresolved_sign_product() {
-        let node = parse(
-            "calc(50% + (sign(1em - 10px) * 10%))",
-            CalcUnitKind::Percentage,
-        )
-        .unwrap();
-        assert_eq!(
-            serialize_calc_node(&node),
-            "calc(50% + (10% * sign(1em - 10px)))"
-        );
-    }
-
-    #[test]
-    fn serializes_infinity_and_nan() {
-        assert_eq!(serialize_calc_node(&CalcNode::Infinity), "calc(infinity)");
-        assert_eq!(
-            serialize_calc_node(&CalcNode::NegInfinity),
-            "calc(-infinity)"
-        );
-        assert_eq!(serialize_calc_node(&CalcNode::Nan), "calc(NaN)");
-    }
-
-    #[test]
-    fn zero_divided_by_zero_folds_to_nan() {
-        let node = parse("calc(0 / 0)", CalcUnitKind::Number).unwrap();
-        assert_eq!(serialize_calc_node(&node), "calc(NaN)");
-    }
-}
+mod tests;
