@@ -396,14 +396,20 @@ fn the_wrap_longhand_after_a_legacy_keyword_changes_only_the_wrap() {
 }
 
 #[test]
-fn word_break_break_word_is_normal_with_break_word_wrapping() {
-    // `word-break: break-word` is mapped to normal breaking plus
-    // `overflow-wrap: break-word`, whatever `overflow-wrap` says.
-    for extra in ["", ";overflow-wrap:anywhere"] {
-        let css = format!("word-break:break-word;overflow-wrap:normal{extra}");
-        let style = root_style(&css).expect("map");
-        assert_eq!(style.word_break, s::WordBreak::Normal, "{css}");
-        assert_eq!(style.overflow_wrap, s::OverflowWrap::BreakWord, "{css}");
+fn word_break_break_word_preserves_its_legacy_keyword_semantics() {
+    for (css, expected_wrap) in [
+        (
+            "word-break:break-word;overflow-wrap:normal",
+            s::OverflowWrap::Normal,
+        ),
+        (
+            "word-break:break-word;overflow-wrap:anywhere",
+            s::OverflowWrap::Anywhere,
+        ),
+    ] {
+        let style = root_style(css).expect("map");
+        assert_eq!(style.word_break, s::WordBreak::BreakWord, "{css}");
+        assert_eq!(style.overflow_wrap, expected_wrap, "{css}");
     }
 }
 

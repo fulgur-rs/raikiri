@@ -3,8 +3,8 @@ use crate::layout::ifc::flow::break_lines;
 use crate::layout::ifc::projection::project_ifc;
 use crate::layout::ifc::root::IfcRoot;
 use crate::layout::ifc::test_support::{ahem_fonts, block_fixture, span};
-use shodo::LayoutContext;
 use shodo::limits::Limits;
+use shodo::{Fragment, LayoutContext};
 
 const EDGES: &str = "padding:0 3px;border-width:0 2px;border-style:solid;margin:0 4px";
 
@@ -50,7 +50,7 @@ fn a_single_line_span_has_the_hand_computed_border_and_content_boxes() {
         doc.append_text(root, "cc");
         span_id = inner;
     });
-    let pieces = inline_box_pieces(&lines, 200.0, false, &[]);
+    let pieces = inline_box_pieces(&lines, 200.0, false);
     assert_eq!(pieces.len(), 1);
     let piece = pieces[0];
     assert_eq!(piece.node, span_id);
@@ -89,7 +89,7 @@ fn vertical_padding_and_border_grow_the_box_but_not_the_line() {
     });
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].block_size(), 10.0);
-    let piece = inline_box_pieces(&lines, 200.0, false, &[])[0];
+    let piece = inline_box_pieces(&lines, 200.0, false)[0];
     // above = below = padding 1 + border 2.
     assert_eq!(
         piece.border_box,
@@ -119,7 +119,7 @@ fn a_span_that_wraps_has_a_piece_per_line_and_only_the_ends_keep_their_edges() {
         doc.append_text(inner, "aaaa bbbb");
     });
     assert_eq!(lines.len(), 2);
-    let pieces = inline_box_pieces(&lines, 60.0, false, &[]);
+    let pieces = inline_box_pieces(&lines, 60.0, false);
     assert_eq!(pieces.len(), 2);
     assert_eq!((pieces[0].line, pieces[1].line), (0, 1));
     assert!(pieces[0].has_start_edge && !pieces[0].has_end_edge);
@@ -153,7 +153,7 @@ fn the_hung_trailing_space_is_not_part_of_a_continuing_piece() {
         let inner = span(doc, root, "display:inline");
         doc.append_text(inner, "aaaa bbbb");
     });
-    let first = inline_box_pieces(&lines, 60.0, false, &[])[0];
+    let first = inline_box_pieces(&lines, 60.0, false)[0];
     assert_eq!(first.border_box.width, 40.0, "the 10px space is hanging");
     assert_eq!(first.content_box.width, 40.0);
     assert!(lines[0].hang_end() > 0.0);
@@ -169,7 +169,7 @@ fn a_span_that_closes_before_the_hung_space_keeps_its_width() {
         doc.append_text(root, " bbbb");
     });
     assert_eq!(lines.len(), 2);
-    let pieces = inline_box_pieces(&lines, 60.0, false, &[]);
+    let pieces = inline_box_pieces(&lines, 60.0, false);
     assert_eq!(pieces.len(), 1);
     // margin 4, border 2 + padding 3, "aaaa" 40, padding 3 + border 2.
     assert_eq!(
@@ -195,7 +195,7 @@ fn nested_spans_record_their_parent() {
         outer_id = outer;
         inner_id = inner;
     });
-    let pieces = inline_box_pieces(&lines, 200.0, false, &[]);
+    let pieces = inline_box_pieces(&lines, 200.0, false);
     let inner = pieces.iter().find(|p| p.node == inner_id).expect("inner");
     let outer = pieces.iter().find(|p| p.node == outer_id).expect("outer");
     assert_eq!(inner.parent, Some(outer_id));
@@ -227,7 +227,7 @@ fn right_to_left_pieces_are_mirrored_inside_the_content_width() {
         doc.append_text(inner, "bb");
     });
     // Logical inline_start 0, size 26: mirrored x = 100 - (0 + 26) = 74.
-    let piece = inline_box_pieces(&lines, 100.0, true, &[])[0];
+    let piece = inline_box_pieces(&lines, 100.0, true)[0];
     assert_eq!(piece.border_box.x, 74.0);
     assert_eq!(piece.border_box.width, 26.0);
 }
@@ -244,7 +244,7 @@ fn a_span_that_closes_after_the_hung_space_ends_before_it() {
     });
     assert_eq!(lines.len(), 2);
     assert!(lines[0].hang_end() > 0.0);
-    let piece = inline_box_pieces(&lines, 60.0, false, &[])[0];
+    let piece = inline_box_pieces(&lines, 60.0, false)[0];
     assert!(piece.has_end_edge);
     // margin 4, border 2 + padding 3, "aaaa" 40, padding 3 + border 2.
     assert_eq!(
@@ -273,7 +273,7 @@ fn an_element_around_a_closed_span_loses_the_hung_space_too() {
         inner_id = inner;
     });
     assert_eq!(lines.len(), 2);
-    let pieces = inline_box_pieces(&lines, 60.0, false, &[]);
+    let pieces = inline_box_pieces(&lines, 60.0, false);
     let on_line = |node: usize| {
         pieces
             .iter()
@@ -295,7 +295,7 @@ fn a_right_to_left_wrapped_piece_keeps_its_width() {
         doc.append_text(inner, "aaaa bbbb");
     });
     assert_eq!(lines.len(), 2);
-    let pieces = inline_box_pieces(&lines, 60.0, true, &[]);
+    let pieces = inline_box_pieces(&lines, 60.0, true);
     // Line 1: margin 4 from the right edge, border box 45 (border 2 +
     // padding 3 + "aaaa"): x 11..56. Line 2: "bbbb" and the end edges, 45
     // wide from the right edge: x 15..60.
@@ -330,7 +330,7 @@ fn preserved_spaces_that_hang_stay_in_their_element() {
         "width:60px;white-space-collapse:preserve-spaces",
     ] {
         let mut span_id = 0;
-        let (root, lines) = root_and_lines_of(css, 60.0, |doc, root| {
+        let (_, lines) = root_and_lines_of(css, 60.0, |doc, root| {
             doc.append_text(root, "aaaa");
             let inner = span(doc, root, "display:inline");
             doc.append_text(inner, "   ");
@@ -339,7 +339,7 @@ fn preserved_spaces_that_hang_stay_in_their_element() {
         });
         assert_eq!(lines.len(), 2, "{css}");
         assert!(lines[0].hang_end() > 0.0, "{css}");
-        let pieces = inline_box_pieces(&lines, 60.0, false, &root.preserved_spaces);
+        let pieces = inline_box_pieces(&lines, 60.0, false);
         let piece = pieces.iter().find(|p| p.node == span_id).expect("span");
         assert_eq!(
             piece.border_box,
@@ -349,6 +349,55 @@ fn preserved_spaces_that_hang_stay_in_their_element() {
                 width: 30.0,
                 height: 10.0
             },
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn inline_box_geometry_matches_shodo_when_spaces_hang() {
+    for (css, rtl, preserved) in [
+        ("width:60px", false, false),
+        ("width:60px;direction:rtl", true, false),
+        ("width:60px;white-space:pre-wrap", false, true),
+    ] {
+        let mut span_id = 0;
+        let (_, lines) = root_and_lines_of(css, 60.0, |doc, root| {
+            let inner = span(doc, root, "display:inline");
+            if preserved {
+                doc.append_text(root, "aaaa");
+                doc.append_text(inner, "   ");
+                doc.append_text(root, "bb");
+            } else {
+                doc.append_text(inner, "aaaa ");
+                doc.append_text(root, "bbbb");
+            }
+            span_id = inner;
+        });
+        assert!(lines[0].hang_end() > 0.0, "{css}");
+
+        let raw = lines[0]
+            .fragments()
+            .find_map(|fragment| match fragment {
+                Fragment::InlineBox(fragment) if fragment.node.0 as usize == span_id => {
+                    Some(fragment)
+                }
+                _ => None,
+            })
+            .expect("shodo inline-box fragment");
+        let piece = inline_box_pieces(&lines, 60.0, rtl)
+            .into_iter()
+            .find(|piece| piece.node == span_id && piece.line == 0)
+            .expect("Raikiri inline-box piece");
+        let expected_x = if rtl {
+            60.0 - (raw.rect.inline_start + raw.rect.inline_size)
+        } else {
+            raw.rect.inline_start
+        };
+        assert_eq!(piece.border_box.x, expected_x, "{css}");
+        assert_eq!(piece.border_box.width, raw.rect.inline_size, "{css}");
+        assert_eq!(
+            piece.content_box.width, raw.content_rect.inline_size,
             "{css}"
         );
     }

@@ -400,11 +400,12 @@ pub(crate) fn inline_style(
     let line_break =
         same_enum!(LineBreak, cv.line_break, node; Auto, Loose, Normal, Strict, Anywhere)?;
     let (word_break, overflow_wrap) = match cv.word_break {
-        // The deprecated keyword: normal breaking plus `overflow-wrap:
-        // break-word`, whatever the authored `overflow-wrap` is, for both
-        // line breaking and min-content sizing (CSS Text 3 §5.2 would give
-        // it the `anywhere` sizing instead).
-        p::WordBreak::BreakWord => (s::WordBreak::Normal, s::OverflowWrap::BreakWord),
+        // shodo models the legacy keyword directly, including its anywhere
+        // min-content sizing behavior, while retaining the authored longhand.
+        p::WordBreak::BreakWord => (
+            s::WordBreak::BreakWord,
+            same_enum!(OverflowWrap, cv.overflow_wrap, node; Normal, BreakWord, Anywhere)?,
+        ),
         word_break => (
             same_enum!(WordBreak, word_break, node; Normal, BreakAll, KeepAll, Manual, AutoPhrase)?,
             same_enum!(OverflowWrap, cv.overflow_wrap, node; Normal, BreakWord, Anywhere)?,

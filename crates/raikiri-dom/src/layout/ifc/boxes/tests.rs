@@ -39,6 +39,26 @@ fn a_probe_stores_nothing_and_a_performed_layout_does() {
 }
 
 #[test]
+fn rtl_lines_use_the_physical_inset_from_a_right_float() {
+    let (mut doc, cascade, _, root) = ahem_paragraph_with_float(
+        "",
+        "float:right;width:30px;height:20px",
+        "aaaa bbbb",
+        "direction:rtl",
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .expect("layout");
+
+    let line = &doc.nodes[root].ifc_lines().expect("ifc lines")[0];
+    assert_eq!(line_start_x(line), Some(70.0));
+}
+
+#[test]
 fn a_probe_does_not_place_an_atomic_and_a_performed_layout_does() {
     let (mut doc, cascade, atomic, root) =
         ahem_paragraph_with_atomic("aa ", "width:30px;height:10px", " bb", "");

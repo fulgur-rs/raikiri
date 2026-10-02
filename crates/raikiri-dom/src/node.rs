@@ -625,7 +625,6 @@ impl Node {
             &lines.lines,
             lines.width,
             root.rtl,
-            &root.preserved_spaces,
         );
         // Lines moved by pagination carry their pieces with them.
         for piece in &mut pieces {

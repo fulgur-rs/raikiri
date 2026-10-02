@@ -29,9 +29,6 @@ pub(crate) struct IfcRoot {
     /// Paint offsets of the relatively positioned inline elements of the
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
-    /// Text nodes whose spaces are preserved: spaces of theirs that hang at
-    /// the end of a line stay in their elements' boxes.
-    pub(crate) preserved_spaces: Vec<usize>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
@@ -104,7 +101,6 @@ impl IfcRoot {
             boxes: projected.boxes,
             rtl: projected.rtl,
             offsets: projected.offsets,
-            preserved_spaces: projected.preserved_spaces,
             cleared_breaks: projected.cleared_breaks,
             fixed: projected.fixed,
             multicol_fragments: None,
@@ -121,7 +117,6 @@ impl IfcRoot {
             boxes: self.boxes.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
-            preserved_spaces: self.preserved_spaces.clone(),
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,
