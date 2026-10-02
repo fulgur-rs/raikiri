@@ -10566,9 +10566,9 @@ pub(crate) const MAX_SUBSTITUTED_VALUE_BYTES: usize = 64 * 1024;
 /// The recursive parser paths use the same bound as a stack guard.
 pub(crate) const MAX_DEFERRED_VALUE_NESTING_DEPTH: usize = 128;
 
-// CSS Color 5's `<color>` endpoint grammar is recursive because it includes
-// `<color-mix()>`. Bound this parser's recursive descent to keep untrusted
-// declarations from exhausting the native stack.
+// CSS Color 5's color endpoints and relative origins are recursive. Share
+// this limit across every color function, not just color-mix(), to bound
+// native recursion in declarations and direct color-parser callers.
 pub(crate) const MAX_COLOR_MIX_NESTING_DEPTH: usize = 128;
 
 fn is_deferred_function(name: &str) -> bool {
@@ -11307,7 +11307,7 @@ fn replace_math_with_dummy_and_number(input: &str, dummy: &str) -> Option<String
 pub(crate) fn contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
     let start = input.state();
     let source_start = input.position();
-    let found = parser_contains_deferred_function(input, source_start, 0);
+    let found = parser_contains_deferred_function(input, source_start, 0).unwrap_or(true);
     input.reset(&start);
     found
 }
@@ -11320,19 +11320,19 @@ pub(crate) fn contains_deferred_function_in_source(input: &str) -> bool {
         return true;
     }
     let source_start = parser.position();
-    parser_contains_deferred_function(&mut parser, source_start, 0)
+    parser_contains_deferred_function(&mut parser, source_start, 0).unwrap_or(true)
 }
 
 /// Inspect CSS component-value tokens, including nested blocks, so a deferred
 /// function is recognized only when cssparser emitted a real `Function` token.
 /// Raw substring matching would mistake `#var(--x)` for a variable function.
-fn parser_contains_deferred_function(
-    input: &mut Parser<'_, '_>,
+fn parser_contains_deferred_function<'i>(
+    input: &mut Parser<'i, '_>,
     source_start: SourcePosition,
     depth: usize,
-) -> bool {
+) -> Result<bool, ParseError<'i, ()>> {
     if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
-        return true;
+        return Err(input.new_custom_error(()));
     }
     let mut found = false;
     loop {
@@ -11353,37 +11353,23 @@ fn parser_contains_deferred_function(
                 if is_deferred_function(name.as_ref()) {
                     found = true;
                 }
-                if input
-                    .parse_nested_block(|nested| {
-                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(
-                            nested,
-                            source_start,
-                            depth.saturating_add(1),
-                        ))
-                    })
-                    .unwrap_or(false)
-                {
+                if input.parse_nested_block(|nested| {
+                    parser_contains_deferred_function(nested, source_start, depth.saturating_add(1))
+                })? {
                     found = true;
                 }
             }
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
-                if input
-                    .parse_nested_block(|nested| {
-                        Ok::<_, ParseError<'_, ()>>(parser_contains_deferred_function(
-                            nested,
-                            source_start,
-                            depth.saturating_add(1),
-                        ))
-                    })
-                    .unwrap_or(false)
-                {
+                if input.parse_nested_block(|nested| {
+                    parser_contains_deferred_function(nested, source_start, depth.saturating_add(1))
+                })? {
                     found = true;
                 }
             }
             _ => {}
         }
     }
-    found
+    Ok(found)
 }
 
 #[cfg(test)]
@@ -11412,13 +11398,16 @@ pub(crate) fn skip_deferred_comment(input: &str, start: usize) -> Option<usize> 
 ///
 /// In particular, an unquoted `url-token` is one token: brackets and braces
 /// in its payload are URL data, not nested component values.
-fn css_component_values_are_bounded(input: &str) -> bool {
+pub(crate) fn css_component_values_are_bounded(input: &str) -> bool {
     let mut parser_input = ParserInput::new(input);
     let mut parser = Parser::new(&mut parser_input);
     css_component_values_are_bounded_in_parser(&mut parser, 0)
 }
 
-fn css_component_values_are_bounded_in_parser(input: &mut Parser<'_, '_>, depth: usize) -> bool {
+pub(crate) fn css_component_values_are_bounded_in_parser(
+    input: &mut Parser<'_, '_>,
+    depth: usize,
+) -> bool {
     loop {
         let token = match input.next() {
             Ok(token) => token.clone(),

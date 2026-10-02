@@ -791,12 +791,10 @@ fn parse_color_entirely(raw_value: &str) -> Option<CssColor> {
 /// changing `CssColor`/`PropertyValue`'s shape, which is public API used
 /// well beyond this parser (cascade, paint, and downstream consumers).
 pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
-    if name == "border-color" {
-        return serialize_border_color_shorthand(raw_value);
-    }
     if !matches!(
         name,
         "color"
+            | "border-color"
             | "background-color"
             | "border-top-color"
             | "border-right-color"
@@ -806,6 +804,15 @@ pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
             | "outline-color"
     ) {
         return None;
+    }
+    // Lab-family serialization enters its own math parser, while border
+    // shorthand serialization calls the color parser directly. Guard both
+    // before any recursive parse, even without declaration validation.
+    if !css_component_values_are_bounded(raw_value) {
+        return None;
+    }
+    if name == "border-color" {
+        return serialize_border_color_shorthand(raw_value);
     }
     serialize_one_color(raw_value)
 }

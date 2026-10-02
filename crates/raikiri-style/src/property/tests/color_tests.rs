@@ -22,6 +22,86 @@ fn parse_parsed_color_entire(source: &str) -> Option<ParsedColor> {
         .ok()
 }
 
+fn nested_color_wrapper(prefix: &str, suffix: &str, depth: usize) -> String {
+    format!("{}red{}", prefix.repeat(depth), suffix.repeat(depth))
+}
+
+#[test]
+fn color_recursion_depth_notification_survives_the_deferred_scan() {
+    let source = nested_color_wrapper("contrast-color(", ")", MAX_COLOR_MIX_NESTING_DEPTH + 1);
+    assert!(contains_deferred_function_in_source(&source));
+    assert_eq!(parse(&source, "color"), None);
+}
+
+#[test]
+fn color_recursion_depth_bounds_every_recursive_wrapper() {
+    for (prefix, suffix) in [
+        ("contrast-color(", ")"),
+        ("light-dark(", ", blue)"),
+        ("light-dark(blue, ", ")"),
+        ("alpha(from ", ")"),
+        ("rgb(from ", " r g b)"),
+        ("lab(from ", " l a b)"),
+        ("color(from ", " srgb r g b)"),
+    ] {
+        let source = nested_color_wrapper(prefix, suffix, MAX_COLOR_MIX_NESTING_DEPTH + 1);
+        assert_eq!(parse_color_entire(&source), None, "{prefix}");
+    }
+}
+
+#[test]
+fn color_recursion_preserves_boundary_and_ordinary_controls() {
+    let boundary = nested_color_wrapper("contrast-color(", ")", MAX_COLOR_MIX_NESTING_DEPTH);
+    assert!(parse_color_entire(&boundary).is_some());
+    assert!(!contains_deferred_function_in_source(&boundary));
+    for source in [
+        "contrast-color(red)",
+        "light-dark(red, blue)",
+        "alpha(from red)",
+        "rgb(from red r g b)",
+        "lab(from red l a b)",
+        "color(from red srgb r g b)",
+        "rgb(from red calc(r + 1) g b)",
+        "color-mix(in srgb, contrast-color(red), light-dark(red, blue))",
+    ] {
+        assert!(parse_color_entire(source).is_some(), "{source}");
+    }
+    let mut input = ParserInput::new("rgb(0 0 255)");
+    let mut parser = Parser::new(&mut input);
+    assert!(parse_color_float(&mut parser, MAX_COLOR_MIX_NESTING_DEPTH).is_none());
+}
+
+#[test]
+fn color_recursion_preflight_leaves_following_components_to_the_caller() {
+    let following = nested_color_wrapper("contrast-color(", ")", MAX_COLOR_MIX_NESTING_DEPTH + 1);
+    for first in ["red", "rgb(1 2 3)"] {
+        let source = format!("{first} {following}");
+        let mut input = ParserInput::new(&source);
+        let mut parser = Parser::new(&mut input);
+        assert!(parse_color_float(&mut parser, 0).is_some());
+        assert!(parse_color_float(&mut parser, 0).is_none());
+    }
+}
+
+#[test]
+fn color_recursion_bounds_direct_serializer_and_relative_math() {
+    let depth = MAX_DEFERRED_VALUE_NESTING_DEPTH * 16;
+    let contrast = nested_color_wrapper(r"CoNtRaSt\2d CoLoR(", ")", depth);
+    assert!(parse_color_entire(&contrast).is_none());
+    assert!(serialize_color_value("border-color", &contrast).is_none());
+    let relative = format!(
+        "rgb(from red calc({}r{}) g b)",
+        "(".repeat(depth),
+        ")".repeat(depth)
+    );
+    assert!(parse_color_entire(&relative).is_none());
+    assert!(serialize_color_value("border-color", &relative).is_none());
+    let lab = format!("lab(calc({}1{}) 0 0)", "(".repeat(depth), ")".repeat(depth));
+    assert!(serialize_color_value("color", &lab).is_none());
+    assert!(serialize_color_value("border-color", "rgb(0 0 255) red").is_some());
+    assert!(serialize_color_value("color", "lab(calc(1 + 2) 0 0)").is_some());
+}
+
 #[test]
 fn color_parse_hex() {
     assert_eq!(
