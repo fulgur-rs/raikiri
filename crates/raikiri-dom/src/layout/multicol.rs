@@ -535,10 +535,15 @@ fn record_nested_ifc_box_fragments(
             .iter()
             .map(|placement| (placement.node_id, placement.fragmentainer))
             .collect::<std::collections::HashSet<_>>();
+        let mut last_placement_columns = std::collections::HashMap::<usize, usize>::new();
+        for placement in &placements {
+            last_placement_columns
+                .entry(placement.node_id)
+                .and_modify(|last| *last = (*last).max(placement.fragmentainer))
+                .or_insert(placement.fragmentainer);
+        }
+        let mut overflow_clip_heights = std::collections::HashMap::<usize, f32>::new();
         for source in placements.clone() {
-            if placements.len() >= MAX_NESTED_FLOAT_FRAGMENTS {
-                break;
-            }
             if !tree.nodes[source.node_id].style.float.is_floated() {
                 continue;
             }
@@ -564,6 +569,21 @@ fn record_nested_ifc_box_fragments(
                         ..source.rect
                     },
                 });
+                last_placement_columns
+                    .entry(source.node_id)
+                    .and_modify(|last| *last = (*last).max(column))
+                    .or_insert(column);
+            }
+            let last_emitted = last_placement_columns[&source.node_id];
+            if last_emitted < last_column {
+                // Keep the unexpanded tail visible in the final emitted
+                // column when the defensive fragment budget is exhausted.
+                let remaining_bottom = source.rect.y + source.rect.height
+                    - last_emitted.saturating_sub(source.fragmentainer) as f32 * height;
+                overflow_clip_heights
+                    .entry(last_emitted)
+                    .and_modify(|clip| *clip = clip.max(remaining_bottom))
+                    .or_insert(remaining_bottom);
             }
         }
         if !placements.is_empty() || line_ranges.is_some() {
@@ -591,6 +611,18 @@ fn record_nested_ifc_box_fragments(
                     .as_ref()
                     .and_then(|ranges| ranges.iter().find(|range| range.fragmentainer == column))
                     .copied();
+                let line_bottom = line_range
+                    .and_then(|range| {
+                        lines
+                            .as_ref()?
+                            .lines
+                            .get(range.line_end.checked_sub(1)?)
+                            .map(|line| line.block_offset() + line.block_size())
+                    })
+                    .unwrap_or(0.0);
+                let column_clip_height = height
+                    .max(line_bottom)
+                    .max(overflow_clip_heights.get(&column).copied().unwrap_or(0.0));
                 let column_delta = column.saturating_sub(context.column_index) as f32 * height;
                 let mut parent = parent_fragment;
                 let mut parent_offset = Point::ZERO;
@@ -655,10 +687,11 @@ fn record_nested_ifc_box_fragments(
                         .is_some_and(|parent| tree.nodes[parent].style.display == Display::Flex);
                     let fragment_id =
                         if let Some(&fragment_id) = existing_fragments.get(&(ancestor, column)) {
+                            let fragment = &mut tree.fragment_tree.fragments[fragment_id];
+                            extend_fragment_clip(fragment, column_clip_height);
                             if ancestor == node_id
                                 && let Some(range) = line_range
                             {
-                                let fragment = &mut tree.fragment_tree.fragments[fragment_id];
                                 fragment.line_start = Some(range.line_start);
                                 fragment.line_end = Some(range.line_end);
                             }
@@ -692,7 +725,7 @@ fn record_nested_ifc_box_fragments(
                                         },
                                         y: -parent_offset.y,
                                         width: context.column_width,
-                                        height,
+                                        height: column_clip_height,
                                     }),
                                     fragment_index: 0,
                                     fragment_count: 1,
@@ -730,7 +763,7 @@ fn record_nested_ifc_box_fragments(
                             },
                             y: -parent_offset.y,
                             width: context.column_width,
-                            height,
+                            height: column_clip_height,
                         }),
                         fragment_index: 0,
                         fragment_count: 1,
@@ -751,6 +784,12 @@ fn record_nested_ifc_box_fragments(
                         && tree.nodes[child].style.display != Display::None
                 }),
         );
+    }
+}
+
+fn extend_fragment_clip(fragment: &mut crate::fragment::LayoutFragment, height: f32) {
+    if let Some(clip) = fragment.fragmentainer_clip.as_mut() {
+        clip.height = clip.height.max(height);
     }
 }
 

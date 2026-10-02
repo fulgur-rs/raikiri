@@ -772,7 +772,12 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
         Style::default(),
         Some("display:flex;flex-direction:row"),
     );
-    let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("font-size:0;line-height:0"),
+    );
     let float = doc.append_element(
         Some(item),
         "div",
@@ -790,6 +795,112 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
         .count();
     assert!(count > 1, "float must cross more than one column");
     assert!(count <= 1_024, "float expansion must remain bounded");
+    let last_float = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == float)
+        .max_by_key(|fragment| fragment.fragmentainer)
+        .expect("last float fragment");
+    let last_clip = last_float.fragmentainer_clip.expect("last float clip");
+    assert!(
+        last_float.fragmentainer as f32 * 0.001 + last_clip.height >= 2.0,
+        "the final float fragment must paint the remaining height"
+    );
+    let mut parent = last_float.parent;
+    while let Some(parent_id) = parent {
+        let ancestor = &doc.fragment_tree.fragments[parent_id];
+        if let Some(clip) = ancestor.fragmentainer_clip {
+            assert!(
+                clip.height >= last_clip.height,
+                "ancestor clips must include the float overflow"
+            );
+        }
+        parent = ancestor.parent;
+    }
+}
+
+#[test]
+fn tiny_fragmentainers_keep_terminal_text_lines_visible() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;columns:2;max-height:0.001px"),
+    );
+    let flex = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:row"),
+    );
+    let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+    doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("float:left;width:1px;height:2px"),
+    );
+    for _ in 0..12 {
+        doc.append_text(item, "line");
+        doc.append_element(Some(item), "br", Style::default(), None::<&str>);
+    }
+
+    layout_nested_flex_float_fixture(&mut doc);
+    let lines = doc.nodes[item].ifc_lines().expect("item lines");
+    assert!(lines.len() >= 12, "all source lines must survive");
+    let ranges = doc.nodes[item]
+        .ifc_multicol_fragments()
+        .expect("fragmentainer ranges");
+    let last_range = ranges.last().expect("last line range");
+    assert_eq!(last_range.line_end, lines.len());
+    let last_line = &lines[last_range.line_end - 1];
+    let line_bottom = last_line.block_offset() + last_line.block_size();
+    let clip_height = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| {
+            fragment.node_id == item && fragment.fragmentainer == last_range.fragmentainer
+        })
+        .filter_map(|fragment| fragment.fragmentainer_clip.map(|clip| clip.height))
+        .fold(0.0_f32, f32::max);
+    assert!(
+        clip_height >= line_bottom,
+        "the final text fragment must include every continuation line"
+    );
+}
+
+#[test]
+fn reused_fragment_clip_expands_to_later_child_overflow() {
+    let mut fragment = crate::fragment::LayoutFragment {
+        node_id: 0,
+        parent: None,
+        fragmentainer: 0,
+        rect: crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 1.0,
+        },
+        fragmentainer_clip: Some(crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 1.0,
+        }),
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    extend_fragment_clip(&mut fragment, 2.0);
+    assert_eq!(fragment.fragmentainer_clip.expect("clip").height, 2.0);
+    extend_fragment_clip(&mut fragment, 0.5);
+    assert_eq!(fragment.fragmentainer_clip.expect("clip").height, 2.0);
 }
 
 #[test]
