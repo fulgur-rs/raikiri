@@ -1018,8 +1018,9 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
 
-    // Check that margin=20 makes p.location nonzero: a precondition for
-    // actually exercising the accumulation logic.
+    // Check that margin=20 makes the accumulated block-flow position
+    // nonzero: its top margin can collapse from p onto body.
+    let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
     let p_loc = doc.get_node(p).unwrap().unrounded_layout.location;
     assert!(
         p_loc.x >= 20.0,
@@ -1027,8 +1028,9 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
         p_loc.x
     );
     assert!(
-        p_loc.y >= 20.0,
-        "p.location.y should reflect margin=20, got {}",
+        body_loc.y + p_loc.y >= 20.0,
+        "body+p accumulated y should reflect margin=20, got body {} + p {}",
+        body_loc.y,
         p_loc.y
     );
 
