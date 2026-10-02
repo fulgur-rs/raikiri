@@ -558,6 +558,85 @@ fn each_inline_element_gets_only_its_own_pieces() {
 }
 
 #[test]
+fn many_sibling_inline_boxes_build_a_page_scene_within_two_seconds() {
+    use std::time::{Duration, Instant};
+
+    let mut html = String::from(
+        "<style>body{margin:0} div{font:10px/10px Ahem} span{padding:1px}</style><div>",
+    );
+    for _ in 0..30_000 {
+        html.push_str("<span></span>");
+    }
+    html.push_str("</div>");
+
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
+    let cascade = build_cascaded(&uncascaded);
+    let mut dom = uncascaded.dom;
+    let dir = std::path::Path::new(FONT_DIR);
+    dom.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
+
+    let root = find_element(&dom, "div");
+    assert_eq!(
+        node(&dom, root).ifc_inline_boxes().expect("pieces").len(),
+        30_000
+    );
+    let started = Instant::now();
+    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    let elapsed = started.elapsed();
+    assert_eq!(scene.node_ids.len(), 30_002);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "building the scene for 30,000 sibling spans took {elapsed:?}"
+    );
+}
+
+#[test]
+fn many_sibling_text_nodes_build_a_page_scene_within_two_seconds() {
+    use std::time::{Duration, Instant};
+
+    let mut html =
+        String::from("<style>body{margin:0} div{font:10px/10px Ahem;width:100000px}</style><div>");
+    for _ in 0..20_000 {
+        html.push_str("a<!---->");
+    }
+    html.push_str("</div>");
+
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
+    let cascade = build_cascaded(&uncascaded);
+    let mut dom = uncascaded.dom;
+    let dir = std::path::Path::new(FONT_DIR);
+    dom.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
+    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
+
+    let root = find_element(&dom, "div");
+    assert!(
+        node(&dom, root)
+            .ifc_inline_boxes()
+            .expect("pieces")
+            .is_empty()
+    );
+    let started = Instant::now();
+    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    let elapsed = started.elapsed();
+    assert_eq!(scene.node_ids.len(), 20_002);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "building the scene for 20,000 sibling text nodes took {elapsed:?}"
+    );
+}
+
+#[test]
 fn a_later_page_gets_only_the_lines_and_pieces_below_its_top() {
     let (dom, cascade, _scene) = scene_with_engine(WRAPPING_SPAN);
     // A page whose content starts at y 20: the "cc" line (20..30) is on it,

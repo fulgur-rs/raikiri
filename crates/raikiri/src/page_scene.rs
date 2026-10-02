@@ -611,8 +611,11 @@ pub fn build_page_scene_for_page_named(
         // layout of their own, and its inline elements are recorded as one
         // rectangle per line; both are measured from the root's content box.
         // A root is visited before its descendants.
+        type SceneRect = (Pt, Pt, Pt, Pt);
+        type PieceRectsByNode = HashMap<usize, Vec<SceneRect>>;
         let mut ifc_origin: HashMap<usize, (Pt, Pt)> = HashMap::new();
-        let mut ifc_pieces: HashMap<usize, Vec<raikiri_dom::InlineBoxPiece>> = HashMap::new();
+        let mut ifc_pieces: HashMap<usize, PieceRectsByNode> = HashMap::new();
+        let mut ifc_text_lines = HashMap::new();
         while let Some((idx, parent_abs_x, parent_abs_y)) = stack.pop() {
             let Some(node) = dom.get_node(idx) else {
                 continue; // cov:ignore: DFS stack holds only body-subtree indices, always valid in a well-formed Document
@@ -628,23 +631,32 @@ pub fn build_page_scene_for_page_named(
             let abs_y = parent_abs_y + layout.location.y;
             let is_body = idx == body_idx;
             if node.is_ifc_root() {
-                ifc_origin.insert(
-                    idx,
-                    (
-                        abs_x + layout.border.left + layout.padding.left,
-                        abs_y + layout.border.top + layout.padding.top,
-                    ),
+                let origin = (
+                    abs_x + layout.border.left + layout.padding.left,
+                    abs_y + layout.border.top + layout.padding.top,
                 );
-                ifc_pieces.insert(idx, node.ifc_inline_boxes().unwrap_or_default());
+                ifc_origin.insert(idx, origin);
+                let mut by_node: PieceRectsByNode = HashMap::new();
+                for piece in node.ifc_inline_boxes().unwrap_or_default() {
+                    let rect = piece.border_box;
+                    by_node.entry(piece.node).or_default().push((
+                        origin.0 + rect.x,
+                        origin.1 + rect.y,
+                        rect.width,
+                        rect.height,
+                    ));
+                }
+                ifc_pieces.insert(idx, by_node);
+                ifc_text_lines.extend(dom.ifc_text_lines_by_node(idx));
             }
             let ifc_lines = if node.kind() == NodeKind::Text {
-                dom.ifc_text_lines(idx)
+                ifc_text_lines.get(&idx)
             } else {
                 None
             };
             // Border boxes of the node in document coordinates: one for most
             // nodes, one per line for an inline element of an ifc paragraph.
-            let rects: Vec<(Pt, Pt, Pt, Pt)> = if let Some(owned) = &ifc_lines {
+            let rects: Vec<(Pt, Pt, Pt, Pt)> = if let Some(owned) = ifc_lines {
                 let (root_x, root_y) = ifc_origin
                     .get(&owned.root)
                     .copied()
@@ -660,17 +672,9 @@ pub fn build_page_scene_for_page_named(
             } else {
                 let pieces: Vec<(Pt, Pt, Pt, Pt)> = if node.in_ifc_subtree() {
                     ifc_root_of(dom, idx)
-                        .and_then(|root| Some((ifc_origin.get(&root)?, ifc_pieces.get(&root)?)))
-                        .map(|(&(root_x, root_y), pieces)| {
-                            pieces
-                                .iter()
-                                .filter(|piece| piece.node == idx)
-                                .map(|piece| {
-                                    let rect = piece.border_box;
-                                    (root_x + rect.x, root_y + rect.y, rect.width, rect.height)
-                                })
-                                .collect()
-                        })
+                        .and_then(|root| ifc_pieces.get(&root))
+                        .and_then(|pieces| pieces.get(&idx))
+                        .cloned()
                         .unwrap_or_default()
                 } else {
                     Vec::new()
@@ -735,7 +739,7 @@ pub fn build_page_scene_for_page_named(
                     }
                     NodeKind::Text => {
                         // A text node outside every paragraph has no lines.
-                        let line_count = ifc_lines.as_ref().map_or(0, |owned| owned.lines.len());
+                        let line_count = ifc_lines.map_or(0, |owned| owned.lines.len());
                         let entry = ParagraphEntry {
                             line_count,
                             ..ParagraphEntry::default()
