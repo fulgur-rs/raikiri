@@ -163,15 +163,69 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut beside_floats = false;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
 
-    for column in context.column_index..context.column_count {
-        let has_next = column + 1 < context.column_count;
+    let fragmentainer_height = context.available_height;
+    let column_limit = fragmentainer_height.map_or(context.column_count, |height| {
+        let float_extent = root
+            .boxes
+            .iter()
+            .filter(|box_| box_.kind == IfcBoxKind::Float)
+            .map(|box_| {
+                measure_float(tree, box_.node, geometry)
+                    .margin_box
+                    .height
+                    .max(0.0)
+            })
+            .sum::<f32>();
+        let flow_extent = tree.nodes[idx]
+            .unrounded_layout
+            .size
+            .height
+            .max(float_extent);
+        let needed = (flow_extent / height).ceil().max(1.0) as usize;
+        context
+            .column_count
+            .max(context.column_index.saturating_add(needed))
+    });
+    let mut source_float_placements = Vec::new();
+    for column in context.column_index..column_limit {
+        let has_next = column + 1 < column_limit;
+        let column_geometry = FlowGeometry {
+            top_edge: if column == context.column_index {
+                geometry.top_edge
+            } else {
+                0.0
+            },
+            ..geometry
+        };
         let mut bfc = BlockFormattingContext::new();
         let mut ctx = bfc.root_block_context();
         ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
+        let carried_placements = if perform {
+            carried_float_placements(
+                tree,
+                &source_float_placements,
+                context.column_index,
+                column,
+                fragmentainer_height,
+            )
+        } else {
+            Vec::new()
+        };
+        if let Some(height) = fragmentainer_height {
+            seed_carried_floats(
+                tree,
+                &mut ctx,
+                column_geometry,
+                &source_float_placements,
+                context.column_index,
+                column,
+                height,
+            );
+        }
         let outcome = run_boxes_segment(
             tree,
             &root,
-            geometry,
+            column_geometry,
             &mut ctx,
             perform,
             true,
@@ -203,6 +257,15 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         max_height = max_height.max(outcome.lines.height);
         beside_floats |= outcome.lines.beside_floats;
         escaping_margin = outcome.lines.escaping_margin;
+        for placement in &outcome.lines.fragment_box_placements {
+            if !source_float_placements
+                .iter()
+                .any(|source| source.node_id == placement.node_id)
+            {
+                source_float_placements.push(*placement);
+            }
+        }
+        fragment_box_placements.extend(carried_placements);
         fragment_box_placements.extend(outcome.lines.fragment_box_placements);
         atomic_outputs.extend(outcome.atomic_outputs);
         let column_lines = std::sync::Arc::try_unwrap(outcome.lines.lines)
@@ -234,6 +297,81 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry);
     }
     result
+}
+
+fn carried_float_placements(
+    tree: &Document,
+    sources: &[IfcBoxFragment],
+    first_column: usize,
+    column: usize,
+    fragmentainer_height: Option<f32>,
+) -> Vec<IfcBoxFragment> {
+    let Some(height) = fragmentainer_height.filter(|height| *height > 0.0) else {
+        return Vec::new();
+    };
+    let column_origin = column.saturating_sub(first_column) as f32 * height;
+    sources
+        .iter()
+        .filter(|source| source.fragmentainer < column)
+        .filter_map(|source| {
+            let source_origin = source.fragmentainer.saturating_sub(first_column) as f32 * height;
+            let source_y = source_origin + source.rect.y;
+            (source_y + source.rect.height > column_origin).then_some(IfcBoxFragment {
+                node_id: source.node_id,
+                fragmentainer: column,
+                rect: crate::fragment::FragmentRect {
+                    y: source.rect.y - (column - source.fragmentainer) as f32 * height,
+                    ..source.rect
+                },
+            })
+        })
+        .filter(|placement| tree.nodes[placement.node_id].style.float.is_floated())
+        .collect()
+}
+
+fn seed_carried_floats(
+    tree: &Document,
+    ctx: &mut BlockContext<'_>,
+    geometry: FlowGeometry,
+    sources: &[IfcBoxFragment],
+    first_column: usize,
+    column: usize,
+    fragmentainer_height: f32,
+) {
+    if fragmentainer_height <= 0.0 {
+        return;
+    }
+    let column_origin = column.saturating_sub(first_column) as f32 * fragmentainer_height;
+    for source in sources
+        .iter()
+        .filter(|source| source.fragmentainer < column)
+    {
+        let layout = tree.nodes[source.node_id].unrounded_layout;
+        let margin = resolved_margins(tree, source.node_id, geometry.width);
+        let source_column_origin =
+            source.fragmentainer.saturating_sub(first_column) as f32 * fragmentainer_height;
+        let float_top = source_column_origin + source.rect.y - margin.top;
+        let float_bottom = float_top + source.rect.height + margin.top + margin.bottom;
+        let visible_top = float_top.max(column_origin);
+        let visible_bottom = float_bottom.min(column_origin + fragmentainer_height);
+        if visible_bottom <= visible_top {
+            continue;
+        }
+        ctx.place_floated_box(
+            Size {
+                width: layout.size.width + margin.left + margin.right,
+                height: visible_bottom - visible_top,
+            },
+            geometry.top_edge + visible_top - column_origin,
+            tree.nodes[source.node_id]
+                .style
+                .float
+                .float_direction()
+                .unwrap_or(FloatDirection::Left),
+            tree.nodes[source.node_id].style.clear,
+            false,
+        );
+    }
 }
 
 /// The line loop. `local` is true when the context is this paragraph's own,
@@ -393,7 +531,6 @@ fn run_boxes_segment(
                 // intermediate position past this fragmentainer's bottom.
                 if has_next_fragmentainer
                     && !fits
-                    && !lines.is_empty()
                     && let Some(height) = fragmentainer_height
                     && next_float_edge(ctx, top_edge, line_y).is_some_and(|edge| edge >= height)
                 {

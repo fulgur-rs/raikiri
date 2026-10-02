@@ -93,7 +93,7 @@ impl FragmentationContext {
     /// Return a child context translated into one of this container's columns.
     pub(crate) fn in_column(self, column_index: usize, origin_x: f32, origin_y: f32) -> Self {
         Self {
-            column_index: column_index.min(self.column_count.saturating_sub(1)),
+            column_index,
             origin_x,
             origin_y,
             ..self

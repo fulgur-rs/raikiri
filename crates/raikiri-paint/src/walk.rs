@@ -7330,7 +7330,19 @@ fn sort_paint_children(
         } else {
             0
         };
-        (stack, order)
+        let float_paint_order = if !order_sensitive_container
+            && matches!(
+                computed.float,
+                FloatValue::Left
+                    | FloatValue::Right
+                    | FloatValue::InlineStart
+                    | FloatValue::InlineEnd
+            ) {
+            1
+        } else {
+            0
+        };
+        (stack, float_paint_order, order)
     });
 }
 

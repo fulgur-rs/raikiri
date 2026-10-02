@@ -536,12 +536,9 @@ fn relayout_nested_flex_float_records_column_local_geometry() {
         !float_fragments.is_empty(),
         "the nested float needs a final fragment placement"
     );
-    assert!(
-        float_fragments
-            .iter()
-            .all(|fragment| fragment.fragmentainer < context.column_count)
-    );
-    assert_eq!(float_fragments[0].fragmentainer, 1);
+    assert_eq!(float_fragments.len(), 1);
+    assert_eq!(float_fragments[0].fragmentainer, 3);
+    assert!((float_fragments[0].rect.y - 30.0).abs() < 0.01);
     let flex_item = doc.parent_of(second_float).expect("flex item parent");
     let tall_float = *doc.nodes[flex_item]
         .children
@@ -554,7 +551,7 @@ fn relayout_nested_flex_float_records_column_local_geometry() {
         .enumerate()
         .filter(|(_, fragment)| fragment.node_id == flex_item)
         .collect();
-    assert_eq!(flex_item_fragments.len(), 2);
+    assert_eq!(flex_item_fragments.len(), 4);
     assert!(
         flex_item_fragments
             .iter()
@@ -562,15 +559,15 @@ fn relayout_nested_flex_float_records_column_local_geometry() {
             .all(|(index, (_, fragment))| {
                 fragment.fragmentainer == index
                     && fragment.fragment_index == index
-                    && fragment.fragment_count == 2
+                    && fragment.fragment_count == 4
             })
     );
-    let (second_column_item, item_fragment) = flex_item_fragments[1];
-    assert_eq!(float_fragments[0].parent, Some(second_column_item));
+    let (last_column_item, item_fragment) = flex_item_fragments[3];
+    assert_eq!(float_fragments[0].parent, Some(last_column_item));
     let item_clip = item_fragment
         .fragmentainer_clip
         .expect("flex item fragment clip");
-    assert!((item_clip.x - context.column_offset_x(1)).abs() < 0.01);
+    assert!((item_clip.x - context.column_offset_x(3)).abs() < 0.01);
     assert!((item_clip.width - context.column_width).abs() < 0.01);
     assert!((item_clip.height - 160.0).abs() < 0.01);
     let tall_fragment = doc
