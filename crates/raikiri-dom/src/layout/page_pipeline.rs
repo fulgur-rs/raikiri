@@ -251,6 +251,7 @@ pub fn layout_single_page(
     // `enforce_layout_invariants` documentation. Events enter the same
     // `document.layout_warnings` buffer as Steps 1 / 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
+    document.fragment_tree.finalize();
 
     // Step 6: replay buffered LayoutWarn events.
     //

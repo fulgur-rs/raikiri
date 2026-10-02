@@ -681,7 +681,10 @@ fn measure_ifc_root(
     // The content of a multicol container is broken at the column width and
     // split in its columns. A paragraph with boxes of its own is laid out in
     // one column as wide as the container.
-    let fragmentation = if has_boxes {
+    let nested_fragmentation = fragmentation_context_for_ifc(tree, idx, &probe);
+    let fragmentation = if nested_fragmentation.is_some() {
+        nested_fragmentation
+    } else if has_boxes {
         None
     } else {
         tree.nodes[idx]
@@ -699,23 +702,39 @@ fn measure_ifc_root(
             tree.nodes[child].is_in_document() && tree.nodes[child].tag_name() == Some("br")
         });
     let geometry = flow::FlowGeometry {
-        width: fragmentation.map_or(width, |context| context.column_width),
+        width: if nested_fragmentation.is_some() {
+            width
+        } else {
+            fragmentation.map_or(width, |context| context.column_width)
+        },
         edges: measure.edges,
         top_edge: measure.top_inset,
     };
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;
-    let lines = crate::layout::ifc::boxes::layout_with_boxes_in(
-        tree,
-        idx,
-        geometry,
-        block_ctx,
-        perform,
-        measure.bottom_margin_escapes,
-    );
-    let fragments = fragmentation
-        .map(|context| crate::layout::root_column_fragments(&lines, context, in_one_column));
+    let lines = if let Some(context) = nested_fragmentation {
+        crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+            tree, idx, geometry, context, perform,
+        )
+    } else {
+        crate::layout::ifc::boxes::layout_with_boxes_in(
+            tree,
+            idx,
+            geometry,
+            block_ctx,
+            perform,
+            measure.bottom_margin_escapes,
+        )
+    };
+    let fragments = lines
+        .fragmentainer_line_ranges
+        .clone()
+        .map(|fragments| (fragments, lines.height))
+        .or_else(|| {
+            fragmentation
+                .map(|context| crate::layout::root_column_fragments(&lines, context, in_one_column))
+        });
     let content_height = fragments
         .as_ref()
         .map_or(lines.height, |(_, height)| *height);
@@ -743,6 +762,50 @@ fn measure_ifc_root(
         root.multicol_fragments = fragments.map(|(fragments, _)| fragments);
     }
     (size, baseline, escaping_margin)
+}
+
+fn fragmentation_context_for_ifc(
+    tree: &Document,
+    idx: usize,
+    root: &crate::layout::ifc::root::IfcRoot,
+) -> Option<crate::fragment::FragmentationContext> {
+    use crate::layout::ifc::boxes::IfcBoxKind;
+    let context = *tree.fragmentation_stack.last()?;
+    context.available_height?;
+    if !root.boxes.iter().any(|box_| box_.kind == IfcBoxKind::Float) {
+        return None;
+    }
+    let mut ancestor = Some(idx);
+    while let Some(node_id) = ancestor {
+        if matches!(
+            tree.nodes[node_id].authored_writing_mode,
+            Some(
+                raikiri_style::property::WritingMode::VerticalRl
+                    | raikiri_style::property::WritingMode::VerticalLr
+                    | raikiri_style::property::WritingMode::SidewaysRl
+                    | raikiri_style::property::WritingMode::SidewaysLr
+            )
+        ) {
+            return None;
+        }
+        ancestor = tree.parent_of(node_id);
+    }
+
+    let mut has_row_flex = false;
+    let mut ancestor = tree.parent_of(idx);
+    while let Some(node_id) = ancestor {
+        let node = &tree.nodes[node_id];
+        if let Some(multicol) = node.multicol {
+            return (has_row_flex && multicol.horizontal).then_some(context);
+        }
+        has_row_flex |= node.style.display == Display::Flex
+            && matches!(
+                node.style.flex_direction,
+                taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+            );
+        ancestor = tree.parent_of(node_id);
+    }
+    None
 }
 
 /// Return the first baseline of an inline-block from the descendant layout

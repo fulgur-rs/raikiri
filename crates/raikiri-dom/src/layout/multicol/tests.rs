@@ -514,3 +514,248 @@ fn multicol_metrics_keeps_explicit_length_and_percentage_gaps() {
         percent
     );
 }
+
+#[test]
+fn relayout_nested_flex_float_records_column_local_geometry() {
+    let (mut doc, multicol, second_float) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    layout_nested_flex_float_fixture(&mut doc);
+
+    let style = doc.nodes[multicol].multicol.expect("multicol style");
+    let context = FragmentationContext::resolve(300.0, None, style).expect("fragment context");
+    assert_eq!(context.column_count, 2);
+    assert!((context.column_width - 142.0).abs() < 0.01);
+    assert!((context.column_gap - 16.0).abs() < 0.01);
+
+    let float_fragments: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == second_float)
+        .collect();
+    assert!(
+        !float_fragments.is_empty(),
+        "the nested float needs a final fragment placement"
+    );
+    assert!(
+        float_fragments
+            .iter()
+            .all(|fragment| fragment.fragmentainer < context.column_count)
+    );
+    assert_eq!(float_fragments[0].fragmentainer, 1);
+    let flex_item = doc.parent_of(second_float).expect("flex item parent");
+    let tall_float = *doc.nodes[flex_item]
+        .children
+        .first()
+        .expect("first float child");
+    let flex_item_fragments: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .enumerate()
+        .filter(|(_, fragment)| fragment.node_id == flex_item)
+        .collect();
+    assert_eq!(flex_item_fragments.len(), 2);
+    assert!(
+        flex_item_fragments
+            .iter()
+            .enumerate()
+            .all(|(index, (_, fragment))| {
+                fragment.fragmentainer == index
+                    && fragment.fragment_index == index
+                    && fragment.fragment_count == 2
+            })
+    );
+    let (second_column_item, item_fragment) = flex_item_fragments[1];
+    assert_eq!(float_fragments[0].parent, Some(second_column_item));
+    let item_clip = item_fragment
+        .fragmentainer_clip
+        .expect("flex item fragment clip");
+    assert!((item_clip.x - context.column_offset_x(1)).abs() < 0.01);
+    assert!((item_clip.width - context.column_width).abs() < 0.01);
+    assert!((item_clip.height - 160.0).abs() < 0.01);
+    let tall_fragment = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .find(|fragment| fragment.node_id == tall_float)
+        .expect("first float fragment");
+    assert_eq!(tall_fragment.fragmentainer, 0);
+    assert_eq!(tall_fragment.parent, Some(flex_item_fragments[0].0));
+    assert!(
+        float_fragments
+            .iter()
+            .all(|fragment| (fragment.rect.y - 510.0).abs() > 0.01)
+    );
+    assert!(
+        float_fragments
+            .iter()
+            .all(|fragment| fragment.fragmentainer_clip.is_some())
+    );
+    let clip = float_fragments[0]
+        .fragmentainer_clip
+        .expect("float fragment clip");
+    assert!(clip.x.abs() < 0.01);
+    assert!((clip.width - context.column_width).abs() < 0.01);
+    assert!((clip.height - 160.0).abs() < 0.01);
+    assert!(float_fragments.iter().enumerate().all(|(index, fragment)| {
+        fragment.fragment_index == index && fragment.fragment_count == float_fragments.len()
+    }));
+}
+
+#[test]
+fn relayout_nested_flex_float_records_only_committed_positions() {
+    let (mut doc, _, second_float) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    layout_nested_flex_float_fixture(&mut doc);
+
+    let float_fragments: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == second_float)
+        .collect();
+    assert_eq!(
+        float_fragments.len(),
+        1,
+        "the second float is committed once"
+    );
+    assert!(
+        (float_fragments[0].rect.y - 510.0).abs() > 0.01,
+        "the rejected intermediate float position must not be retained"
+    );
+    assert_eq!(float_fragments[0].fragment_index, 0);
+    assert_eq!(float_fragments[0].fragment_count, 1);
+}
+
+#[test]
+fn relayout_nested_flex_float_replaces_old_fragment_records() {
+    let (mut doc, multicol, second_float) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    layout_nested_flex_float_fixture(&mut doc);
+    let first: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == second_float)
+        .copied()
+        .collect();
+    assert!(!first.is_empty(), "the first layout records the float");
+
+    doc.set_element_inline_style(
+        multicol,
+        Some(
+            "display:block;width:300px;columns:100px auto;max-height:120px;border:3px solid pink"
+                .into(),
+        ),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    let second: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == second_float)
+        .copied()
+        .collect();
+
+    assert!(!second.is_empty(), "the second layout records the float");
+    assert_ne!(first, second, "the second pass replaces old placements");
+}
+
+#[test]
+fn relayout_nested_flex_float_scope_is_row_only() {
+    let (mut row_doc, _, row_float) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    layout_nested_flex_float_fixture(&mut row_doc);
+    assert!(
+        row_doc
+            .fragment_tree
+            .fragments
+            .iter()
+            .any(|fragment| fragment.node_id == row_float)
+    );
+
+    for (direction, writing_mode) in [("column", "horizontal-tb"), ("row", "vertical-rl")] {
+        let (mut doc, multicol, second_float) =
+            nested_flex_float_fixture(direction, writing_mode, 160);
+        layout_nested_flex_float_fixture(&mut doc);
+        if writing_mode != "horizontal-tb" {
+            assert_eq!(
+                doc.nodes[multicol].authored_writing_mode,
+                Some(raikiri_style::property::WritingMode::VerticalRl)
+            );
+        }
+        assert!(
+            !doc.fragment_tree
+                .fragments
+                .iter()
+                .any(|fragment| fragment.node_id == second_float),
+            "float fragments should be scoped out for flex-direction:{direction}, writing-mode:{writing_mode}"
+        );
+    }
+}
+
+fn nested_flex_float_fixture(
+    flex_direction: &str,
+    writing_mode: &str,
+    max_height: u16,
+) -> (Document, usize, usize) {
+    let mut doc = Document::new();
+    let html_style =
+        (writing_mode != "horizontal-tb").then(|| format!("writing-mode:{writing_mode}"));
+    let html = doc.append_element(Some(0), "html", Style::default(), html_style.as_deref());
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol_writing_mode = if writing_mode == "horizontal-tb" {
+        String::new()
+    } else {
+        format!(";writing-mode:{writing_mode}")
+    };
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(format!(
+            "display:block;width:300px;columns:100px auto;max-height:{max_height}px;border:3px solid pink{multicol_writing_mode}"
+        )),
+    );
+    let flex = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some(format!("display:flex;flex-direction:{flex_direction}")),
+    );
+    let flex_item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("border:4px solid teal;outline:4px solid blue"),
+    );
+    doc.append_element(
+        Some(flex_item),
+        "div",
+        Style::default(),
+        Some("float:left;border:3px solid black;height:500px;width:100px;background:yellow"),
+    );
+    doc.append_element(Some(flex_item), "br", Style::default(), None::<&str>);
+    let second_float = doc.append_element(
+        Some(flex_item),
+        "div",
+        Style::default(),
+        Some("float:left;background:cyan;width:100px"),
+    );
+    doc.append_element(
+        Some(second_float),
+        "div",
+        Style::default(),
+        Some("height:30px;width:30px;background:purple;display:inline-block"),
+    );
+    (doc, multicol, second_float)
+}
+
+fn layout_nested_flex_float_fixture(doc: &mut Document) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let rules = build_rule_tree(doc);
+    let cascade = cascade(doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(doc, &cascade, page).expect("layout Ok");
+}

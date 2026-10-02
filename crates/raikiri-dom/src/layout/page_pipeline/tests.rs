@@ -5168,6 +5168,7 @@ fn engine_multicol_lines(doc: &Document, root: usize) -> Vec<(f32, f32)> {
         vec![crate::node::MulticolTextFragment {
             line_start: 0,
             line_end: lines.len(),
+            fragmentainer: 0,
             x: 0.0,
             y: lines.first().map_or(0.0, |line| line.block_offset()),
         }]

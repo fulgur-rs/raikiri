@@ -63,6 +63,18 @@ pub(crate) struct IfcLines {
     /// moves that line and every later one down by `delta`, when a box of the
     /// paragraph was moved to a later page.
     pub(crate) shifts: Vec<(usize, f32)>,
+    /// Accepted float placements recorded by a fragmenting IFC layout.
+    pub(crate) fragment_box_placements: Vec<IfcBoxFragment>,
+    /// Line ranges already assigned to fragmentainers by a fragmenting IFC layout.
+    pub(crate) fragmentainer_line_ranges: Option<Vec<crate::node::MulticolTextFragment>>,
+}
+
+/// Placement of an IFC-owned box accepted in one fragmentainer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct IfcBoxFragment {
+    pub(crate) node_id: usize,
+    pub(crate) fragmentainer: usize,
+    pub(crate) rect: crate::fragment::FragmentRect,
 }
 
 impl IfcLines {
@@ -214,6 +226,10 @@ impl fmt::Debug for IfcLines {
             .field("beside_floats", &self.beside_floats)
             .field("escaping_margin", &self.escaping_margin.resolve())
             .field("shifts", &self.shifts)
+            .field(
+                "fragment_box_placements",
+                &self.fragment_box_placements.len(),
+            )
             .finish()
     }
 }

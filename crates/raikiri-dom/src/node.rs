@@ -232,6 +232,8 @@ pub struct MulticolTextFragment {
     pub line_start: usize,
     /// Exclusive last line in the shaped layout.
     pub line_end: usize,
+    /// Fragmentainer/column index that owns this line range.
+    pub fragmentainer: usize,
     /// Horizontal offset from the text node's normal origin.
     pub x: f32,
     /// Vertical offset from the text node's normal origin.
