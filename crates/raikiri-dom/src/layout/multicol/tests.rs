@@ -756,6 +756,43 @@ fn nested_flex_float_continues_text_past_declared_columns() {
 }
 
 #[test]
+fn tiny_fragmentainers_bound_nested_float_fragments() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;columns:2;max-height:0.001px"),
+    );
+    let flex = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:row"),
+    );
+    let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+    let float = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("float:left;width:1px;height:2px"),
+    );
+    doc.append_element(Some(item), "br", Style::default(), None::<&str>);
+
+    layout_nested_flex_float_fixture(&mut doc);
+    let count = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == float)
+        .count();
+    assert!(count > 1, "float must cross more than one column");
+    assert!(count <= 1_024, "float expansion must remain bounded");
+}
+
+#[test]
 fn relayout_nested_flex_float_records_only_committed_positions() {
     let (mut doc, _, second_float) = nested_flex_float_fixture("row", "horizontal-tb", 160);
     layout_nested_flex_float_fixture(&mut doc);

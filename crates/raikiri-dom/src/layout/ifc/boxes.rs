@@ -172,8 +172,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
 
     let fragmentainer_height = context.available_height.filter(|height| *height > 0.0);
     // A paragraph can need more columns than the declared count. Bound the
-    // continuation loop by its source units and float span; the final segment
-    // overflows unfragmented if this defensive budget is exhausted.
+    // continuation loop by its source units and float span, then cap subpixel
+    // fragmentainers. The final segment overflows unfragmented at the cap.
+    const MAX_IFC_FRAGMENTAINERS: usize = 1_024;
     let float_columns = fragmentainer_height
         .map(|height| {
             let float_extent = root
@@ -197,7 +198,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         .saturating_add(root.boxes.len())
         .saturating_add(float_columns)
         .saturating_add(context.column_count)
-        .max(1);
+        .clamp(1, MAX_IFC_FRAGMENTAINERS);
     let mut source_float_placements = Vec::new();
     for offset in 0..column_budget {
         let column = context.column_index.saturating_add(offset);

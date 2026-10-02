@@ -528,7 +528,17 @@ fn record_nested_ifc_box_fragments(
                     })
             })
             .flatten();
+        // A subpixel column height can make one tall float span millions of
+        // fragmentainers. Cap expanded placements before building paint paths.
+        const MAX_NESTED_FLOAT_FRAGMENTS: usize = 1_024;
+        let mut placement_keys = placements
+            .iter()
+            .map(|placement| (placement.node_id, placement.fragmentainer))
+            .collect::<std::collections::HashSet<_>>();
         for source in placements.clone() {
+            if placements.len() >= MAX_NESTED_FLOAT_FRAGMENTS {
+                break;
+            }
             if !tree.nodes[source.node_id].style.float.is_floated() {
                 continue;
             }
@@ -540,9 +550,10 @@ fn record_nested_ifc_box_fragments(
                     .saturating_sub(1),
             );
             for column in source.fragmentainer.saturating_add(1)..=last_column {
-                if placements.iter().any(|placement| {
-                    placement.node_id == source.node_id && placement.fragmentainer == column
-                }) {
+                if placements.len() >= MAX_NESTED_FLOAT_FRAGMENTS {
+                    break;
+                }
+                if !placement_keys.insert((source.node_id, column)) {
                     continue;
                 }
                 placements.push(crate::layout::ifc::root::IfcBoxFragment {
