@@ -86,6 +86,7 @@ impl TaffyChildIter<'_> {
                     | DisplayValue::InlineGrid
                     | DisplayValue::InlineTable
             ),
+            // cov:ignore: other NodeData kinds are excluded from the flat tree before sibling classification.
             _ => false,
         }
     }

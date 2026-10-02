@@ -37,9 +37,13 @@ fn taffy_child_ids_preserve_inline_whitespace_and_match_count_and_index() {
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     let _leading = doc.append_text(parent, "\n  ");
+    let left_text = doc.append_text(parent, "left");
+    let text_separator = doc.append_text(parent, " ");
     let left = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
     let separator = doc.append_text(parent, " ");
     let right = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    let trailing_separator = doc.append_text(parent, " ");
+    let right_text = doc.append_text(parent, "right");
     let _trailing = doc.append_text(parent, "\n  ");
     doc.nodes[parent].style.display = taffy::Display::Block;
     doc.nodes[left].display = DisplayValue::Inline;
@@ -49,9 +53,13 @@ fn taffy_child_ids_preserve_inline_whitespace_and_match_count_and_index() {
 
     let parent_id = taffy::NodeId::from(parent);
     let expected = vec![
+        taffy::NodeId::from(left_text),
+        taffy::NodeId::from(text_separator),
         taffy::NodeId::from(left),
         taffy::NodeId::from(separator),
         taffy::NodeId::from(right),
+        taffy::NodeId::from(trailing_separator),
+        taffy::NodeId::from(right_text),
     ];
     assert_eq!(
         <Document as TraversePartialTree>::child_count(&doc, parent_id),

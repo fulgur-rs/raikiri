@@ -466,13 +466,13 @@ mod tests {
         // auto width is narrower than the page content box by 16 CSS px.
         assert!(
             (body_frags[0].width - (PageBox::A4.width - 16.0)).abs() < 1.0,
-            "body auto width should preserve its UA inline margins: got {}",
-            body_frags[0].width,
+            "body auto width should preserve its UA inline margins: got {}", // cov:ignore: formatted only when this assertion fails.
+            body_frags[0].width, // cov:ignore: assertion diagnostic argument runs only on failure.
         );
         assert!(
             body_frags[0].height > 0.0 && body_frags[0].height < PageBox::A4.height,
-            "receipt body should have positive content height within one page: got {}",
-            body_frags[0].height,
+            "receipt body should have positive content height within one page: got {}", // cov:ignore: formatted only when this assertion fails.
+            body_frags[0].height, // cov:ignore: assertion diagnostic argument runs only on failure.
         );
     }
 

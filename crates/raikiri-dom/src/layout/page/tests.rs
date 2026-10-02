@@ -44,6 +44,16 @@ fn find_body_returns_index_when_present() {
 }
 
 #[test]
+fn find_html_root_containing_body_walks_nested_ancestors() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let wrapper = doc.append_element(Some(html), "div", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(wrapper), "body", Style::default(), None::<&str>);
+
+    assert_eq!(find_html_root_containing_body(&doc, body), Some(html));
+}
+
+#[test]
 fn propagated_start_page_name_handles_dom_edge_cases() {
     use raikiri_style::{build_rule_tree, cascade};
 
