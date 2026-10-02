@@ -1,5 +1,6 @@
 use super::*;
 use crate::node::NodeFlags;
+use raikiri_style::property::DisplayValue;
 use taffy::TraversePartialTree;
 
 #[test]
@@ -28,6 +29,43 @@ fn taffy_children_exclude_non_rendered_html_elements() {
     let body_children: Vec<taffy::NodeId> =
         <Document as TraversePartialTree>::child_ids(&doc, taffy::NodeId::from(body)).collect();
     assert_eq!(body_children, vec![taffy::NodeId::from(content)]);
+}
+
+#[test]
+fn taffy_child_ids_preserve_inline_whitespace_and_match_count_and_index() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let parent = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    let _leading = doc.append_text(parent, "\n  ");
+    let left = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    let separator = doc.append_text(parent, " ");
+    let right = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    let _trailing = doc.append_text(parent, "\n  ");
+    doc.nodes[parent].style.display = taffy::Display::Block;
+    doc.nodes[left].display = DisplayValue::Inline;
+    doc.nodes[right].display = DisplayValue::Inline;
+
+    doc.mark_in_document_flags();
+
+    let parent_id = taffy::NodeId::from(parent);
+    let expected = vec![
+        taffy::NodeId::from(left),
+        taffy::NodeId::from(separator),
+        taffy::NodeId::from(right),
+    ];
+    assert_eq!(
+        <Document as TraversePartialTree>::child_count(&doc, parent_id),
+        expected.len(),
+    );
+    let actual: Vec<taffy::NodeId> =
+        <Document as TraversePartialTree>::child_ids(&doc, parent_id).collect();
+    assert_eq!(actual, expected);
+    for (index, child) in expected.into_iter().enumerate() {
+        assert_eq!(
+            <Document as TraversePartialTree>::get_child_id(&doc, parent_id, index),
+            child,
+        );
+    }
 }
 
 #[test]

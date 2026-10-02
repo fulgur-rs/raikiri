@@ -40,8 +40,8 @@ fn leaf_intrinsic_size(
         })
 }
 
-/// Taffy child iterator: filter detached nodes and non-rendered HTML
-/// subtrees (such as `<head>` and `<style>`) from the raw arena children.
+/// Taffy child iterator: filter detached nodes, non-rendered HTML subtrees,
+/// and collapsible block-flow edge whitespace from raw arena children.
 ///
 /// The taffy layout tree is the web-spec “flat tree,” so layout must treat
 /// template contents as nonexistent and non-rendered HTML subtrees as absent.
@@ -55,6 +55,7 @@ pub struct TaffyChildIter<'a> {
     doc: &'a Document,
     parent: NodeId,
     inner: core::slice::Iter<'a, usize>,
+    child_index: usize,
 }
 
 impl TaffyChildIter<'_> {
@@ -130,8 +131,10 @@ impl TaffyChildIter<'_> {
             return false;
         }
         // CSS Flexbox §4: anonymous flex items are not generated for
-        // whitespace-only text nodes. The same filtering is needed for Grid,
-        // whose item collection also excludes inter-element source whitespace.
+        // collapsible whitespace-only text nodes. The same filtering is needed
+        // for Grid, whose item collection also excludes inter-element source
+        // whitespace. Block flow filters only edge whitespace around inline
+        // runs; visible separators between inline siblings remain children.
         // A synthetic inline root is the one exception: its whitespace nodes
         // are explicit zero-content inline items whose collapsed advance was
         // measured by `preshape_text` and stored in their style.
@@ -158,7 +161,9 @@ impl Iterator for TaffyChildIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let doc = self.doc;
         let parent = self.parent;
-        for (child_index, &child) in self.inner.by_ref().enumerate() {
+        for &child in self.inner.by_ref() {
+            let child_index = self.child_index;
+            self.child_index += 1;
             if Self::includes(doc, parent, child_index, child) {
                 return Some(NodeId::from(child));
             }
@@ -175,11 +180,12 @@ impl TraversePartialTree for Document {
             doc: self,
             parent: node_id,
             inner: TaffyChildIter::children(self, node_id).iter(),
+            child_index: 0,
         }
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
-        // Must match the filter: count only in-document children.
+        // Must match the full child_ids/get_child_id projection.
         TaffyChildIter::children(self, node_id)
             .iter()
             .enumerate()
