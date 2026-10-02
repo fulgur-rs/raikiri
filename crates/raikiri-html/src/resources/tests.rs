@@ -5,6 +5,183 @@ use raikiri_traits::{
 };
 use std::sync::Mutex;
 
+struct BoundedRedirectProbe {
+    requests: Mutex<Vec<Url>>,
+    redirects: Option<usize>,
+    self_loop: bool,
+}
+
+impl NetworkProvider for BoundedRedirectProbe {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request.url.clone());
+        let index = requests.len() - 1;
+        // Keep the regression finite even before the adapter is fixed.
+        if index >= 32 {
+            return Err(NetworkError::Other("probe safety stop".to_owned()));
+        }
+        if self.redirects == Some(index) {
+            return Ok(FetchOutcome::Body(FetchedResource {
+                bytes: b"body".as_slice().into(),
+                content_type: None,
+                final_url: request.url,
+                encoding: None,
+            }));
+        }
+        let location = if self.self_loop {
+            request.url
+        } else {
+            Url::parse(&format!("https://redirect.test/{}", index + 1)).unwrap()
+        };
+        Ok(FetchOutcome::Redirect {
+            location,
+            status: 302,
+        })
+    }
+}
+
+fn fetch_redirect_probe(
+    provider: &BoundedRedirectProbe,
+    policy: Option<&dyn ResourcePolicy>,
+    kind: ResourceKind,
+) -> Result<FetchedResource, NetworkError> {
+    ResourceNetworkProvider {
+        inner: provider,
+        policy,
+        limits: ResourceLimits::default(),
+        budget: Arc::new(Mutex::new(0)),
+    }
+    .fetch(Request {
+        url: Url::parse("https://redirect.test/0").unwrap(),
+        method: Method::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind,
+    })
+}
+
+#[test]
+fn policyless_redirects_bound_cycles_and_unique_url_chains() {
+    for kind in [
+        ResourceKind::ExternalStylesheet,
+        ResourceKind::StylesheetImport,
+        ResourceKind::Font,
+        ResourceKind::Image,
+    ] {
+        for self_loop in [false, true] {
+            let provider = BoundedRedirectProbe {
+                requests: Mutex::new(Vec::new()),
+                redirects: None,
+                self_loop,
+            };
+            let error = fetch_redirect_probe(&provider, None, kind).unwrap_err();
+            assert!(
+                matches!(error, NetworkError::Other(message) if message == "too many redirects")
+            );
+            assert_eq!(provider.requests.lock().unwrap().len(), 11);
+        }
+    }
+}
+
+#[test]
+fn policyless_redirects_preserve_zero_and_exact_limit_success() {
+    for redirects in [0, 10] {
+        let provider = BoundedRedirectProbe {
+            requests: Mutex::new(Vec::new()),
+            redirects: Some(redirects),
+            self_loop: false,
+        };
+        let fetched = fetch_redirect_probe(&provider, None, ResourceKind::Font).unwrap();
+        assert_eq!(fetched.bytes.as_ref(), b"body");
+        assert_eq!(fetched.final_url.path(), format!("/{redirects}"));
+        assert_eq!(provider.requests.lock().unwrap().len(), redirects + 1);
+    }
+}
+
+struct RedirectProbePolicy {
+    limit: u32,
+    seen: Mutex<Vec<u32>>,
+}
+
+impl ResourcePolicy for RedirectProbePolicy {
+    fn is_scheme_allowed(&self, _scheme: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn is_host_allowed(&self, _host: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn allow_redirect(&self, _from: &Url, _to: &Url, hop: u32) -> bool {
+        self.seen.lock().unwrap().push(hop);
+        true
+    }
+    fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+        self.limit
+    }
+    fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn max_decoded_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn fetch_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(10)
+    }
+    fn decode_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(10)
+    }
+    fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+        Vec::new()
+    }
+    fn max_import_depth(&self) -> u32 {
+        10
+    }
+    fn max_svg_recursion_depth(&self) -> u32 {
+        10
+    }
+}
+
+#[test]
+fn explicit_redirect_policy_preserves_limits_and_callback_hop_numbers() {
+    for (limit, redirects, succeeds) in [
+        (0, 1, false),
+        (2, 3, false),
+        (12, 12, true),
+        (u32::MAX, 12, true),
+    ] {
+        let provider = BoundedRedirectProbe {
+            requests: Mutex::new(Vec::new()),
+            redirects: Some(redirects),
+            self_loop: false,
+        };
+        let policy = RedirectProbePolicy {
+            limit,
+            seen: Mutex::new(Vec::new()),
+        };
+        let result = fetch_redirect_probe(&provider, Some(&policy), ResourceKind::Font);
+        let taken = if succeeds {
+            assert!(result.is_ok());
+            redirects as u32
+        } else {
+            let NetworkError::PolicyViolation(violation) = result.unwrap_err() else {
+                panic!("expected policy rejection");
+            };
+            assert!(matches!(
+                violation.violation_type,
+                ViolationType::RedirectDenied
+            ));
+            assert_eq!(violation.url.path(), format!("/{}", limit + 1));
+            limit
+        };
+        assert_eq!(
+            *policy.seen.lock().unwrap(),
+            (1..=taken).collect::<Vec<_>>()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), taken as usize + 1);
+    }
+}
+
 const TWO_COLOR_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000"/><rect x="1" width="1" height="1" fill="#00ff00"/></svg>"##;
 
 #[derive(Default)]

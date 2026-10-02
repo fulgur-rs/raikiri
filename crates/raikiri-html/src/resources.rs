@@ -1703,10 +1703,9 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
             match self.inner.fetch_one_hop(current.clone())? {
                 FetchOutcome::Body(fetched) => break fetched,
                 FetchOutcome::Redirect { location, .. } => {
-                    hop += 1;
                     if let Some(policy) = self.policy
-                        && (hop > policy.max_redirect_hops(request.kind)
-                            || !policy.allow_redirect(&current.url, &location, hop))
+                        && (hop >= policy.max_redirect_hops(request.kind)
+                            || !policy.allow_redirect(&current.url, &location, hop + 1))
                     {
                         return Err(Self::violation(
                             &request,
@@ -1715,6 +1714,12 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
                             "resource redirect is denied by policy",
                         ));
                     }
+                    // This adapter consumes redirects internally, so the
+                    // outer NetworkProvider::fetch loop cannot enforce its cap.
+                    if self.policy.is_none() && hop >= raikiri_traits::MAX_AUTO_REDIRECT_HOPS {
+                        return Err(NetworkError::Other("too many redirects".to_owned()));
+                    }
+                    hop += 1;
                     self.check_url_policy(&request, &location)?;
                     current.url = location;
                 }
