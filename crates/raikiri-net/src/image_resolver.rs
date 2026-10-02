@@ -20,6 +20,12 @@ use crate::resource_loader::{ResourceLoader, default_object_size};
 ///
 /// Fetch + decode happen synchronously inside [`ReplacedResolver::resolve`];
 /// results are cached by URL so later metadata and paint lookups are cache hits.
+/// Each resolver retains at most 256 sources and accounts for at most 128 MiB
+/// of RGBA pixels, URL keys, and SVG source bytes. New resources that exceed
+/// either limit return [`ResolverError::Decode`]; existing cache entries remain
+/// available. Encoded image inputs are limited to 32 MiB, and SVG rasterization
+/// shares the same cache byte budget. Parsed SVG trees are temporary, so SVG
+/// reference expansion does not create unaccounted retained trees.
 pub struct ImageResolver<N> {
     resources: ResourceLoader<N>,
 }
