@@ -36,6 +36,7 @@ fn builder_registers_consumer_supplied_font_bytes_without_system_fonts() {
         .build()
         .expect("bundled bytes register");
     assert!(fonts.is_bundled_only());
+    assert!(format!("{fonts:?}").contains("bundled_only: true"));
     let matched = fonts
         .collection()
         .match_cluster(

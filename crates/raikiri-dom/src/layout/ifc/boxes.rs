@@ -4,6 +4,7 @@ use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolv
 use super::root::{IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::taffy_impl::resolve_calc;
+use shodo::geometry::{Direction, WritingMode};
 use shodo::{
     AtomicIntrinsic, AtomicIntrinsics, AtomicSize, AtomicSizes, FloatClear, FloatCursor,
     FloatIntrinsic, FloatSide, LineConstraint, LineResult,
@@ -183,15 +184,18 @@ fn run_boxes(
         let line_y = y + pending.resolve();
         let base = line_space(ctx, edges.0, top_edge, width, line_y, assumed_height);
         let space = shorten(base, &tentative);
-        let mut constraint = LineConstraint::new(space.width);
-        // `space` is measured from the content box's left edge; shodo measures
-        // the offset from the inline-start edge, which is the right edge in a
-        // right-to-left paragraph.
-        constraint.inline_start_offset = if root.rtl {
-            width - (space.start + space.width)
-        } else {
-            space.start
-        };
+        let right_inset = (width - space.start - space.width).max(0.0);
+        let mut constraint = LineConstraint::from_physical_insets(
+            width,
+            space.start,
+            right_inset,
+            WritingMode::HorizontalTb,
+            if root.rtl {
+                Direction::Rtl
+            } else {
+                Direction::Ltr
+            },
+        );
         constraint.block_offset = line_y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float

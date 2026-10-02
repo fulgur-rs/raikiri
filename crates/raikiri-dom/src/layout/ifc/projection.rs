@@ -55,9 +55,6 @@ pub(crate) struct ProjectedIfc {
     /// Paint offsets of the relatively positioned inline elements, by DOM
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
-    /// Text nodes whose spaces are preserved (not collapsed), in document
-    /// order.
-    pub(crate) preserved_spaces: Vec<usize>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
@@ -394,9 +391,6 @@ pub(crate) struct ProjectedBuilder {
     /// Paint offsets of the relatively positioned inline elements, by DOM
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
-    /// Text nodes whose spaces are preserved (not collapsed), in document
-    /// order.
-    pub(crate) preserved_spaces: Vec<usize>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
@@ -422,7 +416,6 @@ impl ProjectedBuilder {
             boxes: self.boxes,
             rtl: self.rtl,
             offsets: self.offsets,
-            preserved_spaces: self.preserved_spaces,
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
         })
@@ -497,14 +490,6 @@ pub(crate) fn project_ifc_text_builder(
     let paragraph_style = style::paragraph_style(cv, text, root_style)?;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let cleared_breaks = Vec::new();
-    let preserved_spaces = if matches!(
-        cv.effective_white_space_collapse,
-        WhiteSpaceCollapse::Preserve | WhiteSpaceCollapse::PreserveSpaces
-    ) {
-        vec![text]
-    } else {
-        Vec::new()
-    };
     builder.push_text(
         TextSource::Dom {
             node: NodeId(text as u64),
@@ -522,7 +507,6 @@ pub(crate) fn project_ifc_text_builder(
         boxes: Vec::new(),
         rtl: cv.direction == Direction::Rtl,
         offsets: Vec::new(),
-        preserved_spaces,
         cleared_breaks,
         fixed: false,
     })
@@ -591,7 +575,6 @@ pub(crate) fn project_ifc_builder_with(
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
-    let mut preserved_spaces = Vec::new();
     let mut cleared_breaks = Vec::new();
     push_generated(
         &mut builder,
@@ -636,14 +619,6 @@ pub(crate) fn project_ifc_builder_with(
         match node.kind() {
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
-                if cascade.computed.get(id).is_some_and(|cv| {
-                    matches!(
-                        cv.effective_white_space_collapse,
-                        WhiteSpaceCollapse::Preserve | WhiteSpaceCollapse::PreserveSpaces
-                    )
-                }) {
-                    preserved_spaces.push(id);
-                }
                 builder.push_text(
                     TextSource::Dom {
                         node: NodeId(id as u64),
@@ -802,7 +777,6 @@ pub(crate) fn project_ifc_builder_with(
         boxes,
         rtl: root_cv.direction == Direction::Rtl,
         offsets,
-        preserved_spaces,
         cleared_breaks,
         fixed: root_cv.position == PositionValue::Fixed,
     })

@@ -118,6 +118,8 @@ fn place_lines_matches_break_all_without_floats() {
             &options,
             &mut cx,
             &AtomicSizes::EMPTY,
+            width,
+            shodo::geometry::Direction::Ltr,
             |_, _| LineSpace { start: 0.0, width },
         );
         assert_eq!(
@@ -142,6 +144,8 @@ fn place_lines_asks_for_the_space_at_each_line_offset() {
         &root.options,
         &mut cx,
         &AtomicSizes::EMPTY,
+        50.0,
+        shodo::geometry::Direction::Ltr,
         |y, height| {
             asked.push(y);
             let _ = height;

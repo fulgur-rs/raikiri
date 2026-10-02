@@ -5,6 +5,7 @@ use crate::Document;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
+use shodo::geometry::{Direction, WritingMode};
 use shodo::style::LineOptions;
 use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
 use taffy::{BlockContext, Clear};
@@ -117,6 +118,12 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
         &options,
         cx,
         &AtomicSizes::EMPTY,
+        width,
+        if root.rtl {
+            Direction::Rtl
+        } else {
+            Direction::Ltr
+        },
         |_, _| LineSpace { start: 0.0, width },
     );
     placed.width = width;
@@ -130,6 +137,8 @@ pub(crate) fn place_lines(
     options: &LineOptions,
     cx: &mut LayoutContext,
     atomics: &AtomicSizes,
+    content_width: f32,
+    direction: Direction,
     mut space: impl FnMut(f32, f32) -> LineSpace,
 ) -> IfcLines {
     let mut lines: Vec<shodo::Line> = Vec::new();
@@ -142,8 +151,14 @@ pub(crate) fn place_lines(
         let line = loop {
             let available = space(y, assumed_height);
             first_width.get_or_insert(available.width);
-            let mut constraint = LineConstraint::new(available.width);
-            constraint.inline_start_offset = available.start;
+            let right_inset = (content_width - available.start - available.width).max(0.0);
+            let mut constraint = LineConstraint::from_physical_insets(
+                content_width,
+                available.start,
+                right_inset,
+                WritingMode::HorizontalTb,
+                direction,
+            );
             constraint.block_offset = y;
             match paragraph.next_line(cx, token, options, &constraint, atomics) {
                 LineResult::Line(line) => {

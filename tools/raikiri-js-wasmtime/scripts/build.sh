@@ -6,10 +6,10 @@ repo_root=$(cd "$trial_root/../.." && pwd)
 trial_target=${CARGO_TARGET_DIR:-"$repo_root/target/wasmtime-trial"}
 export CARGO_TARGET_DIR="$trial_target"
 mkdir -p "$trial_target/aot"
-cargo build --offline --release --manifest-path "$trial_root/Cargo.toml" -p raikiri-js-wasmtime-guest --target wasm32-wasip1
+cargo build --offline --locked --release --manifest-path "$trial_root/Cargo.toml" -p raikiri-js-wasmtime-guest --target wasm32-wasip1
 trial_guest="$trial_target/wasm32-wasip1/release/raikiri_js_wasmtime_guest.wasm"
 trial_aot="$trial_target/aot/guest-fuel.cwasm"
-cargo run --offline --release --manifest-path "$trial_root/Cargo.toml" -p raikiri-js-wasmtime-precompiler -- "$trial_guest" "$trial_aot"
+cargo run --offline --locked --release --manifest-path "$trial_root/Cargo.toml" -p raikiri-js-wasmtime-precompiler -- "$trial_guest" "$trial_aot"
 python3 - "$trial_guest" "$trial_aot" <<'PY'
 import hashlib,json,platform,sys
 from pathlib import Path
@@ -20,4 +20,4 @@ meta={'wasmtime':'43.0.2','guest_sha256':hashlib.sha256(wasm.read_bytes()).hexdi
 aot.with_suffix('.json').write_text(json.dumps(meta,indent=2)+'\n')
 PY
 export RAIKIRI_JS_AOT="$trial_aot"
-cargo build --offline --release --manifest-path "$repo_root/Cargo.toml" -p raikiri-wpt --no-default-features --features js-wasmtime --bin run-parsing-invalid --bin run-css-text-i18n
+cargo build --offline --locked --release --manifest-path "$repo_root/Cargo.toml" -p raikiri-wpt --no-default-features --features js-wasmtime --bin run-parsing-invalid --bin run-css-text-i18n

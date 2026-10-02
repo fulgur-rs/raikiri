@@ -443,7 +443,6 @@ pub struct RenderResources<'a> {
     policy: Option<&'a dyn ResourcePolicy>,
     base_url: Option<Url>,
     font_collection: Option<shodo::font::FontCollection>,
-    font_collection_bundled_only: bool,
     resolver: Option<&'a (dyn ReplacedResolver + Send + Sync)>,
     image_pixel_source: Option<&'a (dyn ImagePixelSource + Send + Sync)>,
     render_limits: RenderLimits,
@@ -487,7 +486,6 @@ impl<'a> RenderResources<'a> {
             policy: None,
             base_url: None,
             font_collection: None,
-            font_collection_bundled_only: false,
             resolver: None,
             image_pixel_source: None,
             render_limits: RenderLimits::default(),
@@ -562,7 +560,6 @@ impl<'a> RenderResources<'a> {
 
     /// Use a font set built from bundled fonts for layout and paint.
     pub fn fonts(mut self, fonts: crate::RenderFonts) -> Self {
-        self.font_collection_bundled_only = fonts.is_bundled_only();
         self.font_collection = Some(fonts.into_collection());
         self
     }
@@ -580,11 +577,13 @@ impl<'a> RenderResources<'a> {
     /// built from bundled fonts only.
     ///
     /// The layer of the installed fonts loads a face the first time a lookup
-    /// selects it, so which face a fallback lands on could depend on the order
-    /// in which threads ask; with bundled fonts only, every face is loaded
-    /// up front.
+    /// selects it, and shodo does not guarantee deterministic matching during
+    /// concurrent registration. A collection with system-font discovery
+    /// disabled can be built in parallel.
     pub fn inline_engine_parallel_build(&self) -> bool {
-        self.font_collection_bundled_only
+        self.font_collection
+            .as_ref()
+            .is_some_and(shodo::font::FontCollection::is_bundled_only)
     }
 
     /// Set the limits used when parsing HTML.

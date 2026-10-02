@@ -56,53 +56,19 @@ fn physical(rect: LogicalRect, line_top: f32, content_width: f32, rtl: bool) -> 
     }
 }
 
-/// The last glyph run of a line (the one that ends furthest along the
-/// line): its logical inline end, where a space that hangs at the end of the
-/// line ends, and the text node it belongs to.
-fn text_end(fragments: &[Fragment]) -> (f32, Option<usize>) {
-    fragments
-        .iter()
-        .filter_map(|fragment| match fragment {
-            Fragment::GlyphRun(run) => Some((
-                run.inline_start() + run.inline_size(),
-                run.node().map(|node| node.0 as usize),
-            )),
-            _ => None,
-        })
-        .fold((f32::NEG_INFINITY, None), |last, run| {
-            if run.0 > last.0 { run } else { last }
-        })
-}
-
-/// Tolerance for comparing logical positions computed by shodo.
-const EPSILON: f32 = 0.01;
-
 /// Pieces of every inline element on every line, in the order shodo reports
 /// them (an element before its descendants). `content_width` is the width the
-/// lines were broken at; right to left lines are mirrored inside it.
-///
-/// shodo counts the collapsible space that hangs at the end of a line in the
-/// width of every element that holds it (one that continues on the next
-/// line, or one that closes after it), while CSS Text 3 4.1.3 removes it; the
-/// hung width is taken off those pieces (and their content boxes) here: the
-/// pieces that reach the end of the line's last glyph run. Preserved spaces
-/// (`preserved_spaces` lists the text nodes whose spaces are kept) hang
-/// without being removed, so their elements keep them as ink overflow.
+/// lines were broken at; right to left lines are mirrored inside it. shodo's
+/// inline-box fragments already exclude collapsible spaces hanging at a line
+/// end, while preserved spaces remain in their boxes as ink overflow.
 pub(crate) fn inline_box_pieces(
     lines: &[Line],
     content_width: f32,
     rtl: bool,
-    preserved_spaces: &[usize],
 ) -> Vec<InlineBoxPiece> {
     let mut pieces = Vec::new();
     for (line_index, line) in lines.iter().enumerate() {
         let fragments: Vec<Fragment> = line.fragments().collect();
-        let (end, owner) = text_end(&fragments);
-        let hung = if owner.is_some_and(|owner| preserved_spaces.contains(&owner)) {
-            0.0
-        } else {
-            line.hang_end()
-        };
         for fragment in &fragments {
             let Fragment::InlineBox(piece) = fragment else {
                 continue;
@@ -111,26 +77,11 @@ pub(crate) fn inline_box_pieces(
                 Some(Fragment::InlineBox(parent)) => Some(parent.node.0 as usize),
                 _ => None,
             });
-            // Only closing edges may follow the hung space on its line, so
-            // every piece that reaches the end of the text holds the space.
-            let holds_hung_space =
-                piece.rect.inline_start + piece.rect.inline_size >= end - EPSILON;
-            let trim = |mut rect: LogicalRect| {
-                if holds_hung_space {
-                    rect.inline_size = (rect.inline_size - hung).max(0.0);
-                }
-                rect
-            };
             pieces.push(InlineBoxPiece {
                 node: piece.node.0 as usize,
                 line: line_index,
-                border_box: physical(trim(piece.rect), line.block_offset(), content_width, rtl),
-                content_box: physical(
-                    trim(piece.content_rect),
-                    line.block_offset(),
-                    content_width,
-                    rtl,
-                ),
+                border_box: physical(piece.rect, line.block_offset(), content_width, rtl),
+                content_box: physical(piece.content_rect, line.block_offset(), content_width, rtl),
                 has_start_edge: piece.has_start_edge,
                 has_end_edge: piece.has_end_edge,
                 parent,

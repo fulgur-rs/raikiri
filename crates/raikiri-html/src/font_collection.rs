@@ -132,10 +132,7 @@ impl FontCollectionBuilder {
                     .clone();
                 FontCollectionBuildError::FontRejected { family }
             })?;
-        Ok(RenderFonts {
-            collection,
-            bundled_only: !system_fonts,
-        })
+        Ok(RenderFonts { collection })
     }
 }
 
@@ -145,7 +142,6 @@ impl FontCollectionBuilder {
 #[derive(Clone)]
 pub struct RenderFonts {
     collection: shodo::font::FontCollection,
-    bundled_only: bool,
 }
 
 impl RenderFonts {
@@ -153,7 +149,7 @@ impl RenderFonts {
     /// the answer to a font lookup not depend on which installed face was
     /// loaded first.
     pub fn is_bundled_only(&self) -> bool {
-        self.bundled_only
+        self.collection.is_bundled_only()
     }
 
     /// The font layer of the inline layout engine.
@@ -170,7 +166,7 @@ impl RenderFonts {
 impl fmt::Debug for RenderFonts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RenderFonts")
-            .field("bundled_only", &self.bundled_only)
+            .field("bundled_only", &self.is_bundled_only())
             .finish_non_exhaustive()
     }
 }

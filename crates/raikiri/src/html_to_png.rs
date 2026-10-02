@@ -32,10 +32,11 @@ use crate::parse_html;
 /// installed fonts.
 fn use_fonts(dom: &mut raikiri_dom::Document, fonts: Option<raikiri_html::RenderFonts>) {
     if let Some(fonts) = fonts {
-        // Only a layer without installed fonts loads every face up front, so
-        // only then may paragraphs be built on several threads.
-        let bundled_only = fonts.is_bundled_only();
-        dom.set_font_collection(fonts.into_collection());
+        // shodo does not guarantee deterministic matching during concurrent
+        // registration for collections with system-font discovery enabled.
+        let collection = fonts.into_collection();
+        let bundled_only = collection.is_bundled_only();
+        dom.set_font_collection(collection);
         dom.set_ifc_parallel_build(bundled_only);
     }
 }
