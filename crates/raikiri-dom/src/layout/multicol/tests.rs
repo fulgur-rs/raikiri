@@ -120,6 +120,40 @@ fn nested_logical_min_block_size_scope_returns_false_for_an_unrelated_node() {
 }
 
 #[test]
+fn avoid_page_min_block_child_can_continue_across_columns() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:40px;column-count:2;column-gap:0"),
+    );
+    let child = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block;min-block-size:20px;break-inside:avoid-page"),
+    );
+    for _ in 0..8 {
+        doc.append_text(child, "line");
+        doc.append_element(Some(child), "br", Style::default(), None::<&str>);
+    }
+
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(!doc.nodes[child].has_logical_min_block_size);
+    assert!(doc.nodes[child].is_ifc_root());
+    let ranges = doc.nodes[child]
+        .ifc_multicol_fragments()
+        .expect("column line ranges");
+    assert!(
+        ranges.iter().any(|range| range.fragmentainer > 0),
+        "avoid-page must allow the text to reach another column"
+    );
+}
+
+#[test]
 fn layout_offset_from_ancestor_sums_layout_parent_offsets() {
     let mut doc = Document::new();
     let ancestor = doc.append_element(Some(0), "div", Style::default(), None::<&str>);

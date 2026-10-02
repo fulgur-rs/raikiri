@@ -59,12 +59,19 @@ fn apply_computed_to_style_tracks_logical_min_block_provenance() {
         Style::default(),
         Some("min-block-size: 40px; break-inside: auto"),
     );
+    let page_only = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("min-block-size: 40px; break-inside: avoid-page"),
+    );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert!(doc.nodes[avoided].has_logical_min_block_size);
     assert!(!doc.nodes[auto].has_logical_min_block_size);
+    assert!(!doc.nodes[page_only].has_logical_min_block_size);
     assert_eq!(
         doc.nodes[avoided].style.min_size.height,
         LengthPercentageAuto::length(40.0)
