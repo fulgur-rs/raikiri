@@ -119,34 +119,36 @@ pub(crate) struct BreakToken {
 
 /// Physical position and size of one fragment in its parent's coordinate space.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct FragmentRect {
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-    pub(crate) width: f32,
-    pub(crate) height: f32,
+#[doc(hidden)]
+pub struct FragmentRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 /// Physical box or text-range fragment emitted by a layout strategy.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct LayoutFragment {
+#[doc(hidden)]
+pub struct LayoutFragment {
     /// Source DOM node.
-    pub(crate) node_id: usize,
+    pub node_id: usize,
     /// Parent fragment in the fragment tree, if any.
-    pub(crate) parent: Option<usize>,
+    pub parent: Option<usize>,
     /// Fragmentainer/column index local to the owning multicol context.
-    pub(crate) fragmentainer: usize,
+    pub fragmentainer: usize,
     /// Physical position and size relative to the parent fragment's origin.
-    pub(crate) rect: FragmentRect,
+    pub rect: FragmentRect,
     /// Clip for the owning fragmentainer in the parent fragment's space.
-    pub(crate) fragmentainer_clip: Option<FragmentRect>,
+    pub fragmentainer_clip: Option<FragmentRect>,
     /// Zero-based order among fragments of this source node.
-    pub(crate) fragment_index: usize,
+    pub fragment_index: usize,
     /// Total number of fragments for this source node.
-    pub(crate) fragment_count: usize,
+    pub fragment_count: usize,
     /// Optional text line range. `None` denotes an element/box fragment.
-    pub(crate) line_start: Option<usize>,
+    pub line_start: Option<usize>,
     /// Exclusive text line end when `line_start` is set.
-    pub(crate) line_end: Option<usize>,
+    pub line_end: Option<usize>,
 }
 
 /// Per-layout-pass fragment storage.

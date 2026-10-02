@@ -69,6 +69,8 @@ pub use fonts::{
     system_font_collection,
 };
 #[doc(hidden)]
+pub use fragment::{FragmentRect, LayoutFragment};
+#[doc(hidden)]
 pub use layout::{
     BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, relative_offset,
 };

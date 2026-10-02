@@ -115,6 +115,7 @@ fn glyph_runs_land_on_the_baseline_of_each_line() {
             shift_y: 0.0,
         },
         &crate::text::DecorationContext::default(),
+        None,
     );
     let placed = glyphs(&scene);
     assert!(!placed.is_empty(), "the ifc painter emitted no glyphs");
@@ -154,6 +155,7 @@ fn each_run_takes_the_color_of_its_text_node() {
             shift_y: 0.0,
         },
         &crate::text::DecorationContext::default(),
+        None,
     );
     let blue = anyrender::Paint::Solid(peniko::Color::from_rgba8(0, 0, 255, 255));
     let red = anyrender::Paint::Solid(peniko::Color::from_rgba8(255, 0, 0, 255));
@@ -2375,4 +2377,48 @@ fn an_inline_box_after_a_block_moved_to_the_next_page_is_painted_with_its_line()
     // Hand-computed: "cc" is the second line of the second page, so its box
     // spans y 10..20 from the page top.
     assert_eq!(boxes, [(0.0, 10.0)]);
+}
+
+#[test]
+fn draw_ifc_lines_selects_only_the_requested_fragmentainer() {
+    let (mut doc, cascade, root) = paragraph(
+        "width:10px;height:10px;column-count:2;column-gap:0;word-break:break-all",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let paint = |fragmentainer: Option<usize>| {
+        let mut scene = Scene::new();
+        draw_ifc_lines(
+            &mut scene,
+            &doc,
+            &cascade,
+            root,
+            IfcPosition {
+                x: 100.0 + fragmentainer.unwrap_or(0) as f32 * 5.0,
+                y: 200.0,
+                shift_y: 0.0,
+            },
+            &crate::text::DecorationContext::default(),
+            fragmentainer,
+        );
+        glyphs(&scene)
+    };
+
+    let first = paint(Some(0));
+    let second = paint(Some(1));
+    let all = paint(None);
+    assert_eq!(
+        first.iter().map(|glyph| glyph.1).collect::<Vec<_>>(),
+        [100.0]
+    );
+    assert_eq!(
+        second.iter().map(|glyph| glyph.1).collect::<Vec<_>>(),
+        [105.0]
+    );
+    assert_eq!(
+        all.iter().map(|glyph| glyph.1).collect::<Vec<_>>(),
+        [100.0, 105.0]
+    );
 }
