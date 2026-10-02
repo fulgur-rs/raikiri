@@ -595,7 +595,7 @@ fn run_boxes_segment(
                     continue;
                 }
                 if !lines.is_empty() // cov:ignore: continuation requires lines to overflow a fragmentainer and is exercised by the ignored flex-float WPT.
-                    && fragmentainer_height.is_some_and(|limit| line_y + height > limit + 0.001) // cov:ignore: continuation requires lines to overflow a fragmentainer and is exercised by the ignored flex-float WPT.
+                    && fragmentainer_height.is_some_and(|limit| line_y + height > limit + 0.001)
                 {
                     continuation = Some(token); // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
                     break; // cov:ignore: this continuation branch is exercised by the ignored flex-float WPT.
