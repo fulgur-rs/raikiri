@@ -502,17 +502,46 @@ pub(crate) fn resolve_page_fragment_geometry(
 /// its lines come from the paragraph root, measured from its first line; any
 /// other text node has none.
 fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
-    if let Some(owned) = document.ifc_text_lines(node_id) {
-        let first_top = owned.lines.first().map_or(0.0, |l| l.top);
-        return Some(
-            owned
-                .lines
-                .iter()
-                .map(|l| (l.top - first_top, l.bottom - first_top))
-                .collect(),
-        );
-    }
-    None
+    let lines = positioned_text_line_bounds(document, node_id)?;
+    let first_top = lines.first().map_or(0.0, |line| line.0);
+    Some(
+        lines
+            .into_iter()
+            .map(|(top, bottom)| (top - first_top, bottom - first_top))
+            .collect(),
+    )
+}
+
+/// Block edges of a text node's lines after the paragraph's column ranges
+/// have moved them from their unfragmented shaping offsets.
+fn positioned_text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
+    let owned = document.ifc_text_lines(node_id)?;
+    let root = document.nodes.get(owned.root)?.ifc.as_ref()?;
+    let root_lines = root.lines.as_ref()?;
+    Some(
+        owned
+            .lines
+            .iter()
+            .map(|line| {
+                let offset = root
+                    .multicol_fragments
+                    .as_deref()
+                    .and_then(|fragments| {
+                        fragments.iter().find(|fragment| {
+                            fragment.line_start <= line.line && line.line < fragment.line_end
+                        })
+                    })
+                    .and_then(|fragment| {
+                        root_lines
+                            .lines
+                            .get(fragment.line_start)
+                            .map(|first| fragment.y - first.block_offset())
+                    })
+                    .unwrap_or(0.0);
+                (line.top + offset, line.bottom + offset)
+            })
+            .collect(),
+    )
 }
 
 /// Project an already-paginated document using one fixed geometry for all pages.
@@ -1377,8 +1406,11 @@ pub fn layout_pages_with_page_geometry(
         else {
             return;
         };
+        let first_top = positioned_text_line_bounds(document, text)
+            .and_then(|lines| lines.first().map(|line| line.0))
+            .unwrap_or(first.top);
         let layout = document.nodes[root].unrounded_layout;
-        let old_top = layout.border.top + layout.padding.top + first.top;
+        let old_top = layout.border.top + layout.padding.top + first_top;
         let Some(ifc) = document.nodes[root].ifc.as_mut() else {
             return;
         };
@@ -1591,8 +1623,19 @@ pub fn layout_pages_with_page_geometry(
                     let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
                         Some(owned) if owned.root != node_id => {
                             let root_layout = document.nodes[owned.root].unrounded_layout;
-                            let first_top = owned.lines.first().map_or(0.0, |l| l.top);
-                            let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
+                            let positioned = positioned_text_line_bounds(document, node_id)
+                                .unwrap_or_else(|| {
+                                    owned
+                                        .lines
+                                        .iter()
+                                        .map(|line| (line.top, line.bottom))
+                                        .collect()
+                                });
+                            let first_top = positioned.first().map_or(0.0, |line| line.0);
+                            let last_bottom = positioned
+                                .iter()
+                                .map(|line| line.1)
+                                .fold(f32::NEG_INFINITY, f32::max);
                             let offset =
                                 root_layout.border.top + root_layout.padding.top + first_top;
                             (
@@ -2035,10 +2078,13 @@ pub fn layout_pages_with_page_geometry(
                 // lines go where the flow puts them, and the ones after
                 // follow (an earlier box of the paragraph may have grown).
                 let layout = document.nodes[root].unrounded_layout;
+                let first_top = positioned_text_line_bounds(document, node_id)
+                    .and_then(|lines| lines.first().map(|line| line.0))
+                    .unwrap_or(first.top);
                 let current = current_abs_y(document, root, &parent_of)
                     + layout.border.top
                     + layout.padding.top
-                    + first.top;
+                    + first_top;
                 follow_moved_ifc_text(document, root, node_id, effective_y - current);
             }
             materialize_y(document, node_id, effective_y, &parent_of);

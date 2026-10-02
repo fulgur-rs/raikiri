@@ -383,7 +383,6 @@ fn relayout_nested_multicol_children(
     } else {
         None
     };
-
     let mut avoid_column_break_after_previous = false;
     for (order, child) in children.into_iter().enumerate() {
         let measured = auto_measurements
@@ -510,7 +509,11 @@ fn relayout_nested_multicol_children(
                 .map(|height| fallback_height.min(height))
                 .unwrap_or(fallback_height)
         };
-    maximum.max(cursor).max(minimum_height)
+    let used = maximum.max(cursor).max(minimum_height);
+    if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
+        fragment.rect.height = used;
+    }
+    used
 }
 
 // cov:ignore: nested box and float fragment records are exercised by the ignored flex-float WPT.
@@ -962,6 +965,46 @@ fn line_ranges_in_columns(
         }
     }
     ranges
+}
+
+/// Find the smallest column height that fits `extents` within the available
+/// columns. The returned height is then used to fill each column in source
+/// order, including a partially filled final column.
+fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext) -> Option<f32> {
+    let available_columns = context.column_count.saturating_sub(context.column_index);
+    if extents.is_empty() || available_columns == 0 {
+        return None;
+    }
+    let mut low = extents
+        .iter()
+        .map(|(top, bottom)| (bottom - top).max(0.0))
+        .fold(0.0_f32, f32::max);
+    let mut high = extents.last()?.1 - extents.first()?.0;
+    if !low.is_finite() || !high.is_finite() || high < low {
+        return None;
+    }
+
+    for _ in 0..32 {
+        if high - low <= 0.001 {
+            break;
+        }
+        let height = (low + high) * 0.5;
+        let trial_context = FragmentationContext {
+            available_height: Some(height),
+            ..context
+        };
+        let ranges = line_ranges_in_columns(extents, trial_context, false);
+        let fits = !ranges.is_empty()
+            && ranges.iter().all(|&(start, end, _)| {
+                extents[end - 1].1 - extents[start].0 <= height + f32::EPSILON
+            });
+        if fits {
+            high = height;
+        } else {
+            low = height;
+        }
+    }
+    Some(high)
 }
 
 // cov:ignore: nested text fragment refresh is exercised by ignored multicol WPT reftests.
@@ -1520,12 +1563,10 @@ pub(crate) fn line_height_px(cv: &ComputedValues) -> f32 {
 /// and the height the lines need: the tallest column. The lines fill the
 /// columns of `context` by its column height when it is definite, else they
 /// are balanced over them, with `widows` and `orphans` applied at each break
-/// (CSS Multi-column 1, 7; CSS Fragmentation 3, 3.3). With `in_one_column`
-/// every line stays in the first column.
+/// (CSS Multi-column 1, 7; CSS Fragmentation 3, 3.3).
 pub(crate) fn root_column_fragments(
     lines: &crate::layout::ifc::root::IfcLines,
     context: FragmentationContext,
-    in_one_column: bool,
 ) -> (Vec<MulticolTextFragment>, f32) {
     let extents: Vec<(f32, f32)> = lines
         .lines
@@ -1535,11 +1576,15 @@ pub(crate) fn root_column_fragments(
     if extents.is_empty() {
         return (Vec::new(), 0.0);
     }
-    let ranges = if in_one_column {
-        vec![(0, extents.len(), 0)]
+    let balanced_context = if context.available_height.is_none() {
+        balanced_column_height(&extents, context).map(|height| FragmentationContext {
+            available_height: Some(height),
+            ..context
+        })
     } else {
-        line_ranges_in_columns(&extents, context, false)
+        None
     };
+    let ranges = line_ranges_in_columns(&extents, balanced_context.unwrap_or(context), false);
     let height = ranges
         .iter()
         .map(|&(start, end, _)| extents[end - 1].1 - extents[start].0)

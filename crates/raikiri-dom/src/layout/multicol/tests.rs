@@ -328,6 +328,46 @@ fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_defin
 }
 
 #[test]
+fn balanced_auto_multicol_updates_its_container_fragment_height() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;column-count:2;column-gap:0;background:green"),
+    );
+    for (height, extra) in [(25, ""), (50, ""), (25, ";break-before:avoid"), (50, "")] {
+        doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:{height}px{extra}")),
+        );
+    }
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    assert_eq!(doc.nodes[container].unrounded_layout.size.height, 100.0);
+    let fragment = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .find(|fragment| fragment.node_id == container)
+        .expect("multicol container fragment");
+    assert_eq!(fragment.rect.height, 100.0);
+}
+
+#[test]
 fn compute_multicol_layout_clamps_auto_height_to_the_largest_min_constrained_child() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

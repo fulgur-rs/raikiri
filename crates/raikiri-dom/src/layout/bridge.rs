@@ -121,10 +121,20 @@ pub(crate) fn apply_computed_to_style(
             .get(idx)
             .and_then(|mode| *mode);
         bridge_size(doc, idx, cv);
-        doc.nodes[idx].style.aspect_ratio = doc.nodes[idx]
-            .image_intrinsic_box()
-            .and_then(|intrinsic| intrinsic.aspect_ratio)
-            .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
+        // An intrinsic ratio only participates when at least one preferred
+        // dimension is auto; Taffy's leaf sizing otherwise floors an explicit
+        // height to the ratio-derived height.
+        doc.nodes[idx].style.aspect_ratio =
+            if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+                || matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+            {
+                doc.nodes[idx]
+                    .image_intrinsic_box()
+                    .and_then(|intrinsic| intrinsic.aspect_ratio)
+                    .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+            } else {
+                None
+            };
         // SVG 2 geometry: auto dimensions on svg are treated as 100%.
         // With only a viewBox ratio and no definite height, width establishes
         // the viewport and the ratio determines its auto height.
