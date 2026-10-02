@@ -445,7 +445,7 @@ fn overflowing_rl_columns_keep_the_first_column_at_the_right_edge() {
             Top,
         ));
         let many = glyph_positions(&styled_scene(
-            &vec!["a"; 11].join("\n"),
+            &["a"; 11].join("\n"),
             mode,
             Mixed,
             Ltr,

@@ -4295,7 +4295,7 @@ fn margin_box_flow_inherits_from_root_and_page_and_allows_local_override() {
             Some("display:block;writing-mode:vertical-rl;text-orientation:upright;direction:rtl"),
         );
         let node = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
-        doc.append_text(node, &format!("@page {{ {page} @top-left {{ content:'ab';font-family:Ahem;font-size:10px;text-align:end; {local} }} }}"));
+        doc.append_text(node, format!("@page {{ {page} @top-left {{ content:'ab';font-family:Ahem;font-size:10px;text-align:end; {local} }} }}"));
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).unwrap();
         let rule = cascade.page.margin_boxes().first().unwrap();
