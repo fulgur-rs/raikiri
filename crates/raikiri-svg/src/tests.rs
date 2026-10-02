@@ -2,6 +2,156 @@ use super::{SvgDocument, SvgError, SvgRootStyle, SvgViewport};
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
 
+fn selector_freezing_svg(css: &str, elements: usize) -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><style>{css}</style>{}</svg>",
+        "<rect width=\"1\" height=\"1\"/>".repeat(elements)
+    )
+}
+
+fn assert_selector_freezing_rejected(source: &str) {
+    let svg = SvgDocument::parse(source.as_bytes()).expect("supported original SVG");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    for css_pixel_scale in [false, true] {
+        let result = if css_pixel_scale {
+            svg.rasterize_at_css_pixel_scale(viewport, SvgRootStyle::default(), Some(4))
+        } else {
+            svg.rasterize(viewport, SvgRootStyle::default(), Some(4))
+        };
+        assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+            if message.contains("selector freezing resource limit")));
+    }
+}
+
+#[test]
+fn selector_freezing_rejects_excessive_matches_with_a_one_pixel_output() {
+    let source = selector_freezing_svg(&"rect { fill:red }".repeat(257), 256);
+    assert_selector_freezing_rejected(&source);
+}
+
+#[test]
+fn selector_freezing_rejects_amplified_declarations_from_selector_aliases() {
+    let selectors = vec!["rect"; 128].join(",");
+    let css = format!("{selectors} {{ fill:red; unused:{} }}", "a".repeat(70_000));
+    assert_selector_freezing_rejected(&selector_freezing_svg(&css, 1));
+}
+
+#[test]
+fn selector_freezing_keeps_ordinary_aliases_and_cascade_pixels() {
+    let source = selector_freezing_svg(
+        "rect, svg rect { fill:blue } rect { fill:red!important }",
+        2,
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).expect("ordinary SVG");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    for image in [
+        svg.rasterize(viewport, SvgRootStyle::default(), Some(4)),
+        svg.rasterize_at_css_pixel_scale(viewport, SvgRootStyle::default(), Some(4)),
+    ] {
+        assert_eq!(
+            image.expect("ordinary freezing succeeds").rgba,
+            [255, 0, 0, 255]
+        );
+    }
+}
+
+#[test]
+fn selector_freezing_shares_limits_across_style_elements() {
+    let source = selector_freezing_svg(&"rect { fill:red }".repeat(128), 256).replace(
+        "</style>",
+        &format!("</style><style>{}</style>", "rect { fill:red }".repeat(129)),
+    );
+    assert_selector_freezing_rejected(&source);
+}
+
+#[test]
+fn selector_freezing_charges_xml_escape_expansion_before_allocation() {
+    let selectors = vec!["rect"; 128].join(",");
+    let css = format!(
+        "<![CDATA[{selectors} {{ fill:red; unused:'{}' }}]]>",
+        "&".repeat(20_000)
+    );
+    assert_selector_freezing_rejected(&selector_freezing_svg(&css, 1));
+}
+
+#[test]
+fn selector_freezing_limits_nonmatching_selector_work() {
+    assert_selector_freezing_rejected(&selector_freezing_svg(
+        &"missing { fill:red }".repeat(1025),
+        1024,
+    ));
+}
+
+#[test]
+fn selector_freezing_budget_survives_opacity_normalization() {
+    let css = format!("rect {{ opacity:0.5{} }}", "0".repeat(60_000));
+    let source = selector_freezing_svg(&css, 600);
+    let svg = SvgDocument::parse(source.as_bytes()).expect("supported long opacity token");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    let style = SvgRootStyle {
+        neutralize_root_opacity: true,
+        ..SvgRootStyle::default()
+    };
+    for result in [
+        svg.rasterize(viewport, style, Some(4)),
+        svg.rasterize_at_css_pixel_scale(viewport, style, Some(4)),
+    ] {
+        assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+            if message.contains("selector freezing resource limit")));
+    }
+}
+
+#[test]
+fn selector_freezing_accepts_the_match_limit_and_preserves_skip_paths() {
+    let source = selector_freezing_svg(&"rect { fill:red }".repeat(256), 256);
+    let svg = SvgDocument::parse(source.as_bytes()).expect("exact-limit SVG");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    assert_eq!(
+        svg.rasterize(viewport, SvgRootStyle::default(), Some(4))
+            .unwrap()
+            .rgba,
+        [255, 0, 0, 255]
+    );
+
+    let excessive = selector_freezing_svg(&"rect { fill:red }".repeat(257), 256);
+    let svg = SvgDocument::parse(excessive.as_bytes()).unwrap();
+    for style in [
+        SvgRootStyle {
+            visible: false,
+            ..SvgRootStyle::default()
+        },
+        SvgRootStyle {
+            opacity: 0.0,
+            ..SvgRootStyle::default()
+        },
+    ] {
+        assert_eq!(
+            svg.rasterize(viewport, style, Some(4)).unwrap().rgba,
+            [0; 4]
+        );
+    }
+    let unchanged = excessive.replacen("<svg ", "<svg color=\"red\" ", 1);
+    let svg = SvgDocument::parse(unchanged.as_bytes()).unwrap();
+    assert_eq!(
+        svg.rasterize(viewport, SvgRootStyle::default(), Some(4))
+            .unwrap()
+            .rgba,
+        [255, 0, 0, 255]
+    );
+}
+
 #[test]
 fn rasterizes_at_requested_size_and_returns_straight_alpha_rgba() {
     let svg = SvgDocument::parse(HALF_RED_RECT).expect("valid SVG");

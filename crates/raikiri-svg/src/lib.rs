@@ -256,8 +256,9 @@ impl SvgDocument {
                 || !self.root_has_color;
             // Freeze selector matches before viewport, host-style, and opacity
             // rewrites change attributes that selectors can inspect.
+            let mut rewrite_budget = SelectorFreezeBudget::new();
             let source = if modifies_source {
-                freeze_svg_stylesheet_selectors(&self.source)?
+                freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
             } else {
                 self.source.clone()
             };
@@ -267,7 +268,7 @@ impl SvgDocument {
                 with_root_viewport_size(&source, viewport.width, viewport.height)?
             };
             let source = if root_style.neutralize_root_opacity {
-                normalize_svg_opacity_cascade(&source)?
+                normalize_svg_opacity_cascade(&source, &mut rewrite_budget)?
             } else {
                 source
             };
@@ -836,7 +837,48 @@ struct OpacityDeclaration {
     source_order: usize,
 }
 
-fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
+// Intentionally stricter resource policy: raikiri-spike-plxjz. These bounds
+// cover generated freezing state, not the original backend CSS parser's
+// allocations, and do not classify otherwise valid CSS as invalid grammar.
+const MAX_SELECTOR_FREEZE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_SELECTOR_FREEZE_MATCHES: usize = 65_536;
+const MAX_SELECTOR_FREEZE_CHECKS: usize = 1_048_576;
+
+struct SelectorFreezeBudget {
+    bytes: usize,
+    matches: usize,
+    checks: usize,
+}
+
+impl SelectorFreezeBudget {
+    fn new() -> Self {
+        Self {
+            bytes: MAX_SELECTOR_FREEZE_BYTES,
+            matches: MAX_SELECTOR_FREEZE_MATCHES,
+            checks: MAX_SELECTOR_FREEZE_CHECKS,
+        }
+    }
+
+    fn consume(remaining: &mut usize, amount: usize) -> Result<(), SvgError> {
+        *remaining = remaining
+            .checked_sub(amount)
+            .ok_or_else(selector_freeze_limit_error)?;
+        Ok(())
+    }
+
+    fn bytes(&mut self, amount: usize) -> Result<(), SvgError> {
+        Self::consume(&mut self.bytes, amount)
+    }
+}
+
+fn selector_freeze_limit_error() -> SvgError {
+    SvgError::InvalidDocument("selector freezing resource limit exceeded".to_owned())
+}
+
+fn freeze_svg_stylesheet_selectors(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
@@ -874,13 +916,17 @@ fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
         return Ok(source.to_owned());
     }
 
+    budget.bytes(source.len())?;
     let marker_prefix = unique_attribute_name(source, "data-raikiri-svg-selector");
     let mut frozen_stylesheet = String::new();
     let mut element_markers = BTreeMap::<usize, Vec<String>>::new();
     for (index, rule) in stylesheet.rules.iter().enumerate() {
+        // Charge a conservative suffix width before formatting the marker.
+        budget.bytes(marker_prefix.len() + 1 + usize::BITS as usize)?;
         let marker = format!("{marker_prefix}-{index}");
         let mut has_match = false;
         for node in root.descendants().filter(|node| node.is_element()) {
+            SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
             // Markers cannot be inserted into source ranges that are replaced
             // wholesale as stylesheet text. Such nested markup is not a
             // renderable SVG element, even if a broad selector matches it.
@@ -890,6 +936,10 @@ fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
                 continue;
             }
             if rule.selector.matches(&SvgCssElement(node)) {
+                SelectorFreezeBudget::consume(&mut budget.matches, 1)?;
+                // Charge string storage plus a conservative per-match share
+                // of vector/map/edit metadata before retaining the clone.
+                budget.bytes(marker.len() + 128)?;
                 has_match = true;
                 element_markers
                     .entry(node.range().start)
@@ -902,10 +952,18 @@ fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
             continue;
         }
 
+        budget.bytes(marker.len() + 8)?;
         frozen_stylesheet.push('[');
         frozen_stylesheet.push_str(&marker);
         frozen_stylesheet.push_str("] {");
         for declaration in &rule.declarations {
+            let declaration_bytes = declaration
+                .name
+                .len()
+                .checked_add(declaration.value.len())
+                .and_then(|len| len.checked_add(if declaration.important { 14 } else { 3 }))
+                .ok_or_else(selector_freeze_limit_error)?;
+            budget.bytes(declaration_bytes)?;
             frozen_stylesheet.push(' ');
             frozen_stylesheet.push_str(declaration.name);
             frozen_stylesheet.push(':');
@@ -927,6 +985,10 @@ fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
         } else {
             end
         };
+        for marker in &markers {
+            // Attribute formatting creates both a temporary and its copy.
+            budget.bytes((marker.len() + 4) * 2)?;
+        }
         let attributes = markers
             .iter()
             .map(|marker| format!(" {marker}=\"\""))
@@ -938,6 +1000,21 @@ fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
     for (_, range) in stylesheet_ranges {
         let replacement = if !stylesheet_inserted {
             stylesheet_inserted = true;
+            let escaped_len = frozen_stylesheet.bytes().try_fold(0usize, |len, byte| {
+                len.checked_add(match byte {
+                    b'&' => 5,
+                    b'<' | b'>' => 4,
+                    _ => 1,
+                })
+                .ok_or_else(selector_freeze_limit_error)
+            })?;
+            // escape_xml_text performs three replacement passes; charge their
+            // maximum combined payload before any of them allocates.
+            budget.bytes(
+                escaped_len
+                    .checked_mul(3)
+                    .ok_or_else(selector_freeze_limit_error)?,
+            )?;
             escape_xml_text(&frozen_stylesheet)
         } else {
             String::new()
@@ -950,18 +1027,48 @@ fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
         ));
     }
 
-    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
-    let mut result = source.to_owned();
+    apply_selector_edits(source, edits, budget)
+}
+
+fn apply_selector_edits(
+    source: &str,
+    mut edits: Vec<(Range<usize>, String)>,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    let final_len = edits.iter().try_fold(source.len(), |len, (range, text)| {
+        len.checked_sub(range.len())
+            .and_then(|len| len.checked_add(text.len()))
+            .ok_or_else(selector_freeze_limit_error)
+    })?;
+    budget.bytes(final_len)?;
+    edits.sort_by_key(|(range, _)| range.start);
+    let mut result = String::with_capacity(final_len);
+    let mut cursor = 0;
     for (range, replacement) in edits {
-        result.replace_range(range, &replacement);
+        if range.start < cursor {
+            return Err(SvgError::InvalidDocument(
+                "overlapping SVG selector edits".to_owned(),
+            ));
+        }
+        result.push_str(&source[cursor..range.start]);
+        result.push_str(&replacement);
+        cursor = range.end;
     }
+    result.push_str(&source[cursor..]);
     Ok(result)
 }
 
-fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
+fn normalize_svg_opacity_cascade(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
     // Freeze winning opacity declarations before removing them from
     // stylesheets. Keep the literal `inherit` so referenced subtrees retain
     // their instance-specific inheritance through `<use>`.
+    // Keep the freezing budget alive through this second generated form.
+    // A long winning declaration must not be copied into every element for
+    // free merely because the marker representation was small.
+    budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
@@ -995,7 +1102,7 @@ fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
                 .namespace()
                 .is_none_or(|namespace| namespace == SVG_NAMESPACE)
     }) {
-        let winner = opacity_winner(node, &stylesheet);
+        let winner = opacity_winner(node, &stylesheet, budget)?;
         for attribute in node.attributes().filter(|attribute| {
             attribute.name() == "opacity"
                 && matches!(
@@ -1018,6 +1125,16 @@ fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
         // cloned element's opacity.
         let value = winner.value;
         let existing_style = node.attribute("style");
+        // Bound retained declarations, intermediate formatting, all three
+        // attribute-escape passes (up to 6x), and the completed edit payload.
+        let generated_bound = existing_style
+            .map_or(0, str::len)
+            .checked_add(value.len())
+            .and_then(|len| len.checked_add(10))
+            .and_then(|len| len.checked_mul(32))
+            .and_then(|len| len.checked_add(128))
+            .ok_or_else(selector_freeze_limit_error)?;
+        budget.bytes(generated_bound)?;
         let retained = existing_style.map_or_else(String::new, |style| {
             strip_inline_style_properties(style, &["opacity"])
         });
@@ -1048,6 +1165,13 @@ fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
     }
 
     for (node, text) in &stylesheets {
+        // Property removal cannot lengthen the stylesheet; charge its copy,
+        // removal metadata and three XML-escape intermediates conservatively.
+        budget.bytes(
+            text.len()
+                .checked_mul(32)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )?;
         let Some(rewritten) = strip_stylesheet_properties(text, &["opacity"]) else {
             continue;
         };
@@ -1057,25 +1181,29 @@ fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
         edits.push((range, escape_xml_text(&rewritten)));
     }
 
-    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
-    let mut result = source.to_owned();
-    for (range, replacement) in edits {
-        result.replace_range(range, &replacement);
-    }
-    Ok(result)
+    apply_selector_edits(source, edits, budget)
 }
 
 fn opacity_winner(
     node: roxmltree::Node<'_, '_>,
     stylesheet: &simplecss::StyleSheet<'_>,
-) -> Option<OpacityDeclaration> {
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<OpacityDeclaration>, SvgError> {
+    let stylesheet_work = stylesheet.rules.iter().try_fold(0usize, |work, rule| {
+        work.checked_add(rule.declarations.len())
+            .and_then(|work| work.checked_add(1))
+            .ok_or_else(selector_freeze_limit_error)
+    })?;
+    SelectorFreezeBudget::consume(&mut budget.checks, stylesheet_work)?;
     let mut winner: Option<OpacityDeclaration> = None;
 
     let mut consider = |value: &str,
                         important: bool,
                         inline_style: bool,
                         specificity: [u8; 3],
-                        source_order: usize| {
+                        source_order: usize|
+     -> Result<(), SvgError> {
+        budget.bytes(value.len() + std::mem::size_of::<OpacityDeclaration>())?;
         let candidate = OpacityDeclaration {
             value: value.to_owned(),
             important,
@@ -1097,6 +1225,7 @@ fn opacity_winner(
         {
             winner = Some(candidate);
         }
+        Ok(())
     };
 
     let mut source_order = 0;
@@ -1107,7 +1236,7 @@ fn opacity_winner(
                 None | Some(SVG_NAMESPACE) | Some(XLINK_NAMESPACE) | Some(XML_NAMESPACE)
             )
     }) {
-        consider(attribute.value(), false, false, [0, 0, 0], source_order);
+        consider(attribute.value(), false, false, [0, 0, 0], source_order)?;
         source_order += 1;
     }
 
@@ -1124,7 +1253,7 @@ fn opacity_winner(
                     false,
                     specificity,
                     source_order,
-                );
+                )?;
             }
             source_order += 1;
         }
@@ -1139,13 +1268,13 @@ fn opacity_winner(
                     true,
                     [0, 0, 0],
                     source_order,
-                );
+                )?;
             }
             source_order += 1;
         }
     }
 
-    winner
+    Ok(winner)
 }
 
 struct SvgCssElement<'a, 'input: 'a>(roxmltree::Node<'a, 'input>);
