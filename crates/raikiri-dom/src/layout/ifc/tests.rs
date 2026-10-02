@@ -330,7 +330,7 @@ fn quirks_mode_inline_axis_padding_preserves_its_line_height() {
     assert_eq!(block_padded.1[0], empty.1[0]);
 }
 
-fn nested_inline_line_height(mode: raikiri_traits::QuirksMode) -> f32 {
+fn nested_inline_line_height(mode: raikiri_traits::QuirksMode, inner_css: &str) -> f32 {
     use taffy::Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
@@ -347,7 +347,7 @@ fn nested_inline_line_height(mode: raikiri_traits::QuirksMode) -> f32 {
         Style::default(),
         Some("line-height:40px"),
     );
-    let inner = doc.append_element(Some(outer), "b", Style::default(), Some("line-height:10px"));
+    let inner = doc.append_element(Some(outer), "b", Style::default(), Some(inner_css));
     doc.append_text(inner, "x");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -360,6 +360,45 @@ fn nested_inline_line_height(mode: raikiri_traits::QuirksMode) -> f32 {
 #[test]
 fn quirks_mode_parent_inline_without_direct_text_has_no_strut() {
     use raikiri_traits::QuirksMode;
-    assert_eq!(nested_inline_line_height(QuirksMode::Quirks), 20.0);
-    assert_eq!(nested_inline_line_height(QuirksMode::NoQuirks), 40.0);
+    assert_eq!(
+        nested_inline_line_height(QuirksMode::Quirks, "line-height:10px"),
+        20.0
+    );
+    assert_eq!(
+        nested_inline_line_height(QuirksMode::NoQuirks, "line-height:10px"),
+        40.0
+    );
+    assert_eq!(
+        nested_inline_line_height(QuirksMode::Quirks, "display:contents;line-height:10px"),
+        40.0
+    );
+}
+
+#[test]
+fn quirks_mode_generated_text_keeps_only_its_own_inline_strut() {
+    use taffy::Style;
+    let mut doc = Document::new();
+    doc.set_quirks_mode(raikiri_traits::QuirksMode::Quirks);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(style, "span::before { content: \"x\"; line-height: 10px; }");
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font-size:20px;line-height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "span",
+        Style::default(),
+        Some("line-height:40px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+    let line = &doc.nodes[body].ifc_lines().expect("lines")[0];
+    assert_eq!(line.block_size(), 20.0);
 }

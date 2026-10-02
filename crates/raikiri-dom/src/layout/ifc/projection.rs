@@ -147,27 +147,30 @@ fn has_noncollapsed_text(doc: &Document, cascade: &CascadeResult, id: usize) -> 
 
 /// Whether this inline box contains text itself, excluding descendant boxes.
 fn has_direct_inline_text(doc: &Document, cascade: &CascadeResult, element: usize) -> bool {
-    if has_in_flow_generated_text(cascade, element) {
-        return true;
-    }
-    doc.get_node(element).is_some_and(|node| {
-        node.children.iter().copied().any(|id| {
-            let Some(child) = doc.get_node(id).filter(|child| child.is_in_document()) else {
-                return false;
-            };
-            match child.kind() {
-                NodeKind::Text => has_noncollapsed_text(doc, cascade, id),
-                NodeKind::Element => {
-                    child.tag_name() == Some("br")
-                        && cascade
-                            .computed
-                            .get(id)
-                            .is_some_and(|cv| cv.display != DisplayValue::None)
+    let Some(node) = doc.get_node(element) else {
+        return false;
+    };
+    let mut stack = node.children.clone();
+    while let Some(id) = stack.pop() {
+        let Some(child) = doc.get_node(id).filter(|child| child.is_in_document()) else {
+            continue;
+        };
+        match child.kind() {
+            NodeKind::Text if has_noncollapsed_text(doc, cascade, id) => return true,
+            NodeKind::Element => {
+                let Some(cv) = cascade.computed.get(id) else {
+                    continue;
+                };
+                if cv.display == DisplayValue::Contents {
+                    stack.extend(child.children.iter().copied());
+                } else if cv.display != DisplayValue::None && child.tag_name() == Some("br") {
+                    return true;
                 }
-                _ => false,
             }
-        })
-    })
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether the inline content of `element` that belongs to this paragraph
