@@ -3,6 +3,34 @@ use crate::node::NodeFlags;
 use taffy::TraversePartialTree;
 
 #[test]
+fn taffy_children_exclude_non_rendered_html_elements() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let html = doc.append_element(Some(root), "html", Style::default(), None::<&str>);
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(style, "body { margin: 0 }");
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let content = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+
+    doc.mark_in_document_flags();
+
+    let html_id = taffy::NodeId::from(html);
+    assert_eq!(
+        <Document as TraversePartialTree>::child_count(&doc, html_id),
+        1,
+        "html layout must exclude head and retain body"
+    );
+    let children: Vec<taffy::NodeId> =
+        <Document as TraversePartialTree>::child_ids(&doc, html_id).collect();
+    assert_eq!(children, vec![taffy::NodeId::from(body)]);
+
+    let body_children: Vec<taffy::NodeId> =
+        <Document as TraversePartialTree>::child_ids(&doc, taffy::NodeId::from(body)).collect();
+    assert_eq!(body_children, vec![taffy::NodeId::from(content)]);
+}
+
+#[test]
 fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
     // Regression check: the taffy layout tree (= the web-spec flat tree)
     // contains a `<template>` element's ordinary light-DOM children but not

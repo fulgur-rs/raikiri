@@ -40,13 +40,15 @@ fn leaf_intrinsic_size(
         })
 }
 
-/// Taffy child iterator: filter nodes with `is_in_document() == false`
-/// (such as a detached `<template>` contents fragment) from the raw arena
-/// children.
+/// Taffy child iterator: filter detached nodes and non-rendered HTML
+/// subtrees (such as `<head>` and `<style>`) from the raw arena children.
 ///
 /// The taffy layout tree is the web-spec “flat tree,” so layout must treat
-/// template contents as nonexistent. Skipping them only at paint time would
-/// still let their layout sizes / positions shift sibling positions.
+/// template contents as nonexistent and non-rendered HTML subtrees as absent.
+/// The template element itself remains in the layout tree to preserve its
+/// ordinary light-DOM child structure; its detached contents stay excluded.
+/// Skipping other non-rendered subtrees only at paint time would still let
+/// their layout sizes / positions shift sibling positions.
 /// `raikiri_traits::Dom::child_ids` returns raw children by contract;
 /// filter only on the taffy path rather than changing that contract.
 pub struct TaffyChildIter<'a> {
@@ -61,7 +63,11 @@ impl TaffyChildIter<'_> {
     }
 
     fn includes(doc: &Document, parent: NodeId, child: usize) -> bool {
-        if !doc.nodes[child].is_in_document() {
+        let child_node = &doc.nodes[child];
+        let is_template_element = child_node.tag_name() == Some("template");
+        if !child_node.is_in_document()
+            || (child_node.is_non_rendered_html_element() && !is_template_element)
+        {
             return false;
         }
         // CSS Flexbox §4: anonymous flex items are not generated for

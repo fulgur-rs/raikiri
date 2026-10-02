@@ -44,7 +44,7 @@ fn img_element_loads_and_paints_at_css_specified_size() {
     // outer corner therefore gives an exact, unambiguous color, while
     // sampling at each quadrant's geometric center does not.
     let html = format!(
-        r#"<html><head><style>@page {{ size: 40px 40px }} img {{ width: 40px; height: 40px }}</style></head><body><img src="{url}"></body></html>"#
+        r#"<html><head><style>@page {{ size: 40px 40px }} body {{ margin: 0 }} img {{ width: 40px; height: 40px }}</style></head><body><img src="{url}"></body></html>"#
     );
 
     let resolver = ImageResolver::new(FileNetworkProvider);
