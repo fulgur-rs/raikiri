@@ -1443,11 +1443,9 @@ fn fixed_margin_spec() -> MarginBoxPaintSpec {
         width: Some(100.0),
         height: None,
         text_color: Color::from_rgba8(0, 0, 0, 255),
-        font_size: 16.0,
-        font_family: String::new(),
+        text_style: crate::standalone_text::style(16.0, ""),
         alignment: StandaloneAlign::Start,
         vertical_align: text::MarginTextVerticalAlign::Top,
-        vertical_writing: false,
     }
 }
 
@@ -3376,13 +3374,13 @@ fn a_margin_box_width_follows_the_document_font() {
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "abc".to_owned();
-    spec.font_family = "serif".to_owned();
-    spec.font_size = 10.0;
-    assert_eq!(margin_box_text_width(&doc, &spec), 30.0);
+    spec.text_style.families = vec!["serif".to_owned()];
+    spec.text_style.font_size = 10.0;
+    assert_eq!(margin_box_text_width(&doc, &spec, None), 30.0);
     assert_eq!(doc.standalone_text_calls(), 1);
-    // A vertical box is measured by the engine too, as horizontal text.
-    spec.vertical_writing = true;
-    assert_eq!(margin_box_text_width(&doc, &spec), 30.0);
+    // Vertical content width is the block advance of one column.
+    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
+    assert_eq!(margin_box_text_width(&doc, &spec, None), 10.0);
     assert_eq!(doc.standalone_text_calls(), 2);
 }
 
@@ -3452,14 +3450,12 @@ fn margin_boxes_are_measured_and_drawn_by_the_engine() {
 }
 
 #[test]
-fn a_vertical_writing_margin_box_is_drawn_by_the_engine_like_a_horizontal_one() {
-    // Vertical writing is laid out as horizontal text: the vertical box is
-    // shaped by the engine and its glyphs land where the horizontal box's do.
+fn a_vertical_writing_margin_box_advances_glyphs_down_the_column() {
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "abc".to_owned();
-    spec.font_family = "Ahem".to_owned();
-    spec.font_size = 10.0;
+    spec.text_style.families = vec!["Ahem".to_owned()];
+    spec.text_style.font_size = 10.0;
     let glyphs = |spec: &MarginBoxPaintSpec| -> Vec<(f64, f64)> {
         let mut scene = Scene::new();
         paint_margin_box(
@@ -3477,19 +3473,27 @@ fn a_vertical_writing_margin_box_is_drawn_by_the_engine_like_a_horizontal_one() 
             .commands
             .iter()
             .filter_map(|command| match command {
-                RenderCommand::GlyphRun(run) => Some(run.transform.translation()),
+                RenderCommand::GlyphRun(run) => Some(
+                    run.glyphs
+                        .iter()
+                        .map(|g| (f64::from(g.x), f64::from(g.y)))
+                        .collect::<Vec<_>>(),
+                ),
                 _ => None,
             })
-            .map(|origin| (origin.x, origin.y))
+            .flatten()
             .collect()
     };
     let horizontal = glyphs(&spec);
     assert_eq!(doc.standalone_text_calls(), 1);
-    spec.vertical_writing = true;
+    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
     let vertical = glyphs(&spec);
     assert_eq!(doc.standalone_text_calls(), 2, "the engine drew it");
     assert!(!vertical.is_empty());
-    assert_eq!(vertical, horizontal);
+    assert_ne!(vertical, horizontal);
+    assert_eq!(vertical.len(), 3);
+    assert_eq!(vertical[0].0, vertical[1].0);
+    assert_eq!(vertical[1].1 - vertical[0].1, 10.0);
 }
 
 #[test]
@@ -4240,4 +4244,151 @@ fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
     assert_eq!(glyph_xs(&scene), [-24.0, -14.0, -4.0]);
     // One engine result for the measurement, one for the drawing.
     assert_eq!(document.standalone_text_calls(), 2);
+}
+
+#[test]
+fn margin_box_flow_inherits_from_root_and_page_and_allows_local_override() {
+    use shodo::geometry::{Direction, WritingMode as Mode};
+    use shodo::style::TextOrientation as Orientation;
+    for (page, local, mode, orientation, direction) in [
+        (
+            "",
+            "",
+            Mode::VerticalRl,
+            Orientation::Upright,
+            Direction::Rtl,
+        ),
+        (
+            "writing-mode:sideways-lr;text-orientation:sideways;direction:ltr;",
+            "",
+            Mode::SidewaysLr,
+            Orientation::Sideways,
+            Direction::Ltr,
+        ),
+        (
+            "writing-mode:sideways-lr;",
+            "writing-mode:vertical-lr;text-orientation:mixed;direction:ltr;",
+            Mode::VerticalLr,
+            Orientation::Mixed,
+            Direction::Ltr,
+        ),
+        (
+            "writing-mode:vertical-rl;",
+            "writing-mode:horizontal-tb;",
+            Mode::HorizontalTb,
+            Orientation::Upright,
+            Direction::Rtl,
+        ),
+        (
+            "",
+            "writing-mode:sideways-rl;",
+            Mode::SidewaysRl,
+            Orientation::Upright,
+            Direction::Rtl,
+        ),
+    ] {
+        let mut doc = engine_document();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some("display:block;writing-mode:vertical-rl;text-orientation:upright;direction:rtl"),
+        );
+        let node = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+        doc.append_text(node, format!("@page {{ {page} @top-left {{ content:'ab';font-family:Ahem;font-size:10px;text-align:end; {local} }} }}"));
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let rule = cascade.page.margin_boxes().first().unwrap();
+        let spec = margin_box_spec(&doc, &cascade, rule, 100.0, 40.0, 0, 1, false, None).unwrap();
+        assert_eq!(spec.text_style.writing_mode, mode, "{page} {local}");
+        assert_eq!(spec.text_style.text_orientation, orientation);
+        assert_eq!(spec.text_style.direction, direction);
+        assert_eq!(spec.alignment, StandaloneAlign::End);
+        let mut scene = Scene::new();
+        paint_margin_box(
+            &mut scene,
+            &doc,
+            &spec,
+            0.0,
+            0.0,
+            100.0,
+            40.0,
+            None,
+            &mut Vec::new(),
+        );
+        let positions: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|cmd| match cmd {
+                RenderCommand::GlyphRun(run) => Some(run.glyphs.iter().map(|g| (g.x, g.y))),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(positions.len(), 2);
+        if mode.is_vertical() {
+            assert_eq!(positions[0].0, positions[1].0);
+            assert_eq!((positions[1].1 - positions[0].1).abs(), 10.0);
+        } else {
+            assert_eq!(positions[0].1, positions[1].1);
+            assert_eq!((positions[1].0 - positions[0].0).abs(), 10.0);
+        }
+    }
+}
+
+#[test]
+fn vertical_margin_box_intrinsics_use_physical_axes() {
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc\ndef".into();
+    spec.text_style = crate::standalone_text::style(10.0, "Ahem");
+    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
+    assert_eq!(margin_box_text_width(&doc, &spec, None), 20.0);
+    assert_eq!(margin_box_intrinsic_height(&doc, &spec), 30.0);
+}
+
+#[test]
+fn vertical_auto_width_counts_columns_wrapped_to_the_content_height() {
+    let doc = engine_document();
+    let mut spec = fixed_margin_spec();
+    spec.content = "ab cd ef".into();
+    spec.text_style = crate::standalone_text::style(10.0, "Ahem");
+    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
+    spec.height = Some(25.0);
+    assert_eq!(margin_box_text_width(&doc, &spec, None), 30.0);
+}
+
+#[test]
+fn vertical_margin_row_distributes_auto_width_using_wrapped_columns() {
+    let doc = engine_document();
+    let mut long = fixed_margin_spec();
+    long.slot = PageMarginBoxSlot::TopLeft;
+    long.content = "ab cd ef".into();
+    long.text_style = crate::standalone_text::style(10.0, "Ahem");
+    long.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
+    long.width = None;
+    let mut short = long.clone();
+    short.slot = PageMarginBoxSlot::TopRight;
+    short.content = "ab".into();
+    let mut scene = Scene::new();
+    paint_horizontal_margin_boxes(
+        &mut scene,
+        &doc,
+        &[long, short],
+        true,
+        220.0,
+        200.0,
+        margin_row_margins(25.0),
+        None,
+        &mut Vec::new(),
+    );
+    let widths: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape).width()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(widths, [150.0, 50.0]);
 }

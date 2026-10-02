@@ -13,6 +13,7 @@ fn ahem(size: f32) -> StandaloneStyle {
     StandaloneStyle {
         families: vec!["Ahem".to_owned()],
         font_size: size,
+        ..StandaloneStyle::default()
     }
 }
 
@@ -93,6 +94,7 @@ fn a_family_list_uses_the_first_family_the_collection_has() {
     let style = StandaloneStyle {
         families: vec!["No Such Family".to_owned(), "Ahem".to_owned()],
         font_size: 10.0,
+        ..StandaloneStyle::default()
     };
     let text = doc
         .shape_standalone_text("abc", &style, None, StandaloneAlign::Start)
@@ -106,6 +108,7 @@ fn a_generic_keyword_resolves_in_the_document_layer() {
     let style = StandaloneStyle {
         families: vec!["SERIF".to_owned()],
         font_size: 10.0,
+        ..StandaloneStyle::default()
     };
     let text = doc
         .shape_standalone_text("abc", &style, None, StandaloneAlign::Start)
@@ -286,6 +289,7 @@ fn a_generic_keyword_matches_in_any_case_and_a_quoted_one_names_a_family() {
         let style = StandaloneStyle {
             families: vec![family.to_owned()],
             font_size: 10.0,
+            ..StandaloneStyle::default()
         };
         let text = doc
             .shape_standalone_text("A", &style, None, StandaloneAlign::Start)
@@ -300,4 +304,81 @@ fn a_generic_keyword_matches_in_any_case_and_a_quoted_one_names_a_family() {
         "a quoted keyword is a name"
     );
     assert_eq!(font_of("\"serif\""), [AHEM.len()], "double quotes too");
+}
+
+#[test]
+fn vertical_standalone_uses_logical_constraints_and_physical_dimensions() {
+    for writing_mode in [
+        WritingMode::VerticalRl,
+        WritingMode::VerticalLr,
+        WritingMode::SidewaysRl,
+        WritingMode::SidewaysLr,
+    ] {
+        let doc = enabled();
+        let style = StandaloneStyle {
+            writing_mode,
+            ..ahem(10.0)
+        };
+        let text = doc
+            .shape_standalone_text("ab cd", &style, Some(25.0), StandaloneAlign::Start)
+            .unwrap();
+        assert_eq!(text.lines().len(), 2, "{writing_mode:?}");
+        assert_eq!(text.inline_size(), 20.0);
+        assert_eq!(text.block_size(), 20.0);
+        assert_eq!((text.width(), text.height()), (20.0, 20.0));
+        assert_eq!(
+            text.container(),
+            PhysicalSize {
+                width: 20.0,
+                height: 25.0
+            }
+        );
+        assert_eq!(text.advance(), 30.0);
+        let text = doc
+            .shape_standalone_text("abc ", &style, None, StandaloneAlign::Start)
+            .unwrap();
+        assert_eq!((text.width(), text.height()), (10.0, 30.0));
+        assert_eq!(text.advance(), 40.0);
+    }
+}
+
+#[test]
+fn standalone_propagates_direction_and_upright_orientation() {
+    let doc = enabled();
+    for mode in [
+        WritingMode::HorizontalTb,
+        WritingMode::VerticalRl,
+        WritingMode::VerticalLr,
+    ] {
+        let style = StandaloneStyle {
+            writing_mode: mode,
+            direction: Direction::Rtl,
+            text_orientation: TextOrientation::Upright,
+            ..ahem(10.0)
+        };
+        let text = doc
+            .shape_standalone_text("ab", &style, Some(100.0), StandaloneAlign::Start)
+            .unwrap();
+        assert_eq!(text.lines()[0].writing_mode(), mode);
+        assert_eq!(
+            text.lines()[0].used_direction(),
+            if mode.is_vertical() {
+                Direction::Ltr
+            } else {
+                Direction::Rtl
+            }
+        );
+        for fragment in text.lines()[0].fragments() {
+            if let shodo::Fragment::GlyphRun(run) = fragment {
+                assert_eq!(
+                    run.orientation(),
+                    if mode.is_vertical() {
+                        shodo::GlyphOrientation::Upright
+                    } else {
+                        shodo::GlyphOrientation::Horizontal
+                    }
+                );
+            }
+        }
+    }
 }

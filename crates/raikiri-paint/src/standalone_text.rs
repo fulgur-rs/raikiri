@@ -7,6 +7,7 @@ use kurbo::Affine;
 use peniko::{Color, Fill};
 use raikiri_dom::{Document, StandaloneAlign, StandaloneStyle, StandaloneText};
 use shodo::Fragment;
+use shodo::geometry::PhysicalConverter;
 
 /// The family names of a CSS `font-family` string, in order. Quotes are kept:
 /// the engine side tells a quoted `"serif"` (a named family) from the generic
@@ -38,17 +39,23 @@ pub(crate) fn shape(
     width: Option<f32>,
     align: StandaloneAlign,
 ) -> Option<StandaloneText> {
-    let style = StandaloneStyle {
+    let style = style(font_size, font_family);
+    document.shape_standalone_text(content, &style, width, align)
+}
+
+/// Horizontal defaults for callers that only know the font.
+pub(crate) fn style(font_size: f32, font_family: &str) -> StandaloneStyle {
+    StandaloneStyle {
         families: families(font_family),
         font_size: usable_size(font_size),
-    };
-    document.shape_standalone_text(content, &style, width, align)
+        ..StandaloneStyle::default()
+    }
 }
 
 /// Draw the glyph runs of a shaped run with its origin at (`x`, `y`).
 ///
-/// Glyph origins come from the engine's lines, relative to the line's left
-/// edge; a right-to-left run is already in visual order.
+/// Convert logical positions and outline vectors separately so RTL never
+/// mirrors outlines and vertical characters retain their orientation.
 pub(crate) fn draw(
     scene: &mut impl PaintScene,
     shaped: &StandaloneText,
@@ -58,6 +65,11 @@ pub(crate) fn draw(
 ) {
     let transform = Affine::translate((f64::from(x), f64::from(y)));
     for (index, line) in shaped.lines().iter().enumerate() {
+        let converter = PhysicalConverter::new(
+            line.writing_mode(),
+            line.used_direction(),
+            shaped.container(),
+        );
         let shift = shaped.hang_shift(index);
         for fragment in line.fragments() {
             let Fragment::GlyphRun(run) = fragment else {
@@ -71,11 +83,8 @@ pub(crate) fn draw(
                 .enumerate()
                 .filter_map(|(index, glyph)| {
                     let (gx, gy) = run.glyph_origin(index)?;
-                    Some(AnyrenderGlyph {
-                        id: glyph.id,
-                        x: gx + shift,
-                        y: gy + line.block_offset(),
-                    })
+                    let (x, y) = converter.point(gx + shift, gy + line.block_offset());
+                    Some(AnyrenderGlyph { id: glyph.id, x, y })
                 })
                 .collect();
             if glyphs.is_empty() {
@@ -89,9 +98,22 @@ pub(crate) fn draw(
                 .iter()
                 .map(|coord| coord.to_bits())
                 .collect();
-            let glyph_transform = run
-                .skew()
-                .map(|degrees| Affine::skew(f64::from(degrees).to_radians().tan(), 0.0));
+            let axes = run.glyph_transform();
+            let (xx, yx) = converter.vector(axes.inline_x, axes.block_x);
+            let (xy, yy) = converter.vector(axes.inline_y, axes.block_y);
+            let orientation = Affine::new([
+                f64::from(xx),
+                f64::from(yx),
+                f64::from(xy),
+                f64::from(yy),
+                0.0,
+                0.0,
+            ]);
+            let skew = run.skew().map_or(Affine::IDENTITY, |degrees| {
+                Affine::skew(f64::from(degrees).to_radians().tan(), 0.0)
+            });
+            let glyph_transform =
+                (orientation * skew != Affine::IDENTITY).then_some(orientation * skew);
             scene.draw_glyphs(
                 &font,
                 font_size,
