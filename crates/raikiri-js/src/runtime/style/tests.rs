@@ -32,6 +32,47 @@ fn inline_style_helpers_match_the_previous_runner_semantics() {
 }
 
 #[test]
+fn stylesheet_rule_declaration_updates_the_live_style_element() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'span { color: cyan; } span.active { color: red; }'; \
+         document.head.appendChild(styleElement); \
+         var sheets = document.styleSheets; var sheet = sheets[0]; \
+         var rules = sheet.cssRules; var rule = rules[0]; var declaration = rule.style;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheets === document.styleSheets && sheets.length === 1 && \
+         sheets.item(0) === sheet && rules.length === 2 && \
+         rules.item(0) === rule && rule.selectorText === 'span' && \
+         declaration.color === 'cyan' && declaration.parentRule === rule",
+    );
+
+    rt.evaluate("declaration.backgroundColor = 'magenta';")
+        .unwrap();
+    ok(&mut rt, "declaration.backgroundColor === 'magenta'");
+    ok(
+        &mut rt,
+        "styleElement.textContent.includes('background-color: magenta;')",
+    );
+    ok(&mut rt, "rule.style === declaration");
+
+    rt.evaluate(
+        "var secondStyle = document.createElement('style'); \
+         secondStyle.textContent = 'p { color: blue; }'; \
+         document.head.appendChild(secondStyle);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheets.length === 2 && sheets[1].cssRules[0].selectorText === 'p'",
+    );
+}
+
+#[test]
 fn attribute_names_covers_plain_dashed_camel_and_webkit_forms() {
     assert_eq!(attribute_names("color"), vec!["color".to_owned()]);
     assert_eq!(

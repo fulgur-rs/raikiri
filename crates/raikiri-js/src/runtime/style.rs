@@ -351,6 +351,7 @@ pub(crate) fn get_bounding_client_rect(
 struct StyleSource {
     index: usize,
     computed: bool,
+    rule: Option<usize>,
 }
 
 impl StyleSource {
@@ -376,9 +377,19 @@ impl StyleSource {
                 .map(|name| (*name).to_owned()));
         }
         let index_ = self.index;
+        let rule = self.rule;
         with_state(context, |s| {
-            let style_attr = s.host.document().element_attribute(index_, "style");
-            validated_inline_declarations(style_attr)
+            let text = match rule {
+                Some(rule) => {
+                    super::stylesheet::stylesheet_rule_body(s.host.document(), index_, rule)
+                }
+                None => s
+                    .host
+                    .document()
+                    .element_attribute(index_, "style")
+                    .map(str::to_owned),
+            };
+            validated_inline_declarations(text.as_deref())
                 .into_iter()
                 .nth(index)
                 .map(|d| d.name)
@@ -390,9 +401,19 @@ impl StyleSource {
             return Ok(computed_longhand_names().len());
         }
         let index_ = self.index;
+        let rule = self.rule;
         with_state(context, |s| {
-            validated_inline_declarations(s.host.document().element_attribute(index_, "style"))
-                .len()
+            let text = match rule {
+                Some(rule) => {
+                    super::stylesheet::stylesheet_rule_body(s.host.document(), index_, rule)
+                }
+                None => s
+                    .host
+                    .document()
+                    .element_attribute(index_, "style")
+                    .map(str::to_owned),
+            };
+            validated_inline_declarations(text.as_deref()).len()
         })
     }
 }
@@ -414,12 +435,19 @@ fn this_style(this: &JsValue, context: &mut Context) -> JsResult<Rc<StyleSource>
     this_indexed::<StyleSource>(this, context, "CSSStyleDeclaration")
 }
 
-fn read_inline(context: &mut Context, index: usize, property: &str) -> JsResult<String> {
+fn read_declared(context: &mut Context, source: &StyleSource, property: &str) -> JsResult<String> {
     with_state(context, |s| {
-        inline_style_value(
-            s.host.document().element_attribute(index, "style"),
-            property,
-        )
+        let text = match source.rule {
+            Some(rule) => {
+                super::stylesheet::stylesheet_rule_body(s.host.document(), source.index, rule)
+            }
+            None => s
+                .host
+                .document()
+                .element_attribute(source.index, "style")
+                .map(str::to_owned),
+        };
+        inline_style_value(text.as_deref(), property)
     })
 }
 
@@ -508,13 +536,13 @@ fn declaration_value(property: &str, value: &str) -> Option<String> {
 /// by [`declaration_value`).
 fn set_declaration(
     context: &mut Context,
-    index: usize,
+    source: &StyleSource,
     property: &str,
     value: &str,
     important: bool,
 ) -> JsResult<()> {
     if value.trim().is_empty() {
-        return write_inline(context, index, property, "");
+        return write_declared(context, source, property, "");
     }
     let Some(stored) = declaration_value(property.trim(), value) else {
         return Ok(());
@@ -524,22 +552,35 @@ fn set_declaration(
     } else {
         stored
     };
-    write_inline(context, index, property, &stored)
+    write_declared(context, source, property, &stored)
 }
 
-fn write_inline(context: &mut Context, index: usize, property: &str, value: &str) -> JsResult<()> {
+fn write_declared(
+    context: &mut Context,
+    source: &StyleSource,
+    property: &str,
+    value: &str,
+) -> JsResult<()> {
     if property.trim().is_empty() {
         return Ok(());
     }
+    if let Some(rule) = source.rule {
+        let text = with_state(context, |s| {
+            super::stylesheet::stylesheet_rule_body(s.host.document(), source.index, rule)
+                .unwrap_or_default()
+        })?;
+        let next = with_inline_style_property(Some(&text), property, value);
+        return super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, &next);
+    }
     with_state(context, |s| {
         let next = with_inline_style_property(
-            s.host.document().element_attribute(index, "style"),
+            s.host.document().element_attribute(source.index, "style"),
             property,
             value,
         );
         s.host
             .document_mut()
-            .set_element_inline_style(index, Some(next.into()));
+            .set_element_inline_style(source.index, Some(next.into()));
     })?;
     mark_dirty(context)
 }
@@ -572,7 +613,7 @@ fn read_property_value(
     if source.computed {
         Ok(read_computed(context, source.index, name)?.unwrap_or_default())
     } else {
-        read_inline(context, source.index, name)
+        read_declared(context, source, name)
     }
 }
 
@@ -632,10 +673,13 @@ fn style_item(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     Ok(JsValue::from(JsString::from(name)))
 }
 
-/// `parentRule` always reads `null`: this runtime has no `CSSRule` surface.
+/// `parentRule` for a declaration from a rule, or `null` for inline style.
 fn style_parent_rule(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let _ = this_style(this, context)?;
-    Ok(JsValue::null())
+    let source = this_style(this, context)?;
+    match source.rule {
+        Some(rule) => super::stylesheet::parent_rule(context, source.index, rule),
+        None => Ok(JsValue::null()),
+    }
 }
 
 fn style_get_property_value(
@@ -657,11 +701,22 @@ fn style_get_property_priority(
     let source = this_style(this, context)?;
     let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
     let priority = if source.computed {
-        ""
+        String::new()
     } else {
         let index = source.index;
+        let rule = source.rule;
         with_state(context, |s| {
-            property_priority(s.host.document().element_attribute(index, "style"), &name)
+            let text = match rule {
+                Some(rule) => {
+                    super::stylesheet::stylesheet_rule_body(s.host.document(), index, rule)
+                }
+                None => s
+                    .host
+                    .document()
+                    .element_attribute(index, "style")
+                    .map(str::to_owned),
+            };
+            property_priority(text.as_deref(), &name).to_owned()
         })?
     };
     Ok(JsValue::from(JsString::from(priority)))
@@ -717,7 +772,7 @@ fn style_set_property(
     }
     set_declaration(
         context,
-        source.index,
+        &source,
         &trimmed_name,
         &value,
         !priority.is_empty(),
@@ -735,8 +790,8 @@ fn style_remove_property(
         return Err(no_modification_allowed(context));
     }
     let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
-    let previous = read_inline(context, source.index, &name)?;
-    write_inline(context, source.index, &name, "")?;
+    let previous = read_declared(context, &source, &name)?;
+    write_declared(context, &source, &name, "")?;
     Ok(JsValue::from(JsString::from(previous)))
 }
 
@@ -766,9 +821,17 @@ fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
         return Ok(JsValue::from(JsString::from("")));
     }
     let index = source.index;
+    let rule = source.rule;
     let text = with_state(context, |s| {
-        let style_attr = s.host.document().element_attribute(index, "style");
-        serialize_validated(&validated_inline_declarations(style_attr))
+        let style_text = match rule {
+            Some(rule) => super::stylesheet::stylesheet_rule_body(s.host.document(), index, rule),
+            None => s
+                .host
+                .document()
+                .element_attribute(index, "style")
+                .map(str::to_owned),
+        };
+        serialize_validated(&validated_inline_declarations(style_text.as_deref()))
     })?;
     Ok(JsValue::from(JsString::from(text)))
 }
@@ -790,12 +853,16 @@ fn style_css_text_set(
     }
     let text = dom_string(args, 0, context)?;
     let validated = serialize_validated(&validated_inline_declarations(Some(&text)));
-    with_state(context, |s| {
-        s.host
-            .document_mut()
-            .set_element_inline_style(source.index, Some(validated.into()));
-    })?;
-    mark_dirty(context)?;
+    if let Some(rule) = source.rule {
+        super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, &validated)?;
+    } else {
+        with_state(context, |s| {
+            s.host
+                .document_mut()
+                .set_element_inline_style(source.index, Some(validated.into()));
+        })?;
+        mark_dirty(context)?;
+    }
     Ok(JsValue::undefined())
 }
 
@@ -820,7 +887,7 @@ fn style_css_float_set(
         return Err(no_modification_allowed(context));
     }
     let value = legacy_null_to_empty_string(args, 0, context)?;
-    set_declaration(context, source.index, "float", &value, false)?;
+    set_declaration(context, &source, "float", &value, false)?;
     Ok(JsValue::undefined())
 }
 
@@ -905,7 +972,7 @@ fn property_accessor_pair(
             return Err(no_modification_allowed(ctx));
         }
         let value = legacy_null_to_empty_string(args, 0, ctx)?;
-        set_declaration(ctx, source.index, property, &value, false)?;
+        set_declaration(ctx, &source, property, &value, false)?;
         Ok(JsValue::undefined())
     });
     let setter = closure_function(context, &format!("set {key}"), 1, setter)?;
@@ -947,9 +1014,22 @@ pub(crate) fn install_property_accessors(
     Ok(())
 }
 
-fn style_object(context: &mut Context, index: usize, computed: bool) -> JsResult<JsObject> {
+fn style_object(
+    context: &mut Context,
+    index: usize,
+    computed: bool,
+    rule: Option<usize>,
+) -> JsResult<JsObject> {
     let prototype = protos(context).css_style_declaration.clone();
-    indexed_object(context, prototype, StyleSource { index, computed })
+    indexed_object(
+        context,
+        prototype,
+        StyleSource {
+            index,
+            computed,
+            rule,
+        },
+    )
 }
 
 fn style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -957,7 +1037,7 @@ fn style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
     if let Some(existing) = with_state(context, |s| s.style_objects.get(&index).cloned())? {
         return Ok(existing.into());
     }
-    let object = style_object(context, index, false)?;
+    let object = style_object(context, index, false, None)?;
     with_state(context, |s| s.style_objects.insert(index, object.clone()))?;
     Ok(object.into())
 }
@@ -976,11 +1056,19 @@ fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> J
     {
         return Ok(existing.into());
     }
-    let object = style_object(context, index, true)?;
+    let object = style_object(context, index, true, None)?;
     with_state(context, |s| {
         s.computed_style_objects.insert(index, object.clone())
     })?;
     Ok(object.into())
+}
+
+pub(crate) fn stylesheet_style_object(
+    context: &mut Context,
+    style_element: usize,
+    rule: usize,
+) -> JsResult<JsObject> {
+    style_object(context, style_element, false, Some(rule))
 }
 
 fn css_supports(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
