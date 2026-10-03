@@ -4185,13 +4185,17 @@ fn paint_document_impl(
                             warnings,
                         )
                     } else if document.is_canvas_element(node_id) {
-                        let bitmap = document.canvas_bitmap(node_id).unwrap_or_else(|| {
+                        let fallback_bitmap;
+                        let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
+                            bitmap
+                        } else {
                             let (w, h) = document.canvas_size(node_id).unwrap_or((300, 150));
-                            raikiri_dom::CanvasBitmap::cleared(w, h)
-                        });
+                            fallback_bitmap = raikiri_dom::CanvasBitmap::transparent(w, h);
+                            &fallback_bitmap
+                        };
                         paint_canvas(
                             scene,
-                            &bitmap,
+                            bitmap,
                             layout.size.width,
                             layout.size.height,
                             paint_x,
@@ -4991,6 +4995,9 @@ fn paint_canvas(
         return true;
     }
     if bitmap.width == 0 || bitmap.height == 0 {
+        return true;
+    }
+    if bitmap.rgba.is_empty() {
         return true;
     }
     let natural_w = f64::from(bitmap.width);

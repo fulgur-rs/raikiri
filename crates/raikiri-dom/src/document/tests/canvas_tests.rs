@@ -126,6 +126,39 @@ fn canvas_sidecar_round_trips_in_tree_order() {
 }
 
 #[test]
+fn owned_canvas_sidecar_transfer_moves_pixel_storage() {
+    let (mut source, source_canvas) = canvas_in_body();
+    source
+        .set_element_attribute(source_canvas, "width", "2")
+        .unwrap();
+    source
+        .set_element_attribute(source_canvas, "height", "2")
+        .unwrap();
+    source.canvas_fill_rect(source_canvas, 0, 0, 2, 2, [12, 34, 56, 255]);
+    let source_pixels = source
+        .canvas_bitmap_ref(source_canvas)
+        .unwrap()
+        .rgba
+        .as_ptr();
+
+    let sidecar = source.take_canvases_in_tree_order();
+    assert!(source.canvas_bitmap_ref(source_canvas).is_none());
+    assert_eq!(sidecar[0].rgba.as_ptr(), source_pixels);
+
+    let (mut target, target_canvas) = canvas_in_body();
+    target
+        .set_element_attribute(target_canvas, "width", "2")
+        .unwrap();
+    target
+        .set_element_attribute(target_canvas, "height", "2")
+        .unwrap();
+    target.set_canvases_in_tree_order_owned(sidecar);
+    let target_bitmap = target.canvas_bitmap_ref(target_canvas).unwrap();
+    assert_eq!(target_bitmap.rgba.as_ptr(), source_pixels);
+    assert_eq!(target_bitmap.rgba, [12, 34, 56, 255].repeat(4));
+}
+
+#[test]
 fn canvas_overlong_dimensions_saturate_and_zero_sizes_noop() {
     let (mut doc, canvas) = canvas_in_body();
     doc.set_element_attribute(canvas, "width", "123456789012")
@@ -189,4 +222,241 @@ fn canvas_huge_remove_clears_lazily_without_allocating() {
     doc.remove_element_attribute(canvas, "width").unwrap();
     assert_eq!(doc.canvas_size(canvas), Some((300, u32::MAX)));
     assert!(doc.canvas_bitmap(canvas).is_none());
+}
+
+#[test]
+fn canvas_bitmap_constructor_handles_dimension_product_overflow() {
+    let bitmap = crate::CanvasBitmap::cleared(u32::MAX, u32::MAX);
+    assert_eq!((bitmap.width, bitmap.height), (u32::MAX, u32::MAX));
+    assert!(bitmap.rgba.is_empty());
+}
+
+#[test]
+fn canvas_sidecar_keeps_unmaterialized_large_bitmaps_allocation_free() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "3334").unwrap();
+    doc.set_element_attribute(canvas, "height", "3000").unwrap();
+    assert!(doc.canvas_bitmap(canvas).is_none());
+    assert_eq!(
+        doc.try_ensure_canvas_bitmap(canvas),
+        Err(crate::CanvasBitmapError::DimensionsTooLarge)
+    );
+
+    let sidecar = doc.canvases_in_tree_order();
+    assert_eq!(sidecar.len(), 1);
+    assert_eq!((sidecar[0].width, sidecar[0].height), (3334, 3000));
+    assert!(sidecar[0].rgba.is_empty());
+}
+
+#[test]
+fn canvas_document_bitmap_budget_caps_materialized_bytes() {
+    let (mut doc, first) = canvas_in_body();
+    let body = doc.parent_of(first).unwrap();
+    let second = doc.create_detached_element("canvas").unwrap();
+    doc.append_child(body, second).unwrap();
+
+    for (canvas, width, height) in [(first, "2800", "2800"), (second, "600", "1000")] {
+        doc.set_element_attribute(canvas, "width", width).unwrap();
+        doc.set_element_attribute(canvas, "height", height).unwrap();
+    }
+
+    assert_eq!(
+        doc.canvas_bitmap(first).unwrap().rgba.len(),
+        2800 * 2800 * 4
+    );
+    assert_eq!(
+        doc.try_ensure_canvas_bitmap(second),
+        Err(crate::CanvasBitmapError::DocumentLimitExceeded)
+    );
+    assert!(doc.canvas_bitmap(second).is_none());
+}
+
+#[test]
+fn canvas_bitmap_storage_validates_size_and_rgba_length() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "2").unwrap();
+    doc.set_element_attribute(canvas, "height", "2").unwrap();
+
+    let bitmap = crate::CanvasBitmap::cleared(2, 2);
+    doc.set_canvas_bitmap(canvas, bitmap.clone());
+    assert_eq!(doc.canvas_bitmap(canvas), Some(bitmap.clone()));
+
+    assert_eq!(
+        doc.try_set_canvas_bitmap(canvas, crate::CanvasBitmap::transparent(3, 2)),
+        Err(crate::CanvasBitmapError::SizeMismatch)
+    );
+    let malformed = crate::CanvasBitmap {
+        width: 2,
+        height: 2,
+        rgba: vec![0; 3],
+    };
+    assert_eq!(
+        doc.try_set_canvas_bitmap(canvas, malformed.clone()),
+        Err(crate::CanvasBitmapError::InvalidRgbaLength)
+    );
+
+    doc.set_canvas_bitmap(canvas, malformed);
+    assert_eq!(doc.canvas_bitmap(canvas), Some(bitmap));
+}
+
+#[test]
+fn canvas_bitmap_storage_counts_reserved_rgba_capacity() {
+    let (mut doc, canvas) = canvas_in_body();
+    let body = doc.parent_of(canvas).unwrap();
+    let second = doc.create_detached_element("canvas").unwrap();
+    doc.append_child(body, second).unwrap();
+    doc.set_element_attribute(canvas, "width", "2").unwrap();
+    doc.set_element_attribute(canvas, "height", "2").unwrap();
+    doc.set_element_attribute(second, "width", "2").unwrap();
+    doc.set_element_attribute(second, "height", "2").unwrap();
+
+    let over_half_budget = super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES / 2 + 1;
+    let mut first_rgba = Vec::with_capacity(over_half_budget);
+    first_rgba.resize(16, 0);
+    let first_bitmap = crate::CanvasBitmap {
+        width: 2,
+        height: 2,
+        rgba: first_rgba,
+    };
+    assert!(first_bitmap.rgba.capacity() <= super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES);
+    doc.try_set_canvas_bitmap(canvas, first_bitmap).unwrap();
+
+    let mut second_rgba = Vec::with_capacity(over_half_budget);
+    second_rgba.resize(16, 0);
+    let second_bitmap = crate::CanvasBitmap {
+        width: 2,
+        height: 2,
+        rgba: second_rgba,
+    };
+    let second_before = doc.canvas_bitmap(second).unwrap();
+    assert_eq!(
+        doc.try_set_canvas_bitmap(second, second_bitmap),
+        Err(crate::CanvasBitmapError::DocumentLimitExceeded)
+    );
+    assert_eq!(doc.canvas_bitmap(second), Some(second_before));
+
+    doc.try_set_canvas_bitmap(canvas, crate::CanvasBitmap::cleared(2, 2))
+        .unwrap();
+    let mut second_rgba = Vec::with_capacity(over_half_budget);
+    second_rgba.resize(16, 0);
+    doc.try_set_canvas_bitmap(
+        second,
+        crate::CanvasBitmap {
+            width: 2,
+            height: 2,
+            rgba: second_rgba,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn cloned_document_rebuilds_canvas_capacity_accounting() {
+    let (mut source, first) = canvas_in_body();
+    let body = source.parent_of(first).unwrap();
+    let second = source.create_detached_element("canvas").unwrap();
+    source.append_child(body, second).unwrap();
+    for canvas in [first, second] {
+        source.set_element_attribute(canvas, "width", "2").unwrap();
+        source.set_element_attribute(canvas, "height", "2").unwrap();
+    }
+
+    let over_half_budget = super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES / 2 + 1;
+    let mut first_rgba = Vec::with_capacity(over_half_budget);
+    first_rgba.resize(16, 0);
+    source
+        .try_set_canvas_bitmap(
+            first,
+            crate::CanvasBitmap {
+                width: 2,
+                height: 2,
+                rgba: first_rgba,
+            },
+        )
+        .unwrap();
+
+    let mut cloned = source.clone();
+    cloned
+        .try_set_canvas_bitmap(first, crate::CanvasBitmap::cleared(2, 2))
+        .unwrap();
+
+    let mut second_rgba = Vec::with_capacity(over_half_budget);
+    second_rgba.resize(16, 0);
+    assert_eq!(
+        cloned.try_set_canvas_bitmap(
+            second,
+            crate::CanvasBitmap {
+                width: 2,
+                height: 2,
+                rgba: second_rgba,
+            },
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn canvas_bitmap_storage_counts_capacity_for_empty_rgba() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "2").unwrap();
+    doc.set_element_attribute(canvas, "height", "2").unwrap();
+
+    let rgba = Vec::with_capacity(super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES + 1);
+    assert!(rgba.is_empty());
+    assert!(rgba.capacity() > super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES);
+    let before = doc.canvas_bitmap(canvas).unwrap();
+    assert_eq!(
+        doc.try_set_canvas_bitmap(
+            canvas,
+            crate::CanvasBitmap {
+                width: 2,
+                height: 2,
+                rgba,
+            },
+        ),
+        Err(crate::CanvasBitmapError::DocumentLimitExceeded)
+    );
+    assert_eq!(doc.canvas_bitmap(canvas), Some(before));
+}
+
+#[test]
+fn canvas_bitmap_compatibility_ensure_returns_current_size() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "2").unwrap();
+    doc.set_element_attribute(canvas, "height", "3").unwrap();
+    assert_eq!(doc.ensure_canvas_bitmap(canvas), Some((2, 3)));
+    assert_eq!(doc.ensure_canvas_bitmap(doc.root_index()), None);
+}
+
+#[test]
+fn taking_canvas_storage_from_non_element_returns_none() {
+    let mut doc = Document::new();
+    assert!(doc.take_canvas_bitmap_storage(doc.root_index()).is_none());
+}
+
+#[test]
+fn canvas_sidecar_drops_pixel_storage_above_aggregate_limit() {
+    let (mut doc, canvas) = canvas_in_body();
+    let node = doc.nodes.get_mut(canvas).unwrap();
+    let crate::NodeData::Element(element) = &mut node.data else {
+        panic!("canvas arena entry must be an Element");
+    };
+    element.canvas_bitmap = Some(crate::CanvasBitmap {
+        width: 300,
+        height: 150,
+        rgba: vec![7; super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES + 1],
+    });
+
+    let sidecar = doc.canvases_in_tree_order();
+    assert_eq!(sidecar.len(), 1);
+    assert_eq!((sidecar[0].width, sidecar[0].height), (300, 150));
+    assert!(sidecar[0].rgba.is_empty());
+}
+
+#[test]
+fn canvas_bitmap_constructor_enforces_byte_limit_below_pixel_limit() {
+    assert_eq!(
+        crate::CanvasBitmap::try_cleared(3000, 3000),
+        Err(crate::CanvasBitmapError::DimensionsTooLarge)
+    );
 }

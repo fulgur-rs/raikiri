@@ -63,15 +63,55 @@ fn response_copy_does_not_repeat_flush() {
 }
 
 fn page() -> WasmtimePage {
+    page_with_document(Document::new())
+}
+fn page_with_document(doc: Document) -> WasmtimePage {
     WasmtimePage::new(
         Box::new(TestHost {
-            doc: Document::new(),
+            doc,
             flushes: Rc::new(Cell::new(0)),
         }),
         Default::default(),
         Default::default(),
     )
     .unwrap()
+}
+fn document_with_canvas() -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.create_detached_element("html").unwrap();
+    doc.attach_child(doc.root_index(), html);
+    let body = doc.create_detached_element("body").unwrap();
+    doc.append_child(html, body).unwrap();
+    let canvas = doc.create_detached_element("canvas").unwrap();
+    doc.append_child(body, canvas).unwrap();
+    doc.set_element_attribute(canvas, "width", "2").unwrap();
+    doc.set_element_attribute(canvas, "height", "2").unwrap();
+    assert!(doc.canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]));
+    doc.mark_in_document_flags();
+    (doc, canvas)
+}
+#[test]
+fn active_page_takes_canvas_sidecar_by_moving_pixels() {
+    let (doc, canvas) = document_with_canvas();
+    let mut page = page_with_document(doc);
+
+    let sidecar = page.take_canvases_in_tree_order();
+    assert_eq!(sidecar.len(), 1);
+    assert_eq!((sidecar[0].width, sidecar[0].height), (2, 2));
+    assert_eq!(&sidecar[0].rgba[..4], &[255, 0, 0, 255]);
+    assert!(page.document().canvas_bitmap(canvas).is_none());
+}
+#[test]
+fn stopped_page_takes_canvas_sidecar_by_moving_pixels() {
+    let (doc, canvas) = document_with_canvas();
+    let mut page = page_with_document(doc);
+    assert!(page.evaluate_preamble("throw new Error('stop')").is_err());
+
+    let sidecar = page.take_canvases_in_tree_order();
+    assert_eq!(sidecar.len(), 1);
+    assert_eq!((sidecar[0].width, sidecar[0].height), (2, 2));
+    assert_eq!(&sidecar[0].rgba[..4], &[255, 0, 0, 255]);
+    assert!(page.document().canvas_bitmap(canvas).is_none());
 }
 #[test]
 fn real_guest_runtime_and_independent_stores() {

@@ -272,6 +272,26 @@ impl WasmtimePage {
         };
         state.bridge.host.document()
     }
+    // cov:ignore: exercised by host tests; tools/ is outside workspace coverage.
+    /// Remove and return host canvas bitmaps in tree order.
+    pub fn take_canvases_in_tree_order(&mut self) -> Vec<raikiri_dom::CanvasBitmap> {
+        if let Some(store) = self.store.as_mut() {
+            store
+                .data_mut()
+                .bridge
+                .host
+                .document_mut()
+                .take_canvases_in_tree_order()
+        } else if let Some(state) = self.stopped_state.as_mut() {
+            state
+                .bridge
+                .host
+                .document_mut()
+                .take_canvases_in_tree_order()
+        } else {
+            Vec::new() // cov:ignore: a constructed page always retains either an active Store or its stopped state.
+        }
+    }
     pub fn metrics(&self) -> Option<PageMetrics> {
         let Some(s) = self.store.as_ref() else {
             return self.last_metrics.clone();

@@ -1176,6 +1176,36 @@ fn no_wait_canvas_paints_and_compares_pixels() {
     );
 }
 
+#[cfg(feature = "js-wasmtime")]
+#[test]
+fn wasmtime_canvas_sidecar_path_runs_with_matching_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ReftestConfig {
+        width: 40,
+        height: 40,
+        tolerance: Tolerance::EXACT,
+        require_inline_fonts: false,
+    };
+    let html = "<!DOCTYPE html><body style='margin:0'><canvas width='2' height='2'></canvas><script>var c = document.getElementsByTagName('canvas')[0]; var ctx = c.getContext('2d'); ctx.fillStyle = 'red'; ctx.fillRect(0, 0, 2, 2);</script>";
+    let test = dir.path().join("test.html");
+    let reference = dir.path().join("reference.html");
+    std::fs::write(&test, html).unwrap();
+    std::fs::write(&reference, html).unwrap();
+    let pair = ReftestPair {
+        test,
+        reference,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+
+    let result = run_pair(&pair, config).unwrap();
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "matching Wasmtime canvas pages must pass, got {:?}",
+        result.outcome
+    );
+}
+
 /// Two consecutive `<br>` leave an empty line on the inline engine and none
 /// on the parley path, so "bbbb" lands on the third line (y 20..30) only
 /// with the engine. `pages` gives the `@page` rules.

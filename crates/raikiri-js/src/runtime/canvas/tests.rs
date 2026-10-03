@@ -112,6 +112,16 @@ fn get_context_caches_and_rejects_other_modes() {
 }
 
 #[test]
+fn get_context_does_not_recreate_an_oversized_canvas_bitmap() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); c.width = 3334; c.height = 3000; \
+         c.getContext('2d') === null",
+    );
+}
+
+#[test]
 fn get_context_brand_checks_the_canvas() {
     let mut rt = rt();
     let err = rt.evaluate("HTMLCanvasElement.prototype.getContext.call(document.body, '2d')");

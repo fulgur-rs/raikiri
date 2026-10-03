@@ -108,10 +108,11 @@ pub(crate) struct PrintRenderResources<'a> {
     pub(crate) image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
     pub(crate) font_loader: Option<&'a dyn raikiri_dom::FontFaceLoader>,
     pub(crate) prepare_cascade_images: Option<&'a dyn Fn(&mut raikiri_style::CascadeResult)>,
-    /// Live canvas bitmaps in tree order, from [`crate::reftest::dynamic`]'s
-    /// sidecar transfer. Restored onto the reparsed document before layout so
-    /// `innerHTML` round-tripping does not drop script-painted pixels.
-    pub(crate) canvas_bitmaps: Option<&'a [raikiri_dom::CanvasBitmap]>,
+    /// Owned live canvas bitmaps in tree order, from
+    /// [`crate::reftest::dynamic`]'s sidecar transfer. Restored onto the final
+    /// parsed document before paint so `innerHTML` round-tripping does not
+    /// drop script-painted pixels or require another pixel-buffer copy.
+    pub(crate) canvas_bitmaps: Option<Vec<raikiri_dom::CanvasBitmap>>,
     /// Script-created ranges identified by a child-index path, so reparsing
     /// serialized HTML can resolve them to its new arena indices.
     pub(crate) custom_highlight_ranges: Option<&'a [CustomHighlightPathRange]>,
@@ -1913,7 +1914,7 @@ fn render_raikiri_pages_inner_with_canvases(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
     engine: InlineEngineChoice,
-    canvas_bitmaps: Option<&[raikiri_dom::CanvasBitmap]>,
+    canvas_bitmaps: Option<Vec<raikiri_dom::CanvasBitmap>>,
     custom_highlight_ranges: Option<&[CustomHighlightPathRange]>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     // URL construction requires an absolute directory. Normalize caller
@@ -1981,6 +1982,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     };
     use raikiri_html::parse;
 
+    let canvas_bitmaps = resources.canvas_bitmaps;
     let image_resolver = resources.replaced_resolver;
     let image_pixel_source = resources.image_pixel_source;
     let base_url = resources.base_url;
@@ -2000,9 +2002,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
         authored_page_viewport(&html, width as f32, height as f32);
     let html = expand_viewport_units(&html, viewport_width, viewport_height);
     let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
-    if let Some(bitmaps) = resources.canvas_bitmaps {
-        uncascaded.dom.set_canvases_in_tree_order(bitmaps);
-    }
     if let Some(base_url) = base_url {
         crate::http_resources::absolutize_img_sources(&mut uncascaded.dom, base_url);
     }
@@ -2222,6 +2221,10 @@ pub(crate) fn render_raikiri_pages_with_resources(
     } else {
         (uncascaded, provisional_slices)
     };
+
+    if let Some(bitmaps) = canvas_bitmaps {
+        uncascaded.dom.set_canvases_in_tree_order_owned(bitmaps);
+    }
 
     let custom_highlights = resources
         .custom_highlight_ranges
@@ -2777,12 +2780,19 @@ where
     let ref_html = read_html(&pair.reference)?;
     let fuzzy = fuzzy::metadata(&test_html, pair)?;
     let selections = page_selections_for_pair(&test_html, &pair.reference);
-    let test_prepared = dynamic::prepare(&test_html, &pair.test, "", config)?;
-    let ref_prepared =
-        dynamic::prepare(&ref_html, &pair.reference, &pair.reference_suffix, config)?;
-    let ref_html = mirror_default_page_margin(&test_prepared.html, &ref_prepared.html);
+    let dynamic::PreparedDynamic {
+        html: test_render_html,
+        canvases: test_canvases,
+        custom_highlight_ranges: test_custom_highlight_ranges,
+    } = dynamic::prepare(&test_html, &pair.test, "", config)?;
+    let dynamic::PreparedDynamic {
+        html: reference_render_html,
+        canvases: reference_canvases,
+        custom_highlight_ranges: reference_custom_highlight_ranges,
+    } = dynamic::prepare(&ref_html, &pair.reference, &pair.reference_suffix, config)?;
+    let ref_html = mirror_default_page_margin(&test_render_html, &reference_render_html);
     let test_doc = render_raikiri_pages_inner_with_canvases(
-        &test_prepared.html,
+        &test_render_html,
         config.width,
         config.height,
         if resolve_images {
@@ -2792,8 +2802,8 @@ where
         },
         pair.test.parent(),
         InlineEngineChoice::of(&config),
-        Some(&test_prepared.canvases),
-        Some(&test_prepared.custom_highlight_ranges),
+        Some(test_canvases),
+        Some(&test_custom_highlight_ranges),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let ref_doc = render_raikiri_pages_inner_with_canvases(
@@ -2807,8 +2817,8 @@ where
         },
         pair.reference.parent(),
         InlineEngineChoice::of(&config),
-        Some(&ref_prepared.canvases),
-        Some(&ref_prepared.custom_highlight_ranges),
+        Some(reference_canvases),
+        Some(&reference_custom_highlight_ranges),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let (test_selection, reference_selection) = selections;

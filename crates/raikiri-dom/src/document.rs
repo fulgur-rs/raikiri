@@ -31,13 +31,16 @@ use raikiri_traits::{QuirksMode, StylesheetKind};
 
 use crate::fragment::{FragmentTree, FragmentationContext};
 use crate::layout::LayoutWarn;
-use crate::node::{Attr, Node, NodeData};
+use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, Node, NodeData};
 use raikiri_style::property::CalcLengthPercentage;
 
 mod mutation;
 pub use mutation::DomMutationError;
 
 const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
+// A WPT pair can hold one sidecar beside the other document and its paint blob.
+// Capping each side at 32 MiB keeps these three canvas buffers at 96 MiB total.
+const MAX_DOCUMENT_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
 
 fn is_xml_name_start(ch: char) -> bool {
     matches!(
@@ -266,6 +269,16 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
         )
 }
 
+// Cloning invalidates this cache because cloned Vec capacities can change.
+#[derive(Debug)]
+struct CanvasBitmapByteCount(Option<usize>);
+
+impl Clone for CanvasBitmapByteCount {
+    fn clone(&self) -> Self {
+        Self(None)
+    }
+}
+
 /// DOM Document (root plus a Vec-backed node arena).
 ///
 /// `nodes` is flat storage keyed by arena indices. Index 0 is the virtual
@@ -275,6 +288,7 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
 pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
+    canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -452,6 +466,7 @@ impl Document {
         Self {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes,
+            canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             root: 0,
             layout_dirty: false,
             ifc: None,
@@ -1030,19 +1045,10 @@ impl Document {
         // A canvas width/height change resizes and clears the bitmap (HTML
         // Standard §4.12.5 always clears, even when the size is unchanged)
         // and changes the intrinsic size, so layout caches must be
-        // invalidated the same way image resolution does. Huge bitmaps are
-        // cleared lazily (None) to avoid allocating gigabytes for absurd
-        // content-attribute values; the next paint re-creates them on demand.
+        // invalidated the same way image resolution does. Oversized or
+        // over-budget bitmaps remain implicitly transparent without storage.
         if is_canvas_size_attr {
-            let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
-            let area = u64::from(width) * u64::from(height);
-            if area <= 10_000_000 {
-                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
-            } else if let Some(node) = self.nodes.get_mut(id)
-                && let NodeData::Element(element) = &mut node.data
-            {
-                element.canvas_bitmap = None;
-            }
+            self.reset_canvas_bitmap_for_current_size(id);
             self.invalidate_layout_cache();
         }
         Ok(())
@@ -1116,17 +1122,9 @@ impl Document {
         // Removing a canvas width/height attribute reverts to the default
         // size (HTML Standard §4.12.5), clearing the bitmap and changing the
         // intrinsic size. Only when the attribute actually existed: removing
-        // a missing attribute is a no-op. Huge bitmaps clear lazily, as above.
+        // a missing attribute is a no-op.
         if is_canvas_size_attr && first_value.is_some() {
-            let (width, height) = self.canvas_size(id).unwrap_or((300, 150));
-            let area = u64::from(width) * u64::from(height);
-            if area <= 10_000_000 {
-                self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
-            } else if let Some(node) = self.nodes.get_mut(id)
-                && let NodeData::Element(element) = &mut node.data
-            {
-                element.canvas_bitmap = None;
-            }
+            self.reset_canvas_bitmap_for_current_size(id);
             self.invalidate_layout_cache();
         }
         Ok(first_value)
@@ -1901,7 +1899,7 @@ impl Document {
         Some((width, height))
     }
 
-    /// Borrow a canvas bitmap, if one has been painted.
+    /// Borrow a canvas bitmap, if its pixels have been materialized.
     pub fn canvas_bitmap_ref(&self, id: usize) -> Option<&crate::node::CanvasBitmap> {
         let node = self.nodes.get(id)?;
         let NodeData::Element(element) = &node.data else {
@@ -1910,9 +1908,49 @@ impl Document {
         element.canvas_bitmap.as_ref()
     }
 
-    /// Clone a canvas bitmap, if one has been painted.
+    /// Clone a canvas bitmap, if its pixels have been materialized.
     pub fn canvas_bitmap(&self, id: usize) -> Option<crate::node::CanvasBitmap> {
         self.canvas_bitmap_ref(id).cloned()
+    }
+
+    fn canvas_bytes_after_replacement(
+        &mut self,
+        id: usize,
+        replacement_capacity: usize,
+    ) -> Result<usize, CanvasBitmapError> {
+        let document_capacity = if let Some(bytes) = self.canvas_bitmap_bytes.0 {
+            bytes
+        } else {
+            let bytes = self
+                .nodes
+                .iter()
+                .try_fold(0usize, |total, node| {
+                    let capacity = match &node.data {
+                        NodeData::Element(element) => element
+                            .canvas_bitmap
+                            .as_ref()
+                            .map_or(0, |bitmap| bitmap.rgba.capacity()),
+                        _ => 0,
+                    };
+                    total.checked_add(capacity)
+                })
+                .ok_or(CanvasBitmapError::DocumentLimitExceeded)?;
+            self.canvas_bitmap_bytes.0 = Some(bytes);
+            bytes
+        };
+        let old_capacity = self
+            .canvas_bitmap_ref(id)
+            .map_or(0, |bitmap| bitmap.rgba.capacity());
+        let retained_bytes = document_capacity
+            .checked_sub(old_capacity)
+            .ok_or(CanvasBitmapError::InvalidRgbaLength)?;
+        let total_bytes = retained_bytes
+            .checked_add(replacement_capacity)
+            .ok_or(CanvasBitmapError::DocumentLimitExceeded)?;
+        if total_bytes > MAX_DOCUMENT_CANVAS_BITMAP_BYTES {
+            return Err(CanvasBitmapError::DocumentLimitExceeded);
+        }
+        Ok(total_bytes)
     }
 
     /// Store a canvas bitmap, replacing any previous one.
@@ -1921,34 +1959,117 @@ impl Document {
     /// the width/height attributes (see [`crate::image_resolve`]), not from
     /// this bitmap. Callers that changed the size must have updated the
     /// attributes first (see [`Document::set_element_attribute`], which
-    /// clears the bitmap automatically).
+    /// clears the bitmap automatically). Invalid or over-limit storage is
+    /// ignored; use [`Document::try_set_canvas_bitmap`] to observe failure.
     pub fn set_canvas_bitmap(&mut self, id: usize, bitmap: crate::node::CanvasBitmap) {
-        if let Some(node) = self.nodes.get_mut(id)
-            && let NodeData::Element(element) = &mut node.data
-        {
-            element.canvas_bitmap = Some(bitmap);
+        let _ = self.try_set_canvas_bitmap(id, bitmap);
+    }
+
+    /// Try to store a bitmap matching the canvas's current dimensions, within
+    /// the per-canvas and aggregate document memory limits.
+    pub fn try_set_canvas_bitmap(
+        &mut self,
+        id: usize,
+        bitmap: CanvasBitmap,
+    ) -> Result<(), CanvasBitmapError> {
+        let size = self.canvas_size(id).ok_or(CanvasBitmapError::NotCanvas)?;
+        if size != (bitmap.width, bitmap.height) {
+            return Err(CanvasBitmapError::SizeMismatch);
         }
+        if !bitmap.rgba.is_empty() {
+            let expected = CanvasBitmap::checked_rgba_len(bitmap.width, bitmap.height)?;
+            if bitmap.rgba.len() != expected {
+                return Err(CanvasBitmapError::InvalidRgbaLength);
+            }
+        }
+        let total_bytes = self.canvas_bytes_after_replacement(id, bitmap.rgba.capacity())?;
+        // cov:ignore: canvas_size above validated this live canvas slot, and no arena mutation occurs before this borrow.
+        let Some(node) = self.nodes.get_mut(id) else {
+            return Err(CanvasBitmapError::NotCanvas);
+        };
+        // cov:ignore: canvas_size above proved this slot is a canvas Element; no arena mutation occurs before this check.
+        let NodeData::Element(element) = &mut node.data else {
+            return Err(CanvasBitmapError::NotCanvas);
+        };
+        element.canvas_bitmap = Some(bitmap);
+        self.canvas_bitmap_bytes.0 = Some(total_bytes);
+        Ok(())
+    }
+
+    fn clear_canvas_bitmap_storage(&mut self, id: usize) {
+        let _ = self.take_canvas_bitmap_storage(id);
+    }
+
+    fn take_canvas_bitmap_storage(&mut self, id: usize) -> Option<CanvasBitmap> {
+        let bitmap = self.nodes.get_mut(id).and_then(|node| {
+            let NodeData::Element(element) = &mut node.data else {
+                return None;
+            };
+            element.canvas_bitmap.take()
+        });
+        if let Some(bitmap) = &bitmap
+            && let Some(document_capacity) = self.canvas_bitmap_bytes.0
+        {
+            self.canvas_bitmap_bytes.0 =
+                Some(document_capacity.saturating_sub(bitmap.rgba.capacity()));
+        }
+        bitmap
+    }
+
+    fn try_create_canvas_bitmap(&mut self, id: usize) -> Result<(), CanvasBitmapError> {
+        let (width, height) = self.canvas_size(id).ok_or(CanvasBitmapError::NotCanvas)?;
+        let replacement_bytes = CanvasBitmap::checked_rgba_len(width, height)?;
+        self.canvas_bytes_after_replacement(id, replacement_bytes)?;
+        let bitmap = CanvasBitmap::try_cleared(width, height)?;
+        self.try_set_canvas_bitmap(id, bitmap)
+    }
+
+    fn reset_canvas_bitmap_for_current_size(&mut self, id: usize) {
+        self.clear_canvas_bitmap_storage(id);
+        let _ = self.try_create_canvas_bitmap(id);
     }
 
     /// Ensure a bitmap matching the current width/height attributes exists,
     /// creating a transparent-black one when missing or size-mismatched.
     ///
-    /// Returns the current `(width, height)`, or `None` for non-canvas nodes.
-    pub fn ensure_canvas_bitmap(&mut self, id: usize) -> Option<(u32, u32)> {
-        let (width, height) = self.canvas_size(id)?;
-        let needs_reset = self
-            .canvas_bitmap_ref(id)
-            .is_none_or(|bitmap| bitmap.width != width || bitmap.height != height);
-        if needs_reset {
-            self.set_canvas_bitmap(id, crate::node::CanvasBitmap::cleared(width, height));
+    /// Returns the current size, `None` for non-canvas nodes, or an error if
+    /// the bitmap cannot be materialized within resource limits.
+    pub fn try_ensure_canvas_bitmap(
+        &mut self,
+        id: usize,
+    ) -> Result<Option<(u32, u32)>, CanvasBitmapError> {
+        let Some((width, height)) = self.canvas_size(id) else {
+            return Ok(None);
+        };
+        let expected_bytes = match CanvasBitmap::checked_rgba_len(width, height) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.clear_canvas_bitmap_storage(id);
+                return Err(error);
+            }
+        };
+        if self.canvas_bitmap_ref(id).is_some_and(|bitmap| {
+            bitmap.width == width && bitmap.height == height && bitmap.rgba.len() == expected_bytes
+        }) {
+            return Ok(Some((width, height)));
         }
-        Some((width, height))
+        self.clear_canvas_bitmap_storage(id);
+        self.try_create_canvas_bitmap(id)?;
+        Ok(Some((width, height)))
+    }
+
+    /// Ensure a bitmap exists, returning `None` for non-canvas nodes or when
+    /// resource limits prevent materialization. Use
+    /// [`Document::try_ensure_canvas_bitmap`] to distinguish those cases.
+    pub fn ensure_canvas_bitmap(&mut self, id: usize) -> Option<(u32, u32)> {
+        self.try_ensure_canvas_bitmap(id).ok().flatten()
     }
 
     /// Fill `x, y, w, h` (in bitmap px, clipped to the bitmap) with `rgba`.
     ///
     /// Opaque fills overwrite; translucent fills composite source-over
-    /// against the existing pixels. Returns `false` for non-canvas nodes.
+    /// against the existing pixels. Returns `false` for non-canvas nodes or
+    /// when resource limits prevent bitmap materialization.
     pub fn canvas_fill_rect(
         &mut self,
         id: usize,
@@ -1958,17 +2079,17 @@ impl Document {
         h: i32,
         rgba: [u8; 4],
     ) -> bool {
-        if self.ensure_canvas_bitmap(id).is_none() {
+        if !matches!(self.try_ensure_canvas_bitmap(id), Ok(Some(_))) {
             return false;
         }
         let Some(node) = self.nodes.get_mut(id) else {
-            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
+            return false; // cov:ignore: try_ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
         };
         let NodeData::Element(element) = &mut node.data else {
-            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
+            return false; // cov:ignore: try_ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
         };
         let Some(bitmap) = element.canvas_bitmap.as_mut() else {
-            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
+            return false; // cov:ignore: try_ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
         };
         if bitmap.width == 0 || bitmap.height == 0 {
             return true;
@@ -2027,19 +2148,20 @@ impl Document {
     ///
     /// Unlike [`Document::canvas_fill_rect`] with a transparent color (which
     /// composites nothing), this overwrites the pixels outright per HTML
-    /// Standard §4.12.5 `clearRect`. Returns `false` for non-canvas nodes.
+    /// Standard §4.12.5 `clearRect`. Returns `false` for non-canvas nodes or
+    /// when resource limits prevent bitmap materialization.
     pub fn canvas_clear_rect(&mut self, id: usize, x: i32, y: i32, w: i32, h: i32) -> bool {
-        if self.ensure_canvas_bitmap(id).is_none() {
+        if !matches!(self.try_ensure_canvas_bitmap(id), Ok(Some(_))) {
             return false;
         }
         let Some(node) = self.nodes.get_mut(id) else {
-            return false; // cov:ignore: ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
+            return false; // cov:ignore: try_ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
         };
         let NodeData::Element(element) = &mut node.data else {
-            return false; // cov:ignore: ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
+            return false; // cov:ignore: try_ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
         };
         let Some(bitmap) = element.canvas_bitmap.as_mut() else {
-            return false; // cov:ignore: ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
+            return false; // cov:ignore: try_ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
         };
         if bitmap.width == 0 || bitmap.height == 0 {
             return true;
@@ -2067,16 +2189,14 @@ impl Document {
         true
     }
 
-    /// Canvas bitmaps in tree order, for harness sidecar transfer.
+    /// Clone materialized canvas bitmaps in tree order.
     ///
-    /// The live JS document holds bitmaps that HTML serialization drops
-    /// (a canvas bitmap is not part of `innerHTML`). Reftest preparation
-    /// collects them here in tree order and the paint-side injection
-    /// restores them onto the reparsed document in the same order, so the
-    /// Nth live canvas maps to the Nth parsed canvas without polluting
-    /// script-visible attributes.
+    /// Canvas bitmaps are not part of `innerHTML`, so a harness can collect
+    /// them here and restore them onto a reparsed document in the same order.
+    /// Unmaterialized transparent canvases carry only their dimensions.
     pub fn canvases_in_tree_order(&self) -> Vec<crate::node::CanvasBitmap> {
         let mut out = Vec::new();
+        let mut sidecar_bytes = 0usize;
         let mut stack: Vec<usize> = self
             .nodes
             .get(self.root_index())
@@ -2088,9 +2208,19 @@ impl Document {
             };
             if self.is_canvas_element(index) {
                 let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
-                let bitmap = self
-                    .canvas_bitmap(index)
-                    .unwrap_or_else(|| crate::node::CanvasBitmap::cleared(width, height));
+                let bitmap = if let Some(bitmap) = self.canvas_bitmap_ref(index) {
+                    if sidecar_bytes
+                        .checked_add(bitmap.rgba.len())
+                        .is_some_and(|total| total <= MAX_DOCUMENT_CANVAS_BITMAP_BYTES)
+                    {
+                        sidecar_bytes += bitmap.rgba.len();
+                        bitmap.clone()
+                    } else {
+                        CanvasBitmap::transparent(width, height)
+                    }
+                } else {
+                    CanvasBitmap::transparent(width, height)
+                };
                 out.push(bitmap);
             }
             stack.extend(node.children.iter().rev().copied());
@@ -2098,11 +2228,49 @@ impl Document {
         out
     }
 
-    /// Restore bitmaps collected by [`Document::canvases_in_tree_order`].
+    /// Remove and return materialized canvas bitmaps in tree order.
     ///
-    /// Extra bitmaps are ignored; missing ones leave the parsed canvas
-    /// blank (transparent). Used by the reftest paint path after reparsing.
+    /// This transfers pixel storage without cloning it. It is intended for
+    /// consumers that serialize a live document and then discard or replace
+    /// it, such as the WPT reftest paint path.
+    pub fn take_canvases_in_tree_order(&mut self) -> Vec<crate::node::CanvasBitmap> {
+        let mut out = Vec::new();
+        let mut stack: Vec<usize> = self
+            .nodes
+            .get(self.root_index())
+            .map(|root| root.children.iter().rev().copied().collect())
+            .unwrap_or_default();
+        while let Some(index) = stack.pop() {
+            let Some(node) = self.nodes.get(index) else {
+                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
+            };
+            stack.extend(node.children.iter().rev().copied());
+            if self.is_canvas_element(index) {
+                let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
+                out.push(
+                    self.take_canvas_bitmap_storage(index)
+                        .unwrap_or_else(|| CanvasBitmap::transparent(width, height)),
+                );
+            }
+        }
+        out
+    }
+
+    /// Restore cloned bitmaps collected by [`Document::canvases_in_tree_order`].
+    ///
+    /// Extra bitmaps are ignored; missing ones leave the parsed canvas blank
+    /// (transparent). Prefer [`Document::set_canvases_in_tree_order_owned`]
+    /// when the caller owns the sidecar and can transfer its pixel storage.
     pub fn set_canvases_in_tree_order(&mut self, bitmaps: &[crate::node::CanvasBitmap]) {
+        self.set_canvases_in_tree_order_owned(bitmaps.to_vec());
+    }
+
+    /// Restore canvas bitmaps in tree order by moving their pixel storage.
+    ///
+    /// Extra bitmaps are ignored; missing ones leave the parsed canvas blank
+    /// (transparent). Consumers that own the sidecar should prefer this over
+    /// [`Document::set_canvases_in_tree_order`] to avoid copying pixel buffers.
+    pub fn set_canvases_in_tree_order_owned(&mut self, bitmaps: Vec<crate::node::CanvasBitmap>) {
         let mut ids = Vec::new();
         let mut stack: Vec<usize> = self
             .nodes
@@ -2118,8 +2286,8 @@ impl Document {
             }
             stack.extend(node.children.iter().rev().copied());
         }
-        for (id, bitmap) in ids.iter().zip(bitmaps.iter()) {
-            self.set_canvas_bitmap(*id, bitmap.clone());
+        for (id, bitmap) in ids.into_iter().zip(bitmaps) {
+            let _ = self.try_set_canvas_bitmap(id, bitmap);
         }
     }
 
