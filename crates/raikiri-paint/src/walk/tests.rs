@@ -4533,3 +4533,35 @@ fn paint_document_uses_each_nested_float_fragment_once() {
     assert!(clip_origin.x <= fill_origin.x);
     assert!(clip_origin.x + 142.0 >= fill_origin.x + fill_bounds.width());
 }
+
+#[test]
+fn generated_flow_height_skips_a_node_already_queued_from_a_duplicate_child() {
+    let mut document = Document::new();
+    let parent = document.append_element(Some(0), "div", Style::default(), Some("display:block"));
+    let child =
+        document.append_element(Some(parent), "div", Style::default(), Some("display:block"));
+    document.attach_child(parent, child);
+
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut cache = std::collections::HashMap::new();
+
+    assert_eq!(
+        generated_flow_height(&document, &cascade, parent, &[], &mut cache),
+        0.0
+    );
+}
+
+#[test]
+fn generated_flow_height_caches_zero_for_an_unknown_node_id() {
+    let document = Document::new();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut cache = std::collections::HashMap::new();
+
+    assert_eq!(
+        generated_flow_height(&document, &cascade, usize::MAX, &[], &mut cache),
+        0.0
+    );
+    assert_eq!(cache.get(&usize::MAX), Some(&0.0));
+}
