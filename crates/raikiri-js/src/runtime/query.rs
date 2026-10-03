@@ -480,6 +480,20 @@ fn set_class_name(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     Ok(JsValue::undefined())
 }
 
+fn lang(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    Ok(js_str(
+        &attribute(context, index, "lang")?.unwrap_or_default(),
+    ))
+}
+
+fn set_lang(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let value = dom_string(args, 0, context)?;
+    write_attribute(context, index, "lang", &value)?;
+    Ok(JsValue::undefined())
+}
+
 pub(crate) const ELEMENT_QUERY_MEMBERS: Members = Members {
     getters: &[],
     accessors: &[
@@ -497,6 +511,12 @@ pub(crate) const ELEMENT_QUERY_MEMBERS: Members = Members {
         ),
         ("getAttributeNames", 0, get_attribute_names),
     ],
+};
+
+pub(crate) const HTML_ELEMENT_QUERY_MEMBERS: Members = Members {
+    getters: &[],
+    accessors: &[("lang", lang, set_lang)],
+    methods: &[],
 };
 
 #[cfg(test)]
