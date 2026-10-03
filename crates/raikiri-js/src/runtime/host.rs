@@ -109,10 +109,9 @@ pub trait DocumentHost: 'static {
     /// children of the returned document's root.
     ///
     /// Contract: the returned root's children must never include a Document
-    /// node. The `innerHTML` setter hands the returned root to
-    /// `Document::replace_children_from`, which panics on a Document node
-    /// found in the child list, so a host that returns one turns the setter
-    /// into a runtime panic rather than a script-visible exception.
+    /// node. If a host violates this contract, the `innerHTML` setter rejects
+    /// the fragment with the runtime's sticky [`super::Abort::Nodes`] before changing
+    /// the live document.
     fn parse_fragment(
         &mut self,
         context_tag: &str,

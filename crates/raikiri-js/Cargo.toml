@@ -21,6 +21,10 @@ boa_engine = { version = "0.22", default-features = false, features = ["annex-b"
 boa_gc = "0.22"
 url = { workspace = true }
 
+[dev-dependencies]
+# Exercise fragment-child copying through raikiri-dom's validated snapshot API.
+raikiri-dom = { workspace = true, features = ["logical-snapshot"] }
+
 [features]
 # Off by default: native builds and tests never need it. Exists so the
 # Principle 5 (Pure Rust / WASM requirement) wasm32-unknown-unknown check has something

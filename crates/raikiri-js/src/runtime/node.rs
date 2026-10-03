@@ -377,7 +377,9 @@ fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 /// host (context element's tag name and namespace), then replaces the
 /// element's children with the parsed result. Targeting a `<template>`
 /// replaces its template contents instead of its direct children
-/// (`Document::replace_children_from`).
+/// (`Document::replace_children_from`). Before copying, the setter checks the
+/// whole live arena plus every node the replacement will allocate, including
+/// template-content fragment roots, against the runtime's node limit.
 fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let markup = match args.first() {
@@ -401,8 +403,24 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         Ok(fragment) => fragment,
         Err(error) => return Err(host_failure(context, error)),
     };
+    let root = fragment.root_index();
+    let within_node_budget = with_state(context, |s| {
+        let document = s.host.document();
+        let Some(remaining_nodes) = s
+            .event_loop
+            .limits
+            .max_nodes
+            .checked_sub(document.node_count())
+        else {
+            return false;
+        };
+        copied_child_node_count(&fragment, root, remaining_nodes).is_some()
+    })?;
+    if !within_node_budget {
+        let reason = super::event_loop::abort(context, super::event_loop::Abort::Nodes);
+        return Err(super::event_loop::abort_error(reason));
+    }
     with_state(context, |s| {
-        let root = fragment.root_index();
         s.host
             .document_mut()
             .replace_children_from(index, &fragment, root);
@@ -410,6 +428,63 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     mark_dirty(context)?;
     super::dispatch::sync_event_handlers_in_subtree(context, index)?;
     Ok(JsValue::undefined())
+}
+
+/// Count nodes `replace_children_from` will allocate, returning `None` when
+/// the source is malformed or the count exceeds `maximum`. A copied template
+/// adds both its element and a new contents-fragment root; fragment nodes in
+/// child lists are spliced and do not add a target node.
+fn copied_child_node_count(
+    document: &raikiri_dom::Document,
+    source_parent: usize,
+    maximum: usize,
+) -> Option<usize> {
+    let mut pending = vec![(source_parent, 0usize)];
+    let mut count = 0usize;
+
+    while let Some((parent, next_child)) = pending.last_mut() {
+        let parent_node = document.get_node(*parent)?;
+        if *next_child >= parent_node.children.len() {
+            pending.pop();
+            continue;
+        }
+
+        let child_id = parent_node.children[*next_child];
+        *next_child += 1;
+        let child = document.get_node(child_id)?;
+        match child.kind() {
+            NodeKind::Document => return None,
+            NodeKind::DocumentFragment => pending.push((child_id, 0)),
+            NodeKind::Element => {
+                count = count.checked_add(1)?;
+                if count > maximum {
+                    return None;
+                }
+                if let Some(contents_id) = child.template_contents() {
+                    let contents = document.get_node(contents_id)?;
+                    // cov:ignore: Document only creates template contents as fragment roots, and logical snapshots validate this invariant.
+                    if contents.kind() != NodeKind::DocumentFragment {
+                        return None;
+                    }
+                    count = count.checked_add(1)?;
+                    if count > maximum {
+                        return None;
+                    }
+                    pending.push((contents_id, 0));
+                }
+                pending.push((child_id, 0));
+            }
+            _ => {
+                count = count.checked_add(1)?;
+                if count > maximum {
+                    return None;
+                }
+                pending.push((child_id, 0));
+            }
+        }
+    }
+
+    Some(count)
 }
 
 // ---- Document ------------------------------------------------------------
