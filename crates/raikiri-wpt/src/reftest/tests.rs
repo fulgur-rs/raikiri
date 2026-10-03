@@ -730,7 +730,7 @@ fn run_pair_respects_authored_fuzzy_ranges_and_reports_raw_differences() {
         let test = format!(
             "<meta name='fuzzy' content='{fuzzy}'><body style='margin:0;background:rgb(10,0,0)'>"
         );
-        let result = run_pair_with_reader(&pair, config, false, |path| {
+        let result = run_pair_with_reader(&pair, config, false, "", |path| {
             Ok(if path == pair.test {
                 test.clone()
             } else {
@@ -781,6 +781,50 @@ fn dynamic_reftest_wait_runs_nested_animation_frames_before_comparison() {
         result.outcome
     );
     assert_eq!(result.mismatched_pixels, 0);
+}
+
+#[test]
+fn run_pair_with_variant_applies_query_to_test_and_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("test.html");
+    let reference = dir.path().join("ref.html");
+    let html = "<!DOCTYPE html><html><body style='margin:0'><script>document.body.style.background = location.search === '?variant=pass' ? 'green' : 'red';</script></body></html>";
+    std::fs::write(&test, html).unwrap();
+    std::fs::write(&reference, html).unwrap();
+    let pair = ReftestPair {
+        test,
+        reference,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let config = ReftestConfig {
+        width: 16,
+        height: 16,
+        tolerance: Tolerance::EXACT,
+        ..ReftestConfig::default()
+    };
+
+    let result = run_pair_with_variant(&pair, config, "?variant=pass").unwrap();
+
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "{:?}",
+        result.outcome
+    );
+    assert_eq!(result.mismatched_pixels, 0);
+}
+
+#[test]
+fn variant_suffix_preserves_reference_query_and_fragment() {
+    assert_eq!(
+        with_variant_query("?ref=1#target", "?variant=pass"),
+        "?ref=1&variant=pass#target"
+    );
+    assert_eq!(
+        with_variant_query("#target", "?variant=pass"),
+        "?variant=pass#target"
+    );
+    assert_eq!(with_variant_query("?ref=1", ""), "?ref=1");
 }
 
 #[test]

@@ -2741,7 +2741,25 @@ pub fn compare_documents(
 /// `read_html` indirection exists so unit tests can supply inline strings
 /// without touching the filesystem.
 pub fn run_pair(pair: &ReftestPair, config: ReftestConfig) -> Result<ReftestResult, ReftestError> {
-    run_pair_with_reader(pair, config, false, |p| {
+    run_pair_with_reader(pair, config, false, "", |p| {
+        std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
+            path: p.to_path_buf(),
+            source,
+        })
+    })
+}
+
+/// Execute a pair with the selected WPT variant query applied to both pages.
+///
+/// `variant_query` is the query suffix declared by a `<meta name="variant">`
+/// element, including its leading `?`. Existing query strings and fragments
+/// on the reference URL are preserved.
+pub fn run_pair_with_variant(
+    pair: &ReftestPair,
+    config: ReftestConfig,
+    variant_query: &str,
+) -> Result<ReftestResult, ReftestError> {
+    run_pair_with_reader(pair, config, false, variant_query, |p| {
         std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
             path: p.to_path_buf(),
             source,
@@ -2759,7 +2777,7 @@ pub fn run_pair_with_images(
     pair: &ReftestPair,
     config: ReftestConfig,
 ) -> Result<ReftestResult, ReftestError> {
-    run_pair_with_reader(pair, config, true, |p| {
+    run_pair_with_reader(pair, config, true, "", |p| {
         std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
             path: p.to_path_buf(),
             source,
@@ -2771,6 +2789,7 @@ fn run_pair_with_reader<F>(
     pair: &ReftestPair,
     config: ReftestConfig,
     resolve_images: bool,
+    variant_query: &str,
     read_html: F,
 ) -> Result<ReftestResult, ReftestError>
 where
@@ -2780,19 +2799,12 @@ where
     let ref_html = read_html(&pair.reference)?;
     let fuzzy = fuzzy::metadata(&test_html, pair)?;
     let selections = page_selections_for_pair(&test_html, &pair.reference);
-    let dynamic::PreparedDynamic {
-        html: test_render_html,
-        canvases: test_canvases,
-        custom_highlight_ranges: test_custom_highlight_ranges,
-    } = dynamic::prepare(&test_html, &pair.test, "", config)?;
-    let dynamic::PreparedDynamic {
-        html: reference_render_html,
-        canvases: reference_canvases,
-        custom_highlight_ranges: reference_custom_highlight_ranges,
-    } = dynamic::prepare(&ref_html, &pair.reference, &pair.reference_suffix, config)?;
-    let ref_html = mirror_default_page_margin(&test_render_html, &reference_render_html);
+    let test_prepared = dynamic::prepare(&test_html, &pair.test, variant_query, config)?;
+    let reference_suffix = with_variant_query(&pair.reference_suffix, variant_query);
+    let ref_prepared = dynamic::prepare(&ref_html, &pair.reference, &reference_suffix, config)?;
+    let ref_html = mirror_default_page_margin(&test_prepared.html, &ref_prepared.html);
     let test_doc = render_raikiri_pages_inner_with_canvases(
-        &test_render_html,
+        &test_prepared.html,
         config.width,
         config.height,
         if resolve_images {
@@ -2802,8 +2814,8 @@ where
         },
         pair.test.parent(),
         InlineEngineChoice::of(&config),
-        Some(test_canvases),
-        Some(&test_custom_highlight_ranges),
+        Some(test_prepared.canvases),
+        Some(&test_prepared.custom_highlight_ranges),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let ref_doc = render_raikiri_pages_inner_with_canvases(
@@ -2817,8 +2829,8 @@ where
         },
         pair.reference.parent(),
         InlineEngineChoice::of(&config),
-        Some(reference_canvases),
-        Some(&reference_custom_highlight_ranges),
+        Some(ref_prepared.canvases),
+        Some(&ref_prepared.custom_highlight_ranges),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let (test_selection, reference_selection) = selections;
@@ -2853,6 +2865,38 @@ where
         mismatched_pixels: diff.mismatched_pixels,
         total_pixels: diff.total_pixels,
     })
+}
+
+fn with_variant_query(reference_suffix: &str, variant_query: &str) -> String {
+    if variant_query.is_empty() {
+        return reference_suffix.to_owned();
+    }
+
+    let (reference_query, fragment) = match reference_suffix.split_once('#') {
+        Some((query, fragment)) => (query, Some(fragment)),
+        None => (reference_suffix, None),
+    };
+    let reference_query = reference_query.strip_prefix('?').unwrap_or(reference_query);
+    let variant_query = variant_query.strip_prefix('?').unwrap_or(variant_query);
+    let variant_query = variant_query
+        .split_once('#')
+        .map_or(variant_query, |(query, _)| query);
+    let query = [reference_query, variant_query]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("&");
+
+    if query.is_empty() {
+        return reference_suffix.to_owned();
+    }
+
+    let mut suffix = format!("?{query}");
+    if let Some(fragment) = fragment {
+        suffix.push('#');
+        suffix.push_str(fragment);
+    }
+    suffix
 }
 
 /// Execute a pair via both raikiri and blitz, returning raikiri's
