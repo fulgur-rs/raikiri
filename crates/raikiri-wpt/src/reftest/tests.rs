@@ -177,11 +177,28 @@ fn render_raikiri_pages_rejects_an_oversized_page_edge() {
         ),
     };
     assert!(matches!(
-        error,
+        &error,
         ReftestError::Raster(raikiri::RenderError::LimitExceeded {
             kind: raikiri::LimitKind::RasterEdge,
             ..
         })
+    ));
+    assert!(error.to_string().contains("rasterization failed"));
+    assert!(
+        std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<raikiri::RenderError>())
+            .is_some()
+    );
+}
+
+#[test]
+fn raikiri_error_mapper_preserves_non_raster_error_category() {
+    let error =
+        super::map_raster_or_raikiri_error(Box::new(std::io::Error::other("layout failed")));
+
+    assert!(matches!(
+        error,
+        ReftestError::RaikiriRender(message) if message == "layout failed"
     ));
 }
 
@@ -506,11 +523,21 @@ fn render_blitz_rejects_an_oversized_viewport_edge() {
         ),
     };
     assert!(matches!(
-        error,
+        &error,
         ReftestError::Raster(raikiri::RenderError::LimitExceeded {
             kind: raikiri::LimitKind::RasterEdge,
             ..
         })
+    ));
+}
+
+#[test]
+fn blitz_error_mapper_preserves_non_raster_error_category() {
+    let error = super::map_raster_or_blitz_error(Box::new(std::io::Error::other("oracle failed")));
+
+    assert!(matches!(
+        error,
+        ReftestError::BlitzRender(message) if message == "oracle failed"
     ));
 }
 

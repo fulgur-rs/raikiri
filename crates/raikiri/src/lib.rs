@@ -59,6 +59,7 @@ pub use page_scene::{
 };
 
 mod raster_budget;
+// cov:ignore: public re-export declarations have no executable body
 pub use raster_budget::{
     MAX_DOCUMENT_RASTER_BYTES, MAX_PAGE_RASTER_BYTES, MAX_RASTER_EDGE, RasterBufferBudget,
     RasterBufferSize,

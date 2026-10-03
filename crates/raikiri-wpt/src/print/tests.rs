@@ -7,6 +7,16 @@ use crate::reftest::RenderedImage;
 use crate::test_http_server::{TestResponse, TestServer};
 
 #[test]
+fn print_render_error_falls_back_for_non_raster_errors() {
+    let error = super::PrintRenderError::from_render_error(Box::new(std::io::Error::other(
+        "print pipeline failed",
+    )));
+
+    assert_eq!(error.to_string(), "print pipeline failed");
+    assert!(std::error::Error::source(&error).is_none());
+}
+
+#[test]
 fn rejects_zero_fallback_dimensions_before_fetching() {
     let server = TestServer::start(HashMap::<&str, TestResponse>::new());
     let provider = SystemHttpProvider::new();
