@@ -250,7 +250,6 @@ impl PageScene {
     /// Passing a pre-layout Document produces a PNG with missing glyphs because
     /// no paragraph has lines yet. Behavior is undefined; callers must wait
     /// for `layout_single_page` to complete.
-    #[must_use]
     pub fn rasterize(
         &self,
         dom: &Document,
@@ -286,7 +285,6 @@ impl PageScene {
     ///
     /// # Errors
     /// Returns the same dimension and raster limit errors as [`Self::rasterize`].
-    #[must_use]
     pub fn rasterize_with_images(
         &self,
         dom: &Document,
