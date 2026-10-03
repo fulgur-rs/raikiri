@@ -179,6 +179,25 @@ fn css_text_getter_and_setter_replace_the_whole_declaration_block() {
 }
 
 #[test]
+fn element_style_assignment_forwards_to_css_text_in_strict_mode() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "'use strict'; \
+         var body = document.body; \
+         var declaration = body.style; \
+         body.style = 'color: red; margin-top: 2px';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "body.style === declaration \
+         && declaration.cssText === 'color: red; margin-top: 2px;' \
+         && body.getAttribute('style') === declaration.cssText",
+    );
+}
+
+#[test]
 fn length_and_item_enumerate_declared_properties_in_order() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
