@@ -576,6 +576,43 @@ fn pipeline_discovers_nested_named_page_before_enforcing_page_limit() {
 }
 
 #[test]
+fn pipeline_discovers_named_page_after_oversized_text_before_enforcing_page_limit() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page tall{size:200px 200px;margin:0}</style>\
+         <div style='height:250px;line-height:250px'>text</div>\
+         <div style='margin-top:-160px;page:tall;height:10px'></div>",
+    );
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(2))
+                .build(),
+        )
+        .build();
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    match result {
+        Ok(PipelineRun::Completed(output)) => {
+            assert_eq!(output.slices.len(), 2);
+            assert_eq!(output.slices[1].page_name.as_deref(), Some("tall"));
+        }
+        Err(error) => panic!("expected the named tall page after text to fit, got {error}"),
+        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+    }
+}
+
+#[test]
 fn pipeline_does_not_count_distant_absolute_percentage_boxes_as_pages() {
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 200px;margin:0}</style>\
