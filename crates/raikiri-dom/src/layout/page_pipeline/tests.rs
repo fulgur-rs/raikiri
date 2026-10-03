@@ -45,6 +45,85 @@ fn page_layout_control_allows_an_explicit_unbounded_page_count() {
 }
 
 #[test]
+fn page_origins_cover_fixed_and_scheduled_steps_without_a_page_ceiling() {
+    let fixed = PageOrigins::new(&[], 100.0);
+    assert_eq!(fixed.origin(5_000), 500_000.0);
+    assert_eq!(fixed.page_index_for_y(500_000.0), 5_000);
+    assert_eq!(fixed.page_index_for_end(500_000.0), 4_999);
+
+    let scheduled = PageOrigins::new(&[100.0, 200.0], 50.0);
+    assert_eq!(scheduled.origin(4), 400.0);
+    assert_eq!(scheduled.page_index_for_y(100.0), 1);
+    assert_eq!(scheduled.page_index_for_y(300.0), 2);
+    assert_eq!(scheduled.page_index_for_y(350.0), 3);
+    assert_eq!(scheduled.page_index_for_end(100.0), 0);
+    assert_eq!(scheduled.page_index_for_end(300.0), 1);
+    assert_eq!(scheduled.page_index_for_end(350.0), 2);
+}
+
+#[test]
+fn page_origins_keep_fractional_end_boundaries_on_the_preceding_page() {
+    let fixed = PageOrigins::new(&[], 0.1);
+    assert_eq!(fixed.page_index_for_y(0.3), 3);
+    assert_eq!(fixed.page_index_for_end(0.3), 2);
+
+    let scheduled = PageOrigins::new(&[0.1], 0.1);
+    assert_eq!(scheduled.page_index_for_y(0.3), 3);
+    assert_eq!(scheduled.page_index_for_end(0.3), 2);
+}
+
+#[test]
+fn page_origins_resolve_repeated_large_fixed_boundaries() {
+    let fixed = PageOrigins::new(&[], 0.1);
+    let coordinate = 1_677_722.0;
+    let candidates = 16_777_200..16_777_240;
+    let expected_y = candidates
+        .clone()
+        .find(|page_index| coordinate < fixed.origin(*page_index) + fixed.step_at(*page_index))
+        .expect("coordinate falls within the candidate page range");
+    let expected_end = candidates
+        .clone()
+        .find(|page_index| coordinate <= fixed.origin(*page_index) + fixed.step_at(*page_index))
+        .expect("coordinate ends within the candidate page range");
+
+    assert_eq!(fixed.page_index_for_y(coordinate), expected_y);
+    assert_eq!(fixed.page_index_for_end(coordinate), expected_end);
+}
+
+#[test]
+fn page_layout_control_accepts_a_box_ending_on_a_fractional_page_boundary() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:0.3px"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let mut page_box = page_box_800x600();
+    page_box.height = 0.1;
+    let control = PageLayoutControl::new(Some(3));
+
+    let pages = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box,
+        &[],
+        &[],
+        &control,
+    )
+    .expect("three-page boundary layout");
+
+    assert_eq!(pages.len(), 3);
+}
+
+#[test]
 fn page_layout_discovery_returns_a_bounded_prefix() {
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -76,6 +155,42 @@ fn page_layout_discovery_returns_a_bounded_prefix() {
 
     assert_eq!(pages.len(), 2);
     assert!(control.page_limit_reached());
+}
+
+#[test]
+fn page_layout_control_rejects_natural_overflow_beyond_4096_pages() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:3000000px"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let control = PageLayoutControl::new(Some(4_500));
+
+    let result = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        &[],
+        &[],
+        &control,
+    );
+
+    assert!(matches!(
+        result,
+        Err(LayoutError::PageLimitExceeded {
+            limit: 4_500,
+            actual: 5_000,
+        })
+    ));
 }
 
 #[test]

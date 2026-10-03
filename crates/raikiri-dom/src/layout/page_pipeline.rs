@@ -335,12 +335,12 @@ impl<'a> PageLayoutControl<'a> {
         }
     }
 
-    /// Create a bounded provisional paginator for page-geometry discovery.
+    /// Create a provisional paginator for page-geometry discovery.
     ///
-    /// When pagination reaches `max_pages`, layout stops and returns the page
-    /// prefix. Call [`Self::page_limit_reached`] to distinguish that partial
-    /// result from a complete layout. A final scheduled pass should use
-    /// [`Self::new`] so excess pages are rejected.
+    /// When a page limit is set and pagination reaches it, layout stops and
+    /// returns the page prefix. Call [`Self::page_limit_reached`] to distinguish
+    /// that partial result from a complete layout. A final scheduled pass
+    /// should use [`Self::new`] so excess pages are rejected.
     pub fn for_geometry_discovery(max_pages: Option<u32>) -> Self {
         Self {
             max_pages,
@@ -450,12 +450,12 @@ impl PageOrigins {
     }
 
     fn page_index_for_y(&self, y: f32) -> u32 {
-        const MAX_PAGE_INDEX: u32 = 4095;
         if !y.is_finite() || y <= 0.0 {
             return 0;
         }
         if self.scheduled_steps.is_empty() {
-            return ((y / self.fixed_step).floor() as u32).min(MAX_PAGE_INDEX);
+            let tail_page = (f64::from(y) / f64::from(self.fixed_step)).floor();
+            return self.correct_page_index_for_y(self.page_index_after_prefix(tail_page), y);
         }
         let scheduled_pages = self.scheduled_steps.len();
         let scheduled_end = self.scheduled_origins[scheduled_pages];
@@ -463,32 +463,93 @@ impl PageOrigins {
             let index = self.scheduled_origins[..=scheduled_pages]
                 .partition_point(|origin| *origin <= y)
                 .saturating_sub(1);
-            return (index as u32).min(MAX_PAGE_INDEX);
+            return self.correct_page_index_for_y(index as u32, y);
         }
-        let extra = ((y - scheduled_end) / self.fixed_step).floor() as u32;
-        (scheduled_pages as u32)
-            .saturating_add(extra)
-            .min(MAX_PAGE_INDEX)
+        let extra =
+            ((f64::from(y) - f64::from(scheduled_end)) / f64::from(self.fixed_step)).floor();
+        self.correct_page_index_for_y(self.page_index_after_prefix(extra), y)
     }
 
     fn page_index_for_end(&self, end: f32) -> u32 {
-        const MAX_PAGE_INDEX: u32 = 4095;
         if !end.is_finite() || end <= 0.0 {
             return 0;
         }
         if self.scheduled_steps.is_empty() {
-            return (((end / self.fixed_step).ceil() as u32).saturating_sub(1)).min(MAX_PAGE_INDEX);
+            let tail_page = (f64::from(end) / f64::from(self.fixed_step)).ceil() - 1.0;
+            return self
+                .correct_page_index_for_end(self.page_index_after_prefix(tail_page.max(0.0)), end);
         }
         let scheduled_pages = self.scheduled_steps.len();
         let index = self.scheduled_origins[1..].partition_point(|origin| *origin < end);
         if index < scheduled_pages {
-            return (index as u32).min(MAX_PAGE_INDEX);
+            return self.correct_page_index_for_end(index as u32, end);
         }
         let scheduled_end = self.scheduled_origins[scheduled_pages];
-        let extra = (((end - scheduled_end) / self.fixed_step).ceil() as u32).saturating_sub(1);
-        (scheduled_pages as u32)
-            .saturating_add(extra)
-            .min(MAX_PAGE_INDEX)
+        let extra =
+            ((f64::from(end) - f64::from(scheduled_end)) / f64::from(self.fixed_step)).ceil() - 1.0;
+        self.correct_page_index_for_end(self.page_index_after_prefix(extra.max(0.0)), end)
+    }
+
+    fn correct_page_index_for_y(&self, page_index: u32, y: f32) -> u32 {
+        let page_end = self.page_end(page_index);
+        let previous_page_end = page_index
+            .checked_sub(1)
+            .map(|previous| self.page_end(previous))
+            .unwrap_or(f32::NEG_INFINITY);
+        if previous_page_end <= y && y < page_end {
+            page_index
+        } else {
+            self.first_page_ending_after(y)
+        }
+    }
+
+    fn correct_page_index_for_end(&self, page_index: u32, end: f32) -> u32 {
+        let page_end = self.page_end(page_index);
+        let previous_page_end = page_index
+            .checked_sub(1)
+            .map(|previous| self.page_end(previous))
+            .unwrap_or(f32::NEG_INFINITY);
+        if previous_page_end < end && end <= page_end {
+            page_index
+        } else {
+            self.first_page_ending_at_or_after(end)
+        }
+    }
+
+    fn page_end(&self, page_index: u32) -> f32 {
+        self.origin(page_index) + self.step_at(page_index)
+    }
+
+    fn first_page_ending_after(&self, y: f32) -> u32 {
+        self.first_page_matching_end(y, |page_end, y| page_end > y)
+    }
+
+    fn first_page_ending_at_or_after(&self, end: f32) -> u32 {
+        self.first_page_matching_end(end, |page_end, end| page_end >= end)
+    }
+
+    fn first_page_matching_end(&self, value: f32, matches: impl Fn(f32, f32) -> bool) -> u32 {
+        let mut low = 0_u64;
+        let mut high = u64::from(u32::MAX) + 1;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if matches(self.page_end(middle as u32), value) {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        low.min(u64::from(u32::MAX)) as u32
+    }
+
+    fn page_index_after_prefix(&self, tail_page: f64) -> u32 {
+        let scheduled_pages = u32::try_from(self.scheduled_steps.len()).unwrap_or(u32::MAX);
+        let available = u32::MAX - scheduled_pages;
+        if tail_page >= f64::from(available) {
+            u32::MAX
+        } else {
+            scheduled_pages + tail_page as u32
+        }
     }
 }
 
