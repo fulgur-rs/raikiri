@@ -54,6 +54,8 @@ pub(crate) struct Protos {
     pub dom_token_list: JsObject,
     pub dom_rect_read_only: JsObject,
     pub dom_rect: JsObject,
+    pub range: JsObject,
+    pub selection: JsObject,
     pub css_style_declaration: JsObject,
     pub event: JsObject,
     pub custom_event: JsObject,
@@ -305,6 +307,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::dispatch;
     use super::node;
     use super::query;
+    use super::selection;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
     use super::tree;
     use super::window;
@@ -498,6 +501,28 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         0,
     );
     let dom_rect = dom_rect_result?;
+    let range_members = [&selection::RANGE_MEMBERS];
+    let range_result = interface(
+        context,
+        "Range",
+        None,
+        None,
+        &range_members,
+        illegal_constructor,
+        0,
+    );
+    let range = range_result?;
+    let selection_members = [&selection::SELECTION_MEMBERS];
+    let selection_result = interface(
+        context,
+        "Selection",
+        None,
+        None,
+        &selection_members,
+        illegal_constructor,
+        0,
+    );
+    let selection = selection_result?;
     let css_style_declaration_members = [&style::CSS_STYLE_DECLARATION_MEMBERS];
     let css_style_declaration_result = interface(
         context,
@@ -531,6 +556,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         dom_token_list: dom_token_list.prototype,
         dom_rect_read_only: dom_rect_read_only.prototype,
         dom_rect: dom_rect.prototype,
+        range: range.prototype,
+        selection: selection.prototype,
         css_style_declaration: css_style_declaration.prototype,
         event: event.prototype,
         custom_event: custom_event.prototype,
