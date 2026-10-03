@@ -45,7 +45,7 @@ pub(crate) fn parse_css_rules(source: &str) -> Vec<CssRuleInfo> {
             },
         );
         let Ok(prelude) = prelude else {
-            break;
+            break; // cov:ignore: The parser closure always returns Ok and consumes tokenizer errors itself.
         };
         let prelude = prelude.trim().to_owned();
         let token = parser.next_including_whitespace_and_comments().cloned();
@@ -60,7 +60,7 @@ pub(crate) fn parse_css_rules(source: &str) -> Vec<CssRuleInfo> {
                     )
                 });
                 let Ok(body_end) = body_end else {
-                    break;
+                    break; // cov:ignore: The nested parser closure always returns Ok after consuming its tokens.
                 };
                 let end = parser.position().byte_index();
                 rules.push(CssRuleInfo {
@@ -93,13 +93,13 @@ pub(crate) fn stylesheet_text(document: &Document, style_element: usize) -> Stri
 fn stylesheet_nodes(document: &Document) -> Vec<usize> {
     let root = document.root_index();
     let Some(root_node) = document.get_node(root) else {
-        return Vec::new();
+        return Vec::new(); // cov:ignore: A Document always retains its initialized root node.
     };
     let mut pending: Vec<usize> = root_node.children.iter().rev().copied().collect();
     let mut nodes = Vec::new();
     while let Some(index) = pending.pop() {
         let Some(node) = document.get_node(index) else {
-            continue;
+            continue; // cov:ignore: Child indices are created and retained by the same append-only document arena.
         };
         if node.kind() != NodeKind::Element {
             continue;
@@ -240,7 +240,7 @@ pub(crate) fn document_style_sheets(
         "StyleSheetList",
         stylesheet_list_length,
         stylesheet_list_item,
-    )?;
+    )?; // cov:ignore: The fresh realm's built-in object prototype accepts these fixed list members.
     let list = indexed_object(context, prototype, StyleSheetListSource)?;
     with_state(context, |state| state.style_sheet_list = Some(list.clone()))?;
     Ok(list.into())
@@ -295,7 +295,7 @@ fn style_sheet_object(context: &mut Context, style_element: usize) -> JsResult<J
         boa_engine::JsSymbol::to_string_tag(),
         to_string_tag,
         context,
-    )?;
+    )?; // cov:ignore: The newly created ordinary object is extensible and has no conflicting own symbol.
     with_state(context, |state| {
         state.style_sheets.insert(style_element, object.clone())
     })?;
@@ -328,7 +328,7 @@ fn style_sheet_rules(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
         "CSSRuleList",
         css_rule_list_length,
         css_rule_list_item,
-    )?;
+    )?; // cov:ignore: The fresh realm's built-in object prototype accepts these fixed list members.
     let list = indexed_object(context, prototype, CssRuleListSource { style_element })?;
     with_state(context, |state| {
         state.css_rule_lists.insert(style_element, list.clone())
@@ -366,7 +366,7 @@ pub(crate) fn css_style_rule_object(
         boa_engine::JsSymbol::to_string_tag(),
         to_string_tag,
         context,
-    )?;
+    )?; // cov:ignore: The newly created ordinary object is extensible and has no conflicting own symbol.
     with_state(context, |state| {
         state.css_style_rules.insert(key, object.clone())
     })?;

@@ -18,3 +18,8 @@ fn top_level_rule_ranges_preserve_preludes_and_declaration_bodies() {
     assert_eq!(rules[2].prelude, "span");
     assert_eq!(&source[rules[2].body.clone().unwrap()], " color: magenta; ");
 }
+
+#[test]
+fn malformed_blocks_stop_rule_parsing_without_panicking() {
+    assert!(parse_css_rules("}").is_empty());
+}
