@@ -3,8 +3,8 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox,
+    FontFeatureSetting, FontFeatureSettings, FontSynthesisStyle, FontVariantEastAsianVariant,
+    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
@@ -348,6 +348,10 @@ fn parent_fixture() -> ComputedValues {
             tag: SmolStr::new("wght"),
             value: 640.0,
         }]),
+        font_feature_settings: FontFeatureSettings::Features(vec![FontFeatureSetting {
+            tag: *b"kern",
+            value: 0,
+        }]),
         font_variant_caps: FontVariantCaps::SmallCaps,
         text_transform: TextTransform::Uppercase,
         text_combine_upright: TextCombineUpright::All,
@@ -637,6 +641,7 @@ fn inherit_from_copies_inherited_fields() {
         child.font_variation_settings,
         parent.font_variation_settings
     );
+    assert_eq!(child.font_feature_settings, parent.font_feature_settings);
     assert_eq!(child.font_variant_position, FontVariantPosition::Super);
     // CSS Fonts 4 §9.1: font-palette is inherited as specified.
     assert_eq!(

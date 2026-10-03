@@ -604,6 +604,9 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::FontVariationSettings(settings) => {
             PropertyValue::FontVariationSettings(settings.canonicalized())
         }
+        PropertyValue::FontFeatureSettings(settings) => {
+            PropertyValue::FontFeatureSettings(settings.canonicalized())
+        }
         PropertyValue::ColumnWidth(ColumnWidthValue::Length(length)) => {
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Px(
                 resolve_length(length, font_size, own_line_height, ctx).px(),

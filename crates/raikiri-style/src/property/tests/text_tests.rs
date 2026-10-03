@@ -2971,6 +2971,28 @@ fn font_kerning_is_case_insensitive_and_rejects_unknown_keywords() {
 }
 
 #[test]
+fn font_feature_settings_accepts_normal_and_feature_lists() {
+    for (value, expected) in [
+        ("normal", "normal"),
+        ("'halt'", "\"halt\" 1"),
+        ("\"vhal\" off", "\"vhal\" 0"),
+        (
+            "\"halt\" 1, 'vhal' on, \"liga\" off",
+            "\"halt\" 1, \"vhal\" 1, \"liga\" 0",
+        ),
+        ("\"Halt\" 3", "\"Halt\" 3"),
+    ] {
+        assert!(
+            parse_entire(value, "font-feature-settings")
+                .as_ref()
+                .and_then(serialize_value)
+                .is_some_and(|serialized| serialized == expected),
+            "value = {value}"
+        );
+    }
+}
+
+#[test]
 fn font_optical_sizing_parses_serializes_and_maps_its_property_key() {
     for (input, expected) in [
         ("auto", FontOpticalSizing::Auto),
@@ -5377,6 +5399,90 @@ fn font_variation_settings_preserves_specified_order_and_duplicates() {
             parse_entire(invalid, "font-variation-settings"),
             None,
             "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn font_feature_settings_preserves_specified_order_and_duplicates() {
+    use crate::property::FontFeatureSetting;
+
+    let cases = [
+        ("normal", FontFeatureSettings::Normal, "normal"),
+        (
+            r#""kern""#,
+            FontFeatureSettings::Features(vec![FontFeatureSetting {
+                tag: *b"kern",
+                value: 1,
+            }]),
+            r#""kern" 1"#,
+        ),
+        (
+            r#""liga" off, "kern" on"#,
+            FontFeatureSettings::Features(vec![
+                FontFeatureSetting {
+                    tag: *b"liga",
+                    value: 0,
+                },
+                FontFeatureSetting {
+                    tag: *b"kern",
+                    value: 1,
+                },
+            ]),
+            r#""liga" 0, "kern" 1"#,
+        ),
+        (
+            r#""kern" 1, "KERN" 2, "kern" 0"#,
+            FontFeatureSettings::Features(vec![
+                FontFeatureSetting {
+                    tag: *b"kern",
+                    value: 1,
+                },
+                FontFeatureSetting {
+                    tag: *b"KERN",
+                    value: 2,
+                },
+                FontFeatureSetting {
+                    tag: *b"kern",
+                    value: 0,
+                },
+            ]),
+            r#""kern" 1, "KERN" 2, "kern" 0"#,
+        ),
+    ];
+
+    for (input, expected, serialized) in cases {
+        let value = parse_entire(input, "font-feature-settings")
+            .unwrap_or_else(|| panic!("expected valid font-feature-settings `{input}`"));
+        assert_eq!(
+            value,
+            PropertyValue::FontFeatureSettings(expected),
+            "{input}"
+        );
+        assert_eq!(value.key(), PropertyKey::FontFeatureSettings);
+        assert_eq!(
+            serialize_value(&value),
+            Some(serialized.to_owned()),
+            "{input}"
+        );
+    }
+
+    for invalid in [
+        "",
+        "foo",
+        r#""ker" 1"#,
+        r#""kernx" 1"#,
+        r#""kern" -1"#,
+        r#""kern" 1.5"#,
+        r#""kern" 1,"#,
+        r#"normal, "kern" 1"#,
+        r#""kern" 1 "liga" 0"#,
+        r#""ké rn" 1"#,
+    ] {
+        assert_eq!(
+            parse_entire(invalid, "font-feature-settings"),
+            None,
+            "{invalid} should be rejected",
         );
     }
 }

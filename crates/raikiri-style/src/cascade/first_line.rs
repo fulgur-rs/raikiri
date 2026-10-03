@@ -29,6 +29,7 @@ pub(crate) fn first_line_property_applies(key: PropertyKey) -> bool {
             | FontVariantNumeric
             | FontVariantEastAsian
             | FontVariationSettings
+            | FontFeatureSettings
             | Background
             | BackgroundColor
             | BackgroundImage
@@ -259,6 +260,7 @@ fn first_line_parent(normal: &ComputedValues, first: &ComputedValues) -> Compute
     parent.font_variant_numeric = first.font_variant_numeric;
     parent.font_variant_position = first.font_variant_position;
     parent.font_variation_settings = first.font_variation_settings.clone();
+    parent.font_feature_settings = first.font_feature_settings.clone();
     parent.font_weight = first.font_weight;
     parent.hanging_punctuation = first.hanging_punctuation;
     parent.hyphenate_character = first.hyphenate_character.clone();

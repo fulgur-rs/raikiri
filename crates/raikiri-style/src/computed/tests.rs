@@ -1,8 +1,8 @@
 use super::*;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
-    FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
-    HyphenateLimitCharsValue, Length, TextShadowColor,
+    FontFeatureSetting, FontFeatureSettings, FontSynthesisStyle, FontVariantEastAsianVariant,
+    FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Length, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -119,6 +119,7 @@ fn initial_values_match_spec() {
     assert_eq!(cv.font_variant_numeric, FontVariantNumeric::initial());
     assert_eq!(cv.font_variant_east_asian, FontVariantEastAsian::initial());
     assert_eq!(cv.font_variation_settings, FontVariationSettings::Normal);
+    assert_eq!(cv.font_feature_settings, FontFeatureSettings::Normal);
     // CSS Fonts Module Level 3 §6.6: the initial font-variant-caps is
     // `normal`.
     assert_eq!(cv.font_variant_caps, FontVariantCaps::Normal);
@@ -413,6 +414,10 @@ fn non_initial_parent() -> ComputedValues {
             tag: SmolStr::new("wght"),
             value: 640.0,
         }]),
+        font_feature_settings: FontFeatureSettings::Features(vec![FontFeatureSetting {
+            tag: *b"kern",
+            value: 0,
+        }]),
         // CSS Fonts Module Level 3 §6.6: `SmallCaps` differs from the initial
         // `Normal` (as required for every field of
         // non_initial_parent).
@@ -696,6 +701,11 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.cssom_writing_mode, parent.cssom_writing_mode);
     // CSS Fonts 4 §2.4: font-style is inherited.
     assert_eq!(child.font_style, parent.font_style);
+    assert_eq!(
+        child.font_variation_settings,
+        parent.font_variation_settings
+    );
+    assert_eq!(child.font_feature_settings, parent.font_feature_settings);
     // CSS Fonts 4 §9.3: font-variant-emoji is inherited.
     assert_eq!(child.font_variant_emoji, parent.font_variant_emoji);
     // CSS Fonts 4 §6.13: font-language-override is inherited.

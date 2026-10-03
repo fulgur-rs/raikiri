@@ -19,6 +19,10 @@ fn from_name_is_ascii_case_insensitive_and_maps_legacy_aliases() {
         Some(ComputedProperty::FontVariationSettings)
     );
     assert_eq!(
+        ComputedProperty::from_name("FONT-FEATURE-SETTINGS"),
+        Some(ComputedProperty::FontFeatureSettings)
+    );
+    assert_eq!(
         ComputedProperty::from_name("FONT"),
         Some(ComputedProperty::Font)
     );
@@ -163,6 +167,30 @@ fn font_variation_settings_serializes_the_computed_value() {
     assert_eq!(
         ComputedProperty::FontVariationSettings.serialize(&computed, &mut ch_advance),
         Some("\"wdth\" 90, \"wght\" 700".to_owned())
+    );
+}
+
+#[test]
+fn font_feature_settings_serializes_the_canonical_computed_value() {
+    use crate::property::{FontFeatureSetting, FontFeatureSettings};
+
+    let mut computed = ComputedValues::initial();
+    computed.font_feature_settings = FontFeatureSettings::Features(vec![
+        FontFeatureSetting {
+            tag: *b"kern",
+            value: 0,
+        },
+        FontFeatureSetting {
+            tag: *b"liga",
+            value: 0,
+        },
+    ]);
+    let mut ch_advance =
+        |_: &ChFontKey| -> f32 { panic!("feature settings do not use ch lengths") };
+
+    assert_eq!(
+        ComputedProperty::FontFeatureSettings.serialize(&computed, &mut ch_advance),
+        Some(r#""kern" 0, "liga" 0"#.to_owned())
     );
 }
 

@@ -34,27 +34,28 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnFillValue, ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor,
     CssPosition, CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
-    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
-    TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
-    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
-    TextIndentLength, TextJustify, TextOrientation, TextShadowItem, TextSpacingTrim, TextTransform,
-    TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
-    WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue, empty_box_shadow_list,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
+    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
+    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize,
+    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length,
+    LengthOrAuto, LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
+    ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition,
+    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace,
+    TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
+    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness,
+    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle,
+    TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation, TextShadowItem,
+    TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition, TextWrapMode,
+    TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue, WritingMode,
+    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_internal_center,
+    resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent, ResolveContext,
@@ -380,6 +381,8 @@ pub struct SpecifiedValues {
     /// Specified sequence; preserves authored order and duplicates until finalization.
     /// Inherited values come from the parent computed value.
     pub font_variation_settings: FontVariationSettings,
+    /// Specified OpenType features; inherited values come from the parent computed value.
+    pub font_feature_settings: FontFeatureSettings,
     /// Staging value for [`ComputedValues::font_variant_caps`]; computed-equivalent because
     /// `FontVariantCaps` carries no lengths.
     pub font_variant_caps: FontVariantCaps,
@@ -810,6 +813,7 @@ impl SpecifiedValues {
             font_variant_numeric: FontVariantNumeric::initial(),
             font_variant_east_asian: FontVariantEastAsian::initial(),
             font_variation_settings: FontVariationSettings::Normal,
+            font_feature_settings: FontFeatureSettings::Normal,
             // CSS Fonts Module Level 3 §6.6: font-variant-caps is initially `normal`.
             font_variant_caps: FontVariantCaps::Normal,
             // CSS Text Module Level 3 §2.1: text-transform is initially `none`.
@@ -1099,6 +1103,7 @@ impl SpecifiedValues {
             font_variant_numeric: parent.font_variant_numeric,
             font_variant_east_asian: parent.font_variant_east_asian,
             font_variation_settings: parent.font_variation_settings.clone(),
+            font_feature_settings: parent.font_feature_settings.clone(),
             // CSS Fonts Module Level 3 §6.6: font-variant-caps is inherited.
             font_variant_caps: parent.font_variant_caps,
             // CSS Text Module Level 3 §2.1: text-transform is inherited.
@@ -1961,6 +1966,7 @@ impl SpecifiedValues {
             font_variant_numeric: self.font_variant_numeric,
             font_variant_east_asian: self.font_variant_east_asian,
             font_variation_settings: self.font_variation_settings.canonicalized(),
+            font_feature_settings: self.font_feature_settings.canonicalized(),
             // The computed value is the specified keyword (see FontVariantCaps docs); with no
             // lengths, no relative resolution is needed. Pass through this node's winner.
             font_variant_caps: self.font_variant_caps,

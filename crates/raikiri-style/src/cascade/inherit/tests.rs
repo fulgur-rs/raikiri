@@ -2326,6 +2326,47 @@ fn font_variation_settings_inherits_and_child_value_overrides() {
 }
 
 #[test]
+fn font_feature_settings_inherits_and_child_value_overrides() {
+    use crate::property::{FontFeatureSetting, FontFeatureSettings};
+
+    let parent_value = FontFeatureSettings::Features(vec![
+        FontFeatureSetting {
+            tag: *b"kern",
+            value: 0,
+        },
+        FontFeatureSetting {
+            tag: *b"liga",
+            value: 0,
+        },
+    ]);
+    let child_value = FontFeatureSettings::Features(vec![FontFeatureSetting {
+        tag: *b"kern",
+        value: 0,
+    }]);
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some(r#"font-feature-settings: "kern" on, "liga" off, "kern" off"#),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child =
+        doc.push_element(parent, "em", Some(r#"font-feature-settings: "kern" off"#));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(result.computed[parent].font_feature_settings, parent_value);
+    assert_eq!(
+        result.computed[inherited].font_feature_settings,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[override_child].font_feature_settings,
+        child_value
+    );
+}
+
+#[test]
 fn font_synthesis_inherits_and_child_value_overrides() {
     use crate::property::{FontSynthesisStyle, FontSynthesisValue};
     let mut doc = TestDoc::new();

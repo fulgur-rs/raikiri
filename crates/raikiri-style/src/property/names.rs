@@ -88,6 +88,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "float",
         "font",
         "font-family",
+        "font-feature-settings",
         "font-kerning",
         "font-language-override",
         "font-optical-sizing",

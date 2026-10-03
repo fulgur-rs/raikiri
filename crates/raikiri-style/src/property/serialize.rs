@@ -393,6 +393,20 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
                 .join(", "),
         }),
 
+        PropertyValue::FontFeatureSettings(value) => Some(match value {
+            FontFeatureSettings::Normal => "normal".to_owned(),
+            FontFeatureSettings::Features(settings) if settings.is_empty() => "normal".to_owned(),
+            FontFeatureSettings::Features(settings) => settings
+                .iter()
+                .map(|setting| {
+                    let tag = std::str::from_utf8(&setting.tag).ok()?;
+                    let tag = Token::QuotedString(CowRcStr::from(tag)).to_css_string();
+                    Some(format!("{tag} {}", setting.value))
+                })
+                .collect::<Option<Vec<_>>>()?
+                .join(", "),
+        }),
+
         // Single-keyword properties whose parser accepts exactly the keywords
         // in their keyword table (ASCII case-insensitively) with no legacy
         // remap, so the specified keyword serializes as its canonical

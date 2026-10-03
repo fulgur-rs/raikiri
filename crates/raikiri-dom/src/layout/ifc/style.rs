@@ -344,6 +344,21 @@ pub(crate) fn inline_style(
             ));
         }
     };
+    let font_features = match &cv.font_feature_settings {
+        p::FontFeatureSettings::Normal => Vec::new(),
+        p::FontFeatureSettings::Features(values) => values
+            .iter()
+            .map(|value| s::FontFeature {
+                tag: value.tag,
+                value: value.value,
+            })
+            .collect(),
+        _ => {
+            return Err(unsupported(
+                "font-feature-settings is not represented by shodo",
+            ));
+        }
+    };
     // `math-auto` only changes single-letter MathML identifiers, which are
     // not laid out as paragraph text here: no transform.
     let text_transform = if cv.text_transform == p::TextTransform::MathAuto {
@@ -469,6 +484,7 @@ pub(crate) fn inline_style(
         font_variant_east_asian,
         font_optical_sizing,
         font_variations,
+        font_features,
         line_height,
         letter_spacing,
         word_spacing,

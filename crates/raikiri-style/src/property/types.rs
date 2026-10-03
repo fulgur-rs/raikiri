@@ -1574,6 +1574,54 @@ impl FontVariantEastAsian {
     }
 }
 
+/// `font-feature-settings` values from CSS Fonts 4 §6.12
+/// (<https://www.w3.org/TR/2026/WD-css-fonts-4-20260906/#font-feature-settings-prop>).
+///
+/// Specified values retain authored order and duplicates. Computed values
+/// keep the last value for each case-sensitive tag and sort tags by code unit.
+/// The resulting settings are passed to Shodo for OpenType shaping.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FontFeatureSettings {
+    /// `normal` — the initial value, with no author-specified feature changes.
+    Normal,
+    /// A non-empty list of specified feature tag/value pairs.
+    Features(Vec<FontFeatureSetting>),
+}
+
+/// One `<feature-tag-value>` pair in `font-feature-settings`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontFeatureSetting {
+    /// A case-sensitive, four-byte printable ASCII OpenType feature tag.
+    pub tag: [u8; 4],
+    /// A non-negative feature value (`on` maps to 1 and `off` to 0).
+    pub value: u32,
+}
+
+impl FontFeatureSettings {
+    /// Return the computed representation: last entry per tag, sorted by tag.
+    pub(crate) fn canonicalized(self) -> Self {
+        match self {
+            Self::Normal => Self::Normal,
+            Self::Features(mut settings) => {
+                settings.sort_by_key(|setting| setting.tag);
+                let mut canonical: Vec<FontFeatureSetting> = Vec::with_capacity(settings.len());
+                for setting in settings {
+                    if let Some(last) = canonical.last_mut()
+                        && last.tag == setting.tag
+                    {
+                        *last = setting;
+                        continue;
+                    }
+                    canonical.push(setting);
+                }
+                Self::Features(canonical)
+            }
+        }
+    }
+}
+
 /// `font-variation-settings` value used for specified and computed style.
 /// CSS Fonts 4 §8.2 <https://www.w3.org/TR/css-fonts-4/#font-variation-settings-def>.
 ///
@@ -9670,6 +9718,10 @@ pub enum PropertyValue {
     /// CSS Multi-column Layout Module Level 1 §7.1
     /// (<https://www.w3.org/TR/css-multicol-1/#propdef-column-fill>).
     ColumnFill(ColumnFillValue),
+    /// `font-feature-settings: normal | <feature-tag-value>#` — inherited,
+    /// initial `normal`; carries explicit OpenType feature settings into the
+    /// Shodo text shaper. Appended to preserve existing variant discriminants.
+    FontFeatureSettings(FontFeatureSettings),
 }
 
 /// Property key: the discriminant used to select a winner for each property in
@@ -10231,6 +10283,8 @@ pub enum PropertyKey {
     FontVariationSettings,
     // CSS Multi-column Layout Module Level 1 column-fill; appended to preserve existing key slots.
     ColumnFill,
+    // CSS Fonts 4 font-feature-settings; appended to preserve existing key slots.
+    FontFeatureSettings,
 }
 
 impl PropertyValue {
@@ -10493,6 +10547,7 @@ impl PropertyValue {
             PropertyValue::FontVariantNumeric(_) => PropertyKey::FontVariantNumeric,
             PropertyValue::FontVariantEastAsian(_) => PropertyKey::FontVariantEastAsian,
             PropertyValue::FontVariationSettings(_) => PropertyKey::FontVariationSettings,
+            PropertyValue::FontFeatureSettings(_) => PropertyKey::FontFeatureSettings,
         }
     }
 }
@@ -11576,6 +11631,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "font-variant-numeric" => PropertyKey::FontVariantNumeric,
         "font-variant-east-asian" => PropertyKey::FontVariantEastAsian,
         "font-variation-settings" => PropertyKey::FontVariationSettings,
+        "font-feature-settings" => PropertyKey::FontFeatureSettings,
         "text-transform" => PropertyKey::TextTransform,
         "visibility" => PropertyKey::Visibility,
         "z-index" => PropertyKey::ZIndex,

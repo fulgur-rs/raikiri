@@ -36,6 +36,29 @@ fn font_size_weight_and_family_map() {
 }
 
 #[test]
+fn font_feature_settings_map_to_shodo_and_keep_computed_order() {
+    let style = root_style(r#"font-feature-settings: "kern" 1, "liga" 0, "kern" 0, "KERN" 2"#)
+        .expect("map");
+    assert_eq!(
+        style.font_features,
+        vec![
+            shodo::style::FontFeature {
+                tag: *b"KERN",
+                value: 2,
+            },
+            shodo::style::FontFeature {
+                tag: *b"kern",
+                value: 0,
+            },
+            shodo::style::FontFeature {
+                tag: *b"liga",
+                value: 0,
+            },
+        ]
+    );
+}
+
+#[test]
 fn absolute_letter_and_word_spacing_map() {
     let style = root_style("letter-spacing:2px;word-spacing:3px").expect("map");
     assert_eq!(style.letter_spacing, 2.0);

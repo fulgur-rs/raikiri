@@ -1583,6 +1583,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::FontVariantNumeric(_)
         | PropertyValue::FontVariantEastAsian(_)
         | PropertyValue::FontVariationSettings(_)
+        | PropertyValue::FontFeatureSettings(_)
         // `text-transform` carries no length (`TextTransform` doc) and
         // does not depend on the inheritance parent — nothing for phase 2
         // to resolve.
@@ -2110,6 +2111,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::FontVariantNumeric(value) => target.font_variant_numeric = value,
         PropertyValue::FontVariantEastAsian(value) => target.font_variant_east_asian = value,
         PropertyValue::FontVariationSettings(value) => target.font_variation_settings = value,
+        PropertyValue::FontFeatureSettings(value) => target.font_feature_settings = value,
         PropertyValue::TextTransform(tt) => target.text_transform = tt,
         PropertyValue::TextCombineUpright(value) => target.text_combine_upright = value,
         PropertyValue::TextOrientation(value) => target.text_orientation = value,

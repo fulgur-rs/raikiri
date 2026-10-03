@@ -480,7 +480,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) | PropertyValue::Page(_)
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
-        | PropertyValue::ColumnFill(_) => expand_none(d, push),
+        | PropertyValue::ColumnFill(_)
+        | PropertyValue::FontFeatureSettings(_) => expand_none(d, push),
         PropertyValue::Columns(shorthand) => {
             push(Declaration {
                 value: PropertyValue::ColumnWidth(shorthand.width),
@@ -606,7 +607,7 @@ fn expand_deferred(
             PropertyKey::OutlineStyle,
             PropertyKey::OutlineColor,
         ],
-        // `font` shorthand deferred expansion — 6 grammar longhands plus 9
+        // `font` shorthand deferred expansion — 6 grammar longhands plus 10
         // reset-only subproperties. `font-variant-caps` is already a grammar
         // longhand; `size` is one key whether absolute or relative.
         PropertyKey::Font => &[
