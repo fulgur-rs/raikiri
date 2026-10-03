@@ -70,6 +70,7 @@ pub fn render_print_url(
             font_loader: Some(&font_loader),
             prepare_cascade_images: Some(&prepare_images),
             canvas_bitmaps: None,
+            custom_highlight_ranges: None,
             require_inline_fonts: false,
         },
     )

@@ -15,6 +15,63 @@ pub(super) struct PreparedDynamic {
     pub html: String,
     /// Canvas bitmaps in tree order, empty when the document has no canvas.
     pub canvases: Vec<raikiri_dom::CanvasBitmap>,
+    /// Script-created highlight ranges expressed against the serialized tree.
+    pub custom_highlight_ranges: Vec<CustomHighlightPathRange>,
+}
+
+fn node_path(document: &raikiri_dom::Document, node: usize) -> Option<Vec<usize>> {
+    let root = document.root_index();
+    let mut path = Vec::new();
+    let mut current = node;
+    while current != root {
+        let parent = document.parent_of(current)?;
+        let child_index = document
+            .get_node(parent)?
+            .children
+            .iter()
+            .position(|child| *child == current)?;
+        path.push(child_index);
+        current = parent;
+    }
+    path.reverse();
+    Some(path)
+}
+
+fn utf16_offset_to_byte(text: &str, offset: usize) -> Option<usize> {
+    let mut units = 0;
+    for (byte, character) in text.char_indices() {
+        if units == offset {
+            return Some(byte);
+        }
+        units += character.len_utf16();
+    }
+    (units == offset).then_some(text.len())
+}
+
+fn custom_highlight_paths(
+    document: &raikiri_dom::Document,
+    ranges: &[raikiri_js::runtime::CustomHighlightRange],
+) -> Vec<CustomHighlightPathRange> {
+    ranges
+        .iter()
+        .filter_map(|range| {
+            if range.start_container != range.end_container {
+                return None;
+            }
+            let text = document.get_node(range.start_container)?.text_content()?;
+            let start_byte = utf16_offset_to_byte(text, range.start_offset)?;
+            let end_byte = utf16_offset_to_byte(text, range.end_offset)?;
+            if start_byte >= end_byte {
+                return None;
+            }
+            Some(CustomHighlightPathRange {
+                name: range.name.clone(),
+                node_path: node_path(document, range.start_container)?,
+                start_byte,
+                end_byte,
+            })
+        })
+        .collect()
 }
 
 fn waiting(document: &raikiri_dom::Document) -> bool {
@@ -116,6 +173,7 @@ pub(super) fn prepare(
         return Ok(PreparedDynamic {
             html: html.to_owned(),
             canvases: Vec::new(),
+            custom_highlight_ranges: Vec::new(),
         });
     }
     let parent = path
@@ -149,10 +207,18 @@ pub(super) fn prepare(
             raikiri_js_wasmtime_harness::SINK_SYMBOL_DESCRIPTION,
             raikiri_js_wasmtime_harness::deliver,
         );
+        let highlights = runtime
+            .custom_highlight_ranges()
+            .map_err(|error| ReftestError::RaikiriRender(error.to_string()))?;
         let host = runtime.into_host();
         let canvases = host.document().canvases_in_tree_order();
+        let custom_highlight_ranges = custom_highlight_paths(host.document(), &highlights);
         let html = serialize(host.document(), &report)?;
-        Ok(PreparedDynamic { html, canvases })
+        Ok(PreparedDynamic {
+            html,
+            canvases,
+            custom_highlight_ranges,
+        })
     }
     #[cfg(feature = "js-wasmtime")]
     {
@@ -174,7 +240,11 @@ pub(super) fn prepare(
             .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
         let canvases = runtime.document().canvases_in_tree_order();
         let html = serialize(runtime.document(), &report)?;
-        return Ok(PreparedDynamic { html, canvases });
+        return Ok(PreparedDynamic {
+            html,
+            canvases,
+            custom_highlight_ranges: Vec::new(),
+        });
     }
     #[cfg(not(any(feature = "js-native", feature = "js-wasmtime")))]
     {

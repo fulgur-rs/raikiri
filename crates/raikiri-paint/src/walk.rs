@@ -3147,6 +3147,7 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
 ///
 /// Future work will paint element background-color / border / box-shadow
 /// in the Element arm (which reserves the site for that work).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_document(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -3155,6 +3156,7 @@ pub(crate) fn paint_document(
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
+    custom_highlights: &[crate::TextHighlightRange],
 ) {
     let mut warnings = Vec::new();
     paint_document_impl(
@@ -3167,6 +3169,7 @@ pub(crate) fn paint_document(
         fixed_page_width,
         None,
         &mut warnings,
+        custom_highlights,
     );
 }
 
@@ -3181,6 +3184,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     fixed_page_width: f32,
     pixel_source: &dyn ImagePixelSource,
     warnings: &mut Vec<RenderWarning>,
+    custom_highlights: &[crate::TextHighlightRange],
 ) {
     paint_document_impl(
         scene,
@@ -3192,6 +3196,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
         fixed_page_width,
         Some(pixel_source),
         warnings,
+        custom_highlights,
     );
 }
 
@@ -3206,6 +3211,7 @@ fn paint_document_impl(
     fixed_page_width: f32,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
+    custom_highlights: &[crate::TextHighlightRange],
 ) {
     let Some(body_id) = find_body(document) else {
         return;
@@ -4582,6 +4588,7 @@ fn paint_document_impl(
                         },
                         &child_decorations,
                         fragmentainer,
+                        custom_highlights,
                     );
                     if text_clip.is_some() {
                         scene.pop_layer();
@@ -4706,6 +4713,7 @@ fn paint_document_impl(
                             },
                             &decorations,
                             fragmentainer,
+                            custom_highlights,
                         );
                     }
                     // Any other text node lies outside every paragraph and

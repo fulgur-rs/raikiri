@@ -38,7 +38,7 @@ use crate::media::MediaContext;
 use crate::page::{
     PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_media_context,
 };
-use crate::property::{PropertyKey, Sides, WritingMode};
+use crate::property::{CssColor, PropertyKey, Sides, WritingMode};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -56,6 +56,8 @@ static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 #[non_exhaustive]
 pub struct CascadeResult {
     generation: u64,
+    /// Winning custom-highlight background colors keyed by highlight name.
+    pub custom_highlight_styles: HashMap<String, CssColor>,
     /// Per-node computed values (indexed by NodeId.0 as usize).
     /// Populated for Element / Text / Document kinds; out-of-range access
     /// panics and is the caller's responsibility.
@@ -318,6 +320,7 @@ fn cascade_from_candidates<D: StyleDom>(
 
     Ok(CascadeResult {
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
+        custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
         computed,
         opacity_specified,
         background_color_specified,
