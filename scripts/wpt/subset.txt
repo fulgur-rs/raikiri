@@ -2,11 +2,14 @@
 # `fetch.sh` applies these patterns to the shared checkout, so do not narrow
 # this list or add a one-task path: another branch could then hide test files
 # already visible through sibling worktree symlinks.
-# Keep the complete CSS tree plus ACID plus its shared font/image fixtures materialized.
+# Keep the complete CSS tree plus ACID and its shared helper/font/image fixtures.
 acid
 css
 fonts
 images
+# /common carries shared WPT helpers, including rendering-utils.js used by CSS
+# reftests.
+/common
 # /resources is anchored (leading slash) so it matches only the top-level
 # resources/ directory, not the thousands of per-test resources/ helper
 # directories nested throughout the WPT tree. It carries the real

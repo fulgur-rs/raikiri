@@ -7,12 +7,15 @@ commands and Rust tests. Removing `target/` (for example with `cargo clean`)
 removes only the link; `fetch.sh` and the gate recreate it from the home cache.
 
 `subset.txt` defines the shared sparse roots: all of `acid/`, `css/`, `fonts/`,
-`images/`, the top-level `resources/` (anchored as `/resources` so it
-pulls in only the WPT-root `resources/` directory, not the many per-test
-`resources/` helper directories nested throughout the tree), upstream
+`images/`, and the top-level `common/` and `resources/` trees. The
+`/resources` pattern is anchored so it selects only the WPT-root directory,
+not the per-test `resources/` helper directories nested throughout the tree.
+It also includes upstream
 `tools/`, the root `wpt` CLI, and `/docs/commands.json`, which that CLI reads
 while loading its command registry. The top-level
-`resources/` directory carries the real `testharness.js`,
+`common/` carries shared helpers used by reftests, including
+`rendering-utils.js`. The top-level `resources/` directory carries the real
+`testharness.js`,
 `testharnessreport.js`, `check-layout-th.js`, and `testdriver*.js`, so
 JS-driven WPT pages can load their scripts from files instead of needing a
 substitute harness. `fetch.sh` validates this exact set and atomically
@@ -285,4 +288,3 @@ machine-dependent). `--wpt-fonts` names that default and changes nothing; the fo
 Outside `run-baseline-report` (unit tests, `run_pair`), the engine falls back to the
 installed fonts when no WPT font directory exists, so a checkout
 without the fetched WPT fonts still runs the tests.
-

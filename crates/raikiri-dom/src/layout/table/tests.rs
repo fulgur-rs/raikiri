@@ -1,6 +1,8 @@
 use crate::document::Document;
-use raikiri_style::property::DisplayValue;
-use raikiri_style::{build_rule_tree, cascade};
+use raikiri_style::property::{
+    Border, BorderColor, BorderStyle, CssColor, DisplayValue, Length, Sides,
+};
+use raikiri_style::{ComputedLength, ResolveContext, build_rule_tree, cascade, resolve_border};
 use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
@@ -135,6 +137,206 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
             .is_err()
         );
     }
+}
+
+fn collapsed_candidate(
+    style: BorderStyle,
+    width: f32,
+    color: CssColor,
+) -> super::CollapsedBorderCandidate {
+    let mut specified = Border::new();
+    specified.width = Length::Px(width);
+    specified.style = style;
+    specified.color = BorderColor::Resolved(color);
+    let border = resolve_border(
+        specified,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::initial(),
+    );
+    super::CollapsedBorderCandidate {
+        border,
+        taffy_width: LengthPercentage::length(border.width().px()),
+    }
+}
+
+#[test]
+fn collapsed_border_conflict_prefers_hidden_and_non_none_styles() {
+    let solid = collapsed_candidate(BorderStyle::Solid, 8.0, CssColor::BLACK);
+    let hidden = collapsed_candidate(BorderStyle::Hidden, 1.0, CssColor::BLACK);
+    let none = collapsed_candidate(BorderStyle::None, 12.0, CssColor::BLACK);
+
+    let hidden_winner = super::collapsed_border_winner(solid, hidden);
+    assert_eq!(hidden_winner.border.style(), BorderStyle::Hidden);
+    assert_eq!(hidden_winner.border.width(), ComputedLength::ZERO);
+
+    let hidden_leading_winner = super::collapsed_border_winner(hidden, solid);
+    assert_eq!(hidden_leading_winner.border.style(), BorderStyle::Hidden);
+
+    let solid_winner = super::collapsed_border_winner(none, solid);
+    assert_eq!(solid_winner.border.style(), BorderStyle::Solid);
+    assert_eq!(solid_winner.border.width(), ComputedLength(8.0));
+
+    let solid_leading_winner = super::collapsed_border_winner(solid, none);
+    assert_eq!(solid_leading_winner.border.style(), BorderStyle::Solid);
+}
+
+#[test]
+fn collapsed_border_conflict_prefers_width_before_style() {
+    let wide_solid = collapsed_candidate(BorderStyle::Solid, 5.0, CssColor::BLACK);
+    let narrow_double = collapsed_candidate(BorderStyle::Double, 4.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, narrow_double);
+    assert_eq!(winner.border.style(), BorderStyle::Solid);
+    assert_eq!(winner.border.width(), ComputedLength(5.0));
+
+    let same_width_double = collapsed_candidate(BorderStyle::Double, 5.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, same_width_double);
+    assert_eq!(winner.border.style(), BorderStyle::Double);
+    assert_eq!(winner.border.width(), ComputedLength(5.0));
+
+    let narrower_solid = collapsed_candidate(BorderStyle::Solid, 4.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, narrower_solid);
+    assert_eq!(winner.border.width(), ComputedLength(5.0));
+
+    let same_width_solid = collapsed_candidate(BorderStyle::Solid, 5.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, same_width_solid);
+    assert_eq!(winner.border.color, wide_solid.border.color);
+}
+
+#[test]
+fn collapsed_border_style_precedence_matches_css_order() {
+    let styles = [
+        BorderStyle::Double,
+        BorderStyle::Solid,
+        BorderStyle::Dashed,
+        BorderStyle::Dotted,
+        BorderStyle::Ridge,
+        BorderStyle::Outset,
+        BorderStyle::Groove,
+        BorderStyle::Inset,
+    ];
+    for pair in styles.windows(2) {
+        let stronger = collapsed_candidate(pair[0], 5.0, CssColor::BLACK);
+        let weaker = collapsed_candidate(pair[1], 5.0, CssColor::BLACK);
+        assert_eq!(
+            super::collapsed_border_winner(stronger, weaker)
+                .border
+                .style(),
+            pair[0]
+        );
+    }
+    assert_eq!(super::border_style_rank(BorderStyle::Hidden), 9);
+    assert_eq!(super::border_style_rank(BorderStyle::None), 0);
+}
+
+#[test]
+fn collapsed_border_conflict_prefers_the_leading_cell_on_a_tie() {
+    let left = collapsed_candidate(
+        BorderStyle::Solid,
+        5.0,
+        CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        },
+    );
+    let right = collapsed_candidate(
+        BorderStyle::Solid,
+        5.0,
+        CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255,
+        },
+    );
+
+    assert_eq!(
+        super::collapsed_border_winner(left, right).border.color,
+        left.border.color
+    );
+}
+
+#[test]
+fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
+    let mut doc = Document::new();
+    let widths = [3.0, 5.0, 7.0, 9.0];
+    let cells = widths.map(|width| {
+        let id = bordered_cell(&mut doc, width);
+        let candidate = collapsed_candidate(BorderStyle::Solid, width, CssColor::BLACK);
+        doc.nodes[id].computed_border = Some(Sides::all(candidate.border));
+        id
+    });
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![0, 0],
+        cells: vec![
+            make_cell(cells[0], 0, 0, 1, 1, Dimension::auto()),
+            make_cell(cells[1], 0, 1, 1, 1, Dimension::auto()),
+            make_cell(cells[2], 1, 0, 1, 1, Dimension::auto()),
+            make_cell(cells[3], 1, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+
+    assert_eq!(
+        doc.nodes[cells[0]].style.border.right,
+        LengthPercentage::length(5.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[1]].style.border.left,
+        LengthPercentage::length(5.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[2]].style.border.right,
+        LengthPercentage::length(9.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[3]].style.border.left,
+        LengthPercentage::length(9.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[0]].style.border.bottom,
+        LengthPercentage::length(7.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[2]].style.border.top,
+        LengthPercentage::length(7.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[1]].style.border.bottom,
+        LengthPercentage::length(9.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[3]].style.border.top,
+        LengthPercentage::length(9.0)
+    );
+
+    super::resolve_collapsed_border_pair(
+        &mut doc,
+        cells[0],
+        super::CellBorderSide::Top,
+        cells[1],
+        super::CellBorderSide::Right,
+    );
+    super::resolve_collapsed_border_pair(
+        &mut doc,
+        cells[0],
+        super::CellBorderSide::Left,
+        cells[1],
+        super::CellBorderSide::Bottom,
+    );
+    let missing_border = bordered_cell(&mut doc, 1.0);
+    super::resolve_collapsed_border_pair(
+        &mut doc,
+        cells[0],
+        super::CellBorderSide::Left,
+        missing_border,
+        super::CellBorderSide::Right,
+    );
 }
 
 fn build_simple_2x2() -> Document {

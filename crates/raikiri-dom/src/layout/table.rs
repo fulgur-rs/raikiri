@@ -23,22 +23,24 @@
 //! - Fixed layout reads specified widths from **first-row cells only** —
 //!   `col` / `colgroup` `width` is ignored (the grid does not track column
 //!   boxes yet). Fixed with an indefinite table width falls back to auto.
-//! - Collapse uses a **simplified max-width conflict resolution**: each grid
-//!   line takes the max of the adjoining border widths. Style-priority
-//!   resolution (`hidden` > `double` > …) and half-border centering are out
-//!   of scope — adjoining boxes overlap by the pairwise min so the visible
-//!   line equals the max.
+//! - Collapse resolves border conflicts between adjacent cells using style,
+//!   width, and top/left tie-breaking before intrinsic track sizing. Row,
+//!   row-group, column, and column-group candidates and half-border centering
+//!   remain out of scope.
 //! - `border-spacing` (separate model gaps) is not implemented — separate
 //!   cells abut exactly.
 //! - Nested tables are depth-capped fail-closed (`MAX_TABLE_NESTING`).
 
-use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue, WritingMode};
+use raikiri_style::ComputedBorder;
+use raikiri_style::property::{
+    BorderCollapseValue, BorderStyle, DisplayValue, TableLayoutValue, WritingMode,
+};
 use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
 use taffy::tree::{RunMode, SizingMode};
 use taffy::{
-    AvailableSpace, Layout as TaffyLayout, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
-    Point, Rect, Size,
+    AvailableSpace, Layout as TaffyLayout, LayoutInput, LayoutOutput, LayoutPartialTree,
+    LengthPercentage, NodeId, Point, Rect, Size,
 };
 
 use crate::document::Document;
@@ -232,6 +234,9 @@ fn compute_table_layout_checked(
     let mut grid = build_table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
+    if collapse && !grid.rows.is_empty() && grid.n_cols > 0 {
+        resolve_collapsed_cell_borders(doc, &grid);
+    }
     let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
 
     // Container metrics, split so collapse can substitute collapsed outer
@@ -1737,6 +1742,161 @@ fn cell_at(grid: &TableGrid, row: u16, col: u16) -> Option<&CellPlacement> {
             && col >= c.col_start
             && col < c.col_start + c.col_span
     })
+}
+
+#[derive(Clone, Copy)]
+enum CellBorderSide {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+#[derive(Clone, Copy)]
+struct CollapsedBorderCandidate {
+    border: ComputedBorder,
+    taffy_width: LengthPercentage,
+}
+
+fn border_candidate(
+    doc: &Document,
+    node_id: usize,
+    side: CellBorderSide,
+) -> Option<CollapsedBorderCandidate> {
+    let borders = doc.nodes[node_id].computed_border.as_ref()?;
+    let (border, taffy_width) = match side {
+        CellBorderSide::Top => (borders.top, doc.nodes[node_id].style.border.top),
+        CellBorderSide::Right => (borders.right, doc.nodes[node_id].style.border.right),
+        CellBorderSide::Bottom => (borders.bottom, doc.nodes[node_id].style.border.bottom),
+        CellBorderSide::Left => (borders.left, doc.nodes[node_id].style.border.left),
+    };
+    Some(CollapsedBorderCandidate {
+        border,
+        taffy_width,
+    })
+}
+
+fn border_style_rank(style: BorderStyle) -> u8 {
+    match style {
+        BorderStyle::Double => 8,
+        BorderStyle::Solid => 7,
+        BorderStyle::Dashed => 6,
+        BorderStyle::Dotted => 5,
+        BorderStyle::Ridge => 4,
+        BorderStyle::Outset => 3,
+        BorderStyle::Groove => 2,
+        BorderStyle::Inset => 1,
+        BorderStyle::None => 0,
+        BorderStyle::Hidden => 9,
+        _ => 0, // cov:ignore: BorderStyle is non-exhaustive and has no other current variants.
+    }
+}
+
+fn collapsed_border_winner(
+    leading: CollapsedBorderCandidate,
+    trailing: CollapsedBorderCandidate,
+) -> CollapsedBorderCandidate {
+    let leading_style = leading.border.style();
+    let trailing_style = trailing.border.style();
+    if leading_style == BorderStyle::Hidden {
+        return leading;
+    }
+    if trailing_style == BorderStyle::Hidden {
+        return trailing;
+    }
+    if leading_style == BorderStyle::None {
+        return trailing;
+    }
+    if trailing_style == BorderStyle::None {
+        return leading;
+    }
+
+    let width_order = leading
+        .border
+        .width()
+        .px()
+        .total_cmp(&trailing.border.width().px());
+    if width_order.is_gt() {
+        return leading;
+    }
+    if width_order.is_lt() {
+        return trailing;
+    }
+
+    if border_style_rank(leading_style) >= border_style_rank(trailing_style) {
+        leading
+    } else {
+        trailing
+    }
+}
+
+fn resolve_collapsed_border_pair(
+    doc: &mut Document,
+    leading_id: usize,
+    leading_side: CellBorderSide,
+    trailing_id: usize,
+    trailing_side: CellBorderSide,
+) {
+    let (Some(leading), Some(trailing)) = (
+        border_candidate(doc, leading_id, leading_side),
+        border_candidate(doc, trailing_id, trailing_side),
+    ) else {
+        return;
+    };
+    let width = collapsed_border_winner(leading, trailing).taffy_width;
+    match leading_side {
+        CellBorderSide::Top => doc.nodes[leading_id].style.border.top = width,
+        CellBorderSide::Right => doc.nodes[leading_id].style.border.right = width,
+        CellBorderSide::Bottom => doc.nodes[leading_id].style.border.bottom = width,
+        CellBorderSide::Left => doc.nodes[leading_id].style.border.left = width,
+    }
+    match trailing_side {
+        CellBorderSide::Top => doc.nodes[trailing_id].style.border.top = width,
+        CellBorderSide::Right => doc.nodes[trailing_id].style.border.right = width,
+        CellBorderSide::Bottom => doc.nodes[trailing_id].style.border.bottom = width,
+        CellBorderSide::Left => doc.nodes[trailing_id].style.border.left = width,
+    }
+}
+
+fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
+    let column_count = grid.n_cols as usize;
+    for boundary in 1..column_count {
+        for row in 0..grid.rows.len() {
+            let row = row as u16;
+            let left = cell_at(grid, row, (boundary - 1) as u16)
+                .filter(|cell| cell.col_start + cell.col_span == boundary as u16);
+            let right = cell_at(grid, row, boundary as u16)
+                .filter(|cell| cell.col_start == boundary as u16);
+            if let (Some(left), Some(right)) = (left, right) {
+                resolve_collapsed_border_pair(
+                    doc,
+                    left.node_id,
+                    CellBorderSide::Right,
+                    right.node_id,
+                    CellBorderSide::Left,
+                );
+            }
+        }
+    }
+
+    for boundary in 1..grid.rows.len() {
+        for column in 0..column_count {
+            let boundary = boundary as u16;
+            let column = column as u16;
+            let above = cell_at(grid, boundary - 1, column)
+                .filter(|cell| cell.row + cell.row_span == boundary);
+            let below = cell_at(grid, boundary, column).filter(|cell| cell.row == boundary);
+            if let (Some(above), Some(below)) = (above, below) {
+                resolve_collapsed_border_pair(
+                    doc,
+                    above.node_id,
+                    CellBorderSide::Bottom,
+                    below.node_id,
+                    CellBorderSide::Top,
+                );
+            }
+        }
+    }
 }
 
 fn compute_collapsed_lines(
