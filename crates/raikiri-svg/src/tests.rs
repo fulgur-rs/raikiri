@@ -1,6 +1,483 @@
-use super::{SvgDocument, SvgError, SvgRootStyle, SvgViewport};
+use super::{
+    ParsedCssDeclaration, SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
+    append_inline_declarations, apply_css_rewrite, apply_selector_edits,
+    freeze_svg_stylesheet_selectors, normalize_svg_opacity_cascade, scope_stylesheet_properties,
+    scoped_property_rule_len, strip_inline_style_properties, strip_stylesheet_properties,
+    unique_attribute_name, with_root_style_overrides, xml_attribute_escape_allocation_bytes,
+};
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
+
+fn selector_freezing_svg(css: &str, elements: usize) -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><style>{css}</style>{}</svg>",
+        "<rect width=\"1\" height=\"1\"/>".repeat(elements)
+    )
+}
+
+fn assert_selector_freezing_rejected(source: &str) {
+    let svg = SvgDocument::parse(source.as_bytes()).expect("supported original SVG");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    for css_pixel_scale in [false, true] {
+        let result = if css_pixel_scale {
+            svg.rasterize_at_css_pixel_scale(viewport, SvgRootStyle::default(), Some(4))
+        } else {
+            svg.rasterize(viewport, SvgRootStyle::default(), Some(4))
+        };
+        assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+            if message.contains("selector freezing resource limit")));
+    }
+}
+
+#[test]
+fn selector_freezing_rejects_excessive_matches_with_a_one_pixel_output() {
+    let source = selector_freezing_svg(&"rect { fill:red }".repeat(257), 256);
+    assert_selector_freezing_rejected(&source);
+}
+
+#[test]
+fn selector_freezing_rejects_amplified_declarations_from_selector_aliases() {
+    let selectors = vec!["rect"; 128].join(",");
+    let css = format!("{selectors} {{ fill:red; unused:{} }}", "a".repeat(70_000));
+    assert_selector_freezing_rejected(&selector_freezing_svg(&css, 1));
+}
+
+#[test]
+fn selector_freezing_keeps_ordinary_aliases_and_cascade_pixels() {
+    let source = selector_freezing_svg(
+        "rect, svg rect { fill:blue } rect { fill:red!important }",
+        2,
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).expect("ordinary SVG");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    for image in [
+        svg.rasterize(viewport, SvgRootStyle::default(), Some(4)),
+        svg.rasterize_at_css_pixel_scale(viewport, SvgRootStyle::default(), Some(4)),
+    ] {
+        assert_eq!(
+            image.expect("ordinary freezing succeeds").rgba,
+            [255, 0, 0, 255]
+        );
+    }
+}
+
+#[test]
+fn selector_freezing_shares_limits_across_style_elements() {
+    let source = selector_freezing_svg(&"rect { fill:red }".repeat(128), 256).replace(
+        "</style>",
+        &format!("</style><style>{}</style>", "rect { fill:red }".repeat(129)),
+    );
+    assert_selector_freezing_rejected(&source);
+}
+
+#[test]
+fn selector_freezing_charges_xml_escape_expansion_before_allocation() {
+    let selectors = vec!["rect"; 128].join(",");
+    let css = format!(
+        "<![CDATA[{selectors} {{ fill:red; unused:'{}' }}]]>",
+        "&".repeat(20_000)
+    );
+    assert_selector_freezing_rejected(&selector_freezing_svg(&css, 1));
+}
+
+#[test]
+fn selector_freezing_limits_nonmatching_selector_work() {
+    assert_selector_freezing_rejected(&selector_freezing_svg(
+        &"missing { fill:red }".repeat(1025),
+        1024,
+    ));
+}
+
+#[test]
+fn selector_freezing_rejects_excessive_descendant_matcher_work() {
+    let selectors = [
+        format!("z {}", ["*"; 12].join(" ")),
+        format!("[data-never] {}", ["*"; 12].join(" ")),
+    ];
+    for selector in selectors {
+        let mut source = "<svg>".to_owned();
+        for _ in 0..12 {
+            source.push_str("<g>");
+        }
+        for _ in 0..12 {
+            source.push_str("</g>");
+        }
+        source.push_str(&format!("<style>{selector} {{ fill:red }}</style></svg>"));
+        let mut budget = SelectorFreezeBudget {
+            bytes: usize::MAX,
+            matches: usize::MAX,
+            checks: 100,
+        };
+
+        let result = freeze_svg_stylesheet_selectors(&source, &mut budget);
+
+        assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+            if message.contains("selector freezing resource limit")));
+    }
+}
+
+#[test]
+fn selector_freezing_limits_deep_child_matcher_recursion() {
+    let selector = std::iter::once("z")
+        .chain(std::iter::repeat_n("g", 140))
+        .collect::<Vec<_>>()
+        .join(" > ");
+    let mut source = "<svg>".to_owned();
+    for _ in 0..140 {
+        source.push_str("<g>");
+    }
+    for _ in 0..140 {
+        source.push_str("</g>");
+    }
+    source.push_str(&format!("<style>{selector} {{ fill:red }}</style></svg>"));
+    let mut budget = SelectorFreezeBudget {
+        bytes: usize::MAX,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = freeze_svg_stylesheet_selectors(&source, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn selector_freezing_budget_survives_opacity_normalization() {
+    let css = format!("rect {{ opacity:0.5{} }}", "0".repeat(60_000));
+    let source = selector_freezing_svg(&css, 600);
+    let svg = SvgDocument::parse(source.as_bytes()).expect("supported long opacity token");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    let style = SvgRootStyle {
+        neutralize_root_opacity: true,
+        ..SvgRootStyle::default()
+    };
+    for result in [
+        svg.rasterize(viewport, style, Some(4)),
+        svg.rasterize_at_css_pixel_scale(viewport, style, Some(4)),
+    ] {
+        assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+            if message.contains("selector freezing resource limit")));
+    }
+}
+
+#[test]
+fn selector_freezing_budget_covers_xml_escape_and_opacity_stylesheet_copy() {
+    let payload = "<>&".repeat(400_000);
+    let css = format!("<![CDATA[rect {{ fill:'{payload}'; opacity:0.5 }}]]>");
+    let source = selector_freezing_svg(&css, 1);
+    let svg = SvgDocument::parse(source.as_bytes()).expect("supported large SVG stylesheet");
+    let result = svg.rasterize(
+        SvgViewport {
+            width: 1.0,
+            height: 1.0,
+        },
+        SvgRootStyle {
+            neutralize_root_opacity: true,
+            ..SvgRootStyle::default()
+        },
+        Some(4),
+    );
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn selector_edit_application_rejects_overlapping_ranges() {
+    let result = apply_selector_edits(
+        "abc",
+        vec![(0..2, "x".to_owned()), (1..3, "y".to_owned())],
+        &mut SelectorFreezeBudget::new(),
+    );
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message == "overlapping SVG selector edits"));
+}
+
+#[test]
+fn root_style_rewrite_obeys_the_shared_selector_match_budget() {
+    let source = "<svg><style>svg { background:red }</style><rect/><rect/></svg>";
+    let mut budget = SelectorFreezeBudget {
+        bytes: usize::MAX,
+        matches: 1,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn root_style_rewrite_charges_scoped_css_expansion_before_allocation() {
+    let selectors = ["rect"; 12].join(",");
+    let source = format!("<svg><style>{selectors} {{ background:red }}</style><rect/></svg>");
+    let mut budget = SelectorFreezeBudget {
+        bytes: source.len() * 8,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(&source, 1.0, false, true, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn root_style_rewrite_rejects_budget_exhaustion_before_removing_root_attributes() {
+    let source = "<svg background=\"red\"/>";
+    let mut budget = SelectorFreezeBudget {
+        bytes: source.len(),
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn root_style_rewrite_rejects_budget_exhaustion_before_copying_existing_style() {
+    let source = "<svg style=\"color:red\"/>";
+    let mut budget = SelectorFreezeBudget {
+        bytes: source.len(),
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(source, 1.0, true, false, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn root_style_rewrite_rejects_budget_exhaustion_before_replacing_existing_style() {
+    let source = "<svg style=\"color:red\"/>";
+    let original_style = "color:red";
+    let retained = strip_inline_style_properties(original_style, &["opacity"]);
+    let rewritten_style = append_inline_declarations(&retained, "opacity:1");
+    let budget_bytes = source.len()
+        + original_style.len() * 8
+        + xml_attribute_escape_allocation_bytes(&rewritten_style).unwrap();
+    let mut budget = SelectorFreezeBudget {
+        bytes: budget_bytes,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(source, 1.0, true, false, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn root_style_rewrite_rejects_budget_exhaustion_before_copying_stylesheet_text() {
+    let source = "<svg><style>rect { background:red }</style></svg>";
+    let scope_attribute = "data-raikiri-root-opacity-scope";
+    let mut budget = SelectorFreezeBudget {
+        bytes: source.len() + scope_attribute.len(),
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes() {
+    let source = "<svg><style>rect { background:red }</style><rect/></svg>";
+    let mut full_budget = SelectorFreezeBudget {
+        bytes: usize::MAX,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+    let rewritten = with_root_style_overrides(source, 1.0, false, true, &mut full_budget).unwrap();
+    let bytes_through_scope_rewrite = usize::MAX - full_budget.bytes - rewritten.len() - 1;
+    let mut limited_budget = SelectorFreezeBudget {
+        bytes: bytes_through_scope_rewrite,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(source, 1.0, false, true, &mut limited_budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn opacity_normalizer_skips_non_css_and_empty_style_elements() {
+    let source = "<svg><style type=\"text/plain\">opacity:.5</style><style><!-- empty --></style><style><![CDATA[]]></style></svg>";
+    let rewritten =
+        normalize_svg_opacity_cascade(source, &mut SelectorFreezeBudget::new()).unwrap();
+
+    assert_eq!(rewritten, source);
+}
+
+#[test]
+fn stylesheet_rewrite_charges_each_removed_range_as_work() {
+    let mut budget = SelectorFreezeBudget {
+        bytes: usize::MAX,
+        matches: usize::MAX,
+        checks: 1,
+    };
+
+    let result = strip_stylesheet_properties(
+        "rect { opacity:.25; color:red; opacity:.5 }",
+        &["opacity"],
+        &mut budget,
+    );
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn stylesheet_rewrite_stops_when_declaration_storage_exceeds_budget() {
+    let source = "rect{background:red}";
+    let prelude_storage = "rect".len() + 2 * std::mem::size_of::<String>();
+    let mut budget = SelectorFreezeBudget {
+        bytes: prelude_storage,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = scope_stylesheet_properties(source, "scope", &["background"], &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn stylesheet_rewrite_stops_before_allocating_scoped_declaration_references() {
+    let source = "rect{background:red}";
+    let prelude_storage = "rect".len() + 2 * std::mem::size_of::<String>();
+    let declaration_storage =
+        "background".len() + "red".len() + 2 * std::mem::size_of::<ParsedCssDeclaration>();
+    let mut budget = SelectorFreezeBudget {
+        bytes: prelude_storage
+            + declaration_storage
+            + 2 * std::mem::size_of::<&ParsedCssDeclaration>()
+            - 1,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = scope_stylesheet_properties(source, "scope", &["background"], &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+    assert!(budget.bytes < 2 * std::mem::size_of::<&ParsedCssDeclaration>());
+}
+
+#[test]
+fn stylesheet_rewrite_rejects_invalid_removal_ranges() {
+    let invalid_ranges = [vec![0..1, 0..1], std::iter::once(2..4).collect::<Vec<_>>()];
+    for removals in invalid_ranges {
+        let result = apply_css_rewrite(
+            "abc",
+            removals,
+            Vec::new(),
+            &mut SelectorFreezeBudget::new(),
+        );
+
+        assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+            if message == "overlapping SVG CSS rewrite ranges"));
+    }
+}
+
+#[test]
+fn scoped_property_rule_omits_selectors_without_a_scopeable_component() {
+    assert_eq!(
+        scoped_property_rule_len("/* only a comment */", "scope", &["background:red".into()]),
+        None
+    );
+}
+
+#[test]
+fn marker_prefix_collision_search_skips_all_existing_numeric_suffixes() {
+    let base = "data-raikiri-root-opacity-scope";
+    let source = format!("{base} {base}-2");
+    let mut budget = SelectorFreezeBudget::new();
+
+    assert_eq!(
+        unique_attribute_name(&source, base, &mut budget).unwrap(),
+        format!("{base}-3")
+    );
+}
+
+#[test]
+fn marker_prefix_collision_search_skips_suffixes_without_digits() {
+    let base = "data-raikiri-root-opacity-scope";
+    let source = format!("{base}- {base}-text {base}-2");
+    let mut budget = SelectorFreezeBudget::new();
+
+    assert_eq!(
+        unique_attribute_name(&source, base, &mut budget).unwrap(),
+        format!("{base}-3")
+    );
+}
+
+#[test]
+fn selector_freezing_accepts_the_match_limit_and_preserves_skip_paths() {
+    let source = selector_freezing_svg(&"rect { fill:red }".repeat(256), 256);
+    let svg = SvgDocument::parse(source.as_bytes()).expect("exact-limit SVG");
+    let viewport = SvgViewport {
+        width: 1.0,
+        height: 1.0,
+    };
+    assert_eq!(
+        svg.rasterize(viewport, SvgRootStyle::default(), Some(4))
+            .unwrap()
+            .rgba,
+        [255, 0, 0, 255]
+    );
+
+    let excessive = selector_freezing_svg(&"rect { fill:red }".repeat(257), 256);
+    let svg = SvgDocument::parse(excessive.as_bytes()).unwrap();
+    for style in [
+        SvgRootStyle {
+            visible: false,
+            ..SvgRootStyle::default()
+        },
+        SvgRootStyle {
+            opacity: 0.0,
+            ..SvgRootStyle::default()
+        },
+    ] {
+        assert_eq!(
+            svg.rasterize(viewport, style, Some(4)).unwrap().rgba,
+            [0; 4]
+        );
+    }
+    let unchanged = excessive.replacen("<svg ", "<svg color=\"red\" ", 1);
+    let svg = SvgDocument::parse(unchanged.as_bytes()).unwrap();
+    assert_eq!(
+        svg.rasterize(viewport, SvgRootStyle::default(), Some(4))
+            .unwrap()
+            .rgba,
+        [255, 0, 0, 255]
+    );
+}
 
 #[test]
 fn rasterizes_at_requested_size_and_returns_straight_alpha_rgba() {
