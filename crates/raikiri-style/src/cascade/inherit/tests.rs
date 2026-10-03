@@ -6,15 +6,16 @@ use crate::media::MediaContext;
 use crate::property::CssColor;
 use crate::property::DisplayValue;
 use crate::property::{
-    Border, BorderColor, BorderStyle, CalcLengthPercentage, ContentComponent, GridAreaShorthand,
-    GridAutoFlowValue, GridLineValue, GridShorthand, GridTemplateAreasValue, GridTemplateTracks,
-    HyphenateLimitChars, HyphenateLimitCharsValue, Length, LengthOrAuto, ListStylePosition,
-    ListStyleType, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PageValue,
-    PositionValue, PropertyKey, PropertyValue, Sides, TextCombineUpright, TextDecorationColor,
-    TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness,
-    TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape,
-    TextEmphasisStyle, TextEmphasisVEdge, TextOrientation, TextShadowColor, TextUnderlinePosition,
-    UnicodeBidi, WritingMode, empty_counter_entries, initial_grid_auto_track_list,
+    Border, BorderColor, BorderStyle, CalcLengthPercentage, ColumnFillValue, ContentComponent,
+    GridAreaShorthand, GridAutoFlowValue, GridLineValue, GridShorthand, GridTemplateAreasValue,
+    GridTemplateTracks, HyphenateLimitChars, HyphenateLimitCharsValue, Length, LengthOrAuto,
+    ListStylePosition, ListStyleType, Outline, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowXY, PageValue, PositionValue, PropertyKey, PropertyValue, Sides, TextCombineUpright,
+    TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
+    TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition,
+    TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge, TextOrientation, TextShadowColor,
+    TextUnderlinePosition, UnicodeBidi, WritingMode, empty_counter_entries,
+    initial_grid_auto_track_list,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -702,6 +703,26 @@ fn author_multicol_longhands_compute_through_cascade() {
         cv.column_width,
         crate::resolve::ComputedColumnWidth::Px(32.0)
     );
+}
+
+#[test]
+fn column_fill_defaults_to_balance_and_is_not_inherited() {
+    let (parent, child) = cascade_parent_child("div", Some("column-fill: auto"), "span", None);
+    assert_eq!(parent.column_fill, ColumnFillValue::Auto);
+    assert_eq!(child.column_fill, ColumnFillValue::Balance);
+    assert_eq!(
+        ComputedValues::initial().column_fill,
+        ColumnFillValue::Balance
+    );
+
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("column-fill: balance-all"),
+        "span",
+        Some("column-fill: balance"),
+    );
+    assert_eq!(parent.column_fill, ColumnFillValue::BalanceAll);
+    assert_eq!(child.column_fill, ColumnFillValue::Balance);
 }
 
 #[test]

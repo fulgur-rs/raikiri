@@ -1349,6 +1349,11 @@ pub(super) fn parse_column_count(input: &mut Parser<'_, '_>) -> Option<ColumnCou
     Some(ColumnCountValue::Count(u32::try_from(count).ok()?))
 }
 
+/// `column-fill: auto | balance | balance-all`.
+pub(super) fn parse_column_fill(input: &mut Parser<'_, '_>) -> Option<ColumnFillValue> {
+    ColumnFillValue::from_css_ident(input.expect_ident().ok()?)
+}
+
 /// `column-width: auto | <length [0,∞]>`.
 pub(super) fn parse_column_width(input: &mut Parser<'_, '_>) -> Option<ColumnWidthValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {

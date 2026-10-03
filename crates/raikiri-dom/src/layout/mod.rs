@@ -17,10 +17,10 @@ use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
 use raikiri_style::property::{
     AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
-    CalcLengthPercentage, ClearValue, ColumnCountValue, ContentAlignmentValue, Direction,
-    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue, GridLineValue,
-    GridRepeatCount, GridTemplateAreasValue, Length, LengthOrAuto, OverflowValue, PositionValue,
-    PropertyKey, PropertyValue, RubyPosition, SelfAlignmentValue, WritingMode,
+    CalcLengthPercentage, ClearValue, ColumnCountValue, ColumnFillValue, ContentAlignmentValue,
+    Direction, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue,
+    GridLineValue, GridRepeatCount, GridTemplateAreasValue, Length, LengthOrAuto, OverflowValue,
+    PositionValue, PropertyKey, PropertyValue, RubyPosition, SelfAlignmentValue, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
