@@ -167,6 +167,25 @@ fn render_raikiri_pages_compatibility_wrapper_returns_document() {
 }
 
 #[test]
+fn render_raikiri_pages_rejects_an_oversized_page_edge() {
+    let html = r#"<html><head><style>@page { size: 16385px 100px; margin: 0 }</style></head><body>x</body></html>"#;
+    let error = match render_raikiri_pages(html, 10, 10) {
+        Err(error) => error,
+        Ok(document) => panic!(
+            "oversized print page unexpectedly rendered ({} pages)",
+            document.pages.len()
+        ),
+    };
+    assert!(matches!(
+        error,
+        ReftestError::Raster(raikiri::RenderError::LimitExceeded {
+            kind: raikiri::LimitKind::RasterEdge,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn resolved_grid_order_uses_the_first_named_page_width_for_text_wrapping() {
     const TEXT: &str = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
     let prefix = r#"<!doctype html><style>
@@ -471,6 +490,28 @@ fn render_blitz_produces_image_with_correct_dimensions() {
     assert_eq!(img.width, 200);
     assert_eq!(img.height, 100);
     assert_eq!(img.rgba.len(), 200 * 100 * 4);
+}
+
+#[test]
+fn render_blitz_rejects_an_oversized_viewport_edge() {
+    let error = match render_blitz(
+        "<html><body>x</body></html>",
+        raikiri::MAX_RASTER_EDGE + 1,
+        1,
+    ) {
+        Err(error) => error,
+        Ok(image) => panic!(
+            "oversized oracle viewport unexpectedly rendered ({} bytes)",
+            image.rgba.len()
+        ),
+    };
+    assert!(matches!(
+        error,
+        ReftestError::Raster(raikiri::RenderError::LimitExceeded {
+            kind: raikiri::LimitKind::RasterEdge,
+            ..
+        })
+    ));
 }
 
 #[test]

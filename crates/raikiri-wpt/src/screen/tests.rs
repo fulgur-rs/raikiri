@@ -5,6 +5,30 @@ use std::collections::HashMap;
 use crate::test_http_server::TestServer;
 
 #[test]
+fn rejects_an_oversized_viewport_before_fetching_the_document() {
+    let error = match render_screen_url(
+        &SystemHttpProvider::new(),
+        raikiri::Url::parse("http://127.0.0.1:1/index.html").unwrap(),
+        raikiri::MAX_RASTER_EDGE + 1,
+        1,
+    ) {
+        Err(error) => error,
+        Ok(image) => panic!(
+            "oversized screen viewport unexpectedly rendered ({} bytes)",
+            image.rgba.len()
+        ),
+    };
+    let source = std::error::Error::source(&error).expect("raster error source");
+    assert!(matches!(
+        source.downcast_ref::<raikiri::RenderError>(),
+        Some(raikiri::RenderError::LimitExceeded {
+            kind: raikiri::LimitKind::RasterEdge,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn invalid_utf8_document_reports_url_and_declared_encoding() {
     let server = TestServer::start(HashMap::from([(
         "/invalid.html",

@@ -50,6 +50,8 @@ fn use_fonts(dom: &mut raikiri_dom::Document, fonts: Option<raikiri_html::Render
 ///   bytes or parsed DOM nodes exceed their default limits
 /// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
 ///   `<body>` / inline layout / taffy internals)
+/// - `RenderError::LimitExceeded` — returned when the first page exceeds the
+///   shared raster edge or byte budget
 pub(crate) fn html_to_png_impl<R: std::io::Read>(
     input: R,
     fonts: Option<raikiri_html::RenderFonts>,
@@ -76,7 +78,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     // remain until rasterize can operate on a true standalone snapshot.
     let dom = &uncascaded.dom;
     let scene = build_page_scene(dom, &cascade, page_box);
-    Ok(scene.rasterize(dom, &cascade, page_box))
+    scene.rasterize(dom, &cascade, page_box)
 }
 
 /// Rasterize an HTML byte stream to a PNG of the first page (A4 fallback).
@@ -91,6 +93,8 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
 ///   bytes or parsed DOM nodes exceed their default limits
 /// - `RenderError::Layout(_)` — propagated from `layout_single_page` (missing
 ///   `<body>` / inline layout / taffy internals)
+/// - `RenderError::LimitExceeded` — returned when the first page exceeds the
+///   shared raster edge or byte budget
 ///
 /// The spec §L1118 gives the signature `(html: &str)`; this design instead
 /// accepts `impl Read` to match the existing `parse_html<R: Read>` API.
@@ -123,7 +127,8 @@ pub fn html_to_png_with_render_fonts<R: std::io::Read>(
 ///
 /// # Errors
 /// In addition to errors from [`html_to_png`], returns `RenderError::Resolver`
-/// if `resolver` fails for any `<img>`. The `ReplacedResolver` contract treats
+/// if `resolver` fails for any `<img>`, and `RenderError::LimitExceeded` when
+/// the raster exceeds its edge or byte budget. The `ReplacedResolver` contract treats
 /// `Err` as terminal: rendering stops at the first error rather than silently
 /// replacing the image with 0×0. Consumers who want a placeholder should
 /// return `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })`; see the
@@ -152,7 +157,7 @@ where
     )?;
     let dom = &uncascaded.dom;
     let scene = build_page_scene(dom, &cascade, page_box);
-    Ok(scene.rasterize_with_images(dom, &cascade, page_box, pixel_source))
+    scene.rasterize_with_images(dom, &cascade, page_box, pixel_source)
 }
 
 #[cfg(test)]

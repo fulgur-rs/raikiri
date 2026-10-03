@@ -178,6 +178,12 @@ impl From<LayoutError> for RenderError {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitKind {
+    /// Exceeded the maximum width or height of one raster buffer.
+    RasterEdge,
+    /// Exceeded the RGBA8 byte budget for one page.
+    RasterPageBytes,
+    /// Exceeded the cumulative RGBA8 byte budget for all pages in a document.
+    RasterDocumentBytes,
     /// Exceeded `max_document_pages`.
     Pages,
     /// Exceeded `max_dom_nodes`.

@@ -20,6 +20,34 @@ fn rejects_zero_fallback_dimensions_before_fetching() {
 }
 
 #[test]
+fn print_page_raster_limits_remain_structured_at_the_public_boundary() {
+    let server = TestServer::start(HashMap::from([(
+        "/index.html",
+        TestResponse::ok(
+            "text/html",
+            br#"<style>@page { size: 16385px 100px; margin: 0 }</style><body>x</body>"#.to_vec(),
+        ),
+    )]));
+    let error = match render_print_url(&SystemHttpProvider::new(), server.url("index.html"), 10, 10)
+    {
+        Err(error) => error,
+        Ok(document) => panic!(
+            "oversized print page unexpectedly rendered ({} pages)",
+            document.pages.len()
+        ),
+    };
+    let source = std::error::Error::source(&error).expect("structured raster error source");
+    assert!(matches!(
+        source.downcast_ref::<raikiri::RenderError>(),
+        Some(raikiri::RenderError::LimitExceeded {
+            kind: raikiri::LimitKind::RasterEdge,
+            ..
+        })
+    ));
+    assert_eq!(server.finish(), ["/index.html"]);
+}
+
+#[test]
 fn invalid_utf8_document_reports_base_parse_error_and_url() {
     let server = TestServer::start(HashMap::from([(
         "/invalid.html",

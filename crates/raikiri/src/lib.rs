@@ -58,6 +58,12 @@ pub use page_scene::{
     build_page_scene_for_page, build_page_scene_for_page_named,
 };
 
+mod raster_budget;
+pub use raster_budget::{
+    MAX_DOCUMENT_RASTER_BYTES, MAX_PAGE_RASTER_BYTES, MAX_RASTER_EDGE, RasterBufferBudget,
+    RasterBufferSize,
+};
+
 mod page_drawables;
 pub use page_drawables::{PageDrawables, TrackedMap};
 
