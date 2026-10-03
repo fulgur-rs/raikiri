@@ -361,6 +361,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let document_fragment = derived(context, "DocumentFragment", &node_i, &fragment_members)?;
     let html_element_members = [
         &HTML_ELEMENT_MEMBERS,
+        &query::HTML_ELEMENT_QUERY_MEMBERS,
         &geometry::HTML_ELEMENT_OFFSET_MEMBERS,
         &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
     ];

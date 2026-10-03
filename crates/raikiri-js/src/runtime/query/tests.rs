@@ -257,6 +257,19 @@ fn id_class_name_and_attribute_names() {
 }
 
 #[test]
+fn html_element_lang_reflects_the_attribute_and_affects_lang_selectors() {
+    let mut rt = rt();
+    rt.evaluate("'use strict'; document.documentElement.lang = 'ja-JP';")
+        .unwrap();
+    ok(
+        &mut rt,
+        "document.documentElement.lang === 'ja-JP' \
+         && document.documentElement.getAttribute('lang') === 'ja-JP' \
+         && document.documentElement.matches(':lang(ja)')",
+    );
+}
+
+#[test]
 fn fragment_queries() {
     let mut rt = rt();
     ok(
