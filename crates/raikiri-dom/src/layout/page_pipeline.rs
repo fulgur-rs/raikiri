@@ -2786,7 +2786,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         .is_some_and(|value| value >= 0.0);
                 if !monolithic_paper_fit {
                     let end_page = page_index_for_end(end);
-                    check_candidate_page!('candidate_loop, end_page);
+                    control.check_discovery_page_index(end_page)?;
                     max_page = max_page.max(end_page);
                 }
             }
