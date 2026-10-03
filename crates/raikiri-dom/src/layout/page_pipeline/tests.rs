@@ -244,6 +244,63 @@ fn relayout_nested_multicol_children_packs_block_children_into_columns() {
 }
 
 #[test]
+fn auto_fill_keeps_auto_height_block_children_in_source_order() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;column-gap:20px;width:200px;column-fill:auto"),
+    );
+    let children: Vec<usize> = (0..4)
+        .map(|_| {
+            doc.append_element(
+                Some(container),
+                "div",
+                Style::default(),
+                Some("display:block;height:30px"),
+            )
+        })
+        .collect();
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 200.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    let fragmentainer_of = |node: usize| {
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .rev()
+            .find(|fragment| fragment.node_id == node && fragment.line_start.is_none())
+            .map(|fragment| fragment.fragmentainer)
+    };
+    assert_eq!(
+        children
+            .iter()
+            .map(|&child| fragmentainer_of(child))
+            .collect::<Vec<_>>(),
+        [Some(0), Some(0), Some(0), Some(0)]
+    );
+    assert_eq!(
+        children
+            .iter()
+            .map(|&child| doc.nodes[child].unrounded_layout.location.y)
+            .collect::<Vec<_>>(),
+        [0.0, 30.0, 60.0, 90.0]
+    );
+    assert!((doc.nodes[container].unrounded_layout.size.height - 120.0).abs() < 0.01);
+}
+
+#[test]
 fn relayout_nested_multicol_children_honors_break_before_avoid() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -5445,6 +5502,23 @@ fn multicol_container_with_direct_text_is_laid_out() {
     assert_eq!(
         geometry.lines,
         [(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)]
+    );
+}
+
+#[test]
+fn auto_fill_keeps_auto_height_direct_text_in_source_order() {
+    let geometry = multicol_text_geometry_of(
+        "column-count:2;width:100px;column-gap:10px;font:10px/10px Ahem;white-space:pre-line;column-fill:auto",
+        "aa\nbb\ncc",
+        true,
+    );
+
+    assert_eq!(
+        geometry,
+        MulticolTextGeometry {
+            container_height: 30.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (0.0, 20.0)],
+        }
     );
 }
 

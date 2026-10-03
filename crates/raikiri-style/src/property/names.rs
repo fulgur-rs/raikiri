@@ -66,6 +66,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "clip-path",
         "color",
         "column-count",
+        "column-fill",
         "column-gap",
         "column-width",
         "columns",

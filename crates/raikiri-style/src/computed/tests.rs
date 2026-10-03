@@ -640,6 +640,7 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Multi-column Layout 1: non-inherited fields use non-initial
         // values so `inherit_from` assertions exercise the reset.
         column_count: ColumnCountValue::Count(3),
+        column_fill: ColumnFillValue::Auto,
         column_width: ComputedColumnWidth::Px(24.0),
         custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
             SmolStr::new("--fixture"),
@@ -792,8 +793,9 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.outline, initial.outline);
     assert_eq!(child.width, initial.width);
     assert_eq!(child.height, initial.height);
-    // CSS Multi-column Layout 1: both longhands are non-inherited.
+    // CSS Multi-column Layout 1: all three longhands are non-inherited.
     assert_eq!(child.column_count, initial.column_count);
+    assert_eq!(child.column_fill, initial.column_fill);
     assert_eq!(child.column_width, initial.column_width);
     assert_eq!(child.box_sizing, initial.box_sizing);
     // CSS Overflow 3 §3.1: overflow-x/overflow-y are

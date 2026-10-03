@@ -515,6 +515,7 @@ fn parent_fixture() -> ComputedValues {
         // CSS Tables 3 §8: empty-cells is inherited; set a value other than the initial `show`.
         empty_cells: EmptyCellsValue::Hide,
         column_count: ColumnCountValue::Count(3),
+        column_fill: crate::property::ColumnFillValue::Auto,
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
         custom_properties: crate::computed::empty_custom_properties(),
         local_custom_properties: crate::computed::empty_custom_properties(),
@@ -821,8 +822,9 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     assert_eq!(child.border, initial.border);
     assert_eq!(child.width, LengthOrAuto::Auto);
     assert_eq!(child.height, LengthOrAuto::Auto);
-    // CSS Multi-column Layout 1: both longhands are non-inherited.
+    // CSS Multi-column Layout 1: all three longhands are non-inherited.
     assert_eq!(child.column_count, initial.column_count);
+    assert_eq!(child.column_fill, initial.column_fill);
     assert_eq!(child.column_width, initial.column_width);
     assert_eq!(child.box_sizing, BoxSizing::ContentBox);
     // CSS Overflow 3 §3.1: overflow-x and overflow-y are non-inherited.

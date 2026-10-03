@@ -31,6 +31,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
     Some(MulticolStyle {
         count,
         width,
+        column_fill: cv.column_fill,
         gap,
         gap_percent,
         height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),

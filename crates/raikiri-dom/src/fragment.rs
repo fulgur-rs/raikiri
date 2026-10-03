@@ -5,6 +5,8 @@
 //! the strategy resolves computed values before constructing a context, then
 //! recursively lays out children against that context.
 
+use raikiri_style::property::ColumnFillValue;
+
 /// Used multicolumn settings carried from computed style into the Taffy tree.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct MulticolStyle {
@@ -12,6 +14,8 @@ pub(crate) struct MulticolStyle {
     pub(crate) count: Option<usize>,
     /// Explicit positive `column-width`, or `None` for `auto`.
     pub(crate) width: Option<f32>,
+    /// `column-fill` controls balancing for auto-height columns.
+    pub(crate) column_fill: ColumnFillValue,
     /// Used `column-gap` in CSS px when the authored value is absolute/normal.
     pub(crate) gap: f32,
     /// Authored percentage gap, resolved against the container inline size.
@@ -34,6 +38,8 @@ pub(crate) struct FragmentationContext {
     pub(crate) available_width: f32,
     /// Block size available to the current fragmentainer, when definite.
     pub(crate) available_height: Option<f32>,
+    /// Column filling mode used by the current multicol container.
+    pub(crate) column_fill: ColumnFillValue,
     /// Used inline size of each column.
     pub(crate) column_width: f32,
     /// Used number of columns.
@@ -79,6 +85,7 @@ impl FragmentationContext {
         (column_width.is_finite() && column_width > 0.0).then_some(Self {
             available_width,
             available_height,
+            column_fill: style.column_fill,
             column_width,
             column_count: count,
             column_gap: gap,

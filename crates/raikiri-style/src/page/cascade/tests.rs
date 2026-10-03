@@ -25,32 +25,32 @@ use crate::property::{
     BackgroundRepeatKeyword, BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BoxShadowItem, BoxSizing, BreakBetween,
     BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue, ContentComponent, CssColor,
-    CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand, FlexWrapValue,
-    FloatValue, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
-    FontShorthand, FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps,
-    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-    FontVariantPosition, FontVariationSetting, FontVariationSettings, FontWeightValue,
-    GapShorthand, GeometryBox, GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth,
-    GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
-    GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
-    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand,
-    PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition,
-    SelfAlignmentValue, StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll,
-    TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
-    TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationStyle, TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle,
-    TextEmphasisVEdge, TextIndentLength, TextIndentValue, TextJustify, TextOrientation,
-    TextShadowColor, TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform,
-    TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
-    WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
+    ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue, ContentComponent,
+    CssColor, CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue,
+    EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand,
+    FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride, FontOpticalSizing,
+    FontPaletteValue, FontShorthand, FontShorthandSize, FontStyle, FontSynthesisValue,
+    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
+    FontVariantNumeric, FontVariantPosition, FontVariationSetting, FontVariationSettings,
+    FontWeightValue, GapShorthand, GeometryBox, GridAreaShorthand, GridAutoFlowValue,
+    GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand,
+    GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks,
+    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
+    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens,
+    Isolation, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc, LetterSpacingValue,
+    LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
+    Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
+    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
+    RelativeFontSize, RubyPosition, SelfAlignmentValue, StartEnd, TabSize, TableLayoutValue,
+    TextAlign, TextAlignAll, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
+    TextDecorationInset, TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisFill,
+    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand,
+    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextIndentValue, TextJustify,
+    TextOrientation, TextShadowColor, TextShadowItem, TextSpacingShorthand, TextSpacingTrim,
+    TextTransform, TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
+    TransformFunction, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
@@ -3013,7 +3013,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 160;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 161;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3686,6 +3686,7 @@ property_key_samples! {
     ListStylePosition => PropertyValue::ListStylePosition(ListStylePosition::Inside),
     ListStyleImage => PropertyValue::ListStyleImage(BackgroundImage::Url("marker.png".into())),
     ColumnCount => PropertyValue::ColumnCount(ColumnCountValue::Count(3)),
+    ColumnFill => PropertyValue::ColumnFill(ColumnFillValue::BalanceAll),
     ColumnWidth => PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(2.0))),
     Columns => PropertyValue::Columns(ColumnsShorthand {
         width: ColumnWidthValue::Length(Length::Em(2.0)),
@@ -4093,6 +4094,7 @@ property_value_variant_registry! {
     TextUnderlinePosition,
     Page,
     ColumnCount,
+    ColumnFill,
     ColumnWidth,
     Columns,
     HyphenateCharacter,
@@ -4425,7 +4427,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // forms are resolved by `absolutize_in_page_context`, so raw
             // relative units remain visible to this detector only before
             // that phase.
-            | PropertyValue::ColumnCount(_) => None,
+            | PropertyValue::ColumnCount(_)
+            | PropertyValue::ColumnFill(_) => None,
             // cov:ignore: auto width has no length residue to report.
             PropertyValue::ColumnWidth(ColumnWidthValue::Auto) => None,
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(l)) => {

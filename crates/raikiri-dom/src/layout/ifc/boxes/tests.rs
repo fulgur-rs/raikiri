@@ -24,6 +24,7 @@ fn unprojected_root_has_no_fragmentainer_tail() {
         FragmentationContext {
             available_width: 100.0,
             available_height: Some(10.0),
+            column_fill: raikiri_style::property::ColumnFillValue::Balance,
             column_width: 100.0,
             column_count: 1,
             column_gap: 0.0,
@@ -59,6 +60,7 @@ fn final_unfragmented_column_records_only_real_line_overflow() {
     let context = FragmentationContext {
         available_width: 100.0,
         available_height: Some(0.001),
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
         column_width: 100.0,
         column_count: 1,
         column_gap: 0.0,
