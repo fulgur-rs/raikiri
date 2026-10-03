@@ -163,6 +163,47 @@ fn page_layout_control_accepts_a_box_ending_on_a_repeated_fractional_boundary() 
 }
 
 #[test]
+fn page_layout_control_accepts_a_page_height_box_after_fractional_forced_breaks() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    for _ in 0..6 {
+        document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:0;break-after:page"),
+        );
+    }
+    document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:0.1px"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let mut page_box = page_box_800x600();
+    page_box.height = 0.1;
+    let control = PageLayoutControl::new(Some(7));
+
+    let pages = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box,
+        &[],
+        &[],
+        &control,
+    )
+    .expect("seven-page fractional forced-break layout");
+
+    assert_eq!(pages.len(), 7);
+}
+
+#[test]
 fn page_layout_discovery_returns_a_bounded_prefix() {
     use raikiri_style::{build_rule_tree, cascade};
 

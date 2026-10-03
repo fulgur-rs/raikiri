@@ -504,10 +504,10 @@ impl PageOrigins {
     }
 
     fn correct_page_index_for_end(&self, page_index: u32, end: f32) -> u32 {
-        let page_end = self.page_end(page_index);
+        let page_end = self.page_end_with_rounding_tolerance(page_index);
         let previous_page_end = page_index
             .checked_sub(1)
-            .map(|previous| self.page_end(previous))
+            .map(|previous| self.page_end_with_rounding_tolerance(previous))
             .unwrap_or(f32::NEG_INFINITY);
         if previous_page_end < end && end <= page_end {
             page_index
@@ -520,20 +520,36 @@ impl PageOrigins {
         self.origin(page_index.saturating_add(1))
     }
 
+    fn page_end_with_rounding_tolerance(&self, page_index: u32) -> f32 {
+        let page_end = self.page_end(page_index);
+        let next = page_end.next_up();
+        if next - page_end < self.step_at(page_index) {
+            next
+        } else {
+            page_end
+        }
+    }
+
     fn first_page_ending_after(&self, y: f32) -> u32 {
-        self.first_page_matching_end(y, |page_end, y| page_end > y)
+        self.first_page_matching_end(y, |origins, page_index, y| origins.page_end(page_index) > y)
     }
 
     fn first_page_ending_at_or_after(&self, end: f32) -> u32 {
-        self.first_page_matching_end(end, |page_end, end| page_end >= end)
+        self.first_page_matching_end(end, |origins, page_index, end| {
+            origins.page_end_with_rounding_tolerance(page_index) >= end
+        })
     }
 
-    fn first_page_matching_end(&self, value: f32, matches: impl Fn(f32, f32) -> bool) -> u32 {
+    fn first_page_matching_end(
+        &self,
+        value: f32,
+        matches: impl Fn(&Self, u32, f32) -> bool,
+    ) -> u32 {
         let mut low = 0_u64;
         let mut high = u64::from(u32::MAX) + 1;
         while low < high {
             let middle = low + (high - low) / 2;
-            if matches(self.page_end(middle as u32), value) {
+            if matches(self, middle as u32, value) {
                 high = middle;
             } else {
                 low = middle + 1;
