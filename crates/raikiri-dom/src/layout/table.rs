@@ -197,6 +197,20 @@ pub fn compute_table_layout(
     table_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    match compute_table_layout_checked(doc, table_id, inputs) {
+        Ok(output) => output,
+        Err(error) => {
+            doc.table_layout_error = Some(error.to_string());
+            LayoutOutput::from_outer_size(Size::ZERO)
+        }
+    }
+}
+
+fn compute_table_layout_checked(
+    doc: &mut Document,
+    table_id: NodeId,
+    inputs: LayoutInput,
+) -> Result<LayoutOutput, raikiri_traits::LayoutError> {
     // Depth cap: fail-closed as block fallback.
     let _depth_guard = match depth_enter() {
         Some(_prev) => DepthGuard,
@@ -206,16 +220,16 @@ pub fn compute_table_layout(
             // For fail-closed, return outer size based on known_dimensions or zero.
             let w = inputs.known_dimensions.width.unwrap_or(0.0);
             let h = inputs.known_dimensions.height.unwrap_or(0.0);
-            return LayoutOutput::from_outer_size(Size {
+            return Ok(LayoutOutput::from_outer_size(Size {
                 width: w,
                 height: h,
-            });
+            }));
         }
     };
 
     let table_idx = usize::from(table_id);
     let abspos_table = doc.nodes[table_idx].style.position == taffy::Position::Absolute;
-    let mut grid = build_table_grid(doc, table_idx);
+    let mut grid = build_table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
@@ -325,7 +339,7 @@ pub fn compute_table_layout(
                         + padding_border_size.height,
                 )
         });
-        return LayoutOutput::from_outer_size(Size { width, height });
+        return Ok(LayoutOutput::from_outer_size(Size { width, height }));
     }
 
     // Overlap totals up front: tracks are sized in pre-overlap space
@@ -433,7 +447,7 @@ pub fn compute_table_layout(
     }
 
     // Row heights
-    let mut row_heights = resolve_row_heights(doc, &grid, &column_widths);
+    let mut row_heights = resolve_row_heights(doc, &grid, &column_widths)?;
     // An authored definite table height also establishes the containing block
     // for percentage-sized children of a single-row cell. Fragmentation can
     // impose a definite height on a single-row table without doing so; keep
@@ -551,7 +565,7 @@ pub fn compute_table_layout(
     };
 
     if inputs.run_mode == RunMode::ComputeSize {
-        return LayoutOutput::from_outer_size(final_size);
+        return Ok(LayoutOutput::from_outer_size(final_size));
     }
 
     // Position cells: origin includes padding + collapsed outer border.
@@ -566,7 +580,7 @@ pub fn compute_table_layout(
         &row_heights,
         &col_origins,
         &row_origins,
-    );
+    )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
     if vertical_writing {
         reposition_cells_for_vertical_writing(
             doc,
@@ -583,7 +597,7 @@ pub fn compute_table_layout(
     // the rows keep their place, so a caption overlaps the first row.
     layout_table_caption(doc, table_idx, final_size.width, inputs.parent_size.height);
 
-    LayoutOutput::from_outer_size(final_size)
+    Ok(LayoutOutput::from_outer_size(final_size))
 }
 
 #[inline(always)]
@@ -602,19 +616,44 @@ impl Drop for DepthGuard {
 // Grid construction
 // ---------------------------------------------------------------------------
 
-fn build_table_grid(doc: &Document, table_idx: usize) -> TableGrid {
+fn table_column_error() -> raikiri_traits::LayoutError {
+    raikiri_traits::LayoutError::Internal {
+        message: "table column grid exceeds supported bounds".to_owned(),
+    }
+}
+
+fn next_table_column(column: u16, span: u16) -> Result<u16, raikiri_traits::LayoutError> {
+    column.checked_add(span).ok_or_else(table_column_error)
+}
+
+fn cell_column_range(
+    cell: &CellPlacement,
+    columns: usize,
+) -> Result<std::ops::Range<usize>, raikiri_traits::LayoutError> {
+    let start = usize::from(cell.col_start);
+    let end = start + usize::from(cell.col_span);
+    if start >= end || end > columns {
+        return Err(table_column_error());
+    }
+    Ok(start..end)
+}
+
+fn build_table_grid(
+    doc: &Document,
+    table_idx: usize,
+) -> Result<TableGrid, raikiri_traits::LayoutError> {
     let mut rows: Vec<usize> = Vec::new();
     let mut cells: Vec<CellPlacement> = Vec::new();
     let mut n_cols: u16 = 0;
-    collect_rows(doc, table_idx, &mut rows, &mut cells, &mut n_cols);
-    let col_widths = collect_col_widths(doc, table_idx);
-    n_cols = n_cols.max(col_widths.len().min(u16::MAX as usize) as u16);
-    TableGrid {
+    collect_rows(doc, table_idx, &mut rows, &mut cells, &mut n_cols)?;
+    let col_widths = collect_col_widths(doc, table_idx)?;
+    n_cols = n_cols.max(col_widths.len() as u16);
+    Ok(TableGrid {
         n_cols,
         rows,
         cells,
         col_widths,
-    }
+    })
 }
 
 /// Authored `<col>` sizing in grid order.
@@ -633,7 +672,10 @@ struct ColSizing {
     max_width: Dimension,
 }
 
-fn collect_col_widths(doc: &Document, table_idx: usize) -> Vec<ColSizing> {
+fn collect_col_widths(
+    doc: &Document,
+    table_idx: usize,
+) -> Result<Vec<ColSizing>, raikiri_traits::LayoutError> {
     fn col_span(doc: &Document, node_id: usize) -> usize {
         if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
             for a in &data.attributes {
@@ -655,6 +697,17 @@ fn collect_col_widths(doc: &Document, table_idx: usize) -> Vec<ColSizing> {
             max_width: st.max_size.width.into(),
         }
     }
+    fn append_columns(
+        out: &mut Vec<ColSizing>,
+        sizing: ColSizing,
+        span: usize,
+    ) -> Result<(), raikiri_traits::LayoutError> {
+        if span > usize::from(u16::MAX) - out.len() {
+            return Err(table_column_error());
+        }
+        out.extend(std::iter::repeat_n(sizing, span));
+        Ok(())
+    }
     let mut out = Vec::new();
     for &child_id in &doc.nodes[table_idx].children.clone() {
         if !doc.nodes[child_id].is_in_document() {
@@ -670,21 +723,17 @@ fn collect_col_widths(doc: &Document, table_idx: usize) -> Vec<ColSizing> {
                         continue;
                     }
                     let sz = sizing_of(doc, col_id);
-                    for _ in 0..col_span(doc, col_id) {
-                        out.push(sz);
-                    }
+                    append_columns(&mut out, sz, col_span(doc, col_id))?;
                 }
             }
             DisplayValue::TableColumn => {
                 let sz = sizing_of(doc, child_id);
-                for _ in 0..col_span(doc, child_id) {
-                    out.push(sz);
-                }
+                append_columns(&mut out, sz, col_span(doc, child_id))?;
             }
             _ => {}
         }
     }
-    out
+    Ok(out)
 }
 
 /// Visual section ordering for a table's direct children.
@@ -721,7 +770,7 @@ fn collect_rows(
     rows: &mut Vec<usize>,
     cells: &mut Vec<CellPlacement>,
     n_cols: &mut u16,
-) {
+) -> Result<(), raikiri_traits::LayoutError> {
     collect_rows_inner(doc, container_idx, rows, cells, n_cols, true)
 }
 
@@ -732,7 +781,7 @@ fn collect_rows_inner(
     cells: &mut Vec<CellPlacement>,
     n_cols: &mut u16,
     reorder_sections: bool,
-) {
+) -> Result<(), raikiri_traits::LayoutError> {
     let mut pending: Vec<usize> = Vec::new();
 
     let len = doc.nodes[container_idx].children.len();
@@ -780,17 +829,17 @@ fn collect_rows_inner(
         let is_contents = disp == DisplayValue::Contents;
 
         if is_row {
-            flush_pending(doc, &mut pending, rows, cells, n_cols);
-            collect_cells_in_row(doc, child_id, rows, cells, n_cols);
+            flush_pending(doc, &mut pending, rows, cells, n_cols)?;
+            collect_cells_in_row(doc, child_id, rows, cells, n_cols)?;
         } else if is_cell {
             pending.push(child_id);
         } else if is_row_group || is_contents {
             // Anonymous row-group: recurse. But flush pending first (cells cannot cross row-group boundary)
-            flush_pending(doc, &mut pending, rows, cells, n_cols);
-            collect_rows_inner(doc, child_id, rows, cells, n_cols, false);
+            flush_pending(doc, &mut pending, rows, cells, n_cols)?;
+            collect_rows_inner(doc, child_id, rows, cells, n_cols, false)?;
         } else {
             // Non-table descendent (e.g., caption, div inside table). For initial implementation, skip but flush pending.
-            flush_pending(doc, &mut pending, rows, cells, n_cols);
+            flush_pending(doc, &mut pending, rows, cells, n_cols)?;
             // If this is a caption etc., ignore for grid. If it's inside table but not row/cell,
             // recursion not needed - those children are not part of table grid.
             // However if it's a plain div wrapping rows (anomalous), recurse to find rows inside.
@@ -799,11 +848,11 @@ fn collect_rows_inner(
                 // Only recurse if container might hold rows; avoid diving into block content inside cells.
                 // We treat any block container directly under table that contains row-like descendants as group.
                 // Simple: recurse
-                collect_rows_inner(doc, child_id, rows, cells, n_cols, false);
+                collect_rows_inner(doc, child_id, rows, cells, n_cols, false)?;
             }
         }
     }
-    flush_pending(doc, &mut pending, rows, cells, n_cols);
+    flush_pending(doc, &mut pending, rows, cells, n_cols)
 }
 
 fn flush_pending(
@@ -812,9 +861,9 @@ fn flush_pending(
     rows: &mut Vec<usize>,
     cells: &mut Vec<CellPlacement>,
     n_cols: &mut u16,
-) {
+) -> Result<(), raikiri_traits::LayoutError> {
     if pending.is_empty() {
-        return;
+        return Ok(());
     }
     // Anonymous row: borrow first cell's id as row marker (not used for layout beyond count)
     rows.push(pending[0]);
@@ -822,6 +871,7 @@ fn flush_pending(
     let mut col: u16 = 0;
     for &cell_id in pending.iter() {
         let col_span = get_colspan(doc, cell_id);
+        let next_col = next_table_column(col, col_span)?;
         let row_span = get_rowspan(doc, cell_id);
         let specified_width = doc.nodes[cell_id].style.size.width;
         cells.push(CellPlacement {
@@ -833,10 +883,11 @@ fn flush_pending(
             specified_width,
             resolved: None,
         });
-        col += col_span;
+        col = next_col;
     }
     *n_cols = (*n_cols).max(col);
     pending.clear();
+    Ok(())
 }
 
 fn collect_cells_in_row(
@@ -845,7 +896,7 @@ fn collect_cells_in_row(
     rows: &mut Vec<usize>,
     cells: &mut Vec<CellPlacement>,
     n_cols: &mut u16,
-) {
+) -> Result<(), raikiri_traits::LayoutError> {
     rows.push(row_id);
     let row_ix = (rows.len() - 1) as u16;
     let mut col: u16 = 0;
@@ -860,6 +911,7 @@ fn collect_cells_in_row(
             continue;
         }
         let col_span = get_colspan(doc, cell_id);
+        let next_col = next_table_column(col, col_span)?;
         let row_span = get_rowspan(doc, cell_id);
         let specified_width = doc.nodes[cell_id].style.size.width;
         cells.push(CellPlacement {
@@ -871,9 +923,10 @@ fn collect_cells_in_row(
             specified_width,
             resolved: None,
         });
-        col += col_span;
+        col = next_col;
     }
     *n_cols = (*n_cols).max(col);
+    Ok(())
 }
 
 /// Cell `colspan` per WHATWG HTML 4.9.12.1 ("Forming a table", "Cells" step):
@@ -1287,7 +1340,11 @@ fn distribute_extra_width(column_widths: &mut [f32], target: f32) {
 // Row heights
 // ---------------------------------------------------------------------------
 
-fn resolve_row_heights(doc: &mut Document, grid: &TableGrid, column_widths: &[f32]) -> Vec<f32> {
+fn resolve_row_heights(
+    doc: &mut Document,
+    grid: &TableGrid,
+    column_widths: &[f32],
+) -> Result<Vec<f32>, raikiri_traits::LayoutError> {
     let mut row_heights = vec![0.0f32; grid.rows.len()];
     // Authored `height` on rows floors the row (CSS 2.1 §17.5.3; lengths
     // only — percentages need the table height, indefinite at this stage).
@@ -1304,8 +1361,8 @@ fn resolve_row_heights(doc: &mut Document, grid: &TableGrid, column_widths: &[f3
         }
     }
     for cell in &grid.cells {
-        let end = (cell.col_start as usize + cell.col_span as usize).min(column_widths.len());
-        let cell_width: f32 = column_widths[cell.col_start as usize..end].iter().sum();
+        let columns = cell_column_range(cell, column_widths.len())?;
+        let cell_width: f32 = column_widths[columns].iter().sum();
         let output = doc.compute_child_layout(
             NodeId::from(cell.node_id),
             LayoutInput {
@@ -1353,7 +1410,7 @@ fn resolve_row_heights(doc: &mut Document, grid: &TableGrid, column_widths: &[f3
         }
     }
     // Ensure every row has at least min (empty rows get 0 -> keep 0)
-    row_heights
+    Ok(row_heights)
 }
 
 // ---------------------------------------------------------------------------
@@ -1385,17 +1442,17 @@ fn place_cells(
     row_heights: &[f32],
     col_x: &[f32],
     row_y: &[f32],
-) {
+) -> Result<(), raikiri_traits::LayoutError> {
     for (order, cell) in grid.cells.iter_mut().enumerate() {
-        let end_col = (cell.col_start as usize + cell.col_span as usize).min(column_widths.len());
+        let columns = cell_column_range(cell, column_widths.len())?;
         let end_row = (cell.row as usize + cell.row_span as usize).min(row_heights.len());
-        let cell_x = col_x[cell.col_start as usize];
+        let cell_x = *col_x.get(columns.start).ok_or_else(table_column_error)?;
         let cell_y = row_y[cell.row as usize];
         // Full spanned widths — origins already net out the collapsed
         // overlaps for *positioning*; shrinking the box by the overlap as
         // well would double-count the absorbed line (separate model:
         // origins differences equal these sums, so this is a no-op there).
-        let cell_width: f32 = column_widths[cell.col_start as usize..end_col].iter().sum();
+        let cell_width: f32 = column_widths[columns].iter().sum();
         let cell_height: f32 = row_heights[cell.row as usize..end_row].iter().sum();
         // Final layout for cell contents with definite size
         let output = doc.compute_child_layout(
@@ -1463,6 +1520,7 @@ fn place_cells(
         }
         let _ = output;
     }
+    Ok(())
 }
 
 /// Re-map the already measured table grid from horizontal physical axes to

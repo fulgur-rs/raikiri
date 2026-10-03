@@ -165,6 +165,7 @@ pub fn layout_single_page(
     // but an early `?` return (Step 3) would otherwise leave a previous call's
     // leftover entries for the next call to inherit.
     document.layout_warnings.clear();
+    document.table_layout_error = None;
     document.fragment_tree.clear();
     document.fragmentation_stack.clear();
 
@@ -240,6 +241,11 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(content_height),
         },
     );
+    if let Some(message) = document.table_layout_error.take() {
+        // A rejected pass must not cache its temporary zero-sized fallback.
+        document.layout_dirty = true;
+        return Err(LayoutError::Internal { message });
+    }
     if document.fragment_tree.limit_exceeded {
         return Err(LayoutError::FragmentLimitExceeded {
             limit: document.fragment_tree.limit,
