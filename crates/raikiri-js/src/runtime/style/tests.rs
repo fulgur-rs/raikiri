@@ -32,6 +32,47 @@ fn inline_style_helpers_match_the_previous_runner_semantics() {
 }
 
 #[test]
+fn stylesheet_rule_declaration_updates_the_live_style_element() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'span { color: cyan; } span.active { color: red; }'; \
+         document.head.appendChild(styleElement); \
+         var sheets = document.styleSheets; var sheet = sheets[0]; \
+         var rules = sheet.cssRules; var rule = rules[0]; var declaration = rule.style;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheets === document.styleSheets && sheets.length === 1 && \
+         sheets.item(0) === sheet && rules.length === 2 && \
+         rules.item(0) === rule && rule.selectorText === 'span' && \
+         declaration.color === 'cyan' && declaration.parentRule === rule",
+    );
+
+    rt.evaluate("declaration.backgroundColor = 'magenta';")
+        .unwrap();
+    ok(&mut rt, "declaration.backgroundColor === 'magenta'");
+    ok(
+        &mut rt,
+        "styleElement.textContent.includes('background-color: magenta;')",
+    );
+    ok(&mut rt, "rule.style === declaration");
+
+    rt.evaluate(
+        "var secondStyle = document.createElement('style'); \
+         secondStyle.textContent = 'p { color: blue; }'; \
+         document.head.appendChild(secondStyle);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheets.length === 2 && sheets[1].cssRules[0].selectorText === 'p'",
+    );
+}
+
+#[test]
 fn attribute_names_covers_plain_dashed_camel_and_webkit_forms() {
     assert_eq!(attribute_names("color"), vec!["color".to_owned()]);
     assert_eq!(
@@ -960,5 +1001,92 @@ fn get_bounding_client_rect_subtracts_viewport_except_for_fixed() {
         &mut rt,
         "var kids = document.body.children; kids.length === 1 \
          && kids[0].getBoundingClientRect().left === 5 && kids[0].getBoundingClientRect().top === 6",
+    );
+}
+
+#[test]
+fn stylesheet_declaration_reads_priorities_indexes_and_writes_css_text() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@import url(\"theme.css\"); span { color: cyan !important; background-color: magenta; }'; \
+         document.head.appendChild(styleElement); \
+         var rules = document.styleSheets[0].cssRules; \
+         var importRule = rules[0]; var rule = rules[1]; var declaration = rule.style;",
+    )
+    .unwrap();
+
+    ok(
+        &mut rt,
+        "importRule.style === undefined && importRule.cssText === '@import url(\"theme.css\");' && \
+         importRule.selectorText === '@import url(\"theme.css\")' && \
+         declaration.length === 2 && declaration.item(0) === 'color' && \
+         declaration.item(1) === 'background-color' && declaration.item(9) === '' && \
+         rules.item(9) === null && \
+         declaration.getPropertyPriority('color') === 'important' && \
+         declaration.cssText === 'color: cyan !important; background-color: magenta;'",
+    );
+
+    rt.evaluate("declaration.cssText = 'color: red; margin-top: 2px';")
+        .unwrap();
+    ok(
+        &mut rt,
+        "declaration.cssText === 'color: red; margin-top: 2px;' && \
+         styleElement.textContent.includes('color: red; margin-top: 2px;')",
+    );
+}
+
+#[test]
+fn stylesheet_objects_report_invalid_receivers_and_stale_rules() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'span { color: cyan; }'; \
+         document.head.appendChild(styleElement); \
+         var sheet = document.styleSheets[0]; var rule = sheet.cssRules[0]; \
+         var declaration = rule.style;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "(function() { try { Object.getOwnPropertyDescriptor(sheet, 'cssRules').get.call({}); return false; } catch (_) { return true; } })() && \
+         (function() { try { Object.getOwnPropertyDescriptor(rule, 'selectorText').get.call({}); return false; } catch (_) { return true; } })()",
+    );
+
+    rt.evaluate("styleElement.textContent = ''; rule.selectorText;")
+        .unwrap_err();
+    rt.evaluate("declaration.color = 'red';").unwrap_err();
+
+    rt.evaluate(
+        "styleElement.textContent = 'span { color: cyan; }'; \
+         var replacementRule = sheet.cssRules[0]; var replacementStyle = replacementRule.style; \
+         styleElement.textContent = '@import url(\"theme.css\");';",
+    )
+    .unwrap();
+    rt.evaluate("replacementStyle.cssText = 'color: red';")
+        .unwrap_err();
+}
+
+#[test]
+fn stylesheet_list_finds_nested_html_and_svg_style_elements() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var nested = document.createElement('section'); \
+         nested.appendChild(document.createTextNode('ordinary text')); \
+         var htmlStyle = document.createElement('style'); htmlStyle.textContent = 'p { color: red; }'; \
+         nested.appendChild(htmlStyle); document.body.appendChild(nested); \
+         var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); \
+         var svgStyle = document.createElementNS('http://www.w3.org/2000/svg', 'style'); \
+         svgStyle.textContent = 'circle { fill: blue; }'; svg.appendChild(svgStyle); document.body.appendChild(svg);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "document.styleSheets.length === 2 && document.styleSheets.item(9) === null && \
+         document.styleSheets[0].cssRules[0].selectorText === 'p' && \
+         document.styleSheets[1].cssRules[0].selectorText === 'circle'",
     );
 }

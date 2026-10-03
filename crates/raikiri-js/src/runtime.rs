@@ -27,6 +27,7 @@ pub(crate) mod query;
 pub(crate) mod scripts;
 pub(crate) mod selection;
 pub(crate) mod style;
+pub(crate) mod stylesheet;
 pub(crate) mod token_list;
 pub(crate) mod tree;
 pub(crate) mod webidl;
@@ -61,6 +62,16 @@ pub(crate) struct State {
     pub host_failure: Option<String>,
     /// Per-element `style` objects so `el.style === el.style`.
     pub style_objects: HashMap<usize, JsObject>,
+    /// The live `document.styleSheets` list.
+    pub style_sheet_list: Option<JsObject>,
+    /// Per-style-element `CSSStyleSheet` wrappers.
+    pub style_sheets: HashMap<usize, JsObject>,
+    /// Per-style-element live `CSSRuleList` wrappers.
+    pub css_rule_lists: HashMap<usize, JsObject>,
+    /// Per-style-rule `CSSStyleRule` wrappers.
+    pub css_style_rules: HashMap<(usize, usize), JsObject>,
+    /// Per-style-rule `CSSStyleDeclaration` wrappers.
+    pub css_rule_styles: HashMap<(usize, usize), JsObject>,
     /// Per-element `getComputedStyle` objects so
     /// `getComputedStyle(el) === getComputedStyle(el)`.
     pub computed_style_objects: HashMap<usize, JsObject>,
@@ -309,6 +320,11 @@ impl DomRuntime {
             live_walks: 0,
             host_failure: None,
             style_objects: HashMap::new(),
+            style_sheet_list: None,
+            style_sheets: HashMap::new(),
+            css_rule_lists: HashMap::new(),
+            css_style_rules: HashMap::new(),
+            css_rule_styles: HashMap::new(),
             computed_style_objects: HashMap::new(),
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),
