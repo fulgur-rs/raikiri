@@ -2,17 +2,17 @@
 
 use raikiri_dom::{
     FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
-    PageMargins, PageSlice, first_page_name,
-    layout_pages_with_page_geometry_and_resolver_and_base_url,
-    layout_pages_with_resolver_and_base_url, page_content_insets, page_margins,
+    PageLayoutControl, PageMargins, PageSlice, first_page_name,
+    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
+    layout_pages_with_resolver_and_base_url_and_control, page_content_insets, page_margins,
     resolve_initial_page_context,
 };
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, IntrinsicBox,
-    LayoutConfig, PageBox, PageDefaults, PaintRect, PolicyViolation, RenderError, RenderWarning,
-    ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
-    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    LayoutConfig, LayoutError, PageBox, PageDefaults, PaintRect, PolicyViolation, RenderError,
+    RenderWarning, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
+    ResolverRequest, ResourceKind, ResourcePolicy, ViolationType, WarningKind,
 };
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -660,6 +660,8 @@ pub(crate) fn run_pipeline(
     };
     let signal = config.signal.clone();
     let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
+    let page_control =
+        PageLayoutControl::new(config.limits.max_document_pages).with_abort_check(&is_aborted);
     if is_aborted() {
         return Ok(PipelineRun::Aborted);
     }
@@ -737,14 +739,21 @@ pub(crate) fn run_pipeline(
         );
     }
     let mut document = dom;
-    let mut slices = layout_pages_with_resolver_and_base_url(
+    let mut slices = match layout_pages_with_resolver_and_base_url_and_control(
         &mut document,
         &first_cascade,
         page_box,
         &resolver,
         runtime.effective_base_url,
-    )
-    .map_err(RenderError::from)?;
+        &page_control,
+    ) {
+        Ok(slices) => slices,
+        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+        Err(error) => return Err(RenderError::from(error)),
+    };
+    if is_aborted() {
+        return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
+    }
     const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
     let mut page_geometries =
         resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
@@ -766,7 +775,7 @@ pub(crate) fn run_pipeline(
         // the existing scheduled paginator with producer-owned page steps/widths.
         // This remains a bounded batch layout pass; a changed page count or page
         // name can trigger another schedule pass.
-        slices = layout_pages_with_page_geometry_and_resolver_and_base_url(
+        slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
             &mut document,
             &first_cascade,
             page_box,
@@ -774,8 +783,15 @@ pub(crate) fn run_pipeline(
             &schedule.page_widths,
             &resolver,
             runtime.effective_base_url,
-        )
-        .map_err(RenderError::from)?;
+            &page_control,
+        ) {
+            Ok(slices) => slices,
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+            Err(error) => return Err(RenderError::from(error)),
+        };
+        if is_aborted() {
+            return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
+        }
         // A scheduled pass can change both page count and page selectors. Re-
         // resolve before the next iteration so the following schedule is
         // derived from the slices it will actually replace.

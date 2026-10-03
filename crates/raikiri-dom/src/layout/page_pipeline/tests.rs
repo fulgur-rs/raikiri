@@ -2,6 +2,139 @@ use super::*;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
+#[test]
+fn page_layout_control_cancels_candidate_collection() {
+    use std::cell::Cell;
+
+    let (mut document, cascade) = hello_world_doc();
+    let polls = Cell::new(0);
+    let abort_check = || {
+        let next = polls.get() + 1;
+        polls.set(next);
+        next >= 4
+    };
+    let control = PageLayoutControl::new(Some(10)).with_abort_check(&abort_check);
+    let result = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        &[],
+        &[],
+        &control,
+    );
+
+    assert!(matches!(result, Err(LayoutError::Aborted)));
+    assert_eq!(polls.get(), 4, "pagination stops at the cancellation point");
+}
+
+#[test]
+fn page_layout_control_allows_an_explicit_unbounded_page_count() {
+    let (mut document, cascade) = hello_world_doc();
+    let control = PageLayoutControl::new(None);
+    let pages = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        &[],
+        &[],
+        &control,
+    )
+    .expect("unbounded pagination");
+
+    assert_eq!(pages.len(), 1);
+}
+
+#[test]
+fn page_layout_control_checks_percent_width_nodes() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:50%;height:1200px"),
+    );
+    document.append_text(block, "percentage width");
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let control = PageLayoutControl::new(None);
+
+    let pages = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        &[600.0, 300.0],
+        &[800.0, 400.0],
+        &control,
+    )
+    .expect("percentage-width pagination");
+
+    assert!(pages.len() >= 2);
+}
+
+#[test]
+fn candidate_collection_recurses_through_inline_subtrees() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let paragraph =
+        document.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let span = document.append_element(
+        Some(paragraph),
+        "span",
+        Style::default(),
+        Some("display:inline"),
+    );
+    document.append_text(span, "inline text");
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+
+    let pages = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        &[],
+        &[],
+        &PageLayoutControl::new(None),
+    )
+    .expect("inline-subtree pagination");
+
+    assert_eq!(pages.len(), 1);
+    assert!(
+        document.nodes[span]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
+    );
+}
+
+#[test]
+fn page_origins_use_direct_fixed_and_cumulative_scheduled_offsets() {
+    let fixed = PageOrigins::new(&[], 100.0);
+    assert_eq!(fixed.origin(10_000), 1_000_000.0);
+    assert_eq!(fixed.page_index_for_y(300.0), 3);
+    assert_eq!(fixed.page_index_for_end(300.0), 2);
+
+    let scheduled = PageOrigins::new(&[100.0, 180.0], 100.0);
+    assert_eq!(scheduled.origin(0), 0.0);
+    assert_eq!(scheduled.origin(1), 100.0);
+    assert_eq!(scheduled.origin(2), 280.0);
+    assert_eq!(scheduled.origin(3), 380.0);
+    assert_eq!(scheduled.page_index_for_y(150.0), 1);
+    assert_eq!(scheduled.page_index_for_end(150.0), 1);
+    assert_eq!(scheduled.page_index_for_y(280.0), 2);
+    assert_eq!(scheduled.page_index_for_end(280.0), 1);
+
+    let invalid_schedule = PageOrigins::new(&[0.0, -10.0, f32::NAN], 100.0);
+    assert_eq!(invalid_schedule.origin(3), 300.0);
+}
+
 // ── layout_single_page driver (Task 7) ──────────────────────
 
 fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {

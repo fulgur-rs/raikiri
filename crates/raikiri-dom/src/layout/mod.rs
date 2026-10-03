@@ -97,12 +97,14 @@ pub use page::{
     PageMargins, first_page_name, page_content_insets, page_margins, resolve_initial_page_context,
 };
 pub use page_pipeline::{
-    PageSlice, layout_pages, layout_pages_with_page_geometry,
-    layout_pages_with_page_geometry_and_resolver,
-    layout_pages_with_page_geometry_and_resolver_and_base_url, layout_pages_with_page_steps,
-    layout_pages_with_resolver, layout_pages_with_resolver_and_base_url, layout_single_page,
-    layout_single_page_with_resolver, layout_single_page_with_resolver_and_base_url,
-    relayout_text_for_width,
+    PageLayoutControl, PageSlice, layout_pages, layout_pages_with_page_geometry,
+    layout_pages_with_page_geometry_and_control, layout_pages_with_page_geometry_and_resolver,
+    layout_pages_with_page_geometry_and_resolver_and_base_url,
+    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
+    layout_pages_with_page_steps, layout_pages_with_resolver,
+    layout_pages_with_resolver_and_base_url, layout_pages_with_resolver_and_base_url_and_control,
+    layout_single_page, layout_single_page_with_resolver,
+    layout_single_page_with_resolver_and_base_url, relayout_text_for_width,
 };
 
 pub(crate) use page_pipeline::{

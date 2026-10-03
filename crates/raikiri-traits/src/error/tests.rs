@@ -55,3 +55,16 @@ fn fragment_limit_error_reports_the_aggregate_cap() {
     let error = LayoutError::FragmentLimitExceeded { limit: 65_536 };
     assert_eq!(error.to_string(), "Layout fragment limit exceeded: 65536");
 }
+
+#[test]
+fn page_limit_and_abort_layout_errors_have_stable_messages() {
+    assert_eq!(
+        LayoutError::PageLimitExceeded {
+            limit: 2,
+            actual: 3,
+        }
+        .to_string(),
+        "Layout page limit exceeded: 3 pages (limit 2)"
+    );
+    assert_eq!(LayoutError::Aborted.to_string(), "Layout aborted");
+}

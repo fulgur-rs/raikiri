@@ -164,6 +164,11 @@ impl From<LayoutError> for RenderError {
     fn from(e: LayoutError) -> Self {
         match e {
             LayoutError::Resolver(re) => Self::Resolver(re),
+            LayoutError::PageLimitExceeded { limit, actual } => Self::LimitExceeded {
+                kind: LimitKind::Pages,
+                limit: u64::from(limit),
+                actual,
+            },
             other => Self::Layout(other),
         }
     }
@@ -485,6 +490,15 @@ pub enum LayoutError {
         /// Maximum number of retained fragments in one layout pass.
         limit: usize,
     },
+    /// Pagination would produce more pages than the configured limit.
+    PageLimitExceeded {
+        /// Maximum number of pages allowed.
+        limit: u32,
+        /// First page count that exceeded the limit.
+        actual: u64,
+    },
+    /// Pagination was cancelled by its caller.
+    Aborted,
 }
 
 impl std::fmt::Display for LayoutError {
@@ -501,6 +515,13 @@ impl std::fmt::Display for LayoutError {
             Self::FragmentLimitExceeded { limit } => {
                 write!(f, "Layout fragment limit exceeded: {limit}")
             }
+            Self::PageLimitExceeded { limit, actual } => {
+                write!(
+                    f,
+                    "Layout page limit exceeded: {actual} pages (limit {limit})"
+                )
+            }
+            Self::Aborted => write!(f, "Layout aborted"),
         }
     }
 }
