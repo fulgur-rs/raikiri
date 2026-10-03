@@ -1,4 +1,6 @@
-use super::{SvgDocument, SvgError, SvgRootStyle, SvgViewport};
+use super::{
+    SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport, apply_selector_edits,
+};
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
 
@@ -130,6 +132,18 @@ fn selector_freezing_budget_covers_xml_escape_and_opacity_stylesheet_copy() {
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn selector_edit_application_rejects_overlapping_ranges() {
+    let result = apply_selector_edits(
+        "abc",
+        vec![(0..2, "x".to_owned()), (1..3, "y".to_owned())],
+        &mut SelectorFreezeBudget::new(),
+    );
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message == "overlapping SVG selector edits"));
 }
 
 #[test]
