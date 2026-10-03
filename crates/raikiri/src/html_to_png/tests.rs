@@ -47,6 +47,22 @@ fn html_to_png_uses_first_page_size_descriptor_for_png_dimensions() {
     assert_eq!((width, height), (300, 50));
 }
 
+#[test]
+fn html_to_png_rejects_page_that_exceeds_raster_byte_budget() {
+    let html = br#"<html><head><style>@page { size: 4097px 4096px; margin: 0 }</style></head><body>x</body></html>"#;
+    let error = match html_to_png(&html[..]) {
+        Err(error) => error,
+        Ok(png) => panic!(
+            "oversized page unexpectedly rendered ({} output bytes)",
+            png.len()
+        ),
+    };
+    assert!(
+        matches!(error, RenderError::LimitExceeded { .. }),
+        "expected a structured raster limit error, got {error:?}"
+    );
+}
+
 /// Exercise `<img>` intrinsic-size resolution, layout, pixel decoding,
 /// and painting end to end through `html_to_png_with_resolver`.
 /// The `assert_ne!` below proves the resolver/pixel source actually

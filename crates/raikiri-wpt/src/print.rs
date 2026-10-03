@@ -74,26 +74,48 @@ pub fn render_print_url(
             require_inline_fonts: false,
         },
     )
-    .map_err(|error| PrintRenderError::new(error.to_string()))
+    .map_err(PrintRenderError::from_render_error)
 }
 
 /// Failure while fetching, parsing, laying out, or painting a print document.
 #[derive(Debug)]
-pub struct PrintRenderError(String);
+pub struct PrintRenderError {
+    message: String,
+    raster_error: Option<raikiri::RenderError>,
+}
 
 impl PrintRenderError {
     fn new(message: String) -> Self {
-        Self(message)
+        Self {
+            message,
+            raster_error: None,
+        }
+    }
+
+    fn from_render_error(error: Box<dyn std::error::Error>) -> Self {
+        match error.downcast::<raikiri::RenderError>() {
+            Ok(error) => Self {
+                message: error.to_string(),
+                raster_error: Some(*error),
+            },
+            Err(error) => Self::new(error.to_string()),
+        }
     }
 }
 
 impl fmt::Display for PrintRenderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 
-impl std::error::Error for PrintRenderError {}
+impl std::error::Error for PrintRenderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.raster_error
+            .as_ref()
+            .map(|error| error as &(dyn std::error::Error + 'static))
+    }
+}
 
 #[cfg(test)]
 mod tests;

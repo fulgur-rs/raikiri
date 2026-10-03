@@ -1,4 +1,5 @@
 use super::*;
+use crate::LimitKind;
 use crate::build_cascaded;
 use raikiri_html::{ParseOptions, parse};
 
@@ -257,12 +258,38 @@ fn body_margin_lone_5px_collapses_to_8px() {
 fn rasterize_matches_html_to_png_bytes() {
     let (dom, cascade) = hello_world_post_layout();
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-    let via_scene = scene.rasterize(&dom, &cascade, PageBox::A4);
+    let via_scene = scene
+        .rasterize(&dom, &cascade, PageBox::A4)
+        .expect("A4 rasterization succeeds");
     let via_umbrella = crate::html_to_png(&b"<p>Hi</p>"[..]).expect("html_to_png Ok");
     assert_eq!(
         via_scene, via_umbrella,
         "PageScene::rasterize must produce byte-identical output to html_to_png"
     );
+}
+
+#[test]
+fn rasterize_rejects_oversized_direct_page_box() {
+    let (dom, cascade) = hello_world_post_layout();
+    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    let mut page_box = PageBox::new();
+    page_box.width = crate::MAX_RASTER_EDGE as f32 + 1.0;
+    page_box.height = 1.0;
+
+    let error = match scene.rasterize(&dom, &cascade, page_box) {
+        Err(error) => error,
+        Ok(png) => panic!(
+            "oversized direct page box unexpectedly rendered ({} bytes)",
+            png.len()
+        ),
+    };
+    assert!(matches!(
+        error,
+        RenderError::LimitExceeded {
+            kind: LimitKind::RasterEdge,
+            ..
+        }
+    ));
 }
 
 /// Direct unit coverage for the body-margin helpers.

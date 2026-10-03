@@ -7,6 +7,16 @@ use crate::reftest::RenderedImage;
 use crate::test_http_server::{TestResponse, TestServer};
 
 #[test]
+fn print_render_error_falls_back_for_non_raster_errors() {
+    let error = super::PrintRenderError::from_render_error(Box::new(std::io::Error::other(
+        "print pipeline failed",
+    )));
+
+    assert_eq!(error.to_string(), "print pipeline failed");
+    assert!(std::error::Error::source(&error).is_none());
+}
+
+#[test]
 fn rejects_zero_fallback_dimensions_before_fetching() {
     let server = TestServer::start(HashMap::<&str, TestResponse>::new());
     let provider = SystemHttpProvider::new();
@@ -17,6 +27,34 @@ fn rejects_zero_fallback_dimensions_before_fetching() {
         assert!(error.contains("dimensions must be positive"));
     }
     assert!(server.finish().is_empty());
+}
+
+#[test]
+fn print_page_raster_limits_remain_structured_at_the_public_boundary() {
+    let server = TestServer::start(HashMap::from([(
+        "/index.html",
+        TestResponse::ok(
+            "text/html",
+            br#"<style>@page { size: 16385px 100px; margin: 0 }</style><body>x</body>"#.to_vec(),
+        ),
+    )]));
+    let error = match render_print_url(&SystemHttpProvider::new(), server.url("index.html"), 10, 10)
+    {
+        Err(error) => error,
+        Ok(document) => panic!(
+            "oversized print page unexpectedly rendered ({} pages)",
+            document.pages.len()
+        ),
+    };
+    let source = std::error::Error::source(&error).expect("structured raster error source");
+    assert!(matches!(
+        source.downcast_ref::<raikiri::RenderError>(),
+        Some(raikiri::RenderError::LimitExceeded {
+            kind: raikiri::LimitKind::RasterEdge,
+            ..
+        })
+    ));
+    assert_eq!(server.finish(), ["/index.html"]);
 }
 
 #[test]

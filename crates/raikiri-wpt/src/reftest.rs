@@ -207,6 +207,8 @@ pub enum ReftestError {
     },
     /// Rendering failed for raikiri.
     RaikiriRender(String),
+    /// A raster sink rejected the request with a structured error.
+    Raster(raikiri::RenderError),
     /// Rendering failed for blitz.
     BlitzRender(String),
 }
@@ -230,6 +232,7 @@ impl std::fmt::Display for ReftestError {
                 test_path.display()
             ),
             Self::RaikiriRender(s) => write!(f, "raikiri render error: {s}"),
+            Self::Raster(error) => write!(f, "rasterization failed: {error}"),
             Self::BlitzRender(s) => write!(f, "blitz render error: {s}"),
         }
     }
@@ -239,6 +242,7 @@ impl std::error::Error for ReftestError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
+            Self::Raster(error) => Some(error),
             _ => None,
         }
     }
@@ -737,8 +741,7 @@ fn prime_image_resolver(
 /// callers should use [`render_raikiri_pages`] so page count and per-page
 /// `@page` selectors are preserved.
 pub fn render_raikiri(html: &str, width: u32, height: u32) -> Result<RenderedImage, ReftestError> {
-    render_raikiri_inner(html, width, height)
-        .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
+    render_raikiri_inner(html, width, height).map_err(map_raster_or_raikiri_error)
 }
 
 /// Render `html` into one image per output page.
@@ -751,8 +754,14 @@ pub fn render_raikiri_pages(
     width: u32,
     height: u32,
 ) -> Result<RenderedDocument, ReftestError> {
-    render_raikiri_pages_inner(html, width, height, None, None)
-        .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
+    render_raikiri_pages_inner(html, width, height, None, None).map_err(map_raster_or_raikiri_error)
+}
+
+fn map_raster_or_raikiri_error(error: Box<dyn std::error::Error>) -> ReftestError {
+    match error.downcast::<raikiri::RenderError>() {
+        Ok(error) => ReftestError::Raster(*error),
+        Err(error) => ReftestError::RaikiriRender(error.to_string()),
+    }
 }
 
 fn render_raikiri_inner(
@@ -1972,7 +1981,8 @@ pub(crate) fn render_raikiri_pages_with_resources(
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
     use raikiri::{
-        Atom, MediaContext, PageBox, PageContextQuery, build_cascaded_with_media_context_for_page,
+        Atom, MediaContext, PageBox, PageContextQuery, RasterBufferBudget,
+        build_cascaded_with_media_context_for_page,
     };
     use raikiri_dom::{
         layout_pages, layout_pages_with_page_geometry,
@@ -2232,6 +2242,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         .unwrap_or_default();
     let page_count = slices.len() as u32;
     let mut pages = Vec::with_capacity(slices.len());
+    let mut raster_budget = RasterBufferBudget::new();
     for slice in slices {
         let mut query = PageContextQuery::default();
         query.page_name = slice
@@ -2291,8 +2302,9 @@ pub(crate) fn render_raikiri_pages_with_resources(
             relayout_text_for_width(&mut uncascaded.dom, &cascade, page_width);
         }
         let active_page_name = slice.page_name.clone();
-        let page_width = page_box.width.ceil() as u32;
-        let page_height = page_box.height.ceil() as u32;
+        let raster_size = raster_budget.reserve_page_box(page_box)?;
+        let page_width = raster_size.width();
+        let page_height = raster_size.height();
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |painter| {
                 if let Some(pixel_source) = image_pixel_source {
@@ -2522,7 +2534,14 @@ pub(crate) fn wpt_document_fonts(
 /// Uses `blitz_html::HtmlDocument::from_html` → `BaseDocument::resolve`
 /// → `blitz_paint::paint_scene` → `anyrender::render_to_buffer`.
 pub fn render_blitz(html: &str, width: u32, height: u32) -> Result<RenderedImage, ReftestError> {
-    render_blitz_inner(html, width, height).map_err(|e| ReftestError::BlitzRender(e.to_string()))
+    render_blitz_inner(html, width, height).map_err(map_raster_or_blitz_error)
+}
+
+fn map_raster_or_blitz_error(error: Box<dyn std::error::Error>) -> ReftestError {
+    match error.downcast::<raikiri::RenderError>() {
+        Ok(error) => ReftestError::Raster(*error),
+        Err(error) => ReftestError::BlitzRender(error.to_string()),
+    }
 }
 
 fn render_blitz_inner(
@@ -2537,9 +2556,10 @@ fn render_blitz_inner(
     use blitz_paint::paint_scene;
     use blitz_traits::shell::ColorScheme;
     use blitz_traits::shell::Viewport;
+    let size = raikiri::RasterBufferBudget::new().reserve_pixels(width, height)?;
 
     let viewport = Viewport {
-        window_size: (width, height),
+        window_size: (size.width(), size.height()),
         hidpi_scale: 1.0,
         zoom: 1.0,
         color_scheme: ColorScheme::Light,
@@ -2554,14 +2574,14 @@ fn render_blitz_inner(
     let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
         |scene| {
             // blitz_paint expects &mut BaseDocument
-            paint_scene(scene, &mut doc, 1.0, width, height, 0, 0);
+            paint_scene(scene, &mut doc, 1.0, size.width(), size.height(), 0, 0);
         },
-        width,
-        height,
+        size.width(),
+        size.height(),
     );
     Ok(RenderedImage {
-        width,
-        height,
+        width: size.width(),
+        height: size.height(),
         rgba,
     })
 }
@@ -2817,7 +2837,7 @@ where
         Some(test_prepared.canvases),
         Some(&test_prepared.custom_highlight_ranges),
     )
-    .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
+    .map_err(map_raster_or_raikiri_error)?;
     let ref_doc = render_raikiri_pages_inner_with_canvases(
         &ref_html,
         config.width,
@@ -2832,7 +2852,7 @@ where
         Some(ref_prepared.canvases),
         Some(&ref_prepared.custom_highlight_ranges),
     )
-    .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
+    .map_err(map_raster_or_raikiri_error)?;
     let (test_selection, reference_selection) = selections;
     let diff = compare_documents_selected(
         &test_doc,

@@ -49,13 +49,14 @@
 
 use crate::PageDrawables;
 use crate::entries::{BlockEntry, ParagraphEntry};
+use crate::raster_budget::RasterBufferBudget;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri_dom::Document;
 use raikiri_style::property::{DisplayValue, FloatValue, PositionValue};
 use raikiri_style::resolve::{ComputedLengthPercentage, ComputedLengthPercentageOrAuto};
 use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
-use raikiri_traits::{NodeId, NodeKind, PageBox};
+use raikiri_traits::{NodeId, NodeKind, PageBox, RenderError};
 use std::collections::{BTreeMap, HashMap};
 
 /// Type alias for coordinates within `PageScene`.
@@ -218,15 +219,18 @@ impl PageScene {
     /// pending a crate-topology decision.
     ///
     /// # Internals
-    /// 1. Use `page_box.{width,height}.ceil() as u32` for pixel buffer dimensions
-    ///    (the same as html_to_png).
+    /// 1. Validate and reserve the rounded pixel dimensions with
+    ///    `RasterBufferBudget` (the same limit used by html_to_png).
     /// 2. Build `PaintScene` with `anyrender::render_to_buffer::<VelloCpuImageRenderer, _>`.
     /// 3. Call `raikiri_paint::paint_single_page(scene, dom, cascade, page_box)` verbatim.
     /// 4. Serialize RGBA8 to PNG with `encode_png` (`tiny_skia::Pixmap::encode_png`).
     ///
+    /// # Errors
+    /// Returns `RenderError::Configuration` for non-finite or non-positive
+    /// dimensions and `RenderError::LimitExceeded` when the page exceeds the
+    /// shared raster edge or byte budget.
+    ///
     /// # Panics
-    /// - Casting `page_box.width.ceil()` or `page_box.height.ceil()` to u32 gives 0
-    ///   (invalid `tiny_skia::IntSize`).
     /// - The `anyrender_vello_cpu` output buffer length differs from
     ///   `width * height * 4` (invariant violation).
     /// - `tiny_skia::Pixmap::encode_png` fails (not expected for a well-formed pixmap).
@@ -246,11 +250,13 @@ impl PageScene {
     /// Passing a pre-layout Document produces a PNG with missing glyphs because
     /// no paragraph has lines yet. Behavior is undefined; callers must wait
     /// for `layout_single_page` to complete.
-    #[must_use]
-    pub fn rasterize(&self, dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> Vec<u8> {
-        // PageBox = 793.7008 × 1122.5197 CSS px → 794 × 1123 u32 buffer (same rounding as html_to_png)
-        let width = page_box.width.ceil() as u32;
-        let height = page_box.height.ceil() as u32;
+    pub fn rasterize(
+        &self,
+        dom: &Document,
+        cascade: &CascadeResult,
+        page_box: PageBox,
+    ) -> Result<Vec<u8>, RenderError> {
+        let size = RasterBufferBudget::new().reserve_page_box(page_box)?;
 
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |scene| {
@@ -262,11 +268,11 @@ impl PageScene {
                     self.content_origin_y,
                 )
             },
-            width,
-            height,
+            size.width(),
+            size.height(),
         );
 
-        encode_png(&rgba, width, height)
+        Ok(encode_png(&rgba, size.width(), size.height()))
     }
 
     /// Like [`Self::rasterize`], but retrieves decoded `<img>` pixels from
@@ -276,16 +282,17 @@ impl PageScene {
     /// takes an `ImagePixelSource` (an accessor for decoded pixels), not a
     /// `ReplacedResolver`. Intrinsic size resolution already happened before
     /// layout (see [`crate::html_to_png_with_resolver`]).
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns the same dimension and raster limit errors as [`Self::rasterize`].
     pub fn rasterize_with_images(
         &self,
         dom: &Document,
         cascade: &CascadeResult,
         page_box: PageBox,
         pixel_source: &dyn raikiri_traits::ImagePixelSource,
-    ) -> Vec<u8> {
-        let width = page_box.width.ceil() as u32;
-        let height = page_box.height.ceil() as u32;
+    ) -> Result<Vec<u8>, RenderError> {
+        let size = RasterBufferBudget::new().reserve_page_box(page_box)?;
 
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |scene| {
@@ -297,11 +304,11 @@ impl PageScene {
                     pixel_source,
                 )
             },
-            width,
-            height,
+            size.width(),
+            size.height(),
         );
 
-        encode_png(&rgba, width, height)
+        Ok(encode_png(&rgba, size.width(), size.height()))
     }
 }
 

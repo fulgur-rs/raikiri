@@ -5,8 +5,8 @@ use std::fmt;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri::{
-    Body, MediaContext, Method, NetworkProvider, PageBox, PageContextQuery, ParseOptions, Request,
-    ResourceKind, Url, build_cascaded_with_media_context_for_page,
+    Body, MediaContext, Method, NetworkProvider, PageBox, PageContextQuery, ParseOptions,
+    RasterBufferBudget, Request, ResourceKind, Url, build_cascaded_with_media_context_for_page,
 };
 use raikiri_html::effective_document_base_url;
 use raikiri_net::{ImageResolver, SystemHttpProvider};
@@ -23,6 +23,9 @@ pub fn render_screen_url(
     width: u32,
     height: u32,
 ) -> Result<RenderedImage, ScreenRenderError> {
+    let size = RasterBufferBudget::new()
+        .reserve_pixels(width, height)
+        .map_err(ScreenRenderError::from_raster_error)?;
     let resource = provider
         .fetch(Request {
             url,
@@ -69,8 +72,8 @@ pub fn render_screen_url(
     let mut cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &page_query);
     let mut page_box = PageBox::new();
-    page_box.width = width as f32;
-    page_box.height = height as f32;
+    page_box.width = size.width() as f32;
+    page_box.height = size.height() as f32;
     let image_resolver = ImageResolver::new(provider.clone());
     prepare_cascade_images(&mut cascade, &base_url, &image_resolver);
     raikiri_dom::layout_single_page_with_resolver_and_base_url(
@@ -92,33 +95,52 @@ pub fn render_screen_url(
                 &image_resolver,
             );
         },
-        width,
-        height,
+        size.width(),
+        size.height(),
     );
     Ok(RenderedImage {
-        width,
-        height,
+        width: size.width(),
+        height: size.height(),
         rgba,
     })
 }
 
 /// Failure while fetching, parsing, laying out, or painting a screen document.
 #[derive(Debug)]
-pub struct ScreenRenderError(String);
+pub struct ScreenRenderError {
+    message: String,
+    raster_error: Option<raikiri::RenderError>,
+}
 
 impl ScreenRenderError {
     fn new(message: String) -> Self {
-        Self(message)
+        Self {
+            message,
+            raster_error: None,
+        }
+    }
+
+    fn from_raster_error(error: raikiri::RenderError) -> Self {
+        Self {
+            message: error.to_string(),
+            raster_error: Some(error),
+        }
     }
 }
 
 impl fmt::Display for ScreenRenderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.message)
     }
 }
 
-impl std::error::Error for ScreenRenderError {}
+impl std::error::Error for ScreenRenderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.raster_error
+            .as_ref()
+            .map(|error| error as &(dyn std::error::Error + 'static))
+    }
+}
 
 #[cfg(test)]
 mod tests;
