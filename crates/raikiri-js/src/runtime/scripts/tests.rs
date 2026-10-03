@@ -110,6 +110,105 @@ impl DocumentHost for DefaultFetchHost {
     }
 }
 
+struct ScriptFragmentHost {
+    host: StubHost,
+    return_document_child: bool,
+    return_document_fragment_child: bool,
+}
+
+impl DocumentHost for ScriptFragmentHost {
+    fn document(&self) -> &Document {
+        self.host.document()
+    }
+    fn document_mut(&mut self) -> &mut Document {
+        self.host.document_mut()
+    }
+    fn flush(&mut self) -> Result<(), HostError> {
+        self.host.flush()
+    }
+    fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+        self.host.box_geometry(node)
+    }
+    fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
+        self.host.computed_value(node, property)
+    }
+    fn parse_fragment(
+        &mut self,
+        _context_tag: &str,
+        _context_ns: &str,
+        _markup: &str,
+    ) -> Result<Document, HostError> {
+        let mut fragment = Document::new();
+        let root = fragment.root_index();
+        if self.return_document_child {
+            fragment.attach_child(root, root);
+            return Ok(fragment);
+        }
+        if self.return_document_fragment_child {
+            return Document::from_logical_snapshot(
+                raikiri_dom::snapshot::LogicalSnapshot {
+                    root,
+                    nodes: vec![
+                        raikiri_dom::snapshot::LogicalNode {
+                            data: raikiri_dom::snapshot::LogicalData::Document,
+                            children: vec![1],
+                        },
+                        raikiri_dom::snapshot::LogicalNode {
+                            data: raikiri_dom::snapshot::LogicalData::Fragment,
+                            children: vec![2],
+                        },
+                        raikiri_dom::snapshot::LogicalNode {
+                            data: raikiri_dom::snapshot::LogicalData::Text("spliced".to_owned()),
+                            children: vec![],
+                        },
+                    ],
+                    quirks: 0,
+                    stylesheets: vec![],
+                },
+                3,
+            )
+            .map_err(|error| HostError(error.to_string()));
+        }
+        let outer_template = fragment.create_detached_element("template").unwrap();
+        fragment.append_child(root, outer_template).unwrap();
+        let outer_contents = fragment.allocate_template_fragment_root(outer_template);
+        let inner_template = fragment.create_detached_element("template").unwrap();
+        fragment
+            .append_child(outer_contents, inner_template)
+            .unwrap();
+        let inner_contents = fragment.allocate_template_fragment_root(inner_template);
+        fragment.append_text(inner_contents, "nested");
+        Ok(fragment)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+fn template_fragment_host() -> (ScriptFragmentHost, usize) {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "document.body.innerHTML = 'replacement';",
+    );
+    (
+        ScriptFragmentHost {
+            host,
+            return_document_child: false,
+            return_document_fragment_child: false,
+        },
+        body,
+    )
+}
+
 // ---- run_document: order, currentScript, readyState, lifecycle events ----
 
 #[test]
@@ -541,6 +640,276 @@ fn assert_node_budget_aborts(loop_body: &str) {
 #[test]
 fn node_budget_limit_covers_the_textcontent_setter() {
     assert_node_budget_aborts("for (;;) { document.body.textContent = 'x'; }");
+}
+
+#[test]
+fn node_budget_limit_covers_repeated_inner_html_replacements() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "document.body.innerHTML = 'first';\
+         document.body.innerHTML = 'second';\
+         document.body.innerHTML = 'blocked';",
+    );
+    let before = host.document.node_count();
+
+    let mut rt = runtime_with(
+        Limits {
+            max_nodes: before + 2,
+            ..Default::default()
+        },
+        host,
+    );
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, Some(Abort::Nodes), "{report:?}");
+    let (node_count, inner_html) = with_state(rt.context_mut(), |s| {
+        (
+            s.host.document().node_count(),
+            s.host.document().serialize_inner_html(body).unwrap(),
+        )
+    })
+    .unwrap();
+    assert_eq!(node_count, before + 2);
+    assert_eq!(inner_html, "second");
+}
+
+#[test]
+fn inner_html_budget_counts_nested_template_contents_before_mutation() {
+    let (host, body) = template_fragment_host();
+    let before = host.host.document.node_count();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_nodes: before + 4,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, Some(Abort::Nodes), "{report:?}");
+    let (node_count, body_children) = with_state(rt.context_mut(), |s| {
+        (
+            s.host.document().node_count(),
+            s.host.document().get_node(body).unwrap().children.clone(),
+        )
+    })
+    .unwrap();
+    assert_eq!(node_count, before);
+    assert_eq!(body_children.len(), 1);
+    assert_eq!(
+        with_state(rt.context_mut(), |s| {
+            s.host
+                .document()
+                .get_node(body_children[0])
+                .unwrap()
+                .tag_name()
+                .map(str::to_owned)
+        })
+        .unwrap(),
+        Some("script".to_owned())
+    );
+
+    let (host, body) = template_fragment_host();
+    let before = host.host.document.node_count();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_nodes: before + 5,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, None, "{report:?}");
+    let (node_count, inner_html) = with_state(rt.context_mut(), |s| {
+        (
+            s.host.document().node_count(),
+            s.host.document().serialize_inner_html(body).unwrap(),
+        )
+    })
+    .unwrap();
+    assert_eq!(node_count, before + 5);
+    assert_eq!(
+        inner_html,
+        "<template><template>nested</template></template>"
+    );
+}
+
+#[test]
+fn inner_html_budget_rejects_element_and_template_roots_before_mutation() {
+    for extra_nodes in [0, 3] {
+        let (host, body) = template_fragment_host();
+        let before = host.host.document.node_count();
+        let mut rt = DomRuntime::with_options(
+            host,
+            RunOptions {
+                limits: Limits {
+                    max_nodes: before + extra_nodes,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+
+        let report = rt.run_document();
+
+        assert_eq!(report.aborted, Some(Abort::Nodes), "{report:?}");
+        let (node_count, body_children) = with_state(rt.context_mut(), |s| {
+            (
+                s.host.document().node_count(),
+                s.host.document().get_node(body).unwrap().children.clone(),
+            )
+        })
+        .unwrap();
+        assert_eq!(node_count, before);
+        assert_eq!(body_children.len(), 1);
+        assert_eq!(
+            with_state(rt.context_mut(), |s| {
+                s.host
+                    .document()
+                    .get_node(body_children[0])
+                    .unwrap()
+                    .tag_name()
+                    .map(str::to_owned)
+            })
+            .unwrap(),
+            Some("script".to_owned())
+        );
+    }
+}
+
+#[test]
+fn inner_html_budget_splices_document_fragment_children() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "document.body.innerHTML = 'replacement';",
+    );
+    let before = host.document.node_count();
+    let mut rt = DomRuntime::with_options(
+        ScriptFragmentHost {
+            host,
+            return_document_child: false,
+            return_document_fragment_child: true,
+        },
+        RunOptions {
+            limits: Limits {
+                max_nodes: before + 1,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, None, "{report:?}");
+    let (node_count, inner_html) = with_state(rt.context_mut(), |s| {
+        (
+            s.host.document().node_count(),
+            s.host.document().serialize_inner_html(body).unwrap(),
+        )
+    })
+    .unwrap();
+    assert_eq!(node_count, before + 1);
+    assert_eq!(inner_html, "spliced");
+}
+
+#[test]
+fn inner_html_budget_rejects_when_existing_arena_exceeds_limit() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "document.body.innerHTML = 'replacement';",
+    );
+    let before = host.document.node_count();
+    let mut rt = runtime_with(
+        Limits {
+            max_nodes: before - 1,
+            ..Default::default()
+        },
+        host,
+    );
+
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, Some(Abort::Nodes), "{report:?}");
+    let (node_count, inner_html) = with_state(rt.context_mut(), |s| {
+        (
+            s.host.document().node_count(),
+            s.host.document().serialize_inner_html(body).unwrap(),
+        )
+    })
+    .unwrap();
+    assert_eq!(node_count, before);
+    assert_eq!(
+        inner_html,
+        "<script>document.body.innerHTML = 'replacement';</script>"
+    );
+}
+
+#[test]
+fn inner_html_budget_rejects_document_node_from_invalid_host_fragment() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "document.body.innerHTML = 'replacement';",
+    );
+    let before = host.document.node_count();
+    let mut rt = DomRuntime::with_options(
+        ScriptFragmentHost {
+            host,
+            return_document_child: true,
+            return_document_fragment_child: false,
+        },
+        RunOptions {
+            limits: Limits {
+                max_nodes: before + 1,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, Some(Abort::Nodes), "{report:?}");
+    let (node_count, body_children) = with_state(rt.context_mut(), |s| {
+        (
+            s.host.document().node_count(),
+            s.host.document().get_node(body).unwrap().children.clone(),
+        )
+    })
+    .unwrap();
+    assert_eq!(node_count, before);
+    assert_eq!(body_children.len(), 1);
+    assert_eq!(
+        with_state(rt.context_mut(), |s| {
+            s.host
+                .document()
+                .get_node(body_children[0])
+                .unwrap()
+                .tag_name()
+                .map(str::to_owned)
+        })
+        .unwrap(),
+        Some("script".to_owned())
+    );
 }
 
 #[test]
