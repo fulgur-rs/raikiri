@@ -138,8 +138,13 @@ pub(crate) fn compute_multicol_layout(
         if let Some(active) = tree.fragmentation_stack.last_mut() {
             *active = resolved;
         }
-        let used_height =
-            relayout_nested_multicol_children(tree, node_id, resolved, output.size.height);
+        let used_height = relayout_nested_multicol_children(
+            tree,
+            node_id,
+            resolved,
+            output.size.height,
+            fragmentainer_height.is_some(),
+        );
         if fragmentainer_height.is_none() {
             output.size.height = used_height.max(0.0);
         }
@@ -289,6 +294,7 @@ fn relayout_nested_multicol_children(
     node_id: TaffyNodeId,
     context: FragmentationContext,
     fallback_height: f32,
+    has_fragmentainer_height_constraint: bool,
 ) -> f32 {
     let index = usize::from(node_id);
     let children: Vec<usize> = tree.nodes[index]
@@ -511,7 +517,12 @@ fn relayout_nested_multicol_children(
         };
     let used = maximum.max(cursor).max(minimum_height);
     if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
-        fragment.rect.height = used;
+        if has_fragmentainer_height_constraint {
+            // Overflowing descendants do not expand a height-constrained border box.
+            fragment.rect.height = used.min(fallback_height);
+        } else {
+            fragment.rect.height = used;
+        }
     }
     used
 }

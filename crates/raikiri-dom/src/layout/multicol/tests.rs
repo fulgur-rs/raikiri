@@ -1427,3 +1427,21 @@ fn layout_nested_flex_float_fixture(doc: &mut Document) {
     page.height = 600.0;
     layout_single_page(doc, &cascade, page).expect("layout Ok");
 }
+
+#[test]
+fn max_height_multicol_fragment_does_not_expand_to_float_overflow() {
+    let (mut doc, multicol, _) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    layout_nested_flex_float_fixture(&mut doc);
+
+    let fragment = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .find(|fragment| fragment.node_id == multicol)
+        .expect("multicol fragment");
+    assert!(
+        fragment.rect.height <= 166.0,
+        "max-height:160px plus 3px borders must bound the fragment, got {}",
+        fragment.rect.height
+    );
+}
