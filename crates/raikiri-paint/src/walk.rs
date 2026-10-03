@@ -1559,31 +1559,116 @@ fn generated_flow_height(
     cascade: &CascadeResult,
     node_id: usize,
     snapshots: &[CounterSnapshot],
+    cache: &mut std::collections::HashMap<usize, f32>,
 ) -> f32 {
-    let before = generated_pseudo_text_height(
-        document,
-        cascade,
-        node_id,
-        raikiri_style::PseudoElem::Before,
-        snapshots,
-    );
-    let after = generated_pseudo_text_height(
-        document,
-        cascade,
-        node_id,
-        raikiri_style::PseudoElem::After,
-        snapshots,
-    );
-    let Some(node) = document.get_node(node_id) else {
-        return before.max(after); // cov:ignore: generated flow receives arena-valid node ids
-    };
+    if let Some(height) = cache.get(&node_id) {
+        return *height;
+    }
 
-    // A generated `::before` run is the first child of a block box.  When the
-    // block also owns normal-flow block children, those children must start
-    // after the generated run, and their generated flow contributes to the
-    // block's auto height.  Keep the existing inline-only bridge unchanged.
-    let block_children = node
-        .children
+    let mut pending = vec![(node_id, false)];
+    while let Some((current_id, children_ready)) = pending.pop() {
+        if cache.contains_key(&current_id) {
+            continue;
+        }
+        if !children_ready {
+            pending.push((current_id, true));
+            for child in generated_flow_block_children(document, cascade, current_id)
+                .into_iter()
+                .rev()
+            {
+                if !cache.contains_key(&child) {
+                    pending.push((child, false));
+                }
+            }
+            continue;
+        }
+
+        let before = generated_pseudo_text_height(
+            document,
+            cascade,
+            current_id,
+            raikiri_style::PseudoElem::Before,
+            snapshots,
+        );
+        let after = generated_pseudo_text_height(
+            document,
+            cascade,
+            current_id,
+            raikiri_style::PseudoElem::After,
+            snapshots,
+        );
+        let Some(node) = document.get_node(current_id) else {
+            cache.insert(current_id, before.max(after)); // cov:ignore: generated flow receives arena-valid node ids
+            continue;
+        };
+
+        // A generated `::before` run is the first child of a block box. When
+        // the block also owns normal-flow block children, those children must
+        // start after the generated run and contribute to the block's auto
+        // height. Keep the existing inline-only bridge unchanged.
+        let block_children = generated_flow_block_children(document, cascade, current_id);
+        let has_generated_block_child = block_children
+            .iter()
+            .any(|child| cache.get(child).copied().unwrap_or(0.0) > 0.0);
+        let height = if !block_children.is_empty()
+            && (before > 0.0 || after > 0.0 || has_generated_block_child)
+        {
+            before
+                + after
+                + block_children
+                    .iter()
+                    .filter_map(|&child| {
+                        let child_node = document.get_node(child)?;
+                        Some(
+                            child_node
+                                .unrounded_layout
+                                .size
+                                .height
+                                .max(cache.get(&child).copied().unwrap_or(0.0)),
+                        )
+                    })
+                    .sum::<f32>()
+        } else {
+            let inline_child = node
+                .children
+                .iter()
+                .filter_map(|&child| {
+                    let child_cv = cascade.computed.get(child)?;
+                    (child_cv.display == DisplayValue::Inline).then_some(
+                        generated_pseudo_text_height(
+                            document,
+                            cascade,
+                            child,
+                            raikiri_style::PseudoElem::Before,
+                            snapshots,
+                        )
+                        .max(generated_pseudo_text_height(
+                            document,
+                            cascade,
+                            child,
+                            raikiri_style::PseudoElem::After,
+                            snapshots,
+                        )),
+                    )
+                })
+                .fold(0.0, f32::max);
+            before.max(after).max(inline_child)
+        };
+        cache.insert(current_id, height);
+    }
+
+    cache.get(&node_id).copied().unwrap_or(0.0)
+}
+
+fn generated_flow_block_children(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Vec<usize> {
+    let Some(node) = document.get_node(node_id) else {
+        return Vec::new();
+    };
+    node.children
         .iter()
         .filter_map(|&child| {
             let child_node = document.get_node(child)?;
@@ -1597,52 +1682,7 @@ fn generated_flow_height(
                 && normal_flow)
                 .then_some(child)
         })
-        .collect::<Vec<_>>();
-    let has_generated_block_child = block_children
-        .iter()
-        .any(|&child| generated_flow_height(document, cascade, child, snapshots) > 0.0);
-    if !block_children.is_empty() && (before > 0.0 || after > 0.0 || has_generated_block_child) {
-        return before
-            + after
-            + block_children
-                .into_iter()
-                .filter_map(|child| {
-                    let child_node = document.get_node(child)?;
-                    Some(
-                        child_node
-                            .unrounded_layout
-                            .size
-                            .height
-                            .max(generated_flow_height(document, cascade, child, snapshots)),
-                    )
-                })
-                .sum::<f32>();
-    }
-
-    let inline_child = node
-        .children
-        .iter()
-        .filter_map(|&child| {
-            let child_cv = cascade.computed.get(child)?;
-            (child_cv.display == DisplayValue::Inline).then_some(
-                generated_pseudo_text_height(
-                    document,
-                    cascade,
-                    child,
-                    raikiri_style::PseudoElem::Before,
-                    snapshots,
-                )
-                .max(generated_pseudo_text_height(
-                    document,
-                    cascade,
-                    child,
-                    raikiri_style::PseudoElem::After,
-                    snapshots,
-                )),
-            )
-        })
-        .fold(0.0, f32::max);
-    before.max(after).max(inline_child)
+        .collect()
 }
 
 fn generated_pseudo_text_height(
@@ -3221,6 +3261,9 @@ fn paint_document_impl(
     // content are pseudo boxes, so their temporary directives are applied by
     // the respective consumers on a clone of this node snapshot.
     let counter_snapshots = raikiri_dom::counter_snapshots(document, cascade);
+    // The document, cascade, and counter snapshots are stable for this pass,
+    // so each node's generated flow height can be computed once and reused.
+    let mut generated_flow_heights = std::collections::HashMap::new();
 
     let named_page_matches = |node_id: usize| match active_page_name {
         None => true,
@@ -3974,8 +4017,13 @@ fn paint_document_impl(
                 if !paints_as_absolute_continuation
                     && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
                 {
-                    let pseudo_height =
-                        generated_flow_height(document, cascade, node_id, &counter_snapshots);
+                    let pseudo_height = generated_flow_height(
+                        document,
+                        cascade,
+                        node_id,
+                        &counter_snapshots,
+                        &mut generated_flow_heights,
+                    );
                     let pseudo_border_height = cv.border.top.width().px()
                         + paint_padding.top
                         + pseudo_height
@@ -4512,8 +4560,13 @@ fn paint_document_impl(
                             && child_cv.display != DisplayValue::Inline
                             && child_is_normal_flow
                         {
-                            let required_height =
-                                generated_flow_height(document, cascade, child, &counter_snapshots);
+                            let required_height = generated_flow_height(
+                                document,
+                                cascade,
+                                child,
+                                &counter_snapshots,
+                                &mut generated_flow_heights,
+                            );
                             flow_extra += (required_height
                                 - child_node.unrounded_layout.size.height)
                                 .max(0.0);
