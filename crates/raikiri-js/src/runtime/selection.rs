@@ -110,7 +110,7 @@ fn node_length(context: &mut Context, index: usize) -> JsResult<usize> {
                 .count(),
             // `NodeKind` is non-exhaustive; unknown future node kinds have no
             // child or character data exposed by this runtime.
-            _ => 0,
+            _ => 0, // cov:ignore: no NodeKind variant beyond this exhaustive set exists in the current dependency build.
         })
     })?;
     length.ok_or_else(|| {
@@ -134,6 +134,8 @@ fn range_select_node_contents(
         end_container: node,
         end_offset: length,
     };
+    // The Range brand was checked above, and no script callback runs before this update.
+    // cov:ignore: this defensive guard cannot fail between the immediately preceding brand check and update.
     let updated = this.as_object().and_then(|object| {
         object
             .downcast_ref::<RangeData>()

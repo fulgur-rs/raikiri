@@ -1,5 +1,11 @@
+use boa_engine::object::JsObject;
+use boa_engine::property::Attribute;
+use boa_engine::JsString;
+
 use crate::runtime::DomRuntime;
+use crate::runtime::interfaces::{NodeHandle, protos};
 use crate::runtime::test_host::StubHost;
+use crate::runtime::webidl::with_state;
 
 fn rt() -> DomRuntime {
     let (host, ..) = StubHost::page();
@@ -60,7 +66,59 @@ fn selection_remove_all_ranges_clears_the_singleton_selection() {
          var selection = window.getSelection(); selection.addRange(range); \
          selection.removeAllRanges(); selection.rangeCount === 0 \
          && selection.isCollapsed && selection.anchorNode === null \
-         && selection.focusNode === null",
+         && selection.focusNode === null && selection.anchorOffset === 0 \
+         && selection.focusOffset === 0",
+    );
+}
+
+#[test]
+fn range_and_selection_methods_reject_incompatible_receivers() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var badRangeThis = false; \
+         try { Range.prototype.selectNodeContents.call({}, document.body); } \
+         catch (e) { badRangeThis = e instanceof TypeError; } \
+         var badSelectionThis = false; \
+         try { Selection.prototype.getRangeAt.call({}, 0); } \
+         catch (e) { badSelectionThis = e instanceof TypeError; } \
+         badRangeThis && badSelectionThis",
+    );
+}
+
+#[test]
+fn range_select_node_contents_rejects_an_invalid_node_handle() {
+    let mut rt = rt();
+    let node = JsObject::from_proto_and_data(
+        Some(protos(rt.context_mut()).node.clone()),
+        NodeHandle { index: usize::MAX },
+    );
+    rt.context_mut()
+        .register_global_property(JsString::from("invalidNode"), node, Attribute::all())
+        .unwrap();
+    ok(
+        &mut rt,
+        "var range = document.createRange(); \
+         var invalidNode = false; \
+         try { range.selectNodeContents(globalThis.invalidNode); } \
+         catch (e) { invalidNode = e instanceof TypeError; } \
+         invalidNode",
+    );
+}
+
+#[test]
+fn selection_rejects_corrupted_internal_range_state() {
+    let mut rt = rt();
+    rt.evaluate("var selection = window.getSelection();")
+        .unwrap();
+    let range = JsObject::from_proto_and_data(Some(protos(rt.context_mut()).range.clone()), ());
+    with_state(rt.context_mut(), |state| state.selection_ranges.push(range)).unwrap();
+    ok(
+        &mut rt,
+        "var invalidRange = false; \
+         try { selection.isCollapsed; } \
+         catch (e) { invalidRange = e instanceof TypeError; } \
+         invalidRange",
     );
 }
 
