@@ -3544,6 +3544,43 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
 }
 
 #[test]
+fn paint_unmaterialized_large_canvas_without_image_pixels() {
+    let mut parsed = raikiri_html::parse(
+        "<body style='margin:0'><canvas width='3334' height='3000' style='width:2px;height:2px'></canvas>".as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let canvas = {
+        let mut stack = vec![parsed.dom.root_index()];
+        let mut found = None;
+        while let Some(id) = stack.pop() {
+            if parsed.dom.is_canvas_element(id) {
+                found = Some(id);
+                break;
+            }
+            if let Some(node) = parsed.dom.get_node(id) {
+                stack.extend(node.children.iter().rev().copied());
+            }
+        }
+        found.expect("canvas element exists")
+    };
+    assert!(parsed.dom.canvas_bitmap(canvas).is_none());
+
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+
+    assert!(scene.commands.iter().all(|command| {
+        !matches!(command, RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))
+    }));
+}
+
+#[test]
 fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
     // Mirrors overflow-canvas.html: 50x100 bitmap in a 25x50 content box with
     // object-fit none and overflow visible must show the full bitmap.
@@ -3611,8 +3648,8 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
 }
 
 #[test]
-fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
-    // Blank (never painted) canvas: transparent, still handled.
+fn canvas_blank_hidden_and_zero_sizes_paint_nothing() {
+    // Blank (never painted) canvases stay transparent without raster pixel storage.
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='2' height='2' style='width:2px;height:2px'></canvas>".as_bytes(),
         &raikiri_html::ParseOptions {
@@ -3626,10 +3663,16 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing_but_report_handled() {
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
-    assert!(scene.commands.iter().any(|command| matches!(
+    assert!(scene.commands.iter().all(|command| !matches!(
         command,
         RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_))
     )));
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
 
     // Hidden canvas paints nothing visible but still counts as handled (no fallback).
     let mut parsed = raikiri_html::parse(

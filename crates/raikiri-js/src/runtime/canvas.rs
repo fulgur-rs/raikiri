@@ -280,11 +280,13 @@ fn get_context(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     if let Some(existing) = with_state(context, |s| s.canvas_contexts.get(&index).cloned())? {
         return Ok(existing.into());
     }
-    // Ensure a bitmap exists at the current size so paint has pixels even
-    // before the first fillRect.
-    with_state(context, |s| {
-        s.host.document_mut().ensure_canvas_bitmap(index);
+    // Ensure a bounded bitmap exists before creating a drawing context.
+    let allocation = with_state(context, |s| {
+        s.host.document_mut().try_ensure_canvas_bitmap(index)
     })?;
+    if !matches!(allocation, Ok(Some(_))) {
+        return Ok(JsValue::null());
+    }
     let proto = protos(context).canvas_rendering_context_2d.clone();
     let object = JsObject::from_proto_and_data(Some(proto), CanvasContextData { canvas: index });
     with_state(context, |s| {

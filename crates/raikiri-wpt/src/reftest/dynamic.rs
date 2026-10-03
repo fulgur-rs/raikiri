@@ -5,9 +5,9 @@ use super::*;
 ///
 /// HTML serialization drops canvas bitmaps (a bitmap is not part of
 /// `innerHTML`), so the live document's
-/// [`raikiri_dom::Document::canvases_in_tree_order`] sidecar travels
+/// [`raikiri_dom::Document::take_canvases_in_tree_order`] sidecar travels
 /// alongside the markup and the paint path restores it with
-/// [`raikiri_dom::Document::set_canvases_in_tree_order`] before layout.
+/// [`raikiri_dom::Document::set_canvases_in_tree_order_owned`] before paint.
 #[derive(Debug)]
 pub(super) struct PreparedDynamic {
     /// Serialized document after scripts ran (or the original source when no
@@ -149,9 +149,9 @@ pub(super) fn prepare(
             raikiri_js_wasmtime_harness::SINK_SYMBOL_DESCRIPTION,
             raikiri_js_wasmtime_harness::deliver,
         );
-        let host = runtime.into_host();
-        let canvases = host.document().canvases_in_tree_order();
+        let mut host = runtime.into_host();
         let html = serialize(host.document(), &report)?;
+        let canvases = host.document_mut().take_canvases_in_tree_order();
         Ok(PreparedDynamic { html, canvases })
     }
     #[cfg(feature = "js-wasmtime")]
@@ -172,8 +172,8 @@ pub(super) fn prepare(
         runtime
             .synchronize_final_document()
             .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
-        let canvases = runtime.document().canvases_in_tree_order();
         let html = serialize(runtime.document(), &report)?;
+        let canvases = runtime.take_canvases_in_tree_order();
         return Ok(PreparedDynamic { html, canvases });
     }
     #[cfg(not(any(feature = "js-native", feature = "js-wasmtime")))]

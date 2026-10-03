@@ -86,7 +86,7 @@ pub use layout::{
 };
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
-pub use node::{CanvasBitmap, ElementData, Node, NodeData, NodeFlags, TextData};
+pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
 pub use raikiri_traits::{NodeKind, QuirksMode};
 pub use target::{CounterSnapshot, counter_snapshots};

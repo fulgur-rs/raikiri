@@ -184,40 +184,114 @@ pub struct ElementData {
     /// `ReplacedResolver` doc for why `Err` is terminal rather than silently
     /// substituting a size).
     pub(crate) image_intrinsic_size: Option<IntrinsicBox>,
-    /// Live 2d bitmap for an HTML `<canvas>` element, populated by script
-    /// through [`crate::Document::set_canvas_bitmap`] and read by paint.
-    /// `None` means no bitmap has been painted yet (transparent, zero-area
-    /// until width/height attributes give an intrinsic size). Stored here
-    /// rather than as an attribute so `getAttribute` never observes it.
+    /// Materialized bitmap for an HTML `<canvas>` element, populated through
+    /// [`crate::Document::set_canvas_bitmap`] and read by paint. `None` means
+    /// the canvas is implicitly transparent because it has not been drawn or
+    /// its resource limits prevent materialization. Stored here rather than
+    /// as an attribute so `getAttribute` never observes it.
     pub(crate) canvas_bitmap: Option<CanvasBitmap>,
 }
 
 /// Live bitmap of an HTML `<canvas>` element (HTML Standard §4.12.5).
 ///
-/// `rgba` holds premultiplied-free `width * height * 4` bytes in row-major
-/// order, transparent black when newly sized. Paint reads this directly;
-/// layout reads only the width/height attributes for the intrinsic size.
+/// When materialized, `rgba` holds premultiplied-free `width * height * 4`
+/// bytes in row-major order. An empty buffer represents an unmaterialized
+/// transparent bitmap. Paint reads materialized pixels directly; layout reads
+/// only the width/height attributes for the intrinsic size.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanvasBitmap {
     /// Bitmap width in px (the canvas width attribute value).
     pub width: u32,
     /// Bitmap height in px (the canvas height attribute value).
     pub height: u32,
-    /// Row-major RGBA8 bytes, length `width * height * 4`.
+    /// Row-major RGBA8 bytes. Empty storage represents transparent black
+    /// without pixel storage, either for a zero-area canvas or because of
+    /// resource limits.
     pub rgba: Vec<u8>,
 }
 
+const MAX_CANVAS_BITMAP_PIXELS: u64 = 10_000_000;
+const MAX_CANVAS_BITMAP_BYTES: usize = 40_000_000;
+
+/// Reason a canvas bitmap could not be materialized or stored safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasBitmapError {
+    /// The dimensions exceed the per-canvas pixel or byte limit.
+    DimensionsTooLarge,
+    /// The allocator could not reserve the backing RGBA8 buffer.
+    AllocationFailed,
+    /// Storing the bitmap would exceed the document-wide byte limit.
+    DocumentLimitExceeded,
+    /// A materialized RGBA8 buffer does not match the declared dimensions.
+    InvalidRgbaLength,
+    /// The bitmap dimensions differ from the canvas element's current size.
+    SizeMismatch,
+    /// The requested node is not an HTML canvas element.
+    NotCanvas,
+}
+
+impl std::fmt::Display for CanvasBitmapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::DimensionsTooLarge => "canvas bitmap dimensions exceed the per-canvas limit",
+            Self::AllocationFailed => "canvas bitmap allocation failed",
+            Self::DocumentLimitExceeded => "canvas bitmap exceeds the document memory limit",
+            Self::InvalidRgbaLength => "canvas bitmap has an invalid RGBA buffer length",
+            Self::SizeMismatch => "canvas bitmap dimensions do not match the canvas element",
+            Self::NotCanvas => "node is not a canvas element",
+        })
+    }
+}
+
+impl std::error::Error for CanvasBitmapError {}
+
 impl CanvasBitmap {
-    /// A transparent-black bitmap of the given size.
+    /// A transparent-black bitmap of the given size, when within resource
+    /// limits. Otherwise, returns an unmaterialized transparent bitmap.
+    /// Use [`CanvasBitmap::try_cleared`] when allocation failure must be
+    /// distinguished from success.
     pub fn cleared(width: u32, height: u32) -> Self {
-        let len = (u64::from(width) * u64::from(height) * 4)
-            .try_into()
-            .unwrap_or(0);
+        Self::try_cleared(width, height).unwrap_or_else(|_| Self::transparent(width, height))
+    }
+
+    /// Try to materialize transparent RGBA8 pixels for a bounded canvas.
+    pub fn try_cleared(width: u32, height: u32) -> Result<Self, CanvasBitmapError> {
+        let len = Self::checked_rgba_len(width, height)?;
+        let mut rgba = Vec::new();
+        rgba.try_reserve_exact(len)
+            .map_err(|_| CanvasBitmapError::AllocationFailed)?;
+        rgba.resize(len, 0);
+        Ok(Self {
+            width,
+            height,
+            rgba,
+        })
+    }
+
+    /// Represent transparent black without allocating a pixel buffer.
+    pub fn transparent(width: u32, height: u32) -> Self {
         Self {
             width,
             height,
-            rgba: vec![0; len],
+            rgba: Vec::new(),
         }
+    }
+
+    pub(crate) fn checked_rgba_len(width: u32, height: u32) -> Result<usize, CanvasBitmapError> {
+        let pixels = u64::from(width)
+            .checked_mul(u64::from(height))
+            .ok_or(CanvasBitmapError::DimensionsTooLarge)?;
+        if pixels > MAX_CANVAS_BITMAP_PIXELS {
+            return Err(CanvasBitmapError::DimensionsTooLarge);
+        }
+        let bytes = pixels
+            .checked_mul(4)
+            .ok_or(CanvasBitmapError::DimensionsTooLarge)?;
+        let len = usize::try_from(bytes).map_err(|_| CanvasBitmapError::DimensionsTooLarge)?;
+        if len > MAX_CANVAS_BITMAP_BYTES {
+            return Err(CanvasBitmapError::DimensionsTooLarge);
+        }
+        Ok(len)
     }
 }
 
