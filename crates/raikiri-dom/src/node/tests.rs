@@ -271,3 +271,34 @@ fn a_laid_out_ifc_root_exposes_its_lines() {
     assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].ifc_lines().map(<[_]>::len), Some(3));
 }
+
+#[test]
+fn canvas_bitmap_errors_have_descriptive_messages() {
+    let cases = [
+        (
+            CanvasBitmapError::DimensionsTooLarge,
+            "canvas bitmap dimensions exceed the per-canvas limit",
+        ),
+        (
+            CanvasBitmapError::AllocationFailed,
+            "canvas bitmap allocation failed",
+        ),
+        (
+            CanvasBitmapError::DocumentLimitExceeded,
+            "canvas bitmap exceeds the document memory limit",
+        ),
+        (
+            CanvasBitmapError::InvalidRgbaLength,
+            "canvas bitmap has an invalid RGBA buffer length",
+        ),
+        (
+            CanvasBitmapError::SizeMismatch,
+            "canvas bitmap dimensions do not match the canvas element",
+        ),
+        (CanvasBitmapError::NotCanvas, "node is not a canvas element"),
+    ];
+
+    for (error, expected) in cases {
+        assert_eq!(error.to_string(), expected);
+    }
+}

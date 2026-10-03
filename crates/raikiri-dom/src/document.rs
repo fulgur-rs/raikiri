@@ -1954,9 +1954,11 @@ impl Document {
             expected
         };
         let total_bytes = self.canvas_bytes_after_replacement(id, replacement_bytes)?;
+        // cov:ignore: canvas_size above validated this live canvas slot, and no arena mutation occurs before this borrow.
         let Some(node) = self.nodes.get_mut(id) else {
             return Err(CanvasBitmapError::NotCanvas);
         };
+        // cov:ignore: canvas_size above proved this slot is a canvas Element; no arena mutation occurs before this check.
         let NodeData::Element(element) = &mut node.data else {
             return Err(CanvasBitmapError::NotCanvas);
         };

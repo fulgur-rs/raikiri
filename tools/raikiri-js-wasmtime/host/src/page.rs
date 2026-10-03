@@ -288,7 +288,7 @@ impl WasmtimePage {
                 .document_mut()
                 .take_canvases_in_tree_order()
         } else {
-            Vec::new()
+            Vec::new() // cov:ignore: a constructed page always retains either an active Store or its stopped state.
         }
     }
     pub fn metrics(&self) -> Option<PageMetrics> {

@@ -211,7 +211,7 @@ pub struct CanvasBitmap {
 }
 
 const MAX_CANVAS_BITMAP_PIXELS: u64 = 10_000_000;
-const MAX_CANVAS_BITMAP_BYTES: usize = 40_000_000;
+const MAX_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
 
 /// Reason a canvas bitmap could not be materialized or stored safely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
