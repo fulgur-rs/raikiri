@@ -68,6 +68,13 @@ fn page_origins_keep_fractional_end_boundaries_on_the_preceding_page() {
     assert_eq!(fixed.page_index_for_y(0.3), 3);
     assert_eq!(fixed.page_index_for_end(0.3), 2);
 
+    for page_index in [7, 21] {
+        let boundary = fixed.origin(page_index);
+        assert_eq!(fixed.page_end(page_index - 1), boundary);
+        assert_eq!(fixed.page_index_for_y(boundary), page_index);
+        assert_eq!(fixed.page_index_for_end(boundary), page_index - 1);
+    }
+
     let scheduled = PageOrigins::new(&[0.1], 0.1);
     assert_eq!(scheduled.page_index_for_y(0.3), 3);
     assert_eq!(scheduled.page_index_for_end(0.3), 2);
@@ -80,11 +87,11 @@ fn page_origins_resolve_repeated_large_fixed_boundaries() {
     let candidates = 16_777_200..16_777_240;
     let expected_y = candidates
         .clone()
-        .find(|page_index| coordinate < fixed.origin(*page_index) + fixed.step_at(*page_index))
+        .find(|page_index| coordinate < fixed.page_end(*page_index))
         .expect("coordinate falls within the candidate page range");
     let expected_end = candidates
         .clone()
-        .find(|page_index| coordinate <= fixed.origin(*page_index) + fixed.step_at(*page_index))
+        .find(|page_index| coordinate <= fixed.page_end(*page_index))
         .expect("coordinate ends within the candidate page range");
 
     assert_eq!(fixed.page_index_for_y(coordinate), expected_y);
@@ -122,6 +129,37 @@ fn page_layout_control_accepts_a_box_ending_on_a_fractional_page_boundary() {
     .expect("three-page boundary layout");
 
     assert_eq!(pages.len(), 3);
+}
+
+#[test]
+fn page_layout_control_accepts_a_box_ending_on_a_repeated_fractional_boundary() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let page_origins = PageOrigins::new(&[], 0.1);
+    let boundary = page_origins.origin(21);
+    let style = format!("display:block;height:{boundary}px");
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    document.append_element(Some(body), "div", Style::default(), Some(&style));
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let mut page_box = page_box_800x600();
+    page_box.height = 0.1;
+    let control = PageLayoutControl::new(Some(21));
+
+    let pages = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box,
+        &[],
+        &[],
+        &control,
+    )
+    .expect("twenty-one-page boundary layout");
+
+    assert_eq!(pages.len(), 21);
 }
 
 #[test]

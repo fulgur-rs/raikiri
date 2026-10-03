@@ -517,7 +517,7 @@ impl PageOrigins {
     }
 
     fn page_end(&self, page_index: u32) -> f32 {
-        self.origin(page_index) + self.step_at(page_index)
+        self.origin(page_index.saturating_add(1))
     }
 
     fn first_page_ending_after(&self, y: f32) -> u32 {
