@@ -272,6 +272,7 @@ impl WasmtimePage {
         };
         state.bridge.host.document()
     }
+    // cov:ignore: exercised by host tests; tools/ is outside workspace coverage.
     /// Remove and return host canvas bitmaps in tree order.
     pub fn take_canvases_in_tree_order(&mut self) -> Vec<raikiri_dom::CanvasBitmap> {
         if let Some(store) = self.store.as_mut() {
