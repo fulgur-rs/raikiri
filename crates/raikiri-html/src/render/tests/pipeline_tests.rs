@@ -37,6 +37,44 @@ fn pipeline_collects_one_page_style_per_page() {
 }
 
 #[test]
+fn pipeline_propagates_a_resolver_error_during_initial_pagination() {
+    struct FailingResolver;
+
+    impl raikiri_traits::ReplacedResolver for FailingResolver {
+        fn resolve(
+            &self,
+            _request: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            Err(raikiri_traits::ResolverError::Decode(
+                "injected resolver failure".to_owned(),
+            ))
+        }
+    }
+
+    let resolver = FailingResolver;
+    let resources = RenderResources::new().replaced_resolver(&resolver);
+    let doc = parse("<img src='https://example.invalid/image.png'>");
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &LayoutConfig::default(),
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(RenderError::Resolver(raikiri_traits::ResolverError::Decode(message)))
+            if message == "injected resolver failure"
+    ));
+}
+
+#[test]
 fn pipeline_page_styles_follow_the_page_context() {
     let doc = parse(
         "<style>@page { size: 200px 100px; margin: 10px }\
@@ -289,6 +327,78 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_scheduled_pagination() 
     assert!(
         resolver.calls.load(Ordering::SeqCst) >= 3,
         "scheduled pagination must invoke the resolver after the probe and initial pass"
+    );
+}
+
+#[test]
+fn pipeline_returns_aborted_when_resolver_cancels_during_strict_page_confirmation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct AbortOnResolve {
+        controller: raikiri_traits::AbortController,
+        calls: AtomicUsize,
+        abort_on_call: usize,
+    }
+
+    impl raikiri_traits::ReplacedResolver for AbortOnResolve {
+        fn resolve(
+            &self,
+            _request: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == self.abort_on_call {
+                self.controller.abort();
+            }
+            Ok(raikiri_traits::ResolvedIntrinsic {
+                intrinsic: raikiri_traits::IntrinsicBox::new(1.0, 1.0),
+                disposition: raikiri_traits::ResolveDisposition::Ok,
+            })
+        }
+    }
+
+    let controller = raikiri_traits::AbortController::new();
+    let resolver = AbortOnResolve {
+        controller: raikiri_traits::AbortController {
+            signal: controller.signal.clone(),
+        },
+        calls: AtomicUsize::new(0),
+        abort_on_call: 3,
+    };
+    let resources = RenderResources::new().replaced_resolver(&resolver);
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 50px;margin:0}</style>\
+         <div style='height:45px'></div><div style='height:45px'></div>\
+         <img src='https://example.invalid/image.png' style='display:block;height:30px'>\
+         <div style='height:30px'></div><div style='height:30px'></div>",
+    );
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(2))
+                .build(),
+        )
+        .signal(Some(controller.signal.clone()))
+        .build();
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    assert!(
+        matches!(result, Ok(PipelineRun::Aborted)),
+        "strict page confirmation must abort; calls: {}",
+        resolver.calls.load(Ordering::SeqCst)
+    );
+    assert!(
+        resolver.calls.load(Ordering::SeqCst) >= 3,
+        "strict page confirmation must reach the aborting resolver"
     );
 }
 

@@ -50,6 +50,7 @@ fn page_origins_cover_fixed_and_scheduled_steps_without_a_page_ceiling() {
     assert_eq!(fixed.origin(5_000), 500_000.0);
     assert_eq!(fixed.page_index_for_y(500_000.0), 5_000);
     assert_eq!(fixed.page_index_for_end(500_000.0), 4_999);
+    assert_eq!(fixed.correct_page_index_for_y(5_001, 500_000.0), 5_000);
 
     let scheduled = PageOrigins::new(&[100.0, 200.0], 50.0);
     assert_eq!(scheduled.origin(4), 400.0);
@@ -155,6 +156,22 @@ fn page_layout_discovery_returns_a_bounded_prefix() {
 
     assert_eq!(pages.len(), 2);
     assert!(control.page_limit_reached());
+}
+
+#[test]
+fn page_layout_discovery_control_records_a_truncated_limit_check() {
+    let control = PageLayoutControl::for_geometry_discovery(Some(1));
+
+    assert!(control.check_discovery_page_index(1).is_ok());
+    assert!(control.page_limit_reached());
+}
+
+#[test]
+fn page_origins_saturate_indexes_that_exceed_u32() {
+    let tiny = PageOrigins::new(&[], f32::MIN_POSITIVE);
+
+    assert_eq!(tiny.page_index_for_y(f32::MAX), u32::MAX);
+    assert_eq!(tiny.page_index_after_prefix(f64::INFINITY), u32::MAX);
 }
 
 #[test]

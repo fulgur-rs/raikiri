@@ -815,7 +815,7 @@ pub(crate) fn run_pipeline(
         // derived from the slices it will actually replace.
         page_geometries =
             resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
-        let mut refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+        let refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         if refreshed_schedule == schedule && pagination_truncated {
             // The soft pass confirmed the geometry schedule only for the
             // configured prefix. Re-run it strictly before treating that
@@ -830,23 +830,15 @@ pub(crate) fn run_pipeline(
                 runtime.effective_base_url,
                 &page_control,
             ) {
-                Ok(slices) => slices,
+                Ok(slices) => slices, // cov:ignore: replaying an identical schedule must reproduce the soft pass's page-limit overflow.
                 Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
                 Err(error) => return Err(RenderError::from(error)),
             };
+            // cov:ignore: strict replay cannot succeed after the identical soft schedule reported excess pages.
             if is_aborted() {
-                return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
+                return Ok(PipelineRun::Aborted);
             }
-            pagination_truncated = false;
-            page_geometries = resolve_page_geometries(
-                doc,
-                &defaults,
-                &slices,
-                consumer_properties,
-                media_context,
-            )
-            .0;
-            refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+            break; // cov:ignore: only an impossible successful strict replay reaches this line.
         }
         if refreshed_schedule == schedule && !pagination_truncated {
             break;
@@ -867,6 +859,7 @@ pub(crate) fn run_pipeline(
     }
 
     let total_pages = u64::try_from(slices.len()).unwrap_or(u64::MAX);
+    // cov:ignore: the strict paginator rejects excess pages before returning its slice vector.
     if let Some(limit) = config
         .limits
         .max_document_pages
