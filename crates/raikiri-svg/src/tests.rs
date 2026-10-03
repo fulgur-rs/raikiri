@@ -1,5 +1,6 @@
 use super::{
     SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport, apply_selector_edits,
+    strip_stylesheet_properties, unique_attribute_name, with_root_style_overrides,
 };
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
@@ -144,6 +145,67 @@ fn selector_edit_application_rejects_overlapping_ranges() {
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message == "overlapping SVG selector edits"));
+}
+
+#[test]
+fn root_style_rewrite_obeys_the_shared_selector_match_budget() {
+    let source = "<svg><style>svg { background:red }</style><rect/><rect/></svg>";
+    let mut budget = SelectorFreezeBudget {
+        bytes: usize::MAX,
+        matches: 1,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn root_style_rewrite_charges_scoped_css_expansion_before_allocation() {
+    let selectors = ["rect"; 12].join(",");
+    let source = format!("<svg><style>{selectors} {{ background:red }}</style><rect/></svg>");
+    let mut budget = SelectorFreezeBudget {
+        bytes: source.len() * 8,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = with_root_style_overrides(&source, 1.0, false, true, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn stylesheet_rewrite_charges_each_removed_range_as_work() {
+    let mut budget = SelectorFreezeBudget {
+        bytes: usize::MAX,
+        matches: usize::MAX,
+        checks: 1,
+    };
+
+    let result = strip_stylesheet_properties(
+        "rect { opacity:.25; color:red; opacity:.5 }",
+        &["opacity"],
+        &mut budget,
+    );
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
+fn marker_prefix_collision_search_skips_all_existing_numeric_suffixes() {
+    let base = "data-raikiri-root-opacity-scope";
+    let source = format!("{base} {base}-2");
+    let mut budget = SelectorFreezeBudget::new();
+
+    assert_eq!(
+        unique_attribute_name(&source, base, &mut budget).unwrap(),
+        format!("{base}-3")
+    );
 }
 
 #[test]

@@ -4,6 +4,7 @@
 //! local files, issue requests, or recursively load data URLs are rejected.
 
 use raikiri_traits::DecodedImage;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -280,6 +281,7 @@ impl SvgDocument {
                     root_style.opacity,
                     root_style.neutralize_root_opacity,
                     root_style.host_controls_root_background || root_style.neutralize_root_opacity,
+                    &mut rewrite_budget,
                 )?
             } else {
                 source
@@ -711,7 +713,9 @@ fn with_root_style_overrides(
     inherited_root_opacity: f32,
     neutralize_root_opacity: bool,
     host_controls_root_background: bool,
+    budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
+    budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
@@ -729,12 +733,21 @@ fn with_root_style_overrides(
         for attribute in root.attributes().filter(|attribute| {
             attribute.name() == "background-color" || attribute.name() == "background"
         }) {
+            budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
             edits.push((attribute.range(), String::new()));
         }
     }
 
     if !root_style_properties.is_empty() {
         let existing_style = root.attribute("style");
+        if let Some(style) = existing_style {
+            budget.bytes(
+                style
+                    .len()
+                    .checked_mul(8)
+                    .ok_or_else(selector_freeze_limit_error)?,
+            )?;
+        }
         let retained = existing_style.map_or_else(String::new, |style| {
             strip_inline_style_properties(style, &root_style_properties)
         });
@@ -743,23 +756,39 @@ fn with_root_style_overrides(
         } else {
             retained
         };
+        let escaped_bytes = xml_attribute_escape_allocation_bytes(&style_value)?;
+        budget.bytes(escaped_bytes)?;
+        let escaped_style_value = escape_xml_attribute(&style_value);
         if let Some(attribute) = root
             .attributes()
             .find(|attribute| attribute.name() == "style")
         {
+            let replacement_len = escaped_style_value
+                .len()
+                .checked_add(7)
+                .ok_or_else(selector_freeze_limit_error)?;
+            budget.bytes(
+                replacement_len
+                    .checked_add(2 * std::mem::size_of::<(Range<usize>, String)>())
+                    .ok_or_else(selector_freeze_limit_error)?,
+            )?;
             edits.push((
                 attribute.range(),
-                format!("style=\"{}\"", escape_xml_attribute(&style_value)),
+                format!("style=\"{escaped_style_value}\""),
             ));
         } else if neutralize_root_opacity {
-            inserted_root_attributes.push_str(&format!(
-                " style=\"{}\"",
-                escape_xml_attribute(&style_value)
-            ));
+            let attribute_len = escaped_style_value
+                .len()
+                .checked_add(8)
+                .ok_or_else(selector_freeze_limit_error)?;
+            budget.bytes(attribute_len)?;
+            inserted_root_attributes.push_str(" style=\"");
+            inserted_root_attributes.push_str(&escaped_style_value);
+            inserted_root_attributes.push('"');
         }
     }
 
-    let scope_attribute = unique_scope_attribute(source);
+    let scope_attribute = unique_scope_attribute(source, budget)?;
     let mut has_scoped_stylesheet_properties = false;
     for node in root
         .descendants()
@@ -771,16 +800,37 @@ fn with_root_style_overrides(
         {
             continue;
         }
-        let stylesheet_text = node
+        let stylesheet_text_len = node
             .children()
             .filter(|child| child.is_text())
             .filter_map(|child| child.text())
-            .collect::<String>();
+            .try_fold(0usize, |length, text| {
+                length
+                    .checked_add(text.len())
+                    .ok_or_else(selector_freeze_limit_error)
+            })?;
+        budget.bytes(
+            stylesheet_text_len
+                .checked_add(2 * std::mem::size_of::<String>())
+                .ok_or_else(selector_freeze_limit_error)?,
+        )?;
+        let mut stylesheet_text = String::with_capacity(stylesheet_text_len);
+        for text in node
+            .children()
+            .filter(|child| child.is_text())
+            .filter_map(|child| child.text())
+        {
+            stylesheet_text.push_str(text);
+        }
         if stylesheet_text.is_empty() {
             continue;
         }
-        let Some(rewritten) =
-            scope_stylesheet_properties(&stylesheet_text, &scope_attribute, &stylesheet_properties)
+        let Some(rewritten) = scope_stylesheet_properties(
+            &stylesheet_text,
+            &scope_attribute,
+            &stylesheet_properties,
+            budget,
+        )?
         else {
             continue;
         };
@@ -788,7 +838,10 @@ fn with_root_style_overrides(
         let content_range = xml_element_content_range(source, node).ok_or_else(|| {
             SvgError::InvalidDocument("unterminated SVG style element".to_owned())
         })?;
-        edits.push((content_range, escape_xml_text(&rewritten)));
+        budget.bytes(xml_text_escape_allocation_bytes(&rewritten)?)?;
+        let escaped = escape_xml_text(&rewritten);
+        budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+        edits.push((content_range, escaped));
     }
 
     if has_scoped_stylesheet_properties {
@@ -805,6 +858,16 @@ fn with_root_style_overrides(
             } else {
                 end
             };
+            SelectorFreezeBudget::consume(&mut budget.matches, 1)?;
+            let insertion_text_len = scope_attribute
+                .len()
+                .checked_add(4)
+                .ok_or_else(selector_freeze_limit_error)?;
+            budget.bytes(
+                insertion_text_len
+                    .checked_add(2 * std::mem::size_of::<(Range<usize>, String)>())
+                    .ok_or_else(selector_freeze_limit_error)?,
+            )?;
             edits.push((insertion..insertion, format!(" {scope_attribute}=\"\"")));
         }
     }
@@ -818,15 +881,11 @@ fn with_root_style_overrides(
         } else {
             end
         };
+        budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
         edits.push((insertion..insertion, inserted_root_attributes));
     }
 
-    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
-    let mut result = source.to_owned();
-    for (range, replacement) in edits {
-        result.replace_range(range, &replacement);
-    }
-    Ok(result)
+    apply_selector_edits(source, edits, budget)
 }
 
 struct OpacityDeclaration {
@@ -838,8 +897,9 @@ struct OpacityDeclaration {
 }
 
 // Intentionally stricter resource policy: raikiri-spike-plxjz. These bounds
-// cover generated freezing state, not the original backend CSS parser's
-// allocations, and do not classify otherwise valid CSS as invalid grammar.
+// cover generated selector and root-style rewrite state, not the original
+// backend CSS parser's allocations, and do not classify otherwise valid CSS
+// as invalid grammar.
 const MAX_SELECTOR_FREEZE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SELECTOR_FREEZE_MATCHES: usize = 65_536;
 const MAX_SELECTOR_FREEZE_CHECKS: usize = 1_048_576;
@@ -879,6 +939,7 @@ fn freeze_svg_stylesheet_selectors(
     source: &str,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
+    budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
@@ -916,8 +977,7 @@ fn freeze_svg_stylesheet_selectors(
         return Ok(source.to_owned());
     }
 
-    budget.bytes(source.len())?;
-    let marker_prefix = unique_attribute_name(source, "data-raikiri-svg-selector");
+    let marker_prefix = unique_attribute_name(source, "data-raikiri-svg-selector", budget)?;
     let mut frozen_stylesheet = String::new();
     let mut element_markers = BTreeMap::<usize, Vec<String>>::new();
     for (index, rule) in stylesheet.rules.iter().enumerate() {
@@ -1072,21 +1132,28 @@ fn normalize_svg_opacity_cascade(
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
-    let stylesheets = xml
-        .descendants()
-        .filter(|node| node.has_tag_name("style"))
-        .filter_map(|node| {
-            if node
-                .attribute("type")
-                .is_some_and(|style_type| style_type != "text/css")
-            {
-                return None;
-            }
-            // Match usvg's stylesheet loader, which reads only `node.text()`.
-            let text = node.text()?.to_owned();
-            (!text.is_empty()).then_some((node, text))
-        })
-        .collect::<Vec<_>>();
+    let mut stylesheets = Vec::new();
+    for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
+        if node
+            .attribute("type")
+            .is_some_and(|style_type| style_type != "text/css")
+        {
+            continue;
+        }
+        // Match usvg's stylesheet loader, which reads only `node.text()`.
+        let Some(text) = node.text() else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let storage = text
+            .len()
+            .checked_add(2 * std::mem::size_of::<(roxmltree::Node<'_, '_>, String)>())
+            .ok_or_else(selector_freeze_limit_error)?;
+        budget.bytes(storage)?;
+        stylesheets.push((node, text.to_owned()));
+    }
 
     let mut stylesheet = simplecss::StyleSheet::new();
     for (_, text) in &stylesheets {
@@ -1165,19 +1232,13 @@ fn normalize_svg_opacity_cascade(
     }
 
     for (node, text) in &stylesheets {
-        // Property removal cannot lengthen the stylesheet; charge its copy,
-        // removal metadata and three XML-escape intermediates conservatively.
-        budget.bytes(
-            text.len()
-                .checked_mul(32)
-                .ok_or_else(selector_freeze_limit_error)?,
-        )?;
-        let Some(rewritten) = strip_stylesheet_properties(text, &["opacity"]) else {
+        let Some(rewritten) = strip_stylesheet_properties(text, &["opacity"], budget)? else {
             continue;
         };
         let range = xml_element_content_range(source, *node).ok_or_else(|| {
             SvgError::InvalidDocument("unterminated SVG style element".to_owned())
         })?;
+        budget.bytes(xml_text_escape_allocation_bytes(&rewritten)?)?;
         edits.push((range, escape_xml_text(&rewritten)));
     }
 
@@ -1320,12 +1381,30 @@ struct ScopedStylesheetParser<'a> {
     source: &'a str,
     scope_attribute: Option<&'a str>,
     properties: &'a [&'a str],
+    budget: &'a mut SelectorFreezeBudget,
+    budget_exceeded: &'a Cell<bool>,
     removals: Vec<Range<usize>>,
     scoped_rules: Vec<String>,
 }
 
 struct CssDeclarationSourceParser<'a> {
     source: &'a str,
+    budget: &'a mut SelectorFreezeBudget,
+    budget_exceeded: &'a Cell<bool>,
+}
+
+fn consume_css_budget<'i, 't>(
+    input: &mut cssparser::Parser<'i, 't>,
+    budget: &mut SelectorFreezeBudget,
+    amount: Option<usize>,
+    budget_exceeded: &Cell<bool>,
+) -> Result<(), cssparser::ParseError<'i, ()>> {
+    if amount.is_some_and(|amount| budget.bytes(amount).is_ok()) {
+        Ok(())
+    } else {
+        budget_exceeded.set(true);
+        Err(input.new_custom_error(()))
+    }
 }
 
 impl<'i> cssparser::DeclarationParser<'i> for CssDeclarationSourceParser<'_> {
@@ -1341,6 +1420,11 @@ impl<'i> cssparser::DeclarationParser<'i> for CssDeclarationSourceParser<'_> {
         while input.next_including_whitespace_and_comments().is_ok() {}
         let raw = input.slice(declaration_start.position()..input.position());
         let start = source_slice_offset(self.source, raw);
+        let storage = name
+            .len()
+            .checked_add(raw.len())
+            .and_then(|bytes| bytes.checked_add(2 * std::mem::size_of::<ParsedCssDeclaration>()));
+        consume_css_budget(input, self.budget, storage, self.budget_exceeded)?;
         Ok(ParsedCssDeclaration {
             name: name.to_string(),
             raw: raw.to_owned(),
@@ -1409,6 +1493,12 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
         let start = input.position();
         while input.next().is_ok() {}
+        let selector_len = input
+            .position()
+            .byte_index()
+            .saturating_sub(start.byte_index());
+        let storage = selector_len.checked_add(2 * std::mem::size_of::<String>());
+        consume_css_budget(input, self.budget, storage, self.budget_exceeded)?;
         Ok(input.slice(start..input.position()).trim().to_owned())
     }
 
@@ -1418,12 +1508,40 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
         _start: &cssparser::ParserState,
         input: &mut cssparser::Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let mut declaration_parser = CssDeclarationSourceParser {
-            source: self.source,
+        let declarations = {
+            let mut declaration_parser = CssDeclarationSourceParser {
+                source: self.source,
+                budget: self.budget,
+                budget_exceeded: self.budget_exceeded,
+            };
+            cssparser::RuleBodyParser::new(input, &mut declaration_parser)
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>()
         };
-        let declarations = cssparser::RuleBodyParser::new(input, &mut declaration_parser)
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>();
+        if self.budget_exceeded.get() {
+            return Err(input.new_custom_error(()));
+        }
+
+        let scoped_declaration_count = declarations
+            .iter()
+            .filter(|declaration| {
+                self.properties
+                    .iter()
+                    .any(|property| declaration.name.eq_ignore_ascii_case(property))
+            })
+            .count();
+        if scoped_declaration_count == 0 {
+            return Ok(());
+        }
+
+        let scoped_declaration_refs_bytes =
+            scoped_declaration_count.checked_mul(2 * std::mem::size_of::<&ParsedCssDeclaration>());
+        consume_css_budget(
+            input,
+            self.budget,
+            scoped_declaration_refs_bytes,
+            self.budget_exceeded,
+        )?;
         let scoped_declarations = declarations
             .iter()
             .filter(|declaration| {
@@ -1432,9 +1550,10 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
                     .any(|property| declaration.name.eq_ignore_ascii_case(property))
             })
             .collect::<Vec<_>>();
-        if scoped_declarations.is_empty() {
-            return Ok(());
-        }
+
+        let removal_storage =
+            scoped_declaration_count.checked_mul(2 * std::mem::size_of::<Range<usize>>());
+        consume_css_budget(input, self.budget, removal_storage, self.budget_exceeded)?;
 
         self.removals
             .extend(scoped_declarations.iter().map(|declaration| {
@@ -1452,19 +1571,45 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
                 }
                 range
             }));
+        let raw_storage = scoped_declaration_count
+            .checked_mul(2 * std::mem::size_of::<String>())
+            .and_then(|metadata| {
+                scoped_declarations
+                    .iter()
+                    .try_fold(metadata, |bytes, declaration| {
+                        bytes.checked_add(declaration.raw.len())
+                    })
+            });
+        consume_css_budget(input, self.budget, raw_storage, self.budget_exceeded)?;
         let raw_declarations = scoped_declarations
             .iter()
             .map(|declaration| declaration.raw.clone())
             .collect::<Vec<_>>();
         if let Some(scope_attribute) = self.scope_attribute {
+            let selector_count = selector_list
+                .bytes()
+                .filter(|byte| *byte == b',')
+                .count()
+                .checked_add(1);
+            let selector_storage =
+                selector_count.and_then(|count| count.checked_mul(2 * std::mem::size_of::<&str>()));
+            consume_css_budget(input, self.budget, selector_storage, self.budget_exceeded)?;
             for selector in split_css_selector_list(&selector_list) {
                 let selector = selector.trim();
                 if selector.is_empty() {
                     continue;
                 }
-                if let Some(rule) =
-                    scoped_property_rule(selector, scope_attribute, &raw_declarations)
+                if let Some(rule_len) =
+                    scoped_property_rule_len(selector, scope_attribute, &raw_declarations)
                 {
+                    let storage = rule_len.checked_add(2 * std::mem::size_of::<String>());
+                    consume_css_budget(input, self.budget, storage, self.budget_exceeded)?;
+                    let rule = scoped_property_rule(
+                        selector,
+                        scope_attribute,
+                        &raw_declarations,
+                        rule_len,
+                    );
                     self.scoped_rules.push(rule);
                 }
             }
@@ -1477,12 +1622,10 @@ fn scoped_property_rule(
     selector: &str,
     scope_attribute: &str,
     declarations: &[String],
-) -> Option<String> {
+    capacity: usize,
+) -> String {
     let insertion = selector_scope_insertion(selector);
-    if insertion == 0 {
-        return None;
-    }
-    let mut scoped_rule = String::with_capacity(selector.len() + scope_attribute.len() + 16);
+    let mut scoped_rule = String::with_capacity(capacity);
     scoped_rule.push_str(&selector[..insertion]);
     scoped_rule.push('[');
     scoped_rule.push_str(scope_attribute);
@@ -1495,56 +1638,118 @@ fn scoped_property_rule(
         scoped_rule.push(';');
     }
     scoped_rule.push_str(" }");
-    Some(scoped_rule)
+    scoped_rule
+}
+
+fn scoped_property_rule_len(
+    selector: &str,
+    scope_attribute: &str,
+    declarations: &[String],
+) -> Option<usize> {
+    if selector_scope_insertion(selector) == 0 {
+        return None;
+    }
+    declarations.iter().try_fold(
+        selector
+            .len()
+            .checked_add(scope_attribute.len())?
+            .checked_add(6)?,
+        |length, declaration| length.checked_add(declaration.len())?.checked_add(2),
+    )
 }
 
 fn scope_stylesheet_properties(
     source: &str,
     scope_attribute: &str,
     properties: &[&str],
-) -> Option<String> {
-    rewrite_stylesheet_properties(source, Some(scope_attribute), properties)
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<String>, SvgError> {
+    rewrite_stylesheet_properties(source, Some(scope_attribute), properties, budget)
 }
 
-fn strip_stylesheet_properties(source: &str, properties: &[&str]) -> Option<String> {
-    rewrite_stylesheet_properties(source, None, properties)
+fn strip_stylesheet_properties(
+    source: &str,
+    properties: &[&str],
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<String>, SvgError> {
+    rewrite_stylesheet_properties(source, None, properties, budget)
 }
 
 fn rewrite_stylesheet_properties(
     source: &str,
     scope_attribute: Option<&str>,
     properties: &[&str],
-) -> Option<String> {
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<String>, SvgError> {
+    let budget_exceeded = Cell::new(false);
     let mut parser_state = ScopedStylesheetParser {
         source,
         scope_attribute,
         properties,
+        budget,
+        budget_exceeded: &budget_exceeded,
         removals: Vec::new(),
         scoped_rules: Vec::new(),
     };
-    let mut input = cssparser::ParserInput::new(source);
-    let mut parser = cssparser::Parser::new(&mut input);
-    for _ in cssparser::StyleSheetParser::new(&mut parser, &mut parser_state).filter_map(Result::ok)
     {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        for _ in cssparser::StyleSheetParser::new(&mut parser, &mut parser_state) {
+            if budget_exceeded.get() {
+                break;
+            }
+        }
+    }
+    if budget_exceeded.get() {
+        return Err(selector_freeze_limit_error());
     }
     if parser_state.removals.is_empty()
         || (scope_attribute.is_some() && parser_state.scoped_rules.is_empty())
     {
-        return None;
+        return Ok(None);
     }
 
-    parser_state
+    SelectorFreezeBudget::consume(&mut parser_state.budget.checks, parser_state.removals.len())?;
+    let removed_len = parser_state
         .removals
-        .sort_by_key(|range| std::cmp::Reverse(range.start));
-    let mut rewritten = source.to_owned();
+        .iter()
+        .try_fold(0usize, |total, range| {
+            total
+                .checked_add(range.len())
+                .ok_or_else(selector_freeze_limit_error)
+        })?;
+    let appended_len = parser_state
+        .scoped_rules
+        .iter()
+        .try_fold(0usize, |total, rule| {
+            total
+                .checked_add(rule.len())
+                .and_then(|total| total.checked_add(1))
+                .ok_or_else(selector_freeze_limit_error)
+        })?;
+    let final_len = source
+        .len()
+        .checked_sub(removed_len)
+        .and_then(|length| length.checked_add(appended_len))
+        .ok_or_else(selector_freeze_limit_error)?;
+    parser_state.budget.bytes(final_len)?;
+    let mut rewritten = String::with_capacity(final_len);
+    let mut cursor = 0;
     for range in parser_state.removals {
-        rewritten.replace_range(range, "");
+        if range.start < cursor || range.end > source.len() {
+            return Err(SvgError::InvalidDocument(
+                "overlapping SVG CSS rewrite ranges".to_owned(),
+            ));
+        }
+        rewritten.push_str(&source[cursor..range.start]);
+        cursor = range.end;
     }
+    rewritten.push_str(&source[cursor..]);
     for scoped_rule in parser_state.scoped_rules {
         rewritten.push('\n');
         rewritten.push_str(&scoped_rule);
     }
-    Some(rewritten)
+    Ok(Some(rewritten))
 }
 
 fn source_slice_offset(source: &str, slice: &str) -> usize {
@@ -1690,21 +1895,131 @@ fn xml_element_content_range(source: &str, node: roxmltree::Node<'_, '_>) -> Opt
     (content_start <= closing_tag_start).then_some(content_start..closing_tag_start)
 }
 
-fn unique_scope_attribute(source: &str) -> String {
-    unique_attribute_name(source, "data-raikiri-root-opacity-scope")
+fn unique_scope_attribute(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    unique_attribute_name(source, "data-raikiri-root-opacity-scope", budget)
 }
 
-fn unique_attribute_name(source: &str, base: &str) -> String {
-    (0_u32..)
-        .map(|suffix| {
-            if suffix == 0 {
-                base.to_owned()
-            } else {
-                format!("{base}-{suffix}")
-            }
-        })
-        .find(|candidate| !source.contains(candidate))
-        .unwrap_or_else(|| format!("{base}-fallback"))
+fn unique_attribute_name(
+    source: &str,
+    base: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    let mut found_base = false;
+    let mut max_suffix = 0usize;
+    for (start, _) in source.match_indices(base) {
+        found_base = true;
+        let tail = &source[start + base.len()..];
+        let Some(digits) = tail.strip_prefix('-') else {
+            continue;
+        };
+        let digits_len = digits.bytes().take_while(u8::is_ascii_digit).count();
+        if digits_len == 0 {
+            continue;
+        }
+        let suffix = digits[..digits_len]
+            .parse::<usize>()
+            .map_err(|_| selector_freeze_limit_error())?;
+        max_suffix = max_suffix.max(suffix);
+    }
+
+    let name = if !found_base {
+        budget.bytes(base.len())?;
+        base.to_owned()
+    } else {
+        let next_suffix = max_suffix
+            .checked_add(1)
+            .ok_or_else(selector_freeze_limit_error)?;
+        let name_len = base
+            .len()
+            .checked_add(1 + decimal_digits(next_suffix))
+            .ok_or_else(selector_freeze_limit_error)?;
+        budget.bytes(name_len)?;
+        format!("{base}-{next_suffix}")
+    };
+    Ok(name)
+}
+
+fn decimal_digits(value: usize) -> usize {
+    value.ilog10() as usize + 1
+}
+
+fn xml_attribute_escape_allocation_bytes(value: &str) -> Result<usize, SvgError> {
+    let first_pass = value
+        .len()
+        .checked_add(
+            value
+                .bytes()
+                .filter(|byte| *byte == b'&')
+                .count()
+                .checked_mul(4)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )
+        .ok_or_else(selector_freeze_limit_error)?;
+    let second_pass = first_pass
+        .checked_add(
+            value
+                .bytes()
+                .filter(|byte| *byte == b'<')
+                .count()
+                .checked_mul(3)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )
+        .ok_or_else(selector_freeze_limit_error)?;
+    let third_pass = second_pass
+        .checked_add(
+            value
+                .bytes()
+                .filter(|byte| *byte == b'"')
+                .count()
+                .checked_mul(5)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )
+        .ok_or_else(selector_freeze_limit_error)?;
+    first_pass
+        .checked_add(second_pass)
+        .and_then(|bytes| bytes.checked_add(third_pass))
+        .ok_or_else(selector_freeze_limit_error)
+}
+
+fn xml_text_escape_allocation_bytes(value: &str) -> Result<usize, SvgError> {
+    let first_pass = value
+        .len()
+        .checked_add(
+            value
+                .bytes()
+                .filter(|byte| *byte == b'&')
+                .count()
+                .checked_mul(4)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )
+        .ok_or_else(selector_freeze_limit_error)?;
+    let second_pass = first_pass
+        .checked_add(
+            value
+                .bytes()
+                .filter(|byte| *byte == b'<')
+                .count()
+                .checked_mul(3)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )
+        .ok_or_else(selector_freeze_limit_error)?;
+    let third_pass = second_pass
+        .checked_add(
+            value
+                .bytes()
+                .filter(|byte| *byte == b'>')
+                .count()
+                .checked_mul(3)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )
+        .ok_or_else(selector_freeze_limit_error)?;
+    first_pass
+        .checked_add(second_pass)
+        .and_then(|bytes| bytes.checked_add(third_pass))
+        .ok_or_else(selector_freeze_limit_error)
 }
 
 fn append_inline_declarations(style: &str, declarations: &str) -> String {
