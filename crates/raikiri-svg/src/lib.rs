@@ -903,6 +903,7 @@ struct OpacityDeclaration {
 const MAX_SELECTOR_FREEZE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SELECTOR_FREEZE_MATCHES: usize = 65_536;
 const MAX_SELECTOR_FREEZE_CHECKS: usize = 1_048_576;
+const MAX_SELECTOR_MATCH_STEPS: usize = 256;
 
 struct SelectorFreezeBudget {
     bytes: usize,
@@ -995,7 +996,7 @@ fn freeze_svg_stylesheet_selectors(
             }) {
                 continue;
             }
-            if rule.selector.matches(&SvgCssElement(node)) {
+            if budgeted_selector_matches(&rule.selector, node, budget)? {
                 SelectorFreezeBudget::consume(&mut budget.matches, 1)?;
                 // Charge string storage plus a conservative per-match share
                 // of vector/map/edit metadata before retaining the clone.
@@ -1159,6 +1160,19 @@ fn normalize_svg_opacity_cascade(
     for (_, text) in &stylesheets {
         stylesheet.parse_more(text);
     }
+    let specificity_storage = stylesheet
+        .rules
+        .len()
+        .checked_mul(std::mem::size_of::<[u8; 3]>())
+        .ok_or_else(selector_freeze_limit_error)?;
+    budget.bytes(specificity_storage)?;
+    let mut specificities = Vec::with_capacity(stylesheet.rules.len());
+    specificities.extend(
+        stylesheet
+            .rules
+            .iter()
+            .map(|rule| rule.selector.specificity()),
+    );
 
     let mut edits = Vec::<(Range<usize>, String)>::new();
     for node in root.descendants().filter(|node| {
@@ -1169,7 +1183,7 @@ fn normalize_svg_opacity_cascade(
                 .namespace()
                 .is_none_or(|namespace| namespace == SVG_NAMESPACE)
     }) {
-        let winner = opacity_winner(node, &stylesheet, budget)?;
+        let winner = opacity_winner(node, &stylesheet, &specificities, budget)?;
         for attribute in node.attributes().filter(|attribute| {
             attribute.name() == "opacity"
                 && matches!(
@@ -1248,6 +1262,7 @@ fn normalize_svg_opacity_cascade(
 fn opacity_winner(
     node: roxmltree::Node<'_, '_>,
     stylesheet: &simplecss::StyleSheet<'_>,
+    specificities: &[[u8; 3]],
     budget: &mut SelectorFreezeBudget,
 ) -> Result<Option<OpacityDeclaration>, SvgError> {
     let stylesheet_work = stylesheet.rules.iter().try_fold(0usize, |work, rule| {
@@ -1258,37 +1273,6 @@ fn opacity_winner(
     SelectorFreezeBudget::consume(&mut budget.checks, stylesheet_work)?;
     let mut winner: Option<OpacityDeclaration> = None;
 
-    let mut consider = |value: &str,
-                        important: bool,
-                        inline_style: bool,
-                        specificity: [u8; 3],
-                        source_order: usize|
-     -> Result<(), SvgError> {
-        budget.bytes(value.len() + std::mem::size_of::<OpacityDeclaration>())?;
-        let candidate = OpacityDeclaration {
-            value: value.to_owned(),
-            important,
-            inline_style,
-            specificity,
-            source_order,
-        };
-        let cascade_key = |declaration: &OpacityDeclaration| {
-            (
-                declaration.important,
-                declaration.inline_style,
-                declaration.specificity,
-                declaration.source_order,
-            )
-        };
-        if winner
-            .as_ref()
-            .is_none_or(|current| cascade_key(&candidate) > cascade_key(current))
-        {
-            winner = Some(candidate);
-        }
-        Ok(())
-    };
-
     let mut source_order = 0;
     for attribute in node.attributes().filter(|attribute| {
         attribute.name() == "opacity"
@@ -1297,23 +1281,31 @@ fn opacity_winner(
                 None | Some(SVG_NAMESPACE) | Some(XLINK_NAMESPACE) | Some(XML_NAMESPACE)
             )
     }) {
-        consider(attribute.value(), false, false, [0, 0, 0], source_order)?;
+        consider_opacity_declaration(
+            &mut winner,
+            attribute.value(),
+            false,
+            false,
+            [0, 0, 0],
+            source_order,
+            budget,
+        )?;
         source_order += 1;
     }
 
-    let element = SvgCssElement(node);
     // simplecss sorts by specificity and preserves source order for ties.
-    for rule in &stylesheet.rules {
-        let specificity = rule.selector.specificity();
-        let matches = rule.selector.matches(&element);
+    for (rule, specificity) in stylesheet.rules.iter().zip(specificities) {
+        let matches = budgeted_selector_matches(&rule.selector, node, budget)?;
         for declaration in &rule.declarations {
             if matches && declaration.name == "opacity" {
-                consider(
+                consider_opacity_declaration(
+                    &mut winner,
                     declaration.value,
                     declaration.important,
                     false,
-                    specificity,
+                    *specificity,
                     source_order,
+                    budget,
                 )?;
             }
             source_order += 1;
@@ -1323,12 +1315,14 @@ fn opacity_winner(
     if let Some(style) = node.attribute("style") {
         for declaration in simplecss::DeclarationTokenizer::from(style) {
             if declaration.name == "opacity" {
-                consider(
+                consider_opacity_declaration(
+                    &mut winner,
                     declaration.value,
                     declaration.important,
                     true,
                     [0, 0, 0],
                     source_order,
+                    budget,
                 )?;
             }
             source_order += 1;
@@ -1338,19 +1332,116 @@ fn opacity_winner(
     Ok(winner)
 }
 
-struct SvgCssElement<'a, 'input: 'a>(roxmltree::Node<'a, 'input>);
+fn consider_opacity_declaration(
+    winner: &mut Option<OpacityDeclaration>,
+    value: &str,
+    important: bool,
+    inline_style: bool,
+    specificity: [u8; 3],
+    source_order: usize,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<(), SvgError> {
+    budget.bytes(value.len() + std::mem::size_of::<OpacityDeclaration>())?;
+    let candidate = OpacityDeclaration {
+        value: value.to_owned(),
+        important,
+        inline_style,
+        specificity,
+        source_order,
+    };
+    let cascade_key = |declaration: &OpacityDeclaration| {
+        (
+            declaration.important,
+            declaration.inline_style,
+            declaration.specificity,
+            declaration.source_order,
+        )
+    };
+    if winner
+        .as_ref()
+        .is_none_or(|current| cascade_key(&candidate) > cascade_key(current))
+    {
+        *winner = Some(candidate);
+    }
+    Ok(())
+}
 
-impl simplecss::Element for SvgCssElement<'_, '_> {
+// Count Element callbacks and visited siblings inside simplecss's recursive matcher.
+struct BudgetedSvgCssElement<'a, 'input: 'a, 'budget> {
+    node: roxmltree::Node<'a, 'input>,
+    remaining_checks: &'budget Cell<usize>,
+    remaining_steps: &'budget Cell<usize>,
+    exceeded: &'budget Cell<bool>,
+}
+
+impl<'a, 'input: 'a, 'budget> BudgetedSvgCssElement<'a, 'input, 'budget> {
+    fn consume_step(&self) -> bool {
+        let Some(remaining) = self.remaining_steps.get().checked_sub(1) else {
+            self.exceeded.set(true);
+            return false;
+        };
+        self.remaining_steps.set(remaining);
+        self.consume_work(1)
+    }
+
+    fn consume_work(&self, amount: usize) -> bool {
+        let Some(remaining) = self.remaining_checks.get().checked_sub(amount) else {
+            self.exceeded.set(true);
+            return false;
+        };
+        self.remaining_checks.set(remaining);
+        true
+    }
+
+    fn wrap(&self, node: roxmltree::Node<'a, 'input>) -> Self {
+        Self {
+            node,
+            remaining_checks: self.remaining_checks,
+            remaining_steps: self.remaining_steps,
+            exceeded: self.exceeded,
+        }
+    }
+}
+
+impl simplecss::Element for BudgetedSvgCssElement<'_, '_, '_> {
     fn parent_element(&self) -> Option<Self> {
-        self.0.parent_element().map(SvgCssElement)
+        if !self.consume_step() {
+            return None;
+        }
+        self.node.parent_element().map(|node| self.wrap(node))
     }
 
     fn prev_sibling_element(&self) -> Option<Self> {
-        self.0.prev_sibling_element().map(SvgCssElement)
+        if !self.consume_step() {
+            return None;
+        }
+        let mut previous = self.node.prev_sibling();
+        while let Some(node) = previous {
+            if !self.consume_work(1) {
+                return None;
+            }
+            if node.is_element() {
+                return Some(self.wrap(node));
+            }
+            previous = node.prev_sibling();
+        }
+        None
     }
 
     fn has_local_name(&self, local_name: &str) -> bool {
-        self.0.tag_name().name() == local_name
+        if !self.consume_step()
+            || !self.consume_work(
+                self.node
+                    .tag_name()
+                    .name()
+                    .len()
+                    .max(local_name.len())
+                    .saturating_add(1),
+            )
+        {
+            return false;
+        }
+        self.node.tag_name().name() == local_name
     }
 
     fn attribute_matches(
@@ -1358,16 +1449,65 @@ impl simplecss::Element for SvgCssElement<'_, '_> {
         local_name: &str,
         operator: simplecss::AttributeOperator<'_>,
     ) -> bool {
-        self.0
-            .attribute(local_name)
-            .is_some_and(|value| operator.matches(value))
+        if !self.consume_step() {
+            return false;
+        }
+        let mut value = None;
+        for attribute in self.node.attributes() {
+            if !self.consume_work(
+                attribute
+                    .name()
+                    .len()
+                    .max(local_name.len())
+                    .saturating_add(1),
+            ) {
+                return false;
+            }
+            if attribute.name() == local_name {
+                value = Some(attribute.value());
+                break;
+            }
+        }
+        let Some(value) = value else {
+            return false;
+        };
+        if !self.consume_work(value.len().saturating_add(1)) {
+            return false;
+        }
+        operator.matches(value)
     }
 
     fn pseudo_class_matches(&self, class: simplecss::PseudoClass<'_>) -> bool {
+        if !self.consume_step() {
+            return false;
+        }
         match class {
             simplecss::PseudoClass::FirstChild => self.prev_sibling_element().is_none(),
             _ => false,
         }
+    }
+}
+
+fn budgeted_selector_matches(
+    selector: &simplecss::Selector<'_>,
+    node: roxmltree::Node<'_, '_>,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<bool, SvgError> {
+    let remaining_checks = Cell::new(budget.checks);
+    let remaining_steps = Cell::new(MAX_SELECTOR_MATCH_STEPS);
+    let exceeded = Cell::new(false);
+    let element = BudgetedSvgCssElement {
+        node,
+        remaining_checks: &remaining_checks,
+        remaining_steps: &remaining_steps,
+        exceeded: &exceeded,
+    };
+    let matches = selector.matches(&element);
+    budget.checks = remaining_checks.get();
+    if exceeded.get() {
+        Err(selector_freeze_limit_error())
+    } else {
+        Ok(matches)
     }
 }
 

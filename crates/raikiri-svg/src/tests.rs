@@ -1,9 +1,9 @@
 use super::{
     ParsedCssDeclaration, SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
     append_inline_declarations, apply_css_rewrite, apply_selector_edits,
-    normalize_svg_opacity_cascade, scope_stylesheet_properties, scoped_property_rule_len,
-    strip_inline_style_properties, strip_stylesheet_properties, unique_attribute_name,
-    with_root_style_overrides, xml_attribute_escape_allocation_bytes,
+    freeze_svg_stylesheet_selectors, normalize_svg_opacity_cascade, scope_stylesheet_properties,
+    scoped_property_rule_len, strip_inline_style_properties, strip_stylesheet_properties,
+    unique_attribute_name, with_root_style_overrides, xml_attribute_escape_allocation_bytes,
 };
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
@@ -92,6 +92,60 @@ fn selector_freezing_limits_nonmatching_selector_work() {
         &"missing { fill:red }".repeat(1025),
         1024,
     ));
+}
+
+#[test]
+fn selector_freezing_rejects_excessive_descendant_matcher_work() {
+    let selectors = [
+        format!("z {}", ["*"; 12].join(" ")),
+        format!("[data-never] {}", ["*"; 12].join(" ")),
+    ];
+    for selector in selectors {
+        let mut source = "<svg>".to_owned();
+        for _ in 0..12 {
+            source.push_str("<g>");
+        }
+        for _ in 0..12 {
+            source.push_str("</g>");
+        }
+        source.push_str(&format!("<style>{selector} {{ fill:red }}</style></svg>"));
+        let mut budget = SelectorFreezeBudget {
+            bytes: usize::MAX,
+            matches: usize::MAX,
+            checks: 100,
+        };
+
+        let result = freeze_svg_stylesheet_selectors(&source, &mut budget);
+
+        assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+            if message.contains("selector freezing resource limit")));
+    }
+}
+
+#[test]
+fn selector_freezing_limits_deep_child_matcher_recursion() {
+    let selector = std::iter::once("z")
+        .chain(std::iter::repeat_n("g", 140))
+        .collect::<Vec<_>>()
+        .join(" > ");
+    let mut source = "<svg>".to_owned();
+    for _ in 0..140 {
+        source.push_str("<g>");
+    }
+    for _ in 0..140 {
+        source.push_str("</g>");
+    }
+    source.push_str(&format!("<style>{selector} {{ fill:red }}</style></svg>"));
+    let mut budget = SelectorFreezeBudget {
+        bytes: usize::MAX,
+        matches: usize::MAX,
+        checks: usize::MAX,
+    };
+
+    let result = freeze_svg_stylesheet_selectors(&source, &mut budget);
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
 }
 
 #[test]
