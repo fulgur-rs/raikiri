@@ -1709,33 +1709,42 @@ fn rewrite_stylesheet_properties(
         return Ok(None);
     }
 
-    SelectorFreezeBudget::consume(&mut parser_state.budget.checks, parser_state.removals.len())?;
-    let removed_len = parser_state
-        .removals
-        .iter()
-        .try_fold(0usize, |total, range| {
-            total
-                .checked_add(range.len())
-                .ok_or_else(selector_freeze_limit_error)
-        })?;
-    let appended_len = parser_state
-        .scoped_rules
-        .iter()
-        .try_fold(0usize, |total, rule| {
-            total
-                .checked_add(rule.len())
-                .and_then(|total| total.checked_add(1))
-                .ok_or_else(selector_freeze_limit_error)
-        })?;
+    let ScopedStylesheetParser {
+        budget,
+        removals,
+        scoped_rules,
+        ..
+    } = parser_state;
+    apply_css_rewrite(source, removals, scoped_rules, budget).map(Some)
+}
+
+fn apply_css_rewrite(
+    source: &str,
+    removals: Vec<Range<usize>>,
+    scoped_rules: Vec<String>,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    SelectorFreezeBudget::consume(&mut budget.checks, removals.len())?;
+    let removed_len = removals.iter().try_fold(0usize, |total, range| {
+        total
+            .checked_add(range.len())
+            .ok_or_else(selector_freeze_limit_error)
+    })?;
+    let appended_len = scoped_rules.iter().try_fold(0usize, |total, rule| {
+        total
+            .checked_add(rule.len())
+            .and_then(|total| total.checked_add(1))
+            .ok_or_else(selector_freeze_limit_error)
+    })?;
     let final_len = source
         .len()
         .checked_sub(removed_len)
         .and_then(|length| length.checked_add(appended_len))
         .ok_or_else(selector_freeze_limit_error)?;
-    parser_state.budget.bytes(final_len)?;
+    budget.bytes(final_len)?;
     let mut rewritten = String::with_capacity(final_len);
     let mut cursor = 0;
-    for range in parser_state.removals {
+    for range in removals {
         if range.start < cursor || range.end > source.len() {
             return Err(SvgError::InvalidDocument(
                 "overlapping SVG CSS rewrite ranges".to_owned(),
@@ -1745,11 +1754,11 @@ fn rewrite_stylesheet_properties(
         cursor = range.end;
     }
     rewritten.push_str(&source[cursor..]);
-    for scoped_rule in parser_state.scoped_rules {
+    for scoped_rule in scoped_rules {
         rewritten.push('\n');
         rewritten.push_str(&scoped_rule);
     }
-    Ok(Some(rewritten))
+    Ok(rewritten)
 }
 
 fn source_slice_offset(source: &str, slice: &str) -> usize {
