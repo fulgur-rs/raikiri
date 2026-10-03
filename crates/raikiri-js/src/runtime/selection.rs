@@ -134,13 +134,13 @@ fn range_select_node_contents(
         end_container: node,
         end_offset: length,
     };
-    // The Range brand was checked above, and no script callback runs before this update.
-    // cov:ignore: this defensive guard cannot fail between the immediately preceding brand check and update.
     let updated = this.as_object().and_then(|object| {
         object
             .downcast_ref::<RangeData>()
             .map(|data| data.points.set(points))
     });
+    // The Range brand was checked above, and no script callback runs before this update.
+    // cov:ignore: this defensive guard cannot fail between the immediately preceding brand check and update.
     if updated.is_none() {
         return Err(JsNativeError::typ()
             .with_message("'this' is not a Range")

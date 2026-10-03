@@ -1,6 +1,6 @@
+use boa_engine::JsString;
 use boa_engine::object::JsObject;
 use boa_engine::property::Attribute;
-use boa_engine::JsString;
 
 use crate::runtime::DomRuntime;
 use crate::runtime::interfaces::{NodeHandle, protos};
@@ -99,10 +99,10 @@ fn range_select_node_contents_rejects_an_invalid_node_handle() {
     ok(
         &mut rt,
         "var range = document.createRange(); \
-         var invalidNode = false; \
+         var caughtInvalidNode = false; \
          try { range.selectNodeContents(globalThis.invalidNode); } \
-         catch (e) { invalidNode = e instanceof TypeError; } \
-         invalidNode",
+         catch (e) { caughtInvalidNode = e instanceof TypeError; } \
+         caughtInvalidNode",
     );
 }
 
