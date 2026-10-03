@@ -21,7 +21,10 @@ use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
 use shodo::geometry::BaselineKind;
+use shodo::hit::{LineLayout, TextPosition};
+use shodo::node::NodeId;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// Content-box origin of an ifc root in page coordinates.
@@ -137,6 +140,7 @@ fn cumulative_offset(
 /// Per line, underlines and overlines of every run come first, then the
 /// glyphs, then the line-throughs (CSS Text Decoration 3 §3: underlines and
 /// overlines below the text, line-throughs over it).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_ifc_lines(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -145,6 +149,7 @@ pub(crate) fn draw_ifc_lines(
     position: IfcPosition,
     base_decorations: &DecorationContext,
     fragmentainer: Option<usize>,
+    custom_highlights: &[crate::TextHighlightRange],
 ) {
     let Some(lines) = document.get_node(root_id).and_then(|n| n.ifc_lines()) else {
         return;
@@ -211,6 +216,7 @@ pub(crate) fn draw_ifc_lines(
         .get_node(root_id)
         .map(|node| node.ifc_relative_offsets())
         .unwrap_or_default();
+    let hit_layout = (!custom_highlights.is_empty()).then(|| LineLayout::new(lines));
     for (line_index, line) in lines.iter().enumerate() {
         let Some((column_x, column_y)) = line_offsets[line_index] else {
             continue;
@@ -241,6 +247,20 @@ pub(crate) fn draw_ifc_lines(
                 piece,
                 position.x + dx,
                 position.y + position.shift_y + dy - line_shift,
+            );
+        }
+        if let Some(hit_layout) = hit_layout.as_ref() {
+            draw_custom_highlights(
+                scene,
+                document,
+                cascade,
+                root_id,
+                line_index,
+                line,
+                hit_layout,
+                position,
+                offsets,
+                custom_highlights,
             );
         }
         // An element's shift can differ from line to line, so the contexts
@@ -374,6 +394,82 @@ pub(crate) fn draw_ifc_lines(
             );
         }
         draw_decorations(scene, &runs, DecorationPhase::AfterGlyphs);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_custom_highlights(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    root_id: usize,
+    line_index: usize,
+    line: &shodo::Line,
+    hit_layout: &LineLayout<'_>,
+    position: IfcPosition,
+    offsets: &[(usize, (f32, f32))],
+    custom_highlights: &[crate::TextHighlightRange],
+) {
+    let line_range = line.text_range();
+    let Some(offset_mapping) = line.offset_mapping() else {
+        return;
+    };
+    for highlight in custom_highlights {
+        let Some(color) = cascade.custom_highlight_styles.get(&highlight.name) else {
+            continue;
+        };
+        let (Ok(start_byte), Ok(end_byte)) = (
+            u32::try_from(highlight.start_byte),
+            u32::try_from(highlight.end_byte),
+        ) else {
+            continue;
+        };
+        let node = NodeId(highlight.node as u64);
+        let Some((start_offset, start_affinity)) = offset_mapping.dom_to_text(node, start_byte)
+        else {
+            continue;
+        };
+        let Some((end_offset, end_affinity)) = offset_mapping.dom_to_text(node, end_byte) else {
+            continue;
+        };
+        if start_offset >= end_offset
+            || (start_offset as usize) < line_range.start
+            || (end_offset as usize) > line_range.end
+        {
+            continue;
+        }
+        let selection = hit_layout.selection_rects(
+            TextPosition {
+                line: line_index,
+                offset: start_offset,
+                affinity: start_affinity,
+            },
+            TextPosition {
+                line: line_index,
+                offset: end_offset,
+                affinity: end_affinity,
+            },
+        );
+        if selection.is_empty() {
+            continue;
+        }
+        let color = css_color_to_peniko(*color);
+        let (offset_x, offset_y) = cumulative_offset(document, root_id, offsets, highlight.node);
+        for selected in selection {
+            let rect = Rect::new(
+                f64::from(position.x + offset_x + selected.inline_start),
+                f64::from(position.y + position.shift_y + offset_y + selected.block_start),
+                f64::from(position.x + offset_x + selected.inline_start + selected.inline_size),
+                f64::from(
+                    position.y
+                        + position.shift_y
+                        + offset_y
+                        + selected.block_start
+                        + selected.block_size,
+                ),
+            );
+            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+        }
     }
 }
 

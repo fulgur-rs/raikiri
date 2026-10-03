@@ -478,7 +478,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
         | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) | PropertyValue::Page(_)
-        | PropertyValue::ColumnCount(_) | PropertyValue::ColumnWidth(_) => expand_none(d, push),
+        | PropertyValue::ColumnCount(_)
+        | PropertyValue::ColumnWidth(_)
+        | PropertyValue::ColumnFill(_) => expand_none(d, push),
         PropertyValue::Columns(shorthand) => {
             push(Declaration {
                 value: PropertyValue::ColumnWidth(shorthand.width),

@@ -53,6 +53,7 @@ class FetchCacheTests(unittest.TestCase):
         self._write(self.wpt_source, "css/test.html", "css root\n")
         self._write(self.wpt_source, "fonts/ahem.txt", "font root\n")
         self._write(self.wpt_source, "images/ref.txt", "image root\n")
+        self._write(self.wpt_source, "common/rendering-utils.js", "common helpers\n")
         self._write(self.wpt_source, "resources/testharness.js", "resources root\n")
         self._write(self.wpt_source, "tools/wptrunner/README.rst", "wptrunner root\n")
         self._write(self.wpt_source, "wpt", "wpt CLI\n")
@@ -114,14 +115,18 @@ class FetchCacheTests(unittest.TestCase):
         first = self._fetch(self.project)
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(self.cache.resolve(), self.cache)
-        self.assertEqual((self.cache / ".git" / "info" / "sparse-checkout").read_text(),
-                         "acid\ncss\nfonts\nimages\n/resources\n/tools\n/wpt\n/docs/commands.json\n")
+        self.assertEqual(
+            (self.cache / ".git" / "info" / "sparse-checkout").read_text(),
+            "acid\ncss\nfonts\nimages\n/common\n"
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
+        )
         self.assertEqual(
             (self.cache / ".git" / "info" / "sparse-checkout").stat().st_mode & 0o222,
             0,
         )
         self.assertEqual(self._git(self.cache, "rev-parse", "HEAD"), self.pin)
         self.assertFalse((self.cache / "outside/not-sparse.txt").exists())
+        self.assertTrue((self.cache / "common/rendering-utils.js").exists())
         self.assertTrue((self.cache / "resources/testharness.js").exists())
         self.assertTrue((self.cache / "tools/wptrunner/README.rst").exists())
         self.assertTrue((self.cache / "wpt").exists())
@@ -178,7 +183,8 @@ class FetchCacheTests(unittest.TestCase):
         self.assertEqual(migrated.returncode, 0, migrated.stderr)
         self.assertEqual(
             sparse_file.read_text(encoding="utf-8"),
-            "acid\ncss\nfonts\nimages\n/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            "acid\ncss\nfonts\nimages\n/common\n"
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
         )
         self.assertEqual(sparse_file.stat().st_mode & 0o222, 0)
 

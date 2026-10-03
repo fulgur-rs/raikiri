@@ -68,6 +68,202 @@ fn a_box_without_inline_content_is_not_a_root() {
 }
 
 #[test]
+fn empty_ruby_items_with_forced_breaks_stay_on_the_multicol_flex_path() {
+    let mut detached_child = 0;
+    let mut fixture = block_fixture("columns:4;column-fill:auto;height:175px", |doc, root| {
+        let mut first_ruby = None;
+        doc.append_text(root, " ");
+        for _ in 0..4 {
+            let ruby = doc.append_element(
+                Some(root),
+                "ruby",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            first_ruby.get_or_insert(ruby);
+            doc.append_element(
+                Some(ruby),
+                "div",
+                taffy::Style::default(),
+                Some("display:inline-block;width:25px;height:75px"),
+            );
+            let rt = doc.append_element(
+                Some(ruby),
+                "rt",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_element(
+                Some(rt),
+                "div",
+                taffy::Style::default(),
+                Some("display:inline-block;width:25px;height:25px"),
+            );
+            doc.append_element(
+                Some(root),
+                "br",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+        }
+        let hidden = doc.append_element(
+            first_ruby,
+            "span",
+            taffy::Style::default(),
+            Some("display:none"),
+        );
+        doc.append_text(hidden, "hidden text");
+        detached_child = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_comment(Some(root), "layout-neutral comment");
+    });
+    fixture.doc.nodes[detached_child]
+        .flags
+        .remove(NodeFlags::IS_IN_DOCUMENT);
+    enable(&mut fixture);
+    assert!(is_ruby_multicol_flex_projection(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root
+    ));
+    assign(&mut fixture);
+
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn ruby_multicol_with_text_remains_an_inline_formatting_root() {
+    let mut fixture = block_fixture("columns:4;column-fill:auto;height:175px", |doc, root| {
+        let ruby = doc.append_element(
+            Some(root),
+            "ruby",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_text(ruby, "base");
+        doc.append_element(
+            Some(root),
+            "br",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+    });
+    enable(&mut fixture);
+    assert!(!is_ruby_multicol_flex_projection(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root
+    ));
+    assign(&mut fixture);
+
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn direct_text_in_ruby_multicol_remains_an_inline_formatting_root() {
+    let mut fixture = block_fixture("columns:4;column-fill:auto;height:175px", |doc, root| {
+        doc.append_text(root, "direct text");
+        let ruby = doc.append_element(
+            Some(root),
+            "ruby",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_element(
+            Some(ruby),
+            "div",
+            taffy::Style::default(),
+            Some("display:inline-block;width:25px;height:75px"),
+        );
+        doc.append_element(
+            Some(root),
+            "br",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+    });
+    enable(&mut fixture);
+    assert!(!is_ruby_multicol_flex_projection(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root
+    ));
+    assign(&mut fixture);
+
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn ruby_multicol_without_forced_breaks_remains_an_inline_formatting_root() {
+    let mut fixture = block_fixture("columns:4;column-fill:auto;height:175px", |doc, root| {
+        let ruby = doc.append_element(
+            Some(root),
+            "ruby",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_element(
+            Some(ruby),
+            "div",
+            taffy::Style::default(),
+            Some("display:inline-block;width:25px;height:75px"),
+        );
+    });
+    enable(&mut fixture);
+    assert!(!is_ruby_multicol_flex_projection(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root
+    ));
+    assign(&mut fixture);
+
+    assert!(is_root(&fixture, fixture.root));
+}
+
+#[test]
+fn empty_ruby_in_a_single_column_stays_on_the_multicol_flex_path() {
+    let mut fixture = block_fixture("columns:1;column-fill:auto;height:60px", |doc, root| {
+        let ruby = doc.append_element(
+            Some(root),
+            "ruby",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_element(
+            Some(ruby),
+            "div",
+            taffy::Style::default(),
+            Some("display:inline-block;width:100px;height:50px"),
+        );
+        let rt = doc.append_element(
+            Some(ruby),
+            "rt",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_element(
+            Some(rt),
+            "div",
+            taffy::Style::default(),
+            Some("display:inline-block;width:100px;height:50px"),
+        );
+    });
+    enable(&mut fixture);
+    assert!(is_ruby_multicol_flex_projection(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root
+    ));
+    assign(&mut fixture);
+
+    assert!(!is_root(&fixture, fixture.root));
+}
+
+#[test]
 fn reassignment_clears_stale_marks() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");

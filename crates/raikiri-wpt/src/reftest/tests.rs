@@ -1233,6 +1233,7 @@ fn render_with_engine(html: &str) -> RenderedDocument {
             require_inline_fonts: false,
         },
         None,
+        None,
     )
     .expect("render")
 }

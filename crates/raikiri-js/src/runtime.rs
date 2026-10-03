@@ -25,11 +25,15 @@ pub(crate) mod interfaces;
 pub(crate) mod node;
 pub(crate) mod query;
 pub(crate) mod scripts;
+pub(crate) mod selection;
 pub(crate) mod style;
+pub(crate) mod stylesheet;
 pub(crate) mod token_list;
 pub(crate) mod tree;
 pub(crate) mod webidl;
 pub(crate) mod window;
+
+pub use selection::CustomHighlightRange;
 
 #[cfg(test)]
 pub(crate) mod test_host;
@@ -60,6 +64,16 @@ pub(crate) struct State {
     pub host_failure: Option<String>,
     /// Per-element `style` objects so `el.style === el.style`.
     pub style_objects: HashMap<usize, JsObject>,
+    /// The live `document.styleSheets` list.
+    pub style_sheet_list: Option<JsObject>,
+    /// Per-style-element `CSSStyleSheet` wrappers.
+    pub style_sheets: HashMap<usize, JsObject>,
+    /// Per-style-element live `CSSRuleList` wrappers.
+    pub css_rule_lists: HashMap<usize, JsObject>,
+    /// Per-style-rule `CSSStyleRule` wrappers.
+    pub css_style_rules: HashMap<(usize, usize), JsObject>,
+    /// Per-style-rule `CSSStyleDeclaration` wrappers.
+    pub css_rule_styles: HashMap<(usize, usize), JsObject>,
     /// Per-element `getComputedStyle` objects so
     /// `getComputedStyle(el) === getComputedStyle(el)`.
     pub computed_style_objects: HashMap<usize, JsObject>,
@@ -69,6 +83,12 @@ pub(crate) struct State {
     pub child_node_lists: HashMap<usize, JsObject>,
     /// Per-node `children` collections so `n.children === n.children`.
     pub children_collections: HashMap<usize, JsObject>,
+    /// The Window's live Selection object, created on first access.
+    pub selection_object: Option<JsObject>,
+    /// Ranges currently held by the singleton Selection object.
+    pub selection_ranges: Vec<JsObject>,
+    /// Registered CSS custom highlights, keyed by highlight name.
+    pub custom_highlights: HashMap<String, JsObject>,
     /// Registered `EventTarget` listeners, keyed by node arena index; `None`
     /// is the window/global object, which has no arena index of its own.
     /// [`dispatch`] both adds and removes entries here (`addEventListener`/
@@ -304,10 +324,18 @@ impl DomRuntime {
             live_walks: 0,
             host_failure: None,
             style_objects: HashMap::new(),
+            style_sheet_list: None,
+            style_sheets: HashMap::new(),
+            css_rule_lists: HashMap::new(),
+            css_style_rules: HashMap::new(),
+            css_rule_styles: HashMap::new(),
             computed_style_objects: HashMap::new(),
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),
             children_collections: HashMap::new(),
+            selection_object: None,
+            selection_ranges: Vec::new(),
+            custom_highlights: HashMap::new(),
             listeners: HashMap::new(),
             event_loop: event_loop::EventLoop::new(limits.clone()),
             reporting_exception: false,
@@ -577,6 +605,18 @@ impl DomRuntime {
     /// property machinery directly.
     pub fn context_mut(&mut self) -> &mut Context {
         &mut self.context
+    }
+
+    /// Return registered custom highlight ranges while their node indices
+    /// still refer to the live document owned by this runtime.
+    pub fn custom_highlight_ranges(&mut self) -> Result<Vec<CustomHighlightRange>, RuntimeError> {
+        match selection::custom_highlight_ranges(&mut self.context) {
+            Ok(ranges) => Ok(ranges),
+            Err(error) => Err(match error_message(&error, &mut self.context) {
+                Ok(message) => RuntimeError::JavaScript(message),
+                Err(reason) => RuntimeError::Aborted(reason),
+            }),
+        }
     }
 
     /// Tear down the realm and return the host with its (mutated) document.

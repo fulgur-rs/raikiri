@@ -889,6 +889,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "grid-gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
         // CSS Multi-column Layout Module Level 1.
         "column-count" => parse_column_count(input).map(PropertyValue::ColumnCount),
+        "column-fill" => parse_column_fill(input).map(PropertyValue::ColumnFill),
         "column-width" => parse_column_width(input).map(PropertyValue::ColumnWidth),
         "columns" => parse_columns_shorthand(input).map(PropertyValue::Columns),
         // CSS Box Alignment Module Level 3 §5.2

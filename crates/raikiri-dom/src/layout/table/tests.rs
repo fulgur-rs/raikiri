@@ -1,9 +1,343 @@
 use crate::document::Document;
-use raikiri_style::property::DisplayValue;
-use raikiri_style::{build_rule_tree, cascade};
+use raikiri_style::property::{
+    Border, BorderColor, BorderStyle, CssColor, DisplayValue, Length, Sides,
+};
+use raikiri_style::{ComputedLength, ResolveContext, build_rule_tree, cascade, resolve_border};
 use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
+
+fn oversized_columns_document(explicit_row: bool, columns: bool) -> Document {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(Some(body), "div", Style::default(), Some("display: table"));
+    let parent = if explicit_row {
+        doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some("display: table-row"),
+        )
+    } else {
+        table
+    };
+    for _ in 0..66 {
+        let cell = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some(if columns {
+                "display: table-column"
+            } else {
+                "display: table-cell"
+            }),
+        );
+        doc.set_element_attributes(
+            cell,
+            vec![(
+                if columns { "span" } else { "colspan" }.into(),
+                "1000".into(),
+            )],
+        );
+    }
+    doc.mark_in_document_flags();
+    doc
+}
+
+fn assert_oversized_table_is_rejected(explicit_row: bool, columns: bool) {
+    let mut doc = oversized_columns_document(explicit_row, columns);
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    let result = crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4);
+    assert!(matches!(
+        result,
+        Err(raikiri_traits::LayoutError::Internal { .. })
+    ));
+}
+
+#[test]
+fn oversized_explicit_table_columns_return_layout_error() {
+    assert_oversized_table_is_rejected(true, false);
+}
+
+#[test]
+fn oversized_anonymous_table_columns_return_layout_error() {
+    assert_oversized_table_is_rejected(false, false);
+}
+
+#[test]
+fn oversized_column_element_spans_return_layout_error() {
+    assert_oversized_table_is_rejected(false, true);
+}
+
+#[test]
+fn table_column_grid_accepts_exact_representable_boundary() {
+    for (explicit, columns) in [(true, false), (false, false), (false, true)] {
+        let mut doc = oversized_columns_document(explicit, columns);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
+        let table = 3;
+        let last = doc.nodes.len() - 1;
+        let attribute = if columns { "span" } else { "colspan" };
+        doc.set_element_attributes(last, vec![(attribute.into(), "535".into())]);
+        let grid = super::build_table_grid(&doc, table).unwrap();
+        assert_eq!(grid.n_cols, u16::MAX);
+        if columns {
+            assert_eq!(grid.col_widths.len(), usize::from(u16::MAX));
+        } else {
+            let cell = grid.cells.last().unwrap();
+            assert_eq!(
+                super::cell_column_range(cell, usize::from(grid.n_cols)).unwrap(),
+                65000..65535
+            );
+        }
+        doc.set_element_attributes(last, vec![(attribute.into(), "536".into())]);
+        assert!(super::build_table_grid(&doc, table).is_err());
+    }
+}
+
+#[test]
+fn rejected_table_layout_cannot_be_reused_from_cache_and_recovers_after_repair() {
+    let mut doc = oversized_columns_document(true, false);
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    for _ in 0..2 {
+        assert!(crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).is_err());
+    }
+    for cell in 5..doc.nodes.len() {
+        doc.set_element_attributes(cell, vec![("colspan".into(), "1".into())]);
+    }
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+    assert!(doc.table_layout_error.is_none());
+}
+
+#[test]
+fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
+    let mut doc = Document::new();
+    for (start, span) in [(2, 1), (1, 2), (0, 0)] {
+        let mut grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![0],
+            cells: vec![fixed_cell(0, start, span, Dimension::auto())],
+            col_widths: vec![],
+        };
+        assert!(super::resolve_row_heights(&mut doc, &grid, &[1.0, 1.0]).is_err());
+        assert!(
+            super::place_cells(
+                &mut doc,
+                &mut grid,
+                &[1.0, 1.0],
+                &[1.0],
+                &[0.0, 1.0, 2.0],
+                &[0.0, 1.0]
+            )
+            .is_err()
+        );
+    }
+}
+
+fn collapsed_candidate(
+    style: BorderStyle,
+    width: f32,
+    color: CssColor,
+) -> super::CollapsedBorderCandidate {
+    let mut specified = Border::new();
+    specified.width = Length::Px(width);
+    specified.style = style;
+    specified.color = BorderColor::Resolved(color);
+    let border = resolve_border(
+        specified,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::initial(),
+    );
+    super::CollapsedBorderCandidate {
+        border,
+        taffy_width: LengthPercentage::length(border.width().px()),
+    }
+}
+
+#[test]
+fn collapsed_border_conflict_prefers_hidden_and_non_none_styles() {
+    let solid = collapsed_candidate(BorderStyle::Solid, 8.0, CssColor::BLACK);
+    let hidden = collapsed_candidate(BorderStyle::Hidden, 1.0, CssColor::BLACK);
+    let none = collapsed_candidate(BorderStyle::None, 12.0, CssColor::BLACK);
+
+    let hidden_winner = super::collapsed_border_winner(solid, hidden);
+    assert_eq!(hidden_winner.border.style(), BorderStyle::Hidden);
+    assert_eq!(hidden_winner.border.width(), ComputedLength::ZERO);
+
+    let hidden_leading_winner = super::collapsed_border_winner(hidden, solid);
+    assert_eq!(hidden_leading_winner.border.style(), BorderStyle::Hidden);
+
+    let solid_winner = super::collapsed_border_winner(none, solid);
+    assert_eq!(solid_winner.border.style(), BorderStyle::Solid);
+    assert_eq!(solid_winner.border.width(), ComputedLength(8.0));
+
+    let solid_leading_winner = super::collapsed_border_winner(solid, none);
+    assert_eq!(solid_leading_winner.border.style(), BorderStyle::Solid);
+}
+
+#[test]
+fn collapsed_border_conflict_prefers_width_before_style() {
+    let wide_solid = collapsed_candidate(BorderStyle::Solid, 5.0, CssColor::BLACK);
+    let narrow_double = collapsed_candidate(BorderStyle::Double, 4.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, narrow_double);
+    assert_eq!(winner.border.style(), BorderStyle::Solid);
+    assert_eq!(winner.border.width(), ComputedLength(5.0));
+
+    let same_width_double = collapsed_candidate(BorderStyle::Double, 5.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, same_width_double);
+    assert_eq!(winner.border.style(), BorderStyle::Double);
+    assert_eq!(winner.border.width(), ComputedLength(5.0));
+
+    let narrower_solid = collapsed_candidate(BorderStyle::Solid, 4.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, narrower_solid);
+    assert_eq!(winner.border.width(), ComputedLength(5.0));
+
+    let same_width_solid = collapsed_candidate(BorderStyle::Solid, 5.0, CssColor::BLACK);
+    let winner = super::collapsed_border_winner(wide_solid, same_width_solid);
+    assert_eq!(winner.border.color, wide_solid.border.color);
+}
+
+#[test]
+fn collapsed_border_style_precedence_matches_css_order() {
+    let styles = [
+        BorderStyle::Double,
+        BorderStyle::Solid,
+        BorderStyle::Dashed,
+        BorderStyle::Dotted,
+        BorderStyle::Ridge,
+        BorderStyle::Outset,
+        BorderStyle::Groove,
+        BorderStyle::Inset,
+    ];
+    for pair in styles.windows(2) {
+        let stronger = collapsed_candidate(pair[0], 5.0, CssColor::BLACK);
+        let weaker = collapsed_candidate(pair[1], 5.0, CssColor::BLACK);
+        assert_eq!(
+            super::collapsed_border_winner(stronger, weaker)
+                .border
+                .style(),
+            pair[0]
+        );
+    }
+    assert_eq!(super::border_style_rank(BorderStyle::Hidden), 9);
+    assert_eq!(super::border_style_rank(BorderStyle::None), 0);
+}
+
+#[test]
+fn collapsed_border_conflict_prefers_the_leading_cell_on_a_tie() {
+    let left = collapsed_candidate(
+        BorderStyle::Solid,
+        5.0,
+        CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        },
+    );
+    let right = collapsed_candidate(
+        BorderStyle::Solid,
+        5.0,
+        CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255,
+        },
+    );
+
+    assert_eq!(
+        super::collapsed_border_winner(left, right).border.color,
+        left.border.color
+    );
+}
+
+#[test]
+fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
+    let mut doc = Document::new();
+    let widths = [3.0, 5.0, 7.0, 9.0];
+    let cells = widths.map(|width| {
+        let id = bordered_cell(&mut doc, width);
+        let candidate = collapsed_candidate(BorderStyle::Solid, width, CssColor::BLACK);
+        doc.nodes[id].computed_border = Some(Sides::all(candidate.border));
+        id
+    });
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![0, 0],
+        cells: vec![
+            make_cell(cells[0], 0, 0, 1, 1, Dimension::auto()),
+            make_cell(cells[1], 0, 1, 1, 1, Dimension::auto()),
+            make_cell(cells[2], 1, 0, 1, 1, Dimension::auto()),
+            make_cell(cells[3], 1, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+
+    assert_eq!(
+        doc.nodes[cells[0]].style.border.right,
+        LengthPercentage::length(5.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[1]].style.border.left,
+        LengthPercentage::length(5.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[2]].style.border.right,
+        LengthPercentage::length(9.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[3]].style.border.left,
+        LengthPercentage::length(9.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[0]].style.border.bottom,
+        LengthPercentage::length(7.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[2]].style.border.top,
+        LengthPercentage::length(7.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[1]].style.border.bottom,
+        LengthPercentage::length(9.0)
+    );
+    assert_eq!(
+        doc.nodes[cells[3]].style.border.top,
+        LengthPercentage::length(9.0)
+    );
+
+    super::resolve_collapsed_border_pair(
+        &mut doc,
+        cells[0],
+        super::CellBorderSide::Top,
+        cells[1],
+        super::CellBorderSide::Right,
+    );
+    super::resolve_collapsed_border_pair(
+        &mut doc,
+        cells[0],
+        super::CellBorderSide::Left,
+        cells[1],
+        super::CellBorderSide::Bottom,
+    );
+    let missing_border = bordered_cell(&mut doc, 1.0);
+    super::resolve_collapsed_border_pair(
+        &mut doc,
+        cells[0],
+        super::CellBorderSide::Left,
+        missing_border,
+        super::CellBorderSide::Right,
+    );
+}
 
 fn build_simple_2x2() -> Document {
     let mut doc = Document::new();
@@ -1368,7 +1702,7 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
     doc.nodes[col_c].display = DisplayValue::TableColumn;
 
     doc.mark_in_document_flags();
-    let sizing = super::collect_col_widths(&doc, table);
+    let sizing = super::collect_col_widths(&doc, table).unwrap();
 
     assert_eq!(sizing.len(), 4, "col_a + col_b(span=2) + col_c = 4 entries");
     assert_eq!(sizing[0].width, Dimension::length(40.0));
@@ -1393,7 +1727,7 @@ fn collect_rows_wraps_bare_cells_in_anonymous_row() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(rows.len(), 1, "bare cells wrap into a single anonymous row");
     assert_eq!(cells.len(), 2);
@@ -1430,7 +1764,7 @@ fn collect_rows_floats_first_header_group_to_top() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(cells.len(), 2);
     assert_eq!(
@@ -1446,7 +1780,7 @@ fn collect_rows_inner_no_reorder_keeps_dom_order_for_nested_call() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows_inner(&doc, table, &mut rows, &mut cells, &mut n_cols, false);
+    super::collect_rows_inner(&doc, table, &mut rows, &mut cells, &mut n_cols, false).unwrap();
 
     assert_eq!(cells.len(), 2);
     assert_eq!(
@@ -1475,7 +1809,7 @@ fn collect_rows_inner_skips_character_data_between_rows() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(
         rows.len(),
@@ -1501,7 +1835,7 @@ fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 1);
@@ -1520,7 +1854,7 @@ fn flush_pending_assigns_sequential_columns_respecting_colspan() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols);
+    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols).unwrap();
 
     assert!(pending.is_empty());
     assert_eq!(rows, vec![td_a]);
@@ -1537,7 +1871,7 @@ fn flush_pending_on_empty_pending_is_noop() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols);
+    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols).unwrap();
     assert!(rows.is_empty());
     assert!(cells.is_empty());
     assert_eq!(n_cols, 0);

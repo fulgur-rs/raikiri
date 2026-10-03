@@ -92,6 +92,14 @@ pub struct RenderedDocument {
     pub pages: Vec<RenderedImage>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CustomHighlightPathRange {
+    pub(crate) name: String,
+    pub(crate) node_path: Vec<usize>,
+    pub(crate) start_byte: usize,
+    pub(crate) end_byte: usize,
+}
+
 pub(crate) struct PrintRenderResources<'a> {
     pub(crate) network: Option<&'a dyn raikiri_traits::NetworkProvider>,
     pub(crate) parse_base_url: Option<&'a raikiri::Url>,
@@ -105,9 +113,33 @@ pub(crate) struct PrintRenderResources<'a> {
     /// parsed document before paint so `innerHTML` round-tripping does not
     /// drop script-painted pixels or require another pixel-buffer copy.
     pub(crate) canvas_bitmaps: Option<Vec<raikiri_dom::CanvasBitmap>>,
+    /// Script-created ranges identified by a child-index path, so reparsing
+    /// serialized HTML can resolve them to its new arena indices.
+    pub(crate) custom_highlight_ranges: Option<&'a [CustomHighlightPathRange]>,
     /// Fail instead of falling back to the installed fonts when the inline
     /// engine cannot get the WPT fonts.
     pub(crate) require_inline_fonts: bool,
+}
+
+fn resolve_custom_highlights(
+    document: &raikiri_dom::Document,
+    ranges: &[CustomHighlightPathRange],
+) -> Vec<raikiri_paint::TextHighlightRange> {
+    ranges
+        .iter()
+        .filter_map(|range| {
+            let mut node = document.root_index();
+            for child_index in &range.node_path {
+                node = *document.get_node(node)?.children.get(*child_index)?;
+            }
+            Some(raikiri_paint::TextHighlightRange {
+                name: range.name.clone(),
+                node,
+                start_byte: range.start_byte,
+                end_byte: range.end_byte,
+            })
+        })
+        .collect()
 }
 
 /// One inclusive, one-based page range from `reftest-pages` metadata.
@@ -1856,6 +1888,7 @@ fn render_raikiri_pages_inner(
             require_inline_fonts: false,
         },
         None,
+        None,
     )
 }
 
@@ -1882,6 +1915,7 @@ fn render_raikiri_pages_inner_with_canvases(
     font_base: Option<&Path>,
     engine: InlineEngineChoice,
     canvas_bitmaps: Option<Vec<raikiri_dom::CanvasBitmap>>,
+    custom_highlight_ranges: Option<&[CustomHighlightPathRange]>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     // URL construction requires an absolute directory. Normalize caller
     // paths here so resource and stylesheet loading work for relative test
@@ -1923,6 +1957,7 @@ fn render_raikiri_pages_inner_with_canvases(
             prepare_cascade_images: None,
             require_inline_fonts: engine.require_inline_fonts,
             canvas_bitmaps,
+            custom_highlight_ranges,
         },
     )
 }
@@ -2191,6 +2226,10 @@ pub(crate) fn render_raikiri_pages_with_resources(
         uncascaded.dom.set_canvases_in_tree_order_owned(bitmaps);
     }
 
+    let custom_highlights = resources
+        .custom_highlight_ranges
+        .map(|ranges| resolve_custom_highlights(&uncascaded.dom, ranges))
+        .unwrap_or_default();
     let page_count = slices.len() as u32;
     let mut pages = Vec::with_capacity(slices.len());
     for slice in slices {
@@ -2257,7 +2296,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |painter| {
                 if let Some(pixel_source) = image_pixel_source {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
+                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images_and_highlights(
                         painter,
                         &uncascaded.dom,
                         &cascade,
@@ -2270,9 +2309,10 @@ pub(crate) fn render_raikiri_pages_with_resources(
                         active_page_name.as_deref(),
                         fixed_page_width,
                         pixel_source,
+                        &custom_highlights,
                     );
                 } else {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
                         painter,
                         &uncascaded.dom,
                         &cascade,
@@ -2284,6 +2324,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
                         paired_page_increment,
                         active_page_name.as_deref(),
                         fixed_page_width,
+                        &custom_highlights,
                     );
                 }
             },
@@ -2742,10 +2783,12 @@ where
     let dynamic::PreparedDynamic {
         html: test_render_html,
         canvases: test_canvases,
+        custom_highlight_ranges: test_custom_highlight_ranges,
     } = dynamic::prepare(&test_html, &pair.test, "", config)?;
     let dynamic::PreparedDynamic {
         html: reference_render_html,
         canvases: reference_canvases,
+        custom_highlight_ranges: reference_custom_highlight_ranges,
     } = dynamic::prepare(&ref_html, &pair.reference, &pair.reference_suffix, config)?;
     let ref_html = mirror_default_page_margin(&test_render_html, &reference_render_html);
     let test_doc = render_raikiri_pages_inner_with_canvases(
@@ -2760,6 +2803,7 @@ where
         pair.test.parent(),
         InlineEngineChoice::of(&config),
         Some(test_canvases),
+        Some(&test_custom_highlight_ranges),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let ref_doc = render_raikiri_pages_inner_with_canvases(
@@ -2774,6 +2818,7 @@ where
         pair.reference.parent(),
         InlineEngineChoice::of(&config),
         Some(reference_canvases),
+        Some(&reference_custom_highlight_ranges),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let (test_selection, reference_selection) = selections;

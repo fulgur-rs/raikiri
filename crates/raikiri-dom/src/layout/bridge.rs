@@ -31,6 +31,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
     Some(MulticolStyle {
         count,
         width,
+        column_fill: cv.column_fill,
         gap,
         gap_percent,
         height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),
@@ -113,6 +114,7 @@ pub(crate) fn apply_computed_to_style(
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].border_collapse = cv.border_collapse;
+        doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].border_spacing = cv.border_spacing;
         doc.nodes[idx].break_before = cv.break_before;
         doc.nodes[idx].break_after = cv.break_after;

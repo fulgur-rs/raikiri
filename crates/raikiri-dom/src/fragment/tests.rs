@@ -8,6 +8,7 @@ fn resolves_count_and_percentage_gap_against_used_width() {
         MulticolStyle {
             count: Some(2),
             width: None,
+            column_fill: raikiri_style::property::ColumnFillValue::Balance,
             gap: 0.0,
             gap_percent: Some(10.0),
             height_definite: true,
@@ -30,6 +31,7 @@ fn resolves_count_and_percentage_gap_against_used_width() {
             MulticolStyle {
                 count: None,
                 width: None,
+                column_fill: raikiri_style::property::ColumnFillValue::Balance,
                 gap: 0.0,
                 gap_percent: None,
                 height_definite: false,
@@ -46,6 +48,7 @@ fn resolves_count_and_percentage_gap_against_used_width() {
         MulticolStyle {
             count: None,
             width: Some(30.0),
+            column_fill: raikiri_style::property::ColumnFillValue::Balance,
             gap: 5.0,
             gap_percent: None,
             height_definite: false,
@@ -62,6 +65,7 @@ fn resolves_count_and_percentage_gap_against_used_width() {
         MulticolStyle {
             count: Some(1),
             width: None,
+            column_fill: raikiri_style::property::ColumnFillValue::Balance,
             gap: f32::NAN,
             gap_percent: None,
             height_definite: false,

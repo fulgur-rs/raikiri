@@ -2753,6 +2753,28 @@ fn empty_cells_rejects_invalid_values() {
 }
 
 #[test]
+fn column_fill_accepts_all_supported_keywords_and_rejects_others() {
+    for (source, expected) in [
+        ("auto", ColumnFillValue::Auto),
+        ("balance", ColumnFillValue::Balance),
+        ("balance-all", ColumnFillValue::BalanceAll),
+    ] {
+        assert_eq!(
+            parse_entire(source, "column-fill"),
+            Some(PropertyValue::ColumnFill(expected)),
+            "column-fill should parse {source}"
+        );
+    }
+    assert_eq!(
+        parse_entire("BALANCE-ALL", "column-fill"),
+        Some(PropertyValue::ColumnFill(ColumnFillValue::BalanceAll))
+    );
+    for value in ["none", "auto balance", "balance-all balance"] {
+        assert_eq!(parse_entire(value, "column-fill"), None, "{value}");
+    }
+}
+
+#[test]
 fn multicol_longhands_parse_and_reject_out_of_range_values() {
     assert_eq!(
         parse_entire("auto", "column-count"),

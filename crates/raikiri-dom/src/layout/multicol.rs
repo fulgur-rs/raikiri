@@ -138,8 +138,13 @@ pub(crate) fn compute_multicol_layout(
         if let Some(active) = tree.fragmentation_stack.last_mut() {
             *active = resolved;
         }
-        let used_height =
-            relayout_nested_multicol_children(tree, node_id, resolved, output.size.height);
+        let used_height = relayout_nested_multicol_children(
+            tree,
+            node_id,
+            resolved,
+            output.size.height,
+            fragmentainer_height.is_some(),
+        );
         if fragmentainer_height.is_none() {
             output.size.height = used_height.max(0.0);
         }
@@ -289,6 +294,7 @@ fn relayout_nested_multicol_children(
     node_id: TaffyNodeId,
     context: FragmentationContext,
     fallback_height: f32,
+    has_fragmentainer_height_constraint: bool,
 ) -> f32 {
     let index = usize::from(node_id);
     let children: Vec<usize> = tree.nodes[index]
@@ -320,18 +326,19 @@ fn relayout_nested_multicol_children(
     else {
         return fallback_height;
     };
-    // This tranche models `column-fill:auto`: source-order children consume
-    // the current definite fragmentainer before the next column starts.
-    // Balancing remains on the foundational direct-text path.
+    // Definite-height columns place block children sequentially. For
+    // auto-height columns, the selected fill mode controls balancing below.
     let fragment_height = context.available_height;
     let mut column = 0usize;
     let mut cursor = 0.0f32;
     let mut maximum = 0.0f32;
-    // With an auto-height multicol, measure block children once before
-    // placing them. This gives the simple balancing pass a target height;
-    // measuring against the current column would otherwise keep every child
-    // in the first column and leave the container taller than necessary.
-    let auto_measurements = if tree.fragmentation_stack.len() == 1
+    // For balance-filled auto-height multicol containers, measure block
+    // children once before placing them. This gives the simple balancing pass
+    // a target height; measuring against the current column would otherwise
+    // keep every child in the first column and leave the container taller
+    // than necessary.
+    let auto_measurements = if context.column_fill != ColumnFillValue::Auto
+        && tree.fragmentation_stack.len() == 1
         && fragment_height.is_none()
         && !multicol_has_nested_descendant(tree, index)
     {
@@ -511,7 +518,12 @@ fn relayout_nested_multicol_children(
         };
     let used = maximum.max(cursor).max(minimum_height);
     if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
-        fragment.rect.height = used;
+        if has_fragmentainer_height_constraint {
+            // Overflowing descendants do not expand a height-constrained border box.
+            fragment.rect.height = used.min(fallback_height);
+        } else {
+            fragment.rect.height = used;
+        }
     }
     used
 }
@@ -1563,7 +1575,9 @@ pub(crate) fn line_height_px(cv: &ComputedValues) -> f32 {
 /// and the height the lines need: the tallest column. The lines fill the
 /// columns of `context` by its column height when it is definite, else they
 /// are balanced over them, with `widows` and `orphans` applied at each break
-/// (CSS Multi-column 1, 7; CSS Fragmentation 3, 3.3).
+/// (CSS Multi-column 1, 7; CSS Fragmentation 3, 3.3). With `column-fill:auto`
+/// and no definite height, soft breaks are disabled and all lines stay in the
+/// current column.
 pub(crate) fn root_column_fragments(
     lines: &crate::layout::ifc::root::IfcLines,
     context: FragmentationContext,
@@ -1576,15 +1590,26 @@ pub(crate) fn root_column_fragments(
     if extents.is_empty() {
         return (Vec::new(), 0.0);
     }
-    let balanced_context = if context.available_height.is_none() {
-        balanced_column_height(&extents, context).map(|height| FragmentationContext {
-            available_height: Some(height),
-            ..context
-        })
-    } else {
-        None
-    };
-    let ranges = line_ranges_in_columns(&extents, balanced_context.unwrap_or(context), false);
+    let balanced_context =
+        if context.available_height.is_none() && context.column_fill != ColumnFillValue::Auto {
+            balanced_column_height(&extents, context).map(|height| FragmentationContext {
+                available_height: Some(height),
+                ..context
+            })
+        } else {
+            None
+        };
+    let layout_context = balanced_context.unwrap_or_else(|| {
+        if context.available_height.is_none() && context.column_fill == ColumnFillValue::Auto {
+            FragmentationContext {
+                column_count: context.column_index.saturating_add(1),
+                ..context
+            }
+        } else {
+            context
+        }
+    });
+    let ranges = line_ranges_in_columns(&extents, layout_context, false);
     let height = ranges
         .iter()
         .map(|&(start, end, _)| extents[end - 1].1 - extents[start].0)

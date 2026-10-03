@@ -6,6 +6,7 @@ fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
     let context = FragmentationContext {
         available_width: 200.0,
         available_height: None,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
         column_width: 100.0,
         column_count: 2,
         column_gap: 0.0,
@@ -29,6 +30,7 @@ fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
     let context = FragmentationContext {
         available_width: 300.0,
         available_height: Some(100.0),
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
         column_width: 100.0,
         column_count: 3,
         column_gap: 0.0,
@@ -57,6 +59,7 @@ fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_c
     let context = FragmentationContext {
         available_width: 300.0,
         available_height: None,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
         column_width: 100.0,
         column_count: 3,
         column_gap: 0.0,
@@ -1426,4 +1429,22 @@ fn layout_nested_flex_float_fixture(doc: &mut Document) {
     page.width = 800.0;
     page.height = 600.0;
     layout_single_page(doc, &cascade, page).expect("layout Ok");
+}
+
+#[test]
+fn max_height_multicol_fragment_does_not_expand_to_float_overflow() {
+    let (mut doc, multicol, _) = nested_flex_float_fixture("row", "horizontal-tb", 160);
+    layout_nested_flex_float_fixture(&mut doc);
+
+    let fragment = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .find(|fragment| fragment.node_id == multicol)
+        .expect("multicol fragment");
+    assert!(
+        fragment.rect.height <= 166.0,
+        "max-height:160px plus 3px borders must bound the fragment, got {}",
+        fragment.rect.height
+    );
 }

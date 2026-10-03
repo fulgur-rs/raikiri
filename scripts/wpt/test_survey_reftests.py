@@ -166,7 +166,8 @@ class SurveyReftestsTests(unittest.TestCase):
     def test_subset_validation_requires_exact_root_lines(self) -> None:
         subset_file = Path(self.temp.name) / "subset.txt"
         subset_file.write_text(
-            "# stable roots\nacid\ncss\nfonts\nimages\n/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            "# stable roots\nacid\ncss\nfonts\nimages\n/common\n"
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
             encoding="utf-8",
         )
         valid = self.run_shared_sparse(
@@ -175,7 +176,8 @@ class SurveyReftestsTests(unittest.TestCase):
         self.assertEqual(valid.returncode, 0, valid.stderr)
         self.assertEqual(
             valid.stdout,
-            "acid\ncss\nfonts\nimages\n/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            "acid\ncss\nfonts\nimages\n/common\n"
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
         )
 
         subset_file.write_text("css fonts images\n", encoding="utf-8")

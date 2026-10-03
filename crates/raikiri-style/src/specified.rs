@@ -32,9 +32,9 @@ use crate::property::{
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
-    CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
+    ColumnFillValue, ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor,
+    CssPosition, CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
+    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
     FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
     FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
     FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
@@ -668,6 +668,8 @@ pub struct SpecifiedValues {
     pub empty_cells: EmptyCellsValue,
     /// `column-count` specified value; non-inherited.
     pub column_count: ColumnCountValue,
+    /// `column-fill` specified value; non-inherited, initial `balance`.
+    pub column_fill: ColumnFillValue,
     /// `column-width` specified value; non-inherited.
     pub column_width: ColumnWidthValue,
 }
@@ -988,6 +990,7 @@ impl SpecifiedValues {
             // `Self::inherit_from` replaces it with the inherited value.
             empty_cells: EmptyCellsValue::Show,
             column_count: ColumnCountValue::Auto,
+            column_fill: ColumnFillValue::Balance,
             column_width: ColumnWidthValue::Auto,
         }
     }
@@ -1149,8 +1152,9 @@ impl SpecifiedValues {
             // CSS Tables 3 §8: empty-cells is an inherited keyword; copy it directly without a
             // lift, as for visibility.
             empty_cells: parent.empty_cells,
-            // CSS Multi-column Layout 1: both longhands are non-inherited.
+            // CSS Multi-column Layout 1: all three multicol properties are non-inherited.
             column_count: ColumnCountValue::Auto,
+            column_fill: ColumnFillValue::Balance,
             column_width: ColumnWidthValue::Auto,
             // CSS Text 3 §5.3: hyphens is inherited.
             hyphens: parent.hyphens,
@@ -2220,9 +2224,10 @@ impl SpecifiedValues {
             // The computed value is the specified keyword (see EmptyCellsValue docs); likewise,
             // pass through this node's winner or inherited parent value.
             empty_cells: self.empty_cells,
-            // CSS Multi-column Layout 1: non-inherited count passes through;
+            // CSS Multi-column Layout 1: non-inherited count and fill pass through;
             // width is absolutized against the element's own font metrics.
             column_count: self.column_count,
+            column_fill: self.column_fill,
             column_width: resolve_column_width(self.column_width, font_size, own_line_height, ctx),
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),

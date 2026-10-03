@@ -20,6 +20,23 @@ use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
+/// One custom-highlight range over a text node.
+///
+/// Offsets are UTF-8 byte boundaries in the DOM text node. The JS runtime
+/// converts its UTF-16 Range offsets before transferring live selections to
+/// the renderer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextHighlightRange {
+    /// Name used by the matching `::highlight(name)` rule.
+    pub name: String,
+    /// DOM arena index of the selected text node.
+    pub node: usize,
+    /// Inclusive UTF-8 byte offset into the text node.
+    pub start_byte: usize,
+    /// Exclusive UTF-8 byte offset into the text node.
+    pub end_byte: usize,
+}
+
 pub mod border;
 #[allow(
     dead_code,
@@ -157,6 +174,7 @@ pub fn paint_single_page_with_origin_and_page_context(
         None,
         page_box.width,
         None,
+        &[],
     );
 }
 
@@ -192,6 +210,7 @@ pub fn paint_single_page_with_origin_and_page_context_named(
         Some(active_page_name),
         page_box.width,
         None,
+        &[],
     );
 }
 
@@ -228,6 +247,7 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         Some(active_page_name),
         fixed_page_width,
         None,
+        &[],
     );
 }
 
@@ -264,6 +284,74 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         Some(active_page_name),
         fixed_page_width,
         Some(pixel_source),
+        &[],
+    );
+}
+
+/// Named-page paint entry point with custom text-highlight ranges.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+    active_page_name: Option<&str>,
+    fixed_page_width: f32,
+    custom_highlights: &[TextHighlightRange],
+) {
+    paint_single_page_with_origin_and_page_context_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+        Some(active_page_name),
+        fixed_page_width,
+        None,
+        custom_highlights,
+    );
+}
+
+/// Named-page paint entry point with both resolved images and text highlights.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images_and_highlights(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+    active_page_name: Option<&str>,
+    fixed_page_width: f32,
+    pixel_source: &dyn raikiri_traits::ImagePixelSource,
+    custom_highlights: &[TextHighlightRange],
+) {
+    paint_single_page_with_origin_and_page_context_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+        Some(active_page_name),
+        fixed_page_width,
+        Some(pixel_source),
+        custom_highlights,
     );
 }
 
@@ -281,6 +369,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
+    custom_highlights: &[TextHighlightRange],
 ) {
     // The walker (`walk::paint_document` / `ifc_text::draw_ifc_lines`) has several
     // raw-index reads of `cascade.computed[node_id]`. Each assumes the caller
@@ -334,6 +423,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
             fixed_page_width,
             pixel_source,
             &mut warnings,
+            custom_highlights,
         );
     } else {
         walk::paint_document(
@@ -344,6 +434,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
             content_origin_y,
             active_page_name,
             fixed_page_width,
+            custom_highlights,
         );
     }
 }
@@ -425,6 +516,7 @@ pub fn paint_single_page_with_images_and_warnings(
         page_box.width,
         pixel_source,
         &mut warnings,
+        &[],
     );
     warnings
 }

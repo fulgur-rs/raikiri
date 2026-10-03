@@ -1852,6 +1852,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Page(_)
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
+        | PropertyValue::ColumnFill(_)
         | PropertyValue::Columns(_)) => v,
     })
 }
@@ -2268,6 +2269,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::TextAlignAll(_) => {}
         PropertyValue::Page(value) => target.page = value,
         PropertyValue::ColumnCount(value) => target.column_count = value,
+        PropertyValue::ColumnFill(value) => target.column_fill = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
         // cov:ignore: direct unexpanded shorthand callers are defensive-only.
         PropertyValue::Columns(value) => {

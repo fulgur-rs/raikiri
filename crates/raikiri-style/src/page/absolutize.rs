@@ -555,6 +555,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::TextOrientation(_)
         | PropertyValue::UnicodeBidi(_)
         | PropertyValue::Page(_)
+        | PropertyValue::ColumnFill(_)
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(ColumnWidthValue::Auto)
         | PropertyValue::FlexDirection(_)

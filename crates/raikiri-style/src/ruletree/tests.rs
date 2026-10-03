@@ -21,6 +21,35 @@ fn unicode_supports_conditions_preserve_fallback_rules() {
 }
 
 #[test]
+fn custom_highlight_rules_capture_named_background_colors() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "::highlight(open) { background-color: orange; } \
+         ::highlight(close) { background-color: springgreen; }",
+        Origin::Author,
+    );
+    assert!(tree.style_rules().is_empty());
+    assert_eq!(
+        tree.custom_highlight_styles().get("open"),
+        Some(&crate::CssColor {
+            r: 255,
+            g: 165,
+            b: 0,
+            a: 255,
+        })
+    );
+    assert_eq!(
+        tree.custom_highlight_styles().get("close"),
+        Some(&crate::CssColor {
+            r: 0,
+            g: 255,
+            b: 127,
+            a: 255,
+        })
+    );
+}
+
+#[test]
 fn unicode_at_rules_preserve_opaque_content_and_following_style() {
     for name in ["ééé", "日本語", "🦀🦀", "x日本", "é"] {
         for body in [";", "{ p { color: red } }"] {

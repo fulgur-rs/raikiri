@@ -10,10 +10,10 @@ use taffy::{Cache, Layout, Style};
 
 use crate::fragment::MulticolStyle;
 
-use raikiri_style::ComputedBorderSpacing;
 use raikiri_style::property::{
-    BorderCollapseValue, BreakBetween, DisplayValue, TableLayoutValue, WritingMode,
+    BorderCollapseValue, BreakBetween, DisplayValue, Sides, TableLayoutValue, WritingMode,
 };
+use raikiri_style::{ComputedBorder, ComputedBorderSpacing};
 use raikiri_traits::{IntrinsicBox, NodeKind};
 
 bitflags::bitflags! {
@@ -346,6 +346,8 @@ pub struct Node {
     /// is inherited — the value here is already the post-inheritance
     /// computed value, seed handling lives in raikiri-style).
     pub(crate) border_collapse: BorderCollapseValue,
+    /// Computed border sides retained for collapsed-border conflict resolution.
+    pub(crate) computed_border: Option<Sides<ComputedBorder>>,
     /// Computed `border-spacing` used by the separate-border table layout.
     pub(crate) border_spacing: ComputedBorderSpacing,
     /// Computed `break-before` value consumed by column fragmentation.
@@ -449,6 +451,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            computed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -485,6 +488,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            computed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -524,6 +528,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            computed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -559,6 +564,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            computed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -591,6 +597,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            computed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -625,6 +632,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            computed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),

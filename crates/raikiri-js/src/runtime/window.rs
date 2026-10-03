@@ -657,6 +657,7 @@ pub(crate) fn install(
         );
         scroll_op_result?;
     }
+    super::selection::install_window(context)?;
     named::install(context)?;
     Ok(())
 }

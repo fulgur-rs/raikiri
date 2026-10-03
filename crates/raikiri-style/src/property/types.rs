@@ -731,6 +731,29 @@ pub enum ColumnCountValue {
     Count(u32),
 }
 
+/// `column-fill` value from CSS Multi-column Layout Module Level 1 §7.1
+/// (<https://www.w3.org/TR/css-multicol-1/#propdef-column-fill>).
+///
+/// The value is non-inherited and initially `balance`. Layout currently uses
+/// `auto` to suppress balancing when the multicol block-size is indefinite;
+/// the two balance values retain the existing balancing behavior.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnFillValue {
+    /// Fill columns sequentially.
+    Auto,
+    /// Balance content across columns.
+    Balance,
+    /// Balance all columns.
+    BalanceAll,
+}
+
+css_keywords!(ColumnFillValue {
+    Auto => "auto",
+    Balance => "balance",
+    BalanceAll => "balance-all",
+});
+
 /// `column-width` value from CSS Multi-column Layout.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -9643,6 +9666,10 @@ pub enum PropertyValue {
     FontVariantEastAsian(FontVariantEastAsian),
     /// `font-variation-settings` value; data only, with no font-axis application.
     FontVariationSettings(FontVariationSettings),
+    /// `column-fill: auto | balance | balance-all` — non-inherited, initial `balance`.
+    /// CSS Multi-column Layout Module Level 1 §7.1
+    /// (<https://www.w3.org/TR/css-multicol-1/#propdef-column-fill>).
+    ColumnFill(ColumnFillValue),
 }
 
 /// Property key: the discriminant used to select a winner for each property in
@@ -10202,6 +10229,8 @@ pub enum PropertyKey {
     FontVariantEastAsian,
     // CSS Fonts 4 font-variation-settings; appended to preserve existing key slots.
     FontVariationSettings,
+    // CSS Multi-column Layout Module Level 1 column-fill; appended to preserve existing key slots.
+    ColumnFill,
 }
 
 impl PropertyValue {
@@ -10444,6 +10473,7 @@ impl PropertyValue {
             PropertyValue::ColumnCount(_) => PropertyKey::ColumnCount,
             PropertyValue::ColumnWidth(_) => PropertyKey::ColumnWidth,
             PropertyValue::Columns(_) => PropertyKey::Columns,
+            PropertyValue::ColumnFill(_) => PropertyKey::ColumnFill,
             PropertyValue::HyphenateCharacter(_) => PropertyKey::HyphenateCharacter,
             PropertyValue::HyphenateLimitChars(_) => PropertyKey::HyphenateLimitChars,
             PropertyValue::TextSpacingTrim(_) => PropertyKey::TextSpacingTrim,
@@ -11578,6 +11608,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "column-gap" => PropertyKey::ColumnGap,
         "gap" => PropertyKey::Gap,
         "column-count" => PropertyKey::ColumnCount,
+        "column-fill" => PropertyKey::ColumnFill,
         "column-width" => PropertyKey::ColumnWidth,
         "columns" => PropertyKey::Columns,
         "place-content" => PropertyKey::PlaceContent,

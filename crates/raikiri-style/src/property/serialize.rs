@@ -568,6 +568,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::ColumnCount(..)
         | PropertyValue::ColumnWidth(..)
         | PropertyValue::Columns(..)
+        | PropertyValue::ColumnFill(..)
         | PropertyValue::MinBlockSize(..)
         | PropertyValue::HyphenateCharacter(..)
         | PropertyValue::HyphenateLimitChars(..)
