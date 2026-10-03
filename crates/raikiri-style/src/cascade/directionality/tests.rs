@@ -997,3 +997,33 @@ fn dir_auto_scan_continues_after_an_invalid_child_id() {
         Some(Direction::Rtl),
     );
 }
+
+#[test]
+fn dir_auto_scans_nested_text_before_later_direct_text() {
+    let mut doc = TestDoc::new();
+    let auto = doc.push_element(0, "div", None);
+    doc.set_attr(auto, "dir", "auto");
+    let nested = doc.push_element(auto, "span", None);
+    doc.push_text(nested, "\u{05D0}");
+    doc.push_text(auto, "Hello");
+
+    assert_eq!(
+        auto_directionality(&doc, StyleNodeId::new(auto as u64)),
+        Some(Direction::Rtl),
+    );
+}
+
+#[test]
+fn dir_auto_skips_textarea_descendant_text() {
+    let mut doc = TestDoc::new();
+    let auto = doc.push_element(0, "div", None);
+    doc.set_attr(auto, "dir", "auto");
+    let textarea = doc.push_element(auto, "textarea", None);
+    doc.push_text(textarea, "\u{05D0}");
+    doc.push_text(auto, "Hello");
+
+    assert_eq!(
+        auto_directionality(&doc, StyleNodeId::new(auto as u64)),
+        Some(Direction::Ltr),
+    );
+}
