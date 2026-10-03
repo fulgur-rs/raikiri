@@ -662,8 +662,18 @@ pub(crate) fn run_pipeline(
     let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
     let page_control =
         PageLayoutControl::new(config.limits.max_document_pages).with_abort_check(&is_aborted);
+    let discovery_control =
+        PageLayoutControl::for_geometry_discovery(config.limits.max_document_pages)
+            .with_abort_check(&is_aborted);
     if is_aborted() {
         return Ok(PipelineRun::Aborted);
+    }
+    if config.limits.max_document_pages == Some(0) {
+        return Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 0,
+            actual: 1,
+        });
     }
 
     // Resolve the first page context before layout so `:first` and the first
@@ -745,12 +755,13 @@ pub(crate) fn run_pipeline(
         page_box,
         &resolver,
         runtime.effective_base_url,
-        &page_control,
+        &discovery_control,
     ) {
         Ok(slices) => slices,
         Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
         Err(error) => return Err(RenderError::from(error)),
     };
+    let mut pagination_truncated = discovery_control.page_limit_reached();
     if is_aborted() {
         return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
     }
@@ -765,7 +776,7 @@ pub(crate) fn run_pipeline(
         let geometry_varies = page_geometries
             .iter()
             .any(|geometry| geometry_differs(*geometry, first_geometry));
-        if !geometry_varies {
+        if !geometry_varies && !pagination_truncated {
             break;
         }
 
@@ -773,8 +784,14 @@ pub(crate) fn run_pipeline(
         // The first pagination pass establishes page count, names, and source
         // coordinates. If page selectors resolve different used geometry, rerun
         // the existing scheduled paginator with producer-owned page steps/widths.
-        // This remains a bounded batch layout pass; a changed page count or page
-        // name can trigger another schedule pass.
+        // Provisional passes stop at the configured page count and return only
+        // the prefix needed to discover page geometry. Once the schedule is
+        // stable, a strict pass confirms the final count.
+        let scheduled_control = if geometry_varies {
+            &discovery_control
+        } else {
+            &page_control
+        };
         slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
             &mut document,
             &first_cascade,
@@ -783,7 +800,7 @@ pub(crate) fn run_pipeline(
             &schedule.page_widths,
             &resolver,
             runtime.effective_base_url,
-            &page_control,
+            scheduled_control,
         ) {
             Ok(slices) => slices,
             Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
@@ -792,13 +809,46 @@ pub(crate) fn run_pipeline(
         if is_aborted() {
             return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
         }
+        pagination_truncated = geometry_varies && discovery_control.page_limit_reached();
         // A scheduled pass can change both page count and page selectors. Re-
         // resolve before the next iteration so the following schedule is
         // derived from the slices it will actually replace.
         page_geometries =
             resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
-        let refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
-        if refreshed_schedule == schedule {
+        let mut refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+        if refreshed_schedule == schedule && pagination_truncated {
+            // The soft pass confirmed the geometry schedule only for the
+            // configured prefix. Re-run it strictly before treating that
+            // prefix as a complete document.
+            slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+                &mut document,
+                &first_cascade,
+                page_box,
+                &schedule.page_steps,
+                &schedule.page_widths,
+                &resolver,
+                runtime.effective_base_url,
+                &page_control,
+            ) {
+                Ok(slices) => slices,
+                Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+                Err(error) => return Err(RenderError::from(error)),
+            };
+            if is_aborted() {
+                return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
+            }
+            pagination_truncated = false;
+            page_geometries = resolve_page_geometries(
+                doc,
+                &defaults,
+                &slices,
+                consumer_properties,
+                media_context,
+            )
+            .0;
+            refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+        }
+        if refreshed_schedule == schedule && !pagination_truncated {
             break;
         }
         // cov:ignore: no current public fixture can keep a static page-rule schedule
@@ -813,6 +863,19 @@ pub(crate) fn run_pipeline(
     if !geometry_converged {
         return Err(RenderError::PageGeometryDidNotConverge {
             iterations: MAX_PAGE_GEOMETRY_PASSES,
+        });
+    }
+
+    let total_pages = u64::try_from(slices.len()).unwrap_or(u64::MAX);
+    if let Some(limit) = config
+        .limits
+        .max_document_pages
+        .filter(|limit| total_pages > u64::from(*limit))
+    {
+        return Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: u64::from(limit),
+            actual: u64::from(limit) + 1,
         });
     }
 
@@ -841,19 +904,6 @@ pub(crate) fn run_pipeline(
         .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
         .collect();
     document.project_pages(&first_cascade, page_box, &slices, &geometries);
-
-    let total_pages = u32::try_from(slices.len()).unwrap_or(u32::MAX);
-    if config
-        .limits
-        .max_document_pages
-        .is_some_and(|limit| total_pages > limit)
-    {
-        return Err(RenderError::LimitExceeded {
-            kind: raikiri_traits::LimitKind::Pages,
-            limit: config.limits.max_document_pages.unwrap_or(u32::MAX) as u64,
-            actual: total_pages as u64,
-        });
-    }
 
     if let Some(property_observer) = property_observer {
         if is_aborted() {

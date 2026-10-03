@@ -1,4 +1,5 @@
 use super::*;
+use std::cell::Cell;
 
 /// Break the lines of every paragraph again for a page-specific
 /// containing-block width.
@@ -319,6 +320,8 @@ pub struct PageSlice {
 pub struct PageLayoutControl<'a> {
     max_pages: Option<u32>,
     abort_check: Option<&'a dyn Fn() -> bool>,
+    truncate_at_page_limit: bool,
+    page_limit_reached: Cell<bool>,
 }
 
 impl<'a> PageLayoutControl<'a> {
@@ -327,6 +330,23 @@ impl<'a> PageLayoutControl<'a> {
         Self {
             max_pages,
             abort_check: None,
+            truncate_at_page_limit: false,
+            page_limit_reached: Cell::new(false),
+        }
+    }
+
+    /// Create a bounded provisional paginator for page-geometry discovery.
+    ///
+    /// When pagination reaches `max_pages`, layout stops and returns the page
+    /// prefix. Call [`Self::page_limit_reached`] to distinguish that partial
+    /// result from a complete layout. A final scheduled pass should use
+    /// [`Self::new`] so excess pages are rejected.
+    pub fn for_geometry_discovery(max_pages: Option<u32>) -> Self {
+        Self {
+            max_pages,
+            abort_check: None,
+            truncate_at_page_limit: true,
+            page_limit_reached: Cell::new(false),
         }
     }
 
@@ -334,6 +354,12 @@ impl<'a> PageLayoutControl<'a> {
     pub fn with_abort_check(mut self, abort_check: &'a dyn Fn() -> bool) -> Self {
         self.abort_check = Some(abort_check);
         self
+    }
+
+    /// Return whether the most recent paginator call returned a partial page
+    /// prefix because it reached this control's limit.
+    pub fn page_limit_reached(&self) -> bool {
+        self.page_limit_reached.get()
     }
 
     fn check_aborted(&self) -> Result<(), LayoutError> {
@@ -353,6 +379,16 @@ impl<'a> PageLayoutControl<'a> {
             return Err(LayoutError::PageLimitExceeded { limit, actual });
         }
         Ok(())
+    }
+
+    fn check_discovery_page_index(&self, page_index: u32) -> Result<(), LayoutError> {
+        match self.check_page_index(page_index) {
+            Err(LayoutError::PageLimitExceeded { .. }) if self.truncate_at_page_limit => {
+                self.page_limit_reached.set(true);
+                Ok(())
+            }
+            result => result,
+        }
     }
 }
 
@@ -1438,6 +1474,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     page_widths: &[f32],
     control: &PageLayoutControl<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    control.page_limit_reached.set(false);
     control.check_page_index(0)?;
     layout_single_page(document, cascade, page_box)?;
     control.check_page_index(0)?;
@@ -1536,7 +1573,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     // down the first nonblank page.
     let root_flow_offset = if root_margin_top >= fixed_page_step {
         let page_index = page_index_for_y(root_margin_top);
-        control.check_page_index(page_index)?;
+        control.check_discovery_page_index(page_index)?;
         page_origin(page_index)
     } else {
         root_margin_top
@@ -2136,8 +2173,21 @@ pub fn layout_pages_with_page_geometry_and_control(
     // inside them. Only the first candidate of a paragraph may move its root:
     // a later one would move again what the earlier ones placed.
     let mut entered_ifc_roots = HashSet::new();
-    for candidate in candidates {
-        control.check_page_index(current_page)?;
+    macro_rules! check_candidate_page {
+        ($label:lifetime, $page_index:expr) => {
+            match control.check_page_index($page_index) {
+                Ok(()) => {}
+                Err(LayoutError::PageLimitExceeded { .. }) if control.truncate_at_page_limit => {
+                    control.page_limit_reached.set(true);
+                    break $label;
+                }
+                Err(error) => return Err(error),
+            }
+        };
+    }
+
+    'candidate_loop: for candidate in candidates {
+        check_candidate_page!('candidate_loop, current_page);
         let node_id = candidate.node_id;
         let moves_ifc_root = {
             let mut first = true;
@@ -2222,7 +2272,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 if first_line_overflows {
                     let natural_page = page_index_for_y(effective_y + height);
                     let target_page = current_page.saturating_add(1).max(natural_page);
-                    control.check_page_index(target_page)?;
+                    check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
                     let delta = target_y - block_effective_y;
                     if delta.is_finite() && delta > 0.0 {
@@ -2268,7 +2318,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         + current_abs_y(document, block_id, &parent_of)
                         - flow_shift;
                     let target_page = current_page.saturating_add(1);
-                    control.check_page_index(target_page)?;
+                    check_candidate_page!('candidate_loop, target_page);
                     let delta = page_origin(target_page) - block_raw_y;
                     if delta.is_finite() && delta > 0.0 {
                         materialize_y(document, block_id, block_raw_y + delta, &parent_of);
@@ -2314,7 +2364,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         current_page
                     };
                     let target_page = current_page.saturating_add(1).max(natural_page);
-                    control.check_page_index(target_page)?;
+                    check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
                     // The candidate was materialized to `effective_y` above,
                     // so this is the additional movement for this boundary.
@@ -2341,7 +2391,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     current_page_name = candidate_page_name.clone();
                 } else if effective_y.is_finite() && effective_y >= 0.0 {
                     let natural_page = page_index_for_y(effective_y);
-                    control.check_page_index(natural_page)?;
+                    check_candidate_page!('candidate_loop, natural_page);
                     current_page = current_page.max(natural_page);
                 }
             } else {
@@ -2358,7 +2408,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             {
                 current_page_name = candidate_page_name;
             }
-            control.check_page_index(current_page)?;
+            check_candidate_page!('candidate_loop, current_page);
             if page_names.len() <= current_page as usize {
                 page_names.resize(current_page as usize + 1, None);
             }
@@ -2368,7 +2418,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 let end = (effective_y + height).max(effective_y);
                 if end.is_finite() && end > 0.0 {
                     let end_page = page_index_for_end(end);
-                    control.check_page_index(end_page)?;
+                    check_candidate_page!('candidate_loop, end_page);
                     max_page = max_page.max(end_page);
                 }
             }
@@ -2400,7 +2450,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 current_page
             };
             let note_page = current_page.max(anchor_page);
-            control.check_page_index(note_page)?;
+            check_candidate_page!('candidate_loop, note_page);
             let used = footnote_heights.entry(note_page).or_insert(0.0);
             let target_y = (page_origin(note_page) + page_step_at(note_page) - *used - height)
                 .max(page_origin(note_page));
@@ -2544,7 +2594,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     current_page
                 };
                 let target_page = current_page.saturating_add(1).max(natural_page);
-                control.check_page_index(target_page)?;
+                check_candidate_page!('candidate_loop, target_page);
                 let target_y = page_origin(target_page);
                 // A negative block-start margin can pull a forced-break box
                 // back into the preceding page.  Keep the break boundary for
@@ -2612,7 +2662,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 }
             } else if effective_y.is_finite() && effective_y >= 0.0 {
                 let natural_page = page_index_for_y(effective_y);
-                control.check_page_index(natural_page)?;
+                check_candidate_page!('candidate_loop, natural_page);
                 current_page = current_page.max(natural_page);
             }
             if page_transition && margin_top > 0.0 {
@@ -2644,7 +2694,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     candidate.is_named && has_display_none_descendant(document, node_id);
             }
         }
-        control.check_page_index(current_page)?;
+        check_candidate_page!('candidate_loop, current_page);
         if page_names.len() <= current_page as usize {
             page_names.resize(current_page as usize + 1, None);
         }
@@ -2675,7 +2725,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         .is_some_and(|value| value >= 0.0);
                 if !monolithic_paper_fit {
                     let end_page = page_index_for_end(end);
-                    control.check_page_index(end_page)?;
+                    check_candidate_page!('candidate_loop, end_page);
                     max_page = max_page.max(end_page);
                 }
             }
@@ -2706,7 +2756,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                     continue;
                 }
                 let page_index = page_index_for_y(current_abs_y(document, node_id, &parent_of));
-                control.check_page_index(page_index)?;
                 let Some(target_width) = page_widths
                     .get(page_index as usize)
                     .copied()
@@ -2722,8 +2771,13 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
     }
 
-    control.check_page_index(max_page)?;
-    Ok((0..=max_page)
+    control.check_discovery_page_index(max_page)?;
+    let last_page = if control.page_limit_reached.get() {
+        control.max_pages.unwrap_or(0).saturating_sub(1)
+    } else {
+        max_page
+    };
+    Ok((0..=last_page)
         .map(|page_index| PageSlice {
             page_index,
             content_origin_y: page_origin(page_index),

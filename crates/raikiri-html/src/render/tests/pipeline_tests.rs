@@ -330,6 +330,73 @@ fn pipeline_rejects_page_limit_during_scheduled_pagination() {
 }
 
 #[test]
+fn pipeline_applies_page_limit_after_geometry_stabilizes() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 200px;margin:0}</style>\
+         <div style='height:90px'></div><div style='height:90px'></div><div style='height:70px'></div>",
+    );
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(2))
+                .build(),
+        )
+        .build();
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    match result {
+        Ok(PipelineRun::Completed(output)) => assert_eq!(output.slices.len(), 2),
+        Err(error) => panic!("expected the stabilized two-page layout, got {error}"),
+        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+    }
+}
+
+#[test]
+fn pipeline_does_not_count_distant_absolute_percentage_boxes_as_pages() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 200px;margin:0}</style>\
+         <div style='height:90px'></div><div style='height:90px'></div><div style='height:70px'></div>\
+         <div style='position:absolute;top:10000px;width:50%;height:10px'></div>",
+    );
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(2))
+                .build(),
+        )
+        .build();
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    match result {
+        Ok(PipelineRun::Completed(output)) => assert_eq!(output.slices.len(), 2),
+        Err(error) => panic!("an out-of-flow box must not increase the page count: {error}"),
+        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+    }
+}
+
+#[test]
 fn converged_schedule_keeps_page_content_origins() {
     let doc = parse(
         "<style>@page{size:100px 100px;margin:0} @page :left{size:100px 240px;margin:0} @page wide{size:100px 180px;margin:0}</style><div style='height:200px'>first</div><div style='page:wide;break-before:page;height:10px'>wide</div><div style='height:300px'>tail</div>",

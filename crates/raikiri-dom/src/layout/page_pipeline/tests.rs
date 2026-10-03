@@ -45,6 +45,40 @@ fn page_layout_control_allows_an_explicit_unbounded_page_count() {
 }
 
 #[test]
+fn page_layout_discovery_returns_a_bounded_prefix() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    for _ in 0..5 {
+        document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;break-before:page"),
+        );
+    }
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let control = PageLayoutControl::for_geometry_discovery(Some(2));
+
+    let pages = layout_pages_with_page_geometry_and_control(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        &[],
+        &[],
+        &control,
+    )
+    .expect("bounded page discovery");
+
+    assert_eq!(pages.len(), 2);
+    assert!(control.page_limit_reached());
+}
+
+#[test]
 fn page_layout_control_checks_percent_width_nodes() {
     use raikiri_style::{build_rule_tree, cascade};
 
