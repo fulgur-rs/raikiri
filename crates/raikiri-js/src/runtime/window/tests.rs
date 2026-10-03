@@ -1,5 +1,7 @@
 use std::any::Any;
 
+use boa_engine::property::Attribute;
+use boa_engine::{JsString, JsValue};
 use raikiri_dom::Document;
 
 use crate::runtime::DomRuntime;
@@ -119,6 +121,87 @@ fn location_reports_a_bare_delimiter_query_or_fragment_as_empty() {
     ok(&mut rt, "location.search === '' && location.hash === ''");
     let mut rt = rt_with_url("https://example.test/a#");
     ok(&mut rt, "location.search === '' && location.hash === ''");
+}
+
+#[test]
+fn url_search_params_returns_first_and_all_duplicate_values_in_order() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "const params = new URLSearchParams('?class=halt,htb&class=chws'); \
+         const classes = params.getAll('class'); \
+         params.has('class') \
+         && params.get('class') === 'halt,htb' \
+         && classes.join('|') === 'halt,htb|chws' \
+         && classes.flatMap(value => value.split(',')).join('|') === 'halt|htb|chws'",
+    );
+}
+
+#[test]
+fn url_search_params_decodes_form_encoded_values() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "const params = new URLSearchParams('?value=space+with%20plus&city=%E6%9D%B1%E4%BA%AC'); \
+         params.get('value') === 'space with plus' \
+         && params.get('city') === '東京'",
+    );
+}
+
+#[test]
+fn url_search_params_empty_query_and_missing_names_have_empty_results() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "const params = new URLSearchParams(''); \
+         !params.has('missing') \
+         && params.get('missing') === null \
+         && params.getAll('missing').length === 0",
+    );
+}
+
+#[test]
+fn url_search_params_rejects_calls_with_invalid_brand_or_missing_name() {
+    let mut rt = rt();
+    let error = rt
+        .evaluate("URLSearchParams.prototype.get.call({}, 'missing')")
+        .unwrap_err();
+    assert!(error.to_string().contains("not a URLSearchParams"));
+
+    let error = rt.evaluate("new URLSearchParams().get()").unwrap_err();
+    assert!(error.to_string().contains("name is required"));
+}
+
+#[test]
+fn url_search_params_constructor_requires_new_and_an_object_prototype() {
+    let mut rt = rt();
+    let error = rt.evaluate("URLSearchParams('?x=1')").unwrap_err();
+    assert!(error.to_string().contains("requires 'new'"));
+
+    let error = rt
+        .evaluate(
+            "function InvalidPrototype() {} \
+             InvalidPrototype.prototype = null; \
+             Reflect.construct(URLSearchParams, [], InvalidPrototype)",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("prototype is not an object"));
+}
+
+#[test]
+fn url_search_params_install_propagates_global_registration_errors() {
+    let mut rt = rt();
+    rt.context_mut()
+        .register_global_property(
+            JsString::from("URLSearchParams"),
+            JsValue::null(),
+            Attribute::empty(),
+        )
+        .unwrap();
+
+    let result = super::super::url_search_params::install(rt.context_mut());
+
+    assert!(result.is_err());
 }
 
 #[test]
