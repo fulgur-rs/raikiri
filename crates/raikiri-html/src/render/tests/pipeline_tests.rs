@@ -403,6 +403,73 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_strict_page_confirmatio
 }
 
 #[test]
+fn pipeline_rechecks_the_page_limit_when_strict_confirmation_changes_page_names() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct ChangingResolver {
+        calls: AtomicUsize,
+    }
+
+    impl raikiri_traits::ReplacedResolver for ChangingResolver {
+        fn resolve(
+            &self,
+            _request: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let height = if call < 2 { 350.0 } else { 10.0 };
+            Ok(raikiri_traits::ResolvedIntrinsic {
+                intrinsic: raikiri_traits::IntrinsicBox::new(10.0, height),
+                disposition: raikiri_traits::ResolveDisposition::Ok,
+            })
+        }
+    }
+
+    let resolver = ChangingResolver {
+        calls: AtomicUsize::new(0),
+    };
+    let resources = RenderResources::new().replaced_resolver(&resolver);
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 200px;margin:0} @page narrow{size:200px 50px;margin:0}</style>\
+         <div style='height:40px'></div><img src='https://example.invalid/image.png' style='display:block'>\
+         <div style='page:narrow;height:100px'></div>",
+    );
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(2))
+                .build(),
+        )
+        .build();
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    match result {
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            actual: 3,
+        }) => {}
+        Err(error) => panic!("expected the recomputed page limit, got {error}"),
+        Ok(PipelineRun::Completed(output)) => panic!(
+            "expected the recomputed narrow-page schedule to exceed the limit, got {} pages; resolver calls: {}",
+            output.slices.len(),
+            resolver.calls.load(Ordering::SeqCst)
+        ),
+        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+    }
+}
+
+#[test]
 fn pipeline_rejects_page_limit_during_scheduled_pagination() {
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 50px;margin:0}</style>\

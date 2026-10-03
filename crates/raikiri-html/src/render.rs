@@ -769,6 +769,7 @@ pub(crate) fn run_pipeline(
     let mut page_geometries =
         resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
     let mut geometry_converged = true;
+    let mut schedule_changed = false;
     for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
         let Some(first_geometry) = page_geometries.first().copied() else {
             break; // cov:ignore: a successful document with a body always emits a page slice.
@@ -776,7 +777,8 @@ pub(crate) fn run_pipeline(
         let geometry_varies = page_geometries
             .iter()
             .any(|geometry| geometry_differs(*geometry, first_geometry));
-        if !geometry_varies && !pagination_truncated {
+        let schedule_must_be_applied = std::mem::take(&mut schedule_changed);
+        if !geometry_varies && !pagination_truncated && !schedule_must_be_applied {
             break;
         }
 
@@ -815,7 +817,7 @@ pub(crate) fn run_pipeline(
         // derived from the slices it will actually replace.
         page_geometries =
             resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
-        let refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+        let mut refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         if refreshed_schedule == schedule && pagination_truncated {
             // The soft pass confirmed the geometry schedule only for the
             // configured prefix. Re-run it strictly before treating that
@@ -830,19 +832,32 @@ pub(crate) fn run_pipeline(
                 runtime.effective_base_url,
                 &page_control,
             ) {
-                Ok(slices) => slices, // cov:ignore: replaying an identical schedule must reproduce the soft pass's page-limit overflow.
+                Ok(slices) => slices,
                 Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
                 Err(error) => return Err(RenderError::from(error)),
             };
-            // cov:ignore: strict replay cannot succeed after the identical soft schedule reported excess pages.
+            // A cancellation arriving after the paginator's final poll is a race-only case.
+            // cov:ignore: closes the cancellation race after strict confirmation completes.
             if is_aborted() {
                 return Ok(PipelineRun::Aborted);
             }
-            break; // cov:ignore: only an impossible successful strict replay reaches this line.
+            pagination_truncated = false;
+            page_geometries = resolve_page_geometries(
+                doc,
+                &defaults,
+                &slices,
+                consumer_properties,
+                media_context,
+            )
+            .0;
+            refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         }
         if refreshed_schedule == schedule && !pagination_truncated {
             break;
         }
+        // A refreshed schedule may differ due to page names or page count even
+        // when every page currently has the same geometry. Apply it before converging.
+        schedule_changed = refreshed_schedule != schedule;
         // cov:ignore: no current public fixture can keep a static page-rule schedule
         // changing through all three bounded passes; the terminal status has a
         // direct contract test in raikiri-traits.
@@ -859,11 +874,11 @@ pub(crate) fn run_pipeline(
     }
 
     let total_pages = u64::try_from(slices.len()).unwrap_or(u64::MAX);
-    // cov:ignore: the strict paginator rejects excess pages before returning its slice vector.
     if let Some(limit) = config
         .limits
         .max_document_pages
         .filter(|limit| total_pages > u64::from(*limit))
+    // cov:ignore: the strict paginator rejects excess pages before returning its slice vector.
     {
         return Err(RenderError::LimitExceeded {
             kind: raikiri_traits::LimitKind::Pages,
