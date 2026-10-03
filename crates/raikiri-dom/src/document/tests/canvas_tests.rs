@@ -300,6 +300,126 @@ fn canvas_bitmap_storage_validates_size_and_rgba_length() {
 }
 
 #[test]
+fn canvas_bitmap_storage_counts_reserved_rgba_capacity() {
+    let (mut doc, canvas) = canvas_in_body();
+    let body = doc.parent_of(canvas).unwrap();
+    let second = doc.create_detached_element("canvas").unwrap();
+    doc.append_child(body, second).unwrap();
+    doc.set_element_attribute(canvas, "width", "2").unwrap();
+    doc.set_element_attribute(canvas, "height", "2").unwrap();
+    doc.set_element_attribute(second, "width", "2").unwrap();
+    doc.set_element_attribute(second, "height", "2").unwrap();
+
+    let over_half_budget = super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES / 2 + 1;
+    let mut first_rgba = Vec::with_capacity(over_half_budget);
+    first_rgba.resize(16, 0);
+    let first_bitmap = crate::CanvasBitmap {
+        width: 2,
+        height: 2,
+        rgba: first_rgba,
+    };
+    assert!(first_bitmap.rgba.capacity() <= super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES);
+    doc.try_set_canvas_bitmap(canvas, first_bitmap).unwrap();
+
+    let mut second_rgba = Vec::with_capacity(over_half_budget);
+    second_rgba.resize(16, 0);
+    let second_bitmap = crate::CanvasBitmap {
+        width: 2,
+        height: 2,
+        rgba: second_rgba,
+    };
+    let second_before = doc.canvas_bitmap(second).unwrap();
+    assert_eq!(
+        doc.try_set_canvas_bitmap(second, second_bitmap),
+        Err(crate::CanvasBitmapError::DocumentLimitExceeded)
+    );
+    assert_eq!(doc.canvas_bitmap(second), Some(second_before));
+
+    doc.try_set_canvas_bitmap(canvas, crate::CanvasBitmap::cleared(2, 2))
+        .unwrap();
+    let mut second_rgba = Vec::with_capacity(over_half_budget);
+    second_rgba.resize(16, 0);
+    doc.try_set_canvas_bitmap(
+        second,
+        crate::CanvasBitmap {
+            width: 2,
+            height: 2,
+            rgba: second_rgba,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn cloned_document_rebuilds_canvas_capacity_accounting() {
+    let (mut source, first) = canvas_in_body();
+    let body = source.parent_of(first).unwrap();
+    let second = source.create_detached_element("canvas").unwrap();
+    source.append_child(body, second).unwrap();
+    for canvas in [first, second] {
+        source.set_element_attribute(canvas, "width", "2").unwrap();
+        source.set_element_attribute(canvas, "height", "2").unwrap();
+    }
+
+    let over_half_budget = super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES / 2 + 1;
+    let mut first_rgba = Vec::with_capacity(over_half_budget);
+    first_rgba.resize(16, 0);
+    source
+        .try_set_canvas_bitmap(
+            first,
+            crate::CanvasBitmap {
+                width: 2,
+                height: 2,
+                rgba: first_rgba,
+            },
+        )
+        .unwrap();
+
+    let mut cloned = source.clone();
+    cloned
+        .try_set_canvas_bitmap(first, crate::CanvasBitmap::cleared(2, 2))
+        .unwrap();
+
+    let mut second_rgba = Vec::with_capacity(over_half_budget);
+    second_rgba.resize(16, 0);
+    assert_eq!(
+        cloned.try_set_canvas_bitmap(
+            second,
+            crate::CanvasBitmap {
+                width: 2,
+                height: 2,
+                rgba: second_rgba,
+            },
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn canvas_bitmap_storage_counts_capacity_for_empty_rgba() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "2").unwrap();
+    doc.set_element_attribute(canvas, "height", "2").unwrap();
+
+    let rgba = Vec::with_capacity(super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES + 1);
+    assert!(rgba.is_empty());
+    assert!(rgba.capacity() > super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES);
+    let before = doc.canvas_bitmap(canvas).unwrap();
+    assert_eq!(
+        doc.try_set_canvas_bitmap(
+            canvas,
+            crate::CanvasBitmap {
+                width: 2,
+                height: 2,
+                rgba,
+            },
+        ),
+        Err(crate::CanvasBitmapError::DocumentLimitExceeded)
+    );
+    assert_eq!(doc.canvas_bitmap(canvas), Some(before));
+}
+
+#[test]
 fn canvas_bitmap_compatibility_ensure_returns_current_size() {
     let (mut doc, canvas) = canvas_in_body();
     doc.set_element_attribute(canvas, "width", "2").unwrap();

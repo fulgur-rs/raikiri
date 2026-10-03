@@ -269,6 +269,16 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
         )
 }
 
+// Cloning invalidates this cache because cloned Vec capacities can change.
+#[derive(Debug)]
+struct CanvasBitmapByteCount(Option<usize>);
+
+impl Clone for CanvasBitmapByteCount {
+    fn clone(&self) -> Self {
+        Self(None)
+    }
+}
+
 /// DOM Document (root plus a Vec-backed node arena).
 ///
 /// `nodes` is flat storage keyed by arena indices. Index 0 is the virtual
@@ -278,7 +288,7 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
 pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
-    canvas_bitmap_bytes: usize,
+    canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -454,7 +464,7 @@ impl Document {
         Self {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes,
-            canvas_bitmap_bytes: 0,
+            canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             root: 0,
             layout_dirty: false,
             ifc: None,
@@ -1901,19 +1911,38 @@ impl Document {
     }
 
     fn canvas_bytes_after_replacement(
-        &self,
+        &mut self,
         id: usize,
-        replacement_bytes: usize,
+        replacement_capacity: usize,
     ) -> Result<usize, CanvasBitmapError> {
-        let old_bytes = self
+        let document_capacity = if let Some(bytes) = self.canvas_bitmap_bytes.0 {
+            bytes
+        } else {
+            let bytes = self
+                .nodes
+                .iter()
+                .try_fold(0usize, |total, node| {
+                    let capacity = match &node.data {
+                        NodeData::Element(element) => element
+                            .canvas_bitmap
+                            .as_ref()
+                            .map_or(0, |bitmap| bitmap.rgba.capacity()),
+                        _ => 0,
+                    };
+                    total.checked_add(capacity)
+                })
+                .ok_or(CanvasBitmapError::DocumentLimitExceeded)?;
+            self.canvas_bitmap_bytes.0 = Some(bytes);
+            bytes
+        };
+        let old_capacity = self
             .canvas_bitmap_ref(id)
-            .map_or(0, |bitmap| bitmap.rgba.len());
-        let retained_bytes = self
-            .canvas_bitmap_bytes
-            .checked_sub(old_bytes)
+            .map_or(0, |bitmap| bitmap.rgba.capacity());
+        let retained_bytes = document_capacity
+            .checked_sub(old_capacity)
             .ok_or(CanvasBitmapError::InvalidRgbaLength)?;
         let total_bytes = retained_bytes
-            .checked_add(replacement_bytes)
+            .checked_add(replacement_capacity)
             .ok_or(CanvasBitmapError::DocumentLimitExceeded)?;
         if total_bytes > MAX_DOCUMENT_CANVAS_BITMAP_BYTES {
             return Err(CanvasBitmapError::DocumentLimitExceeded);
@@ -1944,16 +1973,13 @@ impl Document {
         if size != (bitmap.width, bitmap.height) {
             return Err(CanvasBitmapError::SizeMismatch);
         }
-        let replacement_bytes = if bitmap.rgba.is_empty() {
-            0
-        } else {
+        if !bitmap.rgba.is_empty() {
             let expected = CanvasBitmap::checked_rgba_len(bitmap.width, bitmap.height)?;
             if bitmap.rgba.len() != expected {
                 return Err(CanvasBitmapError::InvalidRgbaLength);
             }
-            expected
-        };
-        let total_bytes = self.canvas_bytes_after_replacement(id, replacement_bytes)?;
+        }
+        let total_bytes = self.canvas_bytes_after_replacement(id, bitmap.rgba.capacity())?;
         // cov:ignore: canvas_size above validated this live canvas slot, and no arena mutation occurs before this borrow.
         let Some(node) = self.nodes.get_mut(id) else {
             return Err(CanvasBitmapError::NotCanvas);
@@ -1963,7 +1989,7 @@ impl Document {
             return Err(CanvasBitmapError::NotCanvas);
         };
         element.canvas_bitmap = Some(bitmap);
-        self.canvas_bitmap_bytes = total_bytes;
+        self.canvas_bitmap_bytes.0 = Some(total_bytes);
         Ok(())
     }
 
@@ -1978,8 +2004,11 @@ impl Document {
             };
             element.canvas_bitmap.take()
         });
-        if let Some(bitmap) = &bitmap {
-            self.canvas_bitmap_bytes = self.canvas_bitmap_bytes.saturating_sub(bitmap.rgba.len());
+        if let Some(bitmap) = &bitmap
+            && let Some(document_capacity) = self.canvas_bitmap_bytes.0
+        {
+            self.canvas_bitmap_bytes.0 =
+                Some(document_capacity.saturating_sub(bitmap.rgba.capacity()));
         }
         bitmap
     }
