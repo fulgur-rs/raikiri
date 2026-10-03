@@ -25,6 +25,7 @@ pub(crate) mod interfaces;
 pub(crate) mod node;
 pub(crate) mod query;
 pub(crate) mod scripts;
+pub(crate) mod selection;
 pub(crate) mod style;
 pub(crate) mod token_list;
 pub(crate) mod tree;
@@ -69,6 +70,10 @@ pub(crate) struct State {
     pub child_node_lists: HashMap<usize, JsObject>,
     /// Per-node `children` collections so `n.children === n.children`.
     pub children_collections: HashMap<usize, JsObject>,
+    /// The Window's live Selection object, created on first access.
+    pub selection_object: Option<JsObject>,
+    /// Ranges currently held by the singleton Selection object.
+    pub selection_ranges: Vec<JsObject>,
     /// Registered `EventTarget` listeners, keyed by node arena index; `None`
     /// is the window/global object, which has no arena index of its own.
     /// [`dispatch`] both adds and removes entries here (`addEventListener`/
@@ -308,6 +313,8 @@ impl DomRuntime {
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),
             children_collections: HashMap::new(),
+            selection_object: None,
+            selection_ranges: Vec::new(),
             listeners: HashMap::new(),
             event_loop: event_loop::EventLoop::new(limits.clone()),
             reporting_exception: false,
