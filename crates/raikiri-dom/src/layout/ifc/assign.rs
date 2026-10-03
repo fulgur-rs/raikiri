@@ -11,7 +11,7 @@ use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{DisplayValue, PositionValue};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
@@ -351,6 +351,7 @@ fn collect_candidates(
         if node.kind() != NodeKind::Element
             || !node.is_in_document()
             || taken[idx]
+            || is_ruby_multicol_flex_projection(doc, cascade, idx)
             || !can_be_ifc_root(doc, cascade, idx)
             || !has_inline_content(doc, cascade, idx, &state.fonts)
         {
@@ -382,6 +383,68 @@ fn collect_candidates(
         candidates.push(Candidate { idx, projected });
     }
     Ok(candidates)
+}
+
+/// Keep empty ruby items in multicol containers on the legacy projection
+/// path, which lays each ruby item out as a flex item. The IFC path currently
+/// treats the base and annotation as unrelated atomic inlines.
+fn is_ruby_multicol_flex_projection(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let ColumnCountValue::Count(count) = cascade.computed[idx].column_count else {
+        return false;
+    };
+    let has_multiple_columns = count > 1;
+
+    let mut has_ruby = false;
+    let mut has_break = false;
+    for &child in &doc.nodes[idx].children {
+        let node = &doc.nodes[child];
+        if !node.is_in_document() {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => {
+                if node
+                    .text_content()
+                    .is_some_and(|text| text.chars().any(|c| !is_css_whitespace(c)))
+                {
+                    return false;
+                }
+            }
+            NodeKind::Element => match node.tag_name() {
+                Some("ruby") => has_ruby = true,
+                Some("br") => has_break = true,
+                _ if cascade.computed[child].display == DisplayValue::None => {}
+                _ => return false,
+            },
+            _ => {} // cov:ignore: comments and processing instructions carry no inline content.
+        }
+    }
+
+    if !has_ruby || (has_multiple_columns && !has_break) {
+        return false;
+    }
+
+    let mut stack = doc.nodes[idx].children.clone();
+    while let Some(id) = stack.pop() {
+        let node = &doc.nodes[id];
+        if !node.is_in_document() || cascade.computed[id].display == DisplayValue::None {
+            continue;
+        }
+        if node.kind() == NodeKind::Text
+            && node
+                .text_content()
+                .is_some_and(|text| text.chars().any(|c| !is_css_whitespace(c)))
+        {
+            return false;
+        }
+        stack.extend(node.children.iter().copied());
+    }
+
+    true
+}
+
+fn is_css_whitespace(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
 }
 
 /// Whether `text` is laid out by a flex or grid container as an anonymous
