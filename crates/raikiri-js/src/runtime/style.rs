@@ -1042,6 +1042,11 @@ fn style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
     Ok(object.into())
 }
 
+fn style_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let declaration = style(this, &[], context)?;
+    style_css_text_set(&declaration, args, context)
+}
+
 fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = arg_node(args, 0, context)?;
     let is_element = with_state(context, |s| {
@@ -1082,8 +1087,8 @@ fn css_supports(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 }
 
 pub(crate) const HTML_ELEMENT_MEMBERS: Members = Members {
-    getters: &[("style", style)],
-    accessors: &[],
+    getters: &[],
+    accessors: &[("style", style, style_set)],
     methods: &[],
 };
 
