@@ -111,6 +111,28 @@ fn selector_freezing_budget_survives_opacity_normalization() {
 }
 
 #[test]
+fn selector_freezing_budget_covers_xml_escape_and_opacity_stylesheet_copy() {
+    let payload = "<>&".repeat(400_000);
+    let css = format!("<![CDATA[rect {{ fill:'{payload}'; opacity:0.5 }}]]>");
+    let source = selector_freezing_svg(&css, 1);
+    let svg = SvgDocument::parse(source.as_bytes()).expect("supported large SVG stylesheet");
+    let result = svg.rasterize(
+        SvgViewport {
+            width: 1.0,
+            height: 1.0,
+        },
+        SvgRootStyle {
+            neutralize_root_opacity: true,
+            ..SvgRootStyle::default()
+        },
+        Some(4),
+    );
+
+    assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
+        if message.contains("selector freezing resource limit")));
+}
+
+#[test]
 fn selector_freezing_accepts_the_match_limit_and_preserves_skip_paths() {
     let source = selector_freezing_svg(&"rect { fill:red }".repeat(256), 256);
     let svg = SvgDocument::parse(source.as_bytes()).expect("exact-limit SVG");
