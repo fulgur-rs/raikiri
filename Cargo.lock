@@ -2610,6 +2610,7 @@ dependencies = [
  "raikiri-dom",
  "raikiri-style",
  "raikiri-traits",
+ "url",
 ]
 
 [[package]]

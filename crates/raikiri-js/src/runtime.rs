@@ -30,6 +30,7 @@ pub(crate) mod style;
 pub(crate) mod stylesheet;
 pub(crate) mod token_list;
 pub(crate) mod tree;
+pub(crate) mod url_search_params;
 pub(crate) mod webidl;
 pub(crate) mod window;
 

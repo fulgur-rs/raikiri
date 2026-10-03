@@ -562,6 +562,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     style::install_property_accessors(context, &css_style_declaration.prototype)?;
     indexed::install(context)?;
     super::event_loop::install(context)?;
+    super::url_search_params::install(context)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
         node: node_i.prototype,

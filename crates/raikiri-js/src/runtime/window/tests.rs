@@ -122,6 +122,43 @@ fn location_reports_a_bare_delimiter_query_or_fragment_as_empty() {
 }
 
 #[test]
+fn url_search_params_returns_first_and_all_duplicate_values_in_order() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "const params = new URLSearchParams('?class=halt,htb&class=chws'); \
+         const classes = params.getAll('class'); \
+         params.has('class') \
+         && params.get('class') === 'halt,htb' \
+         && classes.join('|') === 'halt,htb|chws' \
+         && classes.flatMap(value => value.split(',')).join('|') === 'halt|htb|chws'",
+    );
+}
+
+#[test]
+fn url_search_params_decodes_form_encoded_values() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "const params = new URLSearchParams('?value=space+with%20plus&city=%E6%9D%B1%E4%BA%AC'); \
+         params.get('value') === 'space with plus' \
+         && params.get('city') === '東京'",
+    );
+}
+
+#[test]
+fn url_search_params_empty_query_and_missing_names_have_empty_results() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "const params = new URLSearchParams(''); \
+         !params.has('missing') \
+         && params.get('missing') === null \
+         && params.getAll('missing').length === 0",
+    );
+}
+
+#[test]
 fn location_defaults_to_about_blank_without_a_document_url() {
     let mut rt = rt();
     ok(
