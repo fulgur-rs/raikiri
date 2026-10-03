@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use raikiri_wpt::reftest::{
     ReftestConfig, ReftestKind, discover_pairs_for_file_with_wpt_root, run_pair,
-    run_pair_with_images,
+    run_pair_with_images, run_pair_with_variant,
 };
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
@@ -124,7 +124,7 @@ fn text_spacing_trim_fallback_helper_highlights_exact_pass() {
 
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn text_spacing_trim_unpinned_exact_passes() {
+fn text_spacing_trim_declared_variants_unpinned_exact_passes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let candidates = [
         "css/css-text/text-spacing-trim/text-spacing-trim-001.html",
@@ -140,7 +140,102 @@ fn text_spacing_trim_unpinned_exact_passes() {
         "css/css-text/text-spacing-trim/text-spacing-trim-subset-001.html",
         "css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html",
     ];
-    assert_exact_passes(&root, &candidates);
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    let mut declared_variant_count = 0;
+    let mut comparison_count = 0;
+    let mut failures = Vec::new();
+    for relative in candidates {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
+
+        let html = std::fs::read_to_string(&test)
+            .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+        let variants = declared_variant_queries(&html);
+        declared_variant_count += variants.len();
+        let queries = if variants.is_empty() {
+            vec![String::new()]
+        } else {
+            variants
+        };
+
+        for query in queries {
+            comparison_count += 1;
+            let label = if query.is_empty() {
+                "<no variant>"
+            } else {
+                query.as_str()
+            };
+            match run_pair_with_variant(&pairs[0], config, &query) {
+                Ok(result) if matches!(&result.outcome, TestOutcome::Pass) => {
+                    println!("PASS {relative} {label}");
+                }
+                Ok(result) => {
+                    println!(
+                        "FAIL {relative} {label}: outcome={:?}, mismatches={}",
+                        result.outcome, result.mismatched_pixels
+                    );
+                    failures.push(format!(
+                        "{relative} {label}: outcome={:?}, mismatches={}",
+                        result.outcome, result.mismatched_pixels
+                    ));
+                }
+                Err(error) => {
+                    println!("ERROR {relative} {label}: {error}");
+                    failures.push(format!("{relative} {label}: {error}"));
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        declared_variant_count, 58,
+        "update the focused WPT variant inventory"
+    );
+    assert_eq!(
+        comparison_count, 59,
+        "58 variants plus one fixture without variants"
+    );
+    assert!(
+        failures.is_empty(),
+        "failed exact comparisons:\n{}",
+        failures.join("\n")
+    );
+}
+
+fn declared_variant_queries(html: &str) -> Vec<String> {
+    let parsed = raikiri_html::parse(
+        html.as_bytes(),
+        &raikiri::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .expect("parse WPT variant metadata");
+    let document = &parsed.dom;
+    let mut variants = Vec::new();
+    let mut stack = vec![document.root_index()];
+    while let Some(node_id) = stack.pop() {
+        let Some(node) = document.get_node(node_id) else {
+            continue;
+        };
+        if node.tag_name() == Some("meta")
+            && node
+                .attribute("name")
+                .is_some_and(|name| name.eq_ignore_ascii_case("variant"))
+            && let Some(content) = node.attribute("content")
+        {
+            variants.push(content.to_owned());
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    variants
 }
 
 #[test]
