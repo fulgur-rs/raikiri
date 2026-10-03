@@ -18,8 +18,8 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnFillValue, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
     EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
-    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
-    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
     HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition,
@@ -259,7 +259,7 @@ pub struct ChLengthProvenance {
 }
 
 /// Per-node computed style. See the field documentation below for supported
-/// properties and their inheritance behavior (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position;
+/// properties and their inheritance behavior (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_feature_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position;
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
 /// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear).
@@ -994,6 +994,9 @@ pub struct ComputedValues {
     /// `font-variation-settings` — inherited, initial `normal`, computed as a deduplicated sorted list.
     /// Stored as CSSOM data only; font axes and shaping are not applied.
     pub font_variation_settings: FontVariationSettings,
+    /// `font-feature-settings` — inherited, initial `normal`, computed as a deduplicated sorted list.
+    /// Explicit OpenType feature settings are forwarded to the IFC shaping style.
+    pub font_feature_settings: FontFeatureSettings,
     /// `font-variant-caps`. **inherited**, initial:
     /// [`FontVariantCaps::Normal`] (CSS Fonts Module Level 3 §6.6
     /// "Capitalization: the font-variant-caps property"
@@ -1924,6 +1927,7 @@ impl ComputedValues {
             font_variant_numeric: FontVariantNumeric::initial(),
             font_variant_east_asian: FontVariantEastAsian::initial(),
             font_variation_settings: FontVariationSettings::Normal,
+            font_feature_settings: FontFeatureSettings::Normal,
             // CSS Fonts 3 §6.6: initial font-variant-caps is `normal`.
             font_variant_caps: FontVariantCaps::Normal,
             // CSS Text 3 §2.1: initial text-transform is `none`.
@@ -2134,7 +2138,7 @@ impl ComputedValues {
     /// - Keep **non-inherited** properties at their `initial()` values.
     ///
     /// The field documentation on [`Self`] is the canonical source for each
-    /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
+    /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_feature_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout / column_count / column_fill / column_width).
     ///

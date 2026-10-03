@@ -28,29 +28,30 @@ use crate::property::{
     ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue, ContentComponent,
     CssColor, CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue,
     EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand,
-    FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride, FontOpticalSizing,
-    FontPaletteValue, FontShorthand, FontShorthandSize, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSetting, FontVariationSettings,
-    FontWeightValue, GapShorthand, GeometryBox, GridAreaShorthand, GridAutoFlowValue,
-    GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand,
-    GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens,
-    Isolation, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc, LetterSpacingValue,
-    LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
-    Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
-    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
-    RelativeFontSize, RubyPosition, SelfAlignmentValue, StartEnd, TabSize, TableLayoutValue,
-    TextAlign, TextAlignAll, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
-    TextDecorationInset, TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
-    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisFill,
-    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand,
-    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextIndentValue, TextJustify,
-    TextOrientation, TextShadowColor, TextShadowItem, TextSpacingShorthand, TextSpacingTrim,
-    TextTransform, TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
-    TransformFunction, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
+    FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSetting,
+    FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox, GridAreaShorthand,
+    GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount,
+    GridShorthand, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars,
+    HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
+    LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
+    ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
+    StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll, TextAlignLast, TextAutospace,
+    TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
+    TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
+    TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition,
+    TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle, TextEmphasisVEdge,
+    TextIndentLength, TextIndentValue, TextJustify, TextOrientation, TextShadowColor,
+    TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform, TextUnderlineOffset,
+    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
@@ -667,6 +668,31 @@ fn cascade_page_font_variation_settings_canonicalizes_computed_value() {
                 FontVariationSetting {
                     tag: "wght".into(),
                     value: 640.0,
+                },
+            ])
+        ))
+    );
+}
+
+#[test]
+fn cascade_page_font_feature_settings_canonicalizes_computed_value() {
+    let root = ComputedValues::initial();
+    let result = page(
+        r#"@page { font-feature-settings: "kern" 1, "liga" 0, "kern" 0 }"#,
+        &root,
+    );
+
+    assert_eq!(
+        result.declarations().get(&PropertyKey::FontFeatureSettings),
+        Some(&PropertyValue::FontFeatureSettings(
+            FontFeatureSettings::Features(vec![
+                FontFeatureSetting {
+                    tag: *b"kern",
+                    value: 0,
+                },
+                FontFeatureSetting {
+                    tag: *b"liga",
+                    value: 0,
                 },
             ])
         ))
@@ -3013,7 +3039,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 161;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 162;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3752,6 +3778,9 @@ property_key_samples! {
     FontVariationSettings => {
         PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
     },
+    FontFeatureSettings => {
+        PropertyValue::FontFeatureSettings(FontFeatureSettings::Normal)
+    },
 }
 
 /// `PropertyValue` variants **not covered** by `sample_for`'s 1:1
@@ -4116,6 +4145,7 @@ property_value_variant_registry! {
     FontVariantNumeric,
     FontVariantEastAsian,
     FontVariationSettings,
+    FontFeatureSettings,
 }
 
 /// Confirm that `page_corpus()` covers **every** `PropertyValue` variant
@@ -4639,6 +4669,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::FontVariantNumeric(_)
             | PropertyValue::FontVariantEastAsian(_)
             | PropertyValue::FontVariationSettings(_)
+            | PropertyValue::FontFeatureSettings(_)
             // `FontVariantCaps` carries no length either.
             | PropertyValue::FontVariantCaps(_)
             // `TextTransform` carries no length either.

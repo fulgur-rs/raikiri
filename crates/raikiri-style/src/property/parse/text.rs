@@ -923,6 +923,47 @@ pub(super) fn parse_font_variation_settings(
     Some(FontVariationSettings::Settings(settings))
 }
 
+/// Parse CSS Fonts 4 `font-feature-settings` while preserving the specified list.
+pub(super) fn parse_font_feature_settings(
+    input: &mut Parser<'_, '_>,
+) -> Option<FontFeatureSettings> {
+    if let Ok(ident) = input.try_parse(|input| input.expect_ident_cloned()) {
+        return ident
+            .eq_ignore_ascii_case("normal")
+            .then_some(FontFeatureSettings::Normal);
+    }
+
+    let mut settings = Vec::new();
+    loop {
+        let tag = input.expect_string().ok()?;
+        if tag.len() != 4 || !tag.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+            return None;
+        }
+        let tag: [u8; 4] = tag.as_bytes().try_into().ok()?;
+
+        let value = if let Ok(ident) = input.try_parse(|input| input.expect_ident_cloned()) {
+            if ident.eq_ignore_ascii_case("on") {
+                1
+            } else if ident.eq_ignore_ascii_case("off") {
+                0
+            } else {
+                return None;
+            }
+        } else if let Ok(value) = input.try_parse(|input| input.expect_integer()) {
+            u32::try_from(value).ok()?
+        } else {
+            1
+        };
+
+        settings.push(FontFeatureSetting { tag, value });
+        if input.try_parse(|input| input.expect_comma()).is_err() {
+            break;
+        }
+    }
+
+    Some(FontFeatureSettings::Features(settings))
+}
+
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
     FontStyle::from_css_ident(input.expect_ident().ok()?)
 }

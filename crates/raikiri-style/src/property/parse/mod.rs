@@ -738,6 +738,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "font-variation-settings" => {
             parse_font_variation_settings(input).map(PropertyValue::FontVariationSettings)
         }
+        "font-feature-settings" => {
+            parse_font_feature_settings(input).map(PropertyValue::FontFeatureSettings)
+        }
         // CSS Text 4 `text-spacing-trim`: preserve the specified keyword as
         // its computed value; layout behavior is intentionally out of scope.
         "text-spacing-trim" => parse_text_spacing_trim(input).map(PropertyValue::TextSpacingTrim),

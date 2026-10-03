@@ -6,9 +6,10 @@ use smol_str::SmolStr;
 
 use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
-    CalcLengthPercentage, CustomProperty, DeferredValue, FontVariationSettings, LengthOrAuto,
-    MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey, PropertyValue,
-    VerticalAlign, is_custom_property_name, parse_value,
+    CalcLengthPercentage, CustomProperty, DeferredValue, FontFeatureSettings,
+    FontVariationSettings, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
+    MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey, PropertyValue, VerticalAlign,
+    is_custom_property_name, parse_value,
 };
 
 use super::collect::{CustomCascadedDecl, RankedDecl, beats, cascade_rank};
@@ -532,6 +533,9 @@ pub(crate) fn project_deferred_value(
             }
             crate::property::PropertyKey::FontVariationSettings => {
                 PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
+            }
+            crate::property::PropertyKey::FontFeatureSettings => {
+                PropertyValue::FontFeatureSettings(FontFeatureSettings::Normal)
             }
             _ => return None,
         },
