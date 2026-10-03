@@ -33,6 +33,8 @@ pub(crate) mod tree;
 pub(crate) mod webidl;
 pub(crate) mod window;
 
+pub use selection::CustomHighlightRange;
+
 #[cfg(test)]
 pub(crate) mod test_host;
 
@@ -85,6 +87,8 @@ pub(crate) struct State {
     pub selection_object: Option<JsObject>,
     /// Ranges currently held by the singleton Selection object.
     pub selection_ranges: Vec<JsObject>,
+    /// Registered CSS custom highlights, keyed by highlight name.
+    pub custom_highlights: HashMap<String, JsObject>,
     /// Registered `EventTarget` listeners, keyed by node arena index; `None`
     /// is the window/global object, which has no arena index of its own.
     /// [`dispatch`] both adds and removes entries here (`addEventListener`/
@@ -331,6 +335,7 @@ impl DomRuntime {
             children_collections: HashMap::new(),
             selection_object: None,
             selection_ranges: Vec::new(),
+            custom_highlights: HashMap::new(),
             listeners: HashMap::new(),
             event_loop: event_loop::EventLoop::new(limits.clone()),
             reporting_exception: false,
@@ -600,6 +605,18 @@ impl DomRuntime {
     /// property machinery directly.
     pub fn context_mut(&mut self) -> &mut Context {
         &mut self.context
+    }
+
+    /// Return registered custom highlight ranges while their node indices
+    /// still refer to the live document owned by this runtime.
+    pub fn custom_highlight_ranges(&mut self) -> Result<Vec<CustomHighlightRange>, RuntimeError> {
+        match selection::custom_highlight_ranges(&mut self.context) {
+            Ok(ranges) => Ok(ranges),
+            Err(error) => Err(match error_message(&error, &mut self.context) {
+                Ok(message) => RuntimeError::JavaScript(message),
+                Err(reason) => RuntimeError::Aborted(reason),
+            }),
+        }
     }
 
     /// Tear down the realm and return the host with its (mutated) document.

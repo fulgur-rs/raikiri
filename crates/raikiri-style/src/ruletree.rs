@@ -19,7 +19,7 @@ use crate::media::{MediaCondition, MediaRule, parse_media_condition};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
-use crate::property::parse_value;
+use crate::property::{CssColor, PropertyValue, parse_value};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block_with_consumer_properties};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
@@ -1001,6 +1001,8 @@ impl AtRuleRecord {
 pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`), kept in source order.
     pub(crate) style_rules: Vec<StyleRule>,
+    /// Named custom-highlight background colors, in stylesheet source order.
+    custom_highlight_styles: HashMap<String, CssColor>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
     /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
     /// derivation and margin-box slot layout are not implemented.
@@ -1076,6 +1078,11 @@ impl RuleTree {
     /// ```
     pub fn style_rules(&self) -> &[StyleRule] {
         &self.style_rules
+    }
+
+    /// Return the winning background color for each parsed `::highlight(name)` rule.
+    pub fn custom_highlight_styles(&self) -> &HashMap<String, CssColor> {
+        &self.custom_highlight_styles
     }
 
     /// Read-only accessor for the `@counter-style` registry.
@@ -1162,6 +1169,7 @@ impl RuleTree {
     pub fn empty() -> Self {
         Self {
             style_rules: Vec::new(),
+            custom_highlight_styles: HashMap::new(),
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
             font_faces: FontFaceRegistry::new(),
@@ -1287,6 +1295,11 @@ impl RuleTree {
                     });
                     style_order = style_order.wrapping_add(1);
                     rule_order = rule_order.wrapping_add(1);
+                }
+                ParsedRule::CustomHighlight { name, color } => {
+                    if let Some(color) = color {
+                        self.custom_highlight_styles.insert(name, color);
+                    }
                 }
                 ParsedRule::Page(selector, body) => {
                     let PageBlockBody {
@@ -2031,8 +2044,17 @@ enum ParsedAtRulePrelude {
 /// (due to the `Item = R` constraint on `StyleSheetParser::next`).
 enum ParsedRule {
     Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
+    CustomHighlight {
+        name: String,
+        color: Option<CssColor>,
+    },
     Page(PageSelector, PageBlockBody),
     OpaqueAtRule(AtRuleRecord),
+}
+
+enum QualifiedPrelude {
+    Style(SelectorList<RaikiriSelectorImpl>),
+    CustomHighlight(String),
 }
 
 /// `StyleSheetParser` implementation. Accepts qualified rules and `@page`;
@@ -2237,7 +2259,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
 }
 
 impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> {
-    type Prelude = SelectorList<RaikiriSelectorImpl>;
+    type Prelude = QualifiedPrelude;
     type QualifiedRule = ParsedRule;
     type Error = ();
 
@@ -2245,6 +2267,9 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        if let Ok(name) = input.try_parse(parse_custom_highlight_prelude) {
+            return Ok(QualifiedPrelude::CustomHighlight(name));
+        }
         SelectorList::parse(
             &NamespacedSelectorParser {
                 namespaces: self.namespaces,
@@ -2252,6 +2277,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
             input,
             ParseRelative::No,
         )
+        .map(QualifiedPrelude::Style)
         .map_err(|_| input.new_custom_error(()))
     }
 
@@ -2266,8 +2292,36 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
-        Ok(ParsedRule::Style(prelude, declarations))
+        match prelude {
+            QualifiedPrelude::Style(selectors) => Ok(ParsedRule::Style(selectors, declarations)),
+            QualifiedPrelude::CustomHighlight(name) => {
+                let color =
+                    declarations
+                        .iter()
+                        .rev()
+                        .find_map(|declaration| match declaration.value() {
+                            PropertyValue::BackgroundColor(color) => Some(*color),
+                            _ => None,
+                        });
+                Ok(ParsedRule::CustomHighlight { name, color })
+            }
+        }
     }
+}
+
+fn parse_custom_highlight_prelude<'i, 't>(
+    input: &mut Parser<'i, 't>,
+) -> Result<String, cssparser::ParseError<'i, ()>> {
+    input.expect_colon()?;
+    input.expect_colon()?;
+    input.expect_function_matching("highlight")?;
+    let name = input.parse_nested_block(|input| {
+        let name = input.expect_ident_cloned()?.to_string();
+        input.expect_exhausted()?;
+        Ok(name)
+    })?;
+    input.expect_exhausted()?;
+    Ok(name)
 }
 
 /// Determine whether every selector in the SelectorList contains only currently

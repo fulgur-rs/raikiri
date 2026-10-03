@@ -70,6 +70,7 @@ fn many_inline_pieces_on_separate_lines_paint_within_three_seconds() {
         },
         &crate::text::DecorationContext::default(),
         None,
+        &[],
     );
     let elapsed = started.elapsed();
     assert!(!scene.commands.is_empty());
@@ -117,6 +118,7 @@ fn glyph_runs_land_on_the_baseline_of_each_line() {
         },
         &crate::text::DecorationContext::default(),
         None,
+        &[],
     );
     let placed = glyphs(&scene);
     assert!(!placed.is_empty(), "the ifc painter emitted no glyphs");
@@ -157,6 +159,7 @@ fn each_run_takes_the_color_of_its_text_node() {
         },
         &crate::text::DecorationContext::default(),
         None,
+        &[],
     );
     let blue = anyrender::Paint::Solid(peniko::Color::from_rgba8(0, 0, 255, 255));
     let red = anyrender::Paint::Solid(peniko::Color::from_rgba8(255, 0, 0, 255));
@@ -2403,6 +2406,7 @@ fn draw_ifc_lines_selects_only_the_requested_fragmentainer() {
             },
             &crate::text::DecorationContext::default(),
             fragmentainer,
+            &[],
         );
         glyphs(&scene)
     };

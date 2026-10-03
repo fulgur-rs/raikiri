@@ -57,6 +57,45 @@ fn range_select_node_contents_uses_child_offsets_for_elements() {
 }
 
 #[test]
+fn tree_walker_visits_descendant_text_nodes_in_tree_order() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var root = document.createElement('div'); \
+         var first = document.createTextNode('A'); \
+         var nested = document.createElement('span'); \
+         var second = document.createTextNode('B'); \
+         nested.appendChild(second); root.append(first, nested); document.body.append(root); \
+         var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); \
+         walker.root === root && walker.currentNode === root \
+         && walker.nextNode() === first && walker.currentNode === first \
+         && walker.nextNode() === second && walker.nextNode() === null \
+         && walker.currentNode === second",
+    );
+}
+
+#[test]
+fn range_set_start_and_end_use_utf16_offsets_and_highlights_store_ranges() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var text = document.createTextNode('A😀B'); document.body.appendChild(text); \
+         var range = document.createRange(); range.setStart(text, 1); range.setEnd(text, 3); \
+         var highlight = new Highlight(); highlight.add(range); \
+         CSS.highlights.set('sample', highlight); \
+         range.startContainer === text && range.endContainer === text \
+         && range.startOffset === 1 && range.endOffset === 3 \
+         && CSS.highlights.get('sample') === highlight",
+    );
+    let ranges = rt.custom_highlight_ranges().expect("highlight ranges");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].name, "sample");
+    assert_eq!(ranges[0].start_container, ranges[0].end_container);
+    assert_eq!(ranges[0].start_offset, 1);
+    assert_eq!(ranges[0].end_offset, 3);
+}
+
+#[test]
 fn selection_remove_all_ranges_clears_the_singleton_selection() {
     let mut rt = rt();
     ok(

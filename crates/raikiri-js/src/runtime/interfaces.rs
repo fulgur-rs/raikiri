@@ -55,6 +55,8 @@ pub(crate) struct Protos {
     pub dom_rect_read_only: JsObject,
     pub dom_rect: JsObject,
     pub range: JsObject,
+    pub tree_walker: JsObject,
+    pub highlight: JsObject,
     pub selection: JsObject,
     pub css_style_declaration: JsObject,
     pub event: JsObject,
@@ -512,6 +514,28 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         0,
     );
     let range = range_result?;
+    let tree_walker_members = [&selection::TREE_WALKER_MEMBERS];
+    let tree_walker_result = interface(
+        context,
+        "TreeWalker",
+        None,
+        None,
+        &tree_walker_members,
+        illegal_constructor,
+        0,
+    );
+    let tree_walker = tree_walker_result?;
+    let highlight_members = [&selection::HIGHLIGHT_MEMBERS];
+    let highlight_result = interface(
+        context,
+        "Highlight",
+        None,
+        None,
+        &highlight_members,
+        selection::highlight_constructor,
+        0,
+    );
+    let highlight = highlight_result?;
     let selection_members = [&selection::SELECTION_MEMBERS];
     let selection_result = interface(
         context,
@@ -557,6 +581,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         dom_rect_read_only: dom_rect_read_only.prototype,
         dom_rect: dom_rect.prototype,
         range: range.prototype,
+        tree_walker: tree_walker.prototype,
+        highlight: highlight.prototype,
         selection: selection.prototype,
         css_style_declaration: css_style_declaration.prototype,
         event: event.prototype,
@@ -572,6 +598,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let document = wrap(context, root)?;
     context.register_global_property(js_string!("document"), document, attr)?;
     style::install_globals(context)?;
+    selection::install_globals(context)?;
     events::install_globals(context)?;
     dispatch::install_window_handlers(context)?;
     // `Location`/`Navigator`: real interfaces (illegal constructor,

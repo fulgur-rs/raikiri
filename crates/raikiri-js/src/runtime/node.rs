@@ -536,6 +536,7 @@ pub(crate) const DOCUMENT_MEMBERS: Members = Members {
         ("createElement", 1, create_element),
         ("createElementNS", 2, super::document::create_element_ns),
         ("createRange", 0, super::selection::create_range),
+        ("createTreeWalker", 2, super::selection::create_tree_walker),
     ],
 };
 
