@@ -1234,8 +1234,8 @@ fn layout_vertical_block_child(
         (margin.left, margin.right)
     };
     let block_start = y + pending.collapse_with_margin(block_start_margin).resolve();
-    let width = used_block_width(tree, node, basis)
-        .map(|width| clamp_block_width(tree, node, basis, width));
+    let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis)
+        .map(|width| clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width));
     let height = used_block_height(tree, node, inline_basis)
         .unwrap_or_else(|| (inline_basis - margin.top - margin.bottom).max(0.0));
     let height = clamp_block_height(tree, node, inline_basis, height);
@@ -1307,7 +1307,7 @@ fn layout_vertical_block_child(
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
         };
-        commit_child_layout(tree, node, &output, location, basis);
+        commit_child_layout(tree, node, &output, location, inline_basis);
     }
     BlockChild {
         top: block_start,
@@ -1456,30 +1456,49 @@ fn layout_formatting_context_child(
 /// the root's content width the way taffy's block algorithm resolves the size
 /// of an in-flow item; `None` for `auto`.
 fn used_block_width(tree: &Document, node: usize, basis: f32) -> Option<f32> {
+    used_block_width_with_edge_basis(tree, node, basis, basis)
+}
+
+fn used_block_width_with_edge_basis(
+    tree: &Document,
+    node: usize,
+    dimension_basis: f32,
+    edge_basis: f32,
+) -> Option<f32> {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
     style
         .size
         .width
-        .maybe_resolve(Some(basis), resolve_calc)
-        .map(|width| width + box_sizing_adjustment(tree, node, basis))
+        .maybe_resolve(Some(dimension_basis), resolve_calc)
+        .map(|width| width + box_sizing_adjustment(tree, node, edge_basis))
 }
 
 /// `width` clamped by the block child's own `min-width` and `max-width`,
 /// resolved like [`used_block_width`].
 fn clamp_block_width(tree: &Document, node: usize, basis: f32, width: f32) -> f32 {
+    clamp_block_width_with_edge_basis(tree, node, basis, basis, width)
+}
+
+fn clamp_block_width_with_edge_basis(
+    tree: &Document,
+    node: usize,
+    dimension_basis: f32,
+    edge_basis: f32,
+    width: f32,
+) -> f32 {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
-    let adjustment = box_sizing_adjustment(tree, node, basis);
+    let adjustment = box_sizing_adjustment(tree, node, edge_basis);
     let min = style
         .min_size
         .width
-        .maybe_resolve(Some(basis), resolve_calc)
+        .maybe_resolve(Some(dimension_basis), resolve_calc)
         .map(|min| min + adjustment);
     let max = style
         .max_size
         .width
-        .maybe_resolve(Some(basis), resolve_calc)
+        .maybe_resolve(Some(dimension_basis), resolve_calc)
         .map(|max| max + adjustment);
     let width = max.map_or(width, |max| width.min(max));
     min.map_or(width, |min| width.max(min))
@@ -1644,9 +1663,9 @@ pub(crate) fn commit_float(
 /// Store the final layout of a child that the ifc root laid out itself.
 ///
 /// `location` is the border-box position relative to the ifc root's border
-/// box. `output` is what the child's layout returned. `basis` is what a
-/// percentage in the child's margin, padding and border resolves against: the
-/// root's content width.
+/// box. `output` is what the child's layout returned. `basis` is the root's
+/// content inline size, used to resolve the child's percentage margins,
+/// padding, and border.
 pub(crate) fn commit_child_layout(
     tree: &mut Document,
     node: usize,

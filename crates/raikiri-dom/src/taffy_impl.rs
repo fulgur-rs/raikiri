@@ -43,10 +43,10 @@ pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
     if resolved.is_finite() { resolved } else { 0.0 }
 }
 
-/// Resolve a padding or border length of an ifc root against the parent's
-/// width.
-fn ifc_edge(value: taffy::LengthPercentage, parent_width: Option<f32>) -> f32 {
-    let basis = parent_width.unwrap_or(0.0);
+/// Resolve a padding or border length of an ifc root against the containing
+/// block's inline size.
+fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> f32 {
+    let basis = parent_inline_size.unwrap_or(0.0);
     let raw = value.into_raw();
     if raw.is_calc() {
         resolve_calc(raw.calc_value(), basis)
@@ -55,32 +55,80 @@ fn ifc_edge(value: taffy::LengthPercentage, parent_width: Option<f32>) -> f32 {
     }
 }
 
+/// The physical dimension used by percentage margins, padding, and borders
+/// depends on the containing block's writing mode.
+fn ifc_parent_inline_size(
+    tree: &Document,
+    node: usize,
+    parent_size: Size<Option<f32>>,
+) -> Option<f32> {
+    let mut ancestor = tree.nodes[node].parent;
+    while let Some(id) = ancestor {
+        if let Some(mode) = tree.nodes[id].authored_writing_mode {
+            return Some(match mode {
+                raikiri_style::property::WritingMode::VerticalRl
+                | raikiri_style::property::WritingMode::VerticalLr
+                | raikiri_style::property::WritingMode::SidewaysRl
+                | raikiri_style::property::WritingMode::SidewaysLr => {
+                    parent_size.height.unwrap_or(0.0)
+                }
+                _ => parent_size.width.unwrap_or(0.0),
+            });
+        }
+        ancestor = tree.nodes[id].parent;
+    }
+    Some(parent_size.width.unwrap_or(0.0))
+}
+
+/// Give Taffy pixel edge values resolved against the containing block's
+/// inline size while keeping its physical width and height properties intact.
+fn ifc_style_with_inline_edge_basis(style: &Style, inline_size: Option<f32>) -> Style {
+    let basis = inline_size.unwrap_or(0.0);
+    let mut style = style.clone();
+    style.margin = style.margin.map(|margin| {
+        margin.resolve_to_option(basis, resolve_calc).map_or_else(
+            taffy::LengthPercentageAuto::auto,
+            taffy::LengthPercentageAuto::length,
+        )
+    });
+    style.padding = style
+        .padding
+        .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+    style.border = style
+        .border
+        .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+    style
+}
+
 /// Padding-top plus border-top of an ifc root, resolved from its style.
 ///
 /// The parent has not stored this node's layout yet when the root is
-/// measured, so the insets come from the style and the parent's width.
-fn ifc_top_inset(style: &Style, parent_width: Option<f32>) -> f32 {
-    ifc_edge(style.padding.top, parent_width) + ifc_edge(style.border.top, parent_width)
+/// measured, so the insets come from the style and the parent's inline size.
+fn ifc_top_inset(style: &Style, parent_inline_size: Option<f32>) -> f32 {
+    ifc_edge(style.padding.top, parent_inline_size) + ifc_edge(style.border.top, parent_inline_size)
 }
 
 /// Border plus padding on the left and right of an ifc root, resolved from
 /// its style like [`ifc_top_inset`].
-fn ifc_horizontal_edges(style: &Style, parent_width: Option<f32>) -> (f32, f32) {
+fn ifc_horizontal_edges(style: &Style, parent_inline_size: Option<f32>) -> (f32, f32) {
     (
-        ifc_edge(style.padding.left, parent_width) + ifc_edge(style.border.left, parent_width),
-        ifc_edge(style.padding.right, parent_width) + ifc_edge(style.border.right, parent_width),
+        ifc_edge(style.padding.left, parent_inline_size)
+            + ifc_edge(style.border.left, parent_inline_size),
+        ifc_edge(style.padding.right, parent_inline_size)
+            + ifc_edge(style.border.right, parent_inline_size),
     )
 }
 
-fn ifc_all_insets(style: &Style, parent_width: Option<f32>) -> taffy::Rect<f32> {
+fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect<f32> {
     taffy::Rect {
-        top: ifc_edge(style.padding.top, parent_width) + ifc_edge(style.border.top, parent_width),
-        right: ifc_edge(style.padding.right, parent_width)
-            + ifc_edge(style.border.right, parent_width),
-        bottom: ifc_edge(style.padding.bottom, parent_width)
-            + ifc_edge(style.border.bottom, parent_width),
-        left: ifc_edge(style.padding.left, parent_width)
-            + ifc_edge(style.border.left, parent_width),
+        top: ifc_edge(style.padding.top, parent_inline_size)
+            + ifc_edge(style.border.top, parent_inline_size),
+        right: ifc_edge(style.padding.right, parent_inline_size)
+            + ifc_edge(style.border.right, parent_inline_size),
+        bottom: ifc_edge(style.padding.bottom, parent_inline_size)
+            + ifc_edge(style.border.bottom, parent_inline_size),
+        left: ifc_edge(style.padding.left, parent_inline_size)
+            + ifc_edge(style.border.left, parent_inline_size),
     }
 }
 
@@ -467,9 +515,11 @@ fn compute_ifc_root(
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let style = tree.nodes[idx].style.clone();
+    let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
+    let layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
     // Border-box top inset, resolved here: the parent has not
     // stored this node's layout yet.
-    let top_inset = ifc_top_inset(&style, inputs.parent_size.width);
+    let top_inset = ifc_top_inset(&style, parent_inline_size);
     // A known width on the input means the parent stretched or
     // fixed the box, and a definite `width` of its own fixes it
     // too (taffy passes it as the available width); otherwise the
@@ -484,14 +534,18 @@ fn compute_ifc_root(
         run_mode: inputs.run_mode,
         stretched_width,
         stretched_height,
-        width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
+        width_bounds: ifc_content_width_bounds(
+            &style,
+            inputs.parent_size.width,
+            parent_inline_size,
+        ),
         height_bounds: ifc_content_height_bounds(
             &style,
             inputs.parent_size.height,
-            inputs.parent_size.width,
+            parent_inline_size,
         ),
-        edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
-        insets: ifc_all_insets(&style, inputs.parent_size.width),
+        edges: ifc_horizontal_edges(&style, parent_inline_size),
+        insets: ifc_all_insets(&style, parent_inline_size),
         // CSS 2.1 8.3.1: the bottom margin of a last in-flow child and that
         // of its parent are adjoining when the parent has no bottom padding
         // or border and an `auto` height, and the parent is in the same
@@ -499,8 +553,8 @@ fn compute_ifc_root(
         bottom_margin_escapes: block_ctx.is_some()
             && inputs.vertical_margins_are_collapsible.end
             && style.size.height.is_auto()
-            && ifc_edge(style.padding.bottom, inputs.parent_size.width)
-                + ifc_edge(style.border.bottom, inputs.parent_size.width)
+            && ifc_edge(style.padding.bottom, parent_inline_size)
+                + ifc_edge(style.border.bottom, parent_inline_size)
                 == 0.0,
         column_height: None,
     };
@@ -526,28 +580,29 @@ fn compute_ifc_root(
         .map(|height| {
             let insets = if style.box_sizing == taffy::BoxSizing::BorderBox {
                 top_inset
-                    + ifc_edge(style.padding.bottom, inputs.parent_size.width)
-                    + ifc_edge(style.border.bottom, inputs.parent_size.width)
+                    + ifc_edge(style.padding.bottom, parent_inline_size)
+                    + ifc_edge(style.border.bottom, parent_inline_size)
             } else {
                 0.0
             };
             (height - insets).max(0.0)
         });
-    let mut output = compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
-        let (size, baseline, escaping) = measure_ifc_root(
-            tree,
-            idx,
-            known.width,
-            known.height,
-            available,
-            measure,
-            block_ctx,
-        );
-        measured_size = Some(size);
-        content_baseline = baseline;
-        escaping_margin = escaping;
-        size
-    });
+    let mut output =
+        compute_leaf_layout(inputs, &layout_style, resolve_calc, |known, available| {
+            let (size, baseline, escaping) = measure_ifc_root(
+                tree,
+                idx,
+                known.width,
+                known.height,
+                available,
+                measure,
+                block_ctx,
+            );
+            measured_size = Some(size);
+            content_baseline = baseline;
+            escaping_margin = escaping;
+            size
+        });
     if auto_vertical_block_size && let Some(measured_size) = measured_size {
         // `compute_leaf_layout` retains Taffy's intrinsic auto-width probe as
         // a known width. In vertical flow, the performed IFC layout measures
@@ -581,7 +636,11 @@ fn compute_ifc_root(
 /// A shrink-to-fit box is clamped by these after it is measured, so the lines
 /// have to be broken at the clamped width to match the box taffy returns.
 /// `auto` gives `0.0` and `f32::INFINITY`.
-fn ifc_content_width_bounds(style: &Style, parent_width: Option<f32>) -> (f32, f32) {
+fn ifc_content_width_bounds(
+    style: &Style,
+    parent_width: Option<f32>,
+    parent_inline_size: Option<f32>,
+) -> (f32, f32) {
     ifc_content_axis_bounds(
         style.min_size.width,
         style.max_size.width,
@@ -589,14 +648,14 @@ fn ifc_content_width_bounds(style: &Style, parent_width: Option<f32>) -> (f32, f
         [style.padding.left, style.padding.right],
         [style.border.left, style.border.right],
         parent_width,
-        parent_width,
+        parent_inline_size,
     )
 }
 
 fn ifc_content_height_bounds(
     style: &Style,
     parent_height: Option<f32>,
-    parent_width: Option<f32>,
+    parent_inline_size: Option<f32>,
 ) -> (f32, f32) {
     ifc_content_axis_bounds(
         style.min_size.height,
@@ -605,7 +664,7 @@ fn ifc_content_height_bounds(
         [style.padding.top, style.padding.bottom],
         [style.border.top, style.border.bottom],
         parent_height,
-        parent_width,
+        parent_inline_size,
     )
 }
 

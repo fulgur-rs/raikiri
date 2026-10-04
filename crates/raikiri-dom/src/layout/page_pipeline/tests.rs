@@ -3734,6 +3734,50 @@ fn vertical_block_child_margin_percentages_resolve_against_inline_size() {
 }
 
 #[test]
+fn vertical_block_child_percentage_edges_use_parent_inline_size() {
+    for (mode, block_start_side) in [
+        ("vertical-rl", "margin-right"),
+        ("vertical-lr", "margin-left"),
+    ] {
+        let (mut doc, _, root) =
+            ahem_paragraph("", &format!("width:60px;height:100px;writing-mode:{mode}"));
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(&format!(
+                "display:block;width:30px;height:49px;padding:10%;{block_start_side}:10%"
+            )),
+        );
+        doc.append_text(block, "a");
+        doc.append_text(root, "b");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+
+        let layout = doc.nodes[block].unrounded_layout;
+        assert_eq!(stored_lines(&doc, block).width, 49.0, "{mode}");
+        assert_eq!(
+            (layout.size.width, layout.size.height),
+            (50.0, 69.0),
+            "{mode}"
+        );
+        assert_eq!(layout.padding.left, 10.0, "{mode}");
+        assert_eq!(layout.padding.top, 10.0, "{mode}");
+        assert_eq!(
+            if mode == "vertical-rl" {
+                layout.margin.right
+            } else {
+                layout.margin.left
+            },
+            10.0,
+            "{mode}"
+        );
+    }
+}
+
+#[test]
 fn vertical_block_children_distribute_auto_inline_margins() {
     for mode in ["vertical-rl", "vertical-lr"] {
         let (mut doc, _, root) =
