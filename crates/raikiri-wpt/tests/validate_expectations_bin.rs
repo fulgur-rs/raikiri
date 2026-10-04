@@ -15,6 +15,7 @@ fn stage_header_only_dir() -> TempDir {
         "tracked-wpt.txt",
         "known-issues.txt",
         "raikiri-baseline.txt",
+        "expected-failures.txt",
         "quarantine.txt",
         "deprecated.txt",
     ] {
