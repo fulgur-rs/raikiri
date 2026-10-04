@@ -241,9 +241,10 @@ pub(crate) struct RankedDecl {
 }
 
 /// Precedence rank from cascade origin and `!important`.
-/// [`Origin::AuthorPresentationalHint`] and [`Origin::User`] were added after
-/// the initial UA/Author implementation. Adding [`Origin::User`] required
-/// re-deriving all four origin tiers, not merely shifting rank numbers.
+/// [`Origin::AuthorPresentationalHint`], [`Origin::User`], and
+/// [`Origin::Animation`] were added after the initial UA/Author implementation.
+/// Each insertion re-derives the origin ordering rather than merely shifting
+/// rank numbers.
 ///
 /// Higher ranks win. This represents Origin and Importance in CSS Cascading
 /// L4 §6.1 "Cascade Sorting Order"
@@ -255,19 +256,21 @@ pub(crate) struct RankedDecl {
 /// # UA / User / Author: three origins (verbatim spec order)
 ///
 /// §6.1 "Cascade Sorting Order" lists origins from strongest to weakest.
-/// The six relevant entries follow; transitions and animations are not yet
-/// implemented in this crate:
+/// The relevant entries follow; transitions are not yet implemented in this
+/// crate:
 /// - "Important user agent declarations"
 /// - "Important user declarations"
 /// - "Important author declarations"
+/// - "Animations"
 /// - "Normal author declarations"
 /// - "Normal user declarations"
 /// - "Normal user agent declarations"
 ///
 /// "Declarations from origins earlier in this list win over declarations
 /// from later origins". Reversing that strongest-to-weakest list to ascending
-/// rank gives `Normal UA < Normal User < Normal Author < Important Author
-/// < Important User < Important UA`. This ordering for the three origins,
+/// rank gives `Normal UA < Normal User < Normal Author < Animation
+/// < Important Author < Important User < Important UA`. This ordering for the
+/// three origins,
 /// including Important User's position (`Important Author < Important User
 /// < Important UA`), comes **directly** from the spec, not a derivation.
 ///
@@ -321,9 +324,11 @@ pub(crate) struct RankedDecl {
 /// and Important User in reversed Important order. This position is
 /// **derived**, not verbatim, from the spec's own reversal mechanism.
 ///
-/// # Rank table for all four origins (re-derived)
+/// # Rank table for all declaration sources (re-derived)
 ///
-/// Combining these two sections orders the four origins at each tier:
+/// Combining these two sections orders the four CSS origins at each tier;
+/// animations occupy their own precedence band between normal and important
+/// declarations:
 /// - Normal: UA < User < AuthorPresentationalHint < Author (insert the
 ///   spec-defined hint position between User and Author into the
 ///   spec-defined UA/User/Author ordering).
@@ -331,20 +336,24 @@ pub(crate) struct RankedDecl {
 ///   derived hint position between Important Author and Important User into
 ///   the reversed, spec-defined Author/User/UA ordering).
 ///
-/// Assign ranks with 0 weakest and 7 strongest:
+/// Assign ranks with 0 weakest and 8 strongest:
 ///
 /// | origin                     | Normal | Important |
 /// |-----------------------------|--------|-----------|
-/// | `UserAgent`                 | 0      | 7         |
-/// | `User`                      | 1      | 6         |
-/// | `AuthorPresentationalHint`  | 2      | 5         |
-/// | `Author`                    | 3      | 4         |
+/// | `UserAgent`                 | 0      | 8         |
+/// | `User`                      | 1      | 7         |
+/// | `AuthorPresentationalHint`  | 2      | 6         |
+/// | `Author`                    | 3      | 5         |
+/// | `Animation`                 | 4      | 4         |
 ///
-/// Check: `min(Important) = 4 > max(Normal) = 3`, so any important
-/// declaration beats any normal declaration (§6.1/§6.3). For UA/User/Author,
-/// ascending Normal (`0,1,3`) and descending Important (`7,6,4`) follow the
+/// Check: `min(Important) = 5 > Animation = 4 > max(Normal) = 3`, so any
+/// important declaration beats every animation declaration, and animations
+/// beat every normal declaration (§6.1). For UA/User/Author,
+/// ascending Normal (`0,1,3`) and descending Important (`8,7,5`) follow the
 /// spec directly. The inserted hint ranks (`2`/`5`) retain the same relative
-/// position between User and Author in both orderings.
+/// position between User and Author in both orderings. Animation declarations
+/// are collected as non-important; the total rank function maps either flag
+/// to the same animation band.
 ///
 /// [`push_img_dimension_hints`] always pushes `important = false`, so its
 /// `(AuthorPresentationalHint, true)` arm is currently unreachable. The two
@@ -369,10 +378,11 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
         (Origin::User, false) => 1,
         (Origin::AuthorPresentationalHint, false) => 2,
         (Origin::Author, false) => 3,
-        (Origin::Author, true) => 4,
-        (Origin::AuthorPresentationalHint, true) => 5,
-        (Origin::User, true) => 6,
-        (Origin::UserAgent, true) => 7,
+        (Origin::Animation, false | true) => 4,
+        (Origin::Author, true) => 5,
+        (Origin::AuthorPresentationalHint, true) => 6,
+        (Origin::User, true) => 7,
+        (Origin::UserAgent, true) => 8,
     }
 }
 
@@ -685,6 +695,24 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             decl.value,
                             decl.important,
                             Origin::Author,
+                            INLINE_SPECIFICITY,
+                            INLINE_SOURCE_ORDER,
+                        );
+                    }
+                }
+                if let Some(source) = elem.animation_style_source() {
+                    let mut input = ParserInput::new(source);
+                    let mut parser = Parser::new(&mut input);
+                    for decl in parse_declaration_block_with_consumer_properties(
+                        &mut parser,
+                        rule_tree.consumer_property_registrations(),
+                    ) {
+                        push_cascaded_decl(
+                            &mut out.decls,
+                            &mut out.custom_decls,
+                            decl.value,
+                            false,
+                            Origin::Animation,
                             INLINE_SPECIFICITY,
                             INLINE_SOURCE_ORDER,
                         );

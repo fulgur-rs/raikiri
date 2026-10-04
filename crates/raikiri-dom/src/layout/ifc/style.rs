@@ -179,19 +179,19 @@ pub(crate) fn inline_style(
         ),
         None => absolute_letter_spacing(&cv.letter_spacing_computed, cv.letter_spacing.px())?,
     };
-    let word_spacing = match cv.word_spacing_ch_factor {
+    let (word_spacing_absolute, word_spacing_percent) = match cv.word_spacing_computed {
+        ComputedLetterSpacing::Px(value) => (value, 0.0),
+        ComputedLetterSpacing::Percent(percent) => (0.0, percent),
+        ComputedLetterSpacing::Calc(value) => (value.px, value.percent),
+    };
+    let word_spacing_absolute = match cv.word_spacing_ch_factor {
         Some(factor) => ch_length(factor, &cv.word_spacing_ch_font, cv.word_spacing_ch_offset),
-        None => match cv.word_spacing_computed {
-            ComputedLetterSpacing::Px(value) => value,
-            ComputedLetterSpacing::Percent(_) => 0.0,
-            ComputedLetterSpacing::Calc(value) => value.px,
-        },
+        None => word_spacing_absolute,
     };
-    let word_spacing_percent = match cv.word_spacing_computed {
-        ComputedLetterSpacing::Percent(value) => value,
-        ComputedLetterSpacing::Calc(value) => value.percent,
-        ComputedLetterSpacing::Px(_) => 0.0,
-    };
+    // CSS Text resolves word-spacing percentages against font-size; Shodo's
+    // relative field uses the space advance, so resolve the percentage here.
+    let word_spacing = word_spacing_absolute + cv.font_size.0 * word_spacing_percent / 100.0;
+    let word_spacing_percent = 0.0;
     let line_height = match cv.line_height {
         ComputedLineHeight::Normal => LineHeight::Normal,
         ComputedLineHeight::Number(value) => LineHeight::Number(value),

@@ -592,6 +592,7 @@ pub(crate) const ELEMENT_MEMBERS: Members = Members {
             0,
             super::style::get_bounding_client_rect,
         ),
+        ("animate", 2, super::animation::element_animate),
     ],
 };
 

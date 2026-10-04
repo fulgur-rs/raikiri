@@ -1,5 +1,6 @@
 use super::*;
 use raikiri_dom::Document;
+use raikiri_dom::snapshot::LogicalData;
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, HostError};
 use raikiri_js_wasmtime_protocol::*;
 use std::{any::Any, cell::Cell, rc::Rc};
@@ -128,6 +129,30 @@ fn real_guest_runtime_and_independent_stores() {
     assert!(first.metrics().unwrap().consumed_fuel > 0);
     assert!(first.metrics().unwrap().guest_request_bytes > 0);
     assert!(first.metrics().unwrap().guest_response_bytes > 0);
+}
+
+#[test]
+fn synchronize_final_document_preserves_animation_style() {
+    let mut document = Document::new();
+    let target = document.create_detached_element("div").unwrap();
+    document
+        .append_child(document.root_index(), target)
+        .unwrap();
+    document.set_element_animation_style(target, Some("font-size: 20px;".into()));
+    let mut page = page_with_document(document);
+
+    page.evaluate_preamble("1 + 1").unwrap();
+    page.run_document().unwrap();
+    page.synchronize_final_document().unwrap();
+
+    let snapshot = page.document().logical_snapshot();
+    let animation_style = match &snapshot.nodes[target].data {
+        LogicalData::Element {
+            animation_style, ..
+        } => animation_style.as_deref(),
+        _ => panic!("Wasmtime snapshot changed the element node kind"),
+    };
+    assert_eq!(animation_style, Some("font-size: 20px;"));
 }
 
 #[test]

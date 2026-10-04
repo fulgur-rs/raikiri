@@ -20,6 +20,7 @@ pub(crate) struct TestNode {
     pub(crate) in_document: bool,
     pub(crate) tag: String,
     pub(crate) inline_style: Option<String>,
+    pub(crate) animation_style: Option<String>,
     /// Null-namespace attributes other than `style`. First-wins on duplicate
     /// names, matching the element lookup contract.
     pub(crate) attrs: Vec<(String, String)>,
@@ -38,6 +39,7 @@ impl TestDoc {
                 in_document: true,
                 tag: String::new(),
                 inline_style: None,
+                animation_style: None,
                 attrs: Vec::new(),
                 namespace: None,
                 text: None,
@@ -71,6 +73,7 @@ impl TestDoc {
             in_document: true,
             tag: tag.into(),
             inline_style: inline_style.map(|s| s.to_string()),
+            animation_style: None,
             attrs: attrs
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -97,6 +100,7 @@ impl TestDoc {
             in_document: true,
             tag: tag.into(),
             inline_style: None,
+            animation_style: None,
             attrs: attrs
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -116,6 +120,7 @@ impl TestDoc {
             in_document: true,
             tag: String::new(),
             inline_style: None,
+            animation_style: None,
             attrs: Vec::new(),
             namespace: None,
             text: Some(text.into()),
@@ -136,6 +141,7 @@ impl TestDoc {
             in_document: true,
             tag: String::new(),
             inline_style: None,
+            animation_style: None,
             attrs: Vec::new(),
             namespace: None,
             text: Some(text.into()),
@@ -261,6 +267,12 @@ impl<'a> StyleElement for TestElementRef<'a> {
     /// split on both the real DOM and this mock.
     fn inline_style_source(&self) -> Option<&str> {
         self.node.inline_style.as_deref().filter(|s| !s.is_empty())
+    }
+    fn animation_style_source(&self) -> Option<&str> {
+        self.node
+            .animation_style
+            .as_deref()
+            .filter(|s| !s.is_empty())
     }
     fn namespace_uri(&self) -> Option<&str> {
         self.node.namespace.as_deref()

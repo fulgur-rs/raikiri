@@ -90,6 +90,15 @@ impl<'a> ElementRef<'a> {
         }
     }
 
+    fn animation_style_source(&self) -> Option<&str> {
+        match &self.node.data {
+            crate::node::NodeData::Element(e) => {
+                e.animation_style.as_deref().filter(|s| !s.is_empty())
+            }
+            _ => None,
+        }
+    }
+
     fn namespace_uri(&self) -> Option<&str> {
         match &self.node.data {
             crate::node::NodeData::Element(e) => e.namespace.as_deref(),
@@ -376,6 +385,10 @@ impl<'a> StyleElement for ElementRef<'a> {
 
     fn inline_style_source(&self) -> Option<&str> {
         self.inline_style_source()
+    }
+
+    fn animation_style_source(&self) -> Option<&str> {
+        self.animation_style_source()
     }
 
     fn namespace_uri(&self) -> Option<&str> {

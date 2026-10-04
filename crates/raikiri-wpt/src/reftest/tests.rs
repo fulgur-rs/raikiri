@@ -302,6 +302,71 @@ fn image_resolution_reparses_geometry_varying_pages() {
 }
 
 #[test]
+fn animation_style_sidecar_restore_rejects_missing_and_non_element_paths() {
+    let mut missing_path_document = raikiri_dom::Document::new();
+    let missing_path = [AnimationStyleSidecar {
+        node_path: vec![0],
+        declarations: "font-size: 20px;".into(),
+    }];
+    let error = restore_animation_styles(&mut missing_path_document, &missing_path)
+        .expect_err("a missing child path must be rejected");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("is absent"));
+
+    let mut non_element_document = raikiri_dom::Document::new();
+    let document_root = [AnimationStyleSidecar {
+        node_path: Vec::new(),
+        declarations: "font-size: 20px;".into(),
+    }];
+    let error = restore_animation_styles(&mut non_element_document, &document_root)
+        .expect_err("the document node is not an element");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("does not target an element"));
+}
+
+#[test]
+fn animation_style_sidecar_is_restored_after_geometry_reparse() {
+    let page_rules = "@page{size:300px 300px;margin:0} @page :first{size:300px 200px}";
+    let source = format!(
+        "<html><head><style>{page_rules} html,body{{margin:0}}</style></head><body><div style=\"height:550px;font-size:10px;line-height:normal\">Animation sample</div></body></html>"
+    );
+    let expected = format!(
+        "<html><head><style>{page_rules} html,body{{margin:0}}</style></head><body><div style=\"height:550px;font-size:20px;line-height:normal\">Animation sample</div></body></html>"
+    );
+    let styles = [AnimationStyleSidecar {
+        node_path: vec![0, 1, 0],
+        declarations: "font-size: 20px;".into(),
+    }];
+    let engine = InlineEngineChoice {
+        require_inline_fonts: false,
+    };
+    let rendered = render_raikiri_pages_inner_with_canvases(
+        &source,
+        800,
+        600,
+        None,
+        None,
+        engine,
+        Some(&styles),
+        None,
+        None,
+    )
+    .expect("sidecar document should render after the geometry reparse");
+    let reference = render_raikiri_pages_inner_with_canvases(
+        &expected, 800, 600, None, None, engine, None, None, None,
+    )
+    .expect("authored animation result should render");
+
+    assert!(rendered.pages.len() >= 2);
+    assert_eq!(rendered.pages.len(), reference.pages.len());
+    for (rendered_page, reference_page) in rendered.pages.iter().zip(&reference.pages) {
+        assert_eq!(rendered_page.width, reference_page.width);
+        assert_eq!(rendered_page.height, reference_page.height);
+        assert_eq!(rendered_page.rgba, reference_page.rgba);
+    }
+}
+
+#[test]
 fn reftest_kind_roundtrip() {
     let m = ReftestKind::Match;
     let mm = ReftestKind::Mismatch;
@@ -1545,6 +1610,7 @@ fn render_with_engine(html: &str) -> RenderedDocument {
         InlineEngineChoice {
             require_inline_fonts: false,
         },
+        None,
         None,
         None,
     )

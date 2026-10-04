@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::{StyleDom, StyleElement, StyleNode};
 
 /// A live reftest document after script execution: serialized HTML plus
 /// canvas bitmaps in tree order.
@@ -15,8 +16,42 @@ pub(super) struct PreparedDynamic {
     pub html: String,
     /// Canvas bitmaps in tree order, empty when the document has no canvas.
     pub canvases: Vec<raikiri_dom::CanvasBitmap>,
+    /// Animation-origin declarations that are not represented in serialized HTML.
+    pub animation_styles: Vec<AnimationStyleSidecar>,
     /// Script-created highlight ranges expressed against the serialized tree.
     pub custom_highlight_ranges: Vec<CustomHighlightPathRange>,
+}
+
+fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationStyleSidecar> {
+    let mut styles = Vec::new();
+    let mut stack = vec![(document.root_id(), Vec::new())];
+    while let Some((node_id, path)) = stack.pop() {
+        let animation_style = document.node(node_id).and_then(|node| {
+            node.as_element()
+                .and_then(|element| element.animation_style_source().map(str::to_owned))
+        });
+        if let Some(declarations) = animation_style {
+            styles.push(AnimationStyleSidecar {
+                node_path: path.clone(),
+                declarations,
+            });
+        }
+
+        let children = document
+            .child_ids(node_id)
+            .filter(|child_id| {
+                document
+                    .node(*child_id)
+                    .is_some_and(|child| child.as_element().is_some())
+            })
+            .collect::<Vec<_>>();
+        for (index, child_id) in children.into_iter().enumerate().rev() {
+            let mut child_path = path.clone();
+            child_path.push(index);
+            stack.push((child_id, child_path));
+        }
+    }
+    styles
 }
 
 fn node_path(document: &raikiri_dom::Document, node: usize) -> Option<Vec<usize>> {
@@ -173,6 +208,7 @@ pub(super) fn prepare(
         return Ok(PreparedDynamic {
             html: html.to_owned(),
             canvases: Vec::new(),
+            animation_styles: Vec::new(),
             custom_highlight_ranges: Vec::new(),
         });
     }
@@ -212,11 +248,13 @@ pub(super) fn prepare(
             .map_err(|error| ReftestError::RaikiriRender(error.to_string()))?;
         let mut host = runtime.into_host();
         let custom_highlight_ranges = custom_highlight_paths(host.document(), &highlights);
+        let animation_styles = animation_style_sidecars(host.document());
         let html = serialize(host.document(), &report)?;
         let canvases = host.document_mut().take_canvases_in_tree_order();
         Ok(PreparedDynamic {
             html,
             canvases,
+            animation_styles,
             custom_highlight_ranges,
         })
     }
@@ -238,11 +276,13 @@ pub(super) fn prepare(
         runtime
             .synchronize_final_document()
             .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
+        let animation_styles = animation_style_sidecars(runtime.document());
         let html = serialize(runtime.document(), &report)?;
         let canvases = runtime.take_canvases_in_tree_order();
         return Ok(PreparedDynamic {
             html,
             canvases,
+            animation_styles,
             custom_highlight_ranges: Vec::new(),
         });
     }

@@ -70,6 +70,9 @@ pub enum LogicalData {
         attributes: Vec<LogicalAttr>,
         /// Raw inline style.
         inline_style: Option<String>,
+        /// Sampled animation-origin declarations.
+        #[cfg_attr(feature = "snapshot-serde", serde(default))]
+        animation_style: Option<String>,
         /// Template fragment arena index.
         template: Option<usize>,
     },
@@ -214,6 +217,7 @@ impl Document {
                             namespace: e.namespace.as_ref().map(ToString::to_string),
                             prefix: e.prefix.as_ref().map(ToString::to_string),
                             inline_style: e.inline_style.as_ref().map(ToString::to_string),
+                            animation_style: e.animation_style.as_ref().map(ToString::to_string),
                             template: e.template_contents,
                             attributes: e
                                 .attributes
@@ -272,6 +276,7 @@ impl Document {
                         prefix,
                         attributes,
                         inline_style,
+                        animation_style,
                         template,
                     } => {
                         let mut node = Node::new_element(
@@ -282,6 +287,7 @@ impl Document {
                         let e = node.data.as_element_mut().expect("element constructor");
                         e.namespace = namespace.map(Into::into);
                         e.prefix = prefix.map(Into::into);
+                        e.animation_style = animation_style.map(Into::into);
                         e.template_contents = template;
                         e.attributes = attributes
                             .into_iter()

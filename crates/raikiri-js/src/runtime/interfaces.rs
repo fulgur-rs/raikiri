@@ -58,6 +58,7 @@ pub(crate) struct Protos {
     pub tree_walker: JsObject,
     pub highlight: JsObject,
     pub selection: JsObject,
+    pub animation: JsObject,
     pub css_style_declaration: JsObject,
     pub event: JsObject,
     pub custom_event: JsObject,
@@ -305,6 +306,7 @@ fn derived(
 
 /// Register every interface, then `window` / `self` / `document`.
 pub(crate) fn install(context: &mut Context) -> JsResult<()> {
+    use super::animation;
     use super::canvas;
     use super::dispatch;
     use super::node;
@@ -548,6 +550,17 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         0,
     );
     let selection = selection_result?;
+    let animation_members = [&animation::ANIMATION_MEMBERS];
+    let animation_result = interface(
+        context,
+        "Animation",
+        None,
+        None,
+        &animation_members,
+        illegal_constructor,
+        0,
+    );
+    let animation = animation_result?;
     let css_style_declaration_members = [&style::CSS_STYLE_DECLARATION_MEMBERS];
     let css_style_declaration_result = interface(
         context,
@@ -586,6 +599,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         tree_walker: tree_walker.prototype,
         highlight: highlight.prototype,
         selection: selection.prototype,
+        animation: animation.prototype,
         css_style_declaration: css_style_declaration.prototype,
         event: event.prototype,
         custom_event: custom_event.prototype,
