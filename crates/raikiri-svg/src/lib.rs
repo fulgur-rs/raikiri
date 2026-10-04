@@ -693,11 +693,11 @@ fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), 
         if let Some(id) = node.attribute("id") {
             budget.charge_work(id.len())?;
             if !id_map.contains_key(id) {
-                budget.charge_bytes(
-                    id.len()
-                        .checked_add(std::mem::size_of::<String>() * 2)
-                        .ok_or_else(initial_parse_selector_limit_error)?,
-                )?;
+                let id_storage_bytes = id
+                    .len()
+                    .checked_add(std::mem::size_of::<String>() * 2)
+                    .ok_or_else(initial_parse_selector_limit_error)?;
+                budget.charge_bytes(id_storage_bytes)?;
                 id_map.insert(id.to_owned(), node);
             }
         }

@@ -78,6 +78,11 @@ fn initial_stylesheet_estimator_skips_at_rules_and_unfinished_headers() {
             .position(|bytes| bytes == b"tail")
             .unwrap()
     );
+    let unclosed_block_rule = b"@media { nested {";
+    assert_eq!(
+        skip_simplecss_at_rule(unclosed_block_rule, 0),
+        unclosed_block_rule.len()
+    );
     assert_eq!(skip_simplecss_at_rule(b"@unfinished", 0), 11);
 }
 
@@ -85,6 +90,8 @@ fn initial_stylesheet_estimator_skips_at_rules_and_unfinished_headers() {
 fn initial_stylesheet_estimator_accounts_for_comments_strings_functions_and_blocks() {
     for stylesheet in [
         "rect /* comment */ { fill:red /* declaration comment */; color:rgb(1,2,3) }",
+        "rect /* { */ { fill:red }",
+        "rect:is(g) { fill:red }",
         "rect[data-label='text'] { content:'quoted'; color:rgb(1,2,3) }",
         "rect[data-label='}'] { fill:red }",
         "rect:is(g}) { fill:red }",
@@ -94,6 +101,7 @@ fn initial_stylesheet_estimator_accounts_for_comments_strings_functions_and_bloc
         "rect /* { unterminated",
         "rect /* unterminated",
         "rect { fill:red /* } */; color:blue }",
+        "rect { fill:red /* }",
         "rect { fill:red /* unterminated",
         "rect { content:'unterminated",
         "rect { fill:fn(unterminated",
