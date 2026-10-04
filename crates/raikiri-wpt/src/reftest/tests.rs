@@ -1547,6 +1547,7 @@ fn render_with_engine(html: &str) -> RenderedDocument {
         },
         None,
         None,
+        None,
     )
     .expect("render")
 }

@@ -73,3 +73,29 @@ fn prepare_runs_reference_side_scroll_without_wait() {
         prepared.html
     );
 }
+
+#[test]
+fn prepare_carries_sampled_animation_styles_outside_serialized_html() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("animated.html");
+    std::fs::write(&path, "").unwrap();
+    let html = "<!DOCTYPE html><html><head></head><body>\
+        <div id=target style='font-size:16px'>WORD WORD</div>\
+        <script>const target = document.querySelector('#target');\
+        const animation = target.animate({ fontSize: ['0px', '40px'] }, 40);\
+        animation.pause(); animation.currentTime = 20;</script>\
+        </body></html>";
+    let prepared = prepare(html, &path, "", crate::reftest::ReftestConfig::default())
+        .expect("animated document should prepare");
+
+    assert!(prepared.html.contains("font-size:16px"));
+    assert!(
+        !prepared.html.contains("font-size: 20px"),
+        "sampled declarations must not be serialized as authored style"
+    );
+    assert_eq!(prepared.animation_styles.len(), 1);
+    assert_eq!(
+        prepared.animation_styles[0].declarations,
+        "font-size: 20px;"
+    );
+}
