@@ -56,7 +56,8 @@ fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> 
 }
 
 /// The physical dimension used by percentage margins, padding, and borders
-/// depends on the containing block's writing mode.
+/// depends on the containing block's writing mode. Sideways values use the
+/// horizontal IFC fallback, so they retain the horizontal inline-size basis.
 fn ifc_parent_inline_size(
     tree: &Document,
     node: usize,
@@ -67,9 +68,7 @@ fn ifc_parent_inline_size(
         if let Some(mode) = tree.nodes[id].authored_writing_mode {
             return Some(match mode {
                 raikiri_style::property::WritingMode::VerticalRl
-                | raikiri_style::property::WritingMode::VerticalLr
-                | raikiri_style::property::WritingMode::SidewaysRl
-                | raikiri_style::property::WritingMode::SidewaysLr => {
+                | raikiri_style::property::WritingMode::VerticalLr => {
                     parent_size.height.unwrap_or(0.0)
                 }
                 _ => parent_size.width.unwrap_or(0.0),
@@ -504,6 +503,9 @@ impl Document {
         output
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.
