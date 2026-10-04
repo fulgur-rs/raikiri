@@ -1,13 +1,19 @@
 use super::{
-    InitialParseSelectorBudget, MAX_INITIAL_PARSE_XML_DEPTH, ParsedCssDeclaration,
+    INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR, InitialParseSelectorBudget,
+    MAX_INITIAL_PARSE_DECLARATION_STORAGE_BYTES, MAX_INITIAL_PARSE_XML_DEPTH, ParsedCssDeclaration,
     SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
     append_inline_declarations, apply_css_rewrite, apply_selector_edits,
     charge_initial_parse_node_count, estimate_initial_stylesheet_resources,
     freeze_svg_stylesheet_selectors, is_simplecss_name_start, normalize_svg_opacity_cascade,
     preflight_initial_svg_selectors, scope_stylesheet_properties, scoped_property_rule_len,
-    simplecss_comment_end, simplecss_function_end, simplecss_string_end, skip_simplecss_at_rule,
-    skip_simplecss_spaces_and_comments, strip_inline_style_properties, strip_stylesheet_properties,
-    unique_attribute_name, with_root_style_overrides, xml_attribute_escape_allocation_bytes,
+    simplecss_comment_end, simplecss_function_end, simplecss_recovery_declaration_tokens,
+    simplecss_recovery_delimiter_counts, simplecss_recovery_rule_body_end,
+    simplecss_recovery_rule_body_requires_raw_recovery,
+    simplecss_recovery_selector_header_requires_raw_recovery,
+    simplecss_recovery_selector_segment_is_valid, simplecss_recovery_string_end,
+    simplecss_string_end, skip_simplecss_at_rule, skip_simplecss_spaces_and_comments,
+    strip_inline_style_properties, strip_stylesheet_properties, unique_attribute_name,
+    with_root_style_overrides, xml_attribute_escape_allocation_bytes,
 };
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
@@ -109,6 +115,82 @@ fn initial_stylesheet_estimator_accounts_for_comments_strings_functions_and_bloc
         estimate_initial_stylesheet_resources(stylesheet)
             .unwrap_or_else(|error| panic!("estimation rejected {stylesheet:?}: {error}"));
     }
+}
+
+#[test]
+fn initial_stylesheet_recovery_suffix_keeps_selector_and_declaration_prefixes() {
+    let aliases = std::iter::repeat_n("g", 260).collect::<Vec<_>>().join(",");
+    let selector_suffix = format!(r#"{aliases},[id="}}"] {{ fill:red; }}"#);
+    let selector_estimate = estimate_initial_stylesheet_resources(&selector_suffix).unwrap();
+    assert!(selector_estimate.selector_count >= 261);
+    assert!(
+        selector_estimate.declaration_storage_bytes
+            >= 261
+                * std::mem::size_of::<simplecss::Declaration<'static>>()
+                * INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR
+    );
+
+    let declarations = format!("{}content:'}}'", "fill:red;".repeat(3_000));
+    let declaration_suffix = format!("{aliases} {{{declarations}}}");
+    let declaration_estimate = estimate_initial_stylesheet_resources(&declaration_suffix).unwrap();
+    assert!(
+        declaration_estimate.declaration_storage_bytes
+            > MAX_INITIAL_PARSE_DECLARATION_STORAGE_BYTES
+    );
+
+    let single_alias_declarations = format!("{}content:'}}'", "fill:red;".repeat(100));
+    let single_alias_suffix = format!("g {{{single_alias_declarations}}}");
+    let single_alias_estimate =
+        estimate_initial_stylesheet_resources(&single_alias_suffix).unwrap();
+    let prefix_storage = 2
+        * 101
+        * std::mem::size_of::<simplecss::Declaration<'static>>()
+        * INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR;
+    assert!(single_alias_estimate.declaration_storage_bytes >= prefix_storage);
+}
+
+#[test]
+fn simplecss_recovery_scanners_cover_fallback_tokens_and_malformed_inputs() {
+    let valid_suffix = b"\"}\"],g { fill:red; } @media screen { rect { fill:blue } }";
+    assert!(simplecss_recovery_delimiter_counts(valid_suffix, true).is_some());
+
+    assert!(simplecss_recovery_delimiter_counts(b"\"}\"]{fill:@;}", true).is_none());
+    assert!(simplecss_recovery_delimiter_counts(b"g { fill:fn(", true).is_none());
+    assert_eq!(
+        simplecss_recovery_selector_header_requires_raw_recovery(b"g", 0),
+        None
+    );
+    assert!(simplecss_recovery_selector_segment_is_valid(
+        "g:first-child"
+    ));
+    assert!(!simplecss_recovery_selector_segment_is_valid(
+        ":unsupported"
+    ));
+
+    assert_eq!(simplecss_recovery_rule_body_end(b"fill:{x};}", 0), Some(9));
+    assert_eq!(simplecss_recovery_rule_body_end(b"fill:red", 0), None);
+    assert_eq!(simplecss_recovery_string_end(b"'unfinished", 0), None);
+    assert_eq!(
+        simplecss_recovery_rule_body_requires_raw_recovery(b"fill:@;}", 0),
+        Some(true)
+    );
+    assert_eq!(
+        simplecss_recovery_rule_body_requires_raw_recovery(b"fill:red@ /* },g{fill:blue} */ }", 0),
+        Some(true)
+    );
+    assert_eq!(
+        simplecss_recovery_declaration_tokens("fill:red ! important /* note */ ;; color:blue;")
+            .unwrap(),
+        (2, true)
+    );
+    assert_eq!(
+        simplecss_recovery_declaration_tokens("fill:red !unknown;").unwrap(),
+        (0, false)
+    );
+    assert_eq!(
+        simplecss_recovery_declaration_tokens("/* unfinished").unwrap(),
+        (0, false)
+    );
 }
 
 #[test]

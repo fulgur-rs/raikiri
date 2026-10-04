@@ -160,6 +160,77 @@ fn initial_parse_rejects_selector_declaration_clone_amplification() {
 }
 
 #[test]
+fn initial_parse_rejects_alias_declaration_amplification_after_malformed_selector() {
+    let selectors = std::iter::repeat_n("g", 260).collect::<Vec<_>>().join(",");
+    let declarations = "fill:red;".repeat(3_000);
+    let source = format!(
+        "<svg xmlns=\"{SVG_NAMESPACE}\"><style>{selectors},[id!=\"}}\"] {{{declarations}}}</style><g/></svg>"
+    );
+
+    let error = match SvgDocument::parse(source.as_bytes()) {
+        Ok(_) => panic!("initial parsing must bound alias declaration expansion"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("selector matching resource limit")
+    );
+}
+
+#[test]
+fn initial_parse_accepts_quoted_braces_and_semicolons_in_css_values() {
+    let selectors = std::iter::repeat_n("g", 260).collect::<Vec<_>>().join(",");
+    let quoted_semicolons = ";".repeat(32_768);
+    let source = format!(
+        "<svg xmlns=\"{SVG_NAMESPACE}\"><style>{selectors},[id=\"}}\"] {{ content:'{quoted_semicolons}'; fill:red }}</style><g id=\"}}\"/></svg>"
+    );
+
+    assert!(SvgDocument::parse(source.as_bytes()).is_ok());
+}
+
+#[test]
+fn initial_parse_rejects_alias_amplification_after_malformed_selector_open_brace() {
+    let selectors = std::iter::repeat_n("g", 260).collect::<Vec<_>>().join(",");
+    let declarations = "fill:red;".repeat(3_000);
+    let stylesheet = format!("{selectors},[id!=\"{{{declarations}}}\"] {{fill:red}}");
+    let source = format!("<svg xmlns=\"{SVG_NAMESPACE}\"><style>{stylesheet}</style><g/></svg>");
+
+    let error = match SvgDocument::parse(source.as_bytes()) {
+        Ok(_) => panic!("malformed selector recovery must remain within the clone budget"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("selector matching resource limit")
+    );
+}
+
+#[test]
+fn initial_parse_shares_alias_declaration_budget_across_style_elements() {
+    let selectors = std::iter::repeat_n("g", 130).collect::<Vec<_>>().join(",");
+    let declarations = "fill:red;".repeat(1_700);
+    let stylesheet = format!("{selectors},[id=\"}}\"] {{{declarations}}}");
+    let source = format!(
+        "<svg xmlns=\"{SVG_NAMESPACE}\"><style>{stylesheet}</style><style>{stylesheet}</style><g/></svg>"
+    );
+
+    let error = match SvgDocument::parse(source.as_bytes()) {
+        Ok(_) => panic!("style elements must share the declaration expansion budget"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("selector matching resource limit")
+    );
+}
+
+#[test]
 fn initial_parse_bounds_simplecss_recovery_after_invalid_declarations() {
     let selectors = std::iter::repeat_n("g", 2_048)
         .collect::<Vec<_>>()
@@ -170,6 +241,25 @@ fn initial_parse_bounds_simplecss_recovery_after_invalid_declarations() {
 
     let error = match SvgDocument::parse(source.as_bytes()) {
         Ok(_) => panic!("initial parsing must bound CSS parser recovery work"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("selector matching resource limit")
+    );
+}
+
+#[test]
+fn initial_parse_rejects_alias_amplification_after_partial_declaration_recovery() {
+    let selectors = std::iter::repeat_n("g", 260).collect::<Vec<_>>().join(",");
+    let declarations = "fill:red;".repeat(3_000);
+    let stylesheet = format!("g {{ fill:red@ /* }},{selectors} {{{declarations}}} */ }}");
+    let source = format!("<svg xmlns=\"{SVG_NAMESPACE}\"><style>{stylesheet}</style><g/></svg>");
+
+    let error = match SvgDocument::parse(source.as_bytes()) {
+        Ok(_) => panic!("partial declaration recovery must stay within the clone budget"),
         Err(error) => error,
     };
 
