@@ -222,6 +222,18 @@ fn catch_row(id: &str, body: impl FnOnce() -> (Status, String)) -> Row {
 }
 
 fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
+    let config = ReftestConfig {
+        require_inline_fonts: true,
+        ..ReftestConfig::default()
+    };
+    reftest_status_with_config(wpt_root, id, config)
+}
+
+fn reftest_status_with_config(
+    wpt_root: &Path,
+    id: &str,
+    config: ReftestConfig,
+) -> (Status, String) {
     let (path, query) = id
         .split_once('?')
         .map_or((id, ""), |(path, query)| (path, query));
@@ -238,11 +250,6 @@ fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
     if pairs.is_empty() {
         return (Status::Error, "no reference pair".to_owned());
     }
-    // A baseline taken on the installed fonts would depend on the machine.
-    let config = ReftestConfig {
-        require_inline_fonts: true,
-        ..ReftestConfig::default()
-    };
     let results = pairs
         .iter()
         .map(|pair| {

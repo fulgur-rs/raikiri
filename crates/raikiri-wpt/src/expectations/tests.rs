@@ -65,6 +65,58 @@ fn expected_failure_rejects_non_exact_ids_and_invalid_review_metadata() {
 }
 
 #[test]
+fn expected_failure_parser_rejects_bad_shapes_and_preserves_review_date_errors() {
+    let invalid_rows = [
+        "css/foo.html | reason | raikiri-spike-1 | 2026-10-04 | 2026-11-04 ",
+        "css/foo.html\treason | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
+        "css/foo.html | reason | raikiri-spike-1 | 2026-10-04",
+        "css/foo.html |  | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
+        "css/foo.html | reason | raikiri-spike-1 | 2026-10-04 | not-a-date",
+        "css/foo.html?x?y | reason | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
+    ];
+
+    for row in invalid_rows {
+        let (expected, errors) = ExpectedFailures::parse(row, "expected-failures.txt");
+        assert!(expected.is_empty(), "accepted invalid row: {row:?}");
+        assert_eq!(errors.len(), 1, "row: {row:?}");
+        assert!(
+            matches!(errors[0], ExpectError::MalformedLine { .. }),
+            "row: {row:?}, error: {:?}",
+            errors[0]
+        );
+    }
+}
+
+#[test]
+fn expectation_set_rejects_a_malformed_expected_failure_file() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in [
+        "tracked-wpt.txt",
+        "known-issues.txt",
+        "raikiri-baseline.txt",
+        "quarantine.txt",
+        "deprecated.txt",
+    ] {
+        std::fs::write(dir.path().join(name), "# header\n").unwrap();
+    }
+    std::fs::write(
+        dir.path().join("expected-failures.txt"),
+        "css/foo.html | missing issue id | upstream-1 | 2026-10-04 | 2026-11-04\n",
+    )
+    .unwrap();
+
+    let error = match ExpectationSet::load_from(dir.path()) {
+        Err(error) => error,
+        Ok(_) => panic!("malformed expected-failure rows must reject the expectation set"),
+    };
+
+    assert!(
+        matches!(error, ExpectError::MalformedLine { .. }),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn tracked_parses_test_ids_and_skips_comments() {
     let content = "# comment\n\
                        css/css-page/page-margin-boxes-001\n\

@@ -110,6 +110,50 @@ fn classify_known_issue_pattern_returns_skip() {
 }
 
 #[test]
+fn exact_expected_failure_overrides_only_a_matching_known_issue_prefix() {
+    let id = "css/example/test.html?mode=ja";
+    let mut set = empty_set();
+    set.known_issues
+        .entries
+        .push(("css/example/".to_owned(), "non-goal".to_owned()));
+    set.expected_failures.entries.push(ExpectedFailure {
+        test_id: id.to_owned(),
+        reason: "Japanese variant differs".to_owned(),
+        issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        added_date: time::macros::date!(2026 - 10 - 04),
+        review_by: time::macros::date!(2026 - 11 - 04),
+        line_no: 1,
+    });
+    let runner = WptRunner::new(set);
+
+    assert!(runner.classify(id).is_none());
+    assert!(matches!(
+        runner.classify("css/example/test.html"),
+        Some(TestOutcome::Skip(_))
+    ));
+}
+
+#[test]
+fn run_test_requires_a_discovered_pair_for_an_expected_failure() {
+    let id = "css/example/test.html?mode=ja";
+    let mut set = empty_set();
+    set.expected_failures.entries.push(ExpectedFailure {
+        test_id: id.to_owned(),
+        reason: "Japanese variant differs".to_owned(),
+        issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        added_date: time::macros::date!(2026 - 10 - 04),
+        review_by: time::macros::date!(2026 - 11 - 04),
+        line_no: 1,
+    });
+    let execution = WptRunner::new(set).run_test(id);
+
+    assert!(
+        matches!(execution.outcome, TestOutcome::Error(_)),
+        "a filtered skip would hide that the expected failure was not executed"
+    );
+}
+
+#[test]
 fn run_test_unfiltered_returns_no_pair_skip() {
     let runner = WptRunner::new(empty_set());
     let exec = runner.run_test("css/bar.html");
@@ -177,5 +221,42 @@ fn exact_query_expected_failure_reclassifies_render_results_but_not_errors() {
         matches!(errored.outcome, TestOutcome::Error(_)),
         "a render error must not become XFAIL/XPASS: {:?}",
         errored.outcome
+    );
+}
+
+#[test]
+fn discovery_uses_root_relative_ids_for_expected_failure_matching() {
+    let directory = tempfile::tempdir().unwrap();
+    let test_dir = directory.path().join("css/example");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(
+        test_dir.join("test.html"),
+        "<!DOCTYPE html><html><head><link rel='match' href='reference.html'></head><body style='margin:0;background:red'></body></html>",
+    )
+    .unwrap();
+    std::fs::write(
+        test_dir.join("reference.html"),
+        "<!DOCTYPE html><html><body style='margin:0;background:green'></body></html>",
+    )
+    .unwrap();
+
+    let mut set = empty_set();
+    set.expected_failures.entries.push(ExpectedFailure {
+        test_id: "css/example/test.html".to_owned(),
+        reason: "background color differs".to_owned(),
+        issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        added_date: time::macros::date!(2026 - 10 - 04),
+        review_by: time::macros::date!(2026 - 11 - 04),
+        line_no: 1,
+    });
+
+    let results = WptRunner::new(set).run_all_under(directory.path(), ReftestConfig::default());
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].0.pair_test_id, "css/example/test.html");
+    assert!(
+        matches!(results[0].0.outcome, TestOutcome::XFail { .. }),
+        "discovery should classify using root-relative test ids: {:?}",
+        results[0].0.outcome
     );
 }

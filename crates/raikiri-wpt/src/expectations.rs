@@ -275,9 +275,11 @@ impl ExpectedFailures {
                 });
                 continue;
             }
-            let [test_id, reason, issue_id, added, review_by] = columns.as_slice() else {
-                unreachable!("column count was checked above")
-            };
+            let test_id = columns[0];
+            let reason = columns[1];
+            let issue_id = columns[2];
+            let added = columns[3];
+            let review_by = columns[4];
             if !is_exact_test_id(test_id) {
                 errors.push(ExpectError::MalformedLine {
                     file: file_name.to_owned(),
@@ -336,9 +338,9 @@ impl ExpectedFailures {
                 continue;
             }
             entries.push(ExpectedFailure {
-                test_id: (*test_id).to_owned(),
-                reason: (*reason).to_owned(),
-                issue_id: (*issue_id).to_owned(),
+                test_id: test_id.to_owned(),
+                reason: reason.to_owned(),
+                issue_id: issue_id.to_owned(),
                 added_date,
                 review_by: review_date,
                 line_no,

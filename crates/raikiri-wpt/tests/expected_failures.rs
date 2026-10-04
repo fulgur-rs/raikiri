@@ -19,6 +19,22 @@ fn expectations_dir() -> TempDir {
     dir
 }
 
+#[test]
+fn lint_reports_missing_expectation_files_instead_of_ignoring_them() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let report = run(dir.path(), time::macros::date!(2026 - 10 - 04));
+
+    assert!(report.has_failures());
+    assert!(
+        report.issues.iter().any(|issue| {
+            issue.category == Category::Malformed && issue.file.ends_with("expected-failures.txt")
+        }),
+        "missing expected-failures.txt must be reported: {:?}",
+        report.issues
+    );
+}
+
 fn write(dir: &Path, file: &str, body: &str) {
     std::fs::write(dir.join(file), body).unwrap();
 }
@@ -100,6 +116,11 @@ fn expected_failure_duplicate_is_reported_and_review_expiry_is_warning_only() {
     let row = "css/example/test.html | text differs | raikiri-spike-6qrnr.15.15 | 2026-08-01 | 2026-09-01\n";
     write(
         dir.as_ref(),
+        "quarantine.txt",
+        "css/other/test.html | linux | x86_64 | vello_cpu | low | flaky | local | 2026-01-01\n",
+    );
+    write(
+        dir.as_ref(),
         "expected-failures.txt",
         &format!("{row}{row}"),
     );
@@ -122,6 +143,7 @@ fn expected_failure_duplicate_is_reported_and_review_expiry_is_warning_only() {
     assert!(report.has_failures(), "duplicate is a lint error");
 
     write(dir.as_ref(), "expected-failures.txt", row);
+    write(dir.as_ref(), "quarantine.txt", "# header\n");
     let expired_only = run(dir.path(), time::macros::date!(2026 - 10 - 04));
     assert!(!expired_only.has_failures(), "expiry alone is a warning");
     assert!(

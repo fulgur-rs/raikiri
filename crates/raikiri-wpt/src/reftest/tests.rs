@@ -262,6 +262,18 @@ fn run_pair_reports_html_read_errors() {
 }
 
 #[test]
+fn run_pair_with_images_and_variant_reports_html_read_errors() {
+    let pair = ReftestPair {
+        test: PathBuf::from("/definitely/missing/reftest.html"),
+        reference: PathBuf::from("/definitely/missing/reference.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let result = run_pair_with_images_and_variant(&pair, ReftestConfig::default(), "?mode=ja");
+    assert!(matches!(result, Err(ReftestError::Io { .. })));
+}
+
+#[test]
 fn image_resolution_reparses_geometry_varying_pages() {
     let temp = tempfile::tempdir().unwrap();
     let support = temp.path().join("support");
