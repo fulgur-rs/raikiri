@@ -2530,7 +2530,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raikiri"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -2559,7 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-dom"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitflags",
  "criterion",
@@ -2580,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-html"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -2602,7 +2602,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-js"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-net"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "data-url",
  "flate2",
@@ -2660,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-paint"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -2680,7 +2680,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-style"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "cssparser",
@@ -2704,7 +2704,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-traits"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "libc",
