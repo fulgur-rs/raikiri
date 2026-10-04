@@ -591,13 +591,22 @@ pub fn discover_pairs_for_file_with_wpt_root(
         };
         // Normalize (remove ./ components)
         let reference = normalize_path(&reference);
-        if !reference.exists() {
-            return Err(ReftestError::MissingReference {
-                test_path: test_path.to_path_buf(),
-                reference: reference.clone(),
-            });
-        }
         if let Some(root) = wpt_root {
+            let canonical_reference = match std::fs::canonicalize(&reference) {
+                Ok(path) => path,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(ReftestError::MissingReference {
+                        test_path: test_path.to_path_buf(),
+                        reference,
+                    });
+                }
+                Err(source) => {
+                    return Err(ReftestError::Io {
+                        path: reference,
+                        source,
+                    });
+                }
+            };
             if canonical_wpt_root.is_none() {
                 canonical_wpt_root =
                     Some(
@@ -607,11 +616,6 @@ pub fn discover_pairs_for_file_with_wpt_root(
                         })?,
                     );
             }
-            let canonical_reference =
-                std::fs::canonicalize(&reference).map_err(|source| ReftestError::Io {
-                    path: reference.clone(),
-                    source,
-                })?;
             let canonical_root = canonical_wpt_root
                 .as_ref()
                 .expect("canonical root is set when a WPT root is supplied");
@@ -622,6 +626,11 @@ pub fn discover_pairs_for_file_with_wpt_root(
                     wpt_root: root.to_path_buf(),
                 });
             }
+        } else if !reference.exists() {
+            return Err(ReftestError::MissingReference {
+                test_path: test_path.to_path_buf(),
+                reference,
+            });
         }
         pairs.push(ReftestPair {
             test: test_path.to_path_buf(),

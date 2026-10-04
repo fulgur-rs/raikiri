@@ -482,11 +482,55 @@ fn root_aware_discovery_rejects_parent_traversal_outside_the_wpt_root() {
     .unwrap();
 
     let result = discover_pairs_for_file_with_wpt_root(&test_dir.join("test.html"), Some(&root));
+    let error = result.expect_err("out-of-root reference was accepted");
 
     assert!(
-        matches!(result, Err(ReftestError::ReferenceOutsideWptRoot { .. })),
-        "expected an out-of-root error, got {result:?}"
+        matches!(&error, ReftestError::ReferenceOutsideWptRoot { .. }),
+        "expected an out-of-root error, got {error:?}"
     );
+    assert!(error.to_string().contains("outside WPT root"));
+}
+
+#[test]
+fn root_aware_discovery_keeps_missing_references_as_missing_reference_errors() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let test_dir = root.join("css/tests");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    let test_path = test_dir.join("test.html");
+    std::fs::write(&test_path, r#"<link rel="match" href="missing.html">"#).unwrap();
+
+    let error = discover_pairs_for_file_with_wpt_root(&test_path, Some(&root))
+        .expect_err("missing reference was accepted");
+
+    assert!(matches!(error, ReftestError::MissingReference { .. }));
+}
+
+#[test]
+fn root_aware_discovery_reports_a_wpt_root_canonicalization_error() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let test_dir = root.join("css/tests");
+    let reference = root.join("css/reference/ref.html");
+    let missing_root = temp.path().join("missing-wpt-root");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::create_dir_all(reference.parent().unwrap()).unwrap();
+    std::fs::write(&reference, "reference").unwrap();
+    let test_path = test_dir.join("test.html");
+    std::fs::write(
+        &test_path,
+        r#"<link rel="match" href="../reference/ref.html">"#,
+    )
+    .unwrap();
+
+    let error = discover_pairs_for_file_with_wpt_root(&test_path, Some(&missing_root))
+        .expect_err("missing WPT root was accepted");
+
+    assert!(matches!(
+        error,
+        ReftestError::Io { path, source }
+            if path == missing_root && source.kind() == std::io::ErrorKind::NotFound
+    ));
 }
 
 #[cfg(unix)]
@@ -513,6 +557,28 @@ fn root_aware_discovery_rejects_symlinks_outside_the_wpt_root() {
         matches!(result, Err(ReftestError::ReferenceOutsideWptRoot { .. })),
         "expected an out-of-root error, got {result:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn root_aware_discovery_reports_canonicalization_errors_for_symlink_loops() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let test_dir = root.join("css/tests");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    symlink("loop-b.html", test_dir.join("loop-a.html")).unwrap();
+    symlink("loop-a.html", test_dir.join("loop-b.html")).unwrap();
+    let test_path = test_dir.join("test.html");
+    std::fs::write(&test_path, r#"<link rel="match" href="loop-a.html">"#).unwrap();
+
+    let error = discover_pairs_for_file_with_wpt_root(&test_path, Some(&root))
+        .expect_err("symlink loop reference was accepted");
+    let message = error.to_string();
+
+    assert!(matches!(error, ReftestError::Io { .. }));
+    assert!(message.contains("I/O error at"));
 }
 
 #[test]
