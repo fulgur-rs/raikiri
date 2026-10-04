@@ -98,6 +98,9 @@ const DIFFERENTIAL_CSS: &str = "
     div p::before { color: red }
     .missing p::after { content: 'y' }
     svg foreignObject { color: red }
+    .a .b .c .d .e p { color: red }
+    .a .b.c.d.e.f .g p { color: red }
+    .a .b .c .d .e .z p { color: red }
     svg foreignobject { color: red }
 ";
 
@@ -116,6 +119,12 @@ fn differential_doc(quirks_mode: StyleQuirksMode) -> TestDoc {
     let deeper = doc.push_element_with_attrs(deep, "div", None, &[("class", "missing")]);
     doc.push_element(deeper, "p", None);
     doc.push_element(deeper, "span", None);
+    // A chain with more ancestor requirements than the index keeps.
+    let mut chain = article;
+    for class in ["a", "b", "c", "d", "e", "b c d e f", "g"] {
+        chain = doc.push_element_with_attrs(chain, "div", None, &[("class", class)]);
+    }
+    doc.push_element(chain, "p", None);
     let svg = doc.push_element_with_namespace(article, "svg", "http://www.w3.org/2000/svg", &[]);
     doc.push_element_with_namespace(svg, "foreignObject", "http://www.w3.org/2000/svg", &[]);
     doc
@@ -135,13 +144,16 @@ fn candidates_are_a_superset_of_real_matches_in_every_quirks_mode() {
         let doc = differential_doc(quirks);
         let mut total_candidates = 0;
         let mut total_pairs = 0;
+        let mut total_matches = 0;
         let mut candidates = Vec::new();
         walk(&doc, |id, path, filter| {
             let node = doc.node(id).expect("node");
             let elem = node.as_element().expect("element");
             index.candidate_rules(&elem, filter, &mut candidates);
             assert!(candidates.windows(2).all(|w| w[0] < w[1]));
-            for matched in brute_force_matches(&doc, &rules, id, path) {
+            let matches = brute_force_matches(&doc, &rules, id, path);
+            total_matches += matches.len();
+            for matched in matches {
                 assert!(
                     candidates.contains(&matched),
                     "{quirks:?}: rule {matched} matches node {id:?} but was filtered out"
@@ -150,6 +162,10 @@ fn candidates_are_a_superset_of_real_matches_in_every_quirks_mode() {
             total_candidates += candidates.len();
             total_pairs += rules.len();
         });
+        assert!(
+            total_matches > 0,
+            "{quirks:?}: the workload matched nothing"
+        );
         assert!(
             total_candidates < total_pairs,
             "{quirks:?}: the index tried {total_candidates} of {total_pairs} pairs"
