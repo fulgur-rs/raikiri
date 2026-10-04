@@ -242,7 +242,9 @@ fn unsupported_animation_inputs_throw_type_error() {
                () => target.animate({ fontSize: ['0px', '40px'] }, { duration: 40 }),\
                () => target.animate({ fontSize: ['0px', '40px'] }, -1),\
                () => target.animate({ fontSize: ['0px', '40px'] }, NaN),\
-               () => target.animate({ fontSize: ['0px', '40px'] }, Infinity)\
+               () => target.animate({ fontSize: ['0px', '40px'] }, Infinity),\
+               () => target.animate({ fontSize: ['0 px', '40px'] }, 40),\
+               () => target.animate({ fontSize: ['0px', '1.px'] }, 40)\
              ].every(run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } })",
         )
         .expect("invalid animation inputs are caught as TypeErrors");

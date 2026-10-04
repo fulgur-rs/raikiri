@@ -118,20 +118,70 @@ fn parse_pixel_value(value: &JsValue) -> JsResult<f64> {
         return Err(type_error("animation keyframes must be pixel strings"));
     };
     let value = value.to_std_string_escaped();
-    let Some(number) = value
-        .trim()
-        .strip_suffix("px")
-        .or_else(|| value.trim().strip_suffix("PX"))
-    else {
+    let value = value.trim();
+    let Some(unit_start) = value.len().checked_sub(2) else {
         return Err(type_error("animation keyframes must use px units"));
     };
+    if !value.as_bytes()[unit_start..].eq_ignore_ascii_case(b"px") {
+        return Err(type_error("animation keyframes must use px units"));
+    }
+    let Some(number) = value
+        .get(..unit_start)
+        .filter(|number| is_css_number_syntax(number))
+    else {
+        return Err(type_error(
+            "animation keyframe values must be finite numbers",
+        ));
+    };
     let number = number
-        .trim()
         .parse::<f64>()
         .ok()
         .filter(|number| number.is_finite())
         .ok_or_else(|| type_error("animation keyframe values must be finite numbers"))?;
     Ok(number)
+}
+
+fn is_css_number_syntax(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let integer_start = index;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    let has_integer = index > integer_start;
+
+    let has_fraction = if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == fraction_start {
+            return false;
+        }
+        true
+    } else {
+        false
+    };
+    if !has_integer && !has_fraction {
+        return false;
+    }
+
+    if matches!(bytes.get(index), Some(b'e' | b'E')) {
+        index += 1;
+        if matches!(bytes.get(index), Some(b'+' | b'-')) {
+            index += 1;
+        }
+        let exponent_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == exponent_start {
+            return false;
+        }
+    }
+
+    index == bytes.len()
 }
 
 fn parse_keyframes(

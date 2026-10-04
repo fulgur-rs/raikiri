@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 
 #[test]
 fn waiting_returns_false_without_html_element() {
@@ -98,4 +99,37 @@ fn prepare_carries_sampled_animation_styles_outside_serialized_html() {
         prepared.animation_styles[0].declarations,
         "font-size: 20px;"
     );
+}
+
+#[test]
+fn animation_style_sidecar_survives_adjacent_text_node_serialization() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("animated.html");
+    std::fs::write(&path, "").unwrap();
+    let html = "<!DOCTYPE html><html><head></head><body><div id=target style='font-size:16px'>WORD</div><script>const target = document.querySelector('#target'); target.parentNode.insertBefore(document.createTextNode('a'), target); target.parentNode.insertBefore(document.createTextNode('b'), target); const animation = target.animate({ fontSize: ['0px', '40px'] }, 40); animation.pause(); animation.currentTime = 20;</script></body></html>";
+    let prepared = prepare(html, &path, "", crate::reftest::ReftestConfig::default())
+        .expect("animated document should prepare");
+
+    let parsed = raikiri_html::parse(
+        prepared.html.as_bytes(),
+        &raikiri::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let mut document = parsed.dom;
+    super::super::restore_animation_styles(&mut document, &prepared.animation_styles).unwrap();
+    let target = (0..document.node_count())
+        .find(|id| document.element_attribute(*id, "id") == Some("target"))
+        .expect("target element should survive serialization");
+    let animation_style = document
+        .node(StyleNodeId::new(target as u64))
+        .and_then(|node| {
+            node.as_element()
+                .and_then(|element| element.animation_style_source().map(str::to_owned))
+        });
+
+    assert_eq!(animation_style.as_deref(), Some("font-size: 20px;"));
 }

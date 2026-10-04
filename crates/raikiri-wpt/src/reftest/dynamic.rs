@@ -37,7 +37,14 @@ fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationSt
             });
         }
 
-        let children = document.child_ids(node_id).collect::<Vec<_>>();
+        let children = document
+            .child_ids(node_id)
+            .filter(|child_id| {
+                document
+                    .node(*child_id)
+                    .is_some_and(|child| child.as_element().is_some())
+            })
+            .collect::<Vec<_>>();
         for (index, child_id) in children.into_iter().enumerate().rev() {
             let mut child_path = path.clone();
             child_path.push(index);

@@ -102,6 +102,7 @@ pub(crate) struct CustomHighlightPathRange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AnimationStyleSidecar {
+    /// Indices among element children at each level, stable when text nodes merge.
     pub(crate) node_path: Vec<usize>,
     pub(crate) declarations: String,
 }
@@ -1978,7 +1979,16 @@ fn restore_animation_styles(
         for child_index in &style.node_path {
             target = document
                 .get_node(target)
-                .and_then(|node| node.children.get(*child_index))
+                .and_then(|node| {
+                    node.children
+                        .iter()
+                        .filter(|child| {
+                            document
+                                .get_node(**child)
+                                .is_some_and(|child| child.tag_name().is_some())
+                        })
+                        .nth(*child_index)
+                })
                 .copied()
                 .ok_or_else(|| {
                     std::io::Error::new(

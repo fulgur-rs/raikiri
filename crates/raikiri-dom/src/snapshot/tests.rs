@@ -34,6 +34,26 @@ fn roundtrip_all_logical_kinds() {
 }
 
 #[test]
+fn roundtrip_preserves_animation_style() {
+    let mut document = Document::new();
+    let element = document.append_element(
+        Some(document.root_index()),
+        "div",
+        Default::default(),
+        None::<&str>,
+    );
+    document.set_element_animation_style(element, Some("font-size: 20px;".into()));
+
+    let restored = Document::from_logical_snapshot(document.logical_snapshot(), 100).unwrap();
+    let animation_style = match &restored.nodes[element].data {
+        NodeData::Element(element) => element.animation_style.as_deref(),
+        _ => panic!("snapshot changed the element node kind"),
+    };
+
+    assert_eq!(animation_style, Some("font-size: 20px;"));
+}
+
+#[test]
 #[cfg(feature = "snapshot-serde")]
 fn roundtrip_detached_template_namespaced_attributes() {
     let before = rich_document().logical_snapshot();
@@ -45,6 +65,30 @@ fn roundtrip_detached_template_namespaced_attributes() {
             .logical_snapshot(),
         before
     );
+}
+
+#[test]
+#[cfg(feature = "snapshot-serde")]
+fn older_serde_snapshot_without_animation_style_defaults_to_none() {
+    let mut document = Document::new();
+    document.append_element(
+        Some(document.root_index()),
+        "div",
+        Default::default(),
+        None::<&str>,
+    );
+    let mut wire = serde_json::to_value(document.logical_snapshot()).unwrap();
+    let element = wire["nodes"][1]["data"]["Element"].as_object_mut().unwrap();
+    assert!(element.remove("animation_style").is_some());
+
+    let decoded: LogicalSnapshot = serde_json::from_value(wire).unwrap();
+    let restored = Document::from_logical_snapshot(decoded, 100).unwrap();
+    let animation_style = match &restored.nodes[1].data {
+        NodeData::Element(element) => element.animation_style.as_deref(),
+        _ => panic!("snapshot changed the element node kind"),
+    };
+
+    assert_eq!(animation_style, None);
 }
 
 #[test]
@@ -111,6 +155,7 @@ fn element_node(tag: &str, template: Option<usize>) -> LogicalNode {
             prefix: None,
             attributes: Vec::new(),
             inline_style: None,
+            animation_style: None,
             template,
         },
         children: Vec::new(),
@@ -245,6 +290,7 @@ fn reject_template_link_variants() {
                     prefix: None,
                     attributes: Vec::new(),
                     inline_style: None,
+                    animation_style: None,
                     template: Some(2),
                 },
                 children: Vec::new(),
@@ -266,6 +312,7 @@ fn reject_template_link_variants() {
         prefix: None,
         attributes: Vec::new(),
         inline_style: None,
+        animation_style: None,
         template: Some(2),
     };
     assert!(bad_tag.validate(100).is_err());
