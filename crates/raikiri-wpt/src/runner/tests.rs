@@ -1,7 +1,8 @@
 use super::*;
 use crate::expectations::{
-    Baseline, Deprecated, ExpectedFailures, KnownIssues, Quarantine, TrackedWpt,
+    Baseline, Deprecated, ExpectedFailure, ExpectedFailures, KnownIssues, Quarantine, TrackedWpt,
 };
+use crate::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root};
 
 fn empty_set() -> ExpectationSet {
     ExpectationSet {
@@ -120,4 +121,61 @@ fn run_test_unfiltered_returns_no_pair_skip() {
 fn expectations_accessor_returns_loaded_set() {
     let runner = WptRunner::new(empty_set());
     assert!(runner.expectations().deprecated.entries.is_empty());
+}
+
+#[test]
+fn exact_query_expected_failure_reclassifies_render_results_but_not_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let test = directory.path().join("test.html");
+    let reference = directory.path().join("reference.html");
+    let id = "css/example/test.html?mode=red";
+    let html = "<!DOCTYPE html><html><head><link rel='match' href='reference.html'></head><body style='margin:0'><script>document.body.style.background = location.search === '?mode=red' ? 'red' : 'green';</script></body></html>";
+    let green = "<!DOCTYPE html><html><body style='margin:0;background:green'></body></html>";
+    std::fs::write(&test, html).unwrap();
+    std::fs::write(&reference, green).unwrap();
+
+    let mut pairs = discover_pairs_for_file_with_wpt_root(&test, Some(directory.path()))
+        .unwrap()
+        .into_iter();
+    let pair = pairs.next().expect("match relation should produce a pair");
+    assert!(pairs.next().is_none());
+    let mut set = empty_set();
+    set.expected_failures.entries.push(ExpectedFailure {
+        test_id: id.to_owned(),
+        reason: "query variant paints the wrong color".to_owned(),
+        issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        added_date: time::macros::date!(2026 - 10 - 04),
+        review_by: time::macros::date!(2026 - 11 - 04),
+        line_no: 1,
+    });
+    let runner = WptRunner::new(set);
+    let config = ReftestConfig {
+        width: 8,
+        height: 8,
+        tolerance: Tolerance::EXACT,
+        ..ReftestConfig::default()
+    };
+
+    let failed = runner.run_reftest_pair_for_test_id(id, &pair, config, "?mode=red");
+    assert!(
+        matches!(failed.outcome, TestOutcome::XFail { .. }),
+        "expected the pixel mismatch to be XFAIL, got {:?}",
+        failed.outcome
+    );
+
+    std::fs::write(&test, green).unwrap();
+    let passed = runner.run_reftest_pair_for_test_id(id, &pair, config, "?mode=red");
+    assert!(
+        matches!(passed.outcome, TestOutcome::XPass { .. }),
+        "a fixed test must become XPASS, got {:?}",
+        passed.outcome
+    );
+
+    std::fs::remove_file(&test).unwrap();
+    let errored = runner.run_reftest_pair_for_test_id(id, &pair, config, "?mode=red");
+    assert!(
+        matches!(errored.outcome, TestOutcome::Error(_)),
+        "a render error must not become XFAIL/XPASS: {:?}",
+        errored.outcome
+    );
 }

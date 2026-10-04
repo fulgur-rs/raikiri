@@ -896,6 +896,25 @@ fn variant_suffix_preserves_reference_query_and_fragment() {
 }
 
 #[test]
+fn batch_render_io_failure_is_an_error_not_a_test_mismatch() {
+    let pair = ReftestPair {
+        test: PathBuf::from("missing-test.html"),
+        reference: PathBuf::from("missing-reference.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+
+    let results = run_all_pairs(&[pair], ReftestConfig::default());
+
+    assert_eq!(results.len(), 1);
+    assert!(
+        matches!(results[0].outcome, TestOutcome::Error(_)),
+        "missing fixture should be reported as an execution error: {:?}",
+        results[0].outcome
+    );
+}
+
+#[test]
 fn fuzzy_metadata_keys_errors_and_rgb_only_comparison() {
     let pair = ReftestPair {
         test: PathBuf::from("/virtual/test.html"),

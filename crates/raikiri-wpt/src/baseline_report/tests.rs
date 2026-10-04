@@ -34,7 +34,14 @@ fn only_css_parsing_pages_use_the_testharness_runner() {
 
 #[test]
 fn status_names_round_trip() {
-    for status in [Status::Pass, Status::Fail, Status::Error, Status::Skip] {
+    for status in [
+        Status::Pass,
+        Status::Fail,
+        Status::XFail,
+        Status::XPass,
+        Status::Error,
+        Status::Skip,
+    ] {
         assert_eq!(Status::parse(status.as_str()), Some(status));
     }
     assert_eq!(Status::parse("MAYBE"), None);
@@ -202,11 +209,52 @@ fn report_args_parse_flags_and_repeatable_only() {
 }
 
 #[test]
+fn expected_failure_classification_only_accepts_assertion_and_pixel_failures() {
+    let expected = ExpectedFailure {
+        test_id: "css/foo.html?variant=ja".to_owned(),
+        reason: "Japanese glyph spacing differs".to_owned(),
+        issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        added_date: time::macros::date!(2026 - 10 - 04),
+        review_by: time::macros::date!(2026 - 11 - 04),
+        line_no: 2,
+    };
+
+    let (status, detail) =
+        classify_expected_failure(Status::Fail, "pixel mismatch".to_owned(), &expected);
+    assert_eq!(status, Status::XFail);
+    assert!(detail.contains("pixel mismatch"));
+    assert!(detail.contains(&expected.reason));
+    assert!(detail.contains(&expected.issue_id));
+
+    let (status, detail) = classify_expected_failure(Status::Pass, String::new(), &expected);
+    assert_eq!(status, Status::XPass);
+    assert!(detail.contains("unexpected pass"));
+    assert!(detail.contains(&expected.issue_id));
+
+    for status in [Status::Error, Status::Skip, Status::XFail, Status::XPass] {
+        let (actual, detail) =
+            classify_expected_failure(status, "must remain visible".to_owned(), &expected);
+        assert_eq!(actual, status);
+        assert_eq!(detail, "must remain visible");
+    }
+}
+
+#[test]
 fn report_args_reject_bad_input() {
     assert!(parse_report_args(&strings(&["--nope"])).is_err());
     assert!(parse_report_args(&strings(&["--jobs"])).is_err());
     assert!(parse_report_args(&strings(&["--jobs", "0"])).is_err());
     assert!(parse_report_args(&strings(&["--limit", "many"])).is_err());
+}
+
+#[test]
+fn report_args_enable_strict_mode_without_changing_the_default() {
+    assert!(!parse_report_args(&[]).expect("default args").strict);
+    assert!(
+        parse_report_args(&strings(&["--strict"]))
+            .expect("strict flag")
+            .strict
+    );
 }
 
 #[test]

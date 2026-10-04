@@ -17,6 +17,51 @@ fn empty_content_yields_empty_sets() {
     let (q, q_errs) = Quarantine::parse("# 8-col format follows\n", "quarantine.txt");
     assert!(q_errs.is_empty());
     assert!(q.is_empty());
+    let (expected, expected_errs) = ExpectedFailures::parse("# header\n", "expected-failures.txt");
+    assert!(expected_errs.is_empty());
+    assert!(expected.is_empty());
+}
+
+#[test]
+fn expected_failure_parses_exact_query_ids_and_lookup_does_not_normalize() {
+    let (expected, errors) = ExpectedFailures::parse(
+        "css/css-text/spacing.html?lang=ja | Japanese spacing differs | raikiri-spike-6qrnr.15.15 | 2026-10-04 | 2026-11-04\n",
+        "expected-failures.txt",
+    );
+
+    assert!(errors.is_empty(), "unexpected parser errors: {errors:?}");
+    assert_eq!(expected.entries.len(), 1);
+    let entry = expected
+        .get("css/css-text/spacing.html?lang=ja")
+        .expect("exact variant is present");
+    assert_eq!(entry.reason, "Japanese spacing differs");
+    assert_eq!(entry.issue_id, "raikiri-spike-6qrnr.15.15");
+    assert!(expected.get("css/css-text/spacing.html").is_none());
+    assert!(expected.get("css/css-text/spacing.html?lang=JA").is_none());
+}
+
+#[test]
+fn expected_failure_rejects_non_exact_ids_and_invalid_review_metadata() {
+    let invalid_rows = [
+        "css/foo/* | wildcard | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
+        "../foo.html | traversal | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
+        "css/foo.html? | empty query | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
+        "css/foo.html#fragment | fragment | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
+        "css/foo.html | no local issue | fulgur-1 | 2026-10-04 | 2026-11-04",
+        "css/foo.html | bad date | raikiri-spike-1 | 2026-02-30 | 2026-11-04",
+        "css/foo.html | review must follow add | raikiri-spike-1 | 2026-10-04 | 2026-10-04",
+    ];
+
+    for row in invalid_rows {
+        let (expected, errors) = ExpectedFailures::parse(row, "expected-failures.txt");
+        assert!(expected.is_empty(), "accepted invalid row: {row}");
+        assert_eq!(errors.len(), 1, "row: {row}");
+        assert!(
+            matches!(errors[0], ExpectError::MalformedLine { .. }),
+            "row: {row}, error: {:?}",
+            errors[0]
+        );
+    }
 }
 
 #[test]
