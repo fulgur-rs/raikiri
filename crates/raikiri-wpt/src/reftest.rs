@@ -205,6 +205,15 @@ pub enum ReftestError {
         /// Path to the missing reference file.
         reference: PathBuf,
     },
+    /// A referenced file resolves outside the supplied WPT root.
+    ReferenceOutsideWptRoot {
+        /// Path to the test file.
+        test_path: PathBuf,
+        /// Path to the reference file.
+        reference: PathBuf,
+        /// Supplied WPT root that bounds reference resolution.
+        wpt_root: PathBuf,
+    },
     /// Rendering failed for raikiri.
     RaikiriRender(String),
     /// A raster sink rejected the request with a structured error.
@@ -229,6 +238,17 @@ impl std::fmt::Display for ReftestError {
                 f,
                 "reftest reference {} not found (from {})",
                 reference.display(),
+                test_path.display()
+            ),
+            Self::ReferenceOutsideWptRoot {
+                test_path,
+                reference,
+                wpt_root,
+            } => write!(
+                f,
+                "reftest reference {} resolves outside WPT root {} (from {})",
+                reference.display(),
+                wpt_root.display(),
                 test_path.display()
             ),
             Self::RaikiriRender(s) => write!(f, "raikiri render error: {s}"),
@@ -533,7 +553,10 @@ pub fn discover_pairs_for_file(test_path: &Path) -> Result<Vec<ReftestPair>, Ref
 /// Discover reftest pairs like [`discover_pairs_for_file`], but resolve
 /// server-absolute hrefs (leading `/`, e.g. `/css/reference/...` — WPT
 /// serves the tree from docroot so these are valid reftest refs) against
-/// `wpt_root` when given. Relative hrefs behave exactly as before.
+/// `wpt_root` when given. When a root is supplied, local reference targets
+/// must resolve inside its canonical path, including symlink targets. Without
+/// a root, local references retain the path-relative behavior of
+/// [`discover_pairs_for_file`].
 pub fn discover_pairs_for_file_with_wpt_root(
     test_path: &Path,
     wpt_root: Option<&Path>,
@@ -550,6 +573,7 @@ pub fn discover_pairs_for_file_with_wpt_root(
     }
     let base = test_path.parent().unwrap_or(Path::new("."));
     let mut pairs = Vec::new();
+    let mut canonical_wpt_root = None;
     for (href, kind) in links {
         // Strip query string / fragment for filesystem lookup (WPT reftests may have them)
         let href_fs = href.split(['?', '#']).next().unwrap_or(&href);
@@ -570,8 +594,34 @@ pub fn discover_pairs_for_file_with_wpt_root(
         if !reference.exists() {
             return Err(ReftestError::MissingReference {
                 test_path: test_path.to_path_buf(),
-                reference,
+                reference: reference.clone(),
             });
+        }
+        if let Some(root) = wpt_root {
+            if canonical_wpt_root.is_none() {
+                canonical_wpt_root =
+                    Some(
+                        std::fs::canonicalize(root).map_err(|source| ReftestError::Io {
+                            path: root.to_path_buf(),
+                            source,
+                        })?,
+                    );
+            }
+            let canonical_reference =
+                std::fs::canonicalize(&reference).map_err(|source| ReftestError::Io {
+                    path: reference.clone(),
+                    source,
+                })?;
+            let canonical_root = canonical_wpt_root
+                .as_ref()
+                .expect("canonical root is set when a WPT root is supplied");
+            if !canonical_reference.starts_with(canonical_root) {
+                return Err(ReftestError::ReferenceOutsideWptRoot {
+                    test_path: test_path.to_path_buf(),
+                    reference,
+                    wpt_root: root.to_path_buf(),
+                });
+            }
         }
         pairs.push(ReftestPair {
             test: test_path.to_path_buf(),

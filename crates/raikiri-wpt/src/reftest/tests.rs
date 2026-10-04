@@ -432,6 +432,110 @@ fn parse_reftest_links_ignores_non_reftest_rels() {
 }
 
 #[test]
+#[cfg(unix)]
+fn root_aware_discovery_accepts_in_root_relative_and_server_absolute_references() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let root_link = temp.path().join("wpt-link");
+    let test_dir = root.join("css/tests");
+    let relative_reference = root.join("reference/relative.html");
+    let absolute_reference = root.join("css/reference/absolute.html");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::create_dir_all(relative_reference.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(absolute_reference.parent().unwrap()).unwrap();
+    std::fs::write(
+        test_dir.join("test.html"),
+        r#"<link rel="match" href="../../reference/relative.html?variant#page=1"><link rel="mismatch" href="/css/reference/absolute.html">"#,
+    )
+    .unwrap();
+    std::fs::write(&relative_reference, "relative").unwrap();
+    std::fs::write(&absolute_reference, "absolute").unwrap();
+    symlink(&root, &root_link).unwrap();
+
+    let pairs =
+        discover_pairs_for_file_with_wpt_root(&test_dir.join("test.html"), Some(&root_link))
+            .unwrap();
+
+    assert_eq!(pairs.len(), 2);
+    assert_eq!(pairs[0].reference, relative_reference);
+    assert_eq!(pairs[0].reference_suffix, "?variant#page=1");
+    assert_eq!(
+        pairs[1].reference,
+        root_link.join("css/reference/absolute.html")
+    );
+}
+
+#[test]
+fn root_aware_discovery_rejects_parent_traversal_outside_the_wpt_root() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let test_dir = root.join("css/tests");
+    let outside = temp.path().join("outside.html");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(&outside, "outside").unwrap();
+    std::fs::write(
+        test_dir.join("test.html"),
+        r#"<link rel="match" href="../../../outside.html">"#,
+    )
+    .unwrap();
+
+    let result = discover_pairs_for_file_with_wpt_root(&test_dir.join("test.html"), Some(&root));
+
+    assert!(
+        matches!(result, Err(ReftestError::ReferenceOutsideWptRoot { .. })),
+        "expected an out-of-root error, got {result:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn root_aware_discovery_rejects_symlinks_outside_the_wpt_root() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let test_dir = root.join("css/tests");
+    let outside = temp.path().join("outside.html");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(&outside, "outside").unwrap();
+    symlink(&outside, test_dir.join("escape.html")).unwrap();
+    std::fs::write(
+        test_dir.join("test.html"),
+        r#"<link rel="match" href="escape.html">"#,
+    )
+    .unwrap();
+
+    let result = discover_pairs_for_file_with_wpt_root(&test_dir.join("test.html"), Some(&root));
+
+    assert!(
+        matches!(result, Err(ReftestError::ReferenceOutsideWptRoot { .. })),
+        "expected an out-of-root error, got {result:?}"
+    );
+}
+
+#[test]
+fn rootless_discovery_keeps_resolving_references_relative_to_the_test_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let test_dir = root.join("css/tests");
+    let outside = temp.path().join("outside.html");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(&outside, "outside").unwrap();
+    let test_path = test_dir.join("test.html");
+    std::fs::write(
+        &test_path,
+        r#"<link rel="match" href="../../../outside.html">"#,
+    )
+    .unwrap();
+
+    let pairs = discover_pairs_for_file(&test_path).unwrap();
+
+    assert_eq!(pairs[0].reference, outside);
+}
+
+#[test]
 fn compare_images_exact_identical() {
     let img = RenderedImage {
         width: 2,
