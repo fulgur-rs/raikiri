@@ -5,7 +5,7 @@ use raikiri_dom::{
     PageLayoutControl, PageMargins, PageSlice, first_page_name,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
     layout_pages_with_resolver_and_base_url_and_control, page_content_insets, page_margins,
-    resolve_initial_page_context,
+    resolve_initial_page_context, validate_layout_depth,
 };
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
@@ -188,27 +188,25 @@ fn parse_consumer_integer_or_none(raw: &str) -> Option<ConsumerPropertyValue> {
 }
 
 fn element_text_value(document: &raikiri_dom::Document, node_id: usize) -> String {
-    fn append_text(document: &raikiri_dom::Document, node_id: usize, output: &mut String) {
+    let mut pending = vec![node_id];
+    let mut raw = String::new();
+    while let Some(node_id) = pending.pop() {
         let Some(node) = document.get_node(node_id) else {
-            return; // cov:ignore: DOM child indices are validated by the document arena
+            continue; // cov:ignore: DOM child indices are validated by the document arena
         };
         if !node.is_in_document() {
-            return; // cov:ignore: detached nodes are excluded before traversal
+            continue; // cov:ignore: detached nodes are excluded before traversal
         }
         if node.is_non_rendered_html_element() {
-            return;
+            continue;
         }
         if let Some(text) = node.text_content() {
-            output.push_str(text);
-            return;
+            raw.push_str(text);
+            continue;
         }
-        for &child in &node.children {
-            append_text(document, child, output);
-        }
+        pending.extend(node.children.iter().rev().copied());
     }
 
-    let mut raw = String::new();
-    append_text(document, node_id, &mut raw);
     let mut output = String::new();
     let mut pending_space = false;
     for character in raw.chars() {
@@ -675,6 +673,7 @@ pub(crate) fn run_pipeline(
             actual: 1,
         });
     }
+    validate_layout_depth(&doc.uncascaded.dom)?;
 
     // Resolve the first page context before layout so `:first` and the first
     // resolved `@page size` participate in the initial fragmentainer.

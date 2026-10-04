@@ -498,6 +498,13 @@ pub enum LayoutError {
         /// Which limit, with its configured and observed values.
         limit: String,
     },
+    /// A document's body subtree exceeded the maximum supported layout depth.
+    TreeDepthLimitExceeded {
+        /// Maximum number of nested layout elements accepted.
+        limit: usize,
+        /// First element depth rejected by the layout preflight.
+        actual: usize,
+    },
     /// Counter snapshots exceeded their hard cumulative estimated-memory budget.
     CounterSnapshotLimitExceeded {
         /// Maximum estimated bytes allowed for the operation.
@@ -532,6 +539,10 @@ impl std::fmt::Display for LayoutError {
             Self::IfcLimitExceeded { node, limit } => {
                 write!(f, "Layout inline engine limit at node {node}: {limit}")
             }
+            Self::TreeDepthLimitExceeded { limit, actual } => write!(
+                f,
+                "Layout tree depth limit exceeded: {actual} elements (limit {limit})"
+            ),
             Self::CounterSnapshotLimitExceeded { limit, actual } => write!(
                 f,
                 "Layout counter snapshot limit exceeded: {actual} bytes (limit {limit})"

@@ -20,6 +20,7 @@ raikiri-style  = { workspace = true }
 raikiri-traits = { workspace = true }
 rayon          = "1.8"
 smol_str       = { workspace = true }
+stacker        = { workspace = true }
 taffy          = { workspace = true }
 wuff           = { workspace = true }
 url            = { workspace = true }

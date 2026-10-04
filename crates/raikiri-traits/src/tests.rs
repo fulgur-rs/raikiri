@@ -70,6 +70,18 @@ fn render_error_is_error_trait() {
 }
 
 #[test]
+fn tree_depth_limit_error_has_stable_display_text() {
+    let error = LayoutError::TreeDepthLimitExceeded {
+        limit: 256,
+        actual: 257,
+    };
+    assert_eq!(
+        error.to_string(),
+        "Layout tree depth limit exceeded: 257 elements (limit 256)"
+    );
+}
+
+#[test]
 fn exhaustion_policy_default_is_error() {
     assert_eq!(ExhaustionPolicy::default(), ExhaustionPolicy::Error);
 }

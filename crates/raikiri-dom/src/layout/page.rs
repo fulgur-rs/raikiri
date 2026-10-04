@@ -645,6 +645,7 @@ pub fn resolve_initial_page_context(
     resources: InitialPageProbeResources<'_>,
     mut recascade: impl FnMut(Option<&str>) -> (CascadeResult, PageBox),
 ) -> Result<InitialPageContext, InitialPageContextError> {
+    super::validate_layout_depth(document).map_err(InitialPageContextError::Layout)?;
     let mut context = InitialPageContext {
         page_name,
         cascade,
@@ -918,64 +919,103 @@ fn propagated_start_page_name_with_order(
     inherited_page_name: Option<&str>,
     resolved_layout: bool,
 ) -> (bool, Option<String>) {
-    let Some(node) = document.get_node(node_id) else {
-        return (false, None);
-    };
-    if !node.is_in_document() || node.is_display_none() {
-        return (false, None);
+    enum Task {
+        Visit(usize, Option<String>),
+        ContinueChildren {
+            children: std::vec::IntoIter<usize>,
+            page_name: Option<String>,
+        },
     }
-    if matches!(node.kind(), NodeKind::Text) {
-        let has_text = matches!(
-            &node.data,
-            crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
-        );
-        if !has_text {
-            return (false, None);
-        }
-        return (true, inherited_page_name.map(ToOwned::to_owned));
-    }
-    let display = cascade.computed[node_id].display;
-    let page_applies = !matches!(
-        display,
-        DisplayValue::Inline | DisplayValue::InlineFlex | DisplayValue::InlineGrid
-    );
-    let explicit_page_name = if page_applies {
-        selected_page_name(cascade, node_id)
-    } else {
-        None
-    };
-    let used_page_name = explicit_page_name
-        .clone()
-        .or_else(|| inherited_page_name.map(ToOwned::to_owned));
-    let child_order = if resolved_layout {
-        pagination_child_order(document, cascade, node_id)
-    } else {
-        initial_page_child_order(document, cascade, node_id)
-    };
-    for child_id in child_order {
-        if child_id >= cascade.computed.len() {
+
+    let mut pending = vec![Task::Visit(
+        node_id,
+        inherited_page_name.map(ToOwned::to_owned),
+    )];
+    while let Some(task) = pending.pop() {
+        let (node_id, inherited_page_name) = match task {
+            Task::Visit(node_id, inherited_page_name) => (node_id, inherited_page_name),
+            Task::ContinueChildren {
+                mut children,
+                page_name,
+            } => {
+                let next = children.find(|&child_id| {
+                    cascade
+                        .computed
+                        .get(child_id)
+                        .is_some_and(|child_computed| {
+                            !matches!(
+                                child_computed.position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            ) && matches!(child_computed.float, FloatValue::None)
+                        })
+                });
+                if let Some(child_id) = next {
+                    pending.push(Task::ContinueChildren {
+                        children,
+                        page_name: page_name.clone(),
+                    });
+                    pending.push(Task::Visit(child_id, page_name));
+                    continue;
+                }
+                return (true, page_name);
+            }
+        };
+        let Some(node) = document.get_node(node_id) else {
+            continue;
+        };
+        if !node.is_in_document() || node.is_display_none() {
             continue;
         }
-        let child_computed = &cascade.computed[child_id];
-        if matches!(
-            child_computed.position,
-            PositionValue::Absolute | PositionValue::Fixed
-        ) || !matches!(child_computed.float, FloatValue::None)
-        {
+        if matches!(node.kind(), NodeKind::Text) {
+            let has_text = matches!(
+                &node.data,
+                crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+            );
+            if has_text {
+                return (true, inherited_page_name);
+            }
             continue;
         }
-        let (has_box, child_start) = propagated_start_page_name_with_order(
-            document,
-            cascade,
-            child_id,
-            used_page_name.as_deref(),
-            resolved_layout,
+
+        let display = cascade.computed[node_id].display;
+        let page_applies = !matches!(
+            display,
+            DisplayValue::Inline | DisplayValue::InlineFlex | DisplayValue::InlineGrid
         );
-        if has_box {
-            return (true, child_start);
+        let explicit_page_name = if page_applies {
+            selected_page_name(cascade, node_id)
+        } else {
+            None
+        };
+        let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
+        let child_order = if resolved_layout {
+            pagination_child_order(document, cascade, node_id)
+        } else {
+            initial_page_child_order(document, cascade, node_id)
+        };
+        let mut children = child_order.into_iter();
+        let next = children.find(|&child_id| {
+            cascade
+                .computed
+                .get(child_id)
+                .is_some_and(|child_computed| {
+                    !matches!(
+                        child_computed.position,
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ) && matches!(child_computed.float, FloatValue::None)
+                })
+        });
+        if let Some(child_id) = next {
+            pending.push(Task::ContinueChildren {
+                children,
+                page_name: used_page_name.clone(),
+            });
+            pending.push(Task::Visit(child_id, used_page_name));
+        } else {
+            return (true, used_page_name);
         }
     }
-    (true, used_page_name)
+    (false, None)
 }
 
 #[cfg(test)]
