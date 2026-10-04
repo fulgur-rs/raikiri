@@ -1389,7 +1389,6 @@ css/css-text/text-spacing-trim/text-spacing-trim-quote-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-span-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-start-oof-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-subset-001.html
-css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html
 css/css-text/hanging-punctuation/hanging-punctuation-first-ascii-quote.html
 css/css-text/hanging-punctuation/hanging-punctuation-inline-001.html
 css/css-text/hanging-punctuation/hanging-punctuation-last-ascii-quote.html
