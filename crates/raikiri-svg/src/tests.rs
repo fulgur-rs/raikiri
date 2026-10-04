@@ -1,12 +1,22 @@
 use super::{
-    ParsedCssDeclaration, SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
+    InitialParseSelectorBudget, MAX_INITIAL_PARSE_XML_DEPTH, ParsedCssDeclaration,
+    SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
     append_inline_declarations, apply_css_rewrite, apply_selector_edits,
-    freeze_svg_stylesheet_selectors, normalize_svg_opacity_cascade, scope_stylesheet_properties,
-    scoped_property_rule_len, strip_inline_style_properties, strip_stylesheet_properties,
+    charge_initial_parse_node_count, estimate_initial_stylesheet_resources,
+    freeze_svg_stylesheet_selectors, is_simplecss_name_start, normalize_svg_opacity_cascade,
+    preflight_initial_svg_selectors, scope_stylesheet_properties, scoped_property_rule_len,
+    simplecss_comment_end, simplecss_function_end, simplecss_string_end, skip_simplecss_at_rule,
+    skip_simplecss_spaces_and_comments, strip_inline_style_properties, strip_stylesheet_properties,
     unique_attribute_name, with_root_style_overrides, xml_attribute_escape_allocation_bytes,
 };
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
+const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+
+fn preflight_initial_svg(source: &str) -> Result<(), SvgError> {
+    let xml = roxmltree::Document::parse(source).expect("test SVG is valid XML");
+    preflight_initial_svg_selectors(&xml)
+}
 
 fn selector_freezing_svg(css: &str, elements: usize) -> String {
     format!(
@@ -30,6 +40,160 @@ fn assert_selector_freezing_rejected(source: &str) {
         assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
             if message.contains("selector freezing resource limit")));
     }
+}
+
+#[test]
+fn initial_stylesheet_estimator_skips_at_rules_and_unfinished_headers() {
+    let source = "@import url('theme.css'); @media screen { @supports (display:grid) { rect { fill:red } } } rect { fill:blue }";
+    let estimate = estimate_initial_stylesheet_resources(source).unwrap();
+    assert_eq!(estimate.selector_count, 1);
+
+    let unfinished = estimate_initial_stylesheet_resources("rect").unwrap();
+    assert_eq!(unfinished.selector_count, 1);
+
+    let mut budget = InitialParseSelectorBudget::new();
+    budget.charge_stylesheet_sort_work(0).unwrap();
+    budget.charge_stylesheet_sort_work(1).unwrap();
+
+    assert!(is_simplecss_name_start(Some(b'A')));
+    assert!(is_simplecss_name_start(Some(b'_')));
+    assert!(is_simplecss_name_start(Some(0xF0)));
+    assert!(!is_simplecss_name_start(Some(b'1')));
+    assert!(!is_simplecss_name_start(None));
+
+    let semicolon_rule = b"@import url(x);tail";
+    assert_eq!(
+        skip_simplecss_at_rule(semicolon_rule, 0),
+        semicolon_rule
+            .iter()
+            .position(|byte| *byte == b';')
+            .unwrap()
+            + 1
+    );
+    let block_rule = b"@media { nested { } }tail";
+    assert_eq!(
+        skip_simplecss_at_rule(block_rule, 0),
+        block_rule
+            .windows(4)
+            .position(|bytes| bytes == b"tail")
+            .unwrap()
+    );
+    let unclosed_block_rule = b"@media { nested {";
+    assert_eq!(
+        skip_simplecss_at_rule(unclosed_block_rule, 0),
+        unclosed_block_rule.len()
+    );
+    assert_eq!(skip_simplecss_at_rule(b"@unfinished", 0), 11);
+}
+
+#[test]
+fn initial_stylesheet_estimator_accounts_for_comments_strings_functions_and_blocks() {
+    for stylesheet in [
+        "rect /* comment */ { fill:red /* declaration comment */; color:rgb(1,2,3) }",
+        "rect /* { */ { fill:red }",
+        "rect:is(g) { fill:red }",
+        "rect[data-label='text'] { content:'quoted'; color:rgb(1,2,3) }",
+        "rect[data-label='}'] { fill:red }",
+        "rect:is(g}) { fill:red }",
+        "rect { content:'}'; fill:red }",
+        "rect { fill:fn(}); color:red }",
+        "rect { nested:{ value:red; }; fill:blue }",
+        "rect /* { unterminated",
+        "rect /* unterminated",
+        "rect { fill:red /* } */; color:blue }",
+        "rect { fill:red /* }",
+        "rect { fill:red /* unterminated",
+        "rect { content:'unterminated",
+        "rect { fill:fn(unterminated",
+    ] {
+        estimate_initial_stylesheet_resources(stylesheet)
+            .unwrap_or_else(|error| panic!("estimation rejected {stylesheet:?}: {error}"));
+    }
+}
+
+#[test]
+fn simplecss_scanner_helpers_handle_terminated_and_unterminated_tokens() {
+    assert_eq!(simplecss_comment_end(b"/*x*/", 0), Some(5));
+    assert_eq!(simplecss_comment_end(b"/*x", 0), None);
+
+    let mut cursor = 0;
+    assert!(skip_simplecss_spaces_and_comments(
+        b" \t/*x*/ ",
+        &mut cursor
+    ));
+    assert_eq!(cursor, 8);
+    let mut unterminated_comment = 0;
+    assert!(!skip_simplecss_spaces_and_comments(
+        b"/*x",
+        &mut unterminated_comment
+    ));
+    assert_eq!(unterminated_comment, 3);
+
+    assert_eq!(simplecss_string_end(b"'a\\'b'", 0), 6);
+    assert_eq!(simplecss_string_end(b"'unterminated", 0), 13);
+    assert_eq!(simplecss_function_end(b"fn(x)", 1), 5);
+    assert_eq!(simplecss_function_end(b"fn(x", 1), 4);
+}
+
+#[test]
+fn initial_svg_preflight_handles_empty_styles_foreign_nodes_and_use_reference_forms() {
+    let source = format!(
+        "<svg xmlns=\"{SVG_NAMESPACE}\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:f=\"urn:foreign\" id=\"root\"><style/><style type=\"text/plain\">not CSS</style><style>g {{ fill:red }}</style><f:rect/><g id=\"target\"/><g id=\"target\"/><use href=\"#target\"/><use xlink:href=\"#target\"/><use/><use href=\"#missing\"/><use id=\"self\" href=\"#self\"/><use href=\"#root\"/></svg>"
+    );
+
+    preflight_initial_svg(&source).unwrap();
+}
+
+#[test]
+fn initial_svg_preflight_stops_recursive_use_expansion_and_excessive_depth() {
+    let recursive = format!(
+        "<svg xmlns=\"{SVG_NAMESPACE}\"><style>g {{ fill:red }}</style><g id=\"template\"><use href=\"#template\"/></g><use href=\"#template\"/></svg>"
+    );
+    preflight_initial_svg(&recursive).unwrap();
+
+    let mut nested = format!("<svg xmlns=\"{SVG_NAMESPACE}\"><style>g {{ fill:red }}</style>");
+    nested.push_str(&"<g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH));
+    nested.push_str(&"</g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH));
+    nested.push_str("</svg>");
+    let error = preflight_initial_svg(&nested).unwrap_err();
+    assert!(matches!(error, SvgError::InvalidDocument(ref message)
+        if message.contains("selector matching resource limit")));
+}
+
+#[test]
+fn initial_xml_depth_scanner_skips_non_element_markup_and_enforces_limit() {
+    super::ensure_initial_svg_xml_depth_bounded(
+        "<svg><!-- <g> --><![CDATA[<rect/>]]><?probe <use/> ?><g title=\">\"/></svg>",
+    )
+    .unwrap();
+    super::ensure_initial_svg_xml_depth_bounded("<svg/> ").unwrap();
+    super::ensure_initial_svg_xml_depth_bounded("<!DOCTYPE svg><svg/>").unwrap();
+    super::ensure_initial_svg_xml_depth_bounded("<svg").unwrap();
+    super::ensure_initial_svg_xml_depth_bounded("<svg><!-- unfinished").unwrap();
+    super::ensure_initial_svg_xml_depth_bounded("</orphan><svg/>").unwrap();
+
+    let mut nested = "<svg>".to_owned();
+    nested.push_str(&"<g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH - 1));
+    nested.push_str(&"</g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH - 1));
+    nested.push_str("</svg>");
+    assert!(super::ensure_initial_svg_xml_depth_bounded(&nested).is_ok());
+
+    let mut excessive = "<svg>".to_owned();
+    excessive.push_str(&"<g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH));
+    excessive.push_str(&"</g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH));
+    excessive.push_str("</svg>");
+    assert!(super::ensure_initial_svg_xml_depth_bounded(&excessive).is_err());
+}
+
+#[test]
+fn initial_parse_node_counter_checks_limits_and_overflow() {
+    let mut count = 0;
+    charge_initial_parse_node_count(&mut count, 1).unwrap();
+    assert_eq!(count, 1);
+    assert!(charge_initial_parse_node_count(&mut count, 1).is_err());
+
+    let mut overflow = usize::MAX;
+    assert!(charge_initial_parse_node_count(&mut overflow, usize::MAX).is_err());
 }
 
 #[test]
