@@ -13,6 +13,49 @@ fn inline_style_beats_type_selector() {
 }
 
 #[test]
+fn animation_origin_beats_normal_author_rules_and_inline_style() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "p { color: green }");
+    let p = doc.push_element(0, "p", Some("color: red"));
+    doc.nodes[p].animation_style = Some("color: blue".to_owned());
+
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade succeeds");
+
+    assert_eq!(result.computed[p].color, BLUE);
+}
+
+#[test]
+fn author_important_beats_animation_origin() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "p { color: red !important }");
+    let p = doc.push_element(0, "p", Some("color: green"));
+    doc.nodes[p].animation_style = Some("color: blue".to_owned());
+
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade succeeds");
+
+    assert_eq!(result.computed[p].color, RED);
+}
+
+#[test]
+fn animation_origin_inherited_value_reaches_children_unless_overridden() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", None);
+    doc.nodes[parent].animation_style = Some("color: blue".to_owned());
+    let inherited_child = doc.push_element(parent, "span", None);
+    let overridden_child = doc.push_element(parent, "span", Some("color: red"));
+
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade succeeds");
+
+    assert_eq!(result.computed[inherited_child].color, BLUE);
+    assert_eq!(result.computed[overridden_child].color, RED);
+}
+
+#[test]
 fn inline_svg_root_opacity_attribute_is_a_stylesheet_overridable_hint() {
     const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 
@@ -423,6 +466,7 @@ fn cascade_rank_orders_ua_user_hint_author_normal_then_reverses_for_important() 
     let normal_user = cascade_rank(Origin::User, false);
     let normal_hint = cascade_rank(Origin::AuthorPresentationalHint, false);
     let normal_author = cascade_rank(Origin::Author, false);
+    let animation = cascade_rank(Origin::Animation, false);
     let important_author = cascade_rank(Origin::Author, true);
     let important_hint = cascade_rank(Origin::AuthorPresentationalHint, true);
     let important_user = cascade_rank(Origin::User, true);
@@ -461,6 +505,10 @@ fn cascade_rank_orders_ua_user_hint_author_normal_then_reverses_for_important() 
     assert!(
         normal_author < important_author,
         "any important declaration must beat any normal declaration"
+    );
+    assert!(
+        normal_author < animation && animation < important_author,
+        "animation declarations must rank above normal author and below important author"
     );
     // Spec-verbatim (§6.1): Important Author < Important User < Important UA.
     //

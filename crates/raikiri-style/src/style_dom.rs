@@ -243,6 +243,12 @@ pub trait StyleElement {
         None
     }
 
+    /// Sampled animation declarations, if any. This source is separate from
+    /// authored inline style and enters the cascade at the animation origin.
+    fn animation_style_source(&self) -> Option<&str> {
+        None
+    }
+
     /// Namespace URI (`Some("http://www.w3.org/2000/svg")` for SVG etc).
     /// HTML default namespace returns `None` (optimized path).
     fn namespace_uri(&self) -> Option<&str> {

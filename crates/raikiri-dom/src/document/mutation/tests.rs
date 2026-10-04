@@ -1,4 +1,5 @@
 use crate::{Document, DomMutationError};
+use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 
 fn doc_with_html_body() -> (Document, usize, usize, usize) {
     let mut d = Document::new();
@@ -334,6 +335,31 @@ fn character_data_and_attribute_names() {
         d.element_attribute_names(body),
         vec!["id", "class", "style"]
     );
+}
+
+#[test]
+fn animation_style_is_separate_from_the_authored_style_attribute() {
+    let mut d = Document::new();
+    let div = d.create_detached_element("div").unwrap();
+    d.set_element_inline_style(div, Some("color: red".into()));
+    d.set_element_animation_style(div, Some("color: blue".into()));
+
+    {
+        let node = d.node(StyleNodeId::new(div as u64)).expect("element node");
+        let style_element = node.as_element().expect("style element");
+        assert_eq!(style_element.animation_style_source(), Some("color: blue"));
+        assert_eq!(style_element.inline_style_source(), Some("color: red"));
+        assert_eq!(style_element.attr("style"), Some("color: red"));
+    }
+
+    d.set_element_animation_style(div, None);
+    {
+        let node = d.node(StyleNodeId::new(div as u64)).expect("element node");
+        let style_element = node.as_element().expect("style element");
+        assert_eq!(style_element.animation_style_source(), None);
+        assert_eq!(style_element.inline_style_source(), Some("color: red"));
+        assert_eq!(style_element.attr("style"), Some("color: red"));
+    }
 }
 
 #[test]

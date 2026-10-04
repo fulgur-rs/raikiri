@@ -146,6 +146,8 @@ pub struct ElementData {
     /// Elements). The Element trait contract exposes an empty `style=""` as
     /// `None`, but storage here retains the raw value without normalization.
     pub(crate) inline_style: Option<SmolStr>,
+    /// Sampled animation declarations, separate from the authored style attribute.
+    pub(crate) animation_style: Option<SmolStr>,
     /// Element namespace URI (`Some` only for non-HTML; the HTML default uses
     /// `None` as the optimized path). For example,
     /// `Some("http://www.w3.org/2000/svg")`.
@@ -511,6 +513,7 @@ impl Node {
             data: NodeData::Element(Box::new(ElementData {
                 tag_name: tag,
                 inline_style,
+                animation_style: None,
                 namespace: None,
                 prefix: None,
                 attributes: Vec::new(),

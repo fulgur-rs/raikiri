@@ -832,7 +832,8 @@ fn matching_brace(source: &str, open: usize) -> Option<usize> {
 /// [`Origin::User`] corresponds to CSS Cascading L4 §6.2 at
 /// <https://www.w3.org/TR/css-cascade-4/#cascading-origins>, which defines the "user
 /// origin". Within raikiri-style the variant itself is fully functional:
-/// it participates in the four-tier ordering of [`crate::cascade::cascade_rank`].
+/// it participates in the origin and importance ordering of
+/// [`crate::cascade::cascade_rank`].
 /// Consumer-supplied `extra_stylesheets` are routed here through three crates:
 /// the `StylesheetKind::User` variant in raikiri-traits, retagging in
 /// raikiri-html, and extension of `stylesheet_kind_to_origin` in the umbrella.
@@ -855,6 +856,9 @@ pub enum Origin {
     /// between the user and author origins.
     AuthorPresentationalHint,
     Author,
+    /// Sampled Web Animations declarations, above every normal origin and
+    /// below every important origin (CSS Cascading L5 §6.1).
+    Animation,
 }
 
 /// A syntactically valid at-rule body retained for a consumer that does not

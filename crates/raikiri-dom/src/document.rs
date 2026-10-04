@@ -1637,6 +1637,22 @@ impl Document {
         e.inline_style = inline_style;
     }
 
+    /// Update an Element's sampled animation declarations without changing
+    /// its authored `style` attribute.
+    ///
+    /// Passing `None` clears the animation-style source. The runtime that
+    /// samples animations is responsible for marking style/layout dirty.
+    ///
+    /// Panics (debug and release): if `id` is not an Element.
+    pub fn set_element_animation_style(&mut self, id: usize, animation_style: Option<SmolStr>) {
+        self.page_projection.clear();
+        let element = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("set_element_animation_style called on non-Element");
+        element.animation_style = animation_style;
+    }
+
     /// Apply a predicate to every node's children Vec and remove entries for
     /// which it returns `false`. This generic bulk-detach primitive avoids N
     /// calls to `detach_from_parent` at O(K*N), preventing quadratic work on
