@@ -1,0 +1,11 @@
+# Deterministic WPT failures that still run and report as XFAIL.
+#
+# Format:
+# <exact_test_id> | <reason> | <local_beads_issue_id> | <added_date> | <review_by>
+#
+# A variant id is its root-relative test path plus the exact query declared by
+# WPT, including parameter order and spelling. Do not use globs or prefixes.
+# Dates must be YYYY-MM-DD, and review_by must be later than added_date.
+# Exact entries override directory-prefix SKIPs in known-issues.txt. They do
+# not override deprecated.txt or quarantine.txt, and must not overlap the pass
+# baseline. See README.md for the add, review, and XPASS cleanup procedure.

@@ -1,8 +1,7 @@
 //! Validate `expectations/*.txt` files (spec §12.10).
 //!
 //! Detects Malformed / Duplicate / Conflicting (CI-blocking) and Expired
-//! (warning) issues. Runs in CI on every PR via the GitHub Actions
-//! workflow.
+//! (warning) issues, including exact expected-failure records and review dates.
 //!
 //! Exit codes:
 //! - `0`: clean, or only [`raikiri_wpt::lint::Category::Expired`] warnings

@@ -1,5 +1,7 @@
 use super::*;
-use crate::expectations::{Baseline, Deprecated, KnownIssues, Quarantine, TrackedWpt};
+use crate::expectations::{
+    Baseline, Deprecated, ExpectedFailures, KnownIssues, Quarantine, TrackedWpt,
+};
 
 fn empty_set() -> ExpectationSet {
     ExpectationSet {
@@ -8,6 +10,7 @@ fn empty_set() -> ExpectationSet {
         baseline: Baseline {
             entries: std::collections::HashSet::new(),
         },
+        expected_failures: ExpectedFailures { entries: vec![] },
         quarantine: Quarantine { entries: vec![] },
         deprecated: Deprecated {
             entries: std::collections::HashSet::new(),

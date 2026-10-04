@@ -1,13 +1,16 @@
 //! Per-test report over the WPT baseline.
 //!
 //! Runs every test id in a baseline file through the harness, records one
-//! status per id, and diffs two reports. It is report-only: nothing here
-//! decides whether a build passes.
+//! status per id and diffs two reports. The library stays report-oriented;
+//! the CLI's optional strict mode can make FAIL, XPASS, or ERROR results fail
+//! a gate.
 
+use crate::expectations::{ExpectedFailure, ExpectedFailures};
 use crate::parsing_invalid::{ParsingFileError, run_parsing_invalid_file};
 use crate::reftest::{
     ReftestConfig, ReftestError, ReftestKind, ReftestPair, ReftestResult,
     discover_pairs_for_file_with_wpt_root, run_pair, run_pair_with_images,
+    run_pair_with_images_and_variant, run_pair_with_variant,
 };
 use crate::runner::TestOutcome;
 use std::collections::BTreeMap;
@@ -23,6 +26,10 @@ pub enum Status {
     Pass,
     /// The harness ran and reported a mismatch or a failed assertion.
     Fail,
+    /// The test failed with a recorded exact expected-failure entry.
+    XFail,
+    /// The test passed despite a recorded expected-failure entry.
+    XPass,
     /// The harness could not run the test (missing file, panic, harness error).
     Error,
     /// The harness skipped the test.
@@ -35,6 +42,8 @@ impl Status {
         match self {
             Status::Pass => "PASS",
             Status::Fail => "FAIL",
+            Status::XFail => "XFAIL",
+            Status::XPass => "XPASS",
             Status::Error => "ERROR",
             Status::Skip => "SKIP",
         }
@@ -45,6 +54,8 @@ impl Status {
         match text {
             "PASS" => Some(Status::Pass),
             "FAIL" => Some(Status::Fail),
+            "XFAIL" => Some(Status::XFail),
+            "XPASS" => Some(Status::XPass),
             "ERROR" => Some(Status::Error),
             "SKIP" => Some(Status::Skip),
             _ => None,
@@ -211,7 +222,15 @@ fn catch_row(id: &str, body: impl FnOnce() -> (Status, String)) -> Row {
 }
 
 fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
-    let test = wpt_root.join(id);
+    let (path, query) = id
+        .split_once('?')
+        .map_or((id, ""), |(path, query)| (path, query));
+    let variant_query = if query.is_empty() {
+        String::new()
+    } else {
+        format!("?{query}")
+    };
+    let test = wpt_root.join(path);
     let pairs = match discover_pairs_for_file_with_wpt_root(&test, Some(wpt_root)) {
         Ok(pairs) => pairs,
         Err(error) => return (Status::Error, format!("discover: {error}")),
@@ -227,7 +246,7 @@ fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
     let results = pairs
         .iter()
         .map(|pair| {
-            let (status, detail) = pair_status(pair, config);
+            let (status, detail) = pair_status(pair, config, &variant_query);
             (pair.kind, status, detail)
         })
         .collect();
@@ -242,6 +261,19 @@ fn outcome_status(result: Result<ReftestResult, ReftestError>) -> (Status, Strin
                 Status::Fail,
                 format!("{reason} ({} px)", result.mismatched_pixels),
             ),
+            TestOutcome::XFail {
+                expected,
+                actual,
+                issue_id,
+            } => (
+                Status::XFail,
+                format!("{actual}; expected: {expected} (issue {issue_id})"),
+            ),
+            TestOutcome::XPass { expected, issue_id } => (
+                Status::XPass,
+                format!("unexpected pass; expected: {expected} (issue {issue_id})"),
+            ),
+            TestOutcome::Error(reason) => (Status::Error, reason),
             TestOutcome::Skip(reason) => (Status::Skip, reason),
             TestOutcome::Quarantined => (Status::Skip, "quarantined".to_owned()),
         },
@@ -253,12 +285,24 @@ fn outcome_status(result: Result<ReftestResult, ReftestError>) -> (Status, Strin
 /// without them: the baseline mixes tests pinned under each mode. A pass that
 /// needed the resource-free run is marked with [`FALLBACK_NOTE`]. When neither
 /// passes, the resource-enabled result is reported.
-fn pair_status(pair: &ReftestPair, config: ReftestConfig) -> (Status, String) {
-    let with_resources = outcome_status(run_pair_with_images(pair, config));
+fn pair_status(pair: &ReftestPair, config: ReftestConfig, variant_query: &str) -> (Status, String) {
+    let with_resources = if variant_query.is_empty() {
+        outcome_status(run_pair_with_images(pair, config))
+    } else {
+        outcome_status(run_pair_with_images_and_variant(
+            pair,
+            config,
+            variant_query,
+        ))
+    };
     if with_resources.0 == Status::Pass {
         return with_resources;
     }
-    let plain = outcome_status(run_pair(pair, config));
+    let plain = if variant_query.is_empty() {
+        outcome_status(run_pair(pair, config))
+    } else {
+        outcome_status(run_pair_with_variant(pair, config, variant_query))
+    };
     if plain.0 == Status::Pass {
         (Status::Pass, FALLBACK_NOTE.to_owned())
     } else {
@@ -322,14 +366,44 @@ fn parsing_status(wpt_root: &Path, id: &str) -> (Status, String) {
 /// known-issues prefix filter is deliberately not applied: it overlaps the
 /// baseline.
 pub fn run_id(wpt_root: &Path, id: &str) -> Row {
+    run_id_inner(wpt_root, id, None)
+}
+
+/// Run one baseline or expected-failure id and classify an exact recorded
+/// failure as XFAIL or XPASS after execution.
+pub fn run_id_with_expected_failures(
+    wpt_root: &Path,
+    id: &str,
+    expected_failures: &ExpectedFailures,
+) -> Row {
+    run_id_inner(wpt_root, id, Some(expected_failures))
+}
+
+fn run_id_inner(wpt_root: &Path, id: &str, expected_failures: Option<&ExpectedFailures>) -> Row {
     // Reference lookup and dynamic reftests need an absolute root.
     let wpt_root = std::fs::canonicalize(wpt_root).unwrap_or_else(|_| wpt_root.to_path_buf());
     let wpt_root = wpt_root.as_path();
-    if is_parsing_id(id) {
-        catch_row(id, || parsing_status(wpt_root, id))
+    let (path, query) = id
+        .split_once('?')
+        .map_or((id, None), |(path, query)| (path, Some(query)));
+    let mut row = if is_parsing_id(path) {
+        if query.is_some() {
+            Row {
+                id: id.to_owned(),
+                status: Status::Error,
+                detail: "query variants for parsing tests are not supported by this runner"
+                    .to_owned(),
+            }
+        } else {
+            catch_row(id, || parsing_status(wpt_root, path))
+        }
     } else {
         catch_row(id, || reftest_status(wpt_root, id))
+    };
+    if let Some(expected) = expected_failures.and_then(|entries| entries.get(id)) {
+        (row.status, row.detail) = classify_expected_failure(row.status, row.detail, expected);
     }
+    row
 }
 
 /// Run `ids` on `jobs` threads with `run`, calling `on_row` as each finishes.
@@ -387,6 +461,47 @@ pub fn run_ids(
     run_ids_with(ids, jobs, |id| run_id(wpt_root, id), on_row)
 }
 
+/// [`run_ids_with`] using exact expected-failure entries after each test has
+/// run. The supplied registry is shared read-only across worker threads.
+pub fn run_ids_with_expected_failures(
+    wpt_root: &Path,
+    ids: &[String],
+    expected_failures: &ExpectedFailures,
+    jobs: usize,
+    on_row: &(dyn Fn(&Row) + Sync),
+) -> Vec<Row> {
+    run_ids_with(
+        ids,
+        jobs,
+        |id| run_id_with_expected_failures(wpt_root, id, expected_failures),
+        on_row,
+    )
+}
+
+fn classify_expected_failure(
+    status: Status,
+    detail: String,
+    expected: &ExpectedFailure,
+) -> (Status, String) {
+    match status {
+        Status::Pass => (
+            Status::XPass,
+            format!(
+                "unexpected pass; remove the expectation and promote if in scope (issue {}): {}",
+                expected.issue_id, expected.reason
+            ),
+        ),
+        Status::Fail => (
+            Status::XFail,
+            format!(
+                "{}; expected: {} (issue {})",
+                detail, expected.reason, expected.issue_id
+            ),
+        ),
+        Status::Error | Status::Skip | Status::XFail | Status::XPass => (status, detail),
+    }
+}
+
 /// Options of `run-baseline-report`'s report mode.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ReportOptions {
@@ -402,6 +517,8 @@ pub struct ReportOptions {
     pub only: Vec<String>,
     /// Stop after this many ids.
     pub limit: Option<usize>,
+    /// Return a non-zero exit after reporting if any FAIL, XPASS, or ERROR remains.
+    pub strict: bool,
 }
 
 impl Default for ReportOptions {
@@ -413,6 +530,7 @@ impl Default for ReportOptions {
             jobs: 1,
             only: Vec::new(),
             limit: None,
+            strict: false,
         }
     }
 }
@@ -454,6 +572,7 @@ pub fn parse_report_args(args: &[String]) -> Result<ReportOptions, String> {
                         .map_err(|_| "--limit expects a number".to_owned())?,
                 );
             }
+            "--strict" => options.strict = true,
             other => return Err(format!("unrecognized argument: {other}")),
         }
         index += 1;

@@ -271,15 +271,11 @@ if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p raikiri-net --features ht
 fi
 echo
 
-# NB: The expectations/*.txt lint (WPT status file consistency) has
-# no dedicated script in this repo yet (the raikiri-wpt validate-expectations
-# binary covers a related but not identical surface; see
-# crates/raikiri-wpt/src/bin/validate-expectations.rs). Keep this gap visible
-# instead of silently omitting it.
-echo "-- expectations/*.txt lint --"
-echo "NOT AUTOMATED by this script yet (no dedicated lint entry point found)."
-echo "See crates/raikiri-wpt/src/bin/validate-expectations.rs for the closest"
-echo "existing tool and confirm manually until this is connected."
+echo "-- cargo run --locked -p raikiri-wpt --bin validate-expectations --"
+if ! cargo run --locked -p raikiri-wpt --bin validate-expectations --; then
+  echo "FAIL: expectation files are malformed, conflicting, or need review"
+  FAIL=1
+fi
 echo
 
 # ── Patch coverage ──────────────────────────────────────────────────────────
