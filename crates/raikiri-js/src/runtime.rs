@@ -12,6 +12,7 @@ use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsString, JsSymbol, JsValue, NativeFunction, Source,
 };
 
+pub(crate) mod animation;
 pub(crate) mod canvas;
 pub(crate) mod collections;
 pub(crate) mod dispatch;
