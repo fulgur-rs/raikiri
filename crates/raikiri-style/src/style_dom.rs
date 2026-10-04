@@ -298,6 +298,25 @@ pub trait StyleElement {
             .is_some_and(|value| class_token_matches(value, class, true))
     }
 
+    /// Calls `f` once per non-empty `class` token, in attribute order
+    /// (duplicates included).
+    ///
+    /// The cascade uses this to look up class-keyed rules and to describe
+    /// ancestors, instead of probing [`Self::has_class`] with every class
+    /// that appears in a stylesheet. **Consistency contract:** every token
+    /// for which [`Self::has_class`] returns `true` must be reported here;
+    /// an impl that overrides `has_class` without backing it by
+    /// `attr("class")` must override this method too, or class selectors
+    /// will stop matching. Same tokenisation as [`Self::has_class`].
+    fn for_each_class(&self, f: &mut dyn FnMut(&str)) {
+        if let Some(value) = self.attr("class") {
+            value
+                .split([' ', '\t', '\n', '\r', '\x0C'])
+                .filter(|token| !token.is_empty())
+                .for_each(f);
+        }
+    }
+
     /// Null-namespace attribute lookup.
     ///
     /// **Attribute presence and value are tracked independently**: `None`

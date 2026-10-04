@@ -8,11 +8,12 @@ use crate::PseudoElem;
 use crate::RaikiriSelectorImpl;
 use crate::media::MediaContext;
 use crate::property::{CustomProperty, PropertyValue};
-use crate::rule::{expand_shorthand_into, parse_declaration_block_with_consumer_properties};
+use crate::rule::parse_declaration_block_with_consumer_properties;
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 use super::html_quirks::{push_img_dimension_hints, push_margin_collapsing_quirk_declarations};
+use super::rule_index::{AncestorFilter, RuleIndex};
 use super::selector_match::{match_complex_selector_list, selector_matches_pseudo_element};
 
 /// A 32-bit specificity from selectors, totally ordered as `u32`.
@@ -434,6 +435,11 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
             .map(|media| &media.rule),
     );
     style_rules.sort_unstable_by_key(|rule| rule.source_order);
+    // Bucket the active rules once per cascade so each element only runs the
+    // full matcher against rules that can possibly match it. See the
+    // `rule_index` module docs for why the filtering never drops a match.
+    let rule_index = RuleIndex::new(style_rules);
+    let mut candidate_rules: Vec<u32> = Vec::new();
 
     // Stack entries pair a node id with the `ancestor_path` length it should
     // be truncated to *before* that node is processed.
@@ -459,6 +465,9 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     // A" — verbatim (see `match_combinator_chain`'s "Spec provenance note"
     // for how this text was confirmed), both sides are elements).
     let mut ancestor_path: Vec<StyleNodeId> = Vec::new();
+    // Bloom filter over the same ancestors, truncated and pushed in lockstep
+    // with `ancestor_path`.
+    let mut ancestor_filter = AncestorFilter::new();
     // `::before`/`::after` candidate scratch buffers — declared outside the
     // walk loop and drained (via `Vec::append`, see the flush site below) at
     // the end of each element's processing, so they're always empty when a
@@ -475,6 +484,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     let mut pseudo_first_line_custom: Vec<CustomCascadedDecl> = Vec::new();
     while let Some((id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
+        ancestor_filter.truncate(depth);
         if let Some(node) = dom.node(id) {
             // Skip descendants of <template> and future inert subtrees alike.
             // Silent bug fix: rule matching previously ran inside templates,
@@ -568,40 +578,47 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                     quirks_mode,
                     &mut out.decls,
                 );
-                // stylesheet rule matching
-                for rule in &style_rules {
-                    if let Some(spec) = match_complex_selector_list(
-                        &rule.selectors,
-                        dom,
-                        &elem,
-                        id,
-                        &ancestor_path,
-                        quirks_mode,
-                        // A stylesheet cascade has no scoping element (`:scope`
-                        // falls back to `:root` semantics, matched by
-                        // `is_supported_selector`'s existing rejection of any
-                        // selector containing `:scope` before it ever reaches
-                        // the rule tree, so this arm is dead in practice here).
-                        None,
-                        false,
-                    ) {
-                        for decl in &rule.declarations {
-                            // Expand shorthands before adding longhand
-                            // candidates. Expanding only during parsing does
-                            // not cover post-parse mutation of `RuleTree`.
-                            // See the `crate::rule::expand_shorthand_into` docs.
-                            expand_shorthand_into(decl, |d| {
-                                push_cascaded_decl(
-                                    &mut out.decls,
-                                    &mut out.custom_decls,
-                                    d.value,
-                                    d.important,
-                                    rule.origin,
-                                    spec,
-                                    rule.source_order,
-                                );
-                            });
+                // stylesheet rule matching, restricted to the rules the
+                // index could not rule out (still in source order)
+                rule_index.candidate_rules(&elem, &ancestor_filter, &mut candidate_rules);
+                for &rule_idx in &candidate_rules {
+                    let indexed = rule_index.rule(rule_idx);
+                    let rule = indexed.rule;
+                    if indexed.has_element_selector
+                        && let Some(spec) = match_complex_selector_list(
+                            &rule.selectors,
+                            dom,
+                            &elem,
+                            id,
+                            &ancestor_path,
+                            quirks_mode,
+                            // A stylesheet cascade has no scoping element (`:scope`
+                            // falls back to `:root` semantics, matched by
+                            // `is_supported_selector`'s existing rejection of any
+                            // selector containing `:scope` before it ever reaches
+                            // the rule tree, so this arm is dead in practice here).
+                            None,
+                            false,
+                        )
+                    {
+                        // Longhands were expanded when the index was built
+                        // for this cascade. Expanding only during parsing
+                        // would not cover post-parse mutation of `RuleTree`;
+                        // see the `crate::rule::expand_shorthand_into` docs.
+                        for d in &indexed.declarations {
+                            push_cascaded_decl(
+                                &mut out.decls,
+                                &mut out.custom_decls,
+                                d.value.clone(),
+                                d.important,
+                                rule.origin,
+                                spec,
+                                rule.source_order,
+                            );
                         }
+                    }
+                    if !indexed.has_pseudo_selector {
+                        continue;
                     }
                     // `::before`/`::after` — independent pass over the same
                     // rule's selector list (a rule's comma-separated list can
@@ -641,18 +658,16 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                                 (&mut pseudo_first_line_decls, &mut pseudo_first_line_custom)
                             }
                         };
-                        for decl in &rule.declarations {
-                            expand_shorthand_into(decl, |d| {
-                                push_cascaded_decl(
-                                    buf,
-                                    custom_buf,
-                                    d.value,
-                                    d.important,
-                                    rule.origin,
-                                    spec,
-                                    rule.source_order,
-                                );
-                            });
+                        for d in &indexed.declarations {
+                            push_cascaded_decl(
+                                buf,
+                                custom_buf,
+                                d.value.clone(),
+                                d.important,
+                                rule.origin,
+                                spec,
+                                rule.source_order,
+                            );
                         }
                     }
                 }
@@ -733,6 +748,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 // (pushed just below with `ancestor_path.len()` as their
                 // truncation depth).
                 ancestor_path.push(id);
+                ancestor_filter.push(&elem);
             }
             // The stack is LIFO, so reverse children to visit them in document
             // order. Extend `stack` directly from `child_ids`, then reverse
