@@ -52,6 +52,31 @@ fn query_selector_uses_full_selectors_in_tree_order() {
 }
 
 #[test]
+fn nested_nth_filters_raise_syntax_error_for_all_query_entry_points() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var el = document.createElement('div');
+         var fragment = document.createDocumentFragment();
+         var source = ':nth-child(1 of :nth-child(1 of div))';
+         var calls = [
+             () => document.querySelector(source),
+             () => document.querySelectorAll(source),
+             () => el.querySelector(source),
+             () => el.querySelectorAll(source),
+             () => fragment.querySelector(source),
+             () => fragment.querySelectorAll(source),
+             () => el.matches(source),
+             () => el.closest(source)
+         ];
+         calls.every(call => {
+             try { call(); return false; }
+             catch (e) { return e instanceof DOMException && e.name === 'SyntaxError' && e.code === 12; }
+         }) && el.matches(':nth-child(1 of :scope)') === false && el.matches(':scope')",
+    );
+}
+
+#[test]
 fn query_selector_returns_the_first_match_in_document_order() {
     let mut rt = rt();
     rt.evaluate(

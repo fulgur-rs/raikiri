@@ -39,6 +39,63 @@ fn invalid_selector_is_an_error() {
 }
 
 #[test]
+fn nested_nth_filters_are_rejected_before_query_matching() {
+    for source in [
+        ":nth-child(1 of :nth-child(1 of p))",
+        ":nth-last-child(1 of :first-child)",
+        ":nth-child(1 of :last-of-type)",
+        ":nth-child(1 of :only-child)",
+        ":nth-child(1 of :is(p, :nth-child(2)))",
+        ":nth-child(1 of :where(:nth-last-child(2)))",
+        ":nth-child(1 of :not(:nth-of-type(2)))",
+        ":nth-child(1 of :has(> :nth-child(2)))",
+        ":nth-child(1 of :nth-child(2) > p)",
+        ":nth-child(1 of :nth-child(2) + p)",
+        ":is(:nth-child(1 of :nth-child(2)))",
+        "p, :nth-child(1 of :nth-child(2))",
+        r":n\74 h-child(1 of :n\74 h-child(2))",
+    ] {
+        assert!(crate::parse_selector_list(source).is_ok());
+        assert!(SelectorQuery::parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn flat_nth_filters_preserve_scope_and_detached_query_behavior() {
+    let (mut dom, div, p) = doc();
+    dom.set_in_document(div.0 as usize, false);
+    dom.set_in_document(p.0 as usize, false);
+    for source in [
+        ":nth-child(1 of :scope)",
+        ":nth-last-child(1 of :is(:scope, span))",
+        ":nth-child(1 of :not(span))",
+        ":nth-child(1 of .a > p)",
+        ":is(:nth-child(1 of p))",
+        ":first-child:nth-last-child(1)",
+        ":not(:hover)",
+        ":is(:bogus, p)",
+    ] {
+        let query = SelectorQuery::parse(source).unwrap();
+        assert!(query.matches_scoped(&dom, p, &[div], Some(p)), "{source}");
+    }
+    assert!(
+        SelectorQuery::parse(":scope")
+            .unwrap()
+            .matches_scoped(&dom, p, &[div], Some(p))
+    );
+    assert!(
+        SelectorQuery::parse(":has(> :nth-child(1 of p))")
+            .unwrap()
+            .matches_scoped(&dom, div, &[], Some(p))
+    );
+    assert!(
+        !SelectorQuery::parse(":hover")
+            .unwrap()
+            .matches(&dom, p, &[div])
+    );
+}
+
+#[test]
 fn root_pseudo_class_matches_the_document_element_only() {
     let (dom, div, p) = doc();
     let query = SelectorQuery::parse(":root").unwrap();

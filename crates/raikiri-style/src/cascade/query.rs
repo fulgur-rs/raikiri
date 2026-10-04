@@ -4,7 +4,7 @@
 //! Reuses the cascade's own complex-selector matcher so query results agree
 //! with how the same selector matches during style resolution.
 
-use selectors::parser::SelectorList;
+use selectors::parser::{Component, Selector, SelectorList};
 
 use super::selector_match::match_complex_selector_list;
 use crate::{RaikiriSelectorImpl, StyleDom, StyleNode, StyleNodeId, parse_selector_list};
@@ -20,8 +20,21 @@ impl SelectorQuery {
     ///
     /// Returns an error for an empty or syntactically invalid list, which DOM
     /// callers report as a `SyntaxError` `DOMException`.
+    /// Also rejects syntactically valid nth selectors nested inside an
+    /// `:nth-child(An+B of S)` or `:nth-last-child(An+B of S)` filter.
+    /// This intentional bounded-support restriction prevents recursively
+    /// amplified sibling scans, as in stylesheet registration.
+    /// Decision: `raikiri-spike-58do6`.
     pub fn parse(source: &str) -> Result<Self, String> {
-        parse_selector_list(source).map(|list| Self { list })
+        let list = parse_selector_list(source)?;
+        if !list
+            .slice()
+            .iter()
+            .all(|selector| has_bounded_nth_filters(selector, true))
+        {
+            return Err("nested nth selectors inside an nth-of filter are unsupported".into());
+        }
+        Ok(Self { list })
     }
 
     /// Whether the element `elem_id` matches any selector in the list, with
@@ -89,6 +102,32 @@ impl SelectorQuery {
         )
         .is_some()
     }
+}
+
+// Follow the rule-tree's nested-nth restriction without its unrelated
+// stylesheet support restrictions: DOM queries also support `:scope` and
+// accept state pseudo-classes that simply do not match.
+fn has_bounded_nth_filters(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bool) -> bool {
+    selector
+        .iter_raw_match_order()
+        .all(|component| match component {
+            Component::Nth(_) => allow_nth,
+            Component::NthOf(data) => {
+                allow_nth
+                    && data
+                        .selectors()
+                        .iter()
+                        .all(|selector| has_bounded_nth_filters(selector, false))
+            }
+            Component::Negation(list) | Component::Is(list) | Component::Where(list) => list
+                .slice()
+                .iter()
+                .all(|selector| has_bounded_nth_filters(selector, allow_nth)),
+            Component::Has(list) => list
+                .iter()
+                .all(|relative| has_bounded_nth_filters(&relative.selector, allow_nth)),
+            _ => true,
+        })
 }
 
 #[cfg(test)]
