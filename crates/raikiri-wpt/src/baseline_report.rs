@@ -15,7 +15,7 @@ use crate::reftest::{
 use crate::runner::TestOutcome;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -221,14 +221,15 @@ fn catch_row(id: &str, body: impl FnOnce() -> (Status, String)) -> Row {
     }
 }
 
-fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
+fn reftest_status(wpt_root: &Path, test_path: &Path, variant_query: &str) -> (Status, String) {
     let config = ReftestConfig {
         require_inline_fonts: true,
         ..ReftestConfig::default()
     };
-    reftest_status_with_config(wpt_root, id, config)
+    reftest_status_at_path(wpt_root, test_path, variant_query, config)
 }
 
+#[cfg(test)]
 fn reftest_status_with_config(
     wpt_root: &Path,
     id: &str,
@@ -243,7 +244,16 @@ fn reftest_status_with_config(
         format!("?{query}")
     };
     let test = wpt_root.join(path);
-    let pairs = match discover_pairs_for_file_with_wpt_root(&test, Some(wpt_root)) {
+    reftest_status_at_path(wpt_root, &test, &variant_query, config)
+}
+
+fn reftest_status_at_path(
+    wpt_root: &Path,
+    test_path: &Path,
+    variant_query: &str,
+    config: ReftestConfig,
+) -> (Status, String) {
+    let pairs = match discover_pairs_for_file_with_wpt_root(test_path, Some(wpt_root)) {
         Ok(pairs) => pairs,
         Err(error) => return (Status::Error, format!("discover: {error}")),
     };
@@ -253,7 +263,7 @@ fn reftest_status_with_config(
     let results = pairs
         .iter()
         .map(|pair| {
-            let (status, detail) = pair_status(pair, config, &variant_query);
+            let (status, detail) = pair_status(pair, config, variant_query);
             (pair.kind, status, detail)
         })
         .collect();
@@ -365,6 +375,68 @@ fn parsing_status(wpt_root: &Path, id: &str) -> (Status, String) {
     }
 }
 
+fn validate_wpt_test_id(id: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(id);
+    let has_normal_slash_components = !id.is_empty()
+        && !id.contains('\\')
+        && id
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..");
+    if !has_normal_slash_components
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err("invalid WPT test id: expected a normal relative path".to_owned());
+    }
+
+    Ok(relative.to_path_buf())
+}
+
+enum WptTestPathError {
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    OutsideRoot,
+}
+
+fn resolve_wpt_test_path(
+    wpt_root: &Path,
+    relative: &Path,
+) -> Result<(PathBuf, PathBuf), WptTestPathError> {
+    let input_path = wpt_root.join(relative);
+    let wpt_root = std::fs::canonicalize(wpt_root).map_err(|source| WptTestPathError::Io {
+        path: input_path.clone(),
+        source,
+    })?;
+    let test_input_path = wpt_root.join(relative);
+    let test_path =
+        std::fs::canonicalize(&test_input_path).map_err(|source| WptTestPathError::Io {
+            path: test_input_path,
+            source,
+        })?;
+    if !test_path.starts_with(&wpt_root) {
+        return Err(WptTestPathError::OutsideRoot);
+    }
+
+    Ok((wpt_root, test_path))
+}
+
+fn wpt_test_path_error_detail(error: WptTestPathError, parsing: bool) -> String {
+    match (error, parsing) {
+        (WptTestPathError::Io { source, .. }, true) => {
+            ParsingFileError::Io(source.to_string()).to_string()
+        }
+        (WptTestPathError::Io { path, source }, false) => {
+            format!("discover: {}", ReftestError::Io { path, source })
+        }
+        (WptTestPathError::OutsideRoot, _) => {
+            "WPT test path resolves outside the WPT root".to_owned()
+        }
+    }
+}
+
 /// Run one baseline id with the runner that matches its kind.
 ///
 /// A reftest passes at 800x600 with an exact pixel match, which is how the
@@ -387,25 +459,37 @@ pub fn run_id_with_expected_failures(
 }
 
 fn run_id_inner(wpt_root: &Path, id: &str, expected_failures: Option<&ExpectedFailures>) -> Row {
-    // Reference lookup and dynamic reftests need an absolute root.
-    let wpt_root = std::fs::canonicalize(wpt_root).unwrap_or_else(|_| wpt_root.to_path_buf());
-    let wpt_root = wpt_root.as_path();
     let (path, query) = id
         .split_once('?')
         .map_or((id, None), |(path, query)| (path, Some(query)));
-    let mut row = if is_parsing_id(path) {
-        if query.is_some() {
-            Row {
+    let mut row = match validate_wpt_test_id(path) {
+        Ok(_relative) if is_parsing_id(path) && query.is_some() => Row {
+            id: id.to_owned(),
+            status: Status::Error,
+            detail: "query variants for parsing tests are not supported by this runner".to_owned(),
+        },
+        Ok(relative) => match resolve_wpt_test_path(wpt_root, &relative) {
+            Ok((wpt_root, test_path)) => {
+                if is_parsing_id(path) {
+                    catch_row(id, || parsing_status(&wpt_root, path))
+                } else {
+                    let variant_query = query
+                        .filter(|query| !query.is_empty())
+                        .map_or_else(String::new, |query| format!("?{query}"));
+                    catch_row(id, || reftest_status(&wpt_root, &test_path, &variant_query))
+                }
+            }
+            Err(error) => Row {
                 id: id.to_owned(),
                 status: Status::Error,
-                detail: "query variants for parsing tests are not supported by this runner"
-                    .to_owned(),
-            }
-        } else {
-            catch_row(id, || parsing_status(wpt_root, path))
-        }
-    } else {
-        catch_row(id, || reftest_status(wpt_root, id))
+                detail: wpt_test_path_error_detail(error, is_parsing_id(path)),
+            },
+        },
+        Err(detail) => Row {
+            id: id.to_owned(),
+            status: Status::Error,
+            detail,
+        },
     };
     if let Some(expected) = expected_failures.and_then(|entries| entries.get(id)) {
         (row.status, row.detail) = classify_expected_failure(row.status, row.detail, expected);

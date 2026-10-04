@@ -404,6 +404,110 @@ fn a_missing_test_file_is_an_error_not_a_pass() {
 }
 
 #[test]
+fn a_missing_reftest_in_a_relative_wpt_root_reports_the_canonical_path() {
+    let temp = tempfile::tempdir_in(".").expect("temporary directory");
+    let temp_name = temp.path().file_name().expect("temporary directory name");
+    let root = PathBuf::from(temp_name).join("wpt");
+    std::fs::create_dir(&root).expect("WPT root");
+    let canonical_missing = std::fs::canonicalize(&root)
+        .expect("canonical WPT root")
+        .join("missing.html");
+
+    let row = run_id(&root, "missing.html");
+
+    assert_eq!(row.status, Status::Error);
+    assert!(
+        row.detail.starts_with(&format!(
+            "discover: I/O error at {}:",
+            canonical_missing.display()
+        )),
+        "{}",
+        row.detail
+    );
+}
+
+#[test]
+fn a_parent_traversal_id_is_rejected_before_reading_outside_the_wpt_root() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("wpt");
+    std::fs::create_dir(&root).expect("WPT root");
+    std::fs::write(temp.path().join("outside.html"), "<html></html>").expect("outside file");
+
+    let row = run_id(&root, "../outside.html");
+
+    assert_eq!(row.status, Status::Error);
+    assert!(row.detail.contains("invalid WPT test id"), "{}", row.detail);
+}
+
+#[test]
+fn a_parsing_id_with_parent_traversal_is_rejected_before_dispatch() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("wpt");
+    std::fs::create_dir(&root).expect("WPT root");
+    std::fs::write(temp.path().join("outside.html"), "<html></html>").expect("outside file");
+
+    let row = run_id(&root, "css/parsing/../../../outside.html");
+
+    assert_eq!(row.status, Status::Error);
+    assert!(row.detail.contains("invalid WPT test id"), "{}", row.detail);
+}
+
+#[test]
+fn an_absolute_id_is_rejected_before_reading_outside_the_wpt_root() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("wpt");
+    std::fs::create_dir(&root).expect("WPT root");
+    let outside = temp.path().join("outside.html");
+    std::fs::write(&outside, "<html></html>").expect("outside file");
+
+    let row = run_id(&root, outside.to_str().expect("UTF-8 temporary path"));
+
+    assert_eq!(row.status, Status::Error);
+    assert!(row.detail.contains("invalid WPT test id"), "{}", row.detail);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_to_outside_the_wpt_root_is_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("wpt");
+    std::fs::create_dir(&root).expect("WPT root");
+    let outside = temp.path().join("outside.html");
+    std::fs::write(&outside, "<html></html>").expect("outside file");
+    symlink(&outside, root.join("link.html")).expect("outside symlink");
+
+    let row = run_id(&root, "link.html");
+
+    assert_eq!(row.status, Status::Error);
+    assert!(
+        row.detail.contains("outside the WPT root"),
+        "{}",
+        row.detail
+    );
+}
+
+#[test]
+fn a_valid_nested_relative_id_reaches_the_reftest_runner() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("wpt");
+    let nested = root.join("nested/subdir");
+    std::fs::create_dir_all(&nested).expect("nested WPT directory");
+    std::fs::write(nested.join("page.html"), "<html></html>").expect("test file");
+
+    let row = run_id(&root, "nested/subdir/page.html");
+
+    assert_eq!(row.status, Status::Error);
+    assert!(row.detail.contains("no reftest"), "{}", row.detail);
+
+    let variant = run_id(&root, "nested/subdir/page.html?variant=dark");
+
+    assert_eq!(variant.status, Status::Error);
+    assert!(variant.detail.contains("no reftest"), "{}", variant.detail);
+}
+
+#[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn a_relative_wpt_root_still_runs_dynamic_reftests() {
     // Cargo runs unit tests with the crate directory as the working directory,
