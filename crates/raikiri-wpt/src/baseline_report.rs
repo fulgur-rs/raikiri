@@ -12,7 +12,7 @@ use crate::reftest::{
 use crate::runner::TestOutcome;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -210,9 +210,8 @@ fn catch_row(id: &str, body: impl FnOnce() -> (Status, String)) -> Row {
     }
 }
 
-fn reftest_status(wpt_root: &Path, id: &str) -> (Status, String) {
-    let test = wpt_root.join(id);
-    let pairs = match discover_pairs_for_file_with_wpt_root(&test, Some(wpt_root)) {
+fn reftest_status(wpt_root: &Path, test_path: &Path) -> (Status, String) {
+    let pairs = match discover_pairs_for_file_with_wpt_root(test_path, Some(wpt_root)) {
         Ok(pairs) => pairs,
         Err(error) => return (Status::Error, format!("discover: {error}")),
     };
@@ -314,6 +313,32 @@ fn parsing_status(wpt_root: &Path, id: &str) -> (Status, String) {
     }
 }
 
+fn resolve_wpt_test_path(wpt_root: &Path, id: &str) -> Result<(PathBuf, PathBuf), String> {
+    let relative = Path::new(id);
+    let has_normal_slash_components = !id.is_empty()
+        && !id.contains('\\')
+        && id
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..");
+    if !has_normal_slash_components
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err("invalid WPT test id: expected a normal relative path".to_owned());
+    }
+
+    let wpt_root = std::fs::canonicalize(wpt_root)
+        .map_err(|error| format!("cannot resolve WPT root: {error}"))?;
+    let test_path = std::fs::canonicalize(wpt_root.join(relative))
+        .map_err(|error| format!("cannot resolve WPT test path: {error}"))?;
+    if !test_path.starts_with(&wpt_root) {
+        return Err("WPT test path resolves outside the WPT root".to_owned());
+    }
+
+    Ok((wpt_root, test_path))
+}
+
 /// Run one baseline id with the runner that matches its kind.
 ///
 /// A reftest passes at 800x600 with an exact pixel match, which is how the
@@ -322,13 +347,20 @@ fn parsing_status(wpt_root: &Path, id: &str) -> (Status, String) {
 /// known-issues prefix filter is deliberately not applied: it overlaps the
 /// baseline.
 pub fn run_id(wpt_root: &Path, id: &str) -> Row {
-    // Reference lookup and dynamic reftests need an absolute root.
-    let wpt_root = std::fs::canonicalize(wpt_root).unwrap_or_else(|_| wpt_root.to_path_buf());
-    let wpt_root = wpt_root.as_path();
+    let (wpt_root, test_path) = match resolve_wpt_test_path(wpt_root, id) {
+        Ok(paths) => paths,
+        Err(detail) => {
+            return Row {
+                id: id.to_owned(),
+                status: Status::Error,
+                detail,
+            };
+        }
+    };
     if is_parsing_id(id) {
-        catch_row(id, || parsing_status(wpt_root, id))
+        catch_row(id, || parsing_status(&wpt_root, id))
     } else {
-        catch_row(id, || reftest_status(wpt_root, id))
+        catch_row(id, || reftest_status(&wpt_root, &test_path))
     }
 }
 
