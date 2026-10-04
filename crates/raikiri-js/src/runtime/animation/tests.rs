@@ -1,8 +1,10 @@
-use super::{AnimationProperty, KeyframePair};
+use super::*;
 use crate::runtime::DomRuntime;
 use crate::runtime::interfaces::wrap;
 use crate::runtime::test_host::StubHost;
 use crate::runtime::webidl::with_state;
+use boa_engine::JsValue;
+use boa_engine::object::JsObject;
 use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 
 fn runtime_with_target() -> (DomRuntime, usize) {
@@ -244,7 +246,12 @@ fn unsupported_animation_inputs_throw_type_error() {
                () => target.animate({ fontSize: ['0px', '40px'] }, NaN),\
                () => target.animate({ fontSize: ['0px', '40px'] }, Infinity),\
                () => target.animate({ fontSize: ['0 px', '40px'] }, 40),\
-               () => target.animate({ fontSize: ['0px', '1.px'] }, 40)\
+               () => target.animate({ fontSize: ['0px', '1.px'] }, 40),\
+               () => target.animate({ fontSize: ['', '40px'] }, 40),\
+               () => target.animate({ fontSize: ['0', '40px'] }, 40),\
+               () => target.animate({ fontSize: ['0em', '40px'] }, 40),\
+               () => target.animate({}, 40),\
+               () => target.animate({ fontSize: ['0px', '40px'], wordSpacing: ['0px', '40px'] }, 40)\
              ].every(run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } })",
         )
         .expect("invalid animation inputs are caught as TypeErrors");
@@ -253,6 +260,48 @@ fn unsupported_animation_inputs_throw_type_error() {
         result.to_boolean(),
         "every unsupported input must throw TypeError"
     );
+}
+
+#[test]
+fn css_number_syntax_accepts_only_complete_css_numbers() {
+    for value in ["0", "+1", "-2", "1.5", ".5", "1e2", "1.5E-2"] {
+        assert!(is_css_number_syntax(value), "{value:?} should be accepted");
+    }
+    for value in ["", "+", ". ", "1.", "1e", "1e+", "1  ", "x"] {
+        assert!(!is_css_number_syntax(value), "{value:?} should be rejected");
+    }
+}
+
+#[test]
+fn stale_animation_ids_are_rejected_by_controls() {
+    let (mut runtime, _) = runtime_with_target();
+    let prototype = super::super::interfaces::protos(runtime.context_mut())
+        .animation
+        .clone();
+    let animation =
+        JsObject::from_proto_and_data(Some(prototype), AnimationData { id: usize::MAX });
+    let animation: JsValue = animation.into();
+
+    assert!(pause(&animation, &[], runtime.context_mut()).is_err());
+    assert!(set_current_time(&animation, &[JsValue::from(1.0)], runtime.context_mut()).is_err());
+}
+
+#[test]
+fn paused_effect_without_a_current_time_has_no_sample() {
+    let (mut runtime, target) = runtime_with_target();
+    with_state(runtime.context_mut(), |state| {
+        state.animations.push(AnimationEffect {
+            target,
+            keyframes: KeyframePair::new(AnimationProperty::FontSize, 0.0, 40.0, 40.0)
+                .expect("valid keyframes"),
+            current_time_ms: None,
+            paused: true,
+        });
+    })
+    .unwrap();
+
+    refresh_animation_styles(runtime.context_mut()).unwrap();
+    assert_eq!(animation_style(&mut runtime, target), None);
 }
 
 #[test]

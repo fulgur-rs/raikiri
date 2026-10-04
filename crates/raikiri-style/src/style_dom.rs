@@ -383,3 +383,6 @@ fn class_token_matches(attr_value: &str, class: &str, ascii_case_insensitive: bo
             }
         })
 }
+
+#[cfg(test)]
+mod tests;
