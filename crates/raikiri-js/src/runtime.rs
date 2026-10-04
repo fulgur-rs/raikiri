@@ -66,6 +66,8 @@ pub(crate) struct State {
     pub host_failure: Option<String>,
     /// Per-element `style` objects so `el.style === el.style`.
     pub style_objects: HashMap<usize, JsObject>,
+    /// Animation effects in creation order; the vector index is their stable ID.
+    pub animations: Vec<animation::AnimationEffect>,
     /// The live `document.styleSheets` list.
     pub style_sheet_list: Option<JsObject>,
     /// Per-style-element `CSSStyleSheet` wrappers.
@@ -326,6 +328,7 @@ impl DomRuntime {
             live_walks: 0,
             host_failure: None,
             style_objects: HashMap::new(),
+            animations: Vec::new(),
             style_sheet_list: None,
             style_sheets: HashMap::new(),
             css_rule_lists: HashMap::new(),
