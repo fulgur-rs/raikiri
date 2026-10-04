@@ -386,7 +386,7 @@ fn is_exact_test_id(test_id: &str) -> bool {
     {
         return false;
     }
-    query.map_or(true, |query| !query.is_empty() && !query.contains('?'))
+    query.is_none_or(|query| !query.is_empty() && !query.contains('?'))
 }
 
 fn is_local_beads_id(issue_id: &str) -> bool {
