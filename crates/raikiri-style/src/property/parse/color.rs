@@ -233,7 +233,33 @@ pub(crate) fn parse_color_float(
     input: &mut Parser<'_, '_>,
     color_mix_depth: usize,
 ) -> Option<ParsedColor> {
+    let start = input.state();
     let token = input.next().ok()?.clone();
+    if color_mix_depth == 0 && matches!(token, Token::Function(_)) {
+        // Direct callers, including border-color serialization, bypass the
+        // declaration scanner. Check token nesting once before descending
+        // into color origins, relative math, or variable fallback values.
+        // Inspect only this color's function body, not subsequent gradient
+        // stops or shorthand components; repeated callers stay linear.
+        let bounded = input
+            .parse_nested_block(|nested| {
+                Ok::<_, ParseError<'_, ()>>(css_component_values_are_bounded_in_parser(nested, 1))
+            })
+            .unwrap_or(false);
+        input.reset(&start);
+        input.next().ok()?;
+        if !bounded {
+            return None;
+        }
+    }
+    let color_mix_depth = if matches!(token, Token::Function(_)) {
+        if color_mix_depth >= MAX_COLOR_MIX_NESTING_DEPTH {
+            return None;
+        }
+        color_mix_depth + 1
+    } else {
+        color_mix_depth
+    };
     match token {
         Token::Hash(ref value) | Token::IDHash(ref value) => {
             CssColor::from_hex(value).map(ParsedColor::from_css_color)
@@ -308,28 +334,12 @@ pub(crate) fn parse_color_float(
         Token::Function(ref name) if name.eq_ignore_ascii_case("contrast-color") => input
             .parse_nested_block(|nested| parse_contrast_color_function(nested, color_mix_depth))
             .ok(),
-        Token::Function(ref name) if name.eq_ignore_ascii_case("color-layers") => {
-            if color_mix_depth >= MAX_COLOR_MIX_NESTING_DEPTH {
-                None
-            } else {
-                input
-                    .parse_nested_block(|nested| {
-                        parse_color_layers_function(nested, color_mix_depth.saturating_add(1))
-                    })
-                    .ok()
-            }
-        }
-        Token::Function(ref name) if name.eq_ignore_ascii_case("color-mix") => {
-            if color_mix_depth >= MAX_COLOR_MIX_NESTING_DEPTH {
-                None
-            } else {
-                input
-                    .parse_nested_block(|nested| {
-                        parse_color_mix_function(nested, color_mix_depth.saturating_add(1))
-                    })
-                    .ok()
-            }
-        }
+        Token::Function(ref name) if name.eq_ignore_ascii_case("color-layers") => input
+            .parse_nested_block(|nested| parse_color_layers_function(nested, color_mix_depth))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("color-mix") => input
+            .parse_nested_block(|nested| parse_color_mix_function(nested, color_mix_depth))
+            .ok(),
         _ => None,
     }
 }
