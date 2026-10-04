@@ -67,13 +67,25 @@ fn absolute_letter_and_word_spacing_map() {
 
 #[test]
 fn word_spacing_percent_and_calc_terms_map_to_shodo() {
-    let percent = root_style("word-spacing:25%").expect("map percentage");
-    assert_eq!(percent.word_spacing, 0.0);
-    assert_eq!(percent.word_spacing_percent, 25.0);
+    let percent = root_style("font-size:20px;word-spacing:25%").expect("map percentage");
+    assert_eq!(percent.word_spacing, 5.0);
+    assert_eq!(percent.word_spacing_percent, 0.0);
 
-    let calc = root_style("word-spacing:calc(6px + 25%)").expect("map calc");
-    assert_eq!(calc.word_spacing, 6.0);
-    assert_eq!(calc.word_spacing_percent, 25.0);
+    let calc = root_style("font-size:20px;word-spacing:calc(6px + 25%)").expect("map calc");
+    assert_eq!(calc.word_spacing, 11.0);
+    assert_eq!(calc.word_spacing_percent, 0.0);
+
+    let hundred = root_style("font-size:20px;word-spacing:100%").expect("map 100 percent");
+    assert_eq!(hundred.word_spacing, 20.0);
+    assert_eq!(hundred.word_spacing_percent, 0.0);
+}
+
+#[test]
+fn word_spacing_ch_calc_percent_maps_to_absolute_shodo_length() {
+    let ch_calc = root_style("font-size:20px;word-spacing:calc(2ch - 1px + 25%)")
+        .expect("map calc with ch and percentage");
+    assert_eq!(ch_calc.word_spacing, 44.0);
+    assert_eq!(ch_calc.word_spacing_percent, 0.0);
 }
 
 #[test]
