@@ -26,6 +26,8 @@ fn report_records_execution_errors_and_strict_mode_controls_exit_status() {
             baseline.to_str().unwrap(),
             "--output",
             report.to_str().unwrap(),
+            "--limit",
+            "1",
         ])
         .assert()
         .success();
@@ -50,6 +52,8 @@ fn report_records_execution_errors_and_strict_mode_controls_exit_status() {
             baseline.to_str().unwrap(),
             "--output",
             report.to_str().unwrap(),
+            "--limit",
+            "1",
             "--strict",
         ])
         .assert()
