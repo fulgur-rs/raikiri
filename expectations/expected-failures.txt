@@ -9,6 +9,7 @@
 # Exact entries override directory-prefix SKIPs in known-issues.txt. They do
 # not override deprecated.txt or quarantine.txt, and must not overlap the pass
 # baseline. See README.md for the add, review, and XPASS cleanup procedure.
+css/css-text/word-spacing/word-spacing-001.html | The mixed calc row uses multiplication and division that Raikiri does not compute; the other percentage and length rows match | raikiri-spike-6qrnr.5 | 2026-10-05 | 2026-11-04
 css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html | Pinned WPT actual omits text-spacing-trim; reference uses space-all with explicit halt/vhal punctuation trimming | raikiri-spike-6qrnr.15.14.5.3 | 2026-10-05 | 2026-11-04
 css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html?class=halt,htb | Pinned WPT actual omits text-spacing-trim; reference uses space-all with explicit halt/vhal punctuation trimming | raikiri-spike-6qrnr.15.14.5.3 | 2026-10-04 | 2026-11-04
 css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html?class=chws,htb | Pinned WPT actual omits text-spacing-trim; reference uses space-all with explicit halt/vhal punctuation trimming | raikiri-spike-6qrnr.15.14.5.3 | 2026-10-04 | 2026-11-04

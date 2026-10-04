@@ -66,6 +66,17 @@ fn absolute_letter_and_word_spacing_map() {
 }
 
 #[test]
+fn word_spacing_percent_and_calc_terms_map_to_shodo() {
+    let percent = root_style("word-spacing:25%").expect("map percentage");
+    assert_eq!(percent.word_spacing, 0.0);
+    assert_eq!(percent.word_spacing_percent, 25.0);
+
+    let calc = root_style("word-spacing:calc(6px + 25%)").expect("map calc");
+    assert_eq!(calc.word_spacing, 6.0);
+    assert_eq!(calc.word_spacing_percent, 25.0);
+}
+
+#[test]
 fn line_height_maps_number_and_length() {
     assert_eq!(
         root_style("line-height:1.5").expect("number").line_height,
