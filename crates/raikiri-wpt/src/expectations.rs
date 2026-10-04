@@ -63,7 +63,7 @@ impl ExpectationSet {
         Self::load_from(&workspace_expectations_dir())
     }
 
-    /// Load all 5 files from an arbitrary directory. Used for unit tests
+    /// Load all 6 files from an arbitrary directory. Used for unit tests
     /// via `parse(&str, &str)` on individual files and for future
     /// integration tests that stage fixture directories.
     ///
