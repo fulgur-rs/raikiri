@@ -35,6 +35,14 @@ const COMBINATOR_CHAIN_SELECTOR_DEPTH: usize = 5;
 // cov:ignore: same reason as the constant above.
 const COMBINATOR_CHAIN_DOC_DEPTH: usize = 5000;
 
+/// Depth of the `div` chain in the descendant-miss workload.
+// cov:ignore: bench harness constant — same reason as `CASCADE_NEVER_ERRS`.
+const DESCENDANT_MISS_DOC_DEPTH: usize = 1000;
+
+/// Rule count of the descendant-miss workload.
+// cov:ignore: bench harness constant — same reason as `CASCADE_NEVER_ERRS`.
+const DESCENDANT_MISS_RULES: usize = 50;
+
 /// Number of `article` levels in the mixed-combinator workload.
 // cov:ignore: same reason as the constant above.
 const MIXED_CHAIN_ARTICLES: usize = 300;
@@ -457,6 +465,16 @@ impl StyleElement for BenchElementRef<'_> {
             .any(|c| c.eq_ignore_ascii_case(class))
     }
 
+    /// Bench-local class enumeration over the same tokens as
+    /// [`BenchElementRef::has_class`].
+    fn for_each_class(&self, f: &mut dyn FnMut(&str)) {
+        self.node
+            .classes
+            .iter()
+            .filter(|c| !c.is_empty())
+            .for_each(|c| f(c));
+    }
+
     /// Bench-local attribute lookup. Only `id` is backed: valued class and
     /// attribute selectors are not part of any bench workload, and class
     /// matching goes through [`BenchElementRef::has_class`].
@@ -566,6 +584,38 @@ fn chain_stylesheet(depth: usize) -> (String, Winners) {
             color,
         },
     )
+}
+
+/// Build the descendant-miss workload: a `doc_depth`-deep `div` chain
+/// against `n_rules` rules of the form `.absentN div`. Every rule's subject
+/// compound matches every element, but no element carries any `absentN`
+/// class, so every attempt is a miss that a matcher without an ancestor
+/// filter only discovers after walking the element's entire ancestor chain.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn descendant_miss_workload(n_rules: usize, doc_depth: usize) -> (BenchDoc, RuleTree, u64) {
+    let mut tree = RuleTree::empty();
+    let body = shared_winner_body();
+    let css = (0..n_rules)
+        .map(|i| format!(".absent{i} div {{ {body} }}\n"))
+        .collect::<String>();
+    tree.add_stylesheet(&css, Origin::Author);
+    assert_eq!(
+        tree.style_rules().len(),
+        n_rules,
+        "descendant-miss stylesheet did not parse into the expected rule count"
+    );
+
+    let doc = BenchDoc::chain(doc_depth);
+    let initial = ComputedValues::initial();
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    for i in 1..=doc_depth {
+        assert_eq!(
+            probe.computed[i].color, initial.color,
+            "div at chain position {i} has no `absentN` ancestor and must not \
+             match any rule"
+        );
+    }
+    (doc, tree, (n_rules * doc_depth) as u64)
 }
 
 /// Build a single-rule stylesheet for the `section > article div` mixed
@@ -1461,6 +1511,20 @@ fn bench_cascade(c: &mut Criterion) {
         // produce any declarations at all.
         group.throughput(Throughput::Elements(match_attempts));
         group.bench_function("combinator_chain_5000x4", |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // Descendant-miss config — every (element, rule) pair is a descendant
+    // combinator miss whose required ancestor class never occurs, the case an
+    // ancestor Bloom filter rejects without walking the ancestor chain.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    {
+        let (doc, tree, match_attempts) =
+            descendant_miss_workload(DESCENDANT_MISS_RULES, DESCENDANT_MISS_DOC_DEPTH);
+        group.throughput(Throughput::Elements(match_attempts));
+        group.bench_function("descendant_miss_1000x50", |b| {
             b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
         });
     }

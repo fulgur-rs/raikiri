@@ -338,6 +338,7 @@ pub(crate) use collect::*;
 mod directionality;
 pub(crate) mod lang;
 mod query;
+mod rule_index;
 mod selector_match;
 pub(crate) use directionality::*;
 pub use query::SelectorQuery;
