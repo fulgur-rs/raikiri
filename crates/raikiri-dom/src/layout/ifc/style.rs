@@ -159,10 +159,9 @@ pub(crate) fn inline_style(
     fonts: &FontCollection,
 ) -> Result<InlineStyle, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    // A percentage or calc() spacing would resolve against the font size at
-    // used-value time; this projection takes the computed length's absolute
-    // part (`px()`).
-    let absolute_spacing = |value: &ComputedLetterSpacing, fallback: f32| match value {
+    // Percentage or calc() letter spacing remains deferred, so project its
+    // available absolute fallback for Shodo.
+    let absolute_letter_spacing = |value: &ComputedLetterSpacing, fallback: f32| match value {
         ComputedLetterSpacing::Px(value) => Ok::<f32, IfcError>(*value),
         _ => Ok(fallback),
     };
@@ -178,11 +177,20 @@ pub(crate) fn inline_style(
             &cv.letter_spacing_ch_font,
             cv.letter_spacing_ch_offset,
         ),
-        None => absolute_spacing(&cv.letter_spacing_computed, cv.letter_spacing.px())?,
+        None => absolute_letter_spacing(&cv.letter_spacing_computed, cv.letter_spacing.px())?,
     };
     let word_spacing = match cv.word_spacing_ch_factor {
         Some(factor) => ch_length(factor, &cv.word_spacing_ch_font, cv.word_spacing_ch_offset),
-        None => absolute_spacing(&cv.word_spacing_computed, cv.word_spacing.px())?,
+        None => match cv.word_spacing_computed {
+            ComputedLetterSpacing::Px(value) => value,
+            ComputedLetterSpacing::Percent(_) => 0.0,
+            ComputedLetterSpacing::Calc(value) => value.px,
+        },
+    };
+    let word_spacing_percent = match cv.word_spacing_computed {
+        ComputedLetterSpacing::Percent(value) => value,
+        ComputedLetterSpacing::Calc(value) => value.percent,
+        ComputedLetterSpacing::Px(_) => 0.0,
     };
     let line_height = match cv.line_height {
         ComputedLineHeight::Normal => LineHeight::Normal,
@@ -488,6 +496,7 @@ pub(crate) fn inline_style(
         line_height,
         letter_spacing,
         word_spacing,
+        word_spacing_percent,
         white_space_collapse,
         text_wrap_mode,
         line_break,

@@ -573,12 +573,11 @@ fn overflow_wrap_span_boundaries_are_pixel_exact_at_800x600() {
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn word_spacing_matrix_at_800x600_with_bundled_fonts() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
-    // Keep existing baseline controls green while exposing the one static
-    // negative-length slice supported by this test. Other mismatches remain
-    // diagnostic and must not be added to the baseline.
+    // Pin each file's exact pixel outcome. Track mismatches as exact expected
+    // failures; render and harness errors remain hard failures.
     let candidates = [
-        ("css/css-text/word-spacing/word-spacing-001.html", 27200),
-        ("css/css-text/word-spacing/word-spacing-002.html", 4798),
+        ("css/css-text/word-spacing/word-spacing-001.html", 4000),
+        ("css/css-text/word-spacing/word-spacing-002.html", 0),
         ("css/css-text/word-spacing/word-spacing-003.html", 0),
         (
             "css/css-text/word-spacing/word-spacing-animating-font-size.html",
