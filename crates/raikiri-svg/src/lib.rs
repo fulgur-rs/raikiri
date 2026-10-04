@@ -5,7 +5,7 @@
 
 use raikiri_traits::DecodedImage;
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
@@ -166,6 +166,7 @@ impl SvgDocument {
             .and_then(parse_view_box_ratio)
             .is_some();
         let root_has_color = root.attribute("color").is_some();
+        preflight_initial_svg_selectors(&xml)?;
         let tree = parse_tree(&normalized)?;
         let tree_size = tree.size();
         if !tree_size.width().is_finite()
@@ -331,6 +332,524 @@ fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {
         return Err(SvgError::UnsupportedFilterEffects);
     }
     Ok(tree)
+}
+
+#[derive(Default)]
+struct InitialStylesheetResourceEstimate {
+    selector_count: usize,
+    selector_ast_bytes: usize,
+    declaration_storage_bytes: usize,
+}
+
+fn estimate_initial_stylesheet_resources(
+    stylesheet: &str,
+) -> Result<InitialStylesheetResourceEstimate, SvgError> {
+    let bytes = stylesheet.as_bytes();
+    let mut cursor = 0;
+    let mut estimate = InitialStylesheetResourceEstimate::default();
+
+    while skip_simplecss_spaces_and_comments(bytes, &mut cursor) {
+        if cursor == bytes.len() {
+            break;
+        }
+
+        if bytes[cursor] == b'@' && is_simplecss_name_start(bytes.get(cursor + 1).copied()) {
+            cursor = skip_simplecss_at_rule(bytes, cursor);
+            continue;
+        }
+
+        let mut selector_count = 1usize;
+        let mut selector_source_bytes = 0usize;
+        loop {
+            if cursor >= bytes.len() {
+                break;
+            }
+
+            if bytes[cursor..].starts_with(b"/*") {
+                if let Some(comment_end) = simplecss_comment_end(bytes, cursor) {
+                    if simplecss_has_block_delimiter(&bytes[cursor..comment_end]) {
+                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    }
+                    cursor = comment_end;
+                    continue;
+                }
+                if simplecss_has_block_delimiter(&bytes[cursor..]) {
+                    return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                }
+                cursor = bytes.len();
+                break;
+            }
+
+            match bytes[cursor] {
+                b'\'' | b'"' => {
+                    let string_end = simplecss_string_end(bytes, cursor);
+                    if simplecss_has_block_delimiter(&bytes[cursor..string_end]) {
+                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    }
+                    selector_source_bytes = selector_source_bytes
+                        .checked_add(string_end - cursor)
+                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    cursor = string_end;
+                }
+                b'(' => {
+                    let function_end = simplecss_function_end(bytes, cursor);
+                    if simplecss_has_block_delimiter(&bytes[cursor..function_end]) {
+                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    }
+                    selector_source_bytes = selector_source_bytes
+                        .checked_add(function_end - cursor)
+                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    cursor = function_end;
+                }
+                b',' => {
+                    selector_count = selector_count
+                        .checked_add(1)
+                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    selector_source_bytes = selector_source_bytes
+                        .checked_add(1)
+                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    cursor += 1;
+                }
+                b'{' => break,
+                _ => {
+                    selector_source_bytes = selector_source_bytes
+                        .checked_add(1)
+                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    cursor += 1;
+                }
+            }
+        }
+
+        estimate.selector_count = estimate
+            .selector_count
+            .checked_add(selector_count)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        let selector_headers = selector_count
+            .checked_mul(std::mem::size_of::<simplecss::Rule<'static>>())
+            .and_then(|bytes| bytes.checked_mul(2))
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        let selector_nodes = selector_source_bytes
+            .checked_mul(MAX_INITIAL_PARSE_SELECTOR_AST_BYTES_PER_SOURCE_BYTE)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        estimate.selector_ast_bytes = estimate
+            .selector_ast_bytes
+            .checked_add(selector_headers)
+            .and_then(|bytes| bytes.checked_add(selector_nodes))
+            .ok_or_else(initial_parse_selector_limit_error)?;
+
+        if bytes.get(cursor) != Some(&b'{') {
+            break;
+        }
+        cursor += 1;
+
+        let mut declaration_count = 1usize;
+        let mut nested_blocks = 0usize;
+        while cursor < bytes.len() {
+            if bytes[cursor..].starts_with(b"/*") {
+                if let Some(comment_end) = simplecss_comment_end(bytes, cursor) {
+                    if simplecss_has_block_delimiter(&bytes[cursor..comment_end]) {
+                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    }
+                    cursor = comment_end;
+                    continue;
+                }
+                if simplecss_has_block_delimiter(&bytes[cursor..]) {
+                    return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                }
+                cursor = bytes.len();
+                break;
+            }
+
+            match bytes[cursor] {
+                b'\'' | b'"' => {
+                    let string_end = simplecss_string_end(bytes, cursor);
+                    if simplecss_has_block_delimiter(&bytes[cursor..string_end]) {
+                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    }
+                    cursor = string_end;
+                }
+                b'(' => {
+                    let function_end = simplecss_function_end(bytes, cursor);
+                    if simplecss_has_block_delimiter(&bytes[cursor..function_end]) {
+                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    }
+                    cursor = function_end;
+                }
+                b'{' => {
+                    nested_blocks = nested_blocks
+                        .checked_add(1)
+                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    cursor += 1;
+                }
+                b'}' if nested_blocks == 0 => {
+                    cursor += 1;
+                    break;
+                }
+                b'}' => {
+                    nested_blocks -= 1;
+                    cursor += 1;
+                }
+                b';' => {
+                    declaration_count = declaration_count
+                        .checked_add(1)
+                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    cursor += 1;
+                }
+                _ => cursor += 1,
+            }
+        }
+
+        let declaration_vectors = selector_count
+            .checked_add(1)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        let declaration_storage = declaration_vectors
+            .checked_mul(declaration_count)
+            .and_then(|count| {
+                count.checked_mul(std::mem::size_of::<simplecss::Declaration<'static>>())
+            })
+            .and_then(|bytes| bytes.checked_mul(INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR))
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        estimate.declaration_storage_bytes = estimate
+            .declaration_storage_bytes
+            .checked_add(declaration_storage)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+    }
+
+    Ok(estimate)
+}
+
+fn include_simplecss_recovery_suffix(
+    mut estimate: InitialStylesheetResourceEstimate,
+    stylesheet: &[u8],
+    start: usize,
+) -> Result<InitialStylesheetResourceEstimate, SvgError> {
+    let suffix = &stylesheet[start..];
+    let selector_count = suffix
+        .iter()
+        .filter(|byte| matches!(byte, b',' | b'{'))
+        .count()
+        .checked_add(1)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    let declaration_count = suffix
+        .iter()
+        .filter(|byte| matches!(byte, b';' | b'}'))
+        .count()
+        .checked_add(1)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    let selector_headers = selector_count
+        .checked_mul(std::mem::size_of::<simplecss::Rule<'static>>())
+        .and_then(|bytes| bytes.checked_mul(2))
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    let selector_nodes = suffix
+        .len()
+        .checked_mul(MAX_INITIAL_PARSE_SELECTOR_AST_BYTES_PER_SOURCE_BYTE)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    estimate.selector_count = estimate
+        .selector_count
+        .checked_add(selector_count)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    estimate.selector_ast_bytes = estimate
+        .selector_ast_bytes
+        .checked_add(selector_headers)
+        .and_then(|bytes| bytes.checked_add(selector_nodes))
+        .ok_or_else(initial_parse_selector_limit_error)?;
+
+    let declaration_vectors = selector_count
+        .checked_add(1)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    let declaration_storage = declaration_vectors
+        .checked_mul(declaration_count)
+        .and_then(|count| count.checked_mul(std::mem::size_of::<simplecss::Declaration<'static>>()))
+        .and_then(|bytes| bytes.checked_mul(INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR))
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    estimate.declaration_storage_bytes = estimate
+        .declaration_storage_bytes
+        .checked_add(declaration_storage)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    Ok(estimate)
+}
+
+fn simplecss_has_block_delimiter(bytes: &[u8]) -> bool {
+    bytes.iter().any(|byte| matches!(byte, b'{' | b'}'))
+}
+
+fn skip_simplecss_spaces_and_comments(bytes: &[u8], cursor: &mut usize) -> bool {
+    loop {
+        while bytes
+            .get(*cursor)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C'))
+        {
+            *cursor += 1;
+        }
+        if !bytes[*cursor..].starts_with(b"/*") {
+            return true;
+        }
+        let Some(comment_end) = simplecss_comment_end(bytes, *cursor) else {
+            *cursor = bytes.len();
+            return false;
+        };
+        *cursor = comment_end;
+    }
+}
+
+fn simplecss_comment_end(bytes: &[u8], cursor: usize) -> Option<usize> {
+    let end = bytes
+        .get(cursor + 2..)?
+        .windows(2)
+        .position(|pair| pair == b"*/")?;
+    Some(cursor + 2 + end + 2)
+}
+
+fn simplecss_string_end(bytes: &[u8], cursor: usize) -> usize {
+    let quote = bytes[cursor];
+    let mut previous = quote;
+    let mut end = cursor + 1;
+    while let Some(byte) = bytes.get(end).copied() {
+        if byte == quote && previous != b'\\' {
+            return end + 1;
+        }
+        previous = byte;
+        end += 1;
+    }
+    bytes.len()
+}
+
+fn simplecss_function_end(bytes: &[u8], cursor: usize) -> usize {
+    bytes[cursor + 1..]
+        .iter()
+        .position(|byte| *byte == b')')
+        .map_or(bytes.len(), |offset| cursor + offset + 2)
+}
+
+fn is_simplecss_name_start(byte: Option<u8>) -> bool {
+    byte.is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_' || byte > 237)
+}
+
+fn skip_simplecss_at_rule(bytes: &[u8], cursor: usize) -> usize {
+    let mut end = cursor + 1;
+    while end < bytes.len() && !matches!(bytes[end], b';' | b'{') {
+        end += 1;
+    }
+    match bytes.get(end) {
+        Some(b';') => end + 1,
+        Some(b'{') => {
+            end += 1;
+            let mut nested_blocks = 0usize;
+            while end < bytes.len() {
+                match bytes[end] {
+                    b'{' => nested_blocks += 1,
+                    b'}' if nested_blocks == 0 => return end + 1,
+                    b'}' => nested_blocks -= 1,
+                    _ => {}
+                }
+                end += 1;
+            }
+            end
+        }
+        _ => end,
+    }
+}
+
+fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), SvgError> {
+    let mut budget = InitialParseSelectorBudget::new();
+    let mut selectors = Vec::new();
+    let mut total_rules = 0usize;
+    for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
+        if node
+            .attribute("type")
+            .is_some_and(|style_type| style_type != "text/css")
+        {
+            continue;
+        }
+        let Some(stylesheet_text) = node.text() else {
+            continue;
+        };
+        budget.charge_bytes(stylesheet_text.len())?;
+        let estimate = estimate_initial_stylesheet_resources(stylesheet_text)?;
+        budget.check_selector_capacity(estimate.selector_count)?;
+        budget.charge_selector_ast_bytes(estimate.selector_ast_bytes)?;
+        budget.charge_declaration_storage(estimate.declaration_storage_bytes)?;
+        let stylesheet = simplecss::StyleSheet::parse(stylesheet_text);
+        budget.charge_selectors(stylesheet.rules.len())?;
+        total_rules = total_rules
+            .checked_add(stylesheet.rules.len())
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        budget.charge_stylesheet_sort_work(total_rules)?;
+        selectors.extend(stylesheet.rules.into_iter().map(|rule| rule.selector));
+    }
+    if selectors.is_empty() {
+        return Ok(());
+    }
+
+    let mut xml_node_count = 0usize;
+    for _ in xml.descendants() {
+        xml_node_count = xml_node_count
+            .checked_add(1)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        if xml_node_count > MAX_INITIAL_PARSE_XML_NODES {
+            return Err(initial_parse_selector_limit_error());
+        }
+    }
+
+    let mut id_map = HashMap::new();
+    for node in xml.descendants() {
+        budget.charge_work(1)?;
+        if let Some(id) = node.attribute("id") {
+            budget.charge_work(id.len())?;
+            if !id_map.contains_key(id) {
+                budget.charge_bytes(
+                    id.len()
+                        .checked_add(std::mem::size_of::<String>() * 2)
+                        .ok_or_else(initial_parse_selector_limit_error)?,
+                )?;
+                id_map.insert(id.to_owned(), node);
+            }
+        }
+    }
+
+    let mut expanded_node_count = 0usize;
+    preflight_svg_selector_children(
+        xml.root(),
+        xml.root(),
+        0,
+        &selectors,
+        &id_map,
+        &mut budget,
+        &mut expanded_node_count,
+    )
+}
+
+fn preflight_svg_selector_children<'a, 'input: 'a, 'css>(
+    parent: roxmltree::Node<'a, 'input>,
+    origin: roxmltree::Node<'a, 'input>,
+    depth: usize,
+    selectors: &[simplecss::Selector<'css>],
+    id_map: &HashMap<String, roxmltree::Node<'a, 'input>>,
+    budget: &mut InitialParseSelectorBudget,
+    expanded_node_count: &mut usize,
+) -> Result<(), SvgError> {
+    for child in parent.children() {
+        preflight_svg_selector_node(
+            child,
+            origin,
+            depth,
+            selectors,
+            id_map,
+            budget,
+            expanded_node_count,
+        )?;
+    }
+    Ok(())
+}
+
+fn preflight_svg_selector_node<'a, 'input: 'a, 'css>(
+    node: roxmltree::Node<'a, 'input>,
+    origin: roxmltree::Node<'a, 'input>,
+    depth: usize,
+    selectors: &[simplecss::Selector<'css>],
+    id_map: &HashMap<String, roxmltree::Node<'a, 'input>>,
+    budget: &mut InitialParseSelectorBudget,
+    expanded_node_count: &mut usize,
+) -> Result<(), SvgError> {
+    if !node.is_element()
+        || node
+            .tag_name()
+            .namespace()
+            .is_some_and(|namespace| namespace != SVG_NAMESPACE)
+    {
+        return Ok(());
+    }
+
+    let tag_name = node.tag_name().name();
+    if tag_name == "style" {
+        return Ok(());
+    }
+    if depth > MAX_INITIAL_PARSE_XML_DEPTH {
+        return Err(initial_parse_selector_limit_error());
+    }
+
+    *expanded_node_count = expanded_node_count
+        .checked_add(1)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    if *expanded_node_count > MAX_INITIAL_PARSE_XML_NODES {
+        return Err(initial_parse_selector_limit_error());
+    }
+
+    for selector in selectors {
+        budget.charge_work(1)?;
+        budgeted_selector_matches_with_budget(
+            selector,
+            node,
+            &mut budget.remaining_work,
+            initial_parse_selector_limit_error,
+        )?;
+    }
+
+    if tag_name == "use" {
+        let Some(link) = resolve_svg_use_reference(node, id_map) else {
+            return Ok(());
+        };
+        if link == node || link == origin {
+            return Ok(());
+        }
+        if svg_use_expansion_is_recursive(node, link, id_map, budget)? {
+            return Ok(());
+        }
+        return preflight_svg_selector_node(
+            link,
+            node,
+            depth + 1,
+            selectors,
+            id_map,
+            budget,
+            expanded_node_count,
+        );
+    }
+
+    preflight_svg_selector_children(
+        node,
+        origin,
+        depth + 1,
+        selectors,
+        id_map,
+        budget,
+        expanded_node_count,
+    )
+}
+
+fn resolve_svg_use_reference<'a, 'input: 'a>(
+    node: roxmltree::Node<'a, 'input>,
+    id_map: &HashMap<String, roxmltree::Node<'a, 'input>>,
+) -> Option<roxmltree::Node<'a, 'input>> {
+    let link_value = node
+        .attributes()
+        .find(|attribute| attribute.name() == "href" && attribute.namespace().is_none())
+        .or_else(|| {
+            node.attributes().find(|attribute| {
+                attribute.name() == "href" && attribute.namespace() == Some(XLINK_NAMESPACE)
+            })
+        })
+        .map(|attribute| attribute.value())?;
+    let link_id = svgtypes::IRI::from_str(link_value).ok()?.0;
+    id_map.get(link_id).copied()
+}
+
+fn svg_use_expansion_is_recursive<'a, 'input: 'a>(
+    use_node: roxmltree::Node<'a, 'input>,
+    link: roxmltree::Node<'a, 'input>,
+    id_map: &HashMap<String, roxmltree::Node<'a, 'input>>,
+    budget: &mut InitialParseSelectorBudget,
+) -> Result<bool, SvgError> {
+    for link_child in link.descendants().skip(1) {
+        budget.charge_work(1)?;
+        if link_child.has_tag_name((SVG_NAMESPACE, "use"))
+            && resolve_svg_use_reference(link_child, id_map)
+                .is_some_and(|nested_link| nested_link == use_node || nested_link == link)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn without_svg11_public_doctype(source: &str) -> Result<std::borrow::Cow<'_, str>, SvgError> {
@@ -904,6 +1423,17 @@ const MAX_SELECTOR_FREEZE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SELECTOR_FREEZE_MATCHES: usize = 65_536;
 const MAX_SELECTOR_FREEZE_CHECKS: usize = 1_048_576;
 const MAX_SELECTOR_MATCH_STEPS: usize = 256;
+const MAX_INITIAL_PARSE_SELECTOR_WORK: usize = 16 * 1024 * 1024;
+const MAX_INITIAL_PARSE_SELECTOR_BYTES: usize = MAX_SELECTOR_FREEZE_BYTES;
+const MAX_INITIAL_PARSE_SELECTORS: usize = 4_096;
+// Bound SimpleCSS AST growth and its per-selector declaration-vector clones.
+const MAX_INITIAL_PARSE_SELECTOR_AST_BYTES: usize = 32 * 1024 * 1024;
+const MAX_INITIAL_PARSE_DECLARATION_STORAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INITIAL_PARSE_SELECTOR_AST_BYTES_PER_SOURCE_BYTE: usize = 512;
+const INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR: usize = 2;
+const MAX_INITIAL_PARSE_STYLE_SORT_WORK: usize = 4_194_304;
+const MAX_INITIAL_PARSE_XML_NODES: usize = 1_000_000;
+const MAX_INITIAL_PARSE_XML_DEPTH: usize = 1_024;
 
 struct SelectorFreezeBudget {
     bytes: usize,
@@ -934,6 +1464,95 @@ impl SelectorFreezeBudget {
 
 fn selector_freeze_limit_error() -> SvgError {
     SvgError::InvalidDocument("selector freezing resource limit exceeded".to_owned())
+}
+
+fn initial_parse_selector_limit_error() -> SvgError {
+    SvgError::InvalidDocument("selector matching resource limit exceeded".to_owned())
+}
+
+struct InitialParseSelectorBudget {
+    remaining_work: usize,
+    remaining_bytes: usize,
+    remaining_selectors: usize,
+    remaining_selector_ast_bytes: usize,
+    remaining_declaration_storage_bytes: usize,
+    remaining_sort_work: usize,
+}
+
+impl InitialParseSelectorBudget {
+    fn new() -> Self {
+        Self {
+            remaining_work: MAX_INITIAL_PARSE_SELECTOR_WORK,
+            remaining_bytes: MAX_INITIAL_PARSE_SELECTOR_BYTES,
+            remaining_selectors: MAX_INITIAL_PARSE_SELECTORS,
+            remaining_selector_ast_bytes: MAX_INITIAL_PARSE_SELECTOR_AST_BYTES,
+            remaining_declaration_storage_bytes: MAX_INITIAL_PARSE_DECLARATION_STORAGE_BYTES,
+            remaining_sort_work: MAX_INITIAL_PARSE_STYLE_SORT_WORK,
+        }
+    }
+
+    fn charge_work(&mut self, amount: usize) -> Result<(), SvgError> {
+        self.remaining_work = self
+            .remaining_work
+            .checked_sub(amount)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        Ok(())
+    }
+
+    fn charge_bytes(&mut self, amount: usize) -> Result<(), SvgError> {
+        self.remaining_bytes = self
+            .remaining_bytes
+            .checked_sub(amount)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        Ok(())
+    }
+
+    fn check_selector_capacity(&self, upper_bound: usize) -> Result<(), SvgError> {
+        if upper_bound > self.remaining_selectors {
+            return Err(initial_parse_selector_limit_error());
+        }
+        Ok(())
+    }
+
+    fn charge_selectors(&mut self, amount: usize) -> Result<(), SvgError> {
+        self.remaining_selectors = self
+            .remaining_selectors
+            .checked_sub(amount)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        Ok(())
+    }
+
+    fn charge_selector_ast_bytes(&mut self, amount: usize) -> Result<(), SvgError> {
+        self.remaining_selector_ast_bytes = self
+            .remaining_selector_ast_bytes
+            .checked_sub(amount)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        Ok(())
+    }
+
+    fn charge_declaration_storage(&mut self, amount: usize) -> Result<(), SvgError> {
+        self.remaining_declaration_storage_bytes = self
+            .remaining_declaration_storage_bytes
+            .checked_sub(amount)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        Ok(())
+    }
+
+    fn charge_stylesheet_sort_work(&mut self, rule_count: usize) -> Result<(), SvgError> {
+        let sort_passes = if rule_count <= 1 {
+            usize::from(rule_count == 1)
+        } else {
+            (usize::BITS as usize) - (rule_count - 1).leading_zeros() as usize
+        };
+        let work = rule_count
+            .checked_mul(sort_passes)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        self.remaining_sort_work = self
+            .remaining_sort_work
+            .checked_sub(work)
+            .ok_or_else(initial_parse_selector_limit_error)?;
+        Ok(())
+    }
 }
 
 fn freeze_svg_stylesheet_selectors(
@@ -1493,7 +2112,21 @@ fn budgeted_selector_matches(
     node: roxmltree::Node<'_, '_>,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<bool, SvgError> {
-    let remaining_checks = Cell::new(budget.checks);
+    budgeted_selector_matches_with_budget(
+        selector,
+        node,
+        &mut budget.checks,
+        selector_freeze_limit_error,
+    )
+}
+
+fn budgeted_selector_matches_with_budget(
+    selector: &simplecss::Selector<'_>,
+    node: roxmltree::Node<'_, '_>,
+    available_work: &mut usize,
+    limit_error: fn() -> SvgError,
+) -> Result<bool, SvgError> {
+    let remaining_checks = Cell::new(*available_work);
     let remaining_steps = Cell::new(MAX_SELECTOR_MATCH_STEPS);
     let exceeded = Cell::new(false);
     let element = BudgetedSvgCssElement {
@@ -1503,9 +2136,9 @@ fn budgeted_selector_matches(
         exceeded: &exceeded,
     };
     let matches = selector.matches(&element);
-    budget.checks = remaining_checks.get();
+    *available_work = remaining_checks.get();
     if exceeded.get() {
-        Err(selector_freeze_limit_error())
+        Err(limit_error())
     } else {
         Ok(matches)
     }

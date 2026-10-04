@@ -13,6 +13,7 @@ simplecss = { workspace = true }
 raikiri-traits = { workspace = true }
 resvg = { workspace = true }
 roxmltree = { workspace = true }
+svgtypes = { workspace = true }
 usvg = { workspace = true }
 
 [lints]
