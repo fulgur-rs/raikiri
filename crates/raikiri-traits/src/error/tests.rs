@@ -68,3 +68,25 @@ fn page_limit_and_abort_layout_errors_have_stable_messages() {
     );
     assert_eq!(LayoutError::Aborted.to_string(), "Layout aborted");
 }
+
+#[test]
+fn counter_snapshot_layout_limit_converts_to_a_render_limit() {
+    let layout_error = LayoutError::CounterSnapshotLimitExceeded {
+        limit: 32,
+        actual: 33,
+    };
+    assert_eq!(
+        layout_error.to_string(),
+        "Layout counter snapshot limit exceeded: 33 bytes (limit 32)"
+    );
+
+    let render_error: RenderError = layout_error.into();
+    assert!(matches!(
+        render_error,
+        RenderError::LimitExceeded {
+            kind: LimitKind::CounterSnapshots,
+            limit: 32,
+            actual: 33,
+        }
+    ));
+}

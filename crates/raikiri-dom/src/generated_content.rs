@@ -102,8 +102,8 @@ pub fn generated_text<'a>(
     let computed = cascade
         .pseudo
         .get(&(StyleNodeId::new(element as u64), pseudo))?;
-    let mut counters = snapshots.get(element).cloned().unwrap_or_default();
-    apply_counter_directives_to_snapshot(&mut counters, computed);
+    let base = snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
+    let counters = CounterSnapshotView::new(base, Some(computed));
     let content = content_components_to_text_with_quotes(
         document,
         element,
@@ -114,6 +114,137 @@ pub fn generated_text<'a>(
         &cascade.counter_styles,
     )?;
     Some((computed, content))
+}
+
+static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =
+    std::sync::LazyLock::new(std::collections::HashMap::new);
+
+/// Read-only access to the effective stack for a counter name.
+pub trait CounterSnapshotLookup {
+    /// Return the effective values for `name`, including pseudo-element
+    /// directives when this lookup is a [`CounterSnapshotView`].
+    fn values_for(&self, name: &str) -> CounterValues<'_>;
+}
+
+/// A counter stack view that can replace or append its innermost value
+/// without copying the underlying snapshot map or stack.
+#[derive(Clone, Copy, Debug)]
+pub struct CounterValues<'a> {
+    base: &'a [i32],
+    effective_last: Option<i32>,
+    appended: bool,
+}
+
+impl<'a> CounterValues<'a> {
+    fn unchanged(base: &'a [i32]) -> Self {
+        Self {
+            base,
+            effective_last: None,
+            appended: false,
+        }
+    }
+
+    fn with_directives(base: &'a [i32], computed: Option<&ComputedValues>, name: &str) -> Self {
+        let Some(computed) = computed else {
+            return Self::unchanged(base);
+        };
+        let mut effective_last = None;
+        let mut appended = false;
+        if let Some((_, value)) = computed
+            .counter_reset
+            .iter()
+            .rev()
+            .find(|(counter_name, _)| counter_name.as_str() == name)
+        {
+            effective_last = Some(*value);
+            appended = true;
+        }
+
+        for (counter_name, delta) in computed.counter_increment.iter() {
+            if counter_name.as_str() != name {
+                continue;
+            }
+            effective_last = Some(
+                effective_last
+                    .or_else(|| base.last().copied())
+                    .map_or(*delta, |value| value.saturating_add(*delta)),
+            );
+            appended |= base.is_empty() && !appended;
+        }
+        for (counter_name, value) in computed.counter_set.iter() {
+            if counter_name.as_str() != name {
+                continue;
+            }
+            effective_last = Some(*value);
+            appended |= base.is_empty() && !appended;
+        }
+
+        Self {
+            base,
+            effective_last,
+            appended,
+        }
+    }
+
+    /// The innermost effective value, if the counter exists.
+    pub fn last(self) -> Option<i32> {
+        self.effective_last.or_else(|| self.base.last().copied())
+    }
+
+    /// Whether the effective stack has no values.
+    pub fn is_empty(self) -> bool {
+        self.base.is_empty() && self.effective_last.is_none()
+    }
+
+    /// Iterate the effective stack from outermost to innermost.
+    pub fn iter(self) -> impl Iterator<Item = i32> + 'a {
+        let prefix_end = if self.effective_last.is_some() && !self.appended {
+            self.base.len().saturating_sub(1)
+        } else {
+            self.base.len()
+        };
+        self.base[..prefix_end]
+            .iter()
+            .copied()
+            .chain(self.effective_last)
+    }
+}
+
+/// A borrowed counter snapshot with one pseudo-element's directives applied
+/// lazily to each requested counter. Looking up generated content therefore
+/// copies neither the whole map nor unaffected counter stacks.
+pub struct CounterSnapshotView<'a> {
+    snapshot: &'a CounterSnapshot,
+    computed: Option<&'a ComputedValues>,
+}
+
+impl<'a> CounterSnapshotView<'a> {
+    /// Borrow `snapshot` and optionally apply pseudo-element counter
+    /// directives on lookup.
+    pub fn new(snapshot: &'a CounterSnapshot, computed: Option<&'a ComputedValues>) -> Self {
+        Self { snapshot, computed }
+    }
+}
+
+impl CounterSnapshotLookup for CounterSnapshotView<'_> {
+    fn values_for(&self, name: &str) -> CounterValues<'_> {
+        let base = self
+            .snapshot
+            .get(&raikiri_traits::Symbol::new(name))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        CounterValues::with_directives(base, self.computed, name)
+    }
+}
+
+impl CounterSnapshotLookup for CounterSnapshot {
+    fn values_for(&self, name: &str) -> CounterValues<'_> {
+        CounterValues::unchanged(
+            self.get(&raikiri_traits::Symbol::new(name))
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+        )
+    }
 }
 
 /// Apply the `counter-reset`, `counter-increment` and `counter-set` of
@@ -161,51 +292,47 @@ pub fn apply_counter_directives_to_snapshot(
 
 /// The innermost value of the counter `name` in `style`, `0` when the
 /// counter does not exist (`counter()`).
-pub fn format_counter_component(
-    snapshot: &CounterSnapshot,
+pub fn format_counter_component<C: CounterSnapshotLookup + ?Sized>(
+    snapshot: &C,
     name: &str,
     style: &CounterStyle,
     registry: &CounterStyleRegistry,
 ) -> String {
-    let value = snapshot
-        .get(&raikiri_traits::Symbol::new(name))
-        .and_then(|values| values.last())
-        .copied()
-        .unwrap_or(0);
+    let value = snapshot.values_for(name).last().unwrap_or(0);
     format_counter(value, style, registry)
 }
 
 /// Every value of the counter `name`, outermost first, in `style` and joined
 /// by `separator` (`counters()`).
-pub fn format_counters_component(
-    snapshot: &CounterSnapshot,
+pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
+    snapshot: &C,
     name: &str,
     separator: &str,
     style: &CounterStyle,
     registry: &CounterStyleRegistry,
 ) -> String {
-    snapshot
-        .get(&raikiri_traits::Symbol::new(name))
-        .map(|values| {
-            values
-                .iter()
-                .map(|value| format_counter(*value, style, registry))
-                .collect::<Vec<_>>()
-                .join(separator)
-        })
-        .unwrap_or_default()
+    let values = snapshot.values_for(name);
+    if values.is_empty() {
+        String::new()
+    } else {
+        values
+            .iter()
+            .map(|value| format_counter(value, style, registry))
+            .collect::<Vec<_>>()
+            .join(separator)
+    }
 }
 
 /// The text of a `content` value: literals, attributes of `node_id`,
 /// counters and quotes; other components (images) contribute nothing.
 /// `None` for an empty value.
-pub fn content_components_to_text_with_quotes<T: AsRef<str>>(
+pub fn content_components_to_text_with_quotes<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
     document: &Document,
     node_id: usize,
     components: &[ContentComponent],
     quotes: &[(T, T)],
     quotes_auto: bool,
-    counters: &CounterSnapshot,
+    counters: &C,
     registry: &CounterStyleRegistry,
 ) -> Option<String> {
     if components.is_empty() {
@@ -327,18 +454,4 @@ pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleR
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generated_ids_round_trip_and_stay_above_document_ids() {
-        for element in [0, 1, 42, usize::MAX >> 3] {
-            for pseudo in [PseudoElem::Before, PseudoElem::After] {
-                let id = generated_node_id(element, pseudo);
-                assert!(id > usize::MAX >> 3, "{element} {pseudo:?}");
-                assert_eq!(generated_origin(id), Some((element, pseudo)));
-            }
-        }
-        assert_eq!(generated_origin(usize::MAX >> 3), None);
-    }
-}
+mod tests;

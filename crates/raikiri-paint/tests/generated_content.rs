@@ -26,7 +26,7 @@ fn nested_block_generated_counter_content_paints_in_flow() {
     layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     let glyph_runs = scene
         .commands
         .iter()
@@ -68,7 +68,7 @@ fn nested_absolute_generated_content_does_not_repeat_subtree_work() {
 
     let calls_before_paint = document.standalone_text_calls();
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     let paint_text_calls = document.standalone_text_calls() - calls_before_paint;
 
     let glyph_runs = scene

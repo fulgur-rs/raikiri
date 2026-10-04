@@ -488,7 +488,8 @@ fn marker_render_info_resolves_named_counters_from_element_scopes() {
         marker_render_info(&document, &cascade, second).expect("second marker");
     assert_eq!(first_content, "5/5/9/3/4");
     assert_eq!(second_content, "6/6/9/3/4");
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
+        .expect("test counter snapshots stay within budget");
     let (_, before_content) = generated_pseudo_content_with_snapshots(
         &document,
         &cascade,
@@ -666,7 +667,8 @@ fn generated_pseudo_metrics_preserve_before_after_order() {
         "display: list-item",
         Some(r##"li::before { content: "A " } li::after { content: "B" }"##),
     );
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
+        .expect("test counter snapshots stay within budget");
     assert!(
         generated_pseudo_text_height(
             &document,
@@ -720,7 +722,8 @@ fn generated_pseudo_metrics_preserve_before_after_order() {
         "display: list-item",
         Some(r##"li::before { display: none; content: "hidden" }"##),
     );
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
+        .expect("test counter snapshots stay within budget");
     assert_eq!(
         generated_pseudo_text_height(
             &document,
@@ -779,7 +782,7 @@ fn paint_document_skips_hidden_table_decoration() {
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     let draws = scene
         .commands
         .iter()
@@ -807,7 +810,7 @@ fn paint_document_orders_literal_pseudos_around_direct_text() {
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     let glyph_x: Vec<_> = scene
         .commands
         .iter()
@@ -857,7 +860,7 @@ fn paint_document_offsets_generated_counter_inline_siblings() {
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     assert!(
         scene
             .commands
@@ -883,7 +886,7 @@ fn paint_document_expands_auto_height_for_empty_pseudo_box() {
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     assert!(
         scene
             .commands
@@ -899,7 +902,8 @@ fn paint_generated_pseudo_emits_counter_content() {
         "display: list-item",
         Some(r##"li::before { content: counter(marker) }"##),
     );
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
+        .expect("test counter snapshots stay within budget");
     let mut scene = Scene::new();
     paint_generated_pseudo(
         &mut scene,
@@ -1507,7 +1511,7 @@ fn transformed_box_scene(transform: &str, origin: &str) -> Scene {
     let cascade = cascade(&document, &rules).unwrap();
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     scene
 }
 
@@ -1583,7 +1587,8 @@ fn transform_markup_scene(markup: &str) -> Scene {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
     scene
 }
 
@@ -1735,7 +1740,9 @@ fn replaced_inline_image_composes_own_and_ancestor_transform() {
         &cascade,
         PageBox::A4,
         &Pixels,
-    );
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .expect("test paint stays within the counter snapshot budget");
     assert!(warnings.is_empty());
     let image = scene
         .commands
@@ -3414,7 +3421,15 @@ fn margin_box_glyph_ys() -> (Vec<(f64, f64)>, usize) {
     document.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
-    crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages);
+    crate::paint_single_page_with_images(
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        &NoImages,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .expect("paint succeeds");
     let mut out = Vec::new();
     for command in &scene.commands {
         if let RenderCommand::GlyphRun(run) = command {
@@ -3528,7 +3543,8 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
     let image = scene
         .commands
         .iter()
@@ -3573,7 +3589,8 @@ fn paint_unmaterialized_large_canvas_without_image_pixels() {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
 
     assert!(scene.commands.iter().all(|command| {
         !matches!(command, RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))
@@ -3622,7 +3639,8 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         100,
@@ -3662,7 +3680,8 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing() {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
     assert!(scene.commands.iter().all(|command| !matches!(
         command,
         RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_))
@@ -3704,7 +3723,8 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing() {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         10,
@@ -3745,7 +3765,8 @@ fn canvas_object_fit_variants_all_paint() {
         let cascade = raikiri_html::build_cascaded(&parsed);
         raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
         let mut scene = Scene::new();
-        crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+        crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+            .expect("paint succeeds");
         assert!(
             scene.commands.iter().any(|command| matches!(
                 command,
@@ -3787,7 +3808,8 @@ fn canvas_hidden_overflow_clips_to_content_box() {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         10,
@@ -3812,7 +3834,8 @@ fn canvas_zero_bitmap_size_paints_nothing() {
     let cascade = raikiri_html::build_cascaded(&parsed);
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
+        .expect("paint succeeds");
     // Zero-size bitmap paints nothing but does not fall back to image error paths.
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
@@ -4204,7 +4227,7 @@ fn generated_scene(
     document.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     (document, cascade, scene, div)
 }
 
@@ -4485,7 +4508,7 @@ fn fragmented_flex_float_paint_fixture() -> (Document, CascadeResult, Scene, usi
     page.height = 600.0;
     raikiri_dom::layout_single_page(&mut document, &cascade, page).expect("layout Ok");
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, &document, &cascade, page);
+    crate::paint_single_page(&mut scene, &document, &cascade, page).expect("paint succeeds");
     (document, cascade, scene, second_float)
 }
 

@@ -28,7 +28,7 @@ fn same_font_runs_share_a_baseline_on_autospace_lines() {
     layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
     let runs: Vec<_> = scene
         .commands
         .iter()

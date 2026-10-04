@@ -52,7 +52,7 @@ use crate::entries::{BlockEntry, ParagraphEntry};
 use crate::raster_budget::RasterBufferBudget;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use raikiri_dom::Document;
+use raikiri_dom::{CounterSnapshotBudget, Document};
 use raikiri_style::property::{DisplayValue, FloatValue, PositionValue};
 use raikiri_style::resolve::{ComputedLengthPercentage, ComputedLengthPercentageOrAuto};
 use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
@@ -201,7 +201,8 @@ pub struct PageScene {
 
 impl PageScene {
     /// Rasterize a one-page snapshot on an A4 (or supplied `PageBox`) canvas
-    /// and return PNG bytes.
+    /// and return PNG bytes. Reuse `counter_budget` for every page in one
+    /// document render operation.
     ///
     /// # Why does a snapshot take `dom` and `cascade` parameters?
     ///
@@ -255,22 +256,26 @@ impl PageScene {
         dom: &Document,
         cascade: &CascadeResult,
         page_box: PageBox,
+        counter_budget: &mut CounterSnapshotBudget,
     ) -> Result<Vec<u8>, RenderError> {
         let size = RasterBufferBudget::new().reserve_page_box(page_box)?;
 
+        let mut paint_result = Ok(());
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |scene| {
-                raikiri_paint::paint_single_page_with_origin(
+                paint_result = raikiri_paint::paint_single_page_with_origin(
                     scene,
                     dom,
                     cascade,
                     page_box,
                     self.content_origin_y,
+                    counter_budget,
                 )
             },
             size.width(),
             size.height(),
         );
+        paint_result?;
 
         Ok(encode_png(&rgba, size.width(), size.height()))
     }
@@ -285,28 +290,33 @@ impl PageScene {
     ///
     /// # Errors
     /// Returns the same dimension and raster limit errors as [`Self::rasterize`].
+    /// Reuse `counter_budget` for every page in one document render operation.
     pub fn rasterize_with_images(
         &self,
         dom: &Document,
         cascade: &CascadeResult,
         page_box: PageBox,
         pixel_source: &dyn raikiri_traits::ImagePixelSource,
+        counter_budget: &mut CounterSnapshotBudget,
     ) -> Result<Vec<u8>, RenderError> {
         let size = RasterBufferBudget::new().reserve_page_box(page_box)?;
 
+        let mut paint_result = Ok(());
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |scene| {
-                raikiri_paint::paint_single_page_with_images(
+                paint_result = raikiri_paint::paint_single_page_with_images(
                     scene,
                     dom,
                     cascade,
                     page_box,
                     pixel_source,
+                    counter_budget,
                 )
             },
             size.width(),
             size.height(),
         );
+        paint_result?;
 
         Ok(encode_png(&rgba, size.width(), size.height()))
     }

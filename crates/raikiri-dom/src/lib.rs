@@ -94,7 +94,11 @@ pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
 pub use raikiri_traits::{NodeKind, QuirksMode};
-pub use target::{CounterSnapshot, counter_snapshots};
+// cov:ignore: public re-exports have no executable coverage mapping.
+pub use target::{
+    CounterSnapshot, CounterSnapshotBudget, CounterSnapshotLimitExceeded,
+    MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES, counter_snapshots, counter_snapshots_with_budget,
+};
 
 #[cfg(feature = "logical-snapshot")]
 pub mod snapshot;
