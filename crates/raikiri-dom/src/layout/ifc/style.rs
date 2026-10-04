@@ -540,6 +540,9 @@ pub(crate) fn shodo_writing_mode(
         p::WritingMode::HorizontalTb => Ok(WritingMode::HorizontalTb),
         p::WritingMode::VerticalRl => Ok(WritingMode::VerticalRl),
         p::WritingMode::VerticalLr => Ok(WritingMode::VerticalLr),
+        // Preserve the previous horizontal layout fallback for CSSOM values
+        // whose shaping modes are outside the IFC path's supported set.
+        p::WritingMode::SidewaysRl | p::WritingMode::SidewaysLr => Ok(WritingMode::HorizontalTb),
         _ => Err(IfcError::Unsupported {
             node,
             reason: "writing-mode is not represented by the inline path",
@@ -633,10 +636,9 @@ pub(crate) fn line_options(
     ))
 }
 
-/// Absolute inline-box edges as logical sides, for horizontal lines (vertical
-/// writing modes are laid out horizontally). A `ch` edge is measured with the
-/// font that declared it; a percentage or calc() edge would need the
-/// containing block's width and is taken as zero.
+/// Absolute inline-box edges as logical sides. A `ch` edge is measured with
+/// the font that declared it; a percentage or calc() edge would need the
+/// containing block's inline size and is taken as zero.
 pub(crate) fn inline_edges(
     cv: &ComputedValues,
     node: usize,
@@ -659,20 +661,54 @@ pub(crate) fn inline_edges(
         (None, LengthOrAuto::Px(value)) => Ok(value),
         _ => Ok(0.0),
     };
-    let logical = |top, right, bottom, left| match cv.direction {
-        p::Direction::Ltr => Ok(Sides {
+    let writing_mode = match cv.cssom_writing_mode {
+        p::WritingMode::HorizontalTb | p::WritingMode::SidewaysRl | p::WritingMode::SidewaysLr => {
+            WritingMode::HorizontalTb
+        }
+        p::WritingMode::VerticalRl => WritingMode::VerticalRl,
+        p::WritingMode::VerticalLr => WritingMode::VerticalLr,
+        _ => return Err(unsupported("edge writing mode is not represented by shodo")),
+    };
+    let logical = |top, right, bottom, left| match (writing_mode, cv.direction) {
+        (WritingMode::HorizontalTb, p::Direction::Ltr) => Ok(Sides {
             inline_start: left,
             inline_end: right,
             block_start: top,
             block_end: bottom,
         }),
-        p::Direction::Rtl => Ok(Sides {
+        (WritingMode::HorizontalTb, p::Direction::Rtl) => Ok(Sides {
             inline_start: right,
             inline_end: left,
             block_start: top,
             block_end: bottom,
         }),
-        _ => Err(unsupported("edge direction is not represented by shodo")),
+        (WritingMode::VerticalRl, p::Direction::Ltr) => Ok(Sides {
+            inline_start: top,
+            inline_end: bottom,
+            block_start: right,
+            block_end: left,
+        }),
+        (WritingMode::VerticalRl, p::Direction::Rtl) => Ok(Sides {
+            inline_start: bottom,
+            inline_end: top,
+            block_start: right,
+            block_end: left,
+        }),
+        (WritingMode::VerticalLr, p::Direction::Ltr) => Ok(Sides {
+            inline_start: top,
+            inline_end: bottom,
+            block_start: left,
+            block_end: right,
+        }),
+        (WritingMode::VerticalLr, p::Direction::Rtl) => Ok(Sides {
+            inline_start: bottom,
+            inline_end: top,
+            block_start: left,
+            block_end: right,
+        }),
+        _ => Err(unsupported(
+            "edge writing mode or direction is not represented by shodo",
+        )),
     };
     Ok(InlineEdges {
         margin: logical(

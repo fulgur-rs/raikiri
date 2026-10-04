@@ -3618,6 +3618,166 @@ fn vertical_rl_keeps_multiple_block_children_in_logical_source_order() {
 }
 
 #[test]
+fn vertical_block_children_collapse_adjoining_block_axis_margins() {
+    for (mode, first_margin, second_margin, gap_direction, expected_gap) in [
+        (
+            "vertical-rl",
+            "margin-left:10px",
+            "margin-right:20px",
+            -1.0,
+            20.0,
+        ),
+        (
+            "vertical-lr",
+            "margin-right:10px",
+            "margin-left:20px",
+            1.0,
+            20.0,
+        ),
+        (
+            "vertical-rl",
+            "margin-left:20px",
+            "margin-right:-5px",
+            -1.0,
+            15.0,
+        ),
+        (
+            "vertical-lr",
+            "margin-right:20px",
+            "margin-left:-5px",
+            1.0,
+            15.0,
+        ),
+        (
+            "vertical-rl",
+            "margin-left:-8px",
+            "margin-right:-5px",
+            -1.0,
+            -8.0,
+        ),
+        (
+            "vertical-lr",
+            "margin-right:-8px",
+            "margin-left:-5px",
+            1.0,
+            -8.0,
+        ),
+    ] {
+        let (mut doc, _, root) =
+            ahem_paragraph("", &format!("width:100px;height:100px;writing-mode:{mode}"));
+        let first = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(&format!(
+                "display:block;width:10px;height:20px;{first_margin}"
+            )),
+        );
+        doc.append_text(first, "a");
+        let second = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(&format!(
+                "display:block;width:10px;height:20px;{second_margin}"
+            )),
+        );
+        doc.append_text(second, "b");
+        doc.append_text(root, "c");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+
+        let first_layout = doc.nodes[first].unrounded_layout;
+        let second_layout = doc.nodes[second].unrounded_layout;
+        let gap = if gap_direction < 0.0 {
+            first_layout.location.x - (second_layout.location.x + second_layout.size.width)
+        } else {
+            second_layout.location.x - (first_layout.location.x + first_layout.size.width)
+        };
+        assert_eq!(
+            gap, expected_gap,
+            "{mode}: {first_margin} / {second_margin}"
+        );
+    }
+}
+
+#[test]
+fn vertical_block_child_margin_percentages_resolve_against_inline_size() {
+    for (mode, block_start_margin, expected_x) in [
+        ("vertical-rl", "margin-right:10%", 40.0),
+        ("vertical-lr", "margin-left:10%", 10.0),
+    ] {
+        let (mut doc, _, root) =
+            ahem_paragraph("", &format!("width:60px;height:100px;writing-mode:{mode}"));
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(&format!(
+                "display:block;width:10px;height:20px;{block_start_margin}"
+            )),
+        );
+        doc.append_text(block, "a");
+        doc.append_text(root, "b");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+
+        assert_eq!(
+            doc.nodes[block].unrounded_layout.location.x, expected_x,
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn vertical_block_children_distribute_auto_inline_margins() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, _, root) =
+            ahem_paragraph("", &format!("width:100px;height:100px;writing-mode:{mode}"));
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;width:10px;height:20px;margin-top:auto;margin-bottom:auto"),
+        );
+        doc.append_text(block, "a");
+        doc.append_text(root, "b");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+
+        assert_eq!(doc.nodes[block].unrounded_layout.location.y, 40.0, "{mode}");
+    }
+}
+
+#[test]
+fn vertical_block_child_auto_inline_margin_is_zero_when_the_child_overflows() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, _, root) =
+            ahem_paragraph("", &format!("width:100px;height:20px;writing-mode:{mode}"));
+        let block = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;width:10px;height:40px;margin-top:auto"),
+        );
+        doc.append_text(block, "a");
+        doc.append_text(root, "b");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+
+        assert_eq!(doc.nodes[block].unrounded_layout.location.y, 0.0, "{mode}");
+    }
+}
+
+#[test]
 fn vertical_nested_block_children_match_flat_flow_positions() {
     let positions = |nested: bool| {
         let (mut doc, _, root) =

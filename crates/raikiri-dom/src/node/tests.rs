@@ -50,11 +50,11 @@ mod ifc_geometry_tests {
         assert_eq!(pieces[0].node, inline);
         assert_eq!(
             (pieces[0].border_box.x, pieces[0].border_box.y),
-            (93.0, 0.0)
+            (90.0, 0.0)
         );
         assert_eq!(
             (pieces[0].border_box.width, pieces[0].border_box.height),
-            (10.0, 26.0)
+            (16.0, 20.0)
         );
     }
 }

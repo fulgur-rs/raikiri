@@ -1224,7 +1224,9 @@ fn layout_vertical_block_child(
     perform: bool,
 ) -> BlockChild {
     let basis = geometry.axes.block_extent(geometry.content_size);
-    let margin = resolved_margins(tree, node, basis);
+    let inline_basis = geometry.axes.inline_extent(geometry.content_size);
+    let mut margin = resolved_margins(tree, node, inline_basis);
+    let style_margin = tree.nodes[node].style.margin;
     let vertical_rl = geometry.axes.writing_mode() == WritingMode::VerticalRl;
     let (block_start_margin, block_end_margin) = if vertical_rl {
         (margin.right, margin.left)
@@ -1234,7 +1236,6 @@ fn layout_vertical_block_child(
     let block_start = y + pending.collapse_with_margin(block_start_margin).resolve();
     let width = used_block_width(tree, node, basis)
         .map(|width| clamp_block_width(tree, node, basis, width));
-    let inline_basis = geometry.axes.inline_extent(geometry.content_size);
     let height = used_block_height(tree, node, inline_basis)
         .unwrap_or_else(|| (inline_basis - margin.top - margin.bottom).max(0.0));
     let height = clamp_block_height(tree, node, inline_basis, height);
@@ -1270,10 +1271,26 @@ fn layout_vertical_block_child(
     } else {
         tree.compute_child_layout(node_id, inputs)
     };
+    let inline_free = inline_basis - output.size.height - margin.top - margin.bottom;
+    match (style_margin.top.is_auto(), style_margin.bottom.is_auto()) {
+        (true, true) if inline_free >= 0.0 => {
+            margin.top = inline_free / 2.0;
+            margin.bottom = inline_free / 2.0;
+        }
+        // CSS 2.1 10.3.3 treats auto margins as zero when the non-auto
+        // dimensions already overflow the containing block.
+        (true, true) => {
+            margin.top = 0.0;
+            margin.bottom = 0.0;
+        }
+        (true, false) => margin.top = inline_free.max(0.0),
+        (false, true) => margin.bottom = inline_free.max(0.0),
+        (false, false) => {}
+    }
     let inline_start = if geometry.axes.direction() == Direction::Ltr {
         margin.top
     } else {
-        (inline_basis - output.size.height - margin.bottom).max(0.0)
+        inline_basis - output.size.height - margin.bottom
     };
     let physical = geometry.axes.rect(
         geometry.content_size,
@@ -1294,8 +1311,8 @@ fn layout_vertical_block_child(
     }
     BlockChild {
         top: block_start,
-        next_y: block_start + output.size.width + block_end_margin,
-        pending: CollapsibleMarginSet::ZERO,
+        next_y: block_start + output.size.width,
+        pending: CollapsibleMarginSet::from_margin(block_end_margin),
         floats_bottom: f32::NEG_INFINITY,
     }
 }

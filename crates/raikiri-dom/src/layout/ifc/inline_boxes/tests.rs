@@ -126,17 +126,17 @@ fn vertical_padding_and_border_grow_the_box_but_not_the_line() {
 }
 
 #[test]
-fn vertical_inline_pieces_use_physical_coordinates_for_each_writing_mode() {
-    for (mode, shodo_mode, expected_x) in [
-        ("vertical-rl", WritingMode::VerticalRl, 93.0),
-        ("vertical-lr", WritingMode::VerticalLr, -3.0),
+fn vertical_inline_pieces_map_physical_edges_to_their_logical_axes() {
+    for (mode, shodo_mode) in [
+        ("vertical-rl", WritingMode::VerticalRl),
+        ("vertical-lr", WritingMode::VerticalLr),
     ] {
         let css = format!("width:100px;height:40px;writing-mode:{mode}");
         let (root, lines) = root_and_lines_of(&css, 40.0, |doc, root| {
             let inline = span(
                 doc,
                 root,
-                "display:inline;padding-left:3px;padding-right:3px",
+                "display:inline;padding-left:3px;padding-right:5px;padding-top:7px;padding-bottom:11px",
             );
             doc.append_text(inline, "bb");
         });
@@ -152,13 +152,13 @@ fn vertical_inline_pieces_use_physical_coordinates_for_each_writing_mode() {
             },
         )[0];
         assert_eq!(
-            (piece.border_box.x, piece.border_box.y),
-            (expected_x, 0.0),
+            (piece.border_box.width, piece.border_box.height),
+            (18.0, 38.0),
             "{mode}"
         );
         assert_eq!(
-            (piece.border_box.width, piece.border_box.height),
-            (10.0, 26.0),
+            (piece.content_box.width, piece.content_box.height),
+            (10.0, 20.0),
             "{mode}"
         );
     }
