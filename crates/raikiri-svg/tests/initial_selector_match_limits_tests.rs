@@ -55,6 +55,32 @@ fn initial_parse_rejects_expensive_descendant_selector_backtracking() {
 }
 
 #[test]
+fn initial_parse_rejects_excessive_xml_nesting_before_recursive_parser() {
+    let within_limit = format!(
+        "<svg xmlns=\"{SVG_NAMESPACE}\" width=\"1\" height=\"1\">{}</svg>",
+        nested_groups(127, "<rect/>")
+    );
+    assert!(
+        SvgDocument::parse(within_limit.as_bytes()).is_ok(),
+        "the XML depth limit must preserve input at its supported boundary"
+    );
+
+    let nested = nested_groups(1_025, "<rect/>");
+    let source = format!("<svg xmlns=\"{SVG_NAMESPACE}\">{nested}</svg>");
+
+    let error = match SvgDocument::parse(source.as_bytes()) {
+        Ok(_) => panic!("excessive XML nesting must be rejected before recursive parsing"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("selector matching resource limit")
+    );
+}
+
+#[test]
 fn initial_parse_shares_selector_budget_across_repeated_use_expansion() {
     let stylesheets = "g { fill:red }".repeat(768);
     let template = nested_groups(12, "<rect width=\"1\" height=\"1\"/>");

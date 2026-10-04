@@ -136,6 +136,7 @@ impl SvgDocument {
         let source = std::str::from_utf8(data)
             .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
         let normalized = without_svg11_public_doctype(source)?;
+        ensure_initial_svg_xml_depth_bounded(&normalized)?;
         // Validate placement in the original XML, then keep DTD-free source
         // for every subsequent parser pass. No DTD resource is ever loaded.
         let xml = roxmltree::Document::parse_with_options(
@@ -683,12 +684,7 @@ fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), 
 
     let mut xml_node_count = 0usize;
     for _ in xml.descendants() {
-        xml_node_count = xml_node_count
-            .checked_add(1)
-            .ok_or_else(initial_parse_selector_limit_error)?;
-        if xml_node_count > MAX_INITIAL_PARSE_XML_NODES {
-            return Err(initial_parse_selector_limit_error());
-        }
+        charge_initial_parse_node_count(&mut xml_node_count, MAX_INITIAL_PARSE_XML_NODES)?;
     }
 
     let mut id_map = HashMap::new();
@@ -711,12 +707,118 @@ fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), 
     preflight_svg_selector_children(
         xml.root(),
         xml.root(),
-        0,
+        1,
         &selectors,
         &id_map,
         &mut budget,
         &mut expanded_node_count,
     )
+}
+
+fn ensure_initial_svg_xml_depth_bounded(source: &str) -> Result<(), SvgError> {
+    let bytes = source.as_bytes();
+    let mut cursor = 0usize;
+    let mut depth = 0usize;
+
+    while cursor < bytes.len() {
+        let Some(relative_start) = bytes[cursor..].iter().position(|byte| *byte == b'<') else {
+            break;
+        };
+        cursor += relative_start;
+
+        if bytes[cursor..].starts_with(b"<!--") {
+            cursor = skip_xml_markup_until(bytes, cursor + 4, b"-->");
+            continue;
+        }
+        if bytes[cursor..].starts_with(b"<![CDATA[") {
+            cursor = skip_xml_markup_until(bytes, cursor + 9, b"]]>");
+            continue;
+        }
+        if bytes[cursor..].starts_with(b"<?") {
+            cursor = skip_xml_markup_until(bytes, cursor + 2, b"?>");
+            continue;
+        }
+
+        let closing = bytes.get(cursor + 1) == Some(&b'/');
+        let name_start = cursor + usize::from(closing) + 1;
+        if !bytes.get(name_start).is_some_and(|byte| {
+            byte.is_ascii_alphabetic() || matches!(byte, b'_' | b':') || *byte >= 0x80
+        }) {
+            cursor += 1;
+            continue;
+        }
+
+        let mut quote = None;
+        let mut end = name_start;
+        while let Some(byte) = bytes.get(end).copied() {
+            if let Some(quote_byte) = quote {
+                if byte == quote_byte {
+                    quote = None;
+                }
+            } else {
+                match byte {
+                    b'\'' | b'"' => quote = Some(byte),
+                    b'>' => break,
+                    _ => {}
+                }
+            }
+            end += 1;
+        }
+        if end == bytes.len() {
+            break;
+        }
+
+        if closing {
+            depth = depth.saturating_sub(1);
+        } else {
+            let last_non_space = bytes[name_start..end]
+                .iter()
+                .rev()
+                .find(|byte| !byte.is_ascii_whitespace());
+            if last_non_space != Some(&b'/') {
+                depth = depth
+                    .checked_add(1)
+                    .ok_or_else(initial_parse_selector_limit_error)?;
+                if depth > MAX_INITIAL_PARSE_XML_DEPTH {
+                    return Err(initial_parse_selector_limit_error());
+                }
+            }
+        }
+
+        cursor = end + 1;
+    }
+
+    Ok(())
+}
+
+fn skip_xml_markup_until(bytes: &[u8], start: usize, terminator: &[u8]) -> usize {
+    bytes[start..]
+        .windows(terminator.len())
+        .position(|window| window == terminator)
+        .map_or(bytes.len(), |offset| start + offset + terminator.len())
+}
+
+fn charge_initial_parse_node_count(count: &mut usize, limit: usize) -> Result<(), SvgError> {
+    *count = count
+        .checked_add(1)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    if *count > limit {
+        return Err(initial_parse_selector_limit_error());
+    }
+    Ok(())
+}
+
+enum InitialSvgSelectorFrame<'a, 'input: 'a> {
+    Visit {
+        node: roxmltree::Node<'a, 'input>,
+        origin: roxmltree::Node<'a, 'input>,
+        depth: usize,
+    },
+    Children {
+        origin: roxmltree::Node<'a, 'input>,
+        depth: usize,
+        children: roxmltree::Children<'a, 'input>,
+    },
 }
 
 fn preflight_svg_selector_children<'a, 'input: 'a, 'css>(
@@ -728,93 +830,96 @@ fn preflight_svg_selector_children<'a, 'input: 'a, 'css>(
     budget: &mut InitialParseSelectorBudget,
     expanded_node_count: &mut usize,
 ) -> Result<(), SvgError> {
-    for child in parent.children() {
-        preflight_svg_selector_node(
-            child,
-            origin,
-            depth,
-            selectors,
-            id_map,
-            budget,
-            expanded_node_count,
-        )?;
-    }
-    Ok(())
-}
-
-fn preflight_svg_selector_node<'a, 'input: 'a, 'css>(
-    node: roxmltree::Node<'a, 'input>,
-    origin: roxmltree::Node<'a, 'input>,
-    depth: usize,
-    selectors: &[simplecss::Selector<'css>],
-    id_map: &HashMap<String, roxmltree::Node<'a, 'input>>,
-    budget: &mut InitialParseSelectorBudget,
-    expanded_node_count: &mut usize,
-) -> Result<(), SvgError> {
-    if !node.is_element()
-        || node
-            .tag_name()
-            .namespace()
-            .is_some_and(|namespace| namespace != SVG_NAMESPACE)
-    {
-        return Ok(());
-    }
-
-    let tag_name = node.tag_name().name();
-    if tag_name == "style" {
-        return Ok(());
-    }
-    if depth > MAX_INITIAL_PARSE_XML_DEPTH {
-        return Err(initial_parse_selector_limit_error());
-    }
-
-    *expanded_node_count = expanded_node_count
-        .checked_add(1)
-        .ok_or_else(initial_parse_selector_limit_error)?;
-    if *expanded_node_count > MAX_INITIAL_PARSE_XML_NODES {
-        return Err(initial_parse_selector_limit_error());
-    }
-
-    for selector in selectors {
-        budget.charge_work(1)?;
-        budgeted_selector_matches_with_budget(
-            selector,
-            node,
-            &mut budget.remaining_work,
-            initial_parse_selector_limit_error,
-        )?;
-    }
-
-    if tag_name == "use" {
-        let Some(link) = resolve_svg_use_reference(node, id_map) else {
-            return Ok(());
-        };
-        if link == node || link == origin {
-            return Ok(());
-        }
-        if svg_use_expansion_is_recursive(node, link, id_map, budget)? {
-            return Ok(());
-        }
-        return preflight_svg_selector_node(
-            link,
-            node,
-            depth + 1,
-            selectors,
-            id_map,
-            budget,
-            expanded_node_count,
-        );
-    }
-
-    preflight_svg_selector_children(
-        node,
+    let mut pending = vec![InitialSvgSelectorFrame::Children {
         origin,
-        depth + 1,
-        selectors,
-        id_map,
-        budget,
-        expanded_node_count,
-    )
+        depth,
+        children: parent.children(),
+    }];
+
+    while let Some(frame) = pending.pop() {
+        let (node, origin, depth) = match frame {
+            InitialSvgSelectorFrame::Children {
+                origin,
+                depth,
+                mut children,
+            } => {
+                let Some(node) = children.next() else {
+                    continue;
+                };
+                pending.push(InitialSvgSelectorFrame::Children {
+                    origin,
+                    depth,
+                    children,
+                });
+                pending.push(InitialSvgSelectorFrame::Visit {
+                    node,
+                    origin,
+                    depth,
+                });
+                continue;
+            }
+            InitialSvgSelectorFrame::Visit {
+                node,
+                origin,
+                depth,
+            } => (node, origin, depth),
+        };
+
+        if !node.is_element()
+            || node
+                .tag_name()
+                .namespace()
+                .is_some_and(|namespace| namespace != SVG_NAMESPACE)
+        {
+            continue;
+        }
+
+        let tag_name = node.tag_name().name();
+        if tag_name == "style" {
+            continue;
+        }
+        if depth > MAX_INITIAL_PARSE_XML_DEPTH {
+            return Err(initial_parse_selector_limit_error());
+        }
+
+        charge_initial_parse_node_count(expanded_node_count, MAX_INITIAL_PARSE_XML_NODES)?;
+
+        for selector in selectors {
+            budget.charge_work(1)?;
+            budgeted_selector_matches_with_budget(
+                selector,
+                node,
+                &mut budget.remaining_work,
+                initial_parse_selector_limit_error,
+            )?;
+        }
+
+        if tag_name == "use" {
+            let Some(link) = resolve_svg_use_reference(node, id_map) else {
+                continue;
+            };
+            if link == node || link == origin {
+                continue;
+            }
+            if svg_use_expansion_is_recursive(node, link, id_map, budget)? {
+                continue;
+            }
+            pending.push(InitialSvgSelectorFrame::Visit {
+                node: link,
+                origin: node,
+                depth: depth + 1,
+            });
+            continue;
+        }
+
+        pending.push(InitialSvgSelectorFrame::Children {
+            origin,
+            depth: depth + 1,
+            children: node.children(),
+        });
+    }
+
+    Ok(())
 }
 
 fn resolve_svg_use_reference<'a, 'input: 'a>(
@@ -1433,7 +1538,7 @@ const MAX_INITIAL_PARSE_SELECTOR_AST_BYTES_PER_SOURCE_BYTE: usize = 512;
 const INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR: usize = 2;
 const MAX_INITIAL_PARSE_STYLE_SORT_WORK: usize = 4_194_304;
 const MAX_INITIAL_PARSE_XML_NODES: usize = 1_000_000;
-const MAX_INITIAL_PARSE_XML_DEPTH: usize = 1_024;
+const MAX_INITIAL_PARSE_XML_DEPTH: usize = 128;
 
 struct SelectorFreezeBudget {
     bytes: usize,
