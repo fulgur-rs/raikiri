@@ -262,6 +262,18 @@ fn run_pair_reports_html_read_errors() {
 }
 
 #[test]
+fn run_pair_with_images_and_variant_reports_html_read_errors() {
+    let pair = ReftestPair {
+        test: PathBuf::from("/definitely/missing/reftest.html"),
+        reference: PathBuf::from("/definitely/missing/reference.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let result = run_pair_with_images_and_variant(&pair, ReftestConfig::default(), "?mode=ja");
+    assert!(matches!(result, Err(ReftestError::Io { .. })));
+}
+
+#[test]
 fn image_resolution_reparses_geometry_varying_pages() {
     let temp = tempfile::tempdir().unwrap();
     let support = temp.path().join("support");
@@ -893,6 +905,25 @@ fn variant_suffix_preserves_reference_query_and_fragment() {
         "?variant=pass#target"
     );
     assert_eq!(with_variant_query("?ref=1", ""), "?ref=1");
+}
+
+#[test]
+fn batch_render_io_failure_is_an_error_not_a_test_mismatch() {
+    let pair = ReftestPair {
+        test: PathBuf::from("missing-test.html"),
+        reference: PathBuf::from("missing-reference.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+
+    let results = run_all_pairs(&[pair], ReftestConfig::default());
+
+    assert_eq!(results.len(), 1);
+    assert!(
+        matches!(results[0].outcome, TestOutcome::Error(_)),
+        "missing fixture should be reported as an execution error: {:?}",
+        results[0].outcome
+    );
 }
 
 #[test]

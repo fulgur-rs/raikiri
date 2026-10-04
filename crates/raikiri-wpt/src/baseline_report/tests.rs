@@ -34,7 +34,14 @@ fn only_css_parsing_pages_use_the_testharness_runner() {
 
 #[test]
 fn status_names_round_trip() {
-    for status in [Status::Pass, Status::Fail, Status::Error, Status::Skip] {
+    for status in [
+        Status::Pass,
+        Status::Fail,
+        Status::XFail,
+        Status::XPass,
+        Status::Error,
+        Status::Skip,
+    ] {
         assert_eq!(Status::parse(status.as_str()), Some(status));
     }
     assert_eq!(Status::parse("MAYBE"), None);
@@ -202,11 +209,172 @@ fn report_args_parse_flags_and_repeatable_only() {
 }
 
 #[test]
+fn expected_failure_classification_only_accepts_assertion_and_pixel_failures() {
+    let expected = ExpectedFailure {
+        test_id: "css/foo.html?variant=ja".to_owned(),
+        reason: "Japanese glyph spacing differs".to_owned(),
+        issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        added_date: time::macros::date!(2026 - 10 - 04),
+        review_by: time::macros::date!(2026 - 11 - 04),
+        line_no: 2,
+    };
+
+    let (status, detail) =
+        classify_expected_failure(Status::Fail, "pixel mismatch".to_owned(), &expected);
+    assert_eq!(status, Status::XFail);
+    assert!(detail.contains("pixel mismatch"));
+    assert!(detail.contains(&expected.reason));
+    assert!(detail.contains(&expected.issue_id));
+
+    let (status, detail) = classify_expected_failure(Status::Pass, String::new(), &expected);
+    assert_eq!(status, Status::XPass);
+    assert!(detail.contains("unexpected pass"));
+    assert!(detail.contains(&expected.issue_id));
+
+    for status in [Status::Error, Status::Skip, Status::XFail, Status::XPass] {
+        let (actual, detail) =
+            classify_expected_failure(status, "must remain visible".to_owned(), &expected);
+        assert_eq!(actual, status);
+        assert_eq!(detail, "must remain visible");
+    }
+}
+
+#[test]
+fn report_maps_runner_xfail_and_xpass_outcomes_to_distinct_statuses() {
+    let xfail = ReftestResult {
+        pair_test_id: "css/foo.html?variant=ja".to_owned(),
+        outcome: TestOutcome::XFail {
+            expected: "font spacing differs".to_owned(),
+            actual: "pixel mismatch".to_owned(),
+            issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        },
+        mismatched_pixels: 1,
+        total_pixels: 1,
+    };
+    let (status, detail) = outcome_status(Ok(xfail));
+    assert_eq!(status, Status::XFail);
+    assert!(detail.contains("font spacing differs"));
+    assert!(detail.contains("pixel mismatch"));
+
+    let xpass = ReftestResult {
+        pair_test_id: "css/foo.html?variant=ja".to_owned(),
+        outcome: TestOutcome::XPass {
+            expected: "font spacing differs".to_owned(),
+            issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+        },
+        mismatched_pixels: 0,
+        total_pixels: 1,
+    };
+    let (status, detail) = outcome_status(Ok(xpass));
+    assert_eq!(status, Status::XPass);
+    assert!(detail.contains("unexpected pass"));
+
+    let (status, detail) = outcome_status(Err(ReftestError::Io {
+        path: PathBuf::from("missing.html"),
+        source: std::io::Error::other("missing"),
+    }));
+    assert_eq!(status, Status::Error);
+    assert!(detail.contains("missing.html"));
+}
+
+#[test]
+fn expected_failure_report_runs_only_the_exact_query_variant() {
+    let directory = tempfile::tempdir().unwrap();
+    let wpt_root = directory.path();
+    let test_dir = wpt_root.join("css/example");
+    std::fs::create_dir_all(&test_dir).unwrap();
+
+    let test = test_dir.join("test.html");
+    let reference = test_dir.join("reference.html");
+    let variant_html = "<!DOCTYPE html><html><head><link rel='match' href='reference.html'></head><body style='margin:0'><script>document.body.style.background = location.search === '?mode=red' ? 'red' : 'green';</script></body></html>";
+    let green_html = "<!DOCTYPE html><html><body style='margin:0;background:green'></body></html>";
+    std::fs::write(&test, variant_html).unwrap();
+    std::fs::write(&reference, green_html).unwrap();
+
+    let config = ReftestConfig {
+        width: 16,
+        height: 16,
+        ..ReftestConfig::default()
+    };
+
+    let (status, _) =
+        reftest_status_with_config(wpt_root, "css/example/test.html?mode=red", config);
+    assert_eq!(status, Status::Fail, "the declared query should select red");
+    let (status, _) = reftest_status_with_config(wpt_root, "css/example/test.html", config);
+    assert_eq!(
+        status,
+        Status::Pass,
+        "the undeclared base page selects green"
+    );
+
+    let repaired_variant_html = variant_html.replace("? 'red' : 'green';", "? 'green' : 'green';");
+    std::fs::write(&test, repaired_variant_html).unwrap();
+    let (status, _) =
+        reftest_status_with_config(wpt_root, "css/example/test.html?mode=red", config);
+    assert_eq!(status, Status::Pass, "the repaired declared variant passes");
+}
+
+#[test]
+fn an_expected_failure_does_not_convert_a_parsing_skip_to_xfail() {
+    let directory = tempfile::tempdir().unwrap();
+    let id = "css/css-text/parsing/no-assertions.html";
+    let path = directory.path().join(id);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "<!doctype html><title>No parsing assertions</title>").unwrap();
+    let expected_failures = ExpectedFailures {
+        entries: vec![ExpectedFailure {
+            test_id: id.to_owned(),
+            reason: "the parsing assertion fails".to_owned(),
+            issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+            added_date: time::macros::date!(2026 - 10 - 04),
+            review_by: time::macros::date!(2026 - 11 - 04),
+            line_no: 1,
+        }],
+    };
+
+    let row = run_id_with_expected_failures(directory.path(), id, &expected_failures);
+
+    assert_eq!(row.status, Status::Skip);
+    assert!(row.detail.contains("no parsing test calls"));
+}
+
+#[test]
+fn an_expected_failure_does_not_convert_runner_errors_to_xfail() {
+    let directory = tempfile::tempdir().unwrap();
+    let id = "css/css-text/parsing/missing.html?variant=ja";
+    let expected_failures = ExpectedFailures {
+        entries: vec![ExpectedFailure {
+            test_id: id.to_owned(),
+            reason: "variant fails".to_owned(),
+            issue_id: "raikiri-spike-6qrnr.15.15".to_owned(),
+            added_date: time::macros::date!(2026 - 10 - 04),
+            review_by: time::macros::date!(2026 - 11 - 04),
+            line_no: 1,
+        }],
+    };
+
+    let row = run_id_with_expected_failures(directory.path(), id, &expected_failures);
+
+    assert_eq!(row.status, Status::Error);
+    assert!(row.detail.contains("query variants for parsing tests"));
+}
+
+#[test]
 fn report_args_reject_bad_input() {
     assert!(parse_report_args(&strings(&["--nope"])).is_err());
     assert!(parse_report_args(&strings(&["--jobs"])).is_err());
     assert!(parse_report_args(&strings(&["--jobs", "0"])).is_err());
     assert!(parse_report_args(&strings(&["--limit", "many"])).is_err());
+}
+
+#[test]
+fn report_args_enable_strict_mode_without_changing_the_default() {
+    assert!(!parse_report_args(&[]).expect("default args").strict);
+    assert!(
+        parse_report_args(&strings(&["--strict"]))
+            .expect("strict flag")
+            .strict
+    );
 }
 
 #[test]

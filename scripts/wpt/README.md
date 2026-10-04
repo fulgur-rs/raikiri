@@ -248,15 +248,20 @@ source so the agent's decision is reproducible.
 
 ## Baseline report
 
-`run-baseline-report` runs every id in `expectations/raikiri-baseline.txt` through the
-in-process harness and writes one `id<TAB>STATUS<TAB>detail` line per id. It is
-report-only.
+`run-baseline-report` runs every id in `expectations/raikiri-baseline.txt` and
+`expectations/expected-failures.txt` through the in-process harness and writes
+one `id<TAB>STATUS<TAB>detail` line per id. Query variants in the expected-failures
+file are run with that exact query. It is report-only unless `--strict` is supplied.
 
 - A reftest is PASS when one `rel=match` reference matches exactly at 800x600 (several
   `rel=match` references are alternatives, as in WPT) and every `rel=mismatch` reference
   differs. Each reference is tried with local resources enabled and without them, because
   the baseline mixes tests pinned under either mode.
 - A `css/**/parsing/*` page is PASS when every assertion passes.
+- Expected-failure entries remain executable: assertion or pixel mismatches report
+  `XFAIL`, an unexpected pass reports `XPASS`, and execution errors stay `ERROR`.
+  `XFAIL` never counts as `PASS`; `--strict` exits non-zero for `FAIL`, `XPASS`, or
+  `ERROR` while allowing recorded `XFAIL` rows.
 - Some baseline ids do not pass on a given commit (drift, or a different harness produced
   the pin), so compare two reports with `diff`; do not read the absolute count as a gate.
 
@@ -278,6 +283,10 @@ second report, and PASS results that became weaker: a test that passed cleanly b
 now passes only after falling back to a run without local resources (the row detail reads
 `passes only without local resources`). A weakened PASS is still a PASS, so it is reported
 separately rather than as a regression.
+
+See [expectations/README.md](../../expectations/README.md) for the difference
+between PASS baseline, expected failures, known issues, quarantine, and deprecated
+tests, plus the review and XPASS cleanup procedure.
 
 Text is laid out by the shodo inline engine; a paragraph it cannot lay out fails its test
 with an error. The run refuses to start when the WPT font collection cannot be built (it

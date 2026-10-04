@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use crate::expectations::ExpectationSet;
+use crate::expectations::{ExpectationSet, ExpectedFailure};
 use crate::oracle::{BlitzOracle, OracleDiff};
 use crate::reftest::{
     ReftestConfig, ReftestPair, ReftestResult, compare_images, render_blitz, render_raikiri,
@@ -87,6 +87,11 @@ impl WptRunner {
         {
             return Some(TestOutcome::Quarantined);
         }
+        // An exact expected failure is still executed. It overrides a broad
+        // known-issue skip so the current result remains visible.
+        if self.expectations.expected_failures.get(test_id).is_some() {
+            return None;
+        }
         // known-issues => Skip (non-goal)
         if self
             .expectations
@@ -114,6 +119,15 @@ impl WptRunner {
                 outcome,
             };
         }
+        if self.expectations.expected_failures.get(test_id).is_some() {
+            return TestExecution {
+                test_id: test_id.to_owned(),
+                outcome: TestOutcome::Error(
+                    "expected-failure entries require executing a discovered reftest pair"
+                        .to_owned(),
+                ),
+            };
+        }
         // No WPT tree walk in this entry point; caller that wants real
         // reftest rendering should use `run_reftest_file` / `run_reftest_pair`.
         TestExecution {
@@ -128,23 +142,49 @@ impl WptRunner {
     /// without rendering. Otherwise delegates to [`crate::reftest::run_pair`].
     pub fn run_reftest_pair(&self, pair: &ReftestPair, config: ReftestConfig) -> ReftestResult {
         let test_id = pair.test.display().to_string();
-        if let Some(filtered) = self.classify(&test_id) {
+        self.run_reftest_pair_for_test_id(&test_id, pair, config, "")
+    }
+
+    /// Run a reftest using a caller-supplied canonical WPT id and optional
+    /// declared variant query.
+    ///
+    /// `test_id` must include the query string when the selected variant is
+    /// query-sensitive. `variant_query` is passed to the renderer and should
+    /// preserve the exact WPT declaration, including its leading `?`.
+    pub fn run_reftest_pair_for_test_id(
+        &self,
+        test_id: &str,
+        pair: &ReftestPair,
+        config: ReftestConfig,
+        variant_query: &str,
+    ) -> ReftestResult {
+        if let Some(filtered) = self.classify(test_id) {
             return ReftestResult {
-                pair_test_id: test_id,
+                pair_test_id: test_id.to_owned(),
                 outcome: filtered,
                 mismatched_pixels: 0,
                 total_pixels: u64::from(config.width) * u64::from(config.height),
             };
         }
-        match crate::reftest::run_pair(pair, config) {
-            Ok(r) => r,
-            Err(e) => ReftestResult {
-                pair_test_id: test_id,
-                outcome: TestOutcome::Fail(format!("reftest error: {e}")),
+        let result = if variant_query.is_empty() {
+            crate::reftest::run_pair(pair, config)
+        } else {
+            crate::reftest::run_pair_with_variant(pair, config, variant_query)
+        };
+        let mut result = match result {
+            Ok(result) => result,
+            Err(error) => ReftestResult {
+                pair_test_id: test_id.to_owned(),
+                outcome: TestOutcome::Error(format!("reftest error: {error}")),
                 mismatched_pixels: 0,
                 total_pixels: u64::from(config.width) * u64::from(config.height),
             },
+        };
+        result.pair_test_id = test_id.to_owned();
+        if let Some(expected) = self.expectations.expected_failures.get(test_id) {
+            result.outcome = apply_expected_failure(result.outcome, expected);
         }
+        result
     }
 
     /// Run a reftest pair via both engines and return the oracle delta.
@@ -156,7 +196,18 @@ impl WptRunner {
         pair: &ReftestPair,
         config: ReftestConfig,
     ) -> (ReftestResult, OracleDiff) {
-        let raikiri_result = self.run_reftest_pair(pair, config);
+        let test_id = pair.test.display().to_string();
+        self.run_pair_with_oracle_for_test_id(&test_id, pair, config)
+    }
+
+    /// Run a reftest with a canonical WPT id and return its oracle delta.
+    pub fn run_pair_with_oracle_for_test_id(
+        &self,
+        test_id: &str,
+        pair: &ReftestPair,
+        config: ReftestConfig,
+    ) -> (ReftestResult, OracleDiff) {
+        let raikiri_result = self.run_reftest_pair_for_test_id(test_id, pair, config, "");
         // For filtered tests, fabricate a matching blitz outcome so the diff
         // doesn't report a false blitz-only signal.
         let blitz_outcome = if matches!(
@@ -168,7 +219,7 @@ impl WptRunner {
             // Compute blitz outcome for same pair
             match render_pair_with_engine(pair, config, Engine::Blitz) {
                 Ok(outcome) => outcome,
-                Err(e) => TestOutcome::Fail(format!("blitz error: {e}")),
+                Err(e) => TestOutcome::Error(format!("blitz error: {e}")),
             }
         };
         let diff = BlitzOracle::diff(
@@ -191,7 +242,14 @@ impl WptRunner {
         let pairs = crate::reftest::discover_all_pairs(wpt_root);
         pairs
             .iter()
-            .map(|p| self.run_pair_with_oracle(p, config))
+            .map(|pair| {
+                let id = pair
+                    .test
+                    .strip_prefix(wpt_root)
+                    .unwrap_or(&pair.test)
+                    .to_string_lossy();
+                self.run_pair_with_oracle_for_test_id(&id, pair, config)
+            })
             .collect()
     }
 
@@ -219,6 +277,21 @@ impl WptRunner {
         };
         let oracle = BlitzOracle::diff(&raikiri, &blitz, "<inline>");
         Ok((diff, oracle))
+    }
+}
+
+fn apply_expected_failure(actual: TestOutcome, expected: &ExpectedFailure) -> TestOutcome {
+    match actual {
+        TestOutcome::Pass => TestOutcome::XPass {
+            expected: expected.reason.clone(),
+            issue_id: expected.issue_id.clone(),
+        },
+        TestOutcome::Fail(actual) => TestOutcome::XFail {
+            expected: expected.reason.clone(),
+            actual,
+            issue_id: expected.issue_id.clone(),
+        },
+        other => other,
     }
 }
 
@@ -280,6 +353,24 @@ pub enum TestOutcome {
     Pass,
     /// The test failed, with a reason.
     Fail(String),
+    /// The test failed as expected. This is not a passing result.
+    XFail {
+        /// Recorded reason the failure is currently accepted.
+        expected: String,
+        /// Actual assertion or pixel mismatch detail.
+        actual: String,
+        /// Local issue tracking the follow-up.
+        issue_id: String,
+    },
+    /// The test passed despite having an expected-failure record.
+    XPass {
+        /// Recorded reason the failure had been expected.
+        expected: String,
+        /// Local issue tracking the follow-up.
+        issue_id: String,
+    },
+    /// The test could not execute or render reliably.
+    Error(String),
     /// The test was skipped, with a reason.
     Skip(String),
     /// The test is quarantined (known-flaky, treated as informational per spec §12.10).

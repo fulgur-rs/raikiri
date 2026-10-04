@@ -2810,6 +2810,23 @@ pub fn run_pair_with_images(
     })
 }
 
+/// Execute a WPT variant with local PNG resource resolution enabled.
+///
+/// `variant_query` is the exact query string declared by the test, including
+/// its leading `?`.
+pub fn run_pair_with_images_and_variant(
+    pair: &ReftestPair,
+    config: ReftestConfig,
+    variant_query: &str,
+) -> Result<ReftestResult, ReftestError> {
+    run_pair_with_reader(pair, config, true, variant_query, |p| {
+        std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
+            path: p.to_path_buf(),
+            source,
+        })
+    })
+}
+
 fn run_pair_with_reader<F>(
     pair: &ReftestPair,
     config: ReftestConfig,
@@ -2972,7 +2989,7 @@ pub fn run_pair_with_oracle(
 
 /// Run all `pairs` with `config`, returning per-pair results.
 ///
-/// Pairs that fail to render are reported as `TestOutcome::Fail` with the
+/// Pairs that fail to render are reported as `TestOutcome::Error` with the
 /// rendering error as the reason (rather than aborting the batch).
 pub fn run_all_pairs(pairs: &[ReftestPair], config: ReftestConfig) -> Vec<ReftestResult> {
     pairs
@@ -2981,7 +2998,7 @@ pub fn run_all_pairs(pairs: &[ReftestPair], config: ReftestConfig) -> Vec<Reftes
             Ok(r) => r,
             Err(e) => ReftestResult {
                 pair_test_id: pair.test.display().to_string(),
-                outcome: TestOutcome::Fail(format!("render error: {e}")),
+                outcome: TestOutcome::Error(format!("render error: {e}")),
                 mismatched_pixels: 0,
                 total_pixels: u64::from(config.width) * u64::from(config.height),
             },

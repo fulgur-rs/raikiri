@@ -16,8 +16,8 @@ use std::path::Path;
 use time::{Date, Duration};
 
 use crate::expectations::{
-    ArchFilter, Baseline, Deprecated, ExpectError, KnownIssues, PlatformFilter, Quarantine,
-    QuarantineEntry, RendererFilter, ToleranceFilter, TrackedWpt,
+    ArchFilter, Baseline, Deprecated, ExpectError, ExpectedFailures, KnownIssues, PlatformFilter,
+    Quarantine, QuarantineEntry, RendererFilter, ToleranceFilter, TrackedWpt,
 };
 
 /// A single concrete execution environment: one row of the WPT CI matrix
@@ -278,7 +278,7 @@ pub enum Category {
     Duplicate,
     /// Same test id appears in multiple expectations files.
     Conflicting,
-    /// Quarantine entry older than 90 days (warning only).
+    /// Quarantine or expected-failure review date has passed (warning only).
     Expired,
 }
 
@@ -298,10 +298,12 @@ struct Loaded {
     tracked: Option<TrackedWpt>,
     // Kept for parse-error surfacing and future cross-file checks; not read yet.
     known_issues: Option<KnownIssues>,
+    expected_failures: Option<ExpectedFailures>,
     baseline: Option<Baseline>,
     quarantine: Option<Quarantine>,
     deprecated: Option<Deprecated>,
     baseline_raw: Option<String>,
+    expected_failures_raw: Option<String>,
     quarantine_raw: Option<String>,
     deprecated_raw: Option<String>,
     issues: Vec<LintIssue>,
@@ -351,11 +353,36 @@ fn load_all(dir: &Path) -> Loaded {
     }
 
     let known_path = dir.join("known-issues.txt");
-    match KnownIssues::load(&known_path) {
-        Ok(v) => out.known_issues = Some(v),
-        Err(e) => out
-            .issues
-            .push(expect_error_to_issue(e, known_path.display().to_string())),
+    match std::fs::read_to_string(&known_path) {
+        Ok(raw) => match KnownIssues::parse(&raw, &known_path.display().to_string()) {
+            Ok(v) => out.known_issues = Some(v),
+            Err(e) => out
+                .issues
+                .push(expect_error_to_issue(e, known_path.display().to_string())),
+        },
+        Err(e) => out.issues.push(expect_error_to_issue(
+            ExpectError::Io(e),
+            known_path.display().to_string(),
+        )),
+    }
+
+    let expected_path = dir.join("expected-failures.txt");
+    match std::fs::read_to_string(&expected_path) {
+        Ok(raw) => {
+            let (expected, errors) =
+                ExpectedFailures::parse(&raw, &expected_path.display().to_string());
+            out.issues.extend(
+                errors
+                    .into_iter()
+                    .map(|error| expect_error_to_issue(error, expected_path.display().to_string())),
+            );
+            out.expected_failures = Some(expected);
+            out.expected_failures_raw = Some(raw);
+        }
+        Err(e) => out.issues.push(expect_error_to_issue(
+            ExpectError::Io(e),
+            expected_path.display().to_string(),
+        )),
     }
 
     let baseline_path = dir.join("raikiri-baseline.txt");
@@ -486,6 +513,22 @@ fn detect_duplicates(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
         ));
     }
 
+    if let Some(raw) = loaded.expected_failures_raw.as_deref() {
+        let path = dir.join("expected-failures.txt").display().to_string();
+        issues.extend(detect_dup_by_key(
+            raw,
+            &path,
+            |line| {
+                line.split('|')
+                    .next()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+            },
+            |test_id, first| format!("test_id {test_id:?} already appeared on line {first}"),
+        ));
+    }
+
     if let Some(raw) = loaded.quarantine_raw.as_deref() {
         let path = dir.join("quarantine.txt").display().to_string();
         // Key = first 5 columns (test_id, platform, arch, renderer, tolerance).
@@ -519,17 +562,18 @@ fn detect_duplicates(loaded: &Loaded, dir: &Path) -> Vec<LintIssue> {
     issues
 }
 
-/// Compute `baseline ∩ quarantine` / `deprecated ∩ baseline` /
-/// `deprecated ∩ quarantine` [`Category::Conflicting`] issues.
+/// Compute conflicting exact ids across baseline, expected failures,
+/// deprecated, quarantine, and exact known-issue entries. Directory-level
+/// known-issue prefixes may be overridden by an exact expected-failure row.
 ///
 /// When `matrix` is `Some`, `baseline ∩ quarantine` collisions are
 /// filtered so a quarantine entry whose filter doesn't cover any
 /// [`MatrixRow`] doesn't count as a conflict (per spec §12.10:
 /// the quarantine "flaky on env X" doesn't conflict with the baseline
 /// "passes on env Y" as long as X and Y are disjoint on any axis).
-/// Deprecated ↔ baseline / deprecated ↔ quarantine remain matrix-
-/// independent — deprecated is unconditional exclusion, its overlap
-/// with anything is always a conflict.
+/// Deprecated overlaps and expected-failure overlaps remain matrix-
+/// independent — deprecated is unconditional exclusion, and an expected
+/// failure cannot be both accepted and quarantined or baseline-pinned.
 fn detect_conflicting(loaded: &Loaded, dir: &Path, matrix: Option<&RunMatrix>) -> Vec<LintIssue> {
     use std::collections::BTreeSet;
 
@@ -543,6 +587,29 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path, matrix: Option<&RunMatrix>) -
         .as_ref()
         .map(|d| d.entries.iter().map(String::as_str).collect())
         .unwrap_or_default();
+    let expected_failures: BTreeSet<&str> = loaded
+        .expected_failures
+        .as_ref()
+        .map(|entries| {
+            entries
+                .entries
+                .iter()
+                .map(|entry| entry.test_id.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let known_exact: BTreeSet<&str> = loaded
+        .known_issues
+        .as_ref()
+        .map(|known| {
+            known
+                .entries
+                .iter()
+                .map(|(pattern, _)| pattern.as_str())
+                .filter(|pattern| !pattern.ends_with('/'))
+                .collect()
+        })
+        .unwrap_or_default();
     let quarantine_ids: BTreeSet<&str> = loaded
         .quarantine
         .as_ref()
@@ -551,6 +618,7 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path, matrix: Option<&RunMatrix>) -
 
     let baseline_path = dir.join("raikiri-baseline.txt").display().to_string();
     let deprecated_path = dir.join("deprecated.txt").display().to_string();
+    let expected_path = dir.join("expected-failures.txt").display().to_string();
 
     let mut issues = Vec::new();
     let mk = |file: &str, other: &str, test_id: &str| LintIssue {
@@ -583,32 +651,59 @@ fn detect_conflicting(loaded: &Loaded, dir: &Path, matrix: Option<&RunMatrix>) -
         }
         issues.push(mk(&baseline_path, "quarantine.txt", id));
     }
+    for id in expected_failures.intersection(&baseline) {
+        issues.push(mk(&expected_path, "raikiri-baseline.txt", id));
+    }
+    for id in expected_failures.intersection(&deprecated) {
+        issues.push(mk(&expected_path, "deprecated.txt", id));
+    }
+    for id in expected_failures.intersection(&quarantine_ids) {
+        issues.push(mk(&expected_path, "quarantine.txt", id));
+    }
+    for id in expected_failures.intersection(&known_exact) {
+        issues.push(mk(&expected_path, "known-issues.txt", id));
+    }
     issues
 }
 
-/// Scan the `quarantine.txt` entries for entries older than 90 days
-/// relative to `now` (→ [`Category::Expired`], warning-only).
+/// Scan quarantine entries and expected-failure review dates relative to
+/// `now` (→ [`Category::Expired`], warning-only).
 ///
-/// Parse failures for `added_date` are already surfaced upstream as
-/// [`Category::Malformed`] via [`crate::expectations::Quarantine::parse`],
-/// so this function only handles the 90-day threshold check.
+/// Parse failures are already surfaced upstream as [`Category::Malformed`]
+/// by the expectation parsers, so this function only handles elapsed or
+/// upcoming review dates.
 fn detect_expired(loaded: &Loaded, dir: &Path, now: Date) -> Vec<LintIssue> {
-    let Some(q) = loaded.quarantine.as_ref() else {
-        return Vec::new();
-    };
-    let path = dir.join("quarantine.txt").display().to_string();
     let mut issues = Vec::new();
-    for entry in q.entries.iter() {
-        if now - entry.added_date > Duration::days(90) {
-            issues.push(LintIssue {
-                category: Category::Expired,
-                file: path.clone(),
-                line_no: Some(entry.line_no),
-                message: format!(
-                    "quarantine entry added on {} is older than 90 days (test_id={:?})",
-                    entry.added_date, entry.test_id
-                ),
-            });
+    if let Some(q) = loaded.quarantine.as_ref() {
+        let path = dir.join("quarantine.txt").display().to_string();
+        for entry in q.entries.iter() {
+            if now - entry.added_date > Duration::days(90) {
+                issues.push(LintIssue {
+                    category: Category::Expired,
+                    file: path.clone(),
+                    line_no: Some(entry.line_no),
+                    message: format!(
+                        "quarantine entry added on {} is older than 90 days (test_id={:?})",
+                        entry.added_date, entry.test_id
+                    ),
+                });
+            }
+        }
+    }
+    if let Some(expected) = loaded.expected_failures.as_ref() {
+        let expected_path = dir.join("expected-failures.txt").display().to_string();
+        for entry in &expected.entries {
+            if now > entry.review_by {
+                issues.push(LintIssue {
+                    category: Category::Expired,
+                    file: expected_path.clone(),
+                    line_no: Some(entry.line_no),
+                    message: format!(
+                        "expected-failure review date {} has passed (test_id={:?}, issue={})",
+                        entry.review_by, entry.test_id, entry.issue_id
+                    ),
+                });
+            }
         }
     }
     issues
@@ -656,6 +751,7 @@ mod tests {
         let dir = tempdir().unwrap();
         write(dir.path(), "tracked-wpt.txt", "# header\n");
         write(dir.path(), "known-issues.txt", "# header\n");
+        write(dir.path(), "expected-failures.txt", "# header\n");
         write(dir.path(), "raikiri-baseline.txt", "# header\n");
         write(dir.path(), "quarantine.txt", "# header\n");
         write(dir.path(), "deprecated.txt", "# header\n");

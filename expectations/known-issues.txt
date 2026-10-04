@@ -7,6 +7,8 @@
 # Semantics (consumed by M3 runner):
 # - The `test_id_or_pattern` is a WPT test id or a directory prefix
 #   ending in '/'; runner treats matched tests as intentionally SKIPped.
+# - An exact expected-failure entry may override a directory-prefix SKIP so
+#   that one reviewed test variant executes; exact-id overlap is a lint error.
 # - Results are not reported as regressions and do not count toward
 #   tracked-wpt statistics.
 
