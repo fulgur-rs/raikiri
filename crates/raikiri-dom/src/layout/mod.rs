@@ -55,6 +55,7 @@ fn style_dimension_length(value: Dimension) -> Option<f32> {
 }
 
 mod bridge;
+mod depth;
 pub(crate) mod ifc;
 mod multicol;
 mod page;
@@ -70,6 +71,7 @@ use page_pipeline::*;
 use sanitize::*;
 
 pub(crate) use bridge::apply_computed_to_style;
+pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::{
     compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
 };

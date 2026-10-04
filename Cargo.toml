@@ -68,9 +68,10 @@ peniko    = "0.6"
 kurbo     = "0.13"
 
 # ── Utility crates ─────────────────────────────────────────────────────
-smol_str   = "0.3"
-rustc-hash = "2.1"
 bytes      = "1"
+rustc-hash = "2.1"
+smol_str   = "0.3"
+stacker    = "0.1.24"
 url        = "2.5"
 
 # ── HTTP client (raikiri-net's SSRF-hardened NetworkProvider) ──────────

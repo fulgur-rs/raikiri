@@ -243,7 +243,20 @@ impl Document {
     ///
     /// Overflow is bridged to `taffy::Style::overflow`; the remaining
     /// overflow-area details are handled by the paint and block-layout paths.
+    #[inline(never)]
     fn compute_child_layout_with_block_ctx(
+        &mut self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> LayoutOutput {
+        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+            self.compute_child_layout_with_block_ctx_inner(node_id, inputs, block_ctx)
+        })
+    }
+
+    #[inline(never)]
+    fn compute_child_layout_with_block_ctx_inner(
         &mut self,
         node_id: NodeId,
         inputs: LayoutInput,

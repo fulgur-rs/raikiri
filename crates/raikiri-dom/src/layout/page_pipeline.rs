@@ -133,6 +133,7 @@ pub fn layout_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), LayoutError> {
+    super::validate_layout_depth(document)?;
     document.page_projection.clear();
     // At this observation-side entry point, synchronize membership.
     // `mark_in_document_flags` is an idempotent no-op when flags_dirty=false, so
@@ -1414,6 +1415,7 @@ pub fn layout_pages_with_resolver_and_base_url_and_control(
     control: &PageLayoutControl<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.check_page_index(0)?;
+    super::validate_layout_depth(document)?;
     document.page_projection.clear();
     document.mark_in_document_flags();
     match base_url {
@@ -1484,6 +1486,7 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
     control: &PageLayoutControl<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.check_page_index(0)?;
+    super::validate_layout_depth(document)?;
     document.page_projection.clear();
     document.mark_in_document_flags();
     match base_url {
@@ -1861,16 +1864,24 @@ pub fn layout_pages_with_page_geometry_and_control(
         node_id: usize,
         depth: u32,
     ) -> bool {
-        let Some(node) = document.get_node(node_id) else {
-            return false;
-        };
-        for &child_id in &node.children {
-            let child_depth = depth.saturating_add(1);
-            if child_depth >= 2 && selected_page_name(cascade, child_id).is_some() {
+        let mut pending: Vec<_> = document
+            .get_node(node_id)
+            .into_iter()
+            .flat_map(|node| node.children.iter().rev().copied())
+            .map(|child_id| (child_id, depth.saturating_add(1)))
+            .collect();
+        while let Some((current_id, current_depth)) = pending.pop() {
+            if current_depth >= 2 && selected_page_name(cascade, current_id).is_some() {
                 return true;
             }
-            if has_nested_named_page_descendant(document, cascade, child_id, child_depth) {
-                return true;
+            if let Some(node) = document.get_node(current_id) {
+                pending.extend(
+                    node.children
+                        .iter()
+                        .rev()
+                        .copied()
+                        .map(|child_id| (child_id, current_depth.saturating_add(1))),
+                );
             }
         }
         false
@@ -1880,21 +1891,72 @@ pub fn layout_pages_with_page_geometry_and_control(
     /// page boundary. Keep that boundary distinct from the zero-height named
     /// runs that are otherwise coalesced at one source coordinate.
     fn has_display_none_descendant(document: &Document, node_id: usize) -> bool {
-        let Some(node) = document.get_node(node_id) else {
-            return false;
-        };
-        node.children.iter().any(|&child_id| {
-            let Some(child) = document.get_node(child_id) else {
-                return false;
+        let mut pending: Vec<_> = document
+            .get_node(node_id)
+            .into_iter()
+            .flat_map(|node| node.children.iter().rev().copied())
+            .collect();
+        while let Some(current_id) = pending.pop() {
+            let Some(node) = document.get_node(current_id) else {
+                continue;
             };
-            child.is_display_none() || has_display_none_descendant(document, child_id)
-        })
+            if node.is_display_none() {
+                return true;
+            }
+            pending.extend(node.children.iter().rev().copied());
+        }
+        false
     }
 
     // Candidate collection carries the recursive layout state explicitly so page
     // membership is decided from source coordinates before local page offsets.
     #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
     fn collect_candidates(
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        parent_abs_y: f32,
+        direct_body_child: bool,
+        body_id: usize,
+        parent_height: f32,
+        page_step: f32,
+        inherited_page_name: Option<String>,
+        inside_table: bool,
+        flex_column_parent: bool,
+        grid_single_column_parent: bool,
+        inside_flex: bool,
+        inside_float: bool,
+        inside_out_of_flow: bool,
+        out: &mut Vec<PageCandidate>,
+        control: &PageLayoutControl<'_>,
+    ) -> Result<(), LayoutError> {
+        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+            collect_candidates_inner(
+                document,
+                cascade,
+                node_id,
+                parent_abs_y,
+                direct_body_child,
+                body_id,
+                parent_height,
+                page_step,
+                inherited_page_name,
+                inside_table,
+                flex_column_parent,
+                grid_single_column_parent,
+                inside_flex,
+                inside_float,
+                inside_out_of_flow,
+                out,
+                control,
+            )
+        })
+    }
+
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn collect_candidates_inner(
         document: &Document,
         cascade: &CascadeResult,
         node_id: usize,
@@ -2900,6 +2962,7 @@ pub fn layout_single_page_with_resolver_and_base_url(
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<(), LayoutError> {
+    super::validate_layout_depth(document)?;
     document.page_projection.clear();
     // See “Execution order” above — this must precede `resolve_images`, whose
     // membership gate reads the flags this refreshes.

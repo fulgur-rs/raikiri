@@ -282,6 +282,37 @@ fn content_text_ignores_non_rendered_subtrees() {
 }
 
 #[test]
+fn content_text_accepts_the_maximum_layout_depth() {
+    let mut html = String::from(
+        "<html><head><style>body { bookmark-label: content(text); }</style></head><body>",
+    );
+    html.push_str(&"<div>".repeat(255));
+    html.push_str("Deep text");
+    html.push_str(&"</div>".repeat(255));
+    html.push_str("</body></html>");
+    let doc = parse_html(html.as_bytes(), &options()).expect("parse");
+    let registrations = [ConsumerPropertyRegistration::text("bookmark-label")];
+    let mut observer = Observer::default();
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+
+    layout(
+        &doc,
+        defaults(),
+        LayoutConfig::default(),
+        LayoutOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
+    )
+    .expect("render");
+
+    assert_eq!(observer.events.len(), 1);
+    assert_eq!(
+        observer.events[0].value,
+        ConsumerPropertyValue::Text("Deep text".to_owned())
+    );
+}
+
+#[test]
 fn consumer_property_edge_values_and_closure_observer() {
     let doc = parse_html(
         &br#"<html><head><style>
