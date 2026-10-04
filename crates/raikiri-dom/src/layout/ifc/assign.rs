@@ -10,8 +10,8 @@ use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
-use raikiri_style::CascadeResult;
-use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, WritingMode};
+use raikiri_style::{CascadeResult, ComputedColumnWidth};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
@@ -160,8 +160,9 @@ fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx
 /// or an inline element with a margin, border or padding on an inline side
 /// (CSS 2.1, 9.4.2: a line box without any of these is treated as
 /// zero-height). The content of its boxes does not count, and neither do
-/// floats and block children alone: they are not inline content, so a block
-/// that holds only those is laid out by the block algorithm.
+/// floats or horizontal block children alone. Ordinary vertical block
+/// children use the IFC path to advance along the physical block axis; page
+/// roots and multicol containers remain on their existing layout paths.
 fn has_inline_content(
     doc: &Document,
     cascade: &CascadeResult,
@@ -171,6 +172,13 @@ fn has_inline_content(
     if has_in_flow_generated_text(cascade, idx) {
         return true;
     }
+    let cv = &cascade.computed[idx];
+    let vertical_block_children = matches!(
+        cv.cssom_writing_mode,
+        WritingMode::VerticalRl | WritingMode::VerticalLr
+    ) && !is_layout_root(doc, idx)
+        && matches!(cv.column_count, ColumnCountValue::Auto)
+        && matches!(cv.column_width, ComputedColumnWidth::Auto);
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
@@ -188,6 +196,12 @@ fn has_inline_content(
             }
             NodeKind::Element => match box_kind(cascade, doc, id) {
                 Some(IfcBoxKind::Atomic) => return true,
+                Some(IfcBoxKind::Block) if vertical_block_children => {
+                    if has_in_flow_generated_text(cascade, id) {
+                        return true;
+                    }
+                    stack.extend(node.children.iter().copied());
+                }
                 Some(_) => {}
                 None => {
                     let cv = &cascade.computed[id];

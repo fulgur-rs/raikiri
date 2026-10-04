@@ -1,34 +1,66 @@
 //! Measure and break an ifc root's paragraph.
 
+use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
-use shodo::geometry::{Direction, WritingMode};
+use shodo::geometry::{Direction, PhysicalSize, WritingMode};
 use shodo::style::LineOptions;
 use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
 use taffy::{BlockContext, Clear};
 
-/// Horizontal space of one line, in content-box coordinates.
+/// Logical inline space of one line, in content-box coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LineSpace {
-    /// Offset of the line's start from the content-box start.
-    pub(crate) start: f32,
-    pub(crate) width: f32,
+    /// Offset of logical inline-start from the content-box start.
+    pub(crate) inline_start: f32,
+    /// Available logical inline extent.
+    pub(crate) inline_size: f32,
 }
 
-/// What a layout needs to know about the root's box.
+/// Physical content-box geometry and the axes used by the IFC root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FlowGeometry {
-    /// Content-box width the lines are broken at.
+    /// Logical inline extent the lines are broken at.
     pub(crate) width: f32,
+    pub(crate) axes: IfcAxes,
+    /// Physical content-box size.
+    pub(crate) content_size: PhysicalSize,
+    /// Physical border plus padding on every side.
+    pub(crate) insets: taffy::Rect<f32>,
     /// Border plus padding on the physical left and right side.
     pub(crate) edges: (f32, f32),
-    /// Border plus padding above the content box. A `BlockContext` measures
-    /// block offsets from the block's border-box top, so a block offset inside
-    /// the content box needs this added.
+    /// Border plus padding above the content box.
     pub(crate) top_edge: f32,
+}
+
+impl FlowGeometry {
+    pub(crate) fn new(axes: IfcAxes, content_size: PhysicalSize, insets: taffy::Rect<f32>) -> Self {
+        Self {
+            width: axes.inline_extent(content_size),
+            axes,
+            content_size,
+            insets,
+            edges: (insets.left, insets.right),
+            top_edge: insets.top,
+        }
+    }
+
+    pub(crate) fn horizontal(width: f32, edges: (f32, f32), top_edge: f32) -> Self {
+        let insets = taffy::Rect {
+            top: top_edge,
+            right: edges.1,
+            bottom: 0.0,
+            left: edges.0,
+        };
+        Self::new(
+            IfcAxes::new(WritingMode::HorizontalTb, Direction::Ltr),
+            PhysicalSize { width, height: 0.0 },
+            insets,
+        )
+    }
 }
 
 /// How many times a line is laid out again because the space turned out to
@@ -105,8 +137,8 @@ pub(crate) fn line_space(
         slot = next;
     }
     LineSpace {
-        start,
-        width: (end - start).max(0.0),
+        inline_start: start,
+        inline_size: (end - start).max(0.0),
     }
 }
 
@@ -119,12 +151,18 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
         cx,
         &AtomicSizes::EMPTY,
         width,
-        if root.rtl {
-            Direction::Rtl
-        } else {
-            Direction::Ltr
+        IfcAxes::new(
+            root.writing_mode,
+            if root.rtl {
+                Direction::Rtl
+            } else {
+                Direction::Ltr
+            },
+        ),
+        |_, _| LineSpace {
+            inline_start: 0.0,
+            inline_size: width,
         },
-        |_, _| LineSpace { start: 0.0, width },
     );
     placed.width = width;
     placed
@@ -138,7 +176,7 @@ pub(crate) fn place_lines(
     cx: &mut LayoutContext,
     atomics: &AtomicSizes,
     content_width: f32,
-    direction: Direction,
+    axes: IfcAxes,
     mut space: impl FnMut(f32, f32) -> LineSpace,
 ) -> IfcLines {
     let mut lines: Vec<shodo::Line> = Vec::new();
@@ -150,14 +188,15 @@ pub(crate) fn place_lines(
         let mut retries = 0;
         let line = loop {
             let available = space(y, assumed_height);
-            first_width.get_or_insert(available.width);
-            let right_inset = (content_width - available.start - available.width).max(0.0);
+            first_width.get_or_insert(available.inline_size);
+            let end_inset =
+                (content_width - available.inline_start - available.inline_size).max(0.0);
             let mut constraint = LineConstraint::from_physical_insets(
                 content_width,
-                available.start,
-                right_inset,
-                WritingMode::HorizontalTb,
-                direction,
+                available.inline_start,
+                end_inset,
+                axes.writing_mode(),
+                axes.direction(),
             );
             constraint.block_offset = y;
             match paragraph.next_line(cx, token, options, &constraint, atomics) {
@@ -262,14 +301,14 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         // The inline elements follow the new lines; the root's box keeps the
         // border and padding it was laid out with.
         let layout = doc.nodes[id].unrounded_layout;
-        let geometry = FlowGeometry {
+        let geometry = FlowGeometry::horizontal(
             width,
-            edges: (
+            (
                 layout.padding.left + layout.border.left,
                 layout.padding.right + layout.border.right,
             ),
-            top_edge: layout.padding.top + layout.border.top,
-        };
+            layout.padding.top + layout.border.top,
+        );
         let lines = doc.nodes[id]
             .ifc
             .as_ref()

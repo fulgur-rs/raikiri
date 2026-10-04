@@ -1674,7 +1674,8 @@ pub(crate) fn prepare_multicol_layout(
         ) && matches!(
             cascade.computed[idx].display,
             DisplayValue::Block | DisplayValue::InlineBlock
-        ) && matches!(cascade.computed[idx].position, PositionValue::Static)
+        ) && !has_vertical_writing_mode(cascade, &parent_of, idx)
+            && matches!(cascade.computed[idx].position, PositionValue::Static)
             && !has_nonzero_horizontal_margin(&cascade.computed[idx])
             && !has_out_of_flow_ancestor(cascade, &parent_of, idx)
             && !has_non_block_flow_ancestor(cascade, &parent_of, idx)

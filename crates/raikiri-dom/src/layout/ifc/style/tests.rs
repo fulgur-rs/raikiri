@@ -264,17 +264,34 @@ fn rtl_and_plaintext_bidi_set_the_paragraph_style() {
 }
 
 #[test]
-fn a_vertical_writing_mode_is_laid_out_as_horizontal() {
-    // Real vertical writing is not supported: the projection lays vertical
-    // text out horizontally, whatever the authored writing mode.
-    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+fn supported_vertical_writing_modes_reach_the_paragraph() {
+    for (mode, expected) in [
+        ("horizontal-tb", WritingMode::HorizontalTb),
+        ("vertical-rl", WritingMode::VerticalRl),
+        ("vertical-lr", WritingMode::VerticalLr),
+    ] {
         let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
             doc.append_text(root, "x");
         });
         let cv = &fixture.cascade.computed[fixture.root];
         let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
         let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph");
-        assert_eq!(paragraph.writing_mode, WritingMode::HorizontalTb, "{mode}");
+        assert_eq!(paragraph.writing_mode, expected, "{mode}");
+    }
+}
+
+#[test]
+fn sideways_writing_modes_are_rejected() {
+    for mode in ["sideways-rl", "sideways-lr"] {
+        let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let cv = &fixture.cascade.computed[fixture.root];
+        let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
+        assert!(matches!(
+            paragraph_style(cv, fixture.root, root),
+            Err(IfcError::Unsupported { node, .. }) if node == fixture.root
+        ));
     }
 }
 

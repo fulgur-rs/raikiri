@@ -9,11 +9,7 @@ use crate::layout::test_support::{
 #[test]
 fn unprojected_root_has_no_fragmentainer_tail() {
     let mut doc = Document::new();
-    let geometry = FlowGeometry {
-        width: 100.0,
-        edges: (0.0, 0.0),
-        top_edge: 0.0,
-    };
+    let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
     let ordinary = layout_with_boxes_in(&mut doc, 0, geometry, None, false, false);
     assert!(ordinary.lines.is_empty());
     assert_eq!(ordinary.unfragmented_tail_column, None);
@@ -52,11 +48,7 @@ fn final_unfragmented_column_records_only_real_line_overflow() {
         crate::layout::test_support::page_box_800x600(),
     )
     .expect("layout");
-    let geometry = FlowGeometry {
-        width: 100.0,
-        edges: (0.0, 0.0),
-        top_edge: 0.0,
-    };
+    let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
     let context = FragmentationContext {
         available_width: 100.0,
         available_height: Some(0.001),
@@ -99,11 +91,7 @@ fn a_probe_stores_nothing_and_a_performed_layout_does() {
     .expect("layout");
     // Forget what the pass stored, then run the two modes by hand.
     doc.nodes[float].unrounded_layout = taffy::Layout::new();
-    let geometry = FlowGeometry {
-        width: 100.0,
-        edges: (0.0, 0.0),
-        top_edge: 0.0,
-    };
+    let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     let probed = layout_with_boxes(&mut doc, root, geometry, None, false);
     assert_eq!(
@@ -151,11 +139,7 @@ fn a_probe_does_not_place_an_atomic_and_a_performed_layout_does() {
     )
     .expect("layout");
     doc.nodes[atomic].unrounded_layout = taffy::Layout::new();
-    let geometry = FlowGeometry {
-        width: 100.0,
-        edges: (0.0, 0.0),
-        top_edge: 0.0,
-    };
+    let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     layout_with_boxes(&mut doc, root, geometry, None, false);
     assert_eq!(
@@ -192,11 +176,7 @@ fn a_probe_does_not_record_an_inline_element_and_a_performed_layout_does() {
     .expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
     doc.nodes[span_id].unrounded_layout = taffy::Layout::new();
-    let geometry = FlowGeometry {
-        width: 100.0,
-        edges: (0.0, 0.0),
-        top_edge: 0.0,
-    };
+    let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     layout_with_boxes(&mut doc, root, geometry, None, false);
     assert_eq!(

@@ -518,21 +518,33 @@ pub(crate) fn inline_style(
 }
 
 /// Paragraph-level style for a block root.
-///
-/// Vertical writing modes are laid out as horizontal text (real vertical
-/// writing is not supported): the paragraph is always `horizontal-tb`.
 pub(crate) fn paragraph_style(
-    _cv: &ComputedValues,
-    _node: usize,
+    cv: &ComputedValues,
+    node: usize,
     root: InlineStyle,
 ) -> Result<ParagraphStyle, IfcError> {
     Ok(ParagraphStyle {
-        writing_mode: WritingMode::HorizontalTb,
+        writing_mode: shodo_writing_mode(cv.cssom_writing_mode, node)?,
         direction: root.direction,
         unicode_bidi_plaintext: root.unicode_bidi == s::UnicodeBidi::Plaintext,
         root,
         ..ParagraphStyle::default()
     })
+}
+
+pub(crate) fn shodo_writing_mode(
+    mode: p::WritingMode,
+    node: usize,
+) -> Result<WritingMode, IfcError> {
+    match mode {
+        p::WritingMode::HorizontalTb => Ok(WritingMode::HorizontalTb),
+        p::WritingMode::VerticalRl => Ok(WritingMode::VerticalRl),
+        p::WritingMode::VerticalLr => Ok(WritingMode::VerticalLr),
+        _ => Err(IfcError::Unsupported {
+            node,
+            reason: "writing-mode is not represented by the inline path",
+        }),
+    }
 }
 
 /// Line-level options of a block root. The raw `text-indent` is returned next

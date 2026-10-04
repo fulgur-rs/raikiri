@@ -31,6 +31,38 @@ fn line_texts(projected: &ProjectedIfc, width: f32) -> Vec<String> {
 }
 
 #[test]
+fn projected_paragraph_shapes_with_its_computed_writing_mode() {
+    for (css, expected) in [
+        (
+            "writing-mode:vertical-rl",
+            shodo::geometry::WritingMode::VerticalRl,
+        ),
+        (
+            "writing-mode:vertical-lr",
+            shodo::geometry::WritingMode::VerticalLr,
+        ),
+    ] {
+        let fixture = block_fixture(css, |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let projected = project(&fixture).expect("project");
+        assert_eq!(projected.writing_mode, expected, "{css}");
+        let line = projected
+            .paragraph
+            .break_all(
+                &mut LayoutContext::new(),
+                &projected.options,
+                100.0,
+                &AtomicSizes::EMPTY,
+            )
+            .into_iter()
+            .next()
+            .expect("line");
+        assert_eq!(line.writing_mode(), expected, "{css}");
+    }
+}
+
+#[test]
 fn text_breaks_at_the_ahem_advance() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aaaa bbbb cccc");

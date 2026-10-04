@@ -2,10 +2,9 @@
 //!
 //! The lines live on the block's node (`Node::ifc_lines`). Glyph positions
 //! come from `GlyphRunView::glyph_origin`, which is relative to the block's
-//! content box; the caller supplies that origin in page coordinates. Only
-//! horizontal lines are drawn: paragraphs that need anything else are not
-//! assigned to the inline engine in the first place. A right-to-left line
-//! measures its glyph positions from the right edge of the content box.
+//! content box; the caller supplies that origin in page coordinates. The
+//! painter supports horizontal and vertical normal-flow lines; other geometry
+//! such as vertical fragmentation and decorations remains horizontal-only.
 
 use crate::text::{
     DecorationContext, DecorationGeometry, DecorationPhase, css_color_to_peniko,
@@ -20,7 +19,7 @@ use raikiri_dom::generated_content::{computed_for_id, generated_origin};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
-use shodo::geometry::BaselineKind;
+use shodo::geometry::{BaselineKind, PhysicalConverter, PhysicalSize, WritingMode};
 use shodo::hit::{LineLayout, TextPosition};
 use shodo::node::NodeId;
 use std::collections::HashMap;
@@ -151,9 +150,18 @@ pub(crate) fn draw_ifc_lines(
     fragmentainer: Option<usize>,
     custom_highlights: &[crate::TextHighlightRange],
 ) {
-    let Some(lines) = document.get_node(root_id).and_then(|n| n.ifc_lines()) else {
+    let Some(root_node) = document.get_node(root_id) else {
         return;
     };
+    let Some(lines) = root_node.ifc_lines() else {
+        return;
+    };
+    let writing_mode = root_node
+        .ifc_writing_mode()
+        .unwrap_or(WritingMode::HorizontalTb);
+    let physical_content_size = root_node
+        .ifc_physical_content_size()
+        .unwrap_or(PhysicalSize::default());
     // Lines split across columns are drawn where their column puts them:
     // the first line of a range at the range's offset. Without a split every
     // line stays where it was laid out.
@@ -197,11 +205,12 @@ pub(crate) fn draw_ifc_lines(
         }
     }
     let base = position;
-    let size = document
-        .get_node(root_id)
-        .and_then(|n| n.ifc_size())
-        .unwrap_or((0.0, 0.0));
-    let content_width = size.0;
+    let size = root_node.ifc_size().unwrap_or((0.0, 0.0));
+    let mut converter_size = physical_content_size;
+    if writing_mode == WritingMode::HorizontalTb {
+        converter_size.width = size.0;
+    }
+    let vertical = writing_mode != WritingMode::HorizontalTb;
     let pieces = document
         .get_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
@@ -249,7 +258,7 @@ pub(crate) fn draw_ifc_lines(
                 position.y + position.shift_y + dy - line_shift,
             );
         }
-        if let Some(hit_layout) = hit_layout.as_ref() {
+        if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
                 scene,
                 document,
@@ -268,6 +277,7 @@ pub(crate) fn draw_ifc_lines(
         let shifts = baseline_shifts(document, line);
         let mut contexts: HashMap<usize, DecorationContext> = HashMap::new();
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
+        let converter = PhysicalConverter::new(writing_mode, line.used_direction(), converter_size);
         for fragment in line.fragments() {
             let Fragment::GlyphRun(run) = fragment else {
                 continue;
@@ -283,20 +293,13 @@ pub(crate) fn draw_ifc_lines(
                 continue;
             };
             let _ = font;
-            let rtl = line.used_direction() == shodo::geometry::Direction::Rtl;
             let glyphs: Vec<AnyrenderGlyph> = run
                 .glyphs()
                 .enumerate()
                 .filter_map(|(index, glyph)| {
-                    let (inline, y) = run.glyph_origin(index)?;
-                    // In a right-to-left line the origin is the distance from
-                    // the inline-start (right) edge to the glyph's far edge.
-                    let x = if rtl { content_width - inline } else { inline };
-                    Some(AnyrenderGlyph {
-                        id: glyph.id,
-                        x,
-                        y: y + line.block_offset(),
-                    })
+                    let (inline, block) = run.glyph_origin(index)?;
+                    let (x, y) = converter.point(inline, block + line.block_offset());
+                    Some(AnyrenderGlyph { id: glyph.id, x, y })
                 })
                 .collect();
             if glyphs.is_empty() {
@@ -331,7 +334,9 @@ pub(crate) fn draw_ifc_lines(
                 offset,
             });
         }
-        clip_runs_to_the_line_content(line, &mut runs);
+        if !vertical {
+            clip_runs_to_the_line_content(line, &mut runs);
+        }
         // The line content is clipped in the line's own coordinates; the
         // relative offsets move the runs afterwards.
         for run in &mut runs {
@@ -339,7 +344,9 @@ pub(crate) fn draw_ifc_lines(
             run.x1 += f64::from(run.offset.0);
             run.baseline += f64::from(run.offset.1);
         }
-        draw_decorations(scene, &runs, DecorationPhase::BeforeGlyphs);
+        if !vertical {
+            draw_decorations(scene, &runs, DecorationPhase::BeforeGlyphs);
+        }
         for draw in &runs {
             let Some(font) = draw.run.font_data() else {
                 continue;
@@ -356,29 +363,29 @@ pub(crate) fn draw_ifc_lines(
                 .iter()
                 .map(|coord| coord.to_bits())
                 .collect();
-            let glyph_transform = draw
-                .run
-                .skew()
-                .map(|degrees| Affine::skew(f64::from(degrees).to_radians().tan(), 0.0));
+            let glyph_transform =
+                physical_glyph_transform(&converter, draw.run.glyph_transform(), draw.run.skew());
             let run_transform =
                 transform * Affine::translate((f64::from(draw.offset.0), f64::from(draw.offset.1)));
-            draw_shadows(
-                scene,
-                &ShadowRun {
-                    draw,
-                    font: &font,
-                    coords: &coords,
-                    glyph_transform,
-                },
-                owner_style,
-                run_transform,
-                IfcPosition {
-                    x: position.x + draw.offset.0,
-                    y: position.y + draw.offset.1,
-                    shift_y: position.shift_y,
-                },
-                size,
-            );
+            if !vertical {
+                draw_shadows(
+                    scene,
+                    &ShadowRun {
+                        draw,
+                        font: &font,
+                        coords: &coords,
+                        glyph_transform,
+                    },
+                    owner_style,
+                    run_transform,
+                    IfcPosition {
+                        x: position.x + draw.offset.0,
+                        y: position.y + draw.offset.1,
+                        shift_y: position.shift_y,
+                    },
+                    size,
+                );
+            }
             scene.draw_glyphs(
                 &font,
                 font_size,
@@ -393,8 +400,32 @@ pub(crate) fn draw_ifc_lines(
                 draw.glyphs.clone().into_iter(),
             );
         }
-        draw_decorations(scene, &runs, DecorationPhase::AfterGlyphs);
+        if !vertical {
+            draw_decorations(scene, &runs, DecorationPhase::AfterGlyphs);
+        }
     }
+}
+
+fn physical_glyph_transform(
+    converter: &PhysicalConverter,
+    axes: shodo::GlyphTransform,
+    skew: Option<f32>,
+) -> Option<Affine> {
+    let (xx, yx) = converter.vector(axes.inline_x, axes.block_x);
+    let (xy, yy) = converter.vector(axes.inline_y, axes.block_y);
+    let orientation = Affine::new([
+        f64::from(xx),
+        f64::from(yx),
+        f64::from(xy),
+        f64::from(yy),
+        0.0,
+        0.0,
+    ]);
+    let skew = skew.map_or(Affine::IDENTITY, |degrees| {
+        Affine::skew(f64::from(degrees).to_radians().tan(), 0.0)
+    });
+    let transform = orientation * skew;
+    (transform != Affine::IDENTITY).then_some(transform)
 }
 
 #[allow(clippy::too_many_arguments)]

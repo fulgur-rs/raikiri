@@ -21,6 +21,7 @@ use raikiri_style::property::{
 use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
+use shodo::geometry::WritingMode;
 use shodo::limits::Limits;
 use shodo::node::{InlineEdges, NodeId, OutOfFlowKind, TextSource};
 use shodo::style::LineOptions;
@@ -44,6 +45,8 @@ pub(crate) const REPLACED_BOX_TAGS: &[&str] = &[
 pub(crate) struct ProjectedIfc {
     /// The shaped paragraph.
     pub(crate) paragraph: Paragraph,
+    /// Writing mode used to shape the paragraph.
+    pub(crate) writing_mode: WritingMode,
     /// Line options of the block root.
     pub(crate) options: LineOptions,
     /// The block's raw `text-indent`, to be resolved against its width.
@@ -425,6 +428,8 @@ enum Step {
 pub(crate) struct ProjectedBuilder {
     /// The paragraph's content, not shaped yet.
     pub(crate) builder: ParagraphBuilder,
+    /// Writing mode used to shape the paragraph.
+    pub(crate) writing_mode: WritingMode,
     /// Line options of the block root.
     pub(crate) options: LineOptions,
     /// The block's raw `text-indent`, to be resolved against its width.
@@ -456,6 +461,7 @@ impl ProjectedBuilder {
         let paragraph = self.builder.build(cx, fonts).map_err(IfcError::Limit)?;
         Ok(ProjectedIfc {
             paragraph,
+            writing_mode: self.writing_mode,
             options: self.options,
             indent: self.indent,
             boxes: self.boxes,
@@ -533,6 +539,7 @@ pub(crate) fn project_ifc_text_builder(
     let (options, indent) = style::line_options(cv, text, fonts)?;
     let root_style = styled(doc, cascade, cv, text, fonts)?;
     let paragraph_style = style::paragraph_style(cv, text, root_style)?;
+    let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let cleared_breaks = Vec::new();
     builder.push_text(
@@ -547,6 +554,7 @@ pub(crate) fn project_ifc_text_builder(
     }
     Ok(ProjectedBuilder {
         builder,
+        writing_mode,
         options,
         indent,
         boxes: Vec::new(),
@@ -618,6 +626,7 @@ pub(crate) fn project_ifc_builder_with(
     let mut root_style = styled(doc, cascade, root_cv, root, fonts)?;
     apply_line_height_quirk(doc, paragraph_has_text, &mut root_style);
     let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
+    let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
@@ -830,6 +839,7 @@ pub(crate) fn project_ifc_builder_with(
     )?;
     Ok(ProjectedBuilder {
         builder,
+        writing_mode,
         options,
         indent,
         boxes,

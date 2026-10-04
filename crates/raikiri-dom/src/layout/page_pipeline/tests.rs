@@ -2400,6 +2400,26 @@ fn ifc_root_height_is_lines_times_line_height() {
 }
 
 #[test]
+fn a_definite_physical_height_sets_the_vertical_inline_extent() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, cascade, root) = ahem_paragraph(
+            "aaaa bbbb cccc",
+            &format!("writing-mode:{mode};width:100px;height:30px"),
+        );
+        lay_out(&mut doc, &cascade);
+
+        assert_eq!(stored_lines(&doc, root).width, 30.0, "{mode}");
+        assert_eq!(stored_lines(&doc, root).lines.len(), 3, "{mode}");
+        let layout = doc.nodes[root].unrounded_layout;
+        assert_eq!(
+            (layout.size.width, layout.size.height),
+            (100.0, 30.0),
+            "{mode}"
+        );
+    }
+}
+
+#[test]
 fn padding_and_border_shrink_the_line_width() {
     let (mut doc, cascade, root) = ahem_paragraph(
         "aaaa bbbb",
@@ -3546,6 +3566,150 @@ fn a_block_child_is_offset_by_the_content_box_of_its_paragraph() {
     // paths; the block child keeps the width taffy's style gives it.)
     assert_eq!((layout.location.x, layout.location.y), (6.0, 14.0));
     assert_eq!(layout.size.width, 100.0);
+}
+
+#[test]
+fn vertical_block_children_follow_the_logical_block_direction() {
+    for (mode, expected_x) in [("vertical-rl", 78.0), ("vertical-lr", 10.0)] {
+        let (mut doc, cascade, block, root) = paragraph_with_block(
+            "aa",
+            "width:12px;height:8px",
+            "bb",
+            &format!("height:50px;writing-mode:{mode}"),
+        );
+        lay_out(&mut doc, &cascade);
+
+        let child = doc.nodes[block].unrounded_layout;
+        assert_eq!(
+            (child.location.x, child.location.y),
+            (expected_x, 0.0),
+            "{mode}"
+        );
+        assert_eq!((child.size.width, child.size.height), (12.0, 8.0), "{mode}");
+        assert_eq!(stored_lines(&doc, root).lines.len(), 2, "{mode}");
+    }
+}
+
+#[test]
+fn vertical_rl_keeps_multiple_block_children_in_logical_source_order() {
+    let (mut doc, _, root) =
+        ahem_paragraph("aa", "width:100px;height:50px;writing-mode:vertical-rl");
+    let first = doc.append_element(
+        Some(root),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;width:12px;height:8px"),
+    );
+    doc.append_text(root, "bb");
+    let second = doc.append_element(
+        Some(root),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;width:14px;height:8px"),
+    );
+    doc.append_text(root, "cc");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+
+    assert_eq!(doc.nodes[first].unrounded_layout.location.x, 78.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.x, 54.0);
+}
+
+#[test]
+fn vertical_nested_block_children_match_flat_flow_positions() {
+    let positions = |nested: bool| {
+        let (mut doc, _, root) =
+            ahem_paragraph("", "width:100px;height:50px;writing-mode:vertical-rl");
+        let mut blocks = Vec::new();
+        if nested {
+            let first = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(first, "aa");
+            blocks.push(first);
+
+            let wrapper = doc.append_element(
+                Some(root),
+                "if-zh",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            for text in ["bb", "cc"] {
+                let child = doc.append_element(
+                    Some(wrapper),
+                    "div",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+                doc.append_text(child, text);
+                blocks.push(child);
+            }
+
+            let last = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(last, "dd");
+            blocks.push(last);
+        } else {
+            for text in ["aa", "bb", "cc", "dd"] {
+                let block = doc.append_element(
+                    Some(root),
+                    "div",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+                doc.append_text(block, text);
+                blocks.push(block);
+            }
+        }
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        blocks
+            .into_iter()
+            .map(|block| {
+                let layout = doc.nodes[block].unrounded_layout;
+                let mut absolute_x = 0.0;
+                let mut absolute_y = 0.0;
+                let mut ancestor = Some(block);
+                while let Some(node) = ancestor {
+                    let layout = doc.nodes[node].unrounded_layout;
+                    absolute_x += layout.location.x;
+                    absolute_y += layout.location.y;
+                    ancestor = doc.parent_of(node);
+                }
+                (
+                    absolute_x,
+                    absolute_y,
+                    layout.size.width,
+                    layout.size.height,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(positions(true), positions(false));
+}
+
+#[test]
+fn vertical_rl_block_child_placement_accounts_for_root_padding_and_border() {
+    let root_css = "width:100px;height:40px;box-sizing:border-box;writing-mode:vertical-rl;padding:5px 4px 3px 6px;border:1px solid";
+    let (mut doc, cascade, block, root) =
+        paragraph_with_block("aa", "width:12px;height:8px", "bb", root_css);
+    lay_out(&mut doc, &cascade);
+
+    assert_eq!(stored_lines(&doc, root).width, 30.0);
+    let child = doc.nodes[block].unrounded_layout;
+    assert_eq!((child.location.x, child.location.y), (73.0, 6.0));
 }
 
 #[test]
@@ -5256,12 +5420,20 @@ fn degraded_size(css: &str, text: &str, on_root: bool) -> (f32, f32) {
 }
 
 #[test]
-fn a_vertical_writing_mode_paragraph_is_projected_as_horizontal() {
+fn vertical_writing_mode_uses_the_max_content_inline_extent_when_height_is_auto() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "writing-mode:vertical-rl");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    // Hand-computed: laid out as horizontal text, Ahem 10px, one 10px line.
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+    let lines = stored_lines(&doc, root);
+    assert_eq!(lines.width, 90.0);
+    assert_eq!(lines.lines.len(), 1);
+    assert!(
+        lines
+            .lines
+            .iter()
+            .all(|line| line.writing_mode() == shodo::geometry::WritingMode::VerticalRl)
+    );
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 90.0);
 }
 
 #[test]
@@ -5280,11 +5452,6 @@ fn degraded_forms_have_their_pinned_sizes() {
             "{css}"
         );
     }
-    // The writing-mode row degrades on the root.
-    assert_eq!(
-        degraded_size("writing-mode:vertical-rl", "aaaa", true),
-        (800.0, 10.0)
-    );
 }
 
 /// `root > ["aaaa", input(css)]`; returns the input's x and the root's

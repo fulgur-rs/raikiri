@@ -5,6 +5,7 @@ use super::boxes::IfcBox;
 use super::projection::ProjectedIfc;
 use raikiri_style::ComputedTextIndent;
 use shodo::font::FontCollection;
+use shodo::geometry::WritingMode;
 use shodo::limits::Limits;
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Line, Paragraph};
@@ -17,6 +18,8 @@ use std::sync::atomic::AtomicUsize;
 pub(crate) struct IfcRoot {
     /// `Paragraph` is a cheap clone over shared data, so it is held directly.
     pub(crate) paragraph: Paragraph,
+    /// Writing mode used to shape the paragraph.
+    pub(crate) writing_mode: WritingMode,
     pub(crate) options: LineOptions,
     pub(crate) indent: ComputedTextIndent,
     /// Lines of the last performed layout, if any.
@@ -109,6 +112,7 @@ impl IfcRoot {
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
         Self {
             paragraph: projected.paragraph,
+            writing_mode: projected.writing_mode,
             options: projected.options,
             indent: projected.indent,
             lines: None,
@@ -125,6 +129,7 @@ impl IfcRoot {
     pub(crate) fn without_lines(&self) -> Self {
         Self {
             paragraph: self.paragraph.clone(),
+            writing_mode: self.writing_mode,
             options: self.options,
             indent: self.indent,
             lines: None,
@@ -209,6 +214,7 @@ impl IfcState {
 impl fmt::Debug for IfcRoot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("IfcRoot")
+            .field("writing_mode", &self.writing_mode)
             .field("options", &self.options)
             .field("indent", &self.indent)
             .field("lines", &self.lines)
