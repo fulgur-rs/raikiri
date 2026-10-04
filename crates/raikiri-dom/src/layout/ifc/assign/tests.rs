@@ -1657,3 +1657,21 @@ fn a_refusal_is_always_an_error() {
         LayoutError::IfcUnsupported { node: 5, .. }
     ));
 }
+
+#[test]
+fn a_counter_snapshot_error_during_build_preserves_its_limit() {
+    let error = super::build_error(
+        17,
+        IfcError::CounterSnapshots(crate::target::CounterSnapshotLimitExceeded {
+            limit: 32,
+            actual: 33,
+        }),
+    );
+    assert!(matches!(
+        error,
+        LayoutError::CounterSnapshotLimitExceeded {
+            limit: 32,
+            actual: 33
+        }
+    ));
+}

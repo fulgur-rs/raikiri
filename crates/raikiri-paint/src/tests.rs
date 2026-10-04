@@ -44,7 +44,7 @@ fn paint_single_page_empty_list_item_emits_marker() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     assert!(
         scene
@@ -69,7 +69,7 @@ fn decorated_text_scene_with_text(style: &str, text: &str) -> Scene {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     scene
 }
 
@@ -77,6 +77,7 @@ fn decorated_text_scene_with_text(style: &str, text: &str) -> Scene {
 fn named_page_paint_wrapper_uses_shared_context_entry_point() {
     let (document, cascade) = hello_world_paint_setup();
     let mut scene = Scene::new();
+    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page_context_named(
         &mut scene,
         &document,
@@ -88,8 +89,60 @@ fn named_page_paint_wrapper_uses_shared_context_entry_point() {
         false,
         None,
         None,
-    );
+        &mut budget,
+    )
+    .expect("paint succeeds");
     assert!(!scene.commands.is_empty());
+}
+
+#[test]
+fn fixed_width_named_page_entry_points_share_the_snapshot_budget() {
+    let (document, cascade) = hello_world_paint_setup();
+    let mut budget = CounterSnapshotBudget::default();
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &mut budget,
+    )
+    .expect("fixed-width page paint succeeds");
+
+    struct EmptyPixels;
+    impl raikiri_traits::ImagePixelSource for EmptyPixels {
+        fn get_decoded(
+            &self,
+            _url: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            None
+        }
+    }
+
+    let mut image_scene = Scene::new();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
+        &mut image_scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &EmptyPixels,
+        &mut CounterSnapshotBudget::default(),
+    )
+    .expect("fixed-width page paint with images succeeds");
 }
 
 #[test]
@@ -108,7 +161,7 @@ fn paint_single_page_box_shadow_emits_basic_outer_shadow_command() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     let shadow = scene.commands.iter().find_map(|command| match command {
         RenderCommand::BoxShadow(shadow) => Some(shadow),
@@ -141,7 +194,7 @@ fn paint_single_page_box_shadow_resolves_current_color_and_skips_inset_or_transp
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     let shadows: Vec<_> = scene
         .commands
@@ -172,7 +225,7 @@ fn paint_single_page_outline_emits_basic_solid_outline() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     let green_fills: Vec<_> = scene
         .commands
@@ -210,6 +263,7 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
+    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
         &mut scene,
         &doc,
@@ -228,7 +282,9 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
             start_byte: 1,
             end_byte: 2,
         }],
-    );
+        &mut budget,
+    )
+    .expect("paint succeeds");
 
     let highlight_index = scene
         .commands
@@ -261,7 +317,7 @@ fn paint_single_page_opacity_wraps_element_subtree_in_one_layer() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     let layers: Vec<_> = scene
         .commands
@@ -299,7 +355,7 @@ fn paint_single_page_blurred_text_shadow_uses_a_filtered_layer() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     let filtered_layers = scene
         .commands
@@ -316,12 +372,12 @@ fn paint_single_page_blurred_text_shadow_uses_a_filtered_layer() {
 }
 
 #[test]
-fn paint_single_page_compiles_and_returns_unit() {
+fn paint_single_page_compiles_and_returns_result() {
     let doc = Document::new();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     // canvas white fill is now emitted even for empty Document
     assert_eq!(
         scene
@@ -340,7 +396,7 @@ fn paint_single_page_canvas_background_site_is_noop_at_m1_4() {
     // This test previously pinned the no-op state; now it pins that 1 canvas Fill is emitted.
     let (doc, cr) = hello_world_paint_setup();
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let fill_commands: Vec<_> = scene
         .commands
         .iter()
@@ -368,7 +424,7 @@ fn paint_single_page_uses_page_background_color_before_document_canvas() {
     );
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     // Force the matcher below through its non-fill arm as well as the
     // page-background fill arm.
     scene.commands.push(RenderCommand::PopLayer);
@@ -405,7 +461,7 @@ fn paint_body_origin_fallbacks_cover_auto_and_computed_margins() {
         }
         layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
         let mut scene = Scene::new();
-        paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+        paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
         scene
     }
 
@@ -453,7 +509,7 @@ fn paint_img_filename_color_uses_padding_aware_background_path() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
     assert!(scene.commands.iter().any(|command| {
         matches!(
             command,
@@ -474,7 +530,7 @@ fn paint_single_page_without_body_returns_early() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     // Do not call `layout_single_page` here (it returns Err); test canvas painting alone.
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     assert_eq!(
         scene
             .commands
@@ -524,7 +580,7 @@ fn paint_single_page_skips_zero_size_subtree() {
         "display:none should have zero size after taffy layout"
     );
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     // Its text must emit no glyph runs, whether or not text painting is implemented.
     let glyph_commands: Vec<_> = scene
         .commands
@@ -560,7 +616,7 @@ fn paint_single_page_clips_overflow_hidden_descendants() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let clips = scene
         .commands
         .iter()
@@ -639,7 +695,7 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
     );
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let glyph_commands: Vec<_> = scene
         .commands
         .iter()
@@ -659,7 +715,7 @@ fn paint_single_page_hello_world_emits_one_glyph_run() {
     // Pin that hello-world "Hi" emits one GlyphRun.
     let (doc, cr) = hello_world_paint_setup();
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let glyph_commands: Vec<_> = scene
         .commands
         .iter()
@@ -697,7 +753,7 @@ fn paint_single_page_uses_inherited_color_as_brush() {
 
     let (doc, cr) = hello_world_paint_setup();
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let RenderCommand::GlyphRun(glyph_cmd) = scene
         .commands
         .iter()
@@ -815,7 +871,7 @@ fn paint_single_page_nested_decorations_follow_line_order() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let fills: Vec<_> = scene
         .commands
         .iter()
@@ -909,7 +965,7 @@ fn paint_single_page_html_decoration_propagates_into_body() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let fills: Vec<_> = scene
         .commands
         .iter()
@@ -957,7 +1013,7 @@ fn paint_single_page_ancestor_decoration_propagates_and_keeps_origin_color() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let glyph = scene
         .commands
         .iter()
@@ -1052,7 +1108,7 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
             });
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let RenderCommand::GlyphRun(glyph_cmd) = scene
         .commands
         .iter()
@@ -1111,7 +1167,7 @@ fn span_text_glyph_y(span_style: Option<&str>) -> f32 {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let RenderCommand::GlyphRun(glyph_cmd) = scene
         .commands
         .iter()
@@ -1170,7 +1226,7 @@ fn paint_single_page_skips_empty_text() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let glyph_commands: Vec<_> = scene
         .commands
         .iter()
@@ -1191,7 +1247,7 @@ fn paint_single_page_can_be_called_multiple_times() {
     let (doc, cr) = hello_world_paint_setup();
 
     let mut scene1 = Scene::new();
-    paint_single_page(&mut scene1, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene1, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let count1 = scene1.commands.len();
     let glyph_count1 = scene1
         .commands
@@ -1200,7 +1256,7 @@ fn paint_single_page_can_be_called_multiple_times() {
         .count();
 
     let mut scene2 = Scene::new();
-    paint_single_page(&mut scene2, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene2, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let count2 = scene2.commands.len();
     let glyph_count2 = scene2
         .commands
@@ -1254,7 +1310,7 @@ fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     let glyph_commands: Vec<_> = scene
         .commands
@@ -1429,7 +1485,7 @@ fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 
     let glyph_commands: Vec<_> = scene
         .commands
@@ -1457,7 +1513,7 @@ fn paint_single_page_debug_asserts_cascade_document_length_match() {
     let (mut doc, cr) = hello_world_paint_setup();
     doc.append_element(Some(0), "p", Style::default(), Some("display:block"));
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 }
 
 #[test]
@@ -1526,7 +1582,15 @@ fn img_element_paints_its_decoded_pixels() {
     // `walk::paint_document_with_images` it wraps, so this test also
     // covers `paint_single_page_with_images`'s own debug_assert and
     // canvas-background call.
-    paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+    paint_single_page_with_images(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        &pixel_source,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .expect("paint succeeds");
 
     let fill = scene
         .commands
@@ -1648,7 +1712,9 @@ fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
         &cascade,
         PageBox::A4,
         &EmptyImageSource,
-    );
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .expect("test paint stays within the counter snapshot budget");
     let image = scene
         .commands
         .iter()
@@ -1712,7 +1778,7 @@ fn html_inline_svg_stylesheet_opacity_groups_the_complete_root() {
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
     let image = scene
         .commands
         .iter()
@@ -1748,7 +1814,7 @@ fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
     let image = scene
         .commands
         .iter()
@@ -1784,7 +1850,7 @@ fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
     let image = scene
         .commands
         .iter()
@@ -1826,7 +1892,7 @@ fn html_inline_svg_host_transparent_background_suppresses_source_background() {
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
     let image = scene
         .commands
         .iter()
@@ -1889,7 +1955,9 @@ fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::Rend
         &cascade,
         PageBox::A4,
         &EmptyImageSource,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
     )
+    .expect("test paint stays within the counter snapshot budget")
 }
 
 #[test]
@@ -1956,7 +2024,15 @@ fn img_padding_percentage_resolves_against_width_not_height() {
     let pixel_source = OneImageSource(url, decoded);
 
     let mut scene = Scene::new();
-    paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+    paint_single_page_with_images(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        &pixel_source,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .expect("paint succeeds");
 
     let fill = scene
         .commands
@@ -2039,7 +2115,15 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
     });
     let pixel_source = OneImageSource(url, decoded);
     let mut scene = Scene::new();
-    paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+    paint_single_page_with_images(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        &pixel_source,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .expect("paint succeeds");
     let fill = scene
         .commands
         .iter()
@@ -2097,7 +2181,7 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
     let mut document = document;
     layout_single_page(&mut document, &cascade_result, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    paint_single_page(&mut scene, &document, &cascade_result, PageBox::A4);
+    paint_single_page(&mut scene, &document, &cascade_result, PageBox::A4).expect("paint succeeds");
     assert!(
         scene
             .commands

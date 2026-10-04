@@ -2243,6 +2243,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let page_count = slices.len() as u32;
     let mut pages = Vec::with_capacity(slices.len());
     let mut raster_budget = RasterBufferBudget::new();
+    let mut counter_snapshot_budget = raikiri_dom::CounterSnapshotBudget::default();
     for slice in slices {
         let mut query = PageContextQuery::default();
         query.page_name = slice
@@ -2305,10 +2306,11 @@ pub(crate) fn render_raikiri_pages_with_resources(
         let raster_size = raster_budget.reserve_page_box(page_box)?;
         let page_width = raster_size.width();
         let page_height = raster_size.height();
+        let mut paint_result = Ok(());
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |painter| {
                 if let Some(pixel_source) = image_pixel_source {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images_and_highlights(
+                    paint_result = raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images_and_highlights(
                         painter,
                         &uncascaded.dom,
                         &cascade,
@@ -2322,9 +2324,10 @@ pub(crate) fn render_raikiri_pages_with_resources(
                         fixed_page_width,
                         pixel_source,
                         &custom_highlights,
+                        &mut counter_snapshot_budget,
                     );
                 } else {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+                    paint_result = raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
                         painter,
                         &uncascaded.dom,
                         &cascade,
@@ -2337,12 +2340,14 @@ pub(crate) fn render_raikiri_pages_with_resources(
                         active_page_name.as_deref(),
                         fixed_page_width,
                         &custom_highlights,
+                        &mut counter_snapshot_budget,
                     );
                 }
             },
             page_width,
             page_height,
         );
+        paint_result?;
         pages.push(RenderedImage {
             width: page_width,
             height: page_height,

@@ -258,8 +258,9 @@ fn body_margin_lone_5px_collapses_to_8px() {
 fn rasterize_matches_html_to_png_bytes() {
     let (dom, cascade) = hello_world_post_layout();
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    let mut counter_budget = raikiri_dom::CounterSnapshotBudget::default();
     let via_scene = scene
-        .rasterize(&dom, &cascade, PageBox::A4)
+        .rasterize(&dom, &cascade, PageBox::A4, &mut counter_budget)
         .expect("A4 rasterization succeeds");
     let via_umbrella = crate::html_to_png(&b"<p>Hi</p>"[..]).expect("html_to_png Ok");
     assert_eq!(
@@ -275,8 +276,9 @@ fn rasterize_rejects_oversized_direct_page_box() {
     let mut page_box = PageBox::new();
     page_box.width = crate::MAX_RASTER_EDGE as f32 + 1.0;
     page_box.height = 1.0;
+    let mut counter_budget = raikiri_dom::CounterSnapshotBudget::default();
 
-    let error = match scene.rasterize(&dom, &cascade, page_box) {
+    let error = match scene.rasterize(&dom, &cascade, page_box, &mut counter_budget) {
         Err(error) => error,
         Ok(png) => panic!(
             "oversized direct page box unexpectedly rendered ({} bytes)",

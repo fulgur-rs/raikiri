@@ -141,7 +141,7 @@ fn workload(n_elems: usize) -> (Document, CascadeResult) {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect(INFALLIBLE_SETUP);
 
     let mut probe = Scene::new();
-    paint_single_page(&mut probe, &doc, &cr, PageBox::A4);
+    paint_single_page(&mut probe, &doc, &cr, PageBox::A4).expect("paint succeeds");
     let glyph_runs: Vec<_> = probe
         .commands
         .iter()
@@ -187,7 +187,7 @@ fn bench_paint_walk(c: &mut Criterion) {
             // the walk's own per-node cost.
             b.iter_with_large_drop(|| {
                 let mut scene = Scene::new();
-                paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+                paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
                 scene
             });
         });

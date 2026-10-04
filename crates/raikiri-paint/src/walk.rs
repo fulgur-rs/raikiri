@@ -42,9 +42,12 @@ use taffy::CompactLength;
 
 use crate::text;
 use raikiri_dom::generated_content::{
-    apply_counter_directives_to_snapshot, format_counter, format_counter_component,
+    CounterSnapshotLookup, CounterSnapshotView, format_counter, format_counter_component,
     format_counters_component,
 };
+
+static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =
+    std::sync::LazyLock::new(std::collections::HashMap::new);
 
 /// Canvas background fill site — minimal CSS Backgrounds 3 §2.11 canvas propagation.
 ///
@@ -907,15 +910,14 @@ fn inherited_margin_box_font(
     (font_size.max(0.1), family)
 }
 
-fn list_item_counter_value(counters: &CounterSnapshot, ordinal: u32) -> i32 {
+fn list_item_counter_value(counters: &impl CounterSnapshotLookup, ordinal: u32) -> i32 {
     counters
-        .get(&raikiri_traits::Symbol::new("list-item"))
-        .and_then(|values| values.last())
-        .copied()
+        .values_for("list-item")
+        .last()
         .unwrap_or(ordinal as i32)
 }
 
-fn list_item_marker_ordinal(counters: &CounterSnapshot, ordinal: u32) -> u32 {
+fn list_item_marker_ordinal(counters: &impl CounterSnapshotLookup, ordinal: u32) -> u32 {
     list_item_counter_value(counters, ordinal).max(0) as u32
 }
 
@@ -1358,7 +1360,7 @@ fn marker_content_text<T: AsRef<str>>(
     quotes: &[(T, T)],
     quotes_auto: bool,
     ordinal: u32,
-    counters: &CounterSnapshot,
+    counters: &impl CounterSnapshotLookup,
     registry: &CounterStyleRegistry,
 ) -> Option<String> {
     if components.is_empty() {
@@ -1397,11 +1399,12 @@ fn marker_content_text<T: AsRef<str>>(
                 separator,
                 style,
             } if name.as_str() == "list-item" => {
-                if let Some(values) = counters.get(&raikiri_traits::Symbol::new("list-item")) {
+                let values = counters.values_for("list-item");
+                if !values.is_empty() {
                     text.push_str(
                         &values
                             .iter()
-                            .map(|value| format_counter(*value, style, registry))
+                            .map(|value| format_counter(value, style, registry))
                             .collect::<Vec<_>>()
                             .join(separator.as_str()),
                     );
@@ -1456,7 +1459,8 @@ fn marker_render_info<'a>(
     cascade: &'a CascadeResult,
     node_id: usize,
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
-    let snapshots = raikiri_dom::counter_snapshots(document, cascade);
+    let snapshots = raikiri_dom::counter_snapshots(document, cascade)
+        .expect("test counter snapshots stay within budget");
     marker_render_info_with_snapshots(document, cascade, node_id, &snapshots)
 }
 
@@ -1477,10 +1481,8 @@ fn marker_render_info_with_snapshots<'a>(
     if style.display == DisplayValue::None {
         return None;
     }
-    let mut counters = snapshots.get(node_id).cloned().unwrap_or_default();
-    if let Some(marker) = marker_computed {
-        apply_counter_directives_to_snapshot(&mut counters, marker);
-    }
+    let base = snapshots.get(node_id).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
+    let counters = CounterSnapshotView::new(base, marker_computed);
     let marker_ordinal = list_item_marker_ordinal(&counters, ordinal);
     let content = marker_computed
         .and_then(|marker| {
@@ -1494,7 +1496,7 @@ fn marker_render_info_with_snapshots<'a>(
             )
         })
         .or_else(|| {
-            if counters.contains_key(&raikiri_traits::Symbol::new("list-item")) {
+            if !counters.values_for("list-item").is_empty() {
                 list_marker_text_with_ordinal(cascade, &computed.list_style_type, marker_ordinal)
             } else {
                 list_marker_text(document, cascade, node_id, &computed.list_style_type)
@@ -1772,7 +1774,8 @@ fn paint_list_marker(
     height: f32,
     padding_left: f32,
 ) {
-    let snapshots = raikiri_dom::counter_snapshots(document, cascade);
+    let snapshots = raikiri_dom::counter_snapshots(document, cascade)
+        .expect("test counter snapshots stay within budget");
     paint_list_marker_with_snapshots(
         scene,
         document,
@@ -3192,6 +3195,7 @@ pub(crate) fn paint_document(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
+    counter_snapshots: &[CounterSnapshot],
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
@@ -3203,6 +3207,7 @@ pub(crate) fn paint_document(
         scene,
         document,
         cascade,
+        counter_snapshots,
         page_box,
         content_origin_y,
         active_page_name,
@@ -3218,6 +3223,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
+    counter_snapshots: &[CounterSnapshot],
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
@@ -3230,6 +3236,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
         scene,
         document,
         cascade,
+        counter_snapshots,
         page_box,
         content_origin_y,
         active_page_name,
@@ -3245,6 +3252,7 @@ fn paint_document_impl(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
+    counter_snapshots: &[CounterSnapshot],
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
@@ -3257,10 +3265,6 @@ fn paint_document_impl(
         return;
     };
 
-    // Resolve named counter stacks once per paint pass. Marker and generated
-    // content are pseudo boxes, so their temporary directives are applied by
-    // the respective consumers on a clone of this node snapshot.
-    let counter_snapshots = raikiri_dom::counter_snapshots(document, cascade);
     // The document, cascade, and counter snapshots are stable for this pass,
     // so each node's generated flow height can be computed once and reused.
     let mut generated_flow_heights = std::collections::HashMap::new();
@@ -3617,7 +3621,7 @@ fn paint_document_impl(
                     y,
                     (width - before_advance).max(0.0),
                     height,
-                    &counter_snapshots,
+                    counter_snapshots,
                 );
                 continue;
             }
@@ -4021,7 +4025,7 @@ fn paint_document_impl(
                         document,
                         cascade,
                         node_id,
-                        &counter_snapshots,
+                        counter_snapshots,
                         &mut generated_flow_heights,
                     );
                     let pseudo_border_height = cv.border.top.width().px()
@@ -4354,7 +4358,7 @@ fn paint_document_impl(
                             marker_width,
                             marker_height,
                             layout.padding.left,
-                            &counter_snapshots,
+                            counter_snapshots,
                             pixel_source,
                         );
                     }
@@ -4376,7 +4380,7 @@ fn paint_document_impl(
                             generated_y,
                             layout.size.width,
                             paint_height,
-                            &counter_snapshots,
+                            counter_snapshots,
                         )
                     } else {
                         0.0 // cov:ignore: absolute continuation intentionally omits first pseudo paint
@@ -4484,13 +4488,13 @@ fn paint_document_impl(
                                     cascade,
                                     child,
                                     raikiri_style::PseudoElem::Before,
-                                    &counter_snapshots,
+                                    counter_snapshots,
                                 ) + generated_pseudo_text_advance(
                                     document,
                                     cascade,
                                     child,
                                     raikiri_style::PseudoElem::After,
-                                    &counter_snapshots,
+                                    counter_snapshots,
                                 )
                             } else {
                                 0.0
@@ -4543,7 +4547,7 @@ fn paint_document_impl(
                         cascade,
                         node_id,
                         raikiri_style::PseudoElem::Before,
-                        &counter_snapshots,
+                        counter_snapshots,
                     );
                     let mut offsets = Vec::new();
                     for &child in &children {
@@ -4564,7 +4568,7 @@ fn paint_document_impl(
                                 document,
                                 cascade,
                                 child,
-                                &counter_snapshots,
+                                counter_snapshots,
                                 &mut generated_flow_heights,
                             );
                             flow_extra += (required_height

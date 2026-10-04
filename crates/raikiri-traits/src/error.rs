@@ -169,6 +169,11 @@ impl From<LayoutError> for RenderError {
                 limit: u64::from(limit),
                 actual,
             },
+            LayoutError::CounterSnapshotLimitExceeded { limit, actual } => Self::LimitExceeded {
+                kind: LimitKind::CounterSnapshots,
+                limit,
+                actual,
+            },
             other => Self::Layout(other),
         }
     }
@@ -204,6 +209,8 @@ pub enum LimitKind {
     /// Thus `InputBytes` more directly prevents an attacker from inducing OOM
     /// by sending huge HTML.
     InputBytes,
+    /// Exceeded the hard cumulative estimated-memory budget for counter snapshots.
+    CounterSnapshots,
 }
 
 /// Render completion summary (Finding #4 completion protocol).
@@ -491,6 +498,13 @@ pub enum LayoutError {
         /// Which limit, with its configured and observed values.
         limit: String,
     },
+    /// Counter snapshots exceeded their hard cumulative estimated-memory budget.
+    CounterSnapshotLimitExceeded {
+        /// Maximum estimated bytes allowed for the operation.
+        limit: u64,
+        /// Estimated cumulative bytes after the rejected snapshot.
+        actual: u64,
+    },
     /// One layout pass would create more fragments than the aggregate cap.
     FragmentLimitExceeded {
         /// Maximum number of retained fragments in one layout pass.
@@ -518,6 +532,10 @@ impl std::fmt::Display for LayoutError {
             Self::IfcLimitExceeded { node, limit } => {
                 write!(f, "Layout inline engine limit at node {node}: {limit}")
             }
+            Self::CounterSnapshotLimitExceeded { limit, actual } => write!(
+                f,
+                "Layout counter snapshot limit exceeded: {actual} bytes (limit {limit})"
+            ),
             Self::FragmentLimitExceeded { limit } => {
                 write!(f, "Layout fragment limit exceeded: {limit}")
             }

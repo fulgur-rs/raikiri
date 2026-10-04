@@ -239,9 +239,29 @@ fn projection_error(root: usize, error: IfcError) -> LayoutError {
             limit: limit.to_string(),
         },
         IfcError::Unsupported { node, reason } => LayoutError::IfcUnsupported { node, reason },
+        IfcError::CounterSnapshots(error) => LayoutError::CounterSnapshotLimitExceeded {
+            limit: error.limit,
+            actual: error.actual,
+        },
         IfcError::InvalidNode(node) => LayoutError::IfcUnsupported {
             node,
             reason: "the node is not in the document",
+        },
+    }
+}
+
+fn build_error(root: usize, error: IfcError) -> LayoutError {
+    match error {
+        IfcError::Limit(limit) => LayoutError::IfcLimitExceeded {
+            node: root,
+            limit: limit.to_string(),
+        },
+        IfcError::CounterSnapshots(error) => LayoutError::CounterSnapshotLimitExceeded {
+            limit: error.limit,
+            actual: error.actual,
+        },
+        other => LayoutError::Internal {
+            message: other.to_string(),
         },
     }
 }
@@ -509,15 +529,7 @@ fn build_all(
     let built = |idx: usize, result: Result<ProjectedIfc, IfcError>| {
         result
             .map(|projected| (idx, projected))
-            .map_err(|error| match error {
-                IfcError::Limit(limit) => LayoutError::IfcLimitExceeded {
-                    node: idx,
-                    limit: limit.to_string(),
-                },
-                other => LayoutError::Internal {
-                    message: other.to_string(),
-                },
-            })
+            .map_err(|error| build_error(idx, error))
     };
     if !state.parallel_build || candidates.len() < state.parallel_threshold {
         state.last_build = Some(IfcBuildMode::Sequential);

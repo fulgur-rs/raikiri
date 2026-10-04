@@ -172,7 +172,7 @@ fn each_run_takes_the_color_of_its_text_node() {
 
 fn painted(doc: &Document, cascade: &raikiri_style::CascadeResult) -> Scene {
     let mut scene = Scene::new();
-    crate::paint_single_page(&mut scene, doc, cascade, PageBox::A4);
+    crate::paint_single_page(&mut scene, doc, cascade, PageBox::A4).expect("paint succeeds");
     scene
 }
 
@@ -1951,7 +1951,16 @@ fn lines_overflowing_a_short_root_are_painted_on_a_later_page() {
     lay_out(&mut doc, &cascade);
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     let mut scene = Scene::new();
-    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, PageBox::A4, 1000.0);
+    let mut budget = raikiri_dom::CounterSnapshotBudget::default();
+    crate::paint_single_page_with_origin(
+        &mut scene,
+        &doc,
+        &cascade,
+        PageBox::A4,
+        1000.0,
+        &mut budget,
+    )
+    .expect("paint succeeds");
     let ys: std::collections::BTreeSet<i64> = ink(&scene).iter().map(|g| g.2).collect();
     assert!(ys.contains(&px(8)), "{ys:?}");
 }
@@ -2243,7 +2252,9 @@ fn lines_after_a_block_moved_to_the_next_page_are_painted_there() {
     raikiri_dom::layout_pages(&mut doc, &cascade, page).expect("pages");
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     let mut scene = Scene::new();
-    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0);
+    let mut budget = raikiri_dom::CounterSnapshotBudget::default();
+    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0, &mut budget)
+        .expect("paint succeeds");
     // Glyphs above the page (the first page's "aa") are outside it.
     let ys: std::collections::BTreeSet<i64> = ink(&scene)
         .iter()
@@ -2367,7 +2378,9 @@ fn an_inline_box_after_a_block_moved_to_the_next_page_is_painted_with_its_line()
     raikiri_dom::layout_pages(&mut doc, &cascade, page).expect("pages");
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
     let mut scene = Scene::new();
-    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0);
+    let mut budget = raikiri_dom::CounterSnapshotBudget::default();
+    crate::paint_single_page_with_origin(&mut scene, &doc, &cascade, page, 50.0, &mut budget)
+        .expect("paint succeeds");
     let boxes: Vec<_> = scene
         .commands
         .iter()

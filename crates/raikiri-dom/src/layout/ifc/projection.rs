@@ -14,7 +14,7 @@ use super::error::IfcError;
 use super::style;
 use crate::Document;
 use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
-use crate::target::CounterSnapshot;
+use crate::target::{CounterSnapshot, CounterSnapshotLimitExceeded};
 use raikiri_style::property::{
     ClearValue, Direction, DisplayValue, FloatValue, PositionValue, WhiteSpaceCollapse,
 };
@@ -251,12 +251,23 @@ fn apply_inline_line_height_quirk(
 /// The counters of the document, computed once per layout pass and only when
 /// some paragraph lays out generated text.
 #[derive(Default)]
-pub(crate) struct GeneratedCounters(std::cell::OnceCell<Vec<CounterSnapshot>>);
+pub(crate) struct GeneratedCounters(
+    std::cell::OnceCell<Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded>>,
+);
 
 impl GeneratedCounters {
-    fn get(&self, doc: &Document, cascade: &CascadeResult) -> &[CounterSnapshot] {
-        self.0
+    fn get(
+        &self,
+        doc: &Document,
+        cascade: &CascadeResult,
+    ) -> Result<&[CounterSnapshot], CounterSnapshotLimitExceeded> {
+        match self
+            .0
             .get_or_init(|| crate::target::counter_snapshots(doc, cascade))
+        {
+            Ok(snapshots) => Ok(snapshots),
+            Err(error) => Err(*error),
+        }
     }
 }
 
@@ -290,7 +301,7 @@ fn push_generated(
         return Ok(());
     }
     let Some((cv, text)) =
-        generated_text(doc, cascade, element, pseudo, counters.get(doc, cascade))
+        generated_text(doc, cascade, element, pseudo, counters.get(doc, cascade)?)
     else {
         return Ok(());
     };

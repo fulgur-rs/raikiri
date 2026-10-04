@@ -244,9 +244,14 @@ pub(crate) fn drive_page(
               PageStream for the multi-page case) has not landed. \
               Exercised via this module's own tests."
 )]
-pub(crate) fn drive_document(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResult) {
-    ctx.set_targets(build_target_registry(doc, cascade));
+pub(crate) fn drive_document(
+    ctx: &mut PageContext,
+    doc: &Document,
+    cascade: &CascadeResult,
+) -> Result<(), crate::target::CounterSnapshotLimitExceeded> {
+    ctx.set_targets(build_target_registry(doc, cascade)?);
     drive_page(ctx, doc, cascade, 0, doc.root);
+    Ok(())
 }
 
 /// Document-order walk applying every in-document element's derived
@@ -524,7 +529,9 @@ mod tests {
         // exactly what CSS Lists 3 §4.3 requires, it just means a
         // whole-document walk isn't the right vantage point to observe a
         // single element's own composed value from the outside.
-        ctx.set_targets(build_target_registry(&doc, &cr));
+        ctx.set_targets(
+            build_target_registry(&doc, &cr).expect("counter snapshots remain within budget"),
+        );
         drive_page(&mut ctx, &doc, &cr, 0, h2);
 
         // cov:ignore: panic-message literal only executed on assertion
@@ -550,7 +557,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         assert_eq!(
             ctx.string_state(&Symbol::new("title"))
@@ -599,7 +606,9 @@ mod tests {
         // popped at `doc.root`'s exit — the very last step of a
         // whole-document walk — before this assertion could ever observe
         // the composed value. See module doc "Counter-scope exit".
-        ctx.set_targets(build_target_registry(&doc, &cr));
+        ctx.set_targets(
+            build_target_registry(&doc, &cr).expect("counter snapshots remain within budget"),
+        );
         drive_page(&mut ctx, &doc, &cr, 0, parent);
 
         // cov:ignore: panic-message literal only executed on assertion
@@ -627,7 +636,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -664,7 +673,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -694,7 +703,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -716,7 +725,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         let mut registry = ctx.targets().clone();
         let out = registry.resolve_target_counter(
@@ -745,7 +754,9 @@ mod tests {
         // Pre-wire, as drive_document would before the first drive_page
         // call — drive_page itself never builds or wires targets (see its
         // own doc's "Precondition").
-        ctx.set_targets(build_target_registry(&doc, &cr));
+        ctx.set_targets(
+            build_target_registry(&doc, &cr).expect("counter snapshots remain within budget"),
+        );
         drive_page(&mut ctx, &doc, &cr, 3, doc.root);
 
         assert_eq!(ctx.page_index, 3);
@@ -791,7 +802,7 @@ mod tests {
         let cr0 = cascade(&doc0, &rules0).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc0, &cr0);
+        drive_document(&mut ctx, &doc0, &cr0).expect("counter snapshots remain within budget");
 
         let mut empty_doc = Document::new();
         empty_doc.mark_in_document_flags();
@@ -866,7 +877,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // A counter-reset inside a <template> contents fragment must have
         // no effect: the fragment is unreachable from the Document root, so
@@ -917,7 +928,9 @@ mod tests {
         // Pre-wire, satisfying drive_page's own documented precondition
         // (this is what drive_document does internally before its first
         // drive_page call).
-        ctx.set_targets(build_target_registry(&doc, &cr));
+        ctx.set_targets(
+            build_target_registry(&doc, &cr).expect("counter snapshots remain within budget"),
+        );
         drive_page(&mut ctx, &doc, &cr, 0, doc.root);
 
         // Second page has no string-set of its own — begin_page's carry-
@@ -989,7 +1002,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1047,7 +1060,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1091,7 +1104,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1137,7 +1150,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1170,7 +1183,9 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        ctx.set_targets(build_target_registry(&doc, &cr));
+        ctx.set_targets(
+            build_target_registry(&doc, &cr).expect("counter snapshots remain within budget"),
+        );
         drive_page(&mut ctx, &doc, &cr, 0, page_root);
 
         // cov:ignore: panic-message literal only executed on assertion
@@ -1234,7 +1249,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1312,7 +1327,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1367,7 +1382,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1418,7 +1433,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -1495,7 +1510,7 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut ctx = PageContext::default();
-        drive_document(&mut ctx, &doc, &cr);
+        drive_document(&mut ctx, &doc, &cr).expect("counter snapshots remain within budget");
 
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
