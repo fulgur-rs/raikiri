@@ -342,6 +342,20 @@ struct InitialStylesheetResourceEstimate {
     declaration_storage_bytes: usize,
 }
 
+// SimpleCSS may recover after malformed tokens, so fallback estimates must retain the scanned prefix.
+enum SimpleCssRecoveryPrefix {
+    SelectorHeader {
+        selector_start: usize,
+        selector_count: usize,
+        source_bytes: usize,
+    },
+    DeclarationBody {
+        selector_count: usize,
+        declaration_count: usize,
+        declarations_start: usize,
+    },
+}
+
 fn estimate_initial_stylesheet_resources(
     stylesheet: &str,
 ) -> Result<InitialStylesheetResourceEstimate, SvgError> {
@@ -359,6 +373,7 @@ fn estimate_initial_stylesheet_resources(
             continue;
         }
 
+        let selector_start = cursor;
         let mut selector_count = 1usize;
         let mut selector_source_bytes = 0usize;
         loop {
@@ -369,13 +384,31 @@ fn estimate_initial_stylesheet_resources(
             if bytes[cursor..].starts_with(b"/*") {
                 if let Some(comment_end) = simplecss_comment_end(bytes, cursor) {
                     if simplecss_has_block_delimiter(&bytes[cursor..comment_end]) {
-                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                        return include_simplecss_recovery_suffix(
+                            estimate,
+                            bytes,
+                            cursor,
+                            SimpleCssRecoveryPrefix::SelectorHeader {
+                                selector_start,
+                                selector_count,
+                                source_bytes: selector_source_bytes,
+                            },
+                        );
                     }
                     cursor = comment_end;
                     continue;
                 }
                 if simplecss_has_block_delimiter(&bytes[cursor..]) {
-                    return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    return include_simplecss_recovery_suffix(
+                        estimate,
+                        bytes,
+                        cursor,
+                        SimpleCssRecoveryPrefix::SelectorHeader {
+                            selector_start,
+                            selector_count,
+                            source_bytes: selector_source_bytes,
+                        },
+                    );
                 }
                 cursor = bytes.len();
                 break;
@@ -385,7 +418,16 @@ fn estimate_initial_stylesheet_resources(
                 b'\'' | b'"' => {
                     let string_end = simplecss_string_end(bytes, cursor);
                     if simplecss_has_block_delimiter(&bytes[cursor..string_end]) {
-                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                        return include_simplecss_recovery_suffix(
+                            estimate,
+                            bytes,
+                            cursor,
+                            SimpleCssRecoveryPrefix::SelectorHeader {
+                                selector_start,
+                                selector_count,
+                                source_bytes: selector_source_bytes,
+                            },
+                        );
                     }
                     selector_source_bytes = selector_source_bytes
                         .checked_add(string_end - cursor)
@@ -395,7 +437,16 @@ fn estimate_initial_stylesheet_resources(
                 b'(' => {
                     let function_end = simplecss_function_end(bytes, cursor);
                     if simplecss_has_block_delimiter(&bytes[cursor..function_end]) {
-                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                        return include_simplecss_recovery_suffix(
+                            estimate,
+                            bytes,
+                            cursor,
+                            SimpleCssRecoveryPrefix::SelectorHeader {
+                                selector_start,
+                                selector_count,
+                                source_bytes: selector_source_bytes,
+                            },
+                        );
                     }
                     selector_source_bytes = selector_source_bytes
                         .checked_add(function_end - cursor)
@@ -443,19 +494,39 @@ fn estimate_initial_stylesheet_resources(
         }
         cursor += 1;
 
+        let declarations_start = cursor;
         let mut declaration_count = 1usize;
+        let mut current_declaration_has_content = false;
         let mut nested_blocks = 0usize;
         while cursor < bytes.len() {
             if bytes[cursor..].starts_with(b"/*") {
                 if let Some(comment_end) = simplecss_comment_end(bytes, cursor) {
                     if simplecss_has_block_delimiter(&bytes[cursor..comment_end]) {
-                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                        return include_simplecss_recovery_suffix(
+                            estimate,
+                            bytes,
+                            cursor,
+                            SimpleCssRecoveryPrefix::DeclarationBody {
+                                selector_count,
+                                declaration_count,
+                                declarations_start,
+                            },
+                        );
                     }
                     cursor = comment_end;
                     continue;
                 }
                 if simplecss_has_block_delimiter(&bytes[cursor..]) {
-                    return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                    return include_simplecss_recovery_suffix(
+                        estimate,
+                        bytes,
+                        cursor,
+                        SimpleCssRecoveryPrefix::DeclarationBody {
+                            selector_count,
+                            declaration_count,
+                            declarations_start,
+                        },
+                    );
                 }
                 cursor = bytes.len();
                 break;
@@ -465,18 +536,39 @@ fn estimate_initial_stylesheet_resources(
                 b'\'' | b'"' => {
                     let string_end = simplecss_string_end(bytes, cursor);
                     if simplecss_has_block_delimiter(&bytes[cursor..string_end]) {
-                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                        return include_simplecss_recovery_suffix(
+                            estimate,
+                            bytes,
+                            cursor,
+                            SimpleCssRecoveryPrefix::DeclarationBody {
+                                selector_count,
+                                declaration_count,
+                                declarations_start,
+                            },
+                        );
                     }
+                    current_declaration_has_content = true;
                     cursor = string_end;
                 }
                 b'(' => {
                     let function_end = simplecss_function_end(bytes, cursor);
                     if simplecss_has_block_delimiter(&bytes[cursor..function_end]) {
-                        return include_simplecss_recovery_suffix(estimate, bytes, cursor);
+                        return include_simplecss_recovery_suffix(
+                            estimate,
+                            bytes,
+                            cursor,
+                            SimpleCssRecoveryPrefix::DeclarationBody {
+                                selector_count,
+                                declaration_count,
+                                declarations_start,
+                            },
+                        );
                     }
+                    current_declaration_has_content = true;
                     cursor = function_end;
                 }
                 b'{' => {
+                    current_declaration_has_content = true;
                     nested_blocks = nested_blocks
                         .checked_add(1)
                         .ok_or_else(initial_parse_selector_limit_error)?;
@@ -487,16 +579,25 @@ fn estimate_initial_stylesheet_resources(
                     break;
                 }
                 b'}' => {
+                    current_declaration_has_content = true;
                     nested_blocks -= 1;
                     cursor += 1;
                 }
                 b';' => {
-                    declaration_count = declaration_count
-                        .checked_add(1)
-                        .ok_or_else(initial_parse_selector_limit_error)?;
+                    if current_declaration_has_content {
+                        declaration_count = declaration_count
+                            .checked_add(1)
+                            .ok_or_else(initial_parse_selector_limit_error)?;
+                    } // cov:ignore: LLVM maps this block terminator without a counter.
+                    current_declaration_has_content = false;
                     cursor += 1;
                 }
-                _ => cursor += 1,
+                byte => {
+                    if !matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C') {
+                        current_declaration_has_content = true;
+                    }
+                    cursor += 1;
+                }
             }
         }
 
@@ -523,26 +624,61 @@ fn include_simplecss_recovery_suffix(
     mut estimate: InitialStylesheetResourceEstimate,
     stylesheet: &[u8],
     start: usize,
+    prefix: SimpleCssRecoveryPrefix,
 ) -> Result<InitialStylesheetResourceEstimate, SvgError> {
     let suffix = &stylesheet[start..];
-    let selector_count = suffix
-        .iter()
-        .filter(|byte| matches!(byte, b',' | b'{'))
-        .count()
-        .checked_add(1)
+    let starts_in_selector_header =
+        matches!(&prefix, SimpleCssRecoveryPrefix::SelectorHeader { .. });
+    let requires_raw_recovery = match &prefix {
+        SimpleCssRecoveryPrefix::SelectorHeader { selector_start, .. } => {
+            simplecss_recovery_selector_header_requires_raw_recovery(stylesheet, *selector_start)
+                .unwrap_or(true)
+        }
+        SimpleCssRecoveryPrefix::DeclarationBody {
+            declarations_start, ..
+        } => simplecss_recovery_rule_body_requires_raw_recovery(stylesheet, *declarations_start)
+            .unwrap_or(true),
+    };
+    let (suffix_selector_count, suffix_declaration_count) = if requires_raw_recovery {
+        simplecss_raw_recovery_delimiter_counts(suffix)
+    } else {
+        simplecss_recovery_delimiter_counts(suffix, starts_in_selector_header)
+    }
+    .or_else(|| simplecss_raw_recovery_delimiter_counts(suffix))
+    .ok_or_else(initial_parse_selector_limit_error)?;
+
+    let (
+        prefix_selector_count,
+        prefix_source_bytes,
+        current_rule_selector_count,
+        current_rule_declaration_count,
+    ) = match prefix {
+        SimpleCssRecoveryPrefix::SelectorHeader {
+            selector_start: _,
+            selector_count,
+            source_bytes,
+        } => (selector_count, source_bytes, 0, 0),
+        SimpleCssRecoveryPrefix::DeclarationBody {
+            selector_count,
+            declaration_count,
+            declarations_start: _,
+        } => (0, 0, selector_count, declaration_count),
+    };
+    let selector_count = prefix_selector_count
+        .checked_add(suffix_selector_count)
         .ok_or_else(initial_parse_selector_limit_error)?;
-    let declaration_count = suffix
-        .iter()
-        .filter(|byte| matches!(byte, b';' | b'}'))
-        .count()
-        .checked_add(1)
+    let selector_source_bytes = prefix_source_bytes
+        .checked_add(suffix.len())
         .ok_or_else(initial_parse_selector_limit_error)?;
+    let storage_selector_count = selector_count
+        .checked_add(current_rule_selector_count)
+        .ok_or_else(initial_parse_selector_limit_error)?;
+
     let selector_headers = selector_count
         .checked_mul(std::mem::size_of::<simplecss::Rule<'static>>())
         .and_then(|bytes| bytes.checked_mul(2))
         .ok_or_else(initial_parse_selector_limit_error)?;
-    let selector_nodes = suffix
-        .len()
+    let selector_nodes = selector_source_bytes
         .checked_mul(MAX_INITIAL_PARSE_SELECTOR_AST_BYTES_PER_SOURCE_BYTE)
         .ok_or_else(initial_parse_selector_limit_error)?;
     estimate.selector_count = estimate
@@ -555,19 +691,370 @@ fn include_simplecss_recovery_suffix(
         .and_then(|bytes| bytes.checked_add(selector_nodes))
         .ok_or_else(initial_parse_selector_limit_error)?;
 
-    let declaration_vectors = selector_count
+    let declaration_vectors = storage_selector_count
         .checked_add(1)
         .ok_or_else(initial_parse_selector_limit_error)?;
-    let declaration_storage = declaration_vectors
-        .checked_mul(declaration_count)
+    let suffix_declaration_storage = declaration_vectors
+        .checked_mul(suffix_declaration_count)
         .and_then(|count| count.checked_mul(std::mem::size_of::<simplecss::Declaration<'static>>()))
         .and_then(|bytes| bytes.checked_mul(INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR))
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    let current_rule_prefix_storage = current_rule_selector_count
+        .checked_add(1)
+        .and_then(|vectors| vectors.checked_mul(current_rule_declaration_count))
+        .and_then(|count| count.checked_mul(std::mem::size_of::<simplecss::Declaration<'static>>()))
+        .and_then(|bytes| bytes.checked_mul(INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR))
+        .ok_or_else(initial_parse_selector_limit_error)?;
+    let declaration_storage = suffix_declaration_storage
+        .checked_add(current_rule_prefix_storage)
         .ok_or_else(initial_parse_selector_limit_error)?;
     estimate.declaration_storage_bytes = estimate
         .declaration_storage_bytes
         .checked_add(declaration_storage)
         .ok_or_else(initial_parse_selector_limit_error)?;
     Ok(estimate)
+}
+
+fn simplecss_recovery_delimiter_counts(
+    bytes: &[u8],
+    starts_in_selector_header: bool,
+) -> Option<(usize, usize)> {
+    let mut selector_delimiters = 0usize;
+    let mut declaration_delimiters = 0usize;
+    let mut cursor = 0usize;
+    let mut function_depth = 0usize;
+    let mut block_depth = usize::from(!starts_in_selector_header);
+    let mut selector_header_pending = starts_in_selector_header;
+    let mut current_body_start = None;
+
+    while cursor < bytes.len() {
+        if block_depth == 0
+            && !selector_header_pending
+            && bytes[cursor] == b'@'
+            && is_simplecss_name_start(bytes.get(cursor + 1).copied())
+        {
+            cursor = skip_simplecss_at_rule(bytes, cursor);
+            continue;
+        }
+
+        if bytes[cursor..].starts_with(b"/*") {
+            cursor = simplecss_comment_end(bytes, cursor)?;
+            continue;
+        }
+
+        match bytes[cursor] {
+            b'\'' | b'"' => {
+                cursor = simplecss_recovery_string_end(bytes, cursor)?;
+            }
+            b'(' => {
+                function_depth = function_depth.checked_add(1)?;
+                cursor += 1;
+            }
+            b')' => {
+                function_depth = function_depth.saturating_sub(1);
+                cursor += 1;
+            }
+            b',' if function_depth == 0 && block_depth == 0 => {
+                selector_delimiters = selector_delimiters.checked_add(1)?;
+                cursor += 1;
+            }
+            b'{' if function_depth == 0 => {
+                if block_depth == 0 {
+                    selector_delimiters = selector_delimiters.checked_add(1)?;
+                    selector_header_pending = false;
+                    current_body_start = Some(cursor + 1);
+                } // cov:ignore: LLVM maps this block terminator without a counter.
+                block_depth = block_depth.checked_add(1)?;
+                cursor += 1;
+            }
+            b';' if function_depth == 0 && block_depth > 0 => {
+                declaration_delimiters = declaration_delimiters.checked_add(1)?;
+                cursor += 1;
+            }
+            b'}' if function_depth == 0 => {
+                declaration_delimiters = declaration_delimiters.checked_add(1)?;
+                block_depth = block_depth.saturating_sub(1);
+                if block_depth == 0 {
+                    if let Some(body_start) = current_body_start.take()
+                        && simplecss_recovery_rule_body_requires_raw_recovery(bytes, body_start)?
+                    {
+                        return None;
+                    }
+                    selector_header_pending = false;
+                } // cov:ignore: LLVM maps this block terminator without a counter.
+                cursor += 1;
+            }
+            _ => cursor += 1,
+        }
+    }
+
+    if function_depth != 0 {
+        return None;
+    }
+
+    Some((
+        selector_delimiters.checked_add(1)?,
+        declaration_delimiters.checked_add(1)?,
+    ))
+}
+
+fn simplecss_raw_recovery_delimiter_counts(bytes: &[u8]) -> Option<(usize, usize)> {
+    let selector_count = bytes
+        .iter()
+        .filter(|byte| matches!(byte, b',' | b'{'))
+        .count()
+        .checked_add(1)?;
+    let declaration_count = bytes
+        .iter()
+        .filter(|byte| matches!(byte, b';' | b'}'))
+        .count()
+        .checked_add(1)?;
+    Some((selector_count, declaration_count))
+}
+
+fn simplecss_recovery_rule_body_requires_raw_recovery(
+    stylesheet: &[u8],
+    body_start: usize,
+) -> Option<bool> {
+    let body_end = simplecss_recovery_rule_body_end(stylesheet, body_start)?;
+    let body = std::str::from_utf8(stylesheet.get(body_start..body_end)?).ok()?;
+    let lexical_declarations = simplecss_recovery_lexical_declaration_count(body.as_bytes())?;
+    let (parsed_declarations, consumed_body) = simplecss_recovery_declaration_tokens(body)?;
+    Some(!consumed_body || lexical_declarations != parsed_declarations)
+}
+
+fn simplecss_recovery_selector_header_requires_raw_recovery(
+    stylesheet: &[u8],
+    selector_start: usize,
+) -> Option<bool> {
+    let mut cursor = selector_start;
+    let mut selector_segment_start = selector_start;
+    let mut function_depth = 0usize;
+    let mut requires_raw_recovery = false;
+
+    while cursor < stylesheet.len() {
+        if stylesheet[cursor..].starts_with(b"/*") {
+            cursor = simplecss_comment_end(stylesheet, cursor)?;
+            continue;
+        }
+
+        match stylesheet[cursor] {
+            b'\'' | b'"' => cursor = simplecss_recovery_string_end(stylesheet, cursor)?,
+            b'(' => {
+                function_depth = function_depth.checked_add(1)?;
+                cursor += 1;
+            }
+            b')' => {
+                function_depth = function_depth.checked_sub(1)?;
+                cursor += 1;
+            }
+            b',' if function_depth == 0 => {
+                let segment = std::str::from_utf8(stylesheet.get(selector_segment_start..cursor)?)
+                    .ok()?
+                    .trim();
+                requires_raw_recovery |= !simplecss_recovery_selector_segment_is_valid(segment);
+                selector_segment_start = cursor + 1;
+                cursor += 1;
+            }
+            b'{' if function_depth == 0 => {
+                let segment = std::str::from_utf8(stylesheet.get(selector_segment_start..cursor)?)
+                    .ok()?
+                    .trim();
+                requires_raw_recovery |= !simplecss_recovery_selector_segment_is_valid(segment);
+                return Some(requires_raw_recovery);
+            }
+            b'}' if function_depth == 0 => return None,
+            _ => cursor += 1,
+        }
+    }
+
+    None
+}
+
+fn simplecss_recovery_selector_segment_is_valid(selector: &str) -> bool {
+    use simplecss::SelectorToken;
+
+    let mut has_component = false;
+    for token in simplecss::SelectorTokenizer::from(selector) {
+        let Ok(token) = token else {
+            return false;
+        };
+
+        if let SelectorToken::PseudoClass(name) = token
+            && !matches!(
+                name,
+                "first-child" | "link" | "visited" | "hover" | "active" | "focus"
+            )
+        {
+            return false;
+        }
+
+        if !matches!(
+            token,
+            SelectorToken::DescendantCombinator
+                | SelectorToken::ChildCombinator
+                | SelectorToken::AdjacentCombinator
+        ) {
+            has_component = true;
+        }
+    }
+
+    has_component
+}
+
+fn simplecss_recovery_rule_body_end(stylesheet: &[u8], body_start: usize) -> Option<usize> {
+    let mut cursor = body_start;
+    let mut function_depth = 0usize;
+    let mut nested_blocks = 0usize;
+
+    while cursor < stylesheet.len() {
+        if stylesheet[cursor..].starts_with(b"/*") {
+            cursor = simplecss_comment_end(stylesheet, cursor)?;
+            continue;
+        }
+
+        match stylesheet[cursor] {
+            b'\'' | b'"' => cursor = simplecss_recovery_string_end(stylesheet, cursor)?,
+            b'(' => {
+                function_depth = function_depth.checked_add(1)?;
+                cursor += 1;
+            }
+            b')' => {
+                function_depth = function_depth.checked_sub(1)?;
+                cursor += 1;
+            }
+            b'{' if function_depth == 0 => {
+                nested_blocks = nested_blocks.checked_add(1)?;
+                cursor += 1;
+            }
+            b'}' if function_depth == 0 && nested_blocks == 0 => return Some(cursor),
+            b'}' if function_depth == 0 => {
+                nested_blocks -= 1;
+                cursor += 1;
+            }
+            _ => cursor += 1,
+        }
+    }
+
+    None
+}
+
+fn simplecss_recovery_lexical_declaration_count(bytes: &[u8]) -> Option<usize> {
+    let mut cursor = 0usize;
+    let mut function_depth = 0usize;
+    let mut declaration_count = 0usize;
+    let mut current_declaration_has_content = false;
+
+    while cursor < bytes.len() {
+        if bytes[cursor..].starts_with(b"/*") {
+            cursor = simplecss_comment_end(bytes, cursor)?;
+            continue;
+        }
+
+        match bytes[cursor] {
+            b'\'' | b'"' => {
+                cursor = simplecss_recovery_string_end(bytes, cursor)?;
+                current_declaration_has_content = true;
+            }
+            b'(' => {
+                function_depth = function_depth.checked_add(1)?;
+                current_declaration_has_content = true;
+                cursor += 1;
+            }
+            b')' => {
+                function_depth = function_depth.checked_sub(1)?;
+                cursor += 1;
+            }
+            b';' if function_depth == 0 => {
+                if current_declaration_has_content {
+                    declaration_count = declaration_count.checked_add(1)?;
+                } // cov:ignore: LLVM maps this block terminator without a counter.
+                current_declaration_has_content = false;
+                cursor += 1;
+            }
+            byte => {
+                if !matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C') {
+                    current_declaration_has_content = true;
+                }
+                cursor += 1;
+            }
+        }
+    }
+
+    if current_declaration_has_content {
+        declaration_count = declaration_count.checked_add(1)?;
+    }
+    Some(declaration_count)
+}
+
+fn simplecss_recovery_declaration_tokens(body: &str) -> Option<(usize, bool)> {
+    let bytes = body.as_bytes();
+    let mut cursor = 0usize;
+    let mut declaration_count = 0usize;
+
+    for declaration in simplecss::DeclarationTokenizer::from(body) {
+        let name_start = simplecss_recovery_source_offset(body, declaration.name)?;
+        if !skip_simplecss_spaces_and_comments(bytes, &mut cursor) || cursor != name_start {
+            return Some((declaration_count, false)); // cov:ignore: Tokenizer enforces this before yielding.
+        }
+        cursor = simplecss_recovery_source_offset(body, declaration.value)?
+            .checked_add(declaration.value.len())?;
+        if !skip_simplecss_spaces_and_comments(bytes, &mut cursor) {
+            return Some((declaration_count, false)); // cov:ignore: Tokenizer enforces this before yielding.
+        }
+
+        if declaration.important {
+            if bytes.get(cursor) != Some(&b'!') {
+                return Some((declaration_count, false)); // cov:ignore: Tokenizer enforces its important marker.
+            }
+            cursor += 1;
+            if !skip_simplecss_spaces_and_comments(bytes, &mut cursor)
+                || !bytes[cursor..].starts_with(b"important")
+            {
+                return Some((declaration_count, false)); // cov:ignore: Tokenizer enforces its important marker.
+            }
+            cursor += b"important".len();
+        } else if bytes.get(cursor) == Some(&b'!') {
+            return Some((declaration_count, false));
+        }
+
+        if !skip_simplecss_spaces_and_comments(bytes, &mut cursor) {
+            return Some((declaration_count, false)); // cov:ignore: Tokenizer enforces this before yielding.
+        }
+        while bytes.get(cursor) == Some(&b';') {
+            cursor += 1;
+            if !skip_simplecss_spaces_and_comments(bytes, &mut cursor) {
+                return Some((declaration_count, false)); // cov:ignore: Tokenizer enforces this before yielding.
+            }
+        }
+
+        declaration_count = declaration_count.checked_add(1)?;
+    }
+
+    if !skip_simplecss_spaces_and_comments(bytes, &mut cursor) {
+        return Some((declaration_count, false));
+    }
+    Some((declaration_count, cursor == bytes.len()))
+}
+
+fn simplecss_recovery_source_offset(source: &str, slice: &str) -> Option<usize> {
+    let start = (slice.as_ptr() as usize).checked_sub(source.as_ptr() as usize)?;
+    let end = start.checked_add(slice.len())?;
+    (source.get(start..end)? == slice).then_some(start)
+}
+
+fn simplecss_recovery_string_end(bytes: &[u8], cursor: usize) -> Option<usize> {
+    let quote = *bytes.get(cursor)?;
+    let mut previous = quote;
+    let mut end = cursor.checked_add(1)?;
+    while let Some(byte) = bytes.get(end).copied() {
+        if byte == quote && previous != b'\\' {
+            return end.checked_add(1);
+        }
+        previous = byte;
+        end += 1;
+    }
+    None
 }
 
 fn simplecss_has_block_delimiter(bytes: &[u8]) -> bool {
