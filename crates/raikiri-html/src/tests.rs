@@ -3821,3 +3821,69 @@ fn img_defaults_to_inline_block_via_ua_css() {
         raikiri_style::property::DisplayValue::InlineBlock
     );
 }
+
+#[test]
+fn heading_ua_rules_set_weight_size_and_block_margins_per_level() {
+    // HTML LS §15.3.6 sections-and-headings, through real parse+cascade:
+    // every heading is bold; level n gets its own font size and block
+    // margins, the margins in em of the heading's own font size.
+    use raikiri_style::Origin;
+    use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
+
+    // Standards mode: the quirks-mode margin-collapsing quirk would zero
+    // the first heading's top margin (HTML LS §15.3.9).
+    let html =
+        b"<!doctype html><html><body><h1>a</h1><h2>b</h2><h3>c</h3><h4>d</h4><h5>e</h5><h6>f</h6></body></html>";
+    let uncascaded = parse(&html[..], &empty_options()).expect("parse ok");
+    let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+    tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+    let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+
+    // (tag, font-size factor, margin-block in em)
+    let levels = [
+        ("h1", 2.00, 0.67),
+        ("h2", 1.50, 0.83),
+        ("h3", 1.17, 1.00),
+        ("h4", 1.00, 1.33),
+        ("h5", 0.83, 1.67),
+        ("h6", 0.67, 2.33),
+    ];
+    for (tag, size, margin) in levels {
+        let id = find_first_by_tag(&uncascaded.dom, tag)
+            .unwrap_or_else(|| panic!("<{tag}> should exist"))
+            .0 as usize;
+        let cv = &cascade.computed[id];
+        assert_eq!(cv.font_weight, 700.0, "{tag} weight");
+        let font_size = cv.font_size.px();
+        assert!(
+            (font_size - 16.0 * size).abs() < 1e-3,
+            "{tag} size {font_size}"
+        );
+        for (side, value) in [("top", cv.margin.top), ("bottom", cv.margin.bottom)] {
+            let ComputedLengthPercentageOrAuto::Px(px) = value else {
+                panic!("{tag} margin-{side} is not a length: {value:?}");
+            };
+            assert!(
+                (px - font_size * margin).abs() < 1e-3,
+                "{tag} margin-{side} {px}"
+            );
+        }
+    }
+
+    // Author style wins over the UA rules.
+    let html = b"<!doctype html><html><body><h1 style=\"font-weight: normal; margin: 0\">g</h1></body></html>";
+    let uncascaded = parse(&html[..], &empty_options()).expect("parse ok");
+    let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+    tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+    let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+    let id = find_first_by_tag(&uncascaded.dom, "h1")
+        .expect("<h1> should exist")
+        .0 as usize;
+    let cv = &cascade.computed[id];
+    assert_eq!(cv.font_weight, 400.0);
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(0.0));
+    assert!(
+        (cv.font_size.px() - 32.0).abs() < 1e-3,
+        "the size still comes from the UA rule"
+    );
+}
