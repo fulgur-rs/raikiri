@@ -395,10 +395,11 @@ mod min_content_tests {
     use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600};
     use taffy::Style;
 
-    /// The border box of `wrapper` and of its float ancestor, for a
-    /// `width:min-content` wrapper around a block of Ahem text.
+    /// A border box as `(x, y, width, height)`.
     type Rect = (f32, f32, f32, f32);
 
+    /// The border box of `wrapper` and of its float ancestor, for a
+    /// `width:min-content` wrapper around a block of Ahem text.
     fn min_content_rects(float: bool) -> (Rect, Rect) {
         let mut doc = crate::Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
