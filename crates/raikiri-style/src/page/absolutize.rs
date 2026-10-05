@@ -61,6 +61,7 @@ impl PageLengthBasis<'_> {
             ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
             ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
+            ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         }
     }
     /// `<length-percentage> | auto` for `margin-*` specifically —
@@ -80,6 +81,7 @@ impl PageLengthBasis<'_> {
             ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
             ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
+            ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         }
     }
     /// `flex-basis: content | <'width'>` — same mapping as [`Self::lpa`], with
@@ -110,6 +112,7 @@ impl PageLengthBasis<'_> {
                     LengthOrAuto::Length(Length::Percent(p))
                 }
                 ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
+                ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
             }
         }
         match resolve_background_size(specified, self.font_size, self.own_line_height, self.ctx) {

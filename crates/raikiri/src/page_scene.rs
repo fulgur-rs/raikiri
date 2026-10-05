@@ -332,7 +332,9 @@ fn used_margin_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> f32 {
         ComputedLengthPercentageOrAuto::Px(px) => px,
         ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
         ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
-        ComputedLengthPercentageOrAuto::Auto => return 0.0,
+        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
+            return 0.0;
+        }
     };
     if resolved.is_finite() { resolved } else { 0.0 }
 }

@@ -5720,7 +5720,7 @@ fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Optio
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => Some(px as f64),
         ComputedLengthPercentageOrAuto::Percent(percent) => Some(basis * percent as f64 / 100.0),
-        ComputedLengthPercentageOrAuto::Auto => None,
+        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => None,
         ComputedLengthPercentageOrAuto::Calc(calc) => {
             Some(basis * calc.percent as f64 / 100.0 + calc.px as f64)
         }
@@ -7316,7 +7316,8 @@ pub(crate) fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f3
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto => None,
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(px) => Some(px),
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Percent(_) => None,
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Calc(_) => None,
+            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Calc(_)
+            | raikiri_style::resolve::ComputedLengthPercentageOrAuto::MinContent => None,
         }
     };
     let left = to_px(cv.left);

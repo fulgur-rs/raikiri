@@ -1435,6 +1435,8 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
         }
         ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
         ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+        // Margins never compute to `min-content`; fall back to the initial 0.
+        ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::Length(Length::Px(0.0)),
     }
 }
 

@@ -1323,6 +1323,8 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
             Dimension::percent(sanitize_taffy(p / 100.0, site, diag))
         }
         ComputedLengthPercentageOrAuto::Auto => Dimension::auto(),
+        // CSS Sizing 3 §3.1.1: the min-content size in that axis.
+        ComputedLengthPercentageOrAuto::MinContent => Dimension::min_content(),
         ComputedLengthPercentageOrAuto::Calc(value) => {
             calc_values.push(std::sync::Arc::new(value));
             let pointer = calc_values
@@ -1353,7 +1355,11 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
         ComputedLengthPercentageOrAuto::Percent(p) => {
             LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
         }
-        ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
+        // Min/max sizes never parse `min-content` yet; treat it as no
+        // constraint.
+        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
+            LengthPercentageAuto::auto()
+        }
         ComputedLengthPercentageOrAuto::Calc(value) => {
             calc_values.push(std::sync::Arc::new(value));
             let pointer = calc_values
@@ -1391,6 +1397,8 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
         // Calc payloads are currently produced only for preferred sizes;
         // margin calc resolution will share the same arena in a later pass.
         ComputedLengthPercentageOrAuto::Calc(_) => LengthPercentageAuto::length(0.0),
+        // Margins never compute to `min-content`.
+        ComputedLengthPercentageOrAuto::MinContent => LengthPercentageAuto::length(0.0),
     }
 }
 

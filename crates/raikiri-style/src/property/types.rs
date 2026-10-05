@@ -716,6 +716,9 @@ pub enum LengthOrAuto {
     Auto,
     /// A deferred mixed-unit `calc()` expression.
     Calc(CalcLengthPercentage),
+    /// The `min-content` sizing keyword (CSS Sizing 3 §3.1.1). Only the
+    /// `width` / `inline-size` parser produces it.
+    MinContent,
 }
 
 /// `column-count` value from CSS Multi-column Layout.

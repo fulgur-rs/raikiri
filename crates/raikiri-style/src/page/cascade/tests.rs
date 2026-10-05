@@ -4269,7 +4269,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
     fn length_or_auto(l: LengthOrAuto) -> Option<&'static str> {
         match l {
-            LengthOrAuto::Auto => None,
+            LengthOrAuto::Auto | LengthOrAuto::MinContent => None,
             LengthOrAuto::Calc(_) => Some("calc()"),
             LengthOrAuto::Length(l) => length(l),
         }

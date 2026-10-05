@@ -1992,11 +1992,20 @@ fn border_style_case_insensitive() {
 }
 
 #[test]
-fn width_rejects_min_content_keyword() {
-    // Intrinsic sizing keyword — now accepted as valid parsing (placeholder Auto).
+fn width_and_inline_size_keep_the_min_content_keyword() {
+    // CSS Sizing 3 §3.1.1 intrinsic sizing keyword, kept for layout.
     assert_eq!(
         parse("min-content", "width"),
-        Some(PropertyValue::Width(LengthOrAuto::Auto))
+        Some(PropertyValue::Width(LengthOrAuto::MinContent))
+    );
+    assert_eq!(
+        parse("MIN-CONTENT", "inline-size"),
+        Some(PropertyValue::InlineSize(LengthOrAuto::MinContent))
+    );
+    // Height and the min/max sizes still fold the keyword into `auto`.
+    assert_eq!(
+        parse("min-content", "height"),
+        Some(PropertyValue::Height(LengthOrAuto::Auto))
     );
 }
 
