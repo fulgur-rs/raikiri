@@ -1,7 +1,7 @@
 use super::*;
 use crate::cascade::cascade;
 use crate::cascade::selector_match::{
-    match_complex_selector_list, selector_matches_pseudo_element,
+    MatchCaches, MatchContext, match_complex_selector_list, selector_matches_pseudo_element,
 };
 use crate::cascade::test_support::{BLUE, RED};
 use crate::ruletree::{Origin, RuleTree};
@@ -53,14 +53,13 @@ fn brute_force_matches(
 ) -> Vec<u32> {
     let node = doc.node(id).expect("node");
     let elem = node.as_element().expect("element");
-    let quirks = doc.quirks_mode();
+    let caches = MatchCaches::default();
+    let ctx = MatchContext::new(doc, doc.quirks_mode(), None, false, &caches);
     let mut matched = Vec::new();
     for (idx, rule) in rules.iter().enumerate() {
-        let direct =
-            match_complex_selector_list(&rule.selectors, doc, &elem, id, path, quirks, None, false)
-                .is_some();
+        let direct = match_complex_selector_list(&rule.selectors, ctx, &elem, id, path).is_some();
         let pseudo = rule.selectors.slice().iter().any(|selector| {
-            selector_matches_pseudo_element(doc, selector, &elem, id, path, quirks, false).is_some()
+            selector_matches_pseudo_element(ctx, selector, &elem, id, path).is_some()
         });
         if direct || pseudo {
             matched.push(idx as u32);
