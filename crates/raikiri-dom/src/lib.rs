@@ -59,6 +59,8 @@ pub mod document;
 pub mod dom_impl;
 pub mod fonts;
 pub mod layout;
+#[doc(hidden)]
+pub mod paint_rules;
 pub mod taffy_impl;
 
 pub use document::{Document, DomMutationError};
