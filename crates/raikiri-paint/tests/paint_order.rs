@@ -79,22 +79,46 @@ fn trace(page: &Page<'_>) -> Vec<PaintTraceEvent> {
 
 /// The walker's steps, without column clips (the public list does not have
 /// them yet) and without the pops that close them.
+///
+/// An overflow clip that lies wholly outside the page hides everything
+/// inside it, so such a clip and the steps it encloses are left out: the
+/// walker still visits that subtree, but draws nothing of it on the page.
 fn walker_steps(page: &Page<'_>) -> Vec<Step> {
+    let page_box = page.geometry().page_box;
+    let (page_w, page_h) = (f64::from(page_box.width), f64::from(page_box.height));
+    let off_page =
+        |[x0, y0, x1, y1]: [f64; 4]| x1 <= 0.0 || y1 <= 0.0 || x0 >= page_w || y0 >= page_h;
     let mut steps = Vec::new();
-    // Whether each open clip is a column clip.
+    // Each open clip: whether it is a column clip.
     let mut clips: Vec<bool> = Vec::new();
+    // How many of the open clips lie wholly outside the page.
+    let mut hidden = 0usize;
+    // The depth of `clips` at which each off-page clip was opened.
+    let mut hidden_at: Vec<usize> = Vec::new();
     for event in trace(page) {
         match event {
-            PaintTraceEvent::PushOverflowClip(..) => {
+            PaintTraceEvent::PushOverflowClip(_, rect) => {
                 clips.push(false);
-                steps.push(Step::PushClip);
+                if off_page(rect) {
+                    hidden += 1;
+                    hidden_at.push(clips.len());
+                } else if hidden == 0 {
+                    steps.push(Step::PushClip);
+                }
             }
             PaintTraceEvent::PushFragmentainerClip(_) => clips.push(true),
             PaintTraceEvent::PopClip => {
-                if !clips.pop().expect("a clip to close") {
+                if hidden_at.last() == Some(&clips.len()) {
+                    hidden_at.pop();
+                    hidden -= 1;
+                    clips.pop();
+                    continue;
+                }
+                if !clips.pop().expect("a clip to close") && hidden == 0 {
                     steps.push(Step::PopClip);
                 }
             }
+            _ if hidden > 0 => {}
             PaintTraceEvent::PushOpacity(..) => steps.push(Step::PushOpacity),
             PaintTraceEvent::PopOpacity => steps.push(Step::PopOpacity),
             PaintTraceEvent::Box(node) => steps.push(Step::Box(node)),
@@ -221,17 +245,16 @@ fn walker_steps_on_body_pages(page: &Page<'_>) -> Vec<Step> {
     walker
 }
 
-fn assert_same_order(body: &str, css: &str) {
+/// Compares both sequences on every page and returns the layout so a
+/// fixture can assert its own premises (how many pages, which page names).
+fn assert_same_order(body: &str, css: &str) -> DocumentLayout {
     let result = lay_out(body, css);
     assert!(result.page_count() > 0, "no pages for {body}");
+    let mut paints_a_box = false;
     for page in result.pages() {
         let api = api_steps(&page);
         let walker = walker_steps_on_body_pages(&page);
-        assert!(
-            walker.iter().any(|step| matches!(step, Step::Box(_))),
-            "page {} of {body} paints no box",
-            page.index()
-        );
+        paints_a_box |= walker.iter().any(|step| matches!(step, Step::Box(_)));
         assert!(
             walker == api,
             "page {} of {body}\nwalker:\n{}\npaint_order:\n{}",
@@ -240,6 +263,17 @@ fn assert_same_order(body: &str, css: &str) {
             describe(&page, &api),
         );
     }
+    assert!(paints_a_box, "{body} paints no box");
+    result
+}
+
+/// Asserts that a fixture meant to span pages does.
+fn assert_multi_page(result: &DocumentLayout) {
+    assert!(
+        result.page_count() > 1,
+        "expected several pages, got {}",
+        result.page_count()
+    );
 }
 
 /// The walker draws the body's box on every page, as the root of the page's
@@ -278,7 +312,8 @@ fn known_difference_body_box_on_every_page() {
 #[test]
 fn paragraphs_over_several_pages() {
     let body: String = (0..30).map(|i| format!("<p>paragraph {i}</p>")).collect();
-    assert_same_order(&body, "");
+    let result = assert_same_order(&body, "");
+    assert_multi_page(&result);
 }
 
 #[test]
@@ -373,22 +408,24 @@ fn nested_opacity_and_overflow() {
 #[test]
 fn overflow_hidden_box_across_pages() {
     let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
-    assert_same_order(
+    let result = assert_same_order(
         &format!("<div style=\"overflow: hidden; background: #eee\">{inner}</div>"),
         "",
     );
+    assert_multi_page(&result);
 }
 
 #[test]
 fn fixed_header_on_every_page() {
     let body: String = (0..30).map(|i| format!("<p>paragraph {i}</p>")).collect();
-    assert_same_order(
+    let result = assert_same_order(
         &format!(
             "<div style=\"position: fixed; top: 0; left: 0; background: yellow\">header</div>\
              {body}"
         ),
         "",
     );
+    assert_multi_page(&result);
 }
 
 #[test]
@@ -415,38 +452,91 @@ fn visibility_hidden_table() {
 #[test]
 fn body_with_a_border() {
     let body: String = (0..20).map(|i| format!("<p>paragraph {i}</p>")).collect();
-    assert_same_order(&body, "body { border: 3px solid black; background: #eee }");
+    let result = assert_same_order(&body, "body { border: 3px solid black; background: #eee }");
+    assert_multi_page(&result);
 }
 
 #[test]
 fn named_page() {
-    assert_same_order(
+    let result = assert_same_order(
         "<p>first</p><div style=\"page: wide; background: red\">wide \
          <div style=\"float: left; width: 20px; height: 20px; background: blue\"></div>\
          text</div><p>last</p>",
         "@page wide { size: 400px 200px }",
+    );
+    assert!(
+        result.pages().any(|page| page.name() == Some("wide")),
+        "no page is named wide"
     );
 }
 
 #[test]
 fn absolute_continuation() {
     let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
-    assert_same_order(
+    let result = assert_same_order(
         &format!(
             "<div style=\"position: absolute; top: 0; left: 0; border: 2px solid; \
              background: #eee\">{inner}</div>"
         ),
         "",
     );
+    assert_multi_page(&result);
 }
 
-/// The walker's overflow clip rectangles and the public list's, in order.
+/// An overflow box that starts on the first page and ends there while its
+/// content runs on: on the later pages the box has no fragment, and the
+/// walker's clip for it lies wholly above the page, so nothing inside it is
+/// drawn there.
 #[test]
-fn overflow_clip_rectangles_match() {
-    let result = lay_out(NESTED_CLIPS, "");
-    assert_eq!(result.page_count(), 1);
-    let page = result.pages().next().expect("a page");
-    let walker: Vec<[f64; 4]> = trace(&page)
+fn overflow_box_absent_from_later_pages() {
+    let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
+    let result = assert_same_order(
+        &format!(
+            "<p>x</p><div style=\"overflow: hidden; height: 100px; background: #eee\">\
+             {inner}</div><p>after</p>"
+        ),
+        "",
+    );
+    assert_multi_page(&result);
+    // The premise: on a later page the walker opens the box's clip off the
+    // page, and nothing of the box's content is left to compare.
+    let page = result.pages().nth(1).expect("a second page");
+    assert!(
+        trace(&page)
+            .iter()
+            .any(|event| matches!(event, PaintTraceEvent::PushOverflowClip(..)))
+    );
+    assert!(api_steps(&page).is_empty(), "{:?}", api_steps(&page));
+}
+
+/// As above with an opacity group on the box: on the later pages the group
+/// is still opened and closed, with nothing in it.
+#[test]
+fn translucent_overflow_box_absent_from_later_pages() {
+    let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
+    let result = assert_same_order(
+        &format!(
+            "<p>x</p><div style=\"opacity: 0.5; overflow: hidden; height: 100px\">\
+             {inner}</div><p>after</p>"
+        ),
+        "",
+    );
+    assert_multi_page(&result);
+    let page = result.pages().nth(1).expect("a second page");
+    assert_eq!(api_steps(&page), [Step::PushOpacity, Step::PopOpacity]);
+}
+
+/// A paragraph root whose only line holds a canvas and whitespace: no
+/// visible text, so neither list has the paragraph's text.
+#[test]
+fn inline_content_directly_in_body() {
+    assert_same_order("<canvas width=10 height=10></canvas> ", "");
+}
+
+/// The walker's overflow clip rectangles on `page` and the public list's,
+/// in order.
+fn clip_rects(page: &Page<'_>) -> (Vec<[f64; 4]>, Vec<[f64; 4]>) {
+    let walker: Vec<[f64; 4]> = trace(page)
         .into_iter()
         .filter_map(|event| match event {
             PaintTraceEvent::PushOverflowClip(_, rect) => Some(rect),
@@ -469,15 +559,62 @@ fn overflow_clip_rectangles_match() {
             _ => None,
         })
         .collect();
-    assert_eq!(walker.len(), 2, "{walker:?}");
+    (walker, api)
+}
+
+fn assert_rects_match(walker: &[[f64; 4]], api: &[[f64; 4]], context: &str) {
     assert_eq!(
         walker.len(),
         api.len(),
-        "walker {walker:?}, paint_order {api:?}"
+        "{context}: walker {walker:?}, paint_order {api:?}"
     );
-    for (w, a) in walker.iter().zip(&api) {
+    for (w, a) in walker.iter().zip(api) {
         for (x, y) in w.iter().zip(a) {
-            assert!((x - y).abs() < TOLERANCE, "walker {w:?}, paint_order {a:?}");
+            assert!(
+                (x - y).abs() < TOLERANCE,
+                "{context}: walker {w:?}, paint_order {a:?}"
+            );
         }
+    }
+}
+
+/// The walker's overflow clip rectangles and the public list's, in order.
+#[test]
+fn overflow_clip_rectangles_match() {
+    let result = lay_out(NESTED_CLIPS, "");
+    assert_eq!(result.page_count(), 1);
+    let page = result.pages().next().expect("a page");
+    let (walker, api) = clip_rects(&page);
+    assert_eq!(walker.len(), 2, "{walker:?}");
+    assert_rects_match(&walker, &api, "page 0");
+}
+
+/// A padded overflow box sliced across pages. The walker clips to the whole
+/// box's padding box, which extends past the page on a cut edge; within the
+/// page the clips must agree.
+#[test]
+fn overflow_clip_rectangles_match_across_pages() {
+    let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
+    let result = lay_out(
+        &format!("<div style=\"overflow: hidden; padding: 15px; border: 4px solid\">{inner}</div>"),
+        "",
+    );
+    assert!(result.page_count() > 2, "{} pages", result.page_count());
+    for page in result.pages() {
+        let page_box = page.geometry().page_box;
+        let (w, h) = (f64::from(page_box.width), f64::from(page_box.height));
+        let within_page = |r: &[f64; 4]| {
+            [
+                r[0].clamp(0.0, w),
+                r[1].clamp(0.0, h),
+                r[2].clamp(0.0, w),
+                r[3].clamp(0.0, h),
+            ]
+        };
+        let (walker, api) = clip_rects(&page);
+        assert_eq!(walker.len(), 1, "page {}: {walker:?}", page.index());
+        let walker: Vec<_> = walker.iter().map(within_page).collect();
+        let api: Vec<_> = api.iter().map(within_page).collect();
+        assert_rects_match(&walker, &api, &format!("page {}", page.index()));
     }
 }
