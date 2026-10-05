@@ -34,7 +34,9 @@ pub enum PaintEvent<'a> {
     PushOpacity(f32),
     /// Close the innermost opacity group.
     PopOpacity,
-    /// An element's background, borders and outline.
+    /// An element's background, borders and outline. For a replaced element
+    /// the fragment's kind is `Replaced` and the same fragment follows in a
+    /// [`PaintEvent::Replaced`] event.
     Box(Fragment<'a>),
     /// The lines of a text node.
     Text(Fragment<'a>),
@@ -157,8 +159,11 @@ impl Document {
                             }
                         }
                     }
-                    // The clip needs the element's box on this page; it opens
-                    // after the element's own box and closes after its subtree.
+                    // The clip uses the element's first fragment on this page
+                    // and the node's full padding, as the built-in painter
+                    // does. No clip is listed on a page where the element has
+                    // no box. It opens after the element's own box and closes
+                    // after its subtree.
                     if paint_rules::clips_overflow(cv)
                         && let Some(&item) = own.first()
                     {
@@ -206,30 +211,38 @@ impl Document {
         cascade: &CascadeResult,
     ) -> Vec<(NodeId, &'static str)> {
         let is_multicol = |node_id: usize| {
-            self.get_node(node_id).is_some_and(|node| {
-                node.kind() == NodeKind::Element && node.is_in_document() && !node.is_display_none()
-            }) && cascade
+            cascade
                 .computed
                 .get(node_id)
                 .is_some_and(|cv| matches!(cv.column_count, ColumnCountValue::Count(n) if n >= 2))
         };
-        let mut found: HashSet<usize> = (0..self.nodes.len())
-            .filter(|&node_id| is_multicol(node_id))
-            .collect();
-        // A node fragmented by the multi-column engine is reported through its
-        // outermost multi-column ancestor.
-        for fragment in self.layout_fragments() {
-            let mut outermost = None;
-            let mut cursor = self.parent_of(fragment.node_id);
-            while let Some(ancestor) = cursor {
-                if is_multicol(ancestor) {
-                    outermost = Some(ancestor);
+        // Whether the node and all its ancestors are in the document and
+        // displayed.
+        let is_rendered = |node_id: usize| {
+            let mut cursor = Some(node_id);
+            while let Some(id) = cursor {
+                let Some(node) = self.get_node(id) else {
+                    return false;
+                };
+                if !node.is_in_document()
+                    || (node.kind() == NodeKind::Element && node.is_display_none())
+                {
+                    return false;
                 }
-                cursor = self.parent_of(ancestor);
+                cursor = self.parent_of(id);
             }
-            found.extend(outermost);
-        }
-        let mut found: Vec<usize> = found.into_iter().collect();
+            true
+        };
+        let mut found: Vec<usize> = (0..self.nodes.len())
+            .filter(|&node_id| {
+                self.get_node(node_id)
+                    .is_some_and(|node| node.kind() == NodeKind::Element)
+                    && is_multicol(node_id)
+                    && is_rendered(node_id)
+                    && !std::iter::successors(self.parent_of(node_id), |&id| self.parent_of(id))
+                        .any(is_multicol)
+            })
+            .collect();
         found.sort_unstable();
         found
             .into_iter()

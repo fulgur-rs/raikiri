@@ -223,3 +223,28 @@ fn multicol_containers_are_reported_as_approximations() {
         [(Some("m"), "columns are listed without column clips")]
     );
 }
+
+#[test]
+fn nested_multicol_reports_only_the_outermost() {
+    let html = "<!doctype html><body><div id=outer style='columns:2'>\
+        <div id=inner style='columns:2'><p>a</p><p>b</p></div><p>c</p></div></body>";
+    let doc = parse_html_with_resources(html.as_bytes(), &RenderResources::new()).expect("parse");
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new(),
+    )
+    .expect("layout");
+    let LayoutStatus::Completed(result) = status else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("one page");
+    let (document, cascade, _, _) = page.paint_inputs();
+    let found: Vec<_> = document
+        .paint_order_approximations(cascade)
+        .into_iter()
+        .map(|(node, _)| page.dom().attr(node, "id"))
+        .collect();
+    assert_eq!(found, [Some("outer")]);
+}
