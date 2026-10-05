@@ -87,6 +87,22 @@ fn inline_children_keep_source_order() {
 }
 
 #[test]
+fn wbr_is_transformed_when_its_computed_style_enables_word_space_transform() {
+    let fixture = block_fixture("word-space-transform:space", |doc, root| {
+        doc.append_text(root, "a");
+        doc.append_element(
+            Some(root),
+            "wbr",
+            taffy::Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_text(root, "b");
+    });
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.paragraph.text(), "a b");
+}
+
+#[test]
 fn a_br_forces_a_break() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");

@@ -3,7 +3,7 @@ use crate::layout::ifc::test_support::{block_fixture, span};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::{
     FontFamily, GenericFamily, LineHeight, TextAlign, TextAlignLast, TextCombineUpright,
-    TextOrientation, TextWrapMode, WhiteSpaceCollapse,
+    TextOrientation, TextWrapMode, WhiteSpaceCollapse, WordSpaceTransform,
 };
 
 fn root_style(extra: &str) -> Result<InlineStyle, IfcError> {
@@ -63,6 +63,67 @@ fn absolute_letter_and_word_spacing_map() {
     let style = root_style("letter-spacing:2px;word-spacing:3px").expect("map");
     assert_eq!(style.letter_spacing, 2.0);
     assert_eq!(style.word_spacing, 3.0);
+}
+
+#[test]
+fn word_space_transform_maps_every_computed_value() {
+    for (value, expected) in [
+        ("none", WordSpaceTransform::None),
+        ("space", WordSpaceTransform::Space),
+        ("ideographic-space", WordSpaceTransform::IdeographicSpace),
+        ("space auto-phrase", WordSpaceTransform::SpaceAutoPhrase),
+        (
+            "ideographic-space auto-phrase",
+            WordSpaceTransform::IdeographicSpaceAutoPhrase,
+        ),
+    ] {
+        let style = root_style(&format!("word-space-transform:{value}")).expect("map");
+        assert_eq!(style.word_space_transform, expected, "{value}");
+    }
+}
+
+#[test]
+fn word_space_transform_is_inherited_and_child_values_override_it() {
+    let fixture = block_fixture("word-space-transform:space", |doc, root| {
+        let inherited = span(doc, root, "display:inline");
+        doc.append_text(inherited, "a");
+        let none = span(doc, root, "display:inline;word-space-transform:none");
+        doc.append_text(none, "b");
+        let ideographic = span(
+            doc,
+            root,
+            "display:inline;word-space-transform:ideographic-space auto-phrase",
+        );
+        doc.append_text(ideographic, "c");
+    });
+    let children = &fixture.doc.nodes[fixture.root].children;
+
+    let inherited = inline_style(
+        &fixture.cascade.computed[children[0]],
+        children[0],
+        &fonts(),
+    )
+    .expect("map inherited value");
+    assert_eq!(inherited.word_space_transform, WordSpaceTransform::Space);
+
+    let none = inline_style(
+        &fixture.cascade.computed[children[1]],
+        children[1],
+        &fonts(),
+    )
+    .expect("map child override");
+    assert_eq!(none.word_space_transform, WordSpaceTransform::None);
+
+    let ideographic = inline_style(
+        &fixture.cascade.computed[children[2]],
+        children[2],
+        &fonts(),
+    )
+    .expect("map second child override");
+    assert_eq!(
+        ideographic.word_space_transform,
+        WordSpaceTransform::IdeographicSpaceAutoPhrase
+    );
 }
 
 #[test]

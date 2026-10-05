@@ -472,6 +472,10 @@ pub(crate) fn inline_style(
         TextSpacingTrim, cv.text_spacing_trim, node;
         Normal, SpaceAll, TrimStart, SpaceFirst, TrimBoth, TrimAll, Auto
     )?;
+    let word_space_transform = same_enum!(
+        WordSpaceTransform, cv.word_space_transform, node;
+        None, Space, IdeographicSpace, SpaceAutoPhrase, IdeographicSpaceAutoPhrase
+    )?;
     let text_orientation = map_text_orientation(cv.text_orientation).map_err(unsupported)?;
     let text_combine_upright =
         map_text_combine_upright(cv.text_combine_upright).map_err(unsupported)?;
@@ -508,6 +512,7 @@ pub(crate) fn inline_style(
         tab_size,
         text_autospace,
         text_spacing_trim,
+        word_space_transform,
         vertical_align,
         direction,
         unicode_bidi,
