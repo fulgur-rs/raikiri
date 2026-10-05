@@ -17,7 +17,9 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 
 use super::html_quirks::{push_img_dimension_hints, push_margin_collapsing_quirk_declarations};
 use super::rule_index::{AncestorFilter, RuleIndex};
-use super::selector_match::{match_complex_selector_list, selector_matches_pseudo_element};
+use super::selector_match::{
+    MatchCaches, MatchContext, match_complex_selector_list, selector_matches_pseudo_element,
+};
 
 /// A 32-bit specificity from selectors, totally ordered as `u32`.
 pub(crate) type Specificity = u32;
@@ -543,6 +545,15 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     // Document-wide constant — read once rather than
     // per (node, rule) pair inside the loop below.
     let quirks_mode = dom.quirks_mode();
+    // Sibling positions, languages and directionality are pure functions of
+    // the DOM, which stays immutably borrowed for this whole walk, so one
+    // set of match caches serves every element. A stylesheet cascade has no
+    // scoping element (`:scope` falls back to `:root` semantics, matched by
+    // `is_supported_selector`'s existing rejection of any selector
+    // containing `:scope` before it ever reaches the rule tree), and it
+    // skips inert candidates (`allow_detached = false`).
+    let match_caches = MatchCaches::default();
+    let match_ctx = MatchContext::new(dom, quirks_mode, None, false, &match_caches);
     // The media context is fixed for this cascade invocation. Evaluate each
     // condition once, keeping inactive rules out of every element's scan.
     let mut style_rules = rule_tree.style_rules.iter().collect::<Vec<_>>();
@@ -707,18 +718,10 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                     if indexed.has_element_selector
                         && let Some(spec) = match_complex_selector_list(
                             &rule.selectors,
-                            dom,
+                            match_ctx,
                             &elem,
                             id,
                             &ancestor_path,
-                            quirks_mode,
-                            // A stylesheet cascade has no scoping element (`:scope`
-                            // falls back to `:root` semantics, matched by
-                            // `is_supported_selector`'s existing rejection of any
-                            // selector containing `:scope` before it ever reaches
-                            // the rule tree, so this arm is dead in practice here).
-                            None,
-                            false,
                         )
                     {
                         // Longhands were expanded when the index was built
@@ -753,13 +756,11 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                     // `::after` rules.
                     for selector in rule.selectors.slice() {
                         let Some(pseudo) = selector_matches_pseudo_element(
-                            dom,
+                            match_ctx,
                             selector,
                             &elem,
                             id,
                             &ancestor_path,
-                            quirks_mode,
-                            false,
                         ) else {
                             continue;
                         };

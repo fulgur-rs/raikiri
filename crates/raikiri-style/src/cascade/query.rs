@@ -6,7 +6,7 @@
 
 use selectors::parser::{Component, Selector, SelectorList};
 
-use super::selector_match::match_complex_selector_list;
+use super::selector_match::{MatchCaches, MatchContext, match_complex_selector_list};
 use crate::{RaikiriSelectorImpl, StyleDom, StyleNode, StyleNodeId, parse_selector_list};
 
 /// A parsed selector list ready to test elements of a [`StyleDom`].
@@ -89,18 +89,11 @@ impl SelectorQuery {
         };
         // DOM query entry points allow detached candidates (same-tree gating);
         // the stylesheet cascade passes `false` to keep inert/template-contents
-        // filtering (see `is_candidate_element`).
-        match_complex_selector_list(
-            &self.list,
-            dom,
-            &elem,
-            elem_id,
-            ancestors,
-            dom.quirks_mode(),
-            scope,
-            true,
-        )
-        .is_some()
+        // filtering (see `is_candidate_element`). The caches live for this one
+        // call only: the caller may mutate the DOM between queries.
+        let caches = MatchCaches::default();
+        let ctx = MatchContext::new(dom, dom.quirks_mode(), scope, true, &caches);
+        match_complex_selector_list(&self.list, ctx, &elem, elem_id, ancestors).is_some()
     }
 }
 

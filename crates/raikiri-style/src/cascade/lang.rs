@@ -33,16 +33,14 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 /// range against an empty `content_language` and `true` for `:lang("")`
 /// against one — so this function needs no special case of its own and
 /// simply delegates every range to it.
-pub(crate) fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
-    ranges: &[String],
-    dom: &D,
-    elem: &E,
-    ancestors: &[StyleNodeId],
-) -> bool {
-    let lang = effective_language(dom, elem, ancestors);
+///
+/// `content_language` is the element's resolved [`effective_language`]. The
+/// matcher resolves it once per element and reuses it for every `:lang()`
+/// selector (see `MatchCaches` in `selector_match.rs`).
+pub(crate) fn lang_pseudo_matches(ranges: &[String], content_language: &str) -> bool {
     ranges
         .iter()
-        .any(|range| language_range_matches(range, &lang))
+        .any(|range| language_range_matches(range, content_language))
 }
 
 /// Resolves an element's **content language** per HTML Living Standard

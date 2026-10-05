@@ -699,13 +699,16 @@ fn next_sibling_combinator_does_not_match_parent_child_relationship() {
     assert_eq!(
         match_complex_selector_list(
             &list,
-            &doc,
+            MatchContext::new(
+                &doc,
+                StyleQuirksMode::NoQuirks,
+                None,
+                false,
+                &MatchCaches::default()
+            ),
             &elem,
             StyleNodeId::new(p as u64),
             &[StyleNodeId::new(div as u64)],
-            StyleQuirksMode::NoQuirks,
-            None,
-            false,
         ),
         None,
         "div + p must not match a p that is div's child, not its sibling"
@@ -1174,13 +1177,16 @@ fn descendant_combinator_deep_unsatisfiable_chain_does_not_explode() {
     let start = std::time::Instant::now();
     let result = match_complex_selector_list(
         &list,
-        &doc,
+        MatchContext::new(
+            &doc,
+            StyleQuirksMode::NoQuirks,
+            None,
+            false,
+            &MatchCaches::default(),
+        ),
         &elem,
         target_id,
         &ancestors,
-        StyleQuirksMode::NoQuirks,
-        None,
-        false,
     );
     let elapsed = start.elapsed();
 
@@ -1222,13 +1228,16 @@ fn later_sibling_combinator_deep_unsatisfiable_run_does_not_explode() {
     let start = std::time::Instant::now();
     let result = match_complex_selector_list(
         &list,
-        &doc,
+        MatchContext::new(
+            &doc,
+            StyleQuirksMode::NoQuirks,
+            None,
+            false,
+            &MatchCaches::default(),
+        ),
         &elem,
         target_id,
         &[],
-        StyleQuirksMode::NoQuirks,
-        None,
-        false,
     );
     let elapsed = start.elapsed();
 
@@ -1273,13 +1282,16 @@ fn match_complex_selector_list_rejects_unsupported_component_via_safety_net() {
     assert_eq!(
         match_complex_selector_list(
             &list,
-            &doc,
+            MatchContext::new(
+                &doc,
+                StyleQuirksMode::NoQuirks,
+                None,
+                false,
+                &MatchCaches::default()
+            ),
             &elem,
             StyleNodeId::new(p as u64),
             &[],
-            StyleQuirksMode::NoQuirks,
-            None,
-            false,
         ),
         None,
         "NonTSPseudoClass component must fall through the safety net"
@@ -2522,4 +2534,269 @@ fn pseudo_element_selector_never_matches_real_element_directly() {
         "must stay initial — the ::before rule must not leak onto the \
              real element"
     );
+}
+
+/// Builds `<div>` under the document root with `n_elements` element children
+/// in a mixed tag sequence, a text node between every pair, one unique `b`
+/// in the middle, and (optionally) one child marked inert. Returns the doc,
+/// the parent and the element children in document order.
+fn wide_sibling_doc(n_elements: usize, inert: Option<usize>) -> (TestDoc, usize, Vec<usize>) {
+    const TAGS: [&str; 5] = ["p", "span", "p", "em", "span"];
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", None);
+    let mut children = Vec::with_capacity(n_elements);
+    for i in 0..n_elements {
+        if i > 0 {
+            doc.push_text(parent, " ");
+        }
+        let tag = if i == n_elements / 2 {
+            "b"
+        } else {
+            TAGS[(i * 7 + i / 3) % TAGS.len()]
+        };
+        children.push(doc.push_element(parent, tag, None));
+    }
+    if let Some(index) = inert {
+        doc.set_in_document(children[index], false);
+    }
+    (doc, parent, children)
+}
+
+/// Checks the cached structural matchers against a brute-force model of the
+/// sibling list for every child of a [`wide_sibling_doc`].
+fn assert_structural_selectors_match_brute_force(
+    n_elements: usize,
+    inert: Option<usize>,
+    allow_detached: bool,
+) -> MatchCaches {
+    let (doc, parent, children) = wide_sibling_doc(n_elements, inert);
+    let tag = |id: usize| doc.nodes[id].tag.clone();
+    let candidates: Vec<usize> = children
+        .iter()
+        .copied()
+        .filter(|&id| allow_detached || doc.nodes[id].in_document)
+        .collect();
+    let caches = MatchCaches::default();
+    let ctx = MatchContext::new(
+        &doc,
+        StyleQuirksMode::NoQuirks,
+        None,
+        allow_detached,
+        &caches,
+    );
+    let ancestors = [StyleNodeId::new(parent as u64)];
+
+    type Expect = fn(usize, usize, usize, usize, Option<&str>, &str) -> bool;
+    let cases: [(&str, Expect); 8] = [
+        (":nth-child(2n+1)", |pos, _, _, _, _, _| pos % 2 == 1),
+        (":nth-last-child(3)", |pos, total, _, _, _, _| {
+            total - pos + 1 == 3
+        }),
+        (":first-child", |pos, _, _, _, _, _| pos == 1),
+        (":last-child", |pos, total, _, _, _, _| pos == total),
+        (":only-of-type", |_, _, _, type_total, _, _| type_total == 1),
+        (":nth-of-type(2)", |_, _, type_pos, _, _, _| type_pos == 2),
+        (
+            ":nth-last-of-type(1)",
+            |_, _, type_pos, type_total, _, _| type_total - type_pos + 1 == 1,
+        ),
+        ("p + span", |_, _, _, _, prev, own| {
+            prev == Some("p") && own == "span"
+        }),
+    ];
+    // Two passes over one cache: the first builds, the second only reads.
+    for _ in 0..2 {
+        for (source, expect) in cases {
+            let list = crate::parse_selector_list(source).expect("selector parses");
+            for &child in &children {
+                let node = doc.node(StyleNodeId::new(child as u64)).unwrap();
+                let elem = node.as_element().unwrap();
+                let matched =
+                    match_complex_selector_list(&list, ctx, &elem, node_id(child), &ancestors)
+                        .is_some();
+                let Some(pos) = candidates.iter().position(|&id| id == child) else {
+                    // A non-candidate subject has no sibling position, so no
+                    // structural selector may match it.
+                    if !source.contains('+') {
+                        assert!(!matched, "{source} matched non-candidate {child}");
+                    }
+                    continue;
+                };
+                let own = tag(child);
+                let same_type: Vec<usize> = candidates
+                    .iter()
+                    .copied()
+                    .filter(|&id| tag(id) == own)
+                    .collect();
+                let type_pos = same_type.iter().position(|&id| id == child).unwrap() + 1;
+                let prev = pos.checked_sub(1).map(|p| tag(candidates[p]));
+                let want = expect(
+                    pos + 1,
+                    candidates.len(),
+                    type_pos,
+                    same_type.len(),
+                    prev.as_deref(),
+                    &own,
+                );
+                assert_eq!(
+                    matched, want,
+                    "{source} on child {child} ({own}) of {n_elements}, \
+                     inert {inert:?}, allow_detached {allow_detached}"
+                );
+            }
+        }
+    }
+    caches
+}
+
+fn node_id(index: usize) -> StyleNodeId {
+    StyleNodeId::new(index as u64)
+}
+
+#[test]
+fn structural_selectors_on_wide_sibling_lists_match_brute_force() {
+    for allow_detached in [false, true] {
+        let caches = assert_structural_selectors_match_brute_force(31, None, allow_detached);
+        assert_eq!(
+            caches.siblings.borrow().len(),
+            1,
+            "a wide parent gets exactly one cached sibling list"
+        );
+    }
+}
+
+#[test]
+fn structural_selectors_on_narrow_sibling_lists_match_brute_force() {
+    // 3 elements + 2 text nodes stay below the cache threshold.
+    const { assert!(3 + 2 < SIBLING_CACHE_MIN_CHILDREN) };
+    for allow_detached in [false, true] {
+        let caches = assert_structural_selectors_match_brute_force(3, None, allow_detached);
+        assert!(
+            caches.siblings.borrow().is_empty(),
+            "a narrow parent is scanned directly, never cached"
+        );
+    }
+}
+
+#[test]
+fn structural_selectors_count_inert_siblings_only_when_detached_allowed() {
+    for n_elements in [3, 31] {
+        // Index 2 is a `span` after a `p`, so `p + span` reaches the
+        // preceding-sibling lookup for a non-candidate subject.
+        for inert in [0, 1, 2, n_elements - 1] {
+            for allow_detached in [false, true] {
+                assert_structural_selectors_match_brute_force(
+                    n_elements,
+                    Some(inert),
+                    allow_detached,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn sibling_info_is_built_once_per_parent() {
+    let (doc, parent, children) = wide_sibling_doc(20, None);
+    let caches = MatchCaches::default();
+    let first = caches
+        .sibling_info(&doc, node_id(parent), false)
+        .expect("a 39-child parent is cached");
+    for _ in 0..3 {
+        let again = caches.sibling_info(&doc, node_id(parent), false).unwrap();
+        assert!(Rc::ptr_eq(&first, &again), "sibling info must be reused");
+    }
+    // `allow_detached` is part of the key.
+    let detached = caches.sibling_info(&doc, node_id(parent), true).unwrap();
+    assert!(!Rc::ptr_eq(&first, &detached));
+    assert_eq!(caches.siblings.borrow().len(), 2);
+    assert_eq!(
+        first.elements,
+        children.iter().map(|&id| node_id(id)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn lang_and_dir_memo_agree_with_direct_resolution() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element_with_attrs(0, "html", None, &[("lang", "en"), ("dir", "rtl")]);
+    let plain = doc.push_element(html, "div", None);
+    let french_auto =
+        doc.push_element_with_attrs(plain, "p", None, &[("lang", "fr"), ("dir", "auto")]);
+    doc.push_text(french_auto, "abc");
+    let nested = doc.push_element(french_auto, "span", None);
+    let hebrew_auto = doc.push_element_with_attrs(plain, "p", None, &[("dir", "auto")]);
+    doc.push_text(hebrew_auto, "\u{05D0}\u{05D1}");
+    let explicit_ltr =
+        doc.push_element_with_attrs(hebrew_auto, "em", None, &[("dir", "ltr"), ("lang", "he")]);
+
+    let chains: [(usize, Vec<usize>); 6] = [
+        (html, vec![]),
+        (plain, vec![html]),
+        (french_auto, vec![html, plain]),
+        (nested, vec![html, plain, french_auto]),
+        (hebrew_auto, vec![html, plain]),
+        (explicit_ltr, vec![html, plain, hebrew_auto]),
+    ];
+    let expected = [
+        (html, "en", Direction::Rtl),
+        (plain, "en", Direction::Rtl),
+        (french_auto, "fr", Direction::Ltr),
+        (nested, "fr", Direction::Rtl),
+        (hebrew_auto, "en", Direction::Rtl),
+        (explicit_ltr, "he", Direction::Ltr),
+    ];
+    let caches = MatchCaches::default();
+    // `MatchContext` is `Copy`; its hand-written `Clone` must agree.
+    let ctx = Clone::clone(&MatchContext::new(
+        &doc,
+        StyleQuirksMode::NoQuirks,
+        None,
+        false,
+        &caches,
+    ));
+    let selectors = [
+        ":lang(en)",
+        ":lang(fr)",
+        ":lang(he)",
+        ":dir(ltr)",
+        ":dir(rtl)",
+    ];
+    // Two passes: the second one is answered from the memo.
+    for _ in 0..2 {
+        for ((id, chain), (expected_id, lang, dir)) in chains.iter().zip(expected) {
+            assert_eq!(*id, expected_id);
+            let ancestors: Vec<StyleNodeId> = chain.iter().map(|&a| node_id(a)).collect();
+            let node = doc.node(node_id(*id)).unwrap();
+            let elem = node.as_element().unwrap();
+            let direct_lang = effective_language(&doc, &elem, &ancestors);
+            let direct_dir = resolve_directionality(&doc, &elem, node_id(*id), &ancestors);
+            assert_eq!(direct_lang, lang, "direct language of {id}");
+            assert_eq!(direct_dir, dir, "direct direction of {id}");
+            for source in selectors {
+                let list = crate::parse_selector_list(source).expect("selector parses");
+                let matched =
+                    match_complex_selector_list(&list, ctx, &elem, node_id(*id), &ancestors)
+                        .is_some();
+                let want = match source {
+                    ":lang(en)" => lang == "en",
+                    ":lang(fr)" => lang == "fr",
+                    ":lang(he)" => lang == "he",
+                    ":dir(ltr)" => dir == Direction::Ltr,
+                    _ => dir == Direction::Rtl,
+                };
+                assert_eq!(matched, want, "{source} on element {id}");
+            }
+            assert_eq!(
+                &*caches.content_language(&doc, &elem, node_id(*id), &ancestors),
+                direct_lang
+            );
+            assert_eq!(
+                caches.directionality(&doc, &elem, node_id(*id), &ancestors),
+                direct_dir
+            );
+        }
+    }
+    assert_eq!(caches.languages.borrow().len(), chains.len());
+    assert_eq!(caches.directions.borrow().len(), chains.len());
 }

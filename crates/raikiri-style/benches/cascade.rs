@@ -43,6 +43,10 @@ const DESCENDANT_MISS_DOC_DEPTH: usize = 1000;
 // cov:ignore: bench harness constant — same reason as `CASCADE_NEVER_ERRS`.
 const DESCENDANT_MISS_RULES: usize = 50;
 
+/// Depth of the `div` chain in the `:first-child` chain workload.
+// cov:ignore: bench harness constant — same reason as `CASCADE_NEVER_ERRS`.
+const FIRST_CHILD_CHAIN_DEPTH: usize = 5000;
+
 /// Number of `article` levels in the mixed-combinator workload.
 // cov:ignore: same reason as the constant above.
 const MIXED_CHAIN_ARTICLES: usize = 300;
@@ -786,6 +790,15 @@ fn wide_nth_stylesheet() -> (String, Winners) {
     )
 }
 
+/// Build the single-rule `div:first-child` stylesheet for a
+/// [`BenchDoc::chain`] document: every `div` is its parent's only child, so
+/// every one matches.
+// cov:ignore: bench harness — same reason as `shared_winner_body` above.
+fn first_child_stylesheet() -> (String, Winners) {
+    let body = shared_winner_body();
+    (format!("div:first-child {{ {body} }}\n"), shared_winners())
+}
+
 /// Build the single-rule `div + div` stylesheet for a [`BenchDoc::wide`]
 /// document: every `div` but the first matches.
 // cov:ignore: bench harness — same reason as `shared_winner_body` above.
@@ -1483,6 +1496,70 @@ fn wide_adjacent_workload(n_elems: usize) -> (BenchDoc, RuleTree, u64) {
     (doc, tree, n_elems as u64)
 }
 
+/// Assemble the deep-narrow `:first-child` config: one `div:first-child`
+/// rule ([`first_child_stylesheet`]) against a `depth`-deep
+/// [`BenchDoc::chain`]. Every parent has a single child, so this measures
+/// the per-element cost of structural matching where a sibling-position
+/// cache cannot help and must not add per-parent allocations. Every `div`
+/// must match; a chain has no non-first child to probe the negative case.
+// cov:ignore: bench harness — same reason as `sparse_class_workload` above.
+fn first_child_chain_workload(depth: usize) -> (BenchDoc, RuleTree, u64) {
+    let mut tree = RuleTree::empty();
+    let (css, want) = first_child_stylesheet();
+    tree.add_stylesheet(&css, Origin::Author);
+    assert_eq!(
+        tree.style_rules().len(),
+        1,
+        "first-child stylesheet did not parse into exactly one rule"
+    );
+    assert_eq!(
+        tree.style_rules()[0].declarations().len(),
+        DECLS_PER_RULE,
+        "first-child rule did not parse into the expected declaration count"
+    );
+
+    let doc = BenchDoc::chain(depth);
+    let initial = ComputedValues::initial();
+    assert!(
+        want.font_size != initial.font_size.px()
+            && want.box_px != 0.0
+            && want.color != initial.color,
+        "shared winner values must differ from the initial ones, or the probe below would be vacuous"
+    );
+
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        probe.computed.len(),
+        doc.node_count(),
+        "cascade did not produce one entry per arena node"
+    );
+
+    let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
+    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+    for i in 1..=depth {
+        let cv = &probe.computed[i];
+        assert_eq!(
+            cv.font_size.px(),
+            want.font_size,
+            "div at chain position {i} of {depth} is a first child but does not carry the winning font-size",
+        );
+        assert_eq!(
+            cv.color, want.color,
+            "div at chain position {i} of {depth} is a first child but does not carry the winning color",
+        );
+        assert_eq!(
+            cv.margin.top, want_margin,
+            "div at chain position {i} of {depth}: margin-top does not carry the winning rule's value",
+        );
+        assert_eq!(
+            cv.padding.top, want_padding,
+            "div at chain position {i} of {depth}: padding-top does not carry the winning rule's value",
+        );
+    }
+
+    (doc, tree, depth as u64)
+}
+
 fn bench_cascade(c: &mut Criterion) {
     let mut group = c.benchmark_group("cascade");
 
@@ -1672,6 +1749,18 @@ fn bench_cascade(c: &mut Criterion) {
         let (doc, tree, elems) = wide_adjacent_workload(n_elems);
         group.throughput(Throughput::Elements(elems));
         group.bench_function(format!("adjacent_wide_{n_elems}"), |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // Deep-narrow structural config — the counterpart of the wide configs
+    // above: many parents with one child each.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    {
+        let (doc, tree, elems) = first_child_chain_workload(FIRST_CHILD_CHAIN_DEPTH);
+        group.throughput(Throughput::Elements(elems));
+        group.bench_function("first_child_chain_5000", |b| {
             b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
         });
     }
