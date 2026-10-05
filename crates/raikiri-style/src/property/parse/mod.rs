@@ -549,11 +549,25 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 parse_border_shorthand(input).map(PropertyValue::Border)
             }
         }
+        "border-top" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderTopCssWide(kw))
+            } else {
+                parse_border_top_shorthand(input).map(PropertyValue::BorderTop)
+            }
+        }
         "border-right" => {
             if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
                 Some(PropertyValue::BorderRightCssWide(kw))
             } else {
                 parse_border_right_shorthand(input).map(PropertyValue::BorderRight)
+            }
+        }
+        "border-bottom" => {
+            if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {
+                Some(PropertyValue::BorderBottomCssWide(kw))
+            } else {
+                parse_border_bottom_shorthand(input).map(PropertyValue::BorderBottom)
             }
         }
         "border-left" => {

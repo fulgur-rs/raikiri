@@ -487,7 +487,9 @@ fn computed_declaration_indexed_view_lists_longhands_only_lexicographic() {
            var n = cs.item(i); \
            if (n === 'margin' || n === 'padding' || n === 'background' || n === 'border' || \
                n === 'font' || n === 'flex' || n === 'gap' || n === 'grid' || \
-               n === 'overflow' || n === 'outline' || n === 'columns') { found = true; } \
+               n === 'overflow' || n === 'outline' || n === 'columns' || \
+               n === 'border-top' || n === 'border-right' || n === 'border-bottom' || \
+               n === 'border-left') { found = true; } \
          } \
          !found",
     );

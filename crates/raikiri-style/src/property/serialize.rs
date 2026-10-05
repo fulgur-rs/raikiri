@@ -83,7 +83,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderBottomColorCssWide(kw)
         | PropertyValue::BorderLeftColorCssWide(kw)
         | PropertyValue::BorderCssWide(kw)
+        | PropertyValue::BorderTopCssWide(kw)
         | PropertyValue::BorderRightCssWide(kw)
+        | PropertyValue::BorderBottomCssWide(kw)
         | PropertyValue::BorderLeftCssWide(kw) => Some(kw.as_css_str().to_owned()),
 
         PropertyValue::Top(v)
@@ -486,7 +488,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderBottomColor(..)
         | PropertyValue::BorderLeftColor(..)
         | PropertyValue::Border(..)
+        | PropertyValue::BorderTop(..)
         | PropertyValue::BorderRight(..)
+        | PropertyValue::BorderBottom(..)
         | PropertyValue::BorderLeft(..)
         | PropertyValue::BorderStyle(..)
         | PropertyValue::BoxSizing(..)

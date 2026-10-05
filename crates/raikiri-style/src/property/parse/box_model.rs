@@ -676,6 +676,62 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
     Some(Sides::all(border))
 }
 
+/// Parse `border-top: <line-width> || <line-style> || <color>` single-side shorthand.
+///
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines `border-top` as the three top-side longhands with the same `||`
+/// component grammar as [`parse_border_shorthand`]. Only the expansion target differs:
+/// one [`Border`] for the top side instead of [`Sides::all`] for all four.
+///
+/// The `||` loop, occupied-slot rejection, empty-declaration drop, and omitted-component
+/// initial fill all match [`parse_border_shorthand`]. CSS-wide keywords are not accepted
+/// here; the `parse_value` dispatch tries [`parse_css_wide_keyword`] first and maps it
+/// to [`PropertyValue::BorderTopCssWide`], so a lone `inherit` never reaches this
+/// function. A combined `inherit solid` therefore fails `expect_exhausted` downstream
+/// rather than being silently truncated.
+pub(crate) fn parse_border_top_shorthand(input: &mut Parser<'_, '_>) -> Option<Border> {
+    let mut width: Option<Length> = None;
+    let mut style: Option<BorderStyle> = None;
+    let mut color: Option<BorderColor> = None;
+
+    loop {
+        if width.is_some() && style.is_some() && color.is_some() {
+            break;
+        }
+        if width.is_none()
+            && let Ok(v) = input.try_parse(parse_border_width_side_res)
+        {
+            width = Some(v);
+            continue;
+        }
+        if style.is_none()
+            && let Ok(s) = input.try_parse(|i| -> Result<BorderStyle, ParseError<'_, ()>> {
+                parse_border_style_side(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            style = Some(s);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
+                parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(c);
+            continue;
+        }
+        break;
+    }
+    if width.is_none() && style.is_none() && color.is_none() {
+        return None;
+    }
+    Some(Border {
+        width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
+        style: style.unwrap_or(BorderStyle::None),
+        color: color.unwrap_or(BorderColor::CurrentColor),
+    })
+}
+
 /// Parse `border-right: <line-width> || <line-style> || <color>` single-side shorthand.
 ///
 /// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
@@ -690,6 +746,62 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
 /// function. A combined `inherit solid` therefore fails `expect_exhausted` downstream
 /// rather than being silently truncated.
 pub(crate) fn parse_border_right_shorthand(input: &mut Parser<'_, '_>) -> Option<Border> {
+    let mut width: Option<Length> = None;
+    let mut style: Option<BorderStyle> = None;
+    let mut color: Option<BorderColor> = None;
+
+    loop {
+        if width.is_some() && style.is_some() && color.is_some() {
+            break;
+        }
+        if width.is_none()
+            && let Ok(v) = input.try_parse(parse_border_width_side_res)
+        {
+            width = Some(v);
+            continue;
+        }
+        if style.is_none()
+            && let Ok(s) = input.try_parse(|i| -> Result<BorderStyle, ParseError<'_, ()>> {
+                parse_border_style_side(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            style = Some(s);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
+                parse_border_color(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            color = Some(c);
+            continue;
+        }
+        break;
+    }
+    if width.is_none() && style.is_none() && color.is_none() {
+        return None;
+    }
+    Some(Border {
+        width: width.unwrap_or(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
+        style: style.unwrap_or(BorderStyle::None),
+        color: color.unwrap_or(BorderColor::CurrentColor),
+    })
+}
+
+/// Parse `border-bottom: <line-width> || <line-style> || <color>` single-side shorthand.
+///
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines `border-bottom` as the three bottom-side longhands with the same `||`
+/// component grammar as [`parse_border_shorthand`]. Only the expansion target differs:
+/// one [`Border`] for the bottom side instead of [`Sides::all`] for all four.
+///
+/// The `||` loop, occupied-slot rejection, empty-declaration drop, and omitted-component
+/// initial fill all match [`parse_border_shorthand`]. CSS-wide keywords are not accepted
+/// here; the `parse_value` dispatch tries [`parse_css_wide_keyword`] first and maps it
+/// to [`PropertyValue::BorderBottomCssWide`], so a lone `inherit` never reaches this
+/// function. A combined `inherit solid` therefore fails `expect_exhausted` downstream
+/// rather than being silently truncated.
+pub(crate) fn parse_border_bottom_shorthand(input: &mut Parser<'_, '_>) -> Option<Border> {
     let mut width: Option<Length> = None;
     let mut style: Option<BorderStyle> = None;
     let mut color: Option<BorderColor> = None;

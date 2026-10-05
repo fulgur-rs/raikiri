@@ -8818,6 +8818,165 @@ fn apply_value_direct_border_right_and_css_wide_fall_through() {
     );
 }
 
+/// Accessor for one side of an element's computed border.
+type SideAccessor = fn(&ComputedValues) -> &ComputedBorder;
+
+/// Selects the top or bottom computed border side, labelled for assertion messages.
+const TOP_BOTTOM_SIDES: [(&str, SideAccessor); 2] = [
+    ("border-top", |cv| &cv.border.top),
+    ("border-bottom", |cv| &cv.border.bottom),
+];
+
+#[test]
+fn border_top_and_bottom_shorthands_set_only_their_side() {
+    // CSS Backgrounds 3 §3.4: `border-top` / `border-bottom` set the three
+    // longhands of their own side; the other three sides keep their initial values.
+    let rgb = BorderColor::Resolved(CssColor {
+        r: 1,
+        g: 2,
+        b: 3,
+        a: 255,
+    });
+    for (name, side) in TOP_BOTTOM_SIDES {
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some(&format!("{name}: 1px solid rgb(1, 2, 3)")));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let cv = &r.computed[div];
+        assert_eq!(side(cv).width, ComputedLength(1.0), "{name}");
+        assert_eq!(side(cv).style, BorderStyle::Solid, "{name}");
+        assert_eq!(side(cv).color, rgb, "{name}");
+        let set_sides = [
+            &cv.border.top,
+            &cv.border.right,
+            &cv.border.bottom,
+            &cv.border.left,
+        ]
+        .into_iter()
+        .filter(|b| b.style != BorderStyle::None)
+        .count();
+        assert_eq!(set_sides, 1, "{name} must leave the other sides initial");
+    }
+}
+
+#[test]
+fn border_top_and_bottom_inherit_take_all_three_parent_values() {
+    // Top/bottom counterparts of the `wpt_border_right_01[6-8]_*` cases: a child
+    // `border-top: inherit` / `border-bottom: inherit` takes the parent side's
+    // computed width, style, and color.
+    let blue = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    });
+    for (name, side) in TOP_BOTTOM_SIDES {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some(&format!("{name}: 1in solid blue")));
+        let child = doc.push_element(parent, "div", Some(&format!("{name}: inherit")));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        for el in [parent, child] {
+            assert_eq!(side(&r.computed[el]).width, ComputedLength(96.0), "{name}");
+            assert_eq!(side(&r.computed[el]).style, BorderStyle::Solid, "{name}");
+            assert_eq!(side(&r.computed[el]).color, blue, "{name}");
+        }
+    }
+}
+
+#[test]
+fn border_top_and_bottom_initial_and_unset_reset_to_initial() {
+    // Counterpart of `border_right_initial_and_unset_reset_to_initial`.
+    for (name, side) in TOP_BOTTOM_SIDES {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some(&format!("{name}: 5px solid red")));
+        let initial_child = doc.push_element(parent, "div", Some(&format!("{name}: initial")));
+        let unset_child = doc.push_element(parent, "div", Some(&format!("{name}: unset")));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        for child in [initial_child, unset_child] {
+            assert_eq!(
+                side(&r.computed[child]).width,
+                ComputedLength::ZERO,
+                "{name}"
+            );
+            assert_eq!(side(&r.computed[child]).style, BorderStyle::None, "{name}");
+            assert_eq!(
+                side(&r.computed[child]).color,
+                BorderColor::CurrentColor,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            side(&r.computed[parent]).width,
+            ComputedLength(5.0),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn border_top_and_bottom_var_resolves_and_preserves_order() {
+    // Counterpart of `border_right_var_resolves_and_preserves_order`: the
+    // substituted value expands in place, and a later longhand in the same
+    // block wins per order of appearance.
+    for (name, side) in TOP_BOTTOM_SIDES {
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(
+            0,
+            "div",
+            Some(&format!(
+                "--b: 2px dashed; {name}: var(--b); {name}-width: 5px"
+            )),
+        );
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(side(&r.computed[div]).width, ComputedLength(5.0), "{name}");
+        assert_eq!(side(&r.computed[div]).style, BorderStyle::Dashed, "{name}");
+    }
+}
+
+#[test]
+fn apply_value_direct_border_top_and_bottom_and_css_wide_fall_through() {
+    // Counterpart of `apply_value_direct_border_right_and_css_wide_fall_through`:
+    // the defensive direct `apply_value` arms expand without panicking, and the
+    // CSS-wide forms expand to longhand markers that are no-ops here.
+    use crate::property::CssWideKeyword;
+    use crate::specified::SpecifiedValues;
+    let mut cv = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderTop(Border {
+            width: Length::Px(2.0),
+            style: BorderStyle::Dotted,
+            color: BorderColor::CurrentColor,
+        }),
+        &mut cv,
+    );
+    apply_value(
+        PropertyValue::BorderBottom(Border {
+            width: Length::Px(3.0),
+            style: BorderStyle::Dashed,
+            color: BorderColor::CurrentColor,
+        }),
+        &mut cv,
+    );
+    assert_eq!(cv.border.top.width, Length::Px(2.0));
+    assert_eq!(cv.border.top.style, BorderStyle::Dotted);
+    assert_eq!(cv.border.bottom.width, Length::Px(3.0));
+    assert_eq!(cv.border.bottom.style, BorderStyle::Dashed);
+    let mut cv2 = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::BorderTopCssWide(CssWideKeyword::Initial),
+        &mut cv2,
+    );
+    apply_value(
+        PropertyValue::BorderBottomCssWide(CssWideKeyword::Inherit),
+        &mut cv2,
+    );
+    assert_eq!(cv2.border.top, crate::specified::INITIAL_BORDER);
+    assert_eq!(cv2.border.bottom, crate::specified::INITIAL_BORDER);
+}
+
 #[test]
 fn border_rollback_deferred_var_substituting_to_css_wide() {
     // Cover `resolve_border_css_wide`'s Deferred-then-CssWide arms:

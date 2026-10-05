@@ -1189,7 +1189,7 @@ impl Default for Border {
 /// §7.3.5 "Rolling Back Cascade Layers: the revert-layer keyword"
 /// <https://www.w3.org/TR/css-cascade-5/#revert-layer>).
 ///
-/// Every border longhand and the `border` / `border-right` shorthands accept exactly
+/// Every border longhand and the `border` / `border-<side>` shorthands accept exactly
 /// these five keywords as a single-token value. The shorthand forms expand to their
 /// longhands with the same keyword preserved (see [`PropertyValue::Border`] and
 /// [`PropertyValue::BorderRight`]).
@@ -8740,6 +8740,14 @@ pub enum PropertyValue {
     /// (`parse_border_color`: `currentcolor`, named, hash, or function).
     /// The 1–4-value expansion follows the margin precedent.
     BorderColor(Sides<BorderColor>),
+    /// `border-top: <line-width> || <line-style> || <color>` — single-side shorthand
+    /// for the three top-side longhands (CSS Backgrounds 3 §3.4
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>).
+    ///
+    /// The `||` grammar, omitted-component initial fill, and declaration-ordering
+    /// contract match [`Self::Border`]; only the expansion target differs (three
+    /// top-side longhands instead of twelve). See [`crate::rule::expand_border_top`].
+    BorderTop(Border),
     /// `border-right: <line-width> || <line-style> || <color>` — single-side shorthand
     /// for the three right-side longhands (CSS Backgrounds 3 §3.4
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>).
@@ -8748,6 +8756,14 @@ pub enum PropertyValue {
     /// contract match [`Self::Border`]; only the expansion target differs (three
     /// right-side longhands instead of twelve). See [`crate::rule::expand_border_right`].
     BorderRight(Border),
+    /// `border-bottom: <line-width> || <line-style> || <color>` — single-side shorthand
+    /// for the three bottom-side longhands (CSS Backgrounds 3 §3.4
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>).
+    ///
+    /// The `||` grammar, omitted-component initial fill, and declaration-ordering
+    /// contract match [`Self::Border`]; only the expansion target differs (three
+    /// bottom-side longhands instead of twelve). See [`crate::rule::expand_border_bottom`].
+    BorderBottom(Border),
     /// `border-left: <line-width> || <line-style> || <color>` — single-side shorthand
     /// for the three left-side longhands (CSS Backgrounds 3 §3.4
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>).
@@ -8759,9 +8775,15 @@ pub enum PropertyValue {
     /// `border: <css-wide-keyword>` — expands to twelve longhand CSS-wide markers
     /// (see [`CssWideKeyword`]).
     BorderCssWide(CssWideKeyword),
+    /// `border-top: <css-wide-keyword>` — expands to three top-side longhand
+    /// CSS-wide markers (see [`CssWideKeyword`]).
+    BorderTopCssWide(CssWideKeyword),
     /// `border-right: <css-wide-keyword>` — expands to three right-side longhand
     /// CSS-wide markers (see [`CssWideKeyword`]).
     BorderRightCssWide(CssWideKeyword),
+    /// `border-bottom: <css-wide-keyword>` — expands to three bottom-side longhand
+    /// CSS-wide markers (see [`CssWideKeyword`]).
+    BorderBottomCssWide(CssWideKeyword),
     /// `border-left: <css-wide-keyword>` — expands to three left-side longhand
     /// CSS-wide markers (see [`CssWideKeyword`]).
     BorderLeftCssWide(CssWideKeyword),
@@ -9874,9 +9896,15 @@ pub enum PropertyKey {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    // `border-top` single-side shorthand key (semantics on the matching
+    // PropertyValue::BorderTop variant).
+    BorderTop,
     // `border-right` single-side shorthand key (semantics on the matching
     // PropertyValue::BorderRight variant).
     BorderRight,
+    // `border-bottom` single-side shorthand key (semantics on the matching
+    // PropertyValue::BorderBottom variant).
+    BorderBottom,
     // `border-left` single-side shorthand key (semantics on the matching
     // PropertyValue::BorderLeft variant).
     BorderLeft,
@@ -10404,8 +10432,14 @@ impl PropertyValue {
                 PropertyKey::BorderLeftColor
             }
             PropertyValue::Border(_) | PropertyValue::BorderCssWide(_) => PropertyKey::Border,
+            PropertyValue::BorderTop(_) | PropertyValue::BorderTopCssWide(_) => {
+                PropertyKey::BorderTop
+            }
             PropertyValue::BorderRight(_) | PropertyValue::BorderRightCssWide(_) => {
                 PropertyKey::BorderRight
+            }
+            PropertyValue::BorderBottom(_) | PropertyValue::BorderBottomCssWide(_) => {
+                PropertyKey::BorderBottom
             }
             PropertyValue::BorderLeft(_) | PropertyValue::BorderLeftCssWide(_) => {
                 PropertyKey::BorderLeft
@@ -11606,7 +11640,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-bottom-color" => PropertyKey::BorderBottomColor,
         "border-left-color" => PropertyKey::BorderLeftColor,
         "border" => PropertyKey::Border,
+        "border-top" => PropertyKey::BorderTop,
         "border-right" => PropertyKey::BorderRight,
+        "border-bottom" => PropertyKey::BorderBottom,
         "border-left" => PropertyKey::BorderLeft,
         "border-style" => PropertyKey::BorderStyle,
         "border-width" => PropertyKey::BorderWidth,

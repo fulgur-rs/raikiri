@@ -1668,6 +1668,55 @@ fn cascade_page_border_all_sides_css_wide() {
 }
 
 #[test]
+fn cascade_page_border_top_and_bottom_shorthands() {
+    // `@page` counterpart of `cascade_page_border_css_wide_inherit_takes_root` for
+    // the `border-top` / `border-bottom` shorthands: a CSS-wide keyword resolves
+    // against the root's own side, and a value form expands to that side's
+    // longhands with its width absolutized against the page font-size.
+    let mut root = ComputedValues::initial();
+    root.border.top.width = crate::resolve::ComputedLength(6.0);
+    root.border.top.style = BorderStyle::Dotted;
+    let result = page(
+        "@page { font-size: 20px; border-top: inherit; border-bottom: 0.5em solid }",
+        &root,
+    );
+    let get = |key| result.declarations().get(&key).cloned();
+    assert_eq!(
+        get(PropertyKey::BorderTopWidth),
+        Some(PropertyValue::BorderTopWidth(Length::Px(6.0)))
+    );
+    assert_eq!(
+        get(PropertyKey::BorderTopStyle),
+        Some(PropertyValue::BorderTopStyle(BorderStyle::Dotted))
+    );
+    assert_eq!(
+        get(PropertyKey::BorderBottomWidth),
+        Some(PropertyValue::BorderBottomWidth(Length::Px(10.0)))
+    );
+    assert_eq!(
+        get(PropertyKey::BorderBottomStyle),
+        Some(PropertyValue::BorderBottomStyle(BorderStyle::Solid))
+    );
+    assert_eq!(
+        get(PropertyKey::BorderBottomColor),
+        Some(PropertyValue::BorderBottomColor(BorderColor::CurrentColor))
+    );
+    // `border-bottom: initial` clears the bottom side only.
+    let result2 = page(
+        "@page { border-bottom: initial; border-right: 1px solid }",
+        &root,
+    );
+    assert_eq!(
+        result2.declarations().get(&PropertyKey::BorderBottomStyle),
+        Some(&PropertyValue::BorderBottomStyle(BorderStyle::None))
+    );
+    assert_eq!(
+        result2.declarations().get(&PropertyKey::BorderRightStyle),
+        Some(&PropertyValue::BorderRightStyle(BorderStyle::Solid))
+    );
+}
+
+#[test]
 fn cascade_page_border_width_is_gated_by_border_style_hidden() {
     let root = ComputedValues::initial();
     let result = page(
@@ -3039,7 +3088,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 162;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 164;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3168,7 +3217,17 @@ property_key_samples! {
         style: BorderStyle::Solid,
         color: BorderColor::CurrentColor,
     })),
+    BorderTop => PropertyValue::BorderTop(Border {
+        width: Length::Em(1.0),
+        style: BorderStyle::Solid,
+        color: BorderColor::CurrentColor,
+    }),
     BorderRight => PropertyValue::BorderRight(Border {
+        width: Length::Em(1.0),
+        style: BorderStyle::Solid,
+        color: BorderColor::CurrentColor,
+    }),
+    BorderBottom => PropertyValue::BorderBottom(Border {
         width: Length::Em(1.0),
         style: BorderStyle::Solid,
         color: BorderColor::CurrentColor,
@@ -3809,7 +3868,9 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::BorderRadiusInherit,
         PropertyValue::TextDecorationThicknessInherit,
         PropertyValue::BorderCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderTopCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit),
+        PropertyValue::BorderBottomCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderLeftCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit),
@@ -3975,10 +4036,14 @@ property_value_variant_registry! {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    BorderTop,
     BorderRight,
+    BorderBottom,
     BorderLeft,
     BorderCssWide,
+    BorderTopCssWide,
     BorderRightCssWide,
+    BorderBottomCssWide,
     BorderLeftCssWide,
     BorderTopWidthCssWide,
     BorderRightWidthCssWide,
@@ -4562,10 +4627,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 start_end(*p, length_or_auto)
             }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            PropertyValue::BorderTop(b) => length(b.width),
             PropertyValue::BorderRight(b) => length(b.width),
+            PropertyValue::BorderBottom(b) => length(b.width),
             PropertyValue::BorderLeft(b) => length(b.width),
             PropertyValue::BorderCssWide(_)
+            | PropertyValue::BorderTopCssWide(_)
             | PropertyValue::BorderRightCssWide(_)
+            | PropertyValue::BorderBottomCssWide(_)
             | PropertyValue::BorderLeftCssWide(_)
             | PropertyValue::BorderTopWidthCssWide(_)
             | PropertyValue::BorderRightWidthCssWide(_)

@@ -3388,3 +3388,211 @@ fn border_right_shorthand_rejects_empty_and_unknown() {
     assert_eq!(parse("garbage", "border-right"), None);
     assert_eq!(parse_entire("1px 2px", "border-right"), None);
 }
+
+/// The `border-top` / `border-bottom` single-side shorthands (CSS Backgrounds 3
+/// §3.4), each paired with its value constructor, CSS-wide constructor, and
+/// shorthand key.
+#[allow(clippy::type_complexity)]
+const BORDER_TOP_BOTTOM_SHORTHANDS: &[(
+    &str,
+    fn(Border) -> PropertyValue,
+    fn(CssWideKeyword) -> PropertyValue,
+    PropertyKey,
+)] = &[
+    (
+        "border-top",
+        PropertyValue::BorderTop,
+        PropertyValue::BorderTopCssWide,
+        PropertyKey::BorderTop,
+    ),
+    (
+        "border-bottom",
+        PropertyValue::BorderBottom,
+        PropertyValue::BorderBottomCssWide,
+        PropertyKey::BorderBottom,
+    ),
+];
+
+#[test]
+fn border_top_and_bottom_shorthands_parse_width_style_color() {
+    // Top/bottom counterparts of `border_right_shorthand_parses_width_style_color`:
+    // same `||` grammar, only the expansion target differs.
+    let blue = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    });
+    for (name, ctor, _, key) in BORDER_TOP_BOTTOM_SHORTHANDS {
+        let expected = Border {
+            width: Length::Px(2.0),
+            style: BorderStyle::Dashed,
+            color: BorderColor::Resolved(red()),
+        };
+        assert_eq!(
+            parse("2px dashed red", name),
+            Some(ctor(expected)),
+            "{name}"
+        );
+        // Any order.
+        assert_eq!(
+            parse("red dashed 2px", name),
+            Some(ctor(expected)),
+            "{name}"
+        );
+        // Omitted components fill with their initial values.
+        assert_eq!(
+            parse("thick", name),
+            Some(ctor(Border {
+                width: Length::Px(5.0),
+                style: BorderStyle::None,
+                color: BorderColor::CurrentColor,
+            })),
+            "{name}: thick"
+        );
+        assert_eq!(
+            parse("blue", name),
+            Some(ctor(Border {
+                width: Length::Px(BORDER_WIDTH_MEDIUM_PX),
+                style: BorderStyle::None,
+                color: blue,
+            })),
+            "{name}: blue"
+        );
+        assert_eq!(parse("2px", name).unwrap().key(), *key, "{name}");
+    }
+}
+
+#[test]
+fn border_top_and_bottom_accept_css_wide_keywords() {
+    // Top/bottom counterparts of `border_and_border_right_accept_css_wide_keywords`.
+    for (name, _, wide, key) in BORDER_TOP_BOTTOM_SHORTHANDS {
+        for kw in CssWideKeyword::ALL {
+            assert_eq!(
+                parse(kw.as_css_str(), name),
+                Some(wide(*kw)),
+                "{name}: {kw:?}"
+            );
+        }
+        assert_eq!(
+            parse("INHERIT", name),
+            Some(wide(CssWideKeyword::Inherit)),
+            "{name}"
+        );
+        assert_eq!(wide(CssWideKeyword::Inherit).key(), *key, "{name}");
+        // A CSS-wide keyword must be the lone value.
+        assert_eq!(parse_entire("inherit solid", name), None, "{name}");
+        assert_eq!(parse_entire("solid inherit", name), None, "{name}");
+    }
+}
+
+#[test]
+fn border_top_and_bottom_shorthands_reject_empty_and_unknown() {
+    // Cover the empty-declaration guards of `parse_border_top_shorthand` and
+    // `parse_border_bottom_shorthand`: empty, unknown-only, and duplicated
+    // components drop.
+    for (name, ..) in BORDER_TOP_BOTTOM_SHORTHANDS {
+        assert_eq!(parse("", name), None, "{name}");
+        assert_eq!(parse("garbage", name), None, "{name}");
+        assert_eq!(parse_entire("1px 2px", name), None, "{name}");
+        assert_eq!(parse_entire("solid dashed", name), None, "{name}");
+        assert_eq!(parse_entire("-1px solid", name), None, "{name}");
+    }
+}
+
+#[test]
+fn border_top_and_bottom_expansion_preserves_declaration_order() {
+    // Top/bottom counterparts of `border_right_expansion_preserves_declaration_order`.
+    use crate::rule::{
+        expand_border_bottom, expand_border_bottom_css_wide, expand_border_top,
+        expand_border_top_css_wide,
+    };
+    let border = Border {
+        width: Length::Px(2.0),
+        style: BorderStyle::Dashed,
+        color: BorderColor::CurrentColor,
+    };
+    let mut values = Vec::new();
+    expand_border_top(border, |v| values.push(v));
+    expand_border_bottom(border, |v| values.push(v));
+    assert_eq!(
+        values,
+        vec![
+            PropertyValue::BorderTopWidth(Length::Px(2.0)),
+            PropertyValue::BorderTopStyle(BorderStyle::Dashed),
+            PropertyValue::BorderTopColor(BorderColor::CurrentColor),
+            PropertyValue::BorderBottomWidth(Length::Px(2.0)),
+            PropertyValue::BorderBottomStyle(BorderStyle::Dashed),
+            PropertyValue::BorderBottomColor(BorderColor::CurrentColor),
+        ]
+    );
+    let mut wide = Vec::new();
+    expand_border_top_css_wide(CssWideKeyword::Initial, |v| wide.push(v));
+    expand_border_bottom_css_wide(CssWideKeyword::Initial, |v| wide.push(v));
+    assert_eq!(
+        wide,
+        vec![
+            PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Initial),
+            PropertyValue::BorderTopStyleCssWide(CssWideKeyword::Initial),
+            PropertyValue::BorderTopColorCssWide(CssWideKeyword::Initial),
+            PropertyValue::BorderBottomWidthCssWide(CssWideKeyword::Initial),
+            PropertyValue::BorderBottomStyleCssWide(CssWideKeyword::Initial),
+            PropertyValue::BorderBottomColorCssWide(CssWideKeyword::Initial),
+        ]
+    );
+}
+
+#[test]
+fn border_top_and_bottom_serialize_like_border_right() {
+    // Counterpart of `border_css_wide_serializes_to_keyword`: the CSS-wide forms
+    // serialize to the keyword; the value form is expanded first and so is not
+    // canonically serialized.
+    for (name, ctor, wide, _) in BORDER_TOP_BOTTOM_SHORTHANDS {
+        for kw in CssWideKeyword::ALL {
+            assert_eq!(
+                crate::property::serialize_value(&wide(*kw)),
+                Some(kw.as_css_str().to_owned()),
+                "{name}: {kw:?}"
+            );
+        }
+        assert_eq!(
+            crate::property::serialize_value(&ctor(Border {
+                width: Length::Px(2.0),
+                style: BorderStyle::Solid,
+                color: BorderColor::CurrentColor,
+            })),
+            None,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn border_top_and_bottom_expand_in_declaration_block_and_reset_omitted_parts() {
+    // CSS Backgrounds 3 §3.4: a single-side shorthand resets all three of its
+    // side's longhands, so an earlier longhand in the same block is overridden
+    // by the omitted component's initial value, and a later longhand wins.
+    let decls = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
+        "border-bottom-width: 5px; border-bottom: red; border-top: 1px solid; \
+         border-top-color: blue",
+    )));
+    let values: Vec<_> = decls.iter().map(|d| d.value.clone()).collect();
+    assert_eq!(
+        values,
+        vec![
+            PropertyValue::BorderBottomWidth(Length::Px(5.0)),
+            PropertyValue::BorderBottomWidth(Length::Px(BORDER_WIDTH_MEDIUM_PX)),
+            PropertyValue::BorderBottomStyle(BorderStyle::None),
+            PropertyValue::BorderBottomColor(BorderColor::Resolved(red())),
+            PropertyValue::BorderTopWidth(Length::Px(1.0)),
+            PropertyValue::BorderTopStyle(BorderStyle::Solid),
+            PropertyValue::BorderTopColor(BorderColor::CurrentColor),
+            PropertyValue::BorderTopColor(BorderColor::Resolved(CssColor {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 255,
+            })),
+        ]
+    );
+}
