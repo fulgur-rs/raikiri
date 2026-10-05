@@ -3591,6 +3591,64 @@ fn vertical_block_children_follow_the_logical_block_direction() {
 }
 
 #[test]
+fn vertical_rtl_block_child_uses_the_logical_inline_start_once() {
+    for (mode, expected_x) in [("vertical-rl", 80.0), ("vertical-lr", 0.0)] {
+        let (mut doc, cascade, block, root) = paragraph_with_block(
+            "",
+            "width:20px;height:20px;margin-top:3px;margin-bottom:7px",
+            "bb",
+            &format!("height:100px;writing-mode:{mode};direction:rtl"),
+        );
+        lay_out(&mut doc, &cascade);
+
+        assert!(doc.nodes[root].is_ifc_root(), "{mode}");
+        let child = doc.nodes[block].unrounded_layout;
+        assert_eq!(
+            (child.location.x, child.location.y),
+            (expected_x, 73.0),
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn dimensioned_empty_vertical_block_children_follow_the_block_axis() {
+    for (mode, expected_x) in [("vertical-rl", [80.0, 60.0]), ("vertical-lr", [0.0, 20.0])] {
+        let (mut doc, _cascade, root) = ahem_paragraph(
+            "bb",
+            &format!("width:100px;height:30px;writing-mode:{mode};font-size:0;line-height:0"),
+        );
+        let first = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:20px;height:30px"),
+        );
+        let second = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:20px;height:30px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+
+        lay_out(&mut doc, &cascade);
+
+        assert!(doc.nodes[root].is_ifc_root(), "{mode}");
+        assert_eq!(
+            doc.nodes[first].unrounded_layout.location.x, expected_x[0],
+            "{mode}"
+        );
+        assert_eq!(
+            doc.nodes[second].unrounded_layout.location.x, expected_x[1],
+            "{mode}"
+        );
+    }
+}
+
+#[test]
 fn vertical_rl_keeps_multiple_block_children_in_logical_source_order() {
     let (mut doc, _, root) =
         ahem_paragraph("aa", "width:100px;height:50px;writing-mode:vertical-rl");
@@ -5638,6 +5696,29 @@ fn vertical_writing_mode_uses_the_max_content_inline_extent_when_height_is_auto(
             .all(|line| line.writing_mode() == shodo::geometry::WritingMode::VerticalRl)
     );
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 90.0);
+}
+
+#[test]
+fn vertical_auto_inline_extent_includes_block_child_physical_height() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, _cascade, root) =
+            ahem_paragraph("", &format!("width:100px;height:auto;writing-mode:{mode}"));
+        let child = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:20px;height:80px;margin-top:3px;margin-bottom:7px"),
+        );
+        doc.append_text(child, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+
+        lay_out(&mut doc, &cascade);
+
+        assert!(doc.nodes[root].is_ifc_root(), "{mode}");
+        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 90.0, "{mode}");
+    }
 }
 
 #[test]

@@ -1287,10 +1287,9 @@ fn layout_vertical_block_child(
         (false, true) => margin.bottom = inline_free.max(0.0),
         (false, false) => {}
     }
-    let inline_start = if geometry.axes.direction() == Direction::Ltr {
-        margin.top
-    } else {
-        inline_basis - output.size.height - margin.bottom
+    let inline_start = match geometry.axes.direction() {
+        Direction::Ltr => margin.top,
+        Direction::Rtl => margin.bottom,
     };
     let physical = geometry.axes.rect(
         geometry.content_size,
@@ -1853,9 +1852,15 @@ impl BoxIntrinsics {
     };
 }
 
-/// Min- and max-content widths of the root's boxes, for the paragraph's
-/// intrinsic sizes. Each box is measured without changing its layout.
+/// Min- and max-content inline extents of the root's boxes, for the
+/// paragraph's intrinsic sizes. Each box is measured without changing layout.
 pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -> BoxIntrinsics {
+    let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
+        matches!(
+            root.writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        )
+    });
     let boxes = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -1896,8 +1901,11 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
             IfcBoxKind::OutOfFlow => {}
             IfcBoxKind::Block => {
                 let margin = resolved_margins(tree, b.node, basis);
-                let (min_content, max_content) =
-                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                let (min_content, max_content) = if vertical {
+                    content_heights(tree, b.node, basis, margin.top + margin.bottom)
+                } else {
+                    content_widths(tree, b.node, basis, margin.left + margin.right)
+                };
                 intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
                 intrinsics.blocks.1 = intrinsics.blocks.1.max(max_content);
             }
@@ -1919,35 +1927,65 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
 }
 
 /// Min- and max-content margin-box width of `node`, measured without changing
-/// its layout. taffy measures a child's contribution to a container's
-/// intrinsic width with `InherentSize` (compute/block.rs
-/// `determine_content_based_container_width`), so a child with a `width` of
-/// its own contributes that width.
+/// its layout.
 fn content_widths(tree: &mut Document, node: usize, basis: f32, margins_x: f32) -> (f32, f32) {
+    content_sizes_on_axis(tree, node, basis, margins_x, RequestedAxis::Horizontal)
+}
+
+fn content_heights(tree: &mut Document, node: usize, basis: f32, margins_y: f32) -> (f32, f32) {
+    content_sizes_on_axis(tree, node, basis, margins_y, RequestedAxis::Vertical)
+}
+
+fn content_sizes_on_axis(
+    tree: &mut Document,
+    node: usize,
+    basis: f32,
+    margins: f32,
+    axis: RequestedAxis,
+) -> (f32, f32) {
+    let vertical = axis == RequestedAxis::Vertical;
     let measure = |tree: &mut Document, available: AvailableSpace| {
         let output = tree.compute_child_layout(
             taffy::NodeId::from(node),
             LayoutInput {
                 run_mode: RunMode::ComputeSize,
                 sizing_mode: SizingMode::InherentSize,
-                axis: RequestedAxis::Horizontal,
+                axis,
                 known_dimensions: Size::NONE,
                 known_dimensions_are_definite: Size {
                     width: true,
                     height: true,
                 },
-                parent_size: Size {
-                    width: Some(basis),
-                    height: None,
+                parent_size: if vertical {
+                    Size {
+                        width: None,
+                        height: Some(basis),
+                    }
+                } else {
+                    Size {
+                        width: Some(basis),
+                        height: None,
+                    }
                 },
-                available_space: Size {
-                    width: available,
-                    height: AvailableSpace::MaxContent,
+                available_space: if vertical {
+                    Size {
+                        width: AvailableSpace::MaxContent,
+                        height: available,
+                    }
+                } else {
+                    Size {
+                        width: available,
+                        height: AvailableSpace::MaxContent,
+                    }
                 },
                 vertical_margins_are_collapsible: Line::TRUE,
             },
         );
-        output.size.width + margins_x
+        if vertical {
+            output.size.height + margins
+        } else {
+            output.size.width + margins
+        }
     };
     (
         measure(tree, AvailableSpace::MinContent),

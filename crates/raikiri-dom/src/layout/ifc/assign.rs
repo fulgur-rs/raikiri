@@ -155,15 +155,14 @@ fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx
     })
 }
 
-/// Whether the paragraph has inline content that makes a line: text other
-/// than white space (generated text included), an atomic inline, a `<br>`,
-/// or an inline element with a margin, border or padding on an inline side
-/// (CSS 2.1, 9.4.2: a line box without any of these is treated as
-/// zero-height). The content of its boxes does not count, and neither do
-/// floats or horizontal block children alone. Ordinary vertical block
-/// children use the IFC path to advance along the physical block axis; page
-/// roots and multicol containers remain on their existing layout paths.
-fn has_inline_content(
+/// Whether a block qualifies for the IFC path. Inline content that makes a
+/// line is text other than white space (generated text included), an atomic
+/// inline, a `<br>`, or an inline element with an inline-side margin, border,
+/// or padding (CSS 2.1, 9.4.2). A vertical block child with inline content can
+/// also qualify its ancestor. Once selected, a vertical IFC root lays out its
+/// ordinary block children on the physical block axis, including empty ones.
+/// Page roots and multicol containers remain on their existing layout paths.
+fn needs_ifc_layout(
     doc: &Document,
     cascade: &CascadeResult,
     idx: usize,
@@ -387,7 +386,7 @@ fn collect_candidates(
             || taken[idx]
             || is_ruby_multicol_flex_projection(doc, cascade, idx)
             || !can_be_ifc_root(doc, cascade, idx)
-            || !has_inline_content(doc, cascade, idx, &state.fonts)
+            || !needs_ifc_layout(doc, cascade, idx, &state.fonts)
         {
             continue;
         }
