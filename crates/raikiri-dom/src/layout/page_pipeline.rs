@@ -1114,6 +1114,7 @@ pub(crate) fn project_slices(
                     source.abs_y.max(0.0),
                     source.height,
                     repeat_line_range,
+                    source.abs_y.max(0.0),
                 ));
                 continue;
             }
@@ -1138,14 +1139,20 @@ pub(crate) fn project_slices(
                 let line_range = source.line_metrics.as_deref().and_then(|metrics| {
                     line_range_for_page(metrics, source.abs_y, page_start, page_end)
                 });
-                placements.push((page_slot, fragment_y, fragment_height, line_range));
+                placements.push((
+                    page_slot,
+                    fragment_y,
+                    fragment_height,
+                    line_range,
+                    source.abs_y - page_start,
+                ));
             }
         }
         let fragment_count = placements.len() as u32;
         let paint_offset_x = body_margin.map_or(0.0, |(body, margin)| {
             super::body_paint_shift(document, cascade, body, margin, source.node_id.0 as usize)
         });
-        for (fragment_index, (page_slot, y, fragment_height, line_range)) in
+        for (fragment_index, (page_slot, y, fragment_height, line_range, box_y)) in
             placements.into_iter().enumerate()
         {
             let Some(page) = pages.get_mut(page_slot) else {
@@ -1160,7 +1167,8 @@ pub(crate) fn project_slices(
                 source.is_repeat,
             )
             .with_page_index(page.page_index)
-            .with_paint_offset_x(paint_offset_x);
+            .with_paint_offset_x(paint_offset_x)
+            .with_box_extent(box_y, source.height);
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(range),
                 None => item,

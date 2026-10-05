@@ -101,7 +101,9 @@ impl<'a> Page<'a> {
     /// boxes, floats, and positioned boxes with `z-index: auto` or a
     /// non-negative `z-index`; flex and grid items use `order` within a
     /// stacking level. A paragraph's inline boxes come before its text.
-    /// Clip rectangles are in the same space as [`Fragment::paint_rect`].
+    /// Clip rectangles are in the same space as [`Fragment::paint_rect`]; an
+    /// overflow clip is built from the element's whole box, so it runs past
+    /// the page where a page break cuts the box.
     /// Generated content and markers are not listed yet, and multi-column
     /// containers are listed without column clips (reported once in
     /// [`super::DocumentLayout::warnings`] with

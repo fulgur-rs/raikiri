@@ -589,34 +589,49 @@ fn overflow_clip_rectangles_match() {
     assert_rects_match(&walker, &api, "page 0");
 }
 
-/// A padded overflow box sliced across pages. The walker clips to the whole
-/// box's padding box, which extends past the page on a cut edge; within the
-/// page the clips must agree.
+/// Every page's overflow clip rectangles, compared exactly: the walker
+/// clips to the whole box's padding box, which runs past the page where a
+/// page break cuts the box.
+fn assert_clip_rects_on_every_page(body: &str) {
+    let result = lay_out(body, "");
+    assert!(result.page_count() > 1, "{} pages", result.page_count());
+    for page in result.pages() {
+        let (walker, api) = clip_rects(&page);
+        assert_eq!(walker.len(), 1, "page {}: {walker:?}", page.index());
+        assert_rects_match(&walker, &api, &format!("page {}", page.index()));
+    }
+}
+
+/// A padded overflow box that starts at the top of the first page and runs
+/// over several pages.
 #[test]
 fn overflow_clip_rectangles_match_across_pages() {
     let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
-    let result = lay_out(
-        &format!("<div style=\"overflow: hidden; padding: 15px; border: 4px solid\">{inner}</div>"),
-        "",
-    );
-    assert!(result.page_count() > 2, "{} pages", result.page_count());
-    for page in result.pages() {
-        let page_box = page.geometry().page_box;
-        let (w, h) = (f64::from(page_box.width), f64::from(page_box.height));
-        let within_page = |r: &[f64; 4]| {
-            [
-                r[0].clamp(0.0, w),
-                r[1].clamp(0.0, h),
-                r[2].clamp(0.0, w),
-                r[3].clamp(0.0, h),
-            ]
-        };
-        let (walker, api) = clip_rects(&page);
-        assert_eq!(walker.len(), 1, "page {}: {walker:?}", page.index());
-        let walker: Vec<_> = walker.iter().map(within_page).collect();
-        let api: Vec<_> = api.iter().map(within_page).collect();
-        assert_rects_match(&walker, &api, &format!("page {}", page.index()));
+    assert_clip_rects_on_every_page(&format!(
+        "<div style=\"overflow: hidden; padding: 15px; border: 4px solid\">{inner}</div>"
+    ));
+}
+
+/// A padded overflow box that starts close to the bottom of a page: the part
+/// before the break is shorter than the page margin plus the padding.
+#[test]
+fn overflow_clip_rectangles_match_for_a_box_starting_near_a_page_bottom() {
+    let inner: String = (0..5).map(|i| format!("<p>line {i}</p>")).collect();
+    for spacer in [130, 150] {
+        assert_clip_rects_on_every_page(&format!(
+            "<div style=\"height: {spacer}px\"></div>\
+             <div style=\"overflow: hidden; padding: 15px; border: 4px solid\">{inner}</div>"
+        ));
     }
+}
+
+/// A box whose bottom padding is cut by a page break.
+#[test]
+fn overflow_clip_rectangles_match_for_padding_cut_by_a_break() {
+    assert_clip_rects_on_every_page(
+        "<div style=\"height: 150px\"></div>\
+         <div style=\"overflow: hidden; padding-bottom: 50px; height: 10px\"><p>a</p></div>",
+    );
 }
 
 /// A text node laid out as an anonymous flex item draws its own lines.

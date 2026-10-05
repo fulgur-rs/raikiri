@@ -12,8 +12,9 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ClipKind {
-    /// `overflow` other than `visible`: the element's padding box. Where a
-    /// page break cuts the box, the clip reaches the page box edge instead.
+    /// `overflow` other than `visible`: the padding box of the element's
+    /// whole box. Where a page break cuts the box, the clip runs past the
+    /// page.
     Overflow,
     /// A column of a multi-column container.
     Fragmentainer,
@@ -107,7 +108,6 @@ impl Document {
             }
         }
 
-        let page_height = page.page_box.height;
         let mut events = Vec::new();
         // An explicit stack, like the painter's, so a deep DOM cannot
         // overflow the call stack.
@@ -161,10 +161,9 @@ impl Document {
                             }
                         }
                     }
-                    // The clip is the padding box of the element's first
-                    // fragment on this page (see `overflow_clip` for the edges
-                    // where the box is cut by a page break). It opens after
-                    // the element's own box and closes after its subtree.
+                    // The clip is the padding box of the element's whole box
+                    // (see `overflow_clip`). It opens after the element's own
+                    // box and closes after its subtree.
                     if paint_rules::clips_overflow(cv) {
                         let Some(&item) = own.first() else {
                             // The element's box is not on this page, so the
@@ -175,7 +174,7 @@ impl Document {
                             continue;
                         };
                         let fragment = items.fragment(item);
-                        let clip = overflow_clip(node, cv, item, fragment, page_height);
+                        let clip = overflow_clip(node, cv, item, fragment);
                         events.push(PaintEvent::PushClip(clip, ClipKind::Overflow));
                         stack.push(Frame::PopClip);
                     }
@@ -320,41 +319,32 @@ fn push_paragraph<'a>(
     }
 }
 
-/// The padding box of `fragment`, snapped the way the painter snaps an
-/// overflow clip: the origin is floored so pixel-snapped descendant
-/// backgrounds are not cut by antialiasing, and an `overflow: clip` edge is
-/// floored too.
+/// The padding box of the element's whole border box, snapped the way the
+/// painter snaps an overflow clip: the origin is floored so pixel-snapped
+/// descendant backgrounds are not cut by antialiasing, and an
+/// `overflow: clip` edge is floored too.
 ///
-/// The painter builds the clip from the element's whole box, so where a page
-/// break cuts the box the clip runs on past the page. On such an edge the
-/// clip here is not inset by the padding and reaches the page box edge
-/// instead: the top edge of a fragment after the first, and the bottom edge
-/// of a fragment before the last. Within the page both clips are the same.
+/// Like the painter's clip, it is built from the box before a page break cut
+/// it, so on a page holding only part of the box it runs past the page.
 fn overflow_clip(
     node: &Node,
     cv: &ComputedValues,
     item: &PageFragmentItem,
     fragment: Fragment<'_>,
-    page_height: f32,
 ) -> PaintClip {
     let rect = fragment.paint_rect();
+    let top = rect.y - item.rect.y + item.box_y;
     let padding = node.unrounded_layout.padding;
     let right = rect.x + rect.width - padding.right;
-    let bottom = rect.y + rect.height - padding.bottom;
+    let bottom = top + item.box_height - padding.bottom;
     let x0 = (rect.x + padding.left).floor();
-    let y0 = if item.fragment_index > 0 {
-        0.0
-    } else {
-        (rect.y + padding.top).floor()
-    };
+    let y0 = (top + padding.top).floor();
     let x1 = if matches!(cv.overflow.x, OverflowValue::Clip) {
         right.floor()
     } else {
         right
     };
-    let y1 = if item.fragment_index.saturating_add(1) < item.fragment_count {
-        page_height
-    } else if matches!(cv.overflow.y, OverflowValue::Clip) {
+    let y1 = if matches!(cv.overflow.y, OverflowValue::Clip) {
         bottom.floor()
     } else {
         bottom
