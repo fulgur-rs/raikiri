@@ -1086,6 +1086,10 @@ pub(crate) fn project_slices(
     }
     nodes.sort_by_key(|node| node.node_id);
 
+    // Content the painter moves right by the body's left margin is placed
+    // there in paint space too.
+    let body_margin = super::find_body(document)
+        .map(|body| (body, super::body_paint_margin_left(document, cascade, body)));
     for source in nodes {
         let kind = match source.node_kind {
             NodeKind::Text => PageFragmentKind::Text,
@@ -1138,6 +1142,9 @@ pub(crate) fn project_slices(
             }
         }
         let fragment_count = placements.len() as u32;
+        let paint_offset_x = body_margin.map_or(0.0, |(body, margin)| {
+            super::body_paint_shift(document, cascade, body, margin, source.node_id.0 as usize)
+        });
         for (fragment_index, (page_slot, y, fragment_height, line_range)) in
             placements.into_iter().enumerate()
         {
@@ -1152,7 +1159,8 @@ pub(crate) fn project_slices(
                 fragment_count,
                 source.is_repeat,
             )
-            .with_page_index(page.page_index);
+            .with_page_index(page.page_index)
+            .with_paint_offset_x(paint_offset_x);
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(range),
                 None => item,

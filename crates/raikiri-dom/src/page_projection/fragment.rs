@@ -58,10 +58,14 @@ impl<'a> Fragment<'a> {
         PaintRect::new(r.x + self.origin.0, r.y + self.origin.1, r.width, r.height)
     }
 
-    /// Border box in paint space. Equal to [`Self::rect`] until paint-space
-    /// offsets are exposed.
+    /// Border box in paint space: [`Self::rect`] moved to where the painter
+    /// draws it. The body's in-flow content (its direct text and static,
+    /// relative and sticky children, with their descendants) moves right by
+    /// the body's left margin, which layout space does not include; the same
+    /// offset places the glyphs of `Page::text_runs`.
     pub fn paint_rect(&self) -> PaintRect {
-        self.rect()
+        let r = self.rect();
+        PaintRect::new(r.x + self.item.paint_offset_x, r.y, r.width, r.height)
     }
 
     /// Ordinal of this fragment among the node's fragments.
