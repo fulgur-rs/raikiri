@@ -56,6 +56,9 @@ static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 #[non_exhaustive]
 pub struct CascadeResult {
     generation: u64,
+    /// Index into [`Self::computed`] of the `@page` inheritance parent: the
+    /// root element, or the Document node when the tree has no element child.
+    root_element_index: usize,
     /// Winning custom-highlight background colors keyed by highlight name.
     pub custom_highlight_styles: HashMap<String, CssColor>,
     /// Per-node computed values (indexed by NodeId.0 as usize).
@@ -184,6 +187,43 @@ impl CascadeResult {
     pub fn generation(&self) -> u64 {
         self.generation
     }
+
+    /// Computed values of the root element, the inheritance parent of the
+    /// `@page` cascade.
+    ///
+    /// CSS Paged Media 3 §6 (<https://www.w3.org/TR/css-page-3/#page-properties>)
+    /// states that the page context inherits from the root element. This is
+    /// the first element child of the Document node; a tree without one falls
+    /// back to the Document node's own computed values. The element cascade
+    /// does not depend on the page query, so a caller holding the same
+    /// [`RuleTree`] and [`MediaContext`] can cascade another page query with
+    /// [`cascade_page_with_media_context`] and
+    /// `PageInheritance::FromRoot(result.root_element_computed())` instead of
+    /// rerunning the whole cascade.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Self::computed`] was shrunk after the cascade produced it.
+    pub fn root_element_computed(&self) -> &ComputedValues {
+        &self.computed[self.root_element_index]
+    }
+}
+
+/// Index of the node whose computed values the `@page` cascade inherits from.
+///
+/// `StyleDom::root_id()` is the Document node.  Page properties inherit from
+/// the first direct element child (the root element), not from that Document
+/// node's initial values.  `computed_len` guards against an element id outside
+/// the computed arena, in which case the Document node is used instead.
+fn page_inheritance_root_index<D: StyleDom>(dom: &D, computed_len: usize) -> usize {
+    dom.child_ids(dom.root_id())
+        .find(|id| {
+            dom.node(*id)
+                .is_some_and(|node| node.kind() == StyleNodeKind::Element)
+        })
+        .map(|id| id.0 as usize)
+        .filter(|index| *index < computed_len)
+        .unwrap_or(dom.root_id().0 as usize)
 }
 
 /// Produce per-node ComputedValues from the DOM and RuleTree.
@@ -296,25 +336,17 @@ fn cascade_from_candidates<D: StyleDom>(
         &mut pseudo,
     );
 
-    // `StyleDom::root_id()` is the Document node.  Page properties inherit
-    // from the first direct element child (the root element), not from that
-    // Document node's initial values.
-    let root_element_id = dom.child_ids(dom.root_id()).find(|id| {
-        dom.node(*id)
-            .is_some_and(|node| node.kind() == StyleNodeKind::Element)
-    });
-    let root_computed = root_element_id
-        .and_then(|id| computed.get(id.0 as usize))
-        .unwrap_or(&computed[dom.root_id().0 as usize]);
+    let root_element_index = page_inheritance_root_index(dom, computed.len());
     let page = cascade_page_with_media_context(
         rule_tree,
         page_query,
-        PageInheritance::FromRoot(root_computed),
+        PageInheritance::FromRoot(&computed[root_element_index]),
         media_context,
     );
 
     Ok(CascadeResult {
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
+        root_element_index,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
         computed,
         opacity_specified,

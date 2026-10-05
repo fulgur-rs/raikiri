@@ -9,7 +9,7 @@ use std::time::Instant;
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use raikiri_dom::FontFaceLoader;
 use raikiri_style::{
-    CascadeResult,
+    ComputedValues, PageCascadeResult,
     property::{BackgroundImage, DisplayValue, PropertyKey, PropertyValue, Visibility},
 };
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
@@ -805,16 +805,43 @@ impl<'a> RenderResources<'a> {
         }
     }
 
+    /// Preload the element and page-context background images of one full
+    /// cascade, in that order.
+    #[cfg(test)]
     pub(crate) fn preload_background_images(
         &self,
-        cascade: &CascadeResult,
+        cascade: &raikiri_style::CascadeResult,
         warnings: &SharedRenderWarnings,
         seen: &mut std::collections::HashSet<Url>,
         attempts: &mut usize,
         signal: Option<&AbortSignal>,
     ) {
-        let mut raw_urls: Vec<&str> = cascade
-            .computed
+        self.preload_element_background_images(&cascade.computed, warnings, seen, attempts, signal);
+        self.preload_page_context_background_images(
+            &cascade.page,
+            warnings,
+            seen,
+            attempts,
+            signal,
+        );
+    }
+
+    /// Preload the CSS background images of rendered elements.
+    ///
+    /// Element computed values do not depend on the page query, so a paged
+    /// caller scans them once and then calls
+    /// [`Self::preload_page_context_background_images`] per page. `seen` and
+    /// `attempts` are shared across those calls so deduplication and the
+    /// request limit span the whole document.
+    pub(crate) fn preload_element_background_images(
+        &self,
+        computed: &[ComputedValues],
+        warnings: &SharedRenderWarnings,
+        seen: &mut std::collections::HashSet<Url>,
+        attempts: &mut usize,
+        signal: Option<&AbortSignal>,
+    ) {
+        let raw_urls = computed
             .iter()
             .filter(|computed| {
                 !matches!(
@@ -826,16 +853,27 @@ impl<'a> RenderResources<'a> {
             .filter_map(|computed| match &computed.background_image {
                 BackgroundImage::Url(raw_url) => Some(raw_url.as_str()),
                 _ => None,
-            })
-            .collect();
-        if let Some(PropertyValue::BackgroundImage(BackgroundImage::Url(raw_url))) = cascade
-            .page
-            .declarations()
-            .get(&PropertyKey::BackgroundImage)
+            });
+        self.preload_background_urls(raw_urls, warnings, seen, attempts, signal);
+    }
+
+    /// Preload the page-context and page-margin-box background images of one
+    /// page.
+    pub(crate) fn preload_page_context_background_images(
+        &self,
+        page: &PageCascadeResult,
+        warnings: &SharedRenderWarnings,
+        seen: &mut std::collections::HashSet<Url>,
+        attempts: &mut usize,
+        signal: Option<&AbortSignal>,
+    ) {
+        let mut raw_urls: Vec<&str> = Vec::new();
+        if let Some(PropertyValue::BackgroundImage(BackgroundImage::Url(raw_url))) =
+            page.declarations().get(&PropertyKey::BackgroundImage)
         {
             raw_urls.push(raw_url);
         }
-        let margin_box_rules = cascade.page.margin_boxes();
+        let margin_box_rules = page.margin_boxes();
         let mut seen_slots = Vec::new();
         for rule in margin_box_rules {
             if seen_slots.contains(&rule.slot) {
@@ -854,7 +892,17 @@ impl<'a> RenderResources<'a> {
                 raw_urls.push(raw_url);
             }
         }
+        self.preload_background_urls(raw_urls, warnings, seen, attempts, signal);
+    }
 
+    fn preload_background_urls<'u>(
+        &self,
+        raw_urls: impl IntoIterator<Item = &'u str>,
+        warnings: &SharedRenderWarnings,
+        seen: &mut std::collections::HashSet<Url>,
+        attempts: &mut usize,
+        signal: Option<&AbortSignal>,
+    ) {
         for raw_url in raw_urls {
             if signal.is_some_and(|signal| signal.is_aborted()) {
                 break;

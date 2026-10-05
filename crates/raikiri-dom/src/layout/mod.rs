@@ -96,7 +96,8 @@ pub use ifc::style::relative_offset;
 pub use ifc::text_lines::{IfcTextLine, IfcTextLines};
 pub use page::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
-    PageMargins, first_page_name, page_content_insets, page_margins, resolve_initial_page_context,
+    PageMargins, first_page_name, page_content_insets, page_content_insets_for_page, page_margins,
+    page_margins_for_page, resolve_initial_page_context,
 };
 pub use page_pipeline::{
     PageLayoutControl, PageSlice, layout_pages, layout_pages_with_page_geometry,

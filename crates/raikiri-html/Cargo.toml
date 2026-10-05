@@ -33,3 +33,7 @@ workspace = true
 [[bench]]
 name = "parse"
 harness = false
+
+[[bench]]
+name = "multi_page_layout"
+harness = false
