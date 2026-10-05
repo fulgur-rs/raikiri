@@ -549,6 +549,7 @@ fn serialize_font_shorthand(computed: &ComputedValues) -> Option<String> {
         || computed.font_variant_numeric != crate::property::FontVariantNumeric::initial()
         || computed.font_variant_east_asian != crate::property::FontVariantEastAsian::initial()
         || computed.font_variation_settings != crate::property::FontVariationSettings::Normal
+        || computed.font_feature_settings != crate::property::FontFeatureSettings::Normal
     {
         return None;
     }

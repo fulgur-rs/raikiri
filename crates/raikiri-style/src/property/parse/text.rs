@@ -2399,7 +2399,8 @@ pub enum FontShorthandSize {
 /// [`PropertyValue::FontOpticalSizing`], [`PropertyValue::FontVariantEastAsian`],
 /// [`PropertyValue::FontVariantEmoji`], [`PropertyValue::FontVariantLigatures`],
 /// [`PropertyValue::FontVariantNumeric`], [`PropertyValue::FontVariantPosition`]),
-/// and [`PropertyValue::FontVariationSettings`] (`normal` reset), for 15 longhands in total.
+/// [`PropertyValue::FontVariationSettings`] and
+/// [`PropertyValue::FontFeatureSettings`] (`normal` resets), for 16 longhands in total.
 /// This follows the margin/padding/border/outline shorthand precedent:
 /// "parse-time expansion, never reaches cascade" (see that function's documentation).
 ///

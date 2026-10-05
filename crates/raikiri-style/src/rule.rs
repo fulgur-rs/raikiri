@@ -12,8 +12,8 @@ use crate::RaikiriSelectorImpl;
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::property::{
     BackgroundShorthand, Border, BorderColor, BorderStyle, CustomProperty, DeferredValue, FlexFlow,
-    FlexShorthand, FontKerning, FontLanguageOverride, FontOpticalSizing, FontShorthand,
-    FontShorthandSize, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
+    FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
+    FontShorthand, FontShorthandSize, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
     FontVariantNumeric, FontVariantPosition, FontVariationSettings, GapShorthand,
     GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand,
     PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd,
@@ -642,6 +642,7 @@ fn expand_deferred(
             PropertyKey::FontVariantNumeric,
             PropertyKey::FontVariantPosition,
             PropertyKey::FontVariationSettings,
+            PropertyKey::FontFeatureSettings,
         ],
         PropertyKey::Flex => &[
             PropertyKey::FlexGrow,
@@ -1086,8 +1087,8 @@ pub(crate) fn expand_outline(outline: Outline, mut push: impl FnMut(PropertyValu
     push(PropertyValue::OutlineColor(outline.color));
 }
 
-/// Cold helper expanding the `font` shorthand into 15 longhands (six grammar
-/// values plus nine reset-only subproperties; see the [`FontShorthand`] docs).
+/// Cold helper expanding the `font` shorthand into 16 longhands (six grammar
+/// values plus ten reset-only subproperties; see the [`FontShorthand`] docs).
 /// The shorthand parser fills omitted grammar components with spec initial
 /// values, so this function distributes the six fields and assigns initial
 /// values to reset-only subproperties under CSS Fonts 4 §2.1. `font-variant-caps`
@@ -1126,6 +1127,9 @@ pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(Proper
     ));
     push(PropertyValue::FontVariationSettings(
         FontVariationSettings::Normal,
+    ));
+    push(PropertyValue::FontFeatureSettings(
+        FontFeatureSettings::Normal,
     ));
 }
 
@@ -1469,6 +1473,7 @@ mod tests {
                     PropertyKey::FontVariantNumeric,
                     PropertyKey::FontVariantPosition,
                     PropertyKey::FontVariationSettings,
+                    PropertyKey::FontFeatureSettings,
                 ],
             ),
             (
@@ -2060,12 +2065,12 @@ mod tests {
     // ── font shorthand expansion (CSS Fonts 4 §2.1) ──
 
     #[test]
-    fn font_shorthand_expands_into_fifteen_longhand_declarations() {
+    fn font_shorthand_expands_into_sixteen_longhand_declarations() {
         // The first 6 declarations are grammar longhands. CSS Fonts 4 §2.1
-        // then requires the 9 modeled reset-only subproperties to use their
+        // then requires the 10 modeled reset-only subproperties to use their
         // initial values; `font-variant-caps` is already a grammar longhand.
         let decls = parse_block("font: italic small-caps bold 12px/1.5 serif;");
-        assert_eq!(decls.len(), 15);
+        assert_eq!(decls.len(), 16);
         assert_eq!(decls[0].value, PropertyValue::FontStyle(FontStyle::Italic));
         assert_eq!(
             decls[1].value,
@@ -2122,6 +2127,10 @@ mod tests {
             decls[14].value,
             PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
         );
+        assert_eq!(
+            decls[15].value,
+            PropertyValue::FontFeatureSettings(FontFeatureSettings::Normal)
+        );
     }
 
     #[test]
@@ -2129,7 +2138,7 @@ mod tests {
         // CSS Fonts 4 §2.1 fills omitted grammar components and resets modeled
         // reset-only subproperties to their initial values.
         let decls = parse_block("font: 12px serif;");
-        assert_eq!(decls.len(), 15);
+        assert_eq!(decls.len(), 16);
         assert_eq!(decls[0].value, PropertyValue::FontStyle(FontStyle::Normal));
         assert_eq!(
             decls[1].value,
@@ -2186,7 +2195,7 @@ mod tests {
         // `larger` keeps its `FontSizeRelative` carrier (same `PropertyKey`
         // as `FontSize`, so cascade still sees a single slot).
         let decls = parse_block("font: italic larger serif;");
-        assert_eq!(decls.len(), 15);
+        assert_eq!(decls.len(), 16);
         assert_eq!(
             decls[3].value,
             PropertyValue::FontSizeRelative(RelativeFontSize::Larger)
@@ -2202,7 +2211,7 @@ mod tests {
         // CSS Cascading 4 §3: a shorthand's `!important` is copied to all longhands,
         // as in the outline / overflow important extensions.
         let decls = parse_block("font: italic 12px serif !important;");
-        assert_eq!(decls.len(), 15);
+        assert_eq!(decls.len(), 16);
         for d in &decls {
             assert!(d.important, "important must propagate to every longhand");
         }

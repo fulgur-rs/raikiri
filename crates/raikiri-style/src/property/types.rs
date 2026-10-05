@@ -9605,11 +9605,12 @@ pub enum PropertyValue {
     /// System-font keywords, non-`normal` `font-stretch`, and `font-variant`
     /// values outside CSS2 are out of scope (see Scope carving in
     /// [`FontShorthand`]). [`crate::rule::expand_shorthand_into`] expands it
-    /// into six grammar longhands and nine modeled reset-only subproperties:
+    /// into six grammar longhands and ten modeled reset-only subproperties:
     /// `font-kerning` / `font-language-override` / `font-optical-sizing` /
     /// `font-variant-east-asian` / `font-variant-emoji` /
     /// `font-variant-ligatures` / `font-variant-numeric` /
-    /// `font-variant-position` / `font-variation-settings`.
+    /// `font-variant-position` / `font-variation-settings` /
+    /// `font-feature-settings`.
     /// Appended because shorthands do not reach the cascade stage (see
     /// [`crate::rule::expand_shorthand_into`]), so discriminant order does not
     /// matter. Avoiding shifts of existing variants takes priority (see the

@@ -1746,9 +1746,36 @@ mod tests {
     }
 
     #[test]
+    fn var_in_font_shorthand_resets_font_feature_settings() {
+        use crate::property::FontFeatureSettings;
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "p", Some("font-feature-settings: \"sinf\""));
+        let child = doc.push_element(parent, "div", Some("--f: 20px serif; font: var(--f)"));
+        let later = doc.push_element(
+            parent,
+            "em",
+            Some("--f: 20px serif; font: var(--f); font-feature-settings: \"smcp\""),
+        );
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_ne!(
+            result.computed[parent].font_feature_settings,
+            FontFeatureSettings::Normal
+        );
+        assert_eq!(
+            result.computed[child].font_feature_settings,
+            FontFeatureSettings::Normal
+        );
+        assert_ne!(
+            result.computed[later].font_feature_settings,
+            FontFeatureSettings::Normal
+        );
+    }
+
+    #[test]
     fn var_in_font_shorthand_projects_each_deferred_longhand() {
         // Sibling of `var_in_background_shorthand_projects_each_deferred_longhand`:
-        // sibling — `font: var(--f)` expands 6 grammar longhands plus 9
+        // sibling — `font: var(--f)` expands 6 grammar longhands plus 10
         // reset-only subproperties after substitution.
         use crate::property::{
             FontKerning, FontLanguageOverride, FontOpticalSizing, FontStyle, FontVariantCaps,
@@ -2107,6 +2134,7 @@ mod tests {
                     PropertyKey::FontVariantNumeric,
                     PropertyKey::FontVariantPosition,
                     PropertyKey::FontVariationSettings,
+                    PropertyKey::FontFeatureSettings,
                 ],
             ),
             (
@@ -2128,6 +2156,7 @@ mod tests {
                     PropertyKey::FontVariantNumeric,
                     PropertyKey::FontVariantPosition,
                     PropertyKey::FontVariationSettings,
+                    PropertyKey::FontFeatureSettings,
                 ],
             ),
         ];
