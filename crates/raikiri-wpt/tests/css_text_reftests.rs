@@ -208,6 +208,45 @@ fn text_spacing_trim_declared_variants_unpinned_exact_passes() {
     );
 }
 
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_spacing_trim_quote_variants_exact_pass() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let relative = "css/css-text/text-spacing-trim/text-spacing-trim-quote-001.html";
+    let test = root.join(relative);
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+        .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+    assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
+
+    let html =
+        std::fs::read_to_string(&test).unwrap_or_else(|error| panic!("read {relative}: {error}"));
+    let queries = declared_variant_queries(&html);
+    assert_eq!(queries.len(), 9, "update the quote-001 variant inventory");
+
+    let mut failures = Vec::new();
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    for query in queries {
+        match run_pair_with_variant(&pairs[0], config, &query) {
+            Ok(result) if matches!(&result.outcome, TestOutcome::Pass) => {
+                println!("PASS {relative} {query}");
+            }
+            Ok(result) => failures.push(format!(
+                "{relative} {query}: outcome={:?}, mismatches={}",
+                result.outcome, result.mismatched_pixels
+            )),
+            Err(error) => failures.push(format!("{relative} {query}: {error}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "failed exact comparisons:\n{}",
+        failures.join("\n")
+    );
+}
+
 fn declared_variant_queries(html: &str) -> Vec<String> {
     let parsed = raikiri_html::parse(
         html.as_bytes(),
