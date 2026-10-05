@@ -349,6 +349,67 @@ fn a_vertical_root_is_a_root_laid_out_horizontally() {
 }
 
 #[test]
+fn a_vertical_block_only_container_is_an_ifc_root() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let mut fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
+            for text in ["aa", "bb", "cc"] {
+                let child = doc.append_element(
+                    Some(root),
+                    "div",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+                doc.append_text(child, text);
+            }
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{mode}");
+        assert!(fixture.doc.nodes[fixture.root].ifc.is_some(), "{mode}");
+    }
+}
+
+#[test]
+fn empty_vertical_block_children_do_not_make_an_ifc_root() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let mut fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
+            for _ in 0..2 {
+                doc.append_element(
+                    Some(root),
+                    "div",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+            }
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(!is_root(&fixture, fixture.root), "{mode}");
+    }
+}
+
+#[test]
+fn vertical_multicol_block_children_stay_on_the_multicol_path() {
+    for columns in ["column-count:3", "column-width:100px"] {
+        let mut fixture = block_fixture(
+            &format!("writing-mode:vertical-rl;{columns}"),
+            |doc, root| {
+                let child = doc.append_element(
+                    Some(root),
+                    "div",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+                doc.append_text(child, "aa");
+            },
+        );
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(!is_root(&fixture, fixture.root), "{columns}");
+    }
+}
+
+#[test]
 fn assignment_drops_the_layout_cache_only_when_the_document_has_fonts() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");

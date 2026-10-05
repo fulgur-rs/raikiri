@@ -7,6 +7,7 @@ pub(crate) mod ch;
 pub(crate) mod error;
 pub(crate) mod flow;
 pub(crate) mod font;
+pub(crate) mod geometry;
 pub(crate) mod inline_boxes;
 pub(crate) mod parent;
 pub(crate) mod projection;

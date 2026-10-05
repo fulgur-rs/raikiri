@@ -2,6 +2,64 @@ use super::*;
 use crate::layout::test_support::with_ahem;
 
 #[cfg(test)]
+mod ifc_geometry_tests {
+    use super::*;
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts, page_box_800x600};
+
+    #[test]
+    fn a_laid_out_ifc_root_exposes_its_writing_mode_and_physical_content_size() {
+        let css = "box-sizing:border-box;width:100px;height:40px;writing-mode:vertical-rl;padding:5px 4px 3px 6px;border:1px solid";
+        let (mut doc, cascade, root) = ahem_paragraph("aa", css);
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+
+        assert_eq!(
+            doc.nodes[root].ifc_writing_mode(),
+            Some(shodo::geometry::WritingMode::VerticalRl)
+        );
+        assert_eq!(
+            doc.nodes[root].ifc_physical_content_size(),
+            Some(shodo::geometry::PhysicalSize {
+                width: 88.0,
+                height: 30.0,
+            })
+        );
+        assert_eq!(doc.nodes[root].ifc_size(), Some((30.0, 10.0)));
+    }
+
+    #[test]
+    fn ifc_inline_boxes_are_reported_in_vertical_physical_coordinates() {
+        let css = "box-sizing:border-box;width:100px;height:40px;writing-mode:vertical-rl";
+        let (mut doc, _, root) = ahem_paragraph("", css);
+        let inline = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;padding-left:3px;padding-right:3px"),
+        );
+        doc.append_text(inline, "bb");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+
+        let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].node, inline);
+        assert_eq!(
+            (pieces[0].border_box.x, pieces[0].border_box.y),
+            (90.0, 0.0)
+        );
+        assert_eq!(
+            (pieces[0].border_box.width, pieces[0].border_box.height),
+            (16.0, 20.0)
+        );
+    }
+}
+
+#[cfg(test)]
 mod flags_tests {
     use super::*;
 

@@ -247,6 +247,61 @@ fn text_spacing_trim_quote_variants_exact_pass() {
     );
 }
 
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_spacing_trim_vertical_variants_exact_pass() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let variants = [
+        (
+            "css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html",
+            "?class=vrl&feature=vhal",
+        ),
+        (
+            "css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html",
+            "?class=vrl&feature=vpal",
+        ),
+        (
+            "css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html",
+            "?class=halt,vrl",
+        ),
+        (
+            "css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html",
+            "?class=chws,vrl",
+        ),
+    ];
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let mut failures = Vec::new();
+    for (relative, query) in variants {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
+        let result = run_pair_with_variant(&pairs[0], config, query)
+            .unwrap_or_else(|error| panic!("run {relative} {query}: {error}"));
+        if matches!(&result.outcome, TestOutcome::Pass) {
+            println!("PASS {relative} {query}");
+        } else {
+            println!(
+                "FAIL {relative} {query}: outcome={:?}, mismatches={}",
+                result.outcome, result.mismatched_pixels
+            );
+            failures.push(format!(
+                "{relative} {query}: outcome={:?}, mismatches={}",
+                result.outcome, result.mismatched_pixels
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "failed exact comparisons:\n{}",
+        failures.join("\n")
+    );
+}
+
 fn declared_variant_queries(html: &str) -> Vec<String> {
     let parsed = raikiri_html::parse(
         html.as_bytes(),

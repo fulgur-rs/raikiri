@@ -13,7 +13,8 @@ use shodo::{
 use taffy::util::ResolveOrZero;
 use taffy::{
     AvailableSpace, BlockContext, BlockFormattingContext, Clear, CollapsibleMarginSet,
-    FloatDirection, LayoutInput, LayoutPartialTree, Line, RequestedAxis, RunMode, Size, SizingMode,
+    FloatDirection, LayoutBlockContainer, LayoutInput, LayoutPartialTree, Line, RequestedAxis,
+    RunMode, Size, SizingMode,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -127,7 +128,7 @@ pub(crate) fn layout_with_boxes_in(
         None => {
             let mut bfc = BlockFormattingContext::new();
             let mut ctx = bfc.root_block_context();
-            ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
+            ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
             run_boxes(tree, idx, &root, geometry, &mut ctx, perform, true, false)
         }
     }
@@ -217,7 +218,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         };
         let mut bfc = BlockFormattingContext::new();
         let mut ctx = bfc.root_block_context();
-        ctx.set_width(geometry.width + geometry.edges.0 + geometry.edges.1);
+        ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
         let carried_placements = if perform {
             carried_float_placements(
                 tree,
@@ -462,6 +463,7 @@ fn run_boxes_segment(
         width,
         edges,
         top_edge,
+        ..
     } = geometry;
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
@@ -509,14 +511,21 @@ fn run_boxes_segment(
         // Where the next line starts if it is a line: below the margins
         // still pending.
         let line_y = y + pending.resolve();
-        let base = line_space(ctx, edges.0, top_edge, width, line_y, assumed_height);
+        let base = if root.writing_mode == WritingMode::HorizontalTb {
+            line_space(ctx, edges.0, top_edge, width, line_y, assumed_height)
+        } else {
+            LineSpace {
+                inline_start: 0.0,
+                inline_size: width,
+            }
+        };
         let space = shorten(base, &tentative);
-        let right_inset = (width - space.start - space.width).max(0.0);
+        let right_inset = (width - space.inline_start - space.inline_size).max(0.0);
         let mut constraint = LineConstraint::from_physical_insets(
             width,
-            space.start,
+            space.inline_start,
             right_inset,
-            WritingMode::HorizontalTb,
+            root.writing_mode,
             if root.rtl {
                 Direction::Rtl
             } else {
@@ -552,8 +561,9 @@ fn run_boxes_segment(
                 // `space` already has the tentative floats taken off. A float
                 // with no other float beside it is placed where it is even
                 // when it is wider than the line.
-                let narrowed = !tentative.is_empty() || space.start != 0.0 || space.width < width;
-                let fits = float.margin_box.width <= space.width || !narrowed;
+                let narrowed =
+                    !tentative.is_empty() || space.inline_start != 0.0 || space.inline_size < width;
+                let fits = float.margin_box.width <= space.inline_size || !narrowed;
                 // A float that only fits below an earlier float may be
                 // moved into the next fragmentainer. Do not commit its
                 // intermediate position past this fragmentainer's bottom.
@@ -604,10 +614,15 @@ fn run_boxes_segment(
                 // The line may span more of an outer float than the height it
                 // was assumed to have; lay it out again if the space for its
                 // real height differs.
-                let real = shorten(
-                    line_space(ctx, edges.0, top_edge, width, line_y, height),
-                    &tentative,
-                );
+                let real_base = if root.writing_mode == WritingMode::HorizontalTb {
+                    line_space(ctx, edges.0, top_edge, width, line_y, height)
+                } else {
+                    LineSpace {
+                        inline_start: 0.0,
+                        inline_size: width,
+                    }
+                };
+                let real = shorten(real_base, &tentative);
                 if retries < MAX_SPACE_RETRIES && real != space {
                     assumed_height = height;
                     retries += 1;
@@ -627,9 +642,9 @@ fn run_boxes_segment(
                 } else {
                     0.0
                 };
-                let narrowed = space.start != 0.0 || space.width < width;
+                let narrowed = space.inline_start != 0.0 || space.inline_size < width;
                 let overflows = narrowed
-                    && line.inline_size() + indent > space.width + 0.01
+                    && line.inline_size() + indent > space.inline_size + 0.01
                     && moves < MAX_LINE_MOVES;
                 if overflows {
                     for float in tentative.drain(..) {
@@ -924,13 +939,13 @@ fn shorten(base: LineSpace, tentative: &[TentativeFloat]) -> LineSpace {
     for float in tentative {
         match float.direction {
             FloatDirection::Left => {
-                space.start += float.margin_box.width;
-                space.width -= float.margin_box.width;
+                space.inline_start += float.margin_box.width;
+                space.inline_size -= float.margin_box.width;
             }
-            FloatDirection::Right => space.width -= float.margin_box.width,
+            FloatDirection::Right => space.inline_size -= float.margin_box.width,
         }
     }
-    space.width = space.width.max(0.0);
+    space.inline_size = space.inline_size.max(0.0);
     space
 }
 
@@ -1088,6 +1103,9 @@ fn layout_block_child(
     geometry: FlowGeometry,
     perform: bool,
 ) -> BlockChild {
+    if geometry.axes.writing_mode() != WritingMode::HorizontalTb {
+        return layout_vertical_block_child(tree, node, y, pending, geometry, perform);
+    }
     if !in_the_roots_formatting_context(tree, node) {
         return layout_formatting_context_child(tree, ctx, node, y, pending, geometry, perform);
     }
@@ -1193,6 +1211,108 @@ fn layout_block_child(
         next_y: after.0,
         pending: after.1,
         floats_bottom: floats_bottom + (guess - top),
+    }
+}
+
+/// Lay out an ordinary block child along a vertical root's block axis.
+fn layout_vertical_block_child(
+    tree: &mut Document,
+    node: usize,
+    y: f32,
+    pending: CollapsibleMarginSet,
+    geometry: FlowGeometry,
+    perform: bool,
+) -> BlockChild {
+    let basis = geometry.axes.block_extent(geometry.content_size);
+    let inline_basis = geometry.axes.inline_extent(geometry.content_size);
+    let mut margin = resolved_margins(tree, node, inline_basis);
+    let style_margin = tree.nodes[node].style.margin;
+    let vertical_rl = geometry.axes.writing_mode() == WritingMode::VerticalRl;
+    let (block_start_margin, block_end_margin) = if vertical_rl {
+        (margin.right, margin.left)
+    } else {
+        (margin.left, margin.right)
+    };
+    let block_start = y + pending.collapse_with_margin(block_start_margin).resolve();
+    let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis)
+        .map(|width| clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width));
+    let height = used_block_height(tree, node, inline_basis)
+        .unwrap_or_else(|| (inline_basis - margin.top - margin.bottom).max(0.0));
+    let height = clamp_block_height(tree, node, inline_basis, height);
+    let inputs = LayoutInput {
+        run_mode: if perform {
+            RunMode::PerformLayout
+        } else {
+            RunMode::ComputeSize
+        },
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width,
+            height: Some(height),
+        },
+        known_dimensions_are_definite: Size {
+            width: width.is_some(),
+            height: true,
+        },
+        parent_size: Size {
+            width: Some(geometry.content_size.width),
+            height: Some(inline_basis),
+        },
+        available_space: Size {
+            width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: AvailableSpace::Definite(height),
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let node_id = taffy::NodeId::from(node);
+    let output = if in_the_roots_formatting_context(tree, node) {
+        tree.compute_block_child_layout(node_id, inputs, None)
+    } else {
+        tree.compute_child_layout(node_id, inputs)
+    };
+    let inline_free = inline_basis - output.size.height - margin.top - margin.bottom;
+    match (style_margin.top.is_auto(), style_margin.bottom.is_auto()) {
+        (true, true) if inline_free >= 0.0 => {
+            margin.top = inline_free / 2.0;
+            margin.bottom = inline_free / 2.0;
+        }
+        // CSS 2.1 10.3.3 treats auto margins as zero when the non-auto
+        // dimensions already overflow the containing block.
+        (true, true) => {
+            margin.top = 0.0;
+            margin.bottom = 0.0;
+        }
+        (true, false) => margin.top = inline_free.max(0.0),
+        (false, true) => margin.bottom = inline_free.max(0.0),
+        (false, false) => {}
+    }
+    let inline_start = match geometry.axes.direction() {
+        Direction::Ltr => margin.top,
+        Direction::Rtl => margin.bottom,
+    };
+    let physical = geometry.axes.rect(
+        geometry.content_size,
+        shodo::geometry::LogicalRect {
+            inline_start,
+            block_start,
+            inline_size: output.size.height,
+            block_size: output.size.width,
+        },
+    );
+    if perform {
+        let (dx, dy) = relative_inset(tree, node, basis);
+        let location = taffy::Point {
+            x: geometry.insets.left + physical.x + dx,
+            y: geometry.insets.top + physical.y + dy,
+        };
+        commit_child_layout(tree, node, &output, location, inline_basis);
+    }
+    BlockChild {
+        top: block_start,
+        next_y: block_start + output.size.width,
+        pending: CollapsibleMarginSet::from_margin(block_end_margin),
+        floats_bottom: f32::NEG_INFINITY,
     }
 }
 
@@ -1335,33 +1455,80 @@ fn layout_formatting_context_child(
 /// the root's content width the way taffy's block algorithm resolves the size
 /// of an in-flow item; `None` for `auto`.
 fn used_block_width(tree: &Document, node: usize, basis: f32) -> Option<f32> {
+    used_block_width_with_edge_basis(tree, node, basis, basis)
+}
+
+fn used_block_width_with_edge_basis(
+    tree: &Document,
+    node: usize,
+    dimension_basis: f32,
+    edge_basis: f32,
+) -> Option<f32> {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
     style
         .size
         .width
-        .maybe_resolve(Some(basis), resolve_calc)
-        .map(|width| width + box_sizing_adjustment(tree, node, basis))
+        .maybe_resolve(Some(dimension_basis), resolve_calc)
+        .map(|width| width + box_sizing_adjustment(tree, node, edge_basis))
 }
 
 /// `width` clamped by the block child's own `min-width` and `max-width`,
 /// resolved like [`used_block_width`].
 fn clamp_block_width(tree: &Document, node: usize, basis: f32, width: f32) -> f32 {
+    clamp_block_width_with_edge_basis(tree, node, basis, basis, width)
+}
+
+fn clamp_block_width_with_edge_basis(
+    tree: &Document,
+    node: usize,
+    dimension_basis: f32,
+    edge_basis: f32,
+    width: f32,
+) -> f32 {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
-    let adjustment = box_sizing_adjustment(tree, node, basis);
+    let adjustment = box_sizing_adjustment(tree, node, edge_basis);
     let min = style
         .min_size
         .width
-        .maybe_resolve(Some(basis), resolve_calc)
+        .maybe_resolve(Some(dimension_basis), resolve_calc)
         .map(|min| min + adjustment);
     let max = style
         .max_size
         .width
-        .maybe_resolve(Some(basis), resolve_calc)
+        .maybe_resolve(Some(dimension_basis), resolve_calc)
         .map(|max| max + adjustment);
     let width = max.map_or(width, |max| width.min(max));
     min.map_or(width, |min| width.max(min))
+}
+
+fn used_block_height(tree: &Document, node: usize, basis: f32) -> Option<f32> {
+    use taffy::util::MaybeResolve;
+    let style = &tree.nodes[node].style;
+    style
+        .size
+        .height
+        .maybe_resolve(Some(basis), resolve_calc)
+        .map(|height| height + box_sizing_height_adjustment(tree, node, basis))
+}
+
+fn clamp_block_height(tree: &Document, node: usize, basis: f32, height: f32) -> f32 {
+    use taffy::util::MaybeResolve;
+    let style = &tree.nodes[node].style;
+    let adjustment = box_sizing_height_adjustment(tree, node, basis);
+    let min = style
+        .min_size
+        .height
+        .maybe_resolve(Some(basis), resolve_calc)
+        .map(|min| min + adjustment);
+    let max = style
+        .max_size
+        .height
+        .maybe_resolve(Some(basis), resolve_calc)
+        .map(|max| max + adjustment);
+    let height = max.map_or(height, |max| height.min(max));
+    min.map_or(height, |min| height.max(min))
 }
 
 /// What a `content-box` size needs added to become a border-box size.
@@ -1373,6 +1540,16 @@ fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
     let padding = style.padding.resolve_or_zero(Some(basis), resolve_calc);
     let border = style.border.resolve_or_zero(Some(basis), resolve_calc);
     padding.left + padding.right + border.left + border.right
+}
+
+fn box_sizing_height_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
+    let style = &tree.nodes[node].style;
+    if style.box_sizing != taffy::BoxSizing::ContentBox {
+        return 0.0;
+    }
+    let padding = style.padding.resolve_or_zero(Some(basis), resolve_calc);
+    let border = style.border.resolve_or_zero(Some(basis), resolve_calc);
+    padding.top + padding.bottom + border.top + border.bottom
 }
 
 /// Store the final layout of every atomic inline at its fragment in the
@@ -1485,9 +1662,9 @@ pub(crate) fn commit_float(
 /// Store the final layout of a child that the ifc root laid out itself.
 ///
 /// `location` is the border-box position relative to the ifc root's border
-/// box. `output` is what the child's layout returned. `basis` is what a
-/// percentage in the child's margin, padding and border resolves against: the
-/// root's content width.
+/// box. `output` is what the child's layout returned. `basis` is the root's
+/// content inline size, used to resolve the child's percentage margins,
+/// padding, and border.
 pub(crate) fn commit_child_layout(
     tree: &mut Document,
     node: usize,
@@ -1675,9 +1852,15 @@ impl BoxIntrinsics {
     };
 }
 
-/// Min- and max-content widths of the root's boxes, for the paragraph's
-/// intrinsic sizes. Each box is measured without changing its layout.
+/// Min- and max-content inline extents of the root's boxes, for the
+/// paragraph's intrinsic sizes. Each box is measured without changing layout.
 pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -> BoxIntrinsics {
+    let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
+        matches!(
+            root.writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        )
+    });
     let boxes = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -1718,8 +1901,11 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
             IfcBoxKind::OutOfFlow => {}
             IfcBoxKind::Block => {
                 let margin = resolved_margins(tree, b.node, basis);
-                let (min_content, max_content) =
-                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                let (min_content, max_content) = if vertical {
+                    content_heights(tree, b.node, basis, margin.top + margin.bottom)
+                } else {
+                    content_widths(tree, b.node, basis, margin.left + margin.right)
+                };
                 intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
                 intrinsics.blocks.1 = intrinsics.blocks.1.max(max_content);
             }
@@ -1741,35 +1927,65 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
 }
 
 /// Min- and max-content margin-box width of `node`, measured without changing
-/// its layout. taffy measures a child's contribution to a container's
-/// intrinsic width with `InherentSize` (compute/block.rs
-/// `determine_content_based_container_width`), so a child with a `width` of
-/// its own contributes that width.
+/// its layout.
 fn content_widths(tree: &mut Document, node: usize, basis: f32, margins_x: f32) -> (f32, f32) {
+    content_sizes_on_axis(tree, node, basis, margins_x, RequestedAxis::Horizontal)
+}
+
+fn content_heights(tree: &mut Document, node: usize, basis: f32, margins_y: f32) -> (f32, f32) {
+    content_sizes_on_axis(tree, node, basis, margins_y, RequestedAxis::Vertical)
+}
+
+fn content_sizes_on_axis(
+    tree: &mut Document,
+    node: usize,
+    basis: f32,
+    margins: f32,
+    axis: RequestedAxis,
+) -> (f32, f32) {
+    let vertical = axis == RequestedAxis::Vertical;
     let measure = |tree: &mut Document, available: AvailableSpace| {
         let output = tree.compute_child_layout(
             taffy::NodeId::from(node),
             LayoutInput {
                 run_mode: RunMode::ComputeSize,
                 sizing_mode: SizingMode::InherentSize,
-                axis: RequestedAxis::Horizontal,
+                axis,
                 known_dimensions: Size::NONE,
                 known_dimensions_are_definite: Size {
                     width: true,
                     height: true,
                 },
-                parent_size: Size {
-                    width: Some(basis),
-                    height: None,
+                parent_size: if vertical {
+                    Size {
+                        width: None,
+                        height: Some(basis),
+                    }
+                } else {
+                    Size {
+                        width: Some(basis),
+                        height: None,
+                    }
                 },
-                available_space: Size {
-                    width: available,
-                    height: AvailableSpace::MaxContent,
+                available_space: if vertical {
+                    Size {
+                        width: AvailableSpace::MaxContent,
+                        height: available,
+                    }
+                } else {
+                    Size {
+                        width: available,
+                        height: AvailableSpace::MaxContent,
+                    }
                 },
                 vertical_margins_are_collapsible: Line::TRUE,
             },
         );
-        output.size.width + margins_x
+        if vertical {
+            output.size.height + margins
+        } else {
+            output.size.width + margins
+        }
     };
     (
         measure(tree, AvailableSpace::MinContent),

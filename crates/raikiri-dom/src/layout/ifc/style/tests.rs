@@ -264,17 +264,46 @@ fn rtl_and_plaintext_bidi_set_the_paragraph_style() {
 }
 
 #[test]
-fn a_vertical_writing_mode_is_laid_out_as_horizontal() {
-    // Real vertical writing is not supported: the projection lays vertical
-    // text out horizontally, whatever the authored writing mode.
-    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+fn supported_vertical_writing_modes_reach_the_paragraph() {
+    for (mode, expected) in [
+        ("horizontal-tb", WritingMode::HorizontalTb),
+        ("vertical-rl", WritingMode::VerticalRl),
+        ("vertical-lr", WritingMode::VerticalLr),
+    ] {
         let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
             doc.append_text(root, "x");
         });
         let cv = &fixture.cascade.computed[fixture.root];
         let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
         let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph");
+        assert_eq!(paragraph.writing_mode, expected, "{mode}");
+    }
+}
+
+#[test]
+fn sideways_writing_modes_keep_cssom_values_with_horizontal_layout_fallback() {
+    use raikiri_style::property as p;
+
+    for (mode, computed) in [
+        ("sideways-rl", p::WritingMode::SidewaysRl),
+        ("sideways-lr", p::WritingMode::SidewaysLr),
+    ] {
+        let fixture = block_fixture(
+            &format!("writing-mode:{mode};padding-left:2px;padding-right:3px"),
+            |doc, root| {
+                doc.append_text(root, "x");
+            },
+        );
+        let cv = &fixture.cascade.computed[fixture.root];
+        assert_eq!(cv.cssom_writing_mode, computed, "{mode}");
+        let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
+        let paragraph = paragraph_style(cv, fixture.root, root).expect("layout fallback");
         assert_eq!(paragraph.writing_mode, WritingMode::HorizontalTb, "{mode}");
+        let edges = inline_edges(cv, fixture.root, &fonts()).expect("edge fallback");
+        assert_eq!(
+            (edges.padding.inline_start, edges.padding.inline_end),
+            (2.0, 3.0)
+        );
     }
 }
 
@@ -359,25 +388,71 @@ fn word_break_manual_and_every_spacing_trim_value_map() {
 }
 
 #[test]
-fn inline_edges_of_a_vertical_element_are_mapped_as_horizontal() {
-    // Vertical text is laid out horizontally, so its edges keep the
-    // horizontal-tb mapping: left is inline-start, top is block-start.
-    let fixture = block_fixture(
-        "writing-mode:vertical-rl;padding-top:3px;margin-left:1px",
-        |doc, root| {
-            doc.append_text(root, "x");
-        },
-    );
-    let edges = inline_edges(
-        &fixture.cascade.computed[fixture.root],
-        fixture.root,
-        &fonts(),
-    )
-    .expect("vertical");
-    assert_eq!(
-        (edges.padding.block_start, edges.margin.inline_start),
-        (3.0, 1.0)
-    );
+fn inline_edges_follow_vertical_writing_mode_and_direction() {
+    use shodo::node::Sides;
+
+    for (css, expected_margin, expected_padding, expected_border) in [
+        (
+            "writing-mode:vertical-rl;direction:ltr",
+            Sides {
+                inline_start: 1.0,
+                inline_end: 3.0,
+                block_start: 2.0,
+                block_end: 4.0,
+            },
+            Sides {
+                inline_start: 5.0,
+                inline_end: 7.0,
+                block_start: 6.0,
+                block_end: 8.0,
+            },
+            Sides {
+                inline_start: 9.0,
+                inline_end: 11.0,
+                block_start: 10.0,
+                block_end: 12.0,
+            },
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl",
+            Sides {
+                inline_start: 3.0,
+                inline_end: 1.0,
+                block_start: 4.0,
+                block_end: 2.0,
+            },
+            Sides {
+                inline_start: 7.0,
+                inline_end: 5.0,
+                block_start: 8.0,
+                block_end: 6.0,
+            },
+            Sides {
+                inline_start: 11.0,
+                inline_end: 9.0,
+                block_start: 12.0,
+                block_end: 10.0,
+            },
+        ),
+    ] {
+        let fixture = block_fixture(
+            &format!(
+                "{css};margin:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-style:solid;border-width:9px 10px 11px 12px"
+            ),
+            |doc, root| {
+                doc.append_text(root, "x");
+            },
+        );
+        let edges = inline_edges(
+            &fixture.cascade.computed[fixture.root],
+            fixture.root,
+            &fonts(),
+        )
+        .expect("vertical");
+        assert_eq!(edges.margin, expected_margin, "{css}");
+        assert_eq!(edges.padding, expected_padding, "{css}");
+        assert_eq!(edges.border, expected_border, "{css}");
+    }
 }
 
 #[test]

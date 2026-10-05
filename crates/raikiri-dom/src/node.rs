@@ -708,10 +708,15 @@ impl Node {
     pub fn ifc_inline_boxes(&self) -> Option<Vec<crate::layout::InlineBoxPiece>> {
         let root = self.ifc.as_ref()?;
         let lines = root.lines.as_ref()?;
+        let mut content_size = self.ifc_physical_content_size()?;
+        // Keep the existing line-local container for horizontal columns.
+        if root.writing_mode == shodo::geometry::WritingMode::HorizontalTb {
+            content_size.width = lines.width;
+        }
         let mut pieces = crate::layout::ifc::inline_boxes::inline_box_pieces(
             &lines.lines,
-            lines.width,
-            root.rtl,
+            root.writing_mode,
+            content_size,
         );
         // Lines moved by pagination carry their pieces with them.
         for piece in &mut pieces {
@@ -720,6 +725,35 @@ impl Node {
             piece.content_box.y += shift;
         }
         Some(pieces)
+    }
+
+    /// Writing mode used by this root's last performed IFC layout.
+    #[doc(hidden)]
+    pub fn ifc_writing_mode(&self) -> Option<shodo::geometry::WritingMode> {
+        let root = self.ifc.as_ref()?;
+        root.lines.as_ref()?;
+        Some(root.writing_mode)
+    }
+
+    /// Physical content-box size of this root's last performed IFC layout.
+    #[doc(hidden)]
+    pub fn ifc_physical_content_size(&self) -> Option<shodo::geometry::PhysicalSize> {
+        self.ifc.as_ref()?.lines.as_ref()?;
+        let layout = self.unrounded_layout;
+        Some(shodo::geometry::PhysicalSize {
+            width: (layout.size.width
+                - layout.border.left
+                - layout.border.right
+                - layout.padding.left
+                - layout.padding.right)
+                .max(0.0),
+            height: (layout.size.height
+                - layout.border.top
+                - layout.border.bottom
+                - layout.padding.top
+                - layout.padding.bottom)
+                .max(0.0),
+        })
     }
 
     /// Paint offsets of the relatively positioned inline elements of an ifc

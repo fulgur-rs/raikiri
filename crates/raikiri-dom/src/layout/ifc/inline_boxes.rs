@@ -1,7 +1,8 @@
 //! Boxes of the inline elements of a paragraph, from the fragments shodo
 //! reports for each line.
 
-use shodo::geometry::LogicalRect;
+use super::geometry::IfcAxes;
+use shodo::geometry::{LogicalRect, PhysicalSize, WritingMode};
 use shodo::{Fragment, Line};
 
 /// A physical rectangle in the paragraph's content box.
@@ -39,35 +40,41 @@ pub struct InlineBoxPiece {
     pub parent: Option<usize>,
 }
 
-/// A logical rectangle of a line as a physical one. `line_top` is the line's
-/// block offset in the paragraph; a right to left line grows from the right
-/// edge, so the inline axis is mirrored inside `content_width`.
-fn physical(rect: LogicalRect, line_top: f32, content_width: f32, rtl: bool) -> BoxRect {
-    let x = if rtl {
-        content_width - (rect.inline_start + rect.inline_size)
-    } else {
-        rect.inline_start
-    };
+/// Map a line-local logical rectangle into the root's physical content box.
+fn physical(
+    rect: LogicalRect,
+    line_top: f32,
+    axes: IfcAxes,
+    content_size: PhysicalSize,
+) -> BoxRect {
+    let physical = axes.rect(
+        content_size,
+        LogicalRect {
+            block_start: rect.block_start + line_top,
+            ..rect
+        },
+    );
     BoxRect {
-        x,
-        y: line_top + rect.block_start,
-        width: rect.inline_size,
-        height: rect.block_size,
+        x: physical.x,
+        y: physical.y,
+        width: physical.width,
+        height: physical.height,
     }
 }
 
 /// Pieces of every inline element on every line, in the order shodo reports
-/// them (an element before its descendants). `content_width` is the width the
-/// lines were broken at; right to left lines are mirrored inside it. shodo's
-/// inline-box fragments already exclude collapsible spaces hanging at a line
-/// end, while preserved spaces remain in their boxes as ink overflow.
+/// them (an element before its descendants). Each line's used direction
+/// controls inline progression inside `content_size`. shodo's inline-box
+/// fragments already exclude collapsible spaces hanging at a line end, while
+/// preserved spaces remain in their boxes as ink overflow.
 pub(crate) fn inline_box_pieces(
     lines: &[Line],
-    content_width: f32,
-    rtl: bool,
+    writing_mode: WritingMode,
+    content_size: PhysicalSize,
 ) -> Vec<InlineBoxPiece> {
     let mut pieces = Vec::new();
     for (line_index, line) in lines.iter().enumerate() {
+        let axes = IfcAxes::new(writing_mode, line.used_direction());
         let fragments: Vec<Fragment> = line.fragments().collect();
         for fragment in &fragments {
             let Fragment::InlineBox(piece) = fragment else {
@@ -80,8 +87,8 @@ pub(crate) fn inline_box_pieces(
             pieces.push(InlineBoxPiece {
                 node: piece.node.0 as usize,
                 line: line_index,
-                border_box: physical(piece.rect, line.block_offset(), content_width, rtl),
-                content_box: physical(piece.content_rect, line.block_offset(), content_width, rtl),
+                border_box: physical(piece.rect, line.block_offset(), axes, content_size),
+                content_box: physical(piece.content_rect, line.block_offset(), axes, content_size),
                 has_start_edge: piece.has_start_edge,
                 has_end_edge: piece.has_end_edge,
                 parent,

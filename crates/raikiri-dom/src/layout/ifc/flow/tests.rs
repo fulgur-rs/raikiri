@@ -53,6 +53,18 @@ fn break_lines_sums_the_line_advances() {
 }
 
 #[test]
+fn break_lines_uses_vertical_writing_mode_and_inline_extent() {
+    let (root, mut cx) = root_of("writing-mode:vertical-rl", "aaaa bbbb cccc");
+    let lines = break_lines(&root, &mut cx, 30.0);
+
+    assert_eq!(lines.width, 30.0);
+    assert_eq!(lines.lines.len(), 3);
+    assert!(lines.lines.iter().all(|line| {
+        line.writing_mode() == WritingMode::VerticalRl && line.block_size() == 10.0
+    }));
+}
+
+#[test]
 fn intrinsic_widths_are_the_longest_word_and_the_whole_line() {
     let (root, mut cx) = root_of("", "aaaa bbbbbb cc");
     assert_eq!(intrinsic_widths(&root, &mut cx), (60.0, 140.0));
@@ -119,8 +131,11 @@ fn place_lines_matches_break_all_without_floats() {
             &mut cx,
             &AtomicSizes::EMPTY,
             width,
-            shodo::geometry::Direction::Ltr,
-            |_, _| LineSpace { start: 0.0, width },
+            super::IfcAxes::new(root.writing_mode, shodo::geometry::Direction::Ltr),
+            |_, _| LineSpace {
+                inline_start: 0.0,
+                inline_size: width,
+            },
         );
         assert_eq!(
             shape_of(&placed.lines),
@@ -145,13 +160,13 @@ fn place_lines_asks_for_the_space_at_each_line_offset() {
         &mut cx,
         &AtomicSizes::EMPTY,
         50.0,
-        shodo::geometry::Direction::Ltr,
+        super::IfcAxes::new(root.writing_mode, shodo::geometry::Direction::Ltr),
         |y, height| {
             asked.push(y);
             let _ = height;
             LineSpace {
-                start: 0.0,
-                width: 50.0,
+                inline_start: 0.0,
+                inline_size: 50.0,
             }
         },
     );
@@ -202,16 +217,16 @@ fn line_space_reads_the_segment_at_a_line() {
     assert_eq!(
         line_space(&ctx, 0.0, 0.0, 100.0, 0.0, 5.0),
         LineSpace {
-            start: 30.0,
-            width: 70.0
+            inline_start: 30.0,
+            inline_size: 70.0
         }
     );
     // Below both floats the line has the whole width.
     assert_eq!(
         line_space(&ctx, 0.0, 0.0, 100.0, 50.0, 10.0),
         LineSpace {
-            start: 0.0,
-            width: 100.0
+            inline_start: 0.0,
+            inline_size: 100.0
         }
     );
 }
@@ -225,16 +240,16 @@ fn line_space_intersects_the_segments_a_line_spans() {
     assert_eq!(
         line_space(&ctx, 0.0, 0.0, 100.0, 5.0, 10.0),
         LineSpace {
-            start: 30.0,
-            width: 50.0
+            inline_start: 30.0,
+            inline_size: 50.0
         }
     );
     // At y=20 only the right float remains.
     assert_eq!(
         line_space(&ctx, 0.0, 0.0, 100.0, 20.0, 10.0),
         LineSpace {
-            start: 0.0,
-            width: 80.0
+            inline_start: 0.0,
+            inline_size: 80.0
         }
     );
 }
@@ -249,8 +264,8 @@ fn line_space_is_relative_to_the_content_box_and_never_wider_than_it() {
     assert_eq!(
         line_space(&ctx, 10.0, 0.0, 60.0, 0.0, 5.0),
         LineSpace {
-            start: 20.0,
-            width: 40.0
+            inline_start: 20.0,
+            inline_size: 40.0
         }
     );
 }

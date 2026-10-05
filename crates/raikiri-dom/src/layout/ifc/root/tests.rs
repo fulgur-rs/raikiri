@@ -1,6 +1,6 @@
 use super::*;
 use crate::Document;
-use crate::layout::ifc::test_support::ahem_fonts;
+use crate::layout::ifc::test_support::{ahem_fonts, block_fixture};
 use crate::layout::test_support::with_ahem;
 
 #[test]
@@ -43,6 +43,30 @@ fn a_cloned_document_keeps_its_fonts() {
     let mut doc = Document::new();
     doc.set_font_collection_with_limits(ahem_fonts(), Limits::default());
     assert!(doc.clone().has_font_collection());
+}
+
+#[test]
+fn an_ifc_root_keeps_its_writing_mode_without_lines() {
+    for (mode, expected) in [
+        ("vertical-rl", shodo::geometry::WritingMode::VerticalRl),
+        ("vertical-lr", shodo::geometry::WritingMode::VerticalLr),
+    ] {
+        let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let projected = crate::layout::ifc::projection::project_ifc(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &mut LayoutContext::new(),
+            &ahem_fonts(),
+            &Limits::default(),
+        )
+        .expect("project");
+        let root = IfcRoot::new(projected);
+        assert_eq!(root.writing_mode, expected, "{mode}");
+        assert_eq!(root.without_lines().writing_mode, expected, "{mode}");
+    }
 }
 
 #[test]

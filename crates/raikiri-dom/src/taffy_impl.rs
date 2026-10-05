@@ -19,6 +19,7 @@ use taffy::{
 };
 
 use crate::document::Document;
+use crate::layout::ifc::geometry::IfcAxes;
 use crate::node::{NodeData, NodeFlags};
 use raikiri_style::property::DisplayValue;
 
@@ -42,10 +43,10 @@ pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
     if resolved.is_finite() { resolved } else { 0.0 }
 }
 
-/// Resolve a padding or border length of an ifc root against the parent's
-/// width.
-fn ifc_edge(value: taffy::LengthPercentage, parent_width: Option<f32>) -> f32 {
-    let basis = parent_width.unwrap_or(0.0);
+/// Resolve a padding or border length of an ifc root against the containing
+/// block's inline size.
+fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> f32 {
+    let basis = parent_inline_size.unwrap_or(0.0);
     let raw = value.into_raw();
     if raw.is_calc() {
         resolve_calc(raw.calc_value(), basis)
@@ -54,21 +55,80 @@ fn ifc_edge(value: taffy::LengthPercentage, parent_width: Option<f32>) -> f32 {
     }
 }
 
+/// The physical dimension used by percentage margins, padding, and borders
+/// depends on the containing block's writing mode. Sideways values use the
+/// horizontal IFC fallback, so they retain the horizontal inline-size basis.
+fn ifc_parent_inline_size(
+    tree: &Document,
+    node: usize,
+    parent_size: Size<Option<f32>>,
+) -> Option<f32> {
+    let mut ancestor = tree.nodes[node].parent;
+    while let Some(id) = ancestor {
+        if let Some(mode) = tree.nodes[id].authored_writing_mode {
+            return Some(match mode {
+                raikiri_style::property::WritingMode::VerticalRl
+                | raikiri_style::property::WritingMode::VerticalLr => {
+                    parent_size.height.unwrap_or(0.0)
+                }
+                _ => parent_size.width.unwrap_or(0.0),
+            });
+        }
+        ancestor = tree.nodes[id].parent;
+    }
+    Some(parent_size.width.unwrap_or(0.0))
+}
+
+/// Give Taffy pixel edge values resolved against the containing block's
+/// inline size while keeping its physical width and height properties intact.
+fn ifc_style_with_inline_edge_basis(style: &Style, inline_size: Option<f32>) -> Style {
+    let basis = inline_size.unwrap_or(0.0);
+    let mut style = style.clone();
+    style.margin = style.margin.map(|margin| {
+        margin.resolve_to_option(basis, resolve_calc).map_or_else(
+            taffy::LengthPercentageAuto::auto,
+            taffy::LengthPercentageAuto::length,
+        )
+    });
+    style.padding = style
+        .padding
+        .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+    style.border = style
+        .border
+        .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+    style
+}
+
 /// Padding-top plus border-top of an ifc root, resolved from its style.
 ///
 /// The parent has not stored this node's layout yet when the root is
-/// measured, so the insets come from the style and the parent's width.
-fn ifc_top_inset(style: &Style, parent_width: Option<f32>) -> f32 {
-    ifc_edge(style.padding.top, parent_width) + ifc_edge(style.border.top, parent_width)
+/// measured, so the insets come from the style and the parent's inline size.
+fn ifc_top_inset(style: &Style, parent_inline_size: Option<f32>) -> f32 {
+    ifc_edge(style.padding.top, parent_inline_size) + ifc_edge(style.border.top, parent_inline_size)
 }
 
 /// Border plus padding on the left and right of an ifc root, resolved from
 /// its style like [`ifc_top_inset`].
-fn ifc_horizontal_edges(style: &Style, parent_width: Option<f32>) -> (f32, f32) {
+fn ifc_horizontal_edges(style: &Style, parent_inline_size: Option<f32>) -> (f32, f32) {
     (
-        ifc_edge(style.padding.left, parent_width) + ifc_edge(style.border.left, parent_width),
-        ifc_edge(style.padding.right, parent_width) + ifc_edge(style.border.right, parent_width),
+        ifc_edge(style.padding.left, parent_inline_size)
+            + ifc_edge(style.border.left, parent_inline_size),
+        ifc_edge(style.padding.right, parent_inline_size)
+            + ifc_edge(style.border.right, parent_inline_size),
     )
+}
+
+fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect<f32> {
+    taffy::Rect {
+        top: ifc_edge(style.padding.top, parent_inline_size)
+            + ifc_edge(style.border.top, parent_inline_size),
+        right: ifc_edge(style.padding.right, parent_inline_size)
+            + ifc_edge(style.border.right, parent_inline_size),
+        bottom: ifc_edge(style.padding.bottom, parent_inline_size)
+            + ifc_edge(style.border.bottom, parent_inline_size),
+        left: ifc_edge(style.padding.left, parent_inline_size)
+            + ifc_edge(style.border.left, parent_inline_size),
+    }
 }
 
 /// Taffy child iterator: filter nodes with `is_in_document() == false`
@@ -444,6 +504,9 @@ impl Document {
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.
 fn compute_ifc_root(
@@ -454,22 +517,37 @@ fn compute_ifc_root(
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let style = tree.nodes[idx].style.clone();
+    let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
+    let layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
     // Border-box top inset, resolved here: the parent has not
     // stored this node's layout yet.
-    let top_inset = ifc_top_inset(&style, inputs.parent_size.width);
+    let top_inset = ifc_top_inset(&style, parent_inline_size);
     // A known width on the input means the parent stretched or
     // fixed the box, and a definite `width` of its own fixes it
     // too (taffy passes it as the available width); otherwise the
     // box shrinks to fit.
-    let stretched = inputs.known_dimensions.width.is_some()
+    let stretched_width = inputs.known_dimensions.width.is_some()
         || (inputs.sizing_mode == taffy::SizingMode::InherentSize
             && ifc_has_definite_width(&style, inputs.parent_size.width));
+    let stretched_height = inputs.known_dimensions.height.is_some()
+        || (inputs.sizing_mode == taffy::SizingMode::InherentSize
+            && ifc_has_definite_height(&style, inputs.parent_size.height));
     let measure = IfcMeasure {
         run_mode: inputs.run_mode,
-        stretched,
-        width_bounds: ifc_content_width_bounds(&style, inputs.parent_size.width),
-        edges: ifc_horizontal_edges(&style, inputs.parent_size.width),
-        top_inset,
+        stretched_width,
+        stretched_height,
+        width_bounds: ifc_content_width_bounds(
+            &style,
+            inputs.parent_size.width,
+            parent_inline_size,
+        ),
+        height_bounds: ifc_content_height_bounds(
+            &style,
+            inputs.parent_size.height,
+            parent_inline_size,
+        ),
+        edges: ifc_horizontal_edges(&style, parent_inline_size),
+        insets: ifc_all_insets(&style, parent_inline_size),
         // CSS 2.1 8.3.1: the bottom margin of a last in-flow child and that
         // of its parent are adjoining when the parent has no bottom padding
         // or border and an `auto` height, and the parent is in the same
@@ -477,14 +555,20 @@ fn compute_ifc_root(
         bottom_margin_escapes: block_ctx.is_some()
             && inputs.vertical_margins_are_collapsible.end
             && style.size.height.is_auto()
-            && ifc_edge(style.padding.bottom, inputs.parent_size.width)
-                + ifc_edge(style.border.bottom, inputs.parent_size.width)
+            && ifc_edge(style.padding.bottom, parent_inline_size)
+                + ifc_edge(style.border.bottom, parent_inline_size)
                 == 0.0,
         column_height: None,
     };
     let mut content_baseline = None;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
     let mut measure = measure;
+    let auto_vertical_block_size = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb)
+        && !measure.stretched_width;
+    let mut measured_size = None;
     measure.column_height = tree.nodes[idx]
         .multicol
         .filter(|multicol| multicol.height_definite)
@@ -498,20 +582,35 @@ fn compute_ifc_root(
         .map(|height| {
             let insets = if style.box_sizing == taffy::BoxSizing::BorderBox {
                 top_inset
-                    + ifc_edge(style.padding.bottom, inputs.parent_size.width)
-                    + ifc_edge(style.border.bottom, inputs.parent_size.width)
+                    + ifc_edge(style.padding.bottom, parent_inline_size)
+                    + ifc_edge(style.border.bottom, parent_inline_size)
             } else {
                 0.0
             };
             (height - insets).max(0.0)
         });
-    let mut output = compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
-        let (size, baseline, escaping) =
-            measure_ifc_root(tree, idx, known.height, available, measure, block_ctx);
-        content_baseline = baseline;
-        escaping_margin = escaping;
-        size
-    });
+    let mut output =
+        compute_leaf_layout(inputs, &layout_style, resolve_calc, |known, available| {
+            let (size, baseline, escaping) = measure_ifc_root(
+                tree,
+                idx,
+                known.width,
+                known.height,
+                available,
+                measure,
+                block_ctx,
+            );
+            measured_size = Some(size);
+            content_baseline = baseline;
+            escaping_margin = escaping;
+            size
+        });
+    if auto_vertical_block_size && let Some(measured_size) = measured_size {
+        // `compute_leaf_layout` retains Taffy's intrinsic auto-width probe as
+        // a known width. In vertical flow, the performed IFC layout measures
+        // the cumulative block extent and must replace that probe result.
+        output.size.width = measured_size.width + measure.insets.left + measure.insets.right;
+    }
     output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
     if inputs.run_mode == RunMode::PerformLayout {
         crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size);
@@ -539,21 +638,62 @@ fn compute_ifc_root(
 /// A shrink-to-fit box is clamped by these after it is measured, so the lines
 /// have to be broken at the clamped width to match the box taffy returns.
 /// `auto` gives `0.0` and `f32::INFINITY`.
-fn ifc_content_width_bounds(style: &Style, parent_width: Option<f32>) -> (f32, f32) {
-    let basis = parent_width.unwrap_or(0.0);
+fn ifc_content_width_bounds(
+    style: &Style,
+    parent_width: Option<f32>,
+    parent_inline_size: Option<f32>,
+) -> (f32, f32) {
+    ifc_content_axis_bounds(
+        style.min_size.width,
+        style.max_size.width,
+        style.box_sizing,
+        [style.padding.left, style.padding.right],
+        [style.border.left, style.border.right],
+        parent_width,
+        parent_inline_size,
+    )
+}
+
+fn ifc_content_height_bounds(
+    style: &Style,
+    parent_height: Option<f32>,
+    parent_inline_size: Option<f32>,
+) -> (f32, f32) {
+    ifc_content_axis_bounds(
+        style.min_size.height,
+        style.max_size.height,
+        style.box_sizing,
+        [style.padding.top, style.padding.bottom],
+        [style.border.top, style.border.bottom],
+        parent_height,
+        parent_inline_size,
+    )
+}
+
+fn ifc_content_axis_bounds(
+    min_size: taffy::LengthPercentageAuto,
+    max_size: taffy::LengthPercentageAuto,
+    box_sizing: taffy::BoxSizing,
+    padding: [taffy::LengthPercentage; 2],
+    border: [taffy::LengthPercentage; 2],
+    dimension_basis: Option<f32>,
+    edge_basis: Option<f32>,
+) -> (f32, f32) {
+    let basis = dimension_basis.unwrap_or(0.0);
+    let edge_basis = edge_basis.unwrap_or(0.0);
     let resolve_lp = |value: taffy::LengthPercentage| {
         let raw = value.into_raw();
         if raw.is_calc() {
-            resolve_calc(raw.calc_value(), basis)
+            resolve_calc(raw.calc_value(), edge_basis)
         } else {
-            crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
+            crate::layout::used_style_length_percentage(value, edge_basis).unwrap_or(0.0)
         }
     };
-    let insets = if style.box_sizing == taffy::BoxSizing::BorderBox {
-        resolve_lp(style.padding.left)
-            + resolve_lp(style.padding.right)
-            + resolve_lp(style.border.left)
-            + resolve_lp(style.border.right)
+    let insets = if box_sizing == taffy::BoxSizing::BorderBox {
+        resolve_lp(padding[0])
+            + resolve_lp(padding[1])
+            + resolve_lp(border[0])
+            + resolve_lp(border[1])
     } else {
         0.0
     };
@@ -576,8 +716,8 @@ fn ifc_content_width_bounds(style: &Style, parent_width: Option<f32>) -> (f32, f
         }
     };
     (
-        resolve_dim(style.min_size.width, 0.0),
-        resolve_dim(style.max_size.width, f32::INFINITY),
+        resolve_dim(min_size, 0.0),
+        resolve_dim(max_size, f32::INFINITY),
     )
 }
 
@@ -596,19 +736,35 @@ fn ifc_has_definite_width(style: &Style, parent_width: Option<f32>) -> bool {
     }
 }
 
+fn ifc_has_definite_height(style: &Style, parent_height: Option<f32>) -> bool {
+    let raw = style.size.height.into_raw();
+    if raw.is_calc() {
+        return parent_height.is_some();
+    }
+    match raw.tag() {
+        taffy::CompactLength::LENGTH_TAG => true,
+        taffy::CompactLength::PERCENT_TAG => parent_height.is_some(),
+        _ => false,
+    }
+}
+
 /// What the measure callback of an ifc root needs besides the available
 /// space.
 #[derive(Clone, Copy)]
 struct IfcMeasure {
     run_mode: RunMode,
-    /// The parent stretched or fixed the box's width.
-    stretched: bool,
+    /// The parent stretched or fixed the box's physical width.
+    stretched_width: bool,
+    /// The parent stretched or fixed the box's physical height.
+    stretched_height: bool,
     /// The box's own content-box `min-width` and `max-width`.
     width_bounds: (f32, f32),
+    /// The box's own content-box `min-height` and `max-height`.
+    height_bounds: (f32, f32),
     /// Border plus padding on the left and right.
     edges: (f32, f32),
-    /// Border plus padding above the content box.
-    top_inset: f32,
+    /// Border plus padding on every physical side.
+    insets: taffy::Rect<f32>,
     /// The root's bottom margin may collapse with its last block child's.
     bottom_margin_escapes: bool,
     /// The content-box height of a multicol root with a definite height:
@@ -629,20 +785,32 @@ struct IfcMeasure {
 fn measure_ifc_root(
     tree: &mut Document,
     idx: usize,
+    known_width: Option<f32>,
     known_height: Option<f32>,
     available: Size<AvailableSpace>,
     measure: IfcMeasure,
-    block_ctx: Option<&mut BlockContext<'_>>,
+    mut block_ctx: Option<&mut BlockContext<'_>>,
 ) -> (Size<f32>, Option<f32>, CollapsibleMarginSet) {
     use crate::layout::ifc::{flow, root::with_state};
-    let Some(root) = tree.nodes[idx].ifc.as_ref() else {
+    let Some((probe, writing_mode, fixed, direction)) = tree.nodes[idx].ifc.as_ref().map(|root| {
+        (
+            root.without_lines(),
+            root.writing_mode,
+            root.fixed,
+            if root.rtl {
+                shodo::geometry::Direction::Rtl
+            } else {
+                shodo::geometry::Direction::Ltr
+            },
+        )
+    }) else {
         return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
     };
     // A fixed box shrinks to fit against its containing block, the page area
     // (CSS 2.1 10.1), while taffy hands it its parent's room.
     let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
     let available = match page_width {
-        Some(page_width) if root.fixed && !measure.stretched => Size {
+        Some(page_width) if fixed && !measure.stretched_width => Size {
             width: AvailableSpace::Definite(
                 (page_width - measure.edges.0 - measure.edges.1).max(0.0),
             ),
@@ -652,15 +820,30 @@ fn measure_ifc_root(
     };
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
-    let probe = root.without_lines();
     let has_boxes = !probe.boxes.is_empty();
+    let vertical = writing_mode != shodo::geometry::WritingMode::HorizontalTb;
+    let inline_available = if vertical {
+        available.height
+    } else {
+        available.width
+    };
+    let inline_stretched = if vertical {
+        measure.stretched_height
+    } else {
+        measure.stretched_width
+    };
+    let inline_bounds = if vertical {
+        measure.height_bounds
+    } else {
+        measure.width_bounds
+    };
     // The boxes are measured as nodes of their own, outside the state scope,
     // and only when the intrinsic widths decide the width.
     let needs_intrinsics =
-        !(measure.stretched && matches!(available.width, AvailableSpace::Definite(_)));
+        !(inline_stretched && matches!(inline_available, AvailableSpace::Definite(_)));
     let box_intrinsics = if has_boxes && needs_intrinsics {
-        let basis = match available.width {
-            AvailableSpace::Definite(width) => width,
+        let basis = match inline_available {
+            AvailableSpace::Definite(size) => size,
             _ => 0.0,
         };
         crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis)
@@ -676,26 +859,28 @@ fn measure_ifc_root(
         min_content.max(box_intrinsics.blocks.0),
         max_content.max(box_intrinsics.blocks.1),
     );
-    let width = match available.width {
-        AvailableSpace::Definite(width) if measure.stretched => width,
+    let width = match inline_available {
+        AvailableSpace::Definite(width) if inline_stretched => width,
         AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
         AvailableSpace::MinContent => min_content,
         AvailableSpace::MaxContent => max_content,
     };
     // A stretched or fixed box already carries its clamped width; a
     // shrink-to-fit box is clamped by its own min/max after measurement.
-    let width = if measure.stretched {
+    let width = if inline_stretched {
         width
     } else {
-        width
-            .min(measure.width_bounds.1)
-            .max(measure.width_bounds.0)
+        width.min(inline_bounds.1).max(inline_bounds.0)
     };
     // The content of a multicol container is broken at the column width and
     // split in its columns. A paragraph with boxes of its own is laid out in
     // one column as wide as the container.
-    let nested_fragmentation = fragmentation_context_for_ifc(tree, idx, &probe);
-    let fragmentation = if nested_fragmentation.is_some() {
+    let nested_fragmentation = (!vertical)
+        .then(|| fragmentation_context_for_ifc(tree, idx, &probe))
+        .flatten();
+    let fragmentation = if vertical {
+        None
+    } else if nested_fragmentation.is_some() {
         nested_fragmentation
     } else if has_boxes {
         None
@@ -707,32 +892,109 @@ fn measure_ifc_root(
                 crate::fragment::FragmentationContext::resolve(width, measure.column_height, style)
             })
     };
-    let geometry = flow::FlowGeometry {
-        width: if nested_fragmentation.is_some() {
-            width
-        } else {
-            fragmentation.map_or(width, |context| context.column_width)
-        },
-        edges: measure.edges,
-        top_edge: measure.top_inset,
+    let line_inline_size = if nested_fragmentation.is_some() {
+        width
+    } else {
+        fragmentation.map_or(width, |context| context.column_width)
     };
+    let physical_block_extent = if vertical {
+        known_width.unwrap_or_else(|| match available.width {
+            AvailableSpace::Definite(size) if measure.stretched_width => size,
+            AvailableSpace::Definite(size) => size.max(min_content).min(max_content),
+            AvailableSpace::MinContent => min_content,
+            AvailableSpace::MaxContent => max_content,
+        })
+    } else {
+        line_inline_size
+    };
+    let mut content_size = if vertical {
+        shodo::geometry::PhysicalSize {
+            width: physical_block_extent,
+            height: line_inline_size,
+        }
+    } else {
+        shodo::geometry::PhysicalSize {
+            width: line_inline_size,
+            height: known_height.unwrap_or(0.0),
+        }
+    };
+    let axes = IfcAxes::new(writing_mode, direction);
+    let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;
-    let lines = if let Some(context) = nested_fragmentation {
-        crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
-            tree, idx, geometry, context, perform,
-        )
+    let auto_vertical_block_size = vertical && !measure.stretched_width;
+    let (mut lines, mut measured_block_size) = if auto_vertical_block_size {
+        let mut lines = crate::layout::ifc::boxes::layout_with_boxes_in(
+            tree,
+            idx,
+            geometry,
+            block_ctx.as_deref_mut(),
+            false,
+            measure.bottom_margin_escapes,
+        );
+        let mut block_size = lines
+            .height
+            .min(measure.width_bounds.1)
+            .max(measure.width_bounds.0);
+        // Taffy's auto-width probe can only see the largest block child's
+        // intrinsic width. A vertical IFC root instead needs the accumulated
+        // block-axis extent of all its block children.
+        for _ in 0..3 {
+            if (block_size - geometry.content_size.width).abs() <= 0.01 {
+                break;
+            }
+            content_size.width = block_size;
+            geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
+            lines = crate::layout::ifc::boxes::layout_with_boxes_in(
+                tree,
+                idx,
+                geometry,
+                block_ctx.as_deref_mut(),
+                false,
+                measure.bottom_margin_escapes,
+            );
+            block_size = lines
+                .height
+                .min(measure.width_bounds.1)
+                .max(measure.width_bounds.0);
+        }
+        if (block_size - geometry.content_size.width).abs() > 0.01 {
+            content_size.width = block_size;
+            geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
+        }
+        (lines, block_size)
     } else {
-        crate::layout::ifc::boxes::layout_with_boxes_in(
+        let lines = if let Some(context) = nested_fragmentation {
+            crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+                tree, idx, geometry, context, perform,
+            )
+        } else {
+            crate::layout::ifc::boxes::layout_with_boxes_in(
+                tree,
+                idx,
+                geometry,
+                block_ctx.as_deref_mut(),
+                perform,
+                measure.bottom_margin_escapes,
+            )
+        };
+        (lines, physical_block_extent)
+    };
+    if auto_vertical_block_size && perform {
+        lines = crate::layout::ifc::boxes::layout_with_boxes_in(
             tree,
             idx,
             geometry,
             block_ctx,
-            perform,
+            true,
             measure.bottom_margin_escapes,
-        )
-    };
+        );
+        measured_block_size = lines
+            .height
+            .min(measure.width_bounds.1)
+            .max(measure.width_bounds.0);
+    }
     let fragments = lines
         .fragmentainer_line_ranges
         .clone()
@@ -743,9 +1005,20 @@ fn measure_ifc_root(
     let content_height = fragments
         .as_ref()
         .map_or(lines.height, |(_, height)| *height);
-    let size = Size {
-        width,
-        height: known_height.unwrap_or(content_height),
+    let size = if vertical {
+        Size {
+            width: if auto_vertical_block_size {
+                measured_block_size
+            } else {
+                known_width.unwrap_or(content_height)
+            },
+            height: known_height.unwrap_or(width),
+        }
+    } else {
+        Size {
+            width,
+            height: known_height.unwrap_or(content_height),
+        }
     };
     // An inline-block's baseline is that of its last line box (CSS 2.1
     // 10.8.1); every other box exposes its first.

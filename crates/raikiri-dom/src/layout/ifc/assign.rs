@@ -10,8 +10,8 @@ use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
-use raikiri_style::CascadeResult;
-use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, WritingMode};
+use raikiri_style::{CascadeResult, ComputedColumnWidth};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
@@ -155,14 +155,14 @@ fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx
     })
 }
 
-/// Whether the paragraph has inline content that makes a line: text other
-/// than white space (generated text included), an atomic inline, a `<br>`,
-/// or an inline element with a margin, border or padding on an inline side
-/// (CSS 2.1, 9.4.2: a line box without any of these is treated as
-/// zero-height). The content of its boxes does not count, and neither do
-/// floats and block children alone: they are not inline content, so a block
-/// that holds only those is laid out by the block algorithm.
-fn has_inline_content(
+/// Whether a block qualifies for the IFC path. Inline content that makes a
+/// line is text other than white space (generated text included), an atomic
+/// inline, a `<br>`, or an inline element with an inline-side margin, border,
+/// or padding (CSS 2.1, 9.4.2). A vertical block child with inline content can
+/// also qualify its ancestor. Once selected, a vertical IFC root lays out its
+/// ordinary block children on the physical block axis, including empty ones.
+/// Page roots and multicol containers remain on their existing layout paths.
+fn needs_ifc_layout(
     doc: &Document,
     cascade: &CascadeResult,
     idx: usize,
@@ -171,6 +171,13 @@ fn has_inline_content(
     if has_in_flow_generated_text(cascade, idx) {
         return true;
     }
+    let cv = &cascade.computed[idx];
+    let vertical_block_children = matches!(
+        cv.cssom_writing_mode,
+        WritingMode::VerticalRl | WritingMode::VerticalLr
+    ) && !is_layout_root(doc, idx)
+        && matches!(cv.column_count, ColumnCountValue::Auto)
+        && matches!(cv.column_width, ComputedColumnWidth::Auto);
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
@@ -188,6 +195,12 @@ fn has_inline_content(
             }
             NodeKind::Element => match box_kind(cascade, doc, id) {
                 Some(IfcBoxKind::Atomic) => return true,
+                Some(IfcBoxKind::Block) if vertical_block_children => {
+                    if has_in_flow_generated_text(cascade, id) {
+                        return true;
+                    }
+                    stack.extend(node.children.iter().copied());
+                }
                 Some(_) => {}
                 None => {
                     let cv = &cascade.computed[id];
@@ -373,7 +386,7 @@ fn collect_candidates(
             || taken[idx]
             || is_ruby_multicol_flex_projection(doc, cascade, idx)
             || !can_be_ifc_root(doc, cascade, idx)
-            || !has_inline_content(doc, cascade, idx, &state.fonts)
+            || !needs_ifc_layout(doc, cascade, idx, &state.fonts)
         {
             continue;
         }

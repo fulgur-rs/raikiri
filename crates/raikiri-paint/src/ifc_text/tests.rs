@@ -134,6 +134,86 @@ fn glyph_runs_land_on_the_baseline_of_each_line() {
 }
 
 #[test]
+fn vertical_ifc_glyph_origins_and_outline_axes_are_converted_to_physical_space() {
+    use shodo::geometry::{PhysicalConverter, WritingMode};
+
+    let (mut doc, cascade, root) = paragraph(
+        "box-sizing:border-box;width:40px;height:30px;writing-mode:vertical-rl",
+        |doc, root| {
+            doc.append_text(root, "bb");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let node = doc.get_node(root).expect("root");
+    let lines = node.ifc_lines().expect("lines");
+    let content_size = node.ifc_physical_content_size().expect("content size");
+    assert_eq!(node.ifc_writing_mode(), Some(WritingMode::VerticalRl));
+
+    let mut expected_positions = Vec::new();
+    let mut expected_transforms = Vec::new();
+    for line in lines {
+        let converter =
+            PhysicalConverter::new(WritingMode::VerticalRl, line.used_direction(), content_size);
+        for fragment in line.fragments() {
+            let Fragment::GlyphRun(run) = fragment else {
+                continue;
+            };
+            for (index, glyph) in run.glyphs().enumerate() {
+                let (inline, block) = run.glyph_origin(index).expect("glyph origin");
+                let (x, y) = converter.point(inline, block + line.block_offset());
+                expected_positions.push((glyph.id, 100.0 + f64::from(x), 200.0 + f64::from(y)));
+            }
+            let axes = run.glyph_transform();
+            let (xx, yx) = converter.vector(axes.inline_x, axes.block_x);
+            let (xy, yy) = converter.vector(axes.inline_y, axes.block_y);
+            let orientation = Affine::new([
+                f64::from(xx),
+                f64::from(yx),
+                f64::from(xy),
+                f64::from(yy),
+                0.0,
+                0.0,
+            ]);
+            let skew = run.skew().map_or(Affine::IDENTITY, |degrees| {
+                Affine::skew(f64::from(degrees).to_radians().tan(), 0.0)
+            });
+            let transform = orientation * skew;
+            expected_transforms.push((transform != Affine::IDENTITY).then_some(transform));
+        }
+    }
+
+    let mut scene = Scene::new();
+    draw_ifc_lines(
+        &mut scene,
+        &doc,
+        &cascade,
+        root,
+        IfcPosition {
+            x: 100.0,
+            y: 200.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    let actual = glyphs(&scene)
+        .into_iter()
+        .map(|(id, x, y, _)| (id, x, y))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected_positions);
+    let actual_transforms = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run.glyph_transform),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual_transforms, expected_transforms);
+}
+
+#[test]
 fn each_run_takes_the_color_of_its_text_node() {
     let (mut doc, cascade, root) = paragraph("color:blue", |doc, root| {
         doc.append_text(root, "aa ");
