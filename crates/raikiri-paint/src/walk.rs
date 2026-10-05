@@ -3820,6 +3820,12 @@ pub(crate) fn paint_document_impl(
                         t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
                     }
                 }
+                // A collapsed-border table cell paints the borders that won
+                // conflict resolution with its rows, neighbours and table.
+                let painted_border = document
+                    .get_node(node_id)
+                    .and_then(|node| node.collapsed_border())
+                    .unwrap_or(&cv.border);
                 // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
                 let mut paint_background_width = layout.size.width;
                 if let Some(width) = vertical_table_cell_background_width(
@@ -4078,7 +4084,7 @@ pub(crate) fn paint_document_impl(
                             cv.background_clip,
                             cv.background_origin,
                             &paint_border_radius,
-                            &cv.border,
+                            painted_border,
                             &paint_padding,
                             &cv.background_size,
                             &cv.background_position,
@@ -4104,10 +4110,10 @@ pub(crate) fn paint_document_impl(
                                 | raikiri_style::property::VisualBox::ContentBox
                         )
                         && [
-                            &cv.border.top,
-                            &cv.border.right,
-                            &cv.border.bottom,
-                            &cv.border.left,
+                            &painted_border.top,
+                            &painted_border.right,
+                            &painted_border.bottom,
+                            &painted_border.left,
                         ]
                         .iter()
                         .all(|side| {
@@ -4123,7 +4129,7 @@ pub(crate) fn paint_document_impl(
                             paint_height,
                             paint_x,
                             paint_y,
-                            &cv.border,
+                            painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             cv.color,
                             false,
                         );
@@ -4134,7 +4140,7 @@ pub(crate) fn paint_document_impl(
                             paint_height,
                             paint_x,
                             paint_y,
-                            &cv.border,
+                            painted_border,
                             cv.color,
                             &paint_border_radius,
                         );

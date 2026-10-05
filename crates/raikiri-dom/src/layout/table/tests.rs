@@ -339,6 +339,315 @@ fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
     );
 }
 
+/// A cell whose border box widths and computed borders all use `border`.
+fn collapsed_cell(doc: &mut Document, border: super::CollapsedBorderCandidate) -> usize {
+    let id = bordered_cell(doc, border.border.width().px());
+    doc.nodes[id].computed_border = Some(Sides::all(border.border));
+    id
+}
+
+#[test]
+fn both_cells_paint_the_winner_of_their_shared_border() {
+    let mut doc = Document::new();
+    let purple = CssColor {
+        r: 128,
+        g: 0,
+        b: 128,
+        a: 255,
+    };
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    let above = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 5.0, purple),
+    );
+    let below = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Dashed, 5.0, blue),
+    );
+
+    super::resolve_collapsed_border_pair(
+        &mut doc,
+        above,
+        super::CellBorderSide::Bottom,
+        below,
+        super::CellBorderSide::Top,
+    );
+
+    let painted_bottom = doc.nodes[above]
+        .collapsed_border()
+        .expect("resolved")
+        .bottom;
+    let painted_top = doc.nodes[below].collapsed_border().expect("resolved").top;
+    assert_eq!(painted_top, painted_bottom);
+    assert_eq!(painted_top.style(), BorderStyle::Solid);
+    assert_eq!(painted_top.color, BorderColor::Resolved(purple));
+    // Sides that took part in no conflict keep their own borders.
+    assert_eq!(
+        doc.nodes[below]
+            .collapsed_border()
+            .expect("resolved")
+            .bottom
+            .style(),
+        BorderStyle::Dashed
+    );
+}
+
+#[test]
+fn an_edge_cell_side_yields_to_a_winning_table_border() {
+    let mut doc = Document::new();
+    let table = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 5.0, CssColor::BLACK),
+    );
+    let losing = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Outset, 5.0, CssColor::BLACK),
+    );
+    let tied = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 5.0, CssColor::BLACK),
+    );
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![0],
+        cells: vec![
+            make_cell(losing, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(tied, 0, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_table_edges(&mut doc, &grid, table);
+
+    let losing_sides = doc.nodes[losing].collapsed_border().expect("resolved");
+    assert_eq!(losing_sides.bottom.style(), BorderStyle::None);
+    assert_eq!(losing_sides.bottom.width().px(), 0.0);
+    assert_eq!(
+        doc.nodes[losing].style.border.bottom,
+        LengthPercentage::length(0.0)
+    );
+    // The right side is an inner boundary, not a table edge.
+    assert_eq!(losing_sides.right.style(), BorderStyle::Outset);
+    // A cell wins a tie with the table.
+    assert!(doc.nodes[tied].collapsed_border().is_none());
+}
+
+#[test]
+fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
+    let mut doc = Document::new();
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let thin = collapsed_candidate(BorderStyle::Solid, 1.0, CssColor::BLACK);
+    let rows: Vec<usize> = (0..3)
+        .map(|index| {
+            let color = if index == 2 { red } else { CssColor::BLACK };
+            let row = collapsed_cell(
+                &mut doc,
+                collapsed_candidate(BorderStyle::Solid, 5.0, color),
+            );
+            doc.nodes[row].display = DisplayValue::TableRow;
+            row
+        })
+        .collect();
+    let spanning = collapsed_cell(&mut doc, thin);
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: rows.clone(),
+        cells: vec![make_cell(spanning, 0, 0, 1, 3, Dimension::auto())],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_row_borders(&mut doc, &grid);
+
+    // The spanning cell's bottom lies on the last row's bottom border.
+    let bottom = doc.nodes[spanning]
+        .collapsed_border()
+        .expect("resolved")
+        .bottom;
+    assert_eq!(bottom.color, BorderColor::Resolved(red));
+    assert_eq!(bottom.width().px(), 5.0);
+    assert_eq!(
+        doc.nodes[spanning].style.border.bottom,
+        LengthPercentage::length(5.0)
+    );
+    for row in rows {
+        let painted = doc.nodes[row].collapsed_border().expect("row resolved");
+        assert_eq!(painted.top.style(), BorderStyle::None);
+        assert_eq!(painted.bottom.width().px(), 0.0);
+    }
+}
+
+#[test]
+fn a_spanning_cell_does_not_carry_one_segment_winner_into_the_next() {
+    let mut doc = Document::new();
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    let spanning = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 1.0, CssColor::BLACK),
+    );
+    let wide = collapsed_cell(&mut doc, collapsed_candidate(BorderStyle::Solid, 5.0, red));
+    let narrow = collapsed_cell(&mut doc, collapsed_candidate(BorderStyle::Solid, 2.0, blue));
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![0, 0],
+        cells: vec![
+            make_cell(spanning, 0, 0, 2, 1, Dimension::auto()),
+            make_cell(wide, 1, 0, 1, 1, Dimension::auto()),
+            make_cell(narrow, 1, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+
+    // The spanning cell paints the strongest winner along its bottom.
+    let bottom = doc.nodes[spanning]
+        .collapsed_border()
+        .expect("resolved")
+        .bottom;
+    assert_eq!(bottom.color, BorderColor::Resolved(red));
+    // The narrow cell's segment is decided by the spanning cell's own border.
+    let top = doc.nodes[narrow].collapsed_border().expect("resolved").top;
+    assert_eq!(top.color, BorderColor::Resolved(blue));
+    assert_eq!(top.width().px(), 2.0);
+}
+
+#[test]
+fn a_cell_paints_the_earlier_cell_border_it_ties_with() {
+    let mut doc = Document::new();
+    let purple = CssColor {
+        r: 128,
+        g: 0,
+        b: 128,
+        a: 255,
+    };
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    let above = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 5.0, purple),
+    );
+    let below = collapsed_cell(&mut doc, collapsed_candidate(BorderStyle::Solid, 5.0, blue));
+    let grid = super::TableGrid {
+        n_cols: 1,
+        rows: vec![0, 0],
+        cells: vec![
+            make_cell(above, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(below, 1, 0, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+
+    // CSS 2.1 §17.6.2.1: on an exact tie the cell further up wins.
+    let top = doc.nodes[below].collapsed_border().expect("resolved").top;
+    assert_eq!(top.color, BorderColor::Resolved(purple));
+}
+
+#[test]
+fn an_anonymous_row_does_not_turn_its_first_cell_into_a_row() {
+    let mut doc = Document::new();
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let first = collapsed_cell(&mut doc, collapsed_candidate(BorderStyle::Solid, 5.0, red));
+    let second = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 1.0, CssColor::BLACK),
+    );
+    doc.nodes[first].display = DisplayValue::TableCell;
+    let grid = super::TableGrid {
+        n_cols: 2,
+        // An anonymous row is recorded by its first cell.
+        rows: vec![first],
+        cells: vec![
+            make_cell(first, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(second, 0, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_row_borders(&mut doc, &grid);
+    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+
+    let first_sides = doc.nodes[first].collapsed_border().expect("resolved");
+    assert_eq!(first_sides.top.color, BorderColor::Resolved(red));
+    assert_eq!(first_sides.top.width().px(), 5.0);
+    let second_sides = doc.nodes[second].collapsed_border().expect("resolved");
+    assert_eq!(second_sides.left.color, BorderColor::Resolved(red));
+    assert_eq!(second_sides.top.width().px(), 1.0);
+}
+
+#[test]
+fn collapsed_resolution_skips_boxes_without_computed_borders() {
+    let mut doc = Document::new();
+    // A hand-built box that never went through the style bridge has no
+    // computed borders, so it takes part in no conflict.
+    let bare_row = bordered_cell(&mut doc, 2.0);
+    doc.nodes[bare_row].display = DisplayValue::TableRow;
+    let bare_table = bordered_cell(&mut doc, 2.0);
+    let bare_cell = bordered_cell(&mut doc, 2.0);
+    let cell = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 3.0, CssColor::BLACK),
+    );
+    let grid = super::TableGrid {
+        n_cols: 1,
+        rows: vec![bare_row],
+        cells: vec![make_cell(cell, 0, 0, 1, 1, Dimension::auto())],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_row_borders(&mut doc, &grid);
+    super::resolve_collapsed_table_edges(&mut doc, &grid, bare_table);
+    let pair = super::TableGrid {
+        n_cols: 2,
+        rows: vec![bare_row],
+        cells: vec![
+            make_cell(cell, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(bare_cell, 0, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+    super::resolve_collapsed_cell_borders(&mut doc, &pair);
+
+    assert!(doc.nodes[cell].collapsed_border().is_none());
+    assert!(doc.nodes[bare_cell].collapsed_border().is_none());
+    assert!(doc.nodes[bare_row].collapsed_border().is_none());
+    assert_eq!(
+        doc.nodes[cell].style.border.top,
+        LengthPercentage::length(3.0)
+    );
+}
+
 fn build_simple_2x2() -> Document {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
