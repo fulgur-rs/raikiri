@@ -325,6 +325,11 @@ pub enum WarningKind {
     /// is still laid out and painted; `RenderWarning::node_id` names its root
     /// and `RenderWarning::details` the reason.
     TextRunsOmitted,
+    /// The paint order of a subtree is listed with less structure than the
+    /// painter uses (for example columns without their column clips). The
+    /// subtree's events are still listed; `RenderWarning::node_id` names the
+    /// subtree root and `RenderWarning::details` the reason.
+    PaintOrderApproximated,
 }
 
 /// Behavior when the consumer convergence loop exhausts `max_target_iterations`
