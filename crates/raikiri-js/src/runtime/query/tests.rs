@@ -480,3 +480,25 @@ fn root_pseudo_class_does_not_match_disconnected_roots() {
         "document.querySelector(':root') === document.documentElement",
     );
 }
+
+/// `querySelectorAll` shares one matcher (and its sibling-position cache)
+/// across its traversal; a later query must still see DOM changes made in
+/// between.
+#[test]
+fn query_selector_all_nth_child_sees_mutations_between_queries() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var ul = document.createElement('ul');
+         document.documentElement.appendChild(ul);
+         for (var i = 0; i < 12; i++) {
+             ul.appendChild(document.createTextNode(' '));
+             ul.appendChild(document.createElement('li'));
+         }
+         var before = ul.querySelectorAll('li:nth-child(odd)').length;
+         ul.insertBefore(document.createElement('li'), ul.firstChild);
+         var after = ul.querySelectorAll('li:nth-child(odd)');
+         before === 6 && after.length === 7 && after[0] === ul.firstChild
+             && ul.querySelector('li:nth-child(2)') === ul.children[1]",
+    );
+}

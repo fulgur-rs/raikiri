@@ -119,7 +119,7 @@ pub use specified::SpecifiedValues;
 
 pub mod cascade;
 pub use cascade::{
-    CascadeResult, FirstLineCascade, FirstLineStyles, SelectorQuery, cascade,
+    CascadeResult, FirstLineCascade, FirstLineStyles, SelectorMatcher, SelectorQuery, cascade,
     cascade_with_first_line, cascade_with_media_context, cascade_with_media_context_for_page,
 };
 

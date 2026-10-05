@@ -368,7 +368,7 @@ mod query;
 mod rule_index;
 mod selector_match;
 pub(crate) use directionality::*;
-pub use query::SelectorQuery;
+pub use query::{SelectorMatcher, SelectorQuery};
 mod custom_property;
 mod html_quirks;
 pub(crate) use custom_property::*;

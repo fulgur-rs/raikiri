@@ -171,6 +171,11 @@ impl MatchCaches {
     /// The cached [`SiblingInfo`] for `parent_id`, built on first use, or
     /// `None` when the parent has fewer than [`SIBLING_CACHE_MIN_CHILDREN`]
     /// direct children and the caller should scan directly instead.
+    #[cfg(test)]
+    pub(crate) fn cached_sibling_parents(&self) -> usize {
+        self.siblings.borrow().len()
+    }
+
     fn sibling_info<D: StyleDom>(
         &self,
         dom: &D,

@@ -81,7 +81,49 @@ impl SelectorQuery {
         ancestors: &[StyleNodeId],
         scope: Option<StyleNodeId>,
     ) -> bool {
-        let Some(node) = dom.node(elem_id) else {
+        self.matcher(dom, scope).matches(elem_id, ancestors)
+    }
+
+    /// A matcher that tests many elements of `dom` against this selector
+    /// list with `:scope` bound to `scope` (see [`Self::matches_scoped`]).
+    ///
+    /// Use it for a whole tree traversal such as `querySelectorAll`: it
+    /// keeps the DOM facts the matcher derives (sibling positions for
+    /// `:nth-child()` and `+`, effective language, directionality) across
+    /// every element it tests, where calling [`Self::matches_scoped`] per
+    /// element would rebuild them each time. The matcher borrows `dom` for
+    /// its whole lifetime, so the DOM cannot change while it is in use.
+    pub fn matcher<'a, D: StyleDom>(
+        &'a self,
+        dom: &'a D,
+        scope: Option<StyleNodeId>,
+    ) -> SelectorMatcher<'a, D> {
+        SelectorMatcher {
+            query: self,
+            dom,
+            scope,
+            caches: MatchCaches::default(),
+        }
+    }
+}
+
+/// A [`SelectorQuery`] bound to one DOM and one `:scope` element, created by
+/// [`SelectorQuery::matcher`].
+pub struct SelectorMatcher<'a, D: StyleDom> {
+    query: &'a SelectorQuery,
+    dom: &'a D,
+    scope: Option<StyleNodeId>,
+    /// Shared by every [`Self::matches`] call. Sound because `dom` stays
+    /// borrowed, and therefore unchanged, for the matcher's lifetime.
+    caches: MatchCaches,
+}
+
+impl<D: StyleDom> SelectorMatcher<'_, D> {
+    /// Whether `elem_id` matches any selector in the list. `ancestors`
+    /// follows the same contract as [`SelectorQuery::matches`]: `elem_id`'s
+    /// ancestor element ids, root side first, ending with its parent.
+    pub fn matches(&self, elem_id: StyleNodeId, ancestors: &[StyleNodeId]) -> bool {
+        let Some(node) = self.dom.node(elem_id) else {
             return false;
         };
         let Some(elem) = node.as_element() else {
@@ -89,11 +131,20 @@ impl SelectorQuery {
         };
         // DOM query entry points allow detached candidates (same-tree gating);
         // the stylesheet cascade passes `false` to keep inert/template-contents
-        // filtering (see `is_candidate_element`). The caches live for this one
-        // call only: the caller may mutate the DOM between queries.
-        let caches = MatchCaches::default();
-        let ctx = MatchContext::new(dom, dom.quirks_mode(), scope, true, &caches);
-        match_complex_selector_list(&self.list, ctx, &elem, elem_id, ancestors).is_some()
+        // filtering (see `is_candidate_element`).
+        let ctx = MatchContext::new(
+            self.dom,
+            self.dom.quirks_mode(),
+            self.scope,
+            true,
+            &self.caches,
+        );
+        match_complex_selector_list(&self.query.list, ctx, &elem, elem_id, ancestors).is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_sibling_parents(&self) -> usize {
+        self.caches.cached_sibling_parents()
     }
 }
 
