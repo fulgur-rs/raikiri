@@ -101,9 +101,39 @@ pub(crate) struct MatchCaches {
     languages: RefCell<HashMap<StyleNodeId, Rc<str>>>,
     /// Resolved directionality per element id; see [`resolve_directionality`].
     directions: RefCell<HashMap<StyleNodeId, Direction>>,
+    /// Reusable buffers for `:has()` searches; see [`HasScratch`].
+    has_scratch: RefCell<Vec<HasScratch>>,
+}
+
+/// Buffers for one `:has()` relative-selector search, reused across searches
+/// so each evaluation does not allocate a fresh ancestor path and stack.
+///
+/// They live in a pool rather than a single slot so that a search started
+/// while another is in progress gets its own buffers. The parser currently
+/// rejects `:has()` nested inside `:has()`, so the pool normally holds one
+/// entry.
+#[derive(Default)]
+struct HasScratch {
+    /// The ancestor chain of the candidate being matched, root-most first.
+    path: Vec<StyleNodeId>,
+    /// Pending candidates with the `path` length to truncate to first.
+    stack: Vec<(StyleNodeId, usize)>,
 }
 
 impl MatchCaches {
+    /// Takes a cleared [`HasScratch`] from the pool (or a new one).
+    fn take_has_scratch(&self) -> HasScratch {
+        let mut scratch = self.has_scratch.borrow_mut().pop().unwrap_or_default();
+        scratch.path.clear();
+        scratch.stack.clear();
+        scratch
+    }
+
+    /// Returns a [`HasScratch`] to the pool, keeping its capacity.
+    fn return_has_scratch(&self, scratch: HasScratch) {
+        self.has_scratch.borrow_mut().push(scratch);
+    }
+
     /// The effective content language of `elem`, computed once per element.
     fn content_language<D: StyleDom, E: StyleElement>(
         &self,
@@ -962,70 +992,110 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
 /// element. `selectors` stores each relative selector with an internal
 /// `RelativeSelectorAnchor` at its left edge, so the normal right-to-left
 /// matcher can be reused once that marker is bound to `anchor_id`.
+///
+/// The search buffers come from [`MatchCaches`]' `:has()` scratch pool, so a
+/// repeated evaluation reuses their capacity instead of allocating a root
+/// list, two copies of the ancestor chain, and a stack every time.
 fn has_relative_selector_matches<D: StyleDom>(
     ctx: MatchContext<'_, D>,
     relative_selectors: &[RelativeSelector<RaikiriSelectorImpl>],
     anchor_id: StyleNodeId,
     anchor_ancestors: &[StyleNodeId],
 ) -> bool {
-    for relative_selector in relative_selectors {
-        let leading_combinator = relative_selector.selector.combinator_at_parse_order(1);
-        let include_descendants = relative_selector.match_hint.is_subtree();
-
-        let (roots, candidate_ancestors) = match leading_combinator {
-            Combinator::Child | Combinator::Descendant => {
-                let roots = in_document_element_children(ctx, anchor_id);
-                let mut candidate_ancestors = anchor_ancestors.to_vec();
-                candidate_ancestors.push(anchor_id);
-                (roots, candidate_ancestors)
-            }
-            Combinator::NextSibling | Combinator::LaterSibling => {
-                let Some(parent_id) = anchor_ancestors
-                    .last()
-                    .copied()
-                    .or_else(|| ctx.dom.parent_id(anchor_id))
-                else {
-                    continue;
-                };
-                let roots = following_sibling_elements(
-                    ctx,
-                    parent_id,
-                    anchor_id,
-                    relative_selector.match_hint.is_next_sibling(),
-                );
-                (roots, anchor_ancestors.to_vec())
-            }
-            // The parser rejects pseudo-element/slot/part combinators inside
-            // `:has()`. Keep the matcher fail-closed if a future parser path
-            // constructs one anyway.
-            // cov:ignore: `selectors` does not construct these combinators in a :has() relative selector
-            Combinator::PseudoElement | Combinator::Part | Combinator::SlotAssignment => {
-                continue;
-            }
-        };
-
-        if relative_selector_matches_in_regions(
+    let mut scratch = ctx.caches.take_has_scratch();
+    let matched = relative_selectors.iter().any(|relative_selector| {
+        relative_selector_matches(
             ctx,
-            &relative_selector.selector,
-            &roots,
-            &candidate_ancestors,
-            include_descendants,
+            relative_selector,
             anchor_id,
-        ) {
-            return true;
-        }
-    }
-    false
+            anchor_ancestors,
+            &mut scratch,
+        )
+    });
+    ctx.caches.return_has_scratch(scratch);
+    matched
 }
 
-/// Searches the candidate roots and, when the relative selector can reach
-/// deeper nodes, their element subtrees. The explicit stack avoids consuming
-/// the native call stack on deeply nested untrusted markup.
+/// One relative selector of [`has_relative_selector_matches`]: seeds
+/// `scratch` with the candidate roots and their shared ancestor chain, then
+/// runs the region search.
+fn relative_selector_matches<D: StyleDom>(
+    ctx: MatchContext<'_, D>,
+    relative_selector: &RelativeSelector<RaikiriSelectorImpl>,
+    anchor_id: StyleNodeId,
+    anchor_ancestors: &[StyleNodeId],
+    scratch: &mut HasScratch,
+) -> bool {
+    scratch.path.clear();
+    scratch.stack.clear();
+    scratch.path.extend_from_slice(anchor_ancestors);
+    match relative_selector.selector.combinator_at_parse_order(1) {
+        Combinator::Child | Combinator::Descendant => {
+            // The roots are the anchor's element children, so the anchor
+            // joins their ancestor chain.
+            scratch.path.push(anchor_id);
+            let depth = scratch.path.len();
+            scratch.stack.extend(
+                ctx.dom
+                    .child_ids(anchor_id)
+                    .filter(|&id| is_candidate_element(ctx.dom, id, ctx.allow_detached))
+                    .map(|id| (id, depth)),
+            );
+        }
+        Combinator::NextSibling | Combinator::LaterSibling => {
+            let Some(parent_id) = anchor_ancestors
+                .last()
+                .copied()
+                .or_else(|| ctx.dom.parent_id(anchor_id))
+            else {
+                return false;
+            };
+            // The roots are the anchor's following element siblings, which
+            // share the anchor's own ancestor chain.
+            let depth = scratch.path.len();
+            let only_first = relative_selector.match_hint.is_next_sibling();
+            let mut following = false;
+            for child_id in ctx.dom.child_ids(parent_id) {
+                if child_id == anchor_id {
+                    following = true;
+                    continue;
+                }
+                if following && is_candidate_element(ctx.dom, child_id, ctx.allow_detached) {
+                    scratch.stack.push((child_id, depth));
+                    if only_first {
+                        break;
+                    }
+                }
+            }
+        }
+        // The parser rejects pseudo-element/slot/part combinators inside
+        // `:has()`. Keep the matcher fail-closed if a future parser path
+        // constructs one anyway.
+        // cov:ignore: `selectors` does not construct these combinators in a :has() relative selector
+        Combinator::PseudoElement | Combinator::Part | Combinator::SlotAssignment => {
+            return false;
+        }
+    }
+    // The stack is LIFO and the roots were pushed in document order; reverse
+    // them so the search visits them in document order.
+    scratch.stack.reverse();
+    relative_selector_matches_in_regions(
+        ctx,
+        &relative_selector.selector,
+        scratch,
+        relative_selector.match_hint.is_subtree(),
+        anchor_id,
+    )
+}
+
+/// Searches the candidate roots seeded in `scratch` and, when the relative
+/// selector can reach deeper nodes, their element subtrees. The explicit
+/// stack avoids consuming the native call stack on deeply nested untrusted
+/// markup.
 fn relative_selector_matches_in_regions<D: StyleDom>(
     ctx: MatchContext<'_, D>,
     selector: &Selector<RaikiriSelectorImpl>,
-    roots: &[StyleNodeId],
-    base_ancestors: &[StyleNodeId],
+    scratch: &mut HasScratch,
     include_descendants: bool,
     anchor_id: StyleNodeId,
 ) -> bool {
@@ -1035,17 +1105,14 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
     // branched `:has()` miss retain O(depth²) ancestor ids at a choice point;
     // truncating on pop gives the same DFS paths with O(depth + pending nodes)
     // storage instead.
-    let base_depth = base_ancestors.len();
-    let mut ancestor_path = base_ancestors.to_vec();
-    let mut stack: Vec<(StyleNodeId, usize)> = Vec::with_capacity(roots.len());
-    for &root_id in roots.iter().rev() {
-        stack.push((root_id, base_depth));
-    }
-
+    let HasScratch {
+        path: ancestor_path,
+        stack,
+    } = scratch;
     while let Some((candidate_id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
         if !is_candidate_element(dom, candidate_id, ctx.allow_detached) {
-            continue; // cov:ignore: roots are pre-filtered; only a malformed custom DOM can reach this branch
+            continue;
         }
         let Some(node) = dom.node(candidate_id) else {
             continue; // cov:ignore: is_candidate_element already required a node for this id
@@ -1058,7 +1125,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
             selector,
             &elem,
             candidate_id,
-            &ancestor_path,
+            ancestor_path,
             Some(anchor_id),
         ) {
             return true;
@@ -1079,43 +1146,6 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
         stack[start..].reverse();
     }
     false
-}
-
-/// Returns direct element children in document order (`allow_detached` decides
-/// whether inert siblings count; see `is_candidate_element`).
-fn in_document_element_children<D: StyleDom>(
-    ctx: MatchContext<'_, D>,
-    parent_id: StyleNodeId,
-) -> Vec<StyleNodeId> {
-    ctx.dom
-        .child_ids(parent_id)
-        .filter(|&id| is_candidate_element(ctx.dom, id, ctx.allow_detached))
-        .collect()
-}
-
-/// Returns the following element siblings of `anchor_id`, optionally limited
-/// to the first one for the adjacent-sibling relative combinator.
-fn following_sibling_elements<D: StyleDom>(
-    ctx: MatchContext<'_, D>,
-    parent_id: StyleNodeId,
-    anchor_id: StyleNodeId,
-    only_first: bool,
-) -> Vec<StyleNodeId> {
-    let mut following = false;
-    let mut result = Vec::new();
-    for child_id in ctx.dom.child_ids(parent_id) {
-        if child_id == anchor_id {
-            following = true;
-            continue;
-        }
-        if following && is_candidate_element(ctx.dom, child_id, ctx.allow_detached) {
-            result.push(child_id);
-            if only_first {
-                break;
-            }
-        }
-    }
-    result
 }
 
 /// `::before`/`::after` counterpart of [`selector_matches`]: if `selector`

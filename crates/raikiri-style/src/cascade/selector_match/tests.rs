@@ -2800,3 +2800,47 @@ fn lang_and_dir_memo_agree_with_direct_resolution() {
     assert_eq!(caches.languages.borrow().len(), chains.len());
     assert_eq!(caches.directions.borrow().len(), chains.len());
 }
+
+#[test]
+fn has_search_reuses_one_scratch_buffer_across_evaluations() {
+    let mut doc = TestDoc::new();
+    let list = doc.push_element(0, "ul", None);
+    let mut items = Vec::new();
+    for i in 0..6 {
+        let li = doc.push_element(list, "li", None);
+        if i % 2 == 0 {
+            let b = doc.push_element(li, "b", None);
+            doc.push_text(b, "x");
+        } else {
+            // A text-only item makes the subtree search pop a non-element.
+            doc.push_text(li, "y");
+        }
+        items.push(li);
+    }
+    let caches = MatchCaches::default();
+    let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &caches);
+    let ancestors = [StyleNodeId::new(list as u64)];
+    for (selector, expect) in [
+        ("li:has(> b)", [true, false, true, false, true, false]),
+        ("li:has(b)", [true, false, true, false, true, false]),
+        ("li:has(+ li > b)", [false, true, false, true, false, false]),
+        ("li:has(~ li > b)", [true, true, true, true, false, false]),
+    ] {
+        let parsed = crate::parse_selector_list(selector).expect("valid selector");
+        for (i, &id) in items.iter().enumerate() {
+            let node = doc.node(StyleNodeId::new(id as u64)).expect("node");
+            let elem = node.as_element().expect("element");
+            let matched = match_complex_selector_list(
+                &parsed,
+                ctx,
+                &elem,
+                StyleNodeId::new(id as u64),
+                &ancestors,
+            )
+            .is_some();
+            assert_eq!(matched, expect[i], "{selector} on item {i}");
+        }
+    }
+    // Every evaluation returned its buffers, so one pooled entry served all.
+    assert_eq!(caches.has_scratch.borrow().len(), 1);
+}

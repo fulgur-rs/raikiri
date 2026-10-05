@@ -676,6 +676,40 @@ fn inline_style_workload(n_elems: usize, repeated: bool) -> (BenchDoc, RuleTree,
     (doc, tree, n_elems as u64)
 }
 
+/// Build the `:has()` workload: a `doc_depth`-deep `div` chain against one
+/// `div:has(> div) { ... }` rule. Every `div` evaluates the relative
+/// selector once, and every one but the deepest matches, so the timing is
+/// dominated by setting up one `:has()` search per element.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn has_child_chain_workload(doc_depth: usize) -> (BenchDoc, RuleTree, u64) {
+    let mut tree = RuleTree::empty();
+    let body = shared_winner_body();
+    tree.add_stylesheet(&format!("div:has(> div) {{ {body} }}\n"), Origin::Author);
+    assert_eq!(
+        tree.style_rules().len(),
+        1,
+        ":has() stylesheet did not parse into exactly one rule"
+    );
+    let doc = BenchDoc::chain(doc_depth);
+    let want = shared_winners();
+    let initial = ComputedValues::initial();
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    // `margin-top` is not inherited, so it tells a matching `div` apart from
+    // the deepest one, which only inherits the matched ancestors' color.
+    for i in 1..=doc_depth {
+        let expected = if i < doc_depth {
+            ComputedLengthPercentageOrAuto::Px(want.box_px)
+        } else {
+            initial.margin.top
+        };
+        assert_eq!(
+            probe.computed[i].margin.top, expected,
+            "div at chain position {i} of {doc_depth} has the wrong :has() result"
+        );
+    }
+    (doc, tree, doc_depth as u64)
+}
+
 /// Build a single-rule stylesheet for the `section > article div` mixed
 /// child+descendant selector ([`BenchDoc::mixed_chain`]'s topology), with
 /// [`DECLS_PER_RULE`] longhand declarations.
@@ -1669,6 +1703,17 @@ fn bench_cascade(c: &mut Criterion) {
         let (doc, tree, n) = inline_style_workload(2000, repeated);
         group.throughput(Throughput::Elements(n));
         group.bench_function(name, |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // `:has()` config — one relative-selector search per element.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    {
+        let (doc, tree, n) = has_child_chain_workload(2000);
+        group.throughput(Throughput::Elements(n));
+        group.bench_function("has_child_chain_2000", |b| {
             b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
         });
     }
