@@ -56,8 +56,20 @@ pub use ua::MINIMAL_UA_CSS;
 // them without depending on the style or text-layout implementation crates.
 pub use raikiri_style::{
     CascadeResult, ComputedValues, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
-    MediaContext, MediaType, PageCascadeResult, PageContextQuery,
+    Declaration, MediaContext, MediaType, Origin, PageBleed, PageCascadeResult, PageContextQuery,
+    PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation, PageSize,
+    PageSizeKeyword,
 };
+// `PageCascadeResult` (see `Page::page_style`) reports declarations keyed and
+// valued by these.
+pub use raikiri_style::property::{PropertyKey, PropertyValue};
+
+/// The computed-value types read from [`ComputedValues`] (for example through
+/// `Page::computed`), named in the computed layer so a painter can annotate
+/// every field it reads without depending on the style crate.
+pub mod computed {
+    pub use raikiri_style::computed_api::*;
+}
 pub use shodo::font::FontCollection;
 
 pub use raikiri_traits::{
