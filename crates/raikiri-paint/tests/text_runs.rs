@@ -587,3 +587,18 @@ fn hyphenated_lines_match_paint() {
             .any(|run| run.text.contains('\u{ad}'))
     );
 }
+
+#[test]
+fn hidden_text_is_neither_painted_nor_reported() {
+    let result = lay_out(
+        "<p>shown</p><p style='visibility:hidden'>secret</p>\
+         <p style='visibility:collapse'>folded</p>\
+         <p style='visibility:hidden'><span style='visibility:visible'>seen</span></p>",
+        "",
+    );
+    let page = result.pages().next().unwrap();
+    let texts: Vec<&str> = page.text_runs().iter().map(|run| run.text).collect();
+    assert_eq!(texts, ["shown", "seen"]);
+    // Painted glyphs equal the reported ones: "shown" and "seen".
+    assert_eq!(check(&result), 9);
+}

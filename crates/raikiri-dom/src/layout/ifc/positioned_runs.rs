@@ -7,6 +7,7 @@
 use crate::Document;
 use crate::generated_content::{computed_for_id, generated_origin};
 use raikiri_style::CascadeResult;
+use raikiri_style::property::Visibility;
 use shodo::Fragment;
 use shodo::geometry::{PhysicalConverter, PhysicalSize, WritingMode};
 
@@ -178,7 +179,11 @@ impl<'a> PositionedLines<'a> {
             // inherited one.
             let Some(owner) = run.node() else { continue };
             let owner = owner.0 as usize;
-            if computed_for_id(self.cascade, owner).is_none() || run.font_data().is_none() {
+            // Text inherits `visibility` from its element; hidden and
+            // collapsed text is laid out but not painted (CSS 2.1 §11.2).
+            let visible = computed_for_id(self.cascade, owner)
+                .is_some_and(|style| style.visibility == Visibility::Visible);
+            if !visible || run.font_data().is_none() {
                 continue;
             }
             let glyphs: Vec<LineGlyph> = run
