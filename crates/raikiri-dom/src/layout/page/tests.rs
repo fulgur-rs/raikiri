@@ -1167,3 +1167,37 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
         assert_eq!(output.size, expected);
     }
 }
+
+#[test]
+fn body_paint_shift_moves_only_in_flow_content_inside_the_body() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let flow = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let nested = doc.append_element(Some(flow), "p", Style::default(), Some("display:block"));
+    let fixed = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:fixed"),
+    );
+    let text = doc.append_text(body, "direct");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+    let shift = |node| body_paint_shift(&doc, &cr, body, 20.0, node);
+    assert_eq!(shift(body), 0.0, "the body's own box stays put");
+    assert_eq!(shift(flow), 20.0);
+    assert_eq!(
+        shift(nested),
+        20.0,
+        "descendants move with their in-flow ancestor"
+    );
+    assert_eq!(shift(text), 20.0, "direct text moves");
+    assert_eq!(shift(fixed), 0.0, "a fixed child keeps its own coordinates");
+    assert_eq!(shift(head), 0.0, "nodes outside the body stay put");
+    assert_eq!(body_paint_shift(&doc, &cr, body, 0.0, flow), 0.0);
+}

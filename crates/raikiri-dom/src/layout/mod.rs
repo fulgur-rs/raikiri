@@ -77,7 +77,7 @@ pub(crate) use multicol::{
 };
 #[doc(hidden)]
 pub use page::body_paint_margin_left;
-pub(crate) use page::find_body;
+pub(crate) use page::{body_paint_shift, find_body};
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::measure_ch_advance;

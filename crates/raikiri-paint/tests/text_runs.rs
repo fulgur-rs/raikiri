@@ -602,3 +602,108 @@ fn hidden_text_is_neither_painted_nor_reported() {
     // Painted glyphs equal the reported ones: "shown" and "seen".
     assert_eq!(check(&result), 9);
 }
+
+/// The node whose `id` attribute is `id`.
+fn by_id(page: &Page<'_>, id: &str) -> NodeId {
+    let dom = page.dom();
+    let mut stack = vec![dom.root()];
+    while let Some(node) = stack.pop() {
+        if dom.attr(node, "id") == Some(id) {
+            return node;
+        }
+        stack.extend(dom.children(node));
+    }
+    panic!("no element with id {id}");
+}
+
+/// Bounding boxes `(x, y, width, height)` of every fill the painter draws.
+fn filled(page: &Page<'_>, page_count: u32) -> Vec<(f64, f64, f64, f64)> {
+    let (document, cascade, page_box, origin) = page.paint_inputs();
+    let mut scene = Scene::new();
+    let mut budget = CounterSnapshotBudget::default();
+    paint_single_page_with_origin_and_page(
+        &mut scene,
+        document,
+        cascade,
+        page_box,
+        origin,
+        page.index(),
+        page_count,
+        page.index() % 2 == 1,
+        &mut budget,
+    )
+    .expect("paint");
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => {
+                let bounds = kurbo::Shape::bounding_box(&(fill.transform * fill.shape.clone()));
+                Some((bounds.x0, bounds.y0, bounds.width(), bounds.height()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn paint_rects_follow_the_body_margin_like_the_painter() {
+    let result = lay_out(
+        "<p id='flow'>flow</p>\
+         <div id='abs' style='position: absolute; top: 120px; left: 30px; width: 50px; height: 12px; \
+          background-color: rgb(255, 0, 0)'></div>",
+        "body { margin: 20px } \
+         p { margin: 0; width: 120px; height: 10px; padding: 4px; background-color: rgb(0, 0, 255) }",
+    );
+    let page = result.pages().next().unwrap();
+    let fragment = |id: &str| {
+        let node = by_id(&page, id);
+        page.fragments()
+            .find(|fragment| fragment.node() == node && fragment.kind() == FragmentKind::Box)
+            .unwrap_or_else(|| panic!("no box fragment for {id}"))
+    };
+    let body = page
+        .fragments()
+        .find(|fragment| {
+            fragment.kind() == FragmentKind::Box
+                && page.dom().local_name(fragment.node()) == Some("body")
+        })
+        .expect("body fragment");
+    let flow = fragment("flow");
+    let abs = fragment("abs");
+
+    // The body's own box and its absolute child stay in layout space; its
+    // in-flow child moves right by the body's left margin.
+    assert_eq!(body.paint_rect().x, body.rect().x);
+    assert_eq!(flow.paint_rect().x, flow.rect().x + 20.0);
+    assert_eq!(abs.paint_rect().x, abs.rect().x);
+
+    // The painter fills both backgrounds exactly at their paint rects.
+    let fills = filled(&page, result.page_count() as u32);
+    for (name, fragment) in [("flow", flow), ("abs", abs)] {
+        let r = fragment.paint_rect();
+        let expected = (
+            f64::from(r.x),
+            f64::from(r.y),
+            f64::from(r.width),
+            f64::from(r.height),
+        );
+        assert!(
+            fills.iter().any(|fill| {
+                (fill.0 - expected.0).abs() < TOLERANCE
+                    && (fill.1 - expected.1).abs() < TOLERANCE
+                    && (fill.2 - expected.2).abs() < TOLERANCE
+                    && (fill.3 - expected.3).abs() < TOLERANCE
+            }),
+            "{name}: no fill at {expected:?} among {fills:?}"
+        );
+    }
+
+    // The paragraph's text starts at its paint rect's content edge.
+    let run = page
+        .text_runs()
+        .into_iter()
+        .find(|run| run.text == "flow")
+        .expect("the paragraph's run");
+    assert!((run.origin.0 - (flow.paint_rect().x + 4.0)).abs() < 1e-3);
+}

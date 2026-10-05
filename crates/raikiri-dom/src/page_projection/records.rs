@@ -281,6 +281,9 @@ pub(crate) struct PageFragmentItem {
     /// Optional line range for a text placement (`start..end`, end exclusive).
     /// Non-text placements leave this as `None`.
     pub(crate) line_range: Option<PageFragmentLineRange>,
+    /// Horizontal offset from layout space to paint space: the body's left
+    /// paint margin for content the painter moves with it, otherwise 0.
+    pub(crate) paint_offset_x: f32,
 }
 
 /// Neutral link metadata attached to a page-local event.
@@ -390,7 +393,14 @@ impl PageFragmentItem {
             fragment_count,
             is_repeat,
             line_range: None,
+            paint_offset_x: 0.0,
         }
+    }
+
+    /// Set the layout-to-paint horizontal offset of this placement.
+    pub(crate) fn with_paint_offset_x(mut self, paint_offset_x: f32) -> Self {
+        self.paint_offset_x = paint_offset_x;
+        self
     }
 
     /// Set the zero-based page containing this placement.

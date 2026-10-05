@@ -59,6 +59,46 @@ pub fn body_paint_margin_left(document: &Document, cascade: &CascadeResult, body
     }
 }
 
+/// How far the painter moves `node` right for the body's left paint margin
+/// `margin` ([`body_paint_margin_left`]).
+///
+/// The body's direct text and its static, relative and sticky children move,
+/// together with everything inside them. The body's own box does not move,
+/// and fixed and absolute children of the body keep their containing-block
+/// coordinates, as do nodes outside the body.
+pub(crate) fn body_paint_shift(
+    document: &Document,
+    cascade: &CascadeResult,
+    body: usize,
+    margin: f32,
+    node: usize,
+) -> f32 {
+    if margin == 0.0 || node == body {
+        return 0.0;
+    }
+    // The child of the body that `node` lies in.
+    let mut current = node;
+    loop {
+        match document.parent_of(current) {
+            Some(parent) if parent == body => break,
+            Some(parent) => current = parent,
+            None => return 0.0,
+        }
+    }
+    let direct_text = document
+        .get_node(current)
+        .is_some_and(|child| child.kind() == NodeKind::Text);
+    let in_flow = cascade.computed.get(current).is_some_and(|cv| {
+        matches!(
+            cv.position,
+            raikiri_style::property::PositionValue::Static
+                | raikiri_style::property::PositionValue::Relative
+                | raikiri_style::property::PositionValue::Sticky
+        )
+    });
+    if direct_text || in_flow { margin } else { 0.0 }
+}
+
 /// Walk the Document arena with DFS and return the arena index of the first `<body>` element.
 ///
 /// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid stack

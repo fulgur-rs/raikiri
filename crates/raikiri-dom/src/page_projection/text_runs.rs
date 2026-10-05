@@ -403,28 +403,20 @@ fn glyph_run<'a>(
 }
 
 /// How far the painter moves `root` right for the body's left margin
-/// ([`crate::layout::body_paint_margin_left`]): the body itself and the
-/// content of its static, relative and sticky children move.
+/// ([`crate::layout::body_paint_margin_left`]): the body's own lines, and
+/// the content of its direct text and static, relative and sticky children
+/// ([`crate::layout::body_paint_shift`], which also places fragments).
 fn body_shift(
     document: &Document,
     cascade: &CascadeResult,
     (body, margin): (usize, f32),
     root: usize,
 ) -> f32 {
-    // The body itself, or the child of the body the paragraph lies in.
-    let mut current = root;
-    while current != body && document.parent_of(current) != Some(body) {
-        // Every paragraph lies inside the body, where the projection starts.
-        current = document.parent_of(current).unwrap_or(body);
+    if root == body {
+        margin
+    } else {
+        crate::layout::body_paint_shift(document, cascade, body, margin, root)
     }
-    let in_flow = current == body
-        || cascade.computed.get(current).is_some_and(|cv| {
-            matches!(
-                cv.position,
-                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-            )
-        });
-    if in_flow { margin } else { 0.0 }
 }
 
 /// Append the runs of `root` that belong to `page`; `body` is the body
