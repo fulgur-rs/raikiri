@@ -13,7 +13,8 @@
 use criterion::{Criterion, Throughput};
 use raikiri_style::{
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedValues, CssColor, Origin,
-    RuleTree, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, cascade,
+    RuleTree, SelectorQuery, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind,
+    cascade,
 };
 
 /// Declarations emitted per generated rule in the benchmark workload.
@@ -1715,6 +1716,54 @@ fn bench_cascade(c: &mut Criterion) {
         group.throughput(Throughput::Elements(n));
         group.bench_function("has_child_chain_2000", |b| {
             b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // DOM-query configs — a `querySelectorAll`-style pass testing every
+    // child of a wide `section` against `div:nth-child(odd)`, either with a
+    // fresh per-call match (each call rebuilds the sibling positions) or
+    // through one `SelectorQuery::matcher` shared by the whole pass.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    {
+        let doc = BenchDoc::wide(4000);
+        let section = StyleNodeId::new(1);
+        let divs = doc.nodes[1]
+            .children
+            .iter()
+            .map(|&id| StyleNodeId::new(id as u64))
+            .collect::<Vec<_>>();
+        let query = SelectorQuery::parse("div:nth-child(odd)").expect("valid selector");
+        let ancestors = [section];
+        let per_call = divs
+            .iter()
+            .filter(|&&id| query.matches(&doc, id, &ancestors))
+            .count();
+        let matcher = query.matcher(&doc, None);
+        let shared = divs
+            .iter()
+            .filter(|&&id| matcher.matches(id, &ancestors))
+            .count();
+        assert_eq!(per_call, 2000, "every odd div matches");
+        assert_eq!(
+            shared, per_call,
+            "shared matcher disagrees with per-call matching"
+        );
+        group.throughput(Throughput::Elements(divs.len() as u64));
+        group.bench_function("query_nth_child_per_call_4000", |b| {
+            b.iter(|| {
+                divs.iter()
+                    .filter(|&&id| query.matches(&doc, id, &ancestors))
+                    .count()
+            });
+        });
+        group.bench_function("query_nth_child_shared_matcher_4000", |b| {
+            b.iter(|| {
+                let matcher = query.matcher(&doc, None);
+                divs.iter()
+                    .filter(|&&id| matcher.matches(id, &ancestors))
+                    .count()
+            });
         });
     }
 

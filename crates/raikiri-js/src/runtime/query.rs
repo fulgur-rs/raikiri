@@ -207,10 +207,10 @@ fn query_selector(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         // changed since the last refresh).
         s.host.document_mut().mark_in_document_flags();
         let doc = s.host.document();
-        let scope = scope_for_root(doc, index);
+        let matcher = query.matcher(doc, scope_for_root(doc, index));
         find_in_tree(doc, index, |e, ancestors| {
-            query
-                .matches_scoped(doc, StyleNodeId(e as u64), ancestors, scope)
+            matcher
+                .matches(StyleNodeId(e as u64), ancestors)
                 .then_some(e)
         })
     })?;
@@ -227,9 +227,12 @@ fn query_selector_all(
     let found = with_state(context, |s| {
         s.host.document_mut().mark_in_document_flags();
         let doc = s.host.document();
-        let scope = scope_for_root(doc, index);
+        // One matcher for the whole traversal, so sibling positions and
+        // language/direction lookups are computed once per parent/element
+        // instead of once per tested element.
+        let matcher = query.matcher(doc, scope_for_root(doc, index));
         descendants_matching(doc, index, |e, ancestors| {
-            query.matches_scoped(doc, StyleNodeId(e as u64), ancestors, scope)
+            matcher.matches(StyleNodeId(e as u64), ancestors)
         })
     })?;
     Ok(node_list(context, CollectionSource::Static(found))?.into())
@@ -415,10 +418,11 @@ fn element_closest(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         let doc = s.host.document();
         let mut chain = element_ancestors(doc, index);
         chain.push(StyleNodeId(index as u64));
+        let matcher = query.matcher(doc, scope);
         (0..chain.len()).rev().find_map(|i| {
             let candidate = chain[i];
-            query
-                .matches_scoped(doc, candidate, &chain[..i], scope)
+            matcher
+                .matches(candidate, &chain[..i])
                 .then_some(candidate.0 as usize)
         })
     })?;

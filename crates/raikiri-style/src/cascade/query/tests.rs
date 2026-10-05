@@ -282,3 +282,38 @@ fn root_pseudo_class_does_not_match_a_disconnected_root() {
     assert!(query.matches(&dom, StyleNodeId::new(attached as u64), &[]));
     assert!(!query.matches(&dom, StyleNodeId::new(detached as u64), &[]));
 }
+
+#[test]
+fn matcher_agrees_with_per_call_matching_across_a_wide_list() {
+    let mut dom = TestDoc::new();
+    let list = dom.push_element(0, "ul", None);
+    let items = (0..20)
+        .map(|i| {
+            dom.push_text(list, " ");
+            let tag = if i % 5 == 0 { "b" } else { "li" };
+            dom.push_element(list, tag, None)
+        })
+        .collect::<Vec<_>>();
+    let ancestors = [StyleNodeId::new(list as u64)];
+    for source in [
+        "li:nth-child(odd)",
+        ":nth-last-child(3)",
+        "li:nth-of-type(2n)",
+        "b + li",
+        ":first-child, :last-child",
+    ] {
+        let query = SelectorQuery::parse(source).unwrap();
+        let matcher = query.matcher(&dom, None);
+        for &item in &items {
+            let id = StyleNodeId::new(item as u64);
+            assert_eq!(
+                matcher.matches(id, &ancestors),
+                query.matches(&dom, id, &ancestors),
+                "{source} on node {item}"
+            );
+        }
+        // The list has enough children to be cached, and one matcher keeps
+        // that entry for every element it tests.
+        assert_eq!(matcher.cached_sibling_parents(), 1, "{source}");
+    }
+}
