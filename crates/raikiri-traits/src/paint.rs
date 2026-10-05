@@ -89,3 +89,10 @@ pub struct PaintClip {
     /// Clip rectangle in page-local coordinates.
     pub rect: PaintRect,
 }
+
+impl PaintClip {
+    /// Construct a clip to `rect`.
+    pub const fn new(rect: PaintRect) -> Self {
+        Self { rect }
+    }
+}

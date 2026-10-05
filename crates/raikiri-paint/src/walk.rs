@@ -1,7 +1,7 @@
 //! DOM walker — traverses the Document arena in DFS order and emits to PaintScene.
 //!
 //! `paint_document` walks with an iterative `PaintFrame` stack, following
-//! the pattern of cascade / find_body and avoiding stack overflow for deep DOMs.
+//! the pattern of cascade / find_paint_root and avoiding stack overflow for deep DOMs.
 //! It handles each kind inline: an Element pushes its children (a paragraph
 //! root draws its lines, then pushes the boxes of its paragraph), a Text node
 //! that is a paragraph of its own draws its lines, and display:none skips a
@@ -9,8 +9,9 @@
 //! subtree. See the `vertical_align_shift_px` docs for `parent_font_size` /
 //! `shift_y`.
 //!
-//! find_body duplicates raikiri-dom::layout::find_body, but keeping this
-//! five-line helper here is cleaner than exporting it across crate boundaries.
+//! The paint-order and eligibility predicates (`find_paint_root`,
+//! `sort_paint_children`, ...) live in `raikiri_dom::paint_rules` so the page
+//! paint-order generator shares them with this walker.
 
 use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
@@ -20,11 +21,10 @@ use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
     ColumnCountValue, ConicGradient, ContentComponent, CounterStyle, CssColor, CssPosition,
-    CssPositionOffset, DisplayValue, FloatValue, Gradient, GradientStopColor,
-    HueInterpolationMethod, Length, LengthOrAuto, ListStyleType, MixColorSpace, ObjectFit,
-    OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue,
-    QuoteKeyword, Sides, TextAlign, TextShadowColor, VerticalAlign, Visibility, VisualBox,
-    WritingMode, ZIndexValue,
+    CssPositionOffset, DisplayValue, Gradient, GradientStopColor, HueInterpolationMethod, Length,
+    LengthOrAuto, ListStyleType, MixColorSpace, ObjectFit, OutlineColor, OutlineStyle,
+    OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign,
+    TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
@@ -404,7 +404,7 @@ fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Opti
         return Some(html_id);
     }
 
-    let body_id = find_body(document)?;
+    let body_id = raikiri_dom::paint_rules::find_paint_root(document)?;
     let body = cascade.computed.get(body_id)?;
     let body_has_background =
         !matches!(&body.background_image, BackgroundImage::None) || body.background_color.a != 0;
@@ -3214,6 +3214,7 @@ pub(crate) fn paint_document(
         None,
         &mut warnings,
         custom_highlights,
+        None,
     );
 }
 
@@ -3243,11 +3244,12 @@ pub(crate) fn paint_document_with_images_and_warnings(
         Some(pixel_source),
         warnings,
         custom_highlights,
+        None,
     );
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_document_impl(
+pub(crate) fn paint_document_impl(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -3259,8 +3261,9 @@ fn paint_document_impl(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    mut trace: Option<&mut Vec<crate::PaintTraceEvent>>,
 ) {
-    let Some(body_id) = find_body(document) else {
+    let Some(body_id) = raikiri_dom::paint_rules::find_paint_root(document) else {
         return;
     };
 
@@ -3268,46 +3271,12 @@ fn paint_document_impl(
     // so each node's generated flow height can be computed once and reused.
     let mut generated_flow_heights = std::collections::HashMap::new();
 
-    let named_page_matches = |node_id: usize| match active_page_name {
-        None => true,
-        Some(active) => {
-            // An inline canvas is a boundary marker for pagination, but its
-            // `page` value does not assign the replaced inline box to the
-            // named page. Keep painting it on the page selected by layout.
-            let is_inline_canvas = document.get_node(node_id).is_some_and(|node| {
-                node.tag_name()
-                    .is_some_and(|tag| tag.eq_ignore_ascii_case("canvas"))
-                    && matches!(cascade.computed[node_id].display, DisplayValue::Inline)
-            });
-            if is_inline_canvas {
-                true
-            } else {
-                match cascade.page_values.get(node_id) {
-                    Some(raikiri_style::property::PageValue::Named(name)) => {
-                        // Floats retain the preceding page in the page-name-float
-                        // cases; do not hide the floated box merely because its
-                        // inherited page value names the following page.
-                        if matches!(
-                            cascade.computed[node_id].float,
-                            FloatValue::Left
-                                | FloatValue::Right
-                                | FloatValue::InlineStart
-                                | FloatValue::InlineEnd
-                                | FloatValue::Footnote
-                        ) {
-                            true
-                        } else {
-                            active.is_some_and(|page| name.0.as_str() == page)
-                        }
-                    }
-                    _ => true,
-                }
-            }
-        }
+    let named_page_matches = |node_id: usize| {
+        raikiri_dom::paint_rules::named_page_matches(document, cascade, node_id, active_page_name)
     };
 
     // The body's parent (`<html>`) font-size is available only from a
-    // separate traversal (`find_body`), not from this stack. Use the body's
+    // separate traversal (`find_paint_root`), not from this stack. Use the body's
     // own font-size as a self-referential fallback. The UA default display
     // for body is block, so `vertical_align_shift_px` always ignores this
     // value through its inline-level gate. Except for pathological input
@@ -3551,7 +3520,17 @@ fn paint_document_impl(
                 scene.transform = transform;
                 continue;
             }
-            PaintFrame::PopClip | PaintFrame::PopOpacity => {
+            PaintFrame::PopClip => {
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push(crate::PaintTraceEvent::PopClip);
+                }
+                scene.pop_layer();
+                continue;
+            }
+            PaintFrame::PopOpacity => {
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push(crate::PaintTraceEvent::PopOpacity);
+                }
                 scene.pop_layer();
                 continue;
             }
@@ -3824,6 +3803,9 @@ fn paint_document_impl(
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     multicol_clip_pushed = true;
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
+                    }
                 }
                 if let Some(clip) = fragment_clip {
                     let clip = Rect::new(
@@ -3834,6 +3816,9 @@ fn paint_document_impl(
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     fragmentainer_clip_pushed = true;
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
+                    }
                 }
                 // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
                 let mut paint_background_width = layout.size.width;
@@ -3850,8 +3835,8 @@ fn paint_document_impl(
                 // A hidden table must not paint its own collapsed border. Keep
                 // row/cell visibility handling unchanged; `visibility: collapse`
                 // is table-layout-specific and existing row painting relies on it.
-                let visibility_hidden_table = cv.visibility == Visibility::Hidden
-                    && matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable);
+                let visibility_hidden_table =
+                    raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
                 let mut paints_on_page = !visibility_hidden_table
                     && (node_id == body_id
                         || ((fixed_in_viewport || named_page_matches(node_id))
@@ -4019,7 +4004,7 @@ fn paint_document_impl(
                 // until the deferred `PaintAfter` and overflow clip frames
                 // have finished so overlapping descendants are composited as
                 // one group instead of being alpha-blended individually.
-                let has_opacity_layer = cv.opacity < 1.0;
+                let has_opacity_layer = raikiri_dom::paint_rules::opacity_layer(cv).is_some();
                 if has_opacity_layer {
                     let opacity_clip = Rect::new(
                         0.0,
@@ -4038,9 +4023,15 @@ fn paint_document_impl(
                     // This frame is pushed first so it closes after the
                     // optional overflow clip and generated `::after` paint.
                     stack.push(PaintFrame::PopOpacity);
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushOpacity(node_id, cv.opacity));
+                    }
                 }
                 let mut before_advance = 0.0;
                 if paints_on_page {
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::Box(node_id));
+                    }
                     // A body background is propagated to the page canvas.  For
                     // a non-zero page margin, painting the body border box as
                     // well would leak that color into the translated top/bottom
@@ -4163,6 +4154,13 @@ fn paint_document_impl(
                     // Resolve the source's natural dimensions first. SVG
                     // sources use the resulting concrete object dimensions
                     // for a bounded, size-specific raster request.
+                    if let Some(t) = trace.as_deref_mut()
+                        && (node.is_inline_svg_root()
+                            || document.is_canvas_element(node_id)
+                            || node.tag_name() == Some("img"))
+                    {
+                        t.push(crate::PaintTraceEvent::Replaced(node_id));
+                    }
                     let painted_image = if node.is_inline_svg_root() {
                         paint_inline_svg(
                             scene,
@@ -4354,8 +4352,7 @@ fn paint_document_impl(
                 // clip origin flooring. The clip is pushed only after painting the
                 // element itself, then popped after its complete subtree via the
                 // explicit stack frame.
-                let clips_overflow = !matches!(cv.overflow.x, OverflowValue::Visible)
-                    || !matches!(cv.overflow.y, OverflowValue::Visible);
+                let clips_overflow = raikiri_dom::paint_rules::clips_overflow(cv);
                 if clips_overflow {
                     let clip_right = paint_x + layout.size.width - layout.padding.right;
                     let clip_bottom = paint_y + paint_height - layout.padding.bottom;
@@ -4375,6 +4372,12 @@ fn paint_document_impl(
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     stack.push(PaintFrame::PopClip);
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushOverflowClip(
+                            node_id,
+                            [clip.x0, clip.y0, clip.x1, clip.y1],
+                        ));
+                    }
                 }
                 // Push this after the clip-pop frame and before children.
                 // Children therefore paint first, then `::after`, then the
@@ -4416,7 +4419,7 @@ fn paint_document_impl(
                 } else {
                     node.children.clone()
                 };
-                sort_paint_children(&mut children, cv.display, cascade);
+                raikiri_dom::paint_rules::sort_paint_children(&mut children, cv.display, cascade);
 
                 // The current Taffy bridge treats inline children as zero-sized
                 // block items.  Keep that layout authority, but provide the
@@ -4590,6 +4593,22 @@ fn paint_document_impl(
                     if let Some(clip) = &text_clip {
                         scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                     }
+                    // A paragraph whose lines carry no visible text (only
+                    // atomic inlines and whitespace) is not traced as text,
+                    // as its whitespace-only text nodes have no fragments.
+                    if let Some(t) = trace.as_deref_mut()
+                        && document
+                            .ifc_text_lines_by_node(node_id)
+                            .keys()
+                            .any(|&owner| {
+                                document
+                                    .get_node(owner)
+                                    .and_then(|text| text.text_content())
+                                    .is_some_and(|text| !text.trim().is_empty())
+                            })
+                    {
+                        t.push(crate::PaintTraceEvent::Text(node_id));
+                    }
                     crate::ifc_text::draw_ifc_lines(
                         scene,
                         document,
@@ -4715,6 +4734,9 @@ fn paint_document_impl(
                         // A text node laid out as an anonymous flex or grid
                         // item is a paragraph of its own: its lines start at
                         // its own box, which has no edges.
+                        if let Some(t) = trace.as_deref_mut() {
+                            t.push(crate::PaintTraceEvent::Text(node_id));
+                        }
                         crate::ifc_text::draw_ifc_lines(
                             scene,
                             document,
@@ -7313,114 +7335,6 @@ fn vertical_align_shift_px(
         // alignment is handled by the minimal line-box layout when applicable.
         _ => 0.0,
     }
-}
-
-fn sort_paint_children(
-    children: &mut [usize],
-    parent_display: DisplayValue,
-    cascade: &CascadeResult,
-) {
-    let order_sensitive_container = matches!(
-        parent_display,
-        DisplayValue::Flex
-            | DisplayValue::InlineFlex
-            | DisplayValue::Grid
-            | DisplayValue::InlineGrid
-    );
-    // Stable tuple sorting keeps DOM order for equal (stack, order) values.
-    // Direct abspos/fixed children are not flex/grid items: paint them as if
-    // their order were zero, while in-flow (including relative) items use the
-    // computed `order` value. Stacking buckets stay primary.
-    children.sort_by_key(|&child| {
-        let computed = &cascade.computed[child];
-        let stack =
-            if order_sensitive_container && matches!(computed.position, PositionValue::Static) {
-                // A flex/grid item can use integer z-index even when static.
-                // Match positioned items' stack levels so order only breaks
-                // ties within the same z-index level.
-                match computed.z_index {
-                    ZIndexValue::Auto => (1, 0),
-                    ZIndexValue::Integer(value) if value < 0 => (0, value),
-                    ZIndexValue::Integer(value) => (2, value),
-                    _ => paint_order_key(cascade, child), // cov:ignore: defensive fallback for future non-exhaustive z-index variants.
-                }
-            } else {
-                paint_order_key(cascade, child)
-            };
-        let order = if order_sensitive_container
-            && !matches!(
-                computed.position,
-                PositionValue::Absolute | PositionValue::Fixed
-            ) {
-            computed.order
-        } else {
-            0
-        };
-        let float_paint_order = if !order_sensitive_container
-            && matches!(
-                computed.float,
-                FloatValue::Left
-                    | FloatValue::Right
-                    | FloatValue::InlineStart
-                    | FloatValue::InlineEnd
-            ) {
-            1
-        } else {
-            0
-        };
-        (stack, float_paint_order, order)
-    });
-}
-
-fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
-    let computed = &cascade.computed[node_id];
-    match (&computed.position, computed.z_index) {
-        // In-flow boxes paint before positioned descendants with an auto
-        // z-index. Keep ordinary static boxes in the normal bucket, but
-        // place flex containers with positioned descendants alongside
-        // auto-z siblings so their later absolute child paints in tree order.
-        (PositionValue::Static, _)
-            if matches!(
-                computed.display,
-                DisplayValue::Flex | DisplayValue::InlineFlex
-            ) =>
-        {
-            (2, 0)
-        }
-        (PositionValue::Static, _) => (1, 0),
-        (_, ZIndexValue::Auto) => (2, 0),
-        (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
-        (_, ZIndexValue::Integer(value)) => (2, value),
-        // PositionValue and ZIndexValue are non-exhaustive.  New variants
-        // retain the default/source-order bucket until stacking support grows.
-        _ => (1, 0),
-    }
-}
-
-/// Walk the Document arena in DFS order; return the first `<body>` element index.
-///
-/// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid
-/// stack overflow on deep DOMs. Return `None` for fragments (no `<body>`).
-///
-/// Skip subtrees with `!is_in_document()` (such as `<template>` descendants)
-/// so a hypothetical `<body>` in an inert subtree is not selected. The
-/// paint-side and layout-side find_body are separate to avoid crossing crate
-/// boundaries, but share the same contract.
-fn find_body(doc: &Document) -> Option<usize> {
-    let mut stack: Vec<usize> = vec![doc.root_index()];
-    while let Some(id) = stack.pop() {
-        let node = doc.get_node(id)?;
-        if !node.is_in_document() {
-            continue;
-        }
-        if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
-            return Some(id);
-        }
-        for &c in node.children.iter().rev() {
-            stack.push(c);
-        }
-    }
-    None
 }
 
 #[cfg(test)]

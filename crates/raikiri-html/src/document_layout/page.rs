@@ -1,4 +1,4 @@
-use super::{DomView, Fragment, PositionedGlyphRun};
+use super::{DomView, Fragment, PaintEvent, PositionedGlyphRun};
 use raikiri_style::{ComputedValues, PageCascadeResult};
 use raikiri_traits::{NodeId, PaintInsets, PaintRect};
 
@@ -89,6 +89,35 @@ impl<'a> Page<'a> {
     pub fn text_runs(&self) -> Vec<PositionedGlyphRun<'a>> {
         self.document
             .page_text_runs(self.cascade, self.slice.page_index)
+    }
+
+    /// Body content of this page in paint order: element boxes, paragraph
+    /// text and replaced content, with the clips and group opacities that
+    /// enclose them. The page background, page border and margin boxes are
+    /// drawn before these events.
+    ///
+    /// Every fragment in an event is one of [`Self::fragments`]. Siblings
+    /// follow the built-in painter: negative `z-index` first, then in-flow
+    /// boxes, floats, and positioned boxes with `z-index: auto` or a
+    /// non-negative `z-index`; flex and grid items use `order` within a
+    /// stacking level. A paragraph's inline boxes come before its text.
+    /// Clip rectangles are in the same space as [`Fragment::paint_rect`].
+    /// Generated content and markers are not listed yet, and multi-column
+    /// containers are listed without column clips (reported once in
+    /// [`super::DocumentLayout::warnings`] with
+    /// [`raikiri_traits::WarningKind::PaintOrderApproximated`]).
+    ///
+    /// Where the built-in painter differs: it draws the `<body>` box on every
+    /// page, while this list has it only on the pages its box reaches; and it
+    /// draws each line's inline element backgrounds just before that line's
+    /// text, while this list has all of a paragraph's inline element boxes
+    /// before all of its text.
+    pub fn paint_order(&self) -> Vec<PaintEvent<'a>> {
+        self.document.page_paint_order(
+            self.cascade,
+            self.slice.page_index,
+            self.slice.page_name.as_deref(),
+        )
     }
 
     /// The laid-out document, its cascade, the page box and the page's

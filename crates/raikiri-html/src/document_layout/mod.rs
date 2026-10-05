@@ -8,8 +8,8 @@ pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::{Page, PageGeometry, PageMode};
 pub use raikiri_dom::{
-    FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind, Glyph,
-    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag,
+    ClipKind, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind,
+    Glyph, PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
@@ -162,6 +162,16 @@ pub fn layout(
             node_id: Some(node),
             details: format!("text runs are not reported for this paragraph: {reason}"),
         }));
+    let approximated = out.document.paint_order_approximations(&out.cascade);
+    out.warnings.extend(
+        approximated
+            .into_iter()
+            .map(|(node, reason)| RenderWarning {
+                kind: WarningKind::PaintOrderApproximated,
+                node_id: Some(node),
+                details: format!("paint order is approximated for this subtree: {reason}"),
+            }),
+    );
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }

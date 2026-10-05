@@ -1,6 +1,7 @@
 //! Stored page placements and the final views borrowed from them.
 
 pub(crate) mod fragment;
+pub(crate) mod paint_order;
 pub(crate) mod records;
 pub(crate) mod text_runs;
 
