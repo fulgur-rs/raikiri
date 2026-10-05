@@ -612,7 +612,9 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
     // A hand-built box that never went through the style bridge has no
     // computed borders, so it takes part in no conflict.
     let bare_row = bordered_cell(&mut doc, 2.0);
+    doc.nodes[bare_row].display = DisplayValue::TableRow;
     let bare_table = bordered_cell(&mut doc, 2.0);
+    let bare_cell = bordered_cell(&mut doc, 2.0);
     let cell = collapsed_cell(
         &mut doc,
         collapsed_candidate(BorderStyle::Solid, 3.0, CssColor::BLACK),
@@ -626,8 +628,19 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
 
     super::resolve_collapsed_row_borders(&mut doc, &grid);
     super::resolve_collapsed_table_edges(&mut doc, &grid, bare_table);
+    let pair = super::TableGrid {
+        n_cols: 2,
+        rows: vec![bare_row],
+        cells: vec![
+            make_cell(cell, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(bare_cell, 0, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+    super::resolve_collapsed_cell_borders(&mut doc, &pair);
 
     assert!(doc.nodes[cell].collapsed_border().is_none());
+    assert!(doc.nodes[bare_cell].collapsed_border().is_none());
     assert!(doc.nodes[bare_row].collapsed_border().is_none());
     assert_eq!(
         doc.nodes[cell].style.border.top,
