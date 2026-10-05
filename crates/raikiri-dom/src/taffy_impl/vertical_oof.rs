@@ -19,6 +19,7 @@ use taffy::{AvailableSpace, LayoutInput, Position as TaffyPosition, Size};
 
 use super::resolve_calc;
 use crate::document::Document;
+use crate::node::NodeFlags;
 use raikiri_style::property::WritingMode;
 
 /// The writing mode in effect at `node`: the nearest authored value on the
@@ -130,11 +131,28 @@ pub(super) fn absolute_child_inputs(
     }
 }
 
+/// Whether the subtree of `node` holds inline content laid out by the
+/// inline engine. In flow, such a box makes its vertical container lay out
+/// its block children on vertical axes; a box without it stays on the
+/// horizontal block path.
+fn has_inline_content(tree: &Document, node: usize) -> bool {
+    let mut stack = vec![node];
+    while let Some(id) = stack.pop() {
+        if tree.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {
+            return true;
+        }
+        stack.extend(tree.nodes[id].children.iter().copied());
+    }
+    false
+}
+
 /// Move each absolutely positioned child of the vertical container `node`
-/// whose `left` and `right` are both auto to its static position on the
-/// block-start edge of the padding box: the right edge in `vertical-rl`, the
-/// left edge in `vertical-lr`. A container laid out here has no in-flow
-/// content before the child, so that edge is the static position.
+/// whose `left` and `right` are both auto, and which holds inline content,
+/// to its static position on the block-start edge of the padding box: the
+/// right edge in `vertical-rl`, the left edge in `vertical-lr`. A container
+/// laid out here has no in-flow content before the child, so that edge is
+/// the static position. A child without inline content keeps the position
+/// the horizontal block path gives the same box in flow.
 pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_box: Size<f32>) {
     let mode = used_writing_mode(tree, node);
     if !is_vertical(mode) {
@@ -151,7 +169,7 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
         .children
         .iter()
         .copied()
-        .filter(|&child| is_absolute(tree, child))
+        .filter(|&child| is_absolute(tree, child) && has_inline_content(tree, child))
         .collect();
     for child in children {
         let child_style = &tree.nodes[child].style;

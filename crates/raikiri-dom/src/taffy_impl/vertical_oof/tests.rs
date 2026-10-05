@@ -76,3 +76,29 @@ fn horizontal_absolute_box_is_unchanged() {
     let rects = column_rects("", "position:absolute");
     assert_eq!(rects[0], (0.0, 0.0, 50.0, 20.0));
 }
+
+#[test]
+fn vertical_absolute_box_without_inline_content_keeps_the_block_path_position() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:30px;height:35px;position:relative"),
+    );
+    let absolute = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;width:15px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    // An empty block in this container is laid out on the horizontal block
+    // path, so the static position stays where that path puts it.
+    assert_eq!(absolute_rect(&doc, absolute), (0.0, 0.0, 15.0, 20.0));
+}
