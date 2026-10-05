@@ -1618,10 +1618,14 @@ impl SpecifiedValues {
     fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
         let inline_size = self.inline_size.take();
         let block_size = self.block_size.take();
-        if inline_size.is_none() && block_size.is_none() {
+        let precedence = self.preferred_size_precedence;
+        if inline_size.is_none()
+            && block_size.is_none()
+            && precedence.inline_size.is_none()
+            && precedence.block_size.is_none()
+        {
             return None;
         }
-        let precedence = self.preferred_size_precedence;
         // CSS Logical Properties 1 §4: a logical property and the physical
         // property it maps to share one computed value, so the one later in
         // cascade order wins.
@@ -1629,11 +1633,14 @@ impl SpecifiedValues {
                     physical_rank: Option<CascadePrecedence>,
                     logical: Option<LengthOrAuto>,
                     logical_rank: Option<CascadePrecedence>| {
-            match logical {
-                Some(logical) if physical_rank.is_none() || logical_rank >= physical_rank => {
-                    logical
-                }
-                _ => physical,
+            // A winner invalid at computed-value time still takes its place
+            // in cascade order and computes to the initial `auto`.
+            if logical_rank.is_some() && logical_rank >= physical_rank {
+                logical.unwrap_or(LengthOrAuto::Auto)
+            } else if physical_rank.is_some() {
+                physical
+            } else {
+                logical.unwrap_or(physical)
             }
         };
         let vertical = matches!(

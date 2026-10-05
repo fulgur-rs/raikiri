@@ -6459,3 +6459,16 @@ fn cascade_page_logical_sizes_fold_into_physical_sizes() {
     );
     assert!(!result.declarations().contains_key(&PropertyKey::InlineSize));
 }
+
+/// A `var()` logical size is folded onto the physical slot as well.
+#[test]
+fn cascade_page_var_logical_size_folds_into_width() {
+    let root = ComputedValues::initial();
+    let result = page("@page { --w: 400px; inline-size: var(--w) }", &root);
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+            400.0
+        )))),
+    );
+}

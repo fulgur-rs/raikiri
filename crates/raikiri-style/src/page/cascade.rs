@@ -587,6 +587,19 @@ fn horizontal_preferred_size(value: PropertyValue) -> PropertyValue {
     match value {
         PropertyValue::InlineSize(size) => PropertyValue::Width(size),
         PropertyValue::BlockSize(size) => PropertyValue::Height(size),
+        // A `var()` value is re-parsed by its property name once resolved.
+        PropertyValue::Deferred(mut deferred) => {
+            let physical = match deferred.key {
+                PropertyKey::InlineSize => Some((PropertyKey::Width, "width")),
+                PropertyKey::BlockSize => Some((PropertyKey::Height, "height")),
+                _ => None,
+            };
+            if let Some((key, property)) = physical {
+                deferred.key = key;
+                deferred.property = SmolStr::new_static(property);
+            }
+            PropertyValue::Deferred(deferred)
+        }
         value => value,
     }
 }

@@ -175,6 +175,19 @@ fn logical_and_physical_preferred_sizes_compete_in_cascade_order() {
 }
 
 #[test]
+fn an_invalid_later_preferred_size_still_wins_the_axis() {
+    let physical_invalid = cascade_doc("", "div", Some("inline-size: 10px; width: var(--missing)"));
+    assert_eq!(physical_invalid.width, ComputedLengthPercentageOrAuto::Auto);
+    let logical_invalid = cascade_doc("", "div", Some("width: 10px; inline-size: var(--missing)"));
+    assert_eq!(logical_invalid.width, ComputedLengthPercentageOrAuto::Auto);
+    let earlier_invalid = cascade_doc("", "div", Some("inline-size: var(--missing); width: 10px"));
+    assert_eq!(
+        earlier_invalid.width,
+        ComputedLengthPercentageOrAuto::Px(10.0)
+    );
+}
+
+#[test]
 fn inheritance_walk_child_from_parent_element() {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
