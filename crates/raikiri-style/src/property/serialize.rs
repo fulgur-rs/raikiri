@@ -236,6 +236,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         PropertyValue::HangingPunctuation(value) => Some(match value {
             HangingPunctuation::None => "none".to_owned(),
             HangingPunctuation::First => "first".to_owned(),
+            HangingPunctuation::Last => "last".to_owned(),
         }),
 
         PropertyValue::TextAutospace(value) => Some(match value {

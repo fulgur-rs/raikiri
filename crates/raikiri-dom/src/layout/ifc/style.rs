@@ -518,7 +518,37 @@ pub(crate) fn inline_style(
         unicode_bidi,
         text_orientation,
         text_combine_upright,
+        hanging_punctuation: Some(hanging_punctuation(cv.hanging_punctuation, node)?),
         ..Default::default()
+    })
+}
+
+/// The shodo hanging-punctuation flags of a computed `hanging-punctuation`
+/// (CSS Text 3 §8.2.1). Shodo applies an inline box's value in place of the
+/// paragraph's, so `none` maps to the empty set rather than to "inherit".
+fn hanging_punctuation(
+    value: p::HangingPunctuation,
+    node: usize,
+) -> Result<s::HangingPunctuation, IfcError> {
+    Ok(match value {
+        p::HangingPunctuation::None => s::HangingPunctuation::default(),
+        p::HangingPunctuation::First => s::HangingPunctuation {
+            first: true,
+            ..s::HangingPunctuation::default()
+        },
+        p::HangingPunctuation::Last => s::HangingPunctuation {
+            last: true,
+            ..s::HangingPunctuation::default()
+        },
+        // `HangingPunctuation` is `#[non_exhaustive]` across crates; a value
+        // added later stays out of the paragraph until it is mapped here.
+        // cov:ignore: every current variant is matched above.
+        _ => {
+            return Err(IfcError::Unsupported {
+                node,
+                reason: "hanging-punctuation is not represented by shodo",
+            });
+        }
     })
 }
 
@@ -618,18 +648,7 @@ pub(crate) fn line_options(
             text_align_last,
             text_justify,
             text_wrap_style,
-            hanging_punctuation: match cv.hanging_punctuation {
-                p::HangingPunctuation::None => s::HangingPunctuation::default(),
-                p::HangingPunctuation::First => s::HangingPunctuation {
-                    first: true,
-                    ..s::HangingPunctuation::default()
-                },
-                _ => {
-                    return Err(unsupported(
-                        "hanging-punctuation is not represented by shodo",
-                    ));
-                }
-            },
+            hanging_punctuation: hanging_punctuation(cv.hanging_punctuation, node)?,
             text_indent: s::TextIndent {
                 length: 0.0,
                 hanging: cv.text_indent_hanging,
