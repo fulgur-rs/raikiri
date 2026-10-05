@@ -916,6 +916,22 @@ pub(crate) fn apply_winners(
                 ),
                 _ => Some(value.clone()),
             };
+            // Record the precedence even for a value invalid at computed-value
+            // time: it still decides which of a physical and a logical size wins.
+            let rank = Some((
+                winner.rank,
+                winner.specificity,
+                winner.source_order,
+                winner.idx,
+            ));
+            let sizes = &mut specified.preferred_size_precedence;
+            match winner_key {
+                crate::property::PropertyKey::Width => sizes.width = rank,
+                crate::property::PropertyKey::Height => sizes.height = rank,
+                crate::property::PropertyKey::InlineSize => sizes.inline_size = rank,
+                crate::property::PropertyKey::BlockSize => sizes.block_size = rank,
+                _ => {}
+            }
             if let Some(value) = value {
                 if let PropertyValue::WritingMode(mode) = &value
                     && let Some(slot) = authored_writing_mode.as_deref_mut()
@@ -1651,6 +1667,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::MinWidth(_)
         | PropertyValue::MinHeight(_)
         | PropertyValue::MinBlockSize(_)
+        | PropertyValue::InlineSize(_)
+        | PropertyValue::BlockSize(_)
         | PropertyValue::Top(_)
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)
@@ -2219,6 +2237,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MinWidth(v) => target.min_width = v,
         PropertyValue::MinHeight(v) => target.min_height = v,
         PropertyValue::MinBlockSize(v) => target.min_block_size = Some(v),
+        PropertyValue::InlineSize(v) => target.inline_size = Some(v),
+        PropertyValue::BlockSize(v) => target.block_size = Some(v),
         PropertyValue::Top(v) => target.top = v,
         PropertyValue::Right(v) => target.right = v,
         PropertyValue::Bottom(v) => target.bottom = v,

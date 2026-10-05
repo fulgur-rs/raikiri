@@ -68,6 +68,126 @@ fn min_block_size_maps_to_the_authored_block_axis() {
 }
 
 #[test]
+fn logical_preferred_sizes_map_to_the_authored_axes() {
+    let horizontal = cascade_doc(
+        "",
+        "div",
+        Some("inline-size: 4em; block-size: 30px; font-size: 20px"),
+    );
+    assert_eq!(horizontal.width, ComputedLengthPercentageOrAuto::Px(80.0));
+    assert_eq!(horizontal.height, ComputedLengthPercentageOrAuto::Px(30.0));
+    assert_eq!(horizontal.vertical_logical_size, None);
+
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let vertical = cascade_doc(
+            "",
+            "div",
+            Some(&format!(
+                "inline-size: 4em; block-size: 30px; font-size: 20px; writing-mode: {mode}"
+            )),
+        );
+        // Horizontal layout paths keep the horizontal mapping.
+        assert_eq!(
+            vertical.width,
+            ComputedLengthPercentageOrAuto::Px(80.0),
+            "{mode}"
+        );
+        assert_eq!(
+            vertical
+                .vertical_logical_size
+                .as_ref()
+                .map(|size| (size.width, size.height)),
+            Some((
+                ComputedLengthPercentageOrAuto::Px(30.0),
+                ComputedLengthPercentageOrAuto::Px(80.0),
+            )),
+            "{mode}"
+        );
+    }
+
+    let vertical_inline_only = cascade_doc(
+        "",
+        "div",
+        Some("width: 10px; inline-size: 50%; writing-mode: vertical-rl"),
+    );
+    assert_eq!(
+        vertical_inline_only
+            .vertical_logical_size
+            .as_ref()
+            .map(|size| (size.width, size.height)),
+        Some((
+            ComputedLengthPercentageOrAuto::Px(10.0),
+            ComputedLengthPercentageOrAuto::Percent(50.0),
+        ))
+    );
+
+    let sideways = cascade_doc(
+        "",
+        "div",
+        Some("inline-size: 40px; writing-mode: sideways-rl"),
+    );
+    assert_eq!(sideways.width, ComputedLengthPercentageOrAuto::Px(40.0));
+    assert_eq!(sideways.vertical_logical_size, None);
+}
+
+#[test]
+fn logical_and_physical_preferred_sizes_compete_in_cascade_order() {
+    let physical_later = cascade_doc("", "div", Some("inline-size: 10px; width: 20px"));
+    assert_eq!(
+        physical_later.width,
+        ComputedLengthPercentageOrAuto::Px(20.0)
+    );
+    let logical_later = cascade_doc("", "div", Some("width: 20px; inline-size: 10px"));
+    assert_eq!(
+        logical_later.width,
+        ComputedLengthPercentageOrAuto::Px(10.0)
+    );
+
+    // A more specific physical declaration beats a later logical one.
+    let specific = {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "#x { height: 30px } div { block-size: 40px }");
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "id", "x");
+        let rules = build_rule_tree(&doc);
+        cascade(&doc, &rules).expect("cascade").computed[div].clone()
+    };
+    assert_eq!(specific.height, ComputedLengthPercentageOrAuto::Px(30.0));
+
+    let vertical = cascade_doc(
+        "",
+        "div",
+        Some(
+            "writing-mode: vertical-rl; inline-size: 10px; height: 20px; width: 5px; block-size: 6px",
+        ),
+    );
+    assert_eq!(
+        vertical
+            .vertical_logical_size
+            .as_ref()
+            .map(|size| (size.width, size.height)),
+        Some((
+            ComputedLengthPercentageOrAuto::Px(6.0),
+            ComputedLengthPercentageOrAuto::Px(20.0),
+        ))
+    );
+}
+
+#[test]
+fn an_invalid_later_preferred_size_still_wins_the_axis() {
+    let physical_invalid = cascade_doc("", "div", Some("inline-size: 10px; width: var(--missing)"));
+    assert_eq!(physical_invalid.width, ComputedLengthPercentageOrAuto::Auto);
+    let logical_invalid = cascade_doc("", "div", Some("width: 10px; inline-size: var(--missing)"));
+    assert_eq!(logical_invalid.width, ComputedLengthPercentageOrAuto::Auto);
+    let earlier_invalid = cascade_doc("", "div", Some("inline-size: var(--missing); width: 10px"));
+    assert_eq!(
+        earlier_invalid.width,
+        ComputedLengthPercentageOrAuto::Px(10.0)
+    );
+}
+
+#[test]
 fn inheritance_walk_child_from_parent_element() {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);

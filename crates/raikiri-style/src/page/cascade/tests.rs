@@ -3188,6 +3188,8 @@ property_key_samples! {
     MinWidth => PropertyValue::MinWidth(LengthOrAuto::Length(Length::Em(7.0))),
     MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
     MinBlockSize => PropertyValue::MinBlockSize(LengthOrAuto::Length(Length::Em(9.0))),
+    InlineSize => PropertyValue::InlineSize(LengthOrAuto::Length(Length::Em(10.0))),
+    BlockSize => PropertyValue::BlockSize(LengthOrAuto::Length(Length::Em(11.0))),
     TextUnderlineOffset => {
         PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Length(Length::Em(9.0)))
     },
@@ -4000,6 +4002,8 @@ property_value_variant_registry! {
     MinWidth,
     MinHeight,
     MinBlockSize,
+    InlineSize,
+    BlockSize,
     TextUnderlineOffset,
     BoxSizing,
     Direction,
@@ -4545,7 +4549,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::MaxHeight(l)
             | PropertyValue::MinWidth(l)
             | PropertyValue::MinHeight(l)
-            | PropertyValue::MinBlockSize(l) => length_or_auto(*l),
+            | PropertyValue::MinBlockSize(l)
+            | PropertyValue::InlineSize(l)
+            | PropertyValue::BlockSize(l) => length_or_auto(*l),
             PropertyValue::TextUnderlineOffset(value) => text_underline_offset(*value),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
@@ -6427,5 +6433,42 @@ fn media_guarded_page_unsupported_media_drops_page() {
             width: Length::Px(100.0),
             height: Length::Px(50.0),
         })
+    );
+}
+
+/// Page boxes are horizontal, so `inline-size` / `block-size` land on the
+/// `width` / `height` slots and compete with them in declaration order.
+#[test]
+fn cascade_page_logical_sizes_fold_into_physical_sizes() {
+    let root = ComputedValues::initial();
+    let result = page(
+        "@page { width: 10px; inline-size: 400px; block-size: 300px; height: 20px }",
+        &root,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+            400.0
+        )))),
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Height),
+        Some(&PropertyValue::Height(LengthOrAuto::Length(Length::Px(
+            20.0
+        )))),
+    );
+    assert!(!result.declarations().contains_key(&PropertyKey::InlineSize));
+}
+
+/// A `var()` logical size is folded onto the physical slot as well.
+#[test]
+fn cascade_page_var_logical_size_folds_into_width() {
+    let root = ComputedValues::initial();
+    let result = page("@page { --w: 400px; inline-size: var(--w) }", &root);
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+            400.0
+        )))),
     );
 }

@@ -2430,28 +2430,37 @@ fn width_key_maps_to_width_property_key() {
 }
 
 #[test]
-fn logical_size_aliases_use_physical_horizontal_writing_mode_axes() {
-    // CSS Sizing 3 logical preferred-size properties map to width/height
-    // while this engine's supported writing mode is horizontal-tb.
+fn logical_preferred_sizes_stay_logical_until_the_cascade() {
+    // CSS Logical Properties 1 §4.1: the physical axis of inline-size and
+    // block-size depends on writing-mode, so parsing keeps them logical.
     assert_eq!(
         property_key_for_name("inline-size"),
-        Some(PropertyKey::Width)
+        Some(PropertyKey::InlineSize)
     );
     assert_eq!(
         property_key_for_name("block-size"),
-        Some(PropertyKey::Height)
+        Some(PropertyKey::BlockSize)
     );
     assert_eq!(
         parse("120px", "inline-size"),
-        Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+        Some(PropertyValue::InlineSize(LengthOrAuto::Length(Length::Px(
             120.0
         ))))
     );
     assert_eq!(
         parse("80px", "block-size"),
-        Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(
+        Some(PropertyValue::BlockSize(LengthOrAuto::Length(Length::Px(
             80.0
         ))))
+    );
+    assert_eq!(parse("-1px", "inline-size"), None);
+    assert_eq!(
+        PropertyValue::InlineSize(LengthOrAuto::Auto).key(),
+        PropertyKey::InlineSize
+    );
+    assert_eq!(
+        PropertyValue::BlockSize(LengthOrAuto::Auto).key(),
+        PropertyKey::BlockSize
     );
 }
 

@@ -320,6 +320,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::MinWidth(_)
         | PropertyValue::MinHeight(_)
         | PropertyValue::MinBlockSize(_)
+        | PropertyValue::InlineSize(_)
+        | PropertyValue::BlockSize(_)
         | PropertyValue::Top(_)
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)

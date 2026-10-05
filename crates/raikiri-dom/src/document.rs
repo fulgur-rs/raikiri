@@ -367,6 +367,10 @@ pub struct Document {
     pub(crate) fragment_tree: FragmentTree,
     /// Active nested fragmentainer stack while Taffy recursively lays out nodes.
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
+    /// Vertical block containers being laid out whose absolutely positioned
+    /// children use the recorded physical height as their containing
+    /// block's inline size; see `taffy_impl::vertical_oof`.
+    pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -481,6 +485,7 @@ impl Document {
             calc_values: Vec::new(),
             fragment_tree: FragmentTree::default(),
             fragmentation_stack: Vec::new(),
+            vertical_oof_containing_blocks: Vec::new(),
             quirks_mode: QuirksMode::default(),
         }
     }

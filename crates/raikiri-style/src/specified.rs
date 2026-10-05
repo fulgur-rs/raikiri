@@ -26,7 +26,9 @@ use std::sync::Arc;
 
 use smol_str::SmolStr;
 
-use crate::computed::{ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate};
+use crate::computed::{
+    ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate, VerticalLogicalSize,
+};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
@@ -294,6 +296,16 @@ pub struct SpecifiedValues {
     /// **Specified** `min-block-size`; phase 3 absolutizes it and maps it onto physical
     /// min-width/min-height according to `writing-mode`.
     pub min_block_size: Option<LengthOrAuto>,
+    /// **Specified** `inline-size`; phase 3 maps it onto physical `width` or
+    /// `height` according to `writing-mode`, then absolutizes it.
+    pub inline_size: Option<LengthOrAuto>,
+    /// **Specified** `block-size`; mapped onto the axis perpendicular to
+    /// [`Self::inline_size`] in phase 3.
+    pub block_size: Option<LengthOrAuto>,
+    /// Cascade precedence of the winning `width` / `height` / `inline-size` /
+    /// `block-size` declarations. Phase 3 lets the logical and physical
+    /// declaration that map onto the same axis compete in cascade order.
+    pub(crate) preferred_size_precedence: PreferredSizePrecedence,
     /// **Specified** `top`; absolutized in phase 3.
     pub top: LengthOrAuto,
     /// **Specified** `right`; absolutized in phase 3.
@@ -677,6 +689,21 @@ pub struct SpecifiedValues {
     pub column_width: ColumnWidthValue,
 }
 
+/// Cascade sort key of a winning declaration: origin and importance rank,
+/// specificity, source order, then position among the element's candidates
+/// (CSS Cascading 4 §6.1).
+pub(crate) type CascadePrecedence = (u8, u32, u32, usize);
+
+/// [`CascadePrecedence`] of each winning preferred-size declaration; `None`
+/// when no declaration won for that property.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct PreferredSizePrecedence {
+    pub(crate) width: Option<CascadePrecedence>,
+    pub(crate) height: Option<CascadePrecedence>,
+    pub(crate) inline_size: Option<CascadePrecedence>,
+    pub(crate) block_size: Option<CascadePrecedence>,
+}
+
 impl SpecifiedValues {
     /// Staging values with the CSS-specified initial value for every property.
     ///
@@ -764,6 +791,9 @@ impl SpecifiedValues {
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
+            inline_size: None,
+            preferred_size_precedence: PreferredSizePrecedence::default(),
+            block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1248,6 +1278,9 @@ impl SpecifiedValues {
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
+            inline_size: None,
+            preferred_size_precedence: PreferredSizePrecedence::default(),
+            block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1572,13 +1605,87 @@ impl SpecifiedValues {
     /// first (rather than calling `resolve_line_height` here) because
     /// `padding: 1lh` needs the **already resolved** line height of this
     /// node. Passing it in, like `font_size`, preserves that order.
+    /// Fold `inline-size` / `block-size` into `width` / `height` and return
+    /// their mapping for a vertical writing mode.
+    ///
+    /// Layout runs vertical content on horizontal axes except where it lays
+    /// out vertical lines itself, so `width` / `height` keep the horizontal
+    /// mapping. In `vertical-rl` / `vertical-lr`, the returned physical
+    /// `(width, height)` follows CSS Logical Properties 1 §4.1
+    /// (<https://www.w3.org/TR/css-logical-1/#dimension-properties>): the
+    /// inline size is the physical height. A declared logical size replaces
+    /// the physical size on the same axis, matching `min-block-size` below.
+    fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
+        let inline_size = self.inline_size.take();
+        let block_size = self.block_size.take();
+        let precedence = self.preferred_size_precedence;
+        if inline_size.is_none()
+            && block_size.is_none()
+            && precedence.inline_size.is_none()
+            && precedence.block_size.is_none()
+        {
+            return None;
+        }
+        // CSS Logical Properties 1 §4: a logical property and the physical
+        // property it maps to share one computed value, so the one later in
+        // cascade order wins.
+        let pick = |physical: LengthOrAuto,
+                    physical_rank: Option<CascadePrecedence>,
+                    logical: Option<LengthOrAuto>,
+                    logical_rank: Option<CascadePrecedence>| {
+            // A winner invalid at computed-value time still takes its place
+            // in cascade order and computes to the initial `auto`.
+            if logical_rank.is_some() && logical_rank >= physical_rank {
+                logical.unwrap_or(LengthOrAuto::Auto)
+            } else if physical_rank.is_some() {
+                physical
+            } else {
+                logical.unwrap_or(physical)
+            }
+        };
+        let vertical = matches!(
+            self.writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        )
+        .then(|| {
+            (
+                pick(
+                    self.width,
+                    precedence.width,
+                    block_size,
+                    precedence.block_size,
+                ),
+                pick(
+                    self.height,
+                    precedence.height,
+                    inline_size,
+                    precedence.inline_size,
+                ),
+            )
+        });
+        self.width = pick(
+            self.width,
+            precedence.width,
+            inline_size,
+            precedence.inline_size,
+        );
+        self.height = pick(
+            self.height,
+            precedence.height,
+            block_size,
+            precedence.block_size,
+        );
+        vertical
+    }
+
     fn absolutize_with(
-        self,
+        mut self,
         font_size: ComputedLength,
         line_height: ComputedLineHeight,
         text_align: TextAlign,
         ctx: &ResolveContext,
     ) -> ComputedValues {
+        let vertical_logical_size = self.map_logical_preferred_sizes();
         // Reference for `1lh` on padding, margin, border, width and height. `rlh` uses the
         // tree-global `ctx.root_line_height`, so this local reference is only needed here.
         let own_line_height = used_line_height_length(line_height, font_size);
@@ -1677,6 +1784,17 @@ impl SpecifiedValues {
             }),
             _ => None,
         };
+        let size_ch = |size: LengthOrAuto| match size {
+            LengthOrAuto::Length(length) => ch_provenance(length),
+            _ => None,
+        };
+        let vertical_logical_size =
+            vertical_logical_size.map(|(width, height)| VerticalLogicalSize {
+                width: resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
+                width_ch: size_ch(width),
+                height: resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
+                height_ch: size_ch(height),
+            });
         let width_ch = match self.width {
             LengthOrAuto::Length(length) => ch_provenance(length),
             _ => None,
@@ -1822,6 +1940,7 @@ impl SpecifiedValues {
             min_width,
             min_height,
             min_block_size: physical_min_block,
+            vertical_logical_size,
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),
             bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),

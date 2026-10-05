@@ -331,6 +331,7 @@ impl Document {
             }
             self.layout_dirty = false;
         }
+        let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
         let mut output = compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let idx = usize::from(node_id);
             // Table dispatch uses preserved DisplayValue (not taffy's collapsed Display::Block).
@@ -483,7 +484,19 @@ impl Document {
             } else {
                 match display {
                     Display::Block | Display::FlowRoot => {
-                        compute_block_layout(tree, node_id, inputs, block_ctx)
+                        let vertical_cb =
+                            vertical_oof::containing_block_inline_size(tree, idx, &inputs);
+                        if let Some(inline_size) = vertical_cb {
+                            tree.vertical_oof_containing_blocks.push((idx, inline_size));
+                        }
+                        let output = compute_block_layout(tree, node_id, inputs, block_ctx);
+                        if vertical_cb.is_some() {
+                            tree.vertical_oof_containing_blocks.pop();
+                        }
+                        if inputs.run_mode == RunMode::PerformLayout {
+                            vertical_oof::place_static_block_start(tree, idx, output.size);
+                        }
+                        output
                     }
                     Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
                     Display::Grid => compute_grid_layout(tree, node_id, inputs),
@@ -506,6 +519,8 @@ impl Document {
 
 #[cfg(test)]
 mod tests;
+
+mod vertical_oof;
 
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.

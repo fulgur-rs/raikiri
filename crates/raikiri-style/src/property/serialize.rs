@@ -119,7 +119,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::MinWidth(_)
         | PropertyValue::MinHeight(_)
         | PropertyValue::MaxWidth(_)
-        | PropertyValue::MaxHeight(_) => None,
+        | PropertyValue::MaxHeight(_)
+        | PropertyValue::InlineSize(_)
+        | PropertyValue::BlockSize(_) => None,
 
         // `color`/`background-color`/`border-*-color`/`text-decoration-color`/
         // `outline-color` (including the `border-color` shorthand here) are

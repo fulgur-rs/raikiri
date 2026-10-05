@@ -572,9 +572,14 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `<length-percentage>`. Silently drop the unimplemented min-content,
         // max-content, and fit-content() forms; parse_width rejects negative
         // values under the spec's `[0,∞]` constraint.
-        "width" | "inline-size" => parse_width(input).map(PropertyValue::Width),
+        "width" => parse_width(input).map(PropertyValue::Width),
         // CSS Sizing 3 §3.1.1 preferred size — height.
-        "height" | "block-size" => parse_height(input).map(PropertyValue::Height),
+        "height" => parse_height(input).map(PropertyValue::Height),
+        // CSS Logical Properties 1 §4.1 inline-size / block-size share the
+        // `width` / `height` grammar but stay logical until the cascade knows
+        // the element's `writing-mode`.
+        "inline-size" => parse_width(input).map(PropertyValue::InlineSize),
+        "block-size" => parse_height(input).map(PropertyValue::BlockSize),
         // CSS Sizing 3 §3.2 max-size properties.
         // `none | <length-percentage [0,∞]> | min-content | max-content | fit-content`
         "max-width" => parse_max_size(input).map(PropertyValue::MaxWidth),

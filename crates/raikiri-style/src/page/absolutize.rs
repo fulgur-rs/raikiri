@@ -764,6 +764,8 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::MinWidth(v) => PropertyValue::MinWidth(basis.lpa(v)),
         PropertyValue::MinHeight(v) => PropertyValue::MinHeight(basis.lpa(v)),
         PropertyValue::MinBlockSize(v) => PropertyValue::MinBlockSize(basis.lpa(v)),
+        PropertyValue::InlineSize(v) => PropertyValue::InlineSize(basis.lpa(v)),
+        PropertyValue::BlockSize(v) => PropertyValue::BlockSize(basis.lpa(v)),
         PropertyValue::Top(v) => PropertyValue::Top(basis.lpa(v)),
         PropertyValue::Right(v) => PropertyValue::Right(basis.lpa(v)),
         PropertyValue::Bottom(v) => PropertyValue::Bottom(basis.lpa(v)),
