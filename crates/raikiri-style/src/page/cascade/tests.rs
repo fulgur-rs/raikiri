@@ -3188,6 +3188,8 @@ property_key_samples! {
     MinWidth => PropertyValue::MinWidth(LengthOrAuto::Length(Length::Em(7.0))),
     MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
     MinBlockSize => PropertyValue::MinBlockSize(LengthOrAuto::Length(Length::Em(9.0))),
+    InlineSize => PropertyValue::InlineSize(LengthOrAuto::Length(Length::Em(10.0))),
+    BlockSize => PropertyValue::BlockSize(LengthOrAuto::Length(Length::Em(11.0))),
     TextUnderlineOffset => {
         PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Length(Length::Em(9.0)))
     },
@@ -4000,6 +4002,8 @@ property_value_variant_registry! {
     MinWidth,
     MinHeight,
     MinBlockSize,
+    InlineSize,
+    BlockSize,
     TextUnderlineOffset,
     BoxSizing,
     Direction,
@@ -4545,7 +4549,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::MaxHeight(l)
             | PropertyValue::MinWidth(l)
             | PropertyValue::MinHeight(l)
-            | PropertyValue::MinBlockSize(l) => length_or_auto(*l),
+            | PropertyValue::MinBlockSize(l)
+            | PropertyValue::InlineSize(l)
+            | PropertyValue::BlockSize(l) => length_or_auto(*l),
             PropertyValue::TextUnderlineOffset(value) => text_underline_offset(*value),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),

@@ -294,6 +294,12 @@ pub struct SpecifiedValues {
     /// **Specified** `min-block-size`; phase 3 absolutizes it and maps it onto physical
     /// min-width/min-height according to `writing-mode`.
     pub min_block_size: Option<LengthOrAuto>,
+    /// **Specified** `inline-size`; phase 3 maps it onto physical `width` or
+    /// `height` according to `writing-mode`, then absolutizes it.
+    pub inline_size: Option<LengthOrAuto>,
+    /// **Specified** `block-size`; mapped onto the axis perpendicular to
+    /// [`Self::inline_size`] in phase 3.
+    pub block_size: Option<LengthOrAuto>,
     /// **Specified** `top`; absolutized in phase 3.
     pub top: LengthOrAuto,
     /// **Specified** `right`; absolutized in phase 3.
@@ -764,6 +770,8 @@ impl SpecifiedValues {
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
+            inline_size: None,
+            block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1248,6 +1256,8 @@ impl SpecifiedValues {
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
+            inline_size: None,
+            block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1572,13 +1582,40 @@ impl SpecifiedValues {
     /// first (rather than calling `resolve_line_height` here) because
     /// `padding: 1lh` needs the **already resolved** line height of this
     /// node. Passing it in, like `font_size`, preserves that order.
+    /// Map `inline-size` / `block-size` onto `width` / `height` using this
+    /// element's own `writing-mode` (CSS Logical Properties 1 §4.1 and §2,
+    /// <https://www.w3.org/TR/css-logical-1/#dimension-properties>). A
+    /// declared logical size replaces the physical size on the same axis,
+    /// matching the `min-block-size` mapping below.
+    fn map_logical_preferred_sizes(&mut self) {
+        let vertical = match self.writing_mode {
+            WritingMode::HorizontalTb => false,
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => true,
+        };
+        let (inline_axis, block_axis) = if vertical {
+            (&mut self.height, &mut self.width)
+        } else {
+            (&mut self.width, &mut self.height)
+        };
+        if let Some(size) = self.inline_size.take() {
+            *inline_axis = size;
+        }
+        if let Some(size) = self.block_size.take() {
+            *block_axis = size;
+        }
+    }
+
     fn absolutize_with(
-        self,
+        mut self,
         font_size: ComputedLength,
         line_height: ComputedLineHeight,
         text_align: TextAlign,
         ctx: &ResolveContext,
     ) -> ComputedValues {
+        self.map_logical_preferred_sizes();
         // Reference for `1lh` on padding, margin, border, width and height. `rlh` uses the
         // tree-global `ctx.root_line_height`, so this local reference is only needed here.
         let own_line_height = used_line_height_length(line_height, font_size);

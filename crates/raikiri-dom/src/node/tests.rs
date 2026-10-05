@@ -29,6 +29,31 @@ mod ifc_geometry_tests {
     }
 
     #[test]
+    fn vertical_inline_size_constrains_lines_like_height() {
+        let layout = |size_css: &str| {
+            let css = format!("writing-mode:vertical-rl;{size_css}");
+            let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", &css);
+            doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+            layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+            let lines = doc.nodes[root].ifc_lines().expect("lines").len();
+            (
+                lines,
+                doc.nodes[root].ifc_physical_content_size(),
+                crate::layout::test_support::absolute_rect(&doc, root),
+            )
+        };
+
+        let logical = layout("inline-size:40px");
+        assert_eq!(logical, layout("height:40px"));
+        assert_eq!(logical.0, 3, "40px of inline extent fits one word per line");
+        assert_eq!(
+            logical.1.map(|size| size.height),
+            Some(40.0),
+            "inline-size is the physical height in vertical-rl"
+        );
+    }
+
+    #[test]
     fn ifc_inline_boxes_are_reported_in_vertical_physical_coordinates() {
         let css = "box-sizing:border-box;width:100px;height:40px;writing-mode:vertical-rl";
         let (mut doc, _, root) = ahem_paragraph("", css);

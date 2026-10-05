@@ -68,6 +68,51 @@ fn min_block_size_maps_to_the_authored_block_axis() {
 }
 
 #[test]
+fn logical_preferred_sizes_map_to_the_authored_axes() {
+    let horizontal = cascade_doc(
+        "",
+        "div",
+        Some("inline-size: 4em; block-size: 30px; font-size: 20px"),
+    );
+    assert_eq!(horizontal.width, ComputedLengthPercentageOrAuto::Px(80.0));
+    assert_eq!(horizontal.height, ComputedLengthPercentageOrAuto::Px(30.0));
+
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let vertical = cascade_doc(
+            "",
+            "div",
+            Some(&format!(
+                "inline-size: 4em; block-size: 30px; font-size: 20px; writing-mode: {mode}"
+            )),
+        );
+        assert_eq!(
+            vertical.height,
+            ComputedLengthPercentageOrAuto::Px(80.0),
+            "{mode}"
+        );
+        assert_eq!(
+            vertical.width,
+            ComputedLengthPercentageOrAuto::Px(30.0),
+            "{mode}"
+        );
+    }
+
+    let vertical_inline_only = cascade_doc(
+        "",
+        "div",
+        Some("width: 10px; inline-size: 50%; writing-mode: vertical-rl"),
+    );
+    assert_eq!(
+        vertical_inline_only.width,
+        ComputedLengthPercentageOrAuto::Px(10.0)
+    );
+    assert_eq!(
+        vertical_inline_only.height,
+        ComputedLengthPercentageOrAuto::Percent(50.0)
+    );
+}
+
+#[test]
 fn inheritance_walk_child_from_parent_element() {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);

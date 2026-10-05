@@ -9722,6 +9722,16 @@ pub enum PropertyValue {
     /// initial `normal`; carries explicit OpenType feature settings into the
     /// Shodo text shaper. Appended to preserve existing variant discriminants.
     FontFeatureSettings(FontFeatureSettings),
+    /// `inline-size: auto | <length-percentage [0,∞]>` — logical preferred
+    /// inline size (CSS Logical Properties 1 §4.1). The cascade resolves it to
+    /// `width` or `height` according to the specified `writing-mode`.
+    /// Appended to preserve existing variant discriminants.
+    InlineSize(LengthOrAuto),
+    /// `block-size: auto | <length-percentage [0,∞]>` — logical preferred
+    /// block size (CSS Logical Properties 1 §4.1), resolved like
+    /// [`Self::InlineSize`] onto the perpendicular physical axis.
+    /// Appended to preserve existing variant discriminants.
+    BlockSize(LengthOrAuto),
 }
 
 /// Property key: the discriminant used to select a winner for each property in
@@ -10285,6 +10295,9 @@ pub enum PropertyKey {
     ColumnFill,
     // CSS Fonts 4 font-feature-settings; appended to preserve existing key slots.
     FontFeatureSettings,
+    // Logical preferred sizes; appended to preserve existing key slots.
+    InlineSize,
+    BlockSize,
 }
 
 impl PropertyValue {
@@ -10548,6 +10561,8 @@ impl PropertyValue {
             PropertyValue::FontVariantEastAsian(_) => PropertyKey::FontVariantEastAsian,
             PropertyValue::FontVariationSettings(_) => PropertyKey::FontVariationSettings,
             PropertyValue::FontFeatureSettings(_) => PropertyKey::FontFeatureSettings,
+            PropertyValue::InlineSize(_) => PropertyKey::InlineSize,
+            PropertyValue::BlockSize(_) => PropertyKey::BlockSize,
         }
     }
 }
@@ -11590,8 +11605,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-style" => PropertyKey::BorderStyle,
         "border-width" => PropertyKey::BorderWidth,
         "border-color" => PropertyKey::BorderColor,
-        "width" | "inline-size" => PropertyKey::Width,
-        "height" | "block-size" => PropertyKey::Height,
+        "width" => PropertyKey::Width,
+        "height" => PropertyKey::Height,
+        "inline-size" => PropertyKey::InlineSize,
+        "block-size" => PropertyKey::BlockSize,
         "max-width" => PropertyKey::MaxWidth,
         "max-height" => PropertyKey::MaxHeight,
         "min-width" => PropertyKey::MinWidth,

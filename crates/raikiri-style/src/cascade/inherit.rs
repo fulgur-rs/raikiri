@@ -1651,6 +1651,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::MinWidth(_)
         | PropertyValue::MinHeight(_)
         | PropertyValue::MinBlockSize(_)
+        | PropertyValue::InlineSize(_)
+        | PropertyValue::BlockSize(_)
         | PropertyValue::Top(_)
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)
@@ -2219,6 +2221,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MinWidth(v) => target.min_width = v,
         PropertyValue::MinHeight(v) => target.min_height = v,
         PropertyValue::MinBlockSize(v) => target.min_block_size = Some(v),
+        PropertyValue::InlineSize(v) => target.inline_size = Some(v),
+        PropertyValue::BlockSize(v) => target.block_size = Some(v),
         PropertyValue::Top(v) => target.top = v,
         PropertyValue::Right(v) => target.right = v,
         PropertyValue::Bottom(v) => target.bottom = v,
