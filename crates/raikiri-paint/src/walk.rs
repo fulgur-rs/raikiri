@@ -38,7 +38,6 @@ use raikiri_traits::{
     RenderWarning, WarningKind,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
-use taffy::CompactLength;
 
 use crate::text;
 use raikiri_dom::generated_content::{
@@ -3318,53 +3317,7 @@ fn paint_document_impl(
     // coordinates.  Direct text and ordinary flow children are therefore
     // seeded with the authored horizontal body origin below; fixed/absolute
     // children keep their own containing-block coordinates.
-    let body_has_element_child = document.get_node(body_id).is_some_and(|body| {
-        body.children.iter().any(|&child_id| {
-            document
-                .get_node(child_id)
-                .is_some_and(|child| child.kind() == NodeKind::Element)
-        })
-    });
-    let body_has_canvas_background = {
-        let body = &cascade.computed[body_id];
-        body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
-    };
-    let body_has_direct_text = document.get_node(body_id).is_some_and(|body| {
-        // An ifc body root hides its text children from layout, so their
-        // heights stay 0; the root's own box stands in for them.
-        (body.is_ifc_root() && body.unrounded_layout.size.height > 0.0)
-            || body.children.iter().any(|&child_id| {
-                document.get_node(child_id).is_some_and(|child| {
-                    child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
-                })
-            })
-    });
-    let body_has_non_ua_margin = cascade
-        .non_ua_margin_sides
-        .get(body_id)
-        .is_some_and(|sides| sides.left);
-    let body_margin_left = if body_has_non_ua_margin
-        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
-    {
-        if body_has_non_ua_margin {
-            match document
-                .layout_style(body_id)
-                .map(|style| style.margin.left.into_raw())
-            {
-                Some(raw) if raw.tag() == CompactLength::LENGTH_TAG && raw.value().is_finite() => {
-                    raw.value().max(0.0)
-                }
-                _ => 0.0,
-            }
-        } else {
-            match cascade.computed[body_id].margin.left {
-                ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-                _ => 0.0,
-            }
-        }
-    } else {
-        0.0
-    };
+    let body_margin_left = raikiri_dom::body_paint_margin_left(document, cascade, body_id);
     // The paint walk starts at `<body>` because the html box itself is not a
     // paint item here. Seed the context with html's originating decoration so
     // root-element lines still propagate through the body subtree.

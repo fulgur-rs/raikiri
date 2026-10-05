@@ -73,7 +73,8 @@ pub use fragment::{FragmentRect, LayoutFragment};
 #[doc(hidden)]
 // cov:ignore: this attribute controls rustdoc metadata and has no runtime coverage.
 pub use layout::{
-    BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, relative_offset,
+    BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph, PositionedLine,
+    PositionedLines, PositionedRun, body_paint_margin_left, cumulative_offset, relative_offset,
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
 pub use layout::{
@@ -94,6 +95,10 @@ pub use layout::{
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
+pub use page_projection::text_runs::{
+    FontBlob, FontId, FontRef, FontVariation, GeneratedKind, Glyph, PositionedGlyphRun, RunSource,
+    Synthesis, Tag,
+};
 pub use raikiri_traits::{NodeKind, QuirksMode};
 // cov:ignore: public re-exports have no executable coverage mapping.
 pub use target::{

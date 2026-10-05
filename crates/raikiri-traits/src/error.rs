@@ -319,6 +319,12 @@ pub enum WarningKind {
         /// Observed response or aggregate byte count.
         actual: u64,
     },
+    /// The positioned glyph runs of a paragraph are not reported because its
+    /// text is placed by geometry they do not model yet (for example a
+    /// vertical writing mode or lines split across columns). The paragraph
+    /// is still laid out and painted; `RenderWarning::node_id` names its root
+    /// and `RenderWarning::details` the reason.
+    TextRunsOmitted,
 }
 
 /// Behavior when the consumer convergence loop exhausts `max_target_iterations`

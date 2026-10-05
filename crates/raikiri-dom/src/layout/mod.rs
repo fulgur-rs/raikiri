@@ -75,6 +75,8 @@ pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::{
     compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
 };
+#[doc(hidden)]
+pub use page::body_paint_margin_left;
 pub(crate) use page::find_body;
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
@@ -85,6 +87,11 @@ pub(crate) use sanitize::sanitize_taffy_layout;
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
+/// Glyph positions of the lines of a paragraph laid out by the inline engine.
+#[doc(hidden)]
+pub use ifc::positioned_runs::{
+    LineGlyph, PositionedLine, PositionedLines, PositionedRun, cumulative_offset,
+};
 #[doc(hidden)]
 pub use ifc::root::IfcBuildMode;
 /// Text outside paragraphs shaped by the inline engine.
@@ -111,5 +118,5 @@ pub use page_pipeline::{
 };
 
 pub(crate) use page_pipeline::{
-    page_fragment_events_from_pages, page_fragments_from_slices_with_page_geometry,
+    line_center_on_page, page_fragment_events_from_pages, project_slices,
 };

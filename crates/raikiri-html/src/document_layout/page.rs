@@ -1,4 +1,4 @@
-use super::{DomView, Fragment};
+use super::{DomView, Fragment, PositionedGlyphRun};
 use raikiri_style::{ComputedValues, PageCascadeResult};
 use raikiri_traits::{NodeId, PaintInsets, PaintRect};
 
@@ -70,6 +70,45 @@ impl<'a> Page<'a> {
     /// All fragments on this page. The order is not the paint order.
     pub fn fragments(&self) -> impl Iterator<Item = Fragment<'a>> + 'a + use<'a> {
         self.document.page_fragments(self.slice.page_index)
+    }
+
+    /// Positioned glyph runs of the body text on this page, in document
+    /// order, at the positions the built-in painter draws them.
+    ///
+    /// A line belongs to the page that holds its center, the same rule as
+    /// [`Fragment::line_range`], so every line appears on exactly one page;
+    /// a paragraph repeated on every page (inside `position: fixed`) appears
+    /// on each. Margin boxes, decorations and shadows are not included yet.
+    /// A paragraph whose text is placed by geometry the runs do not model
+    /// has no runs here: a vertical writing mode, a multicol container's
+    /// columns, relatively positioned inline elements, a transform or
+    /// relative offset on the paragraph or an ancestor, or a fixed box not
+    /// placed by `top` and `left` lengths. Each such paragraph is reported
+    /// once in [`super::DocumentLayout::warnings`] with
+    /// [`raikiri_traits::WarningKind::TextRunsOmitted`].
+    pub fn text_runs(&self) -> Vec<PositionedGlyphRun<'a>> {
+        self.document
+            .page_text_runs(self.cascade, self.slice.page_index)
+    }
+
+    /// The laid-out document, its cascade, the page box and the page's
+    /// origin in the shared flow, for painting the page with the built-in
+    /// painter.
+    #[doc(hidden)]
+    pub fn paint_inputs(
+        &self,
+    ) -> (
+        &'a raikiri_dom::Document,
+        &'a raikiri_style::CascadeResult,
+        raikiri_traits::PageBox,
+        f32,
+    ) {
+        (
+            self.document,
+            self.cascade,
+            self.geometry.page_box,
+            self.slice.content_origin_y,
+        )
     }
 
     /// Structure and attributes of the document.

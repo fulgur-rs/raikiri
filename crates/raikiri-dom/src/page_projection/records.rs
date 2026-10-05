@@ -87,6 +87,9 @@ pub(crate) struct PageFragment {
     pub(crate) content_box: PageFragmentRect,
     /// The page's origin in the shared document body-content coordinate space.
     pub(crate) content_origin_y: f32,
+    /// The page's slice of the shared flow space, from `content_origin_y` to
+    /// where the next page starts; `None` for an empty or non-finite slice.
+    pub(crate) flow_range: Option<(f32, f32)>,
     /// Resolved page name, if the page context selected one.
     pub(crate) page_name: Option<String>,
     /// Physical orientation derived from the resolved page box.
@@ -116,6 +119,7 @@ impl PageFragment {
             content_insets: geometry.content_insets,
             content_box: geometry.content_box,
             content_origin_y,
+            flow_range: None,
             page_name,
             orientation: geometry.orientation,
             items: Vec::new(),
@@ -155,6 +159,20 @@ impl PageFragment {
     pub(crate) fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+}
+
+/// A paragraph laid out by the inline engine, at its content-box origin in
+/// the shared flow space (the space of [`PageFragment::content_origin_y`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ProjectedTextRoot {
+    /// DOM node id of the paragraph root.
+    pub(crate) node: usize,
+    /// Left edge of the content box.
+    pub(crate) x: f32,
+    /// Top edge of the content box.
+    pub(crate) y: f32,
+    /// The paragraph is inside a subtree repeated on every page.
+    pub(crate) is_repeat: bool,
 }
 
 /// A CSS-px rectangle used by page-fragment metadata and placements.

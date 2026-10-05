@@ -34,8 +34,9 @@ pub use cascade::{
 };
 pub use document::HtmlDocument;
 pub use document_layout::{
-    Anchor, AnchorIndex, DocumentLayout, DomView, Fragment, FragmentKind, LayoutOptions,
-    LayoutStatus, Link, Page, PageGeometry, PageMode, RepeatKind, layout,
+    Anchor, AnchorIndex, DocumentLayout, DomView, FontBlob, FontId, FontRef, FontVariation,
+    Fragment, FragmentKind, GeneratedKind, Glyph, LayoutOptions, LayoutStatus, Link, Page,
+    PageGeometry, PageMode, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{
@@ -74,7 +75,7 @@ pub use shodo::font::FontCollection;
 
 pub use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, LayoutConfigBuilder, NodeId,
-    NodeKind, PageDefaults, PaintInsets, PaintRect, RenderError, RenderWarning,
+    NodeKind, PageDefaults, PaintInsets, PaintRect, RenderError, RenderWarning, WarningKind,
 };
 
 #[cfg(test)]

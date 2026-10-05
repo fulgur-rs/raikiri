@@ -10,6 +10,7 @@ pub(crate) mod font;
 pub(crate) mod geometry;
 pub(crate) mod inline_boxes;
 pub(crate) mod parent;
+pub(crate) mod positioned_runs;
 pub(crate) mod projection;
 pub(crate) mod records;
 pub(crate) mod root;

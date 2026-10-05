@@ -7,12 +7,15 @@ mod page;
 pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::{Page, PageGeometry, PageMode};
-pub use raikiri_dom::{Fragment, FragmentKind, RepeatKind};
+pub use raikiri_dom::{
+    FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind, Glyph,
+    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag,
+};
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
 use crate::{ConsumerPropertyRegistration, HtmlDocument, RenderResources};
 use raikiri_traits::{
-    ConsumerPropertyObserver, LayoutConfig, PageDefaults, RenderError, RenderWarning,
+    ConsumerPropertyObserver, LayoutConfig, PageDefaults, RenderError, RenderWarning, WarningKind,
 };
 
 /// Result of [`layout`].
@@ -148,10 +151,17 @@ pub fn layout(
             preload_background_images,
         },
     )?;
-    let out = match run {
+    let mut out = match run {
         PipelineRun::Completed(out) => out,
         PipelineRun::Aborted => return Ok(LayoutStatus::Aborted),
     };
+    let omitted = out.document.omitted_text_run_roots(&out.cascade);
+    out.warnings
+        .extend(omitted.into_iter().map(|(node, reason)| RenderWarning {
+            kind: WarningKind::TextRunsOmitted,
+            node_id: Some(node),
+            details: format!("text runs are not reported for this paragraph: {reason}"),
+        }));
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }

@@ -1,4 +1,64 @@
 use super::*;
+/// How far the painter moves the in-flow content of `<body>` right for the
+/// body's left margin, which the synthetic body root does not expose in its
+/// descendants' layout coordinates.
+///
+/// An authored left margin is applied as the used length; the UA margin only
+/// when the body holds nothing but direct text and has a canvas background.
+/// The painter adds this to the body's direct text and to its static,
+/// relative and sticky children; fixed and absolute children keep their own
+/// containing-block coordinates.
+#[doc(hidden)]
+pub fn body_paint_margin_left(document: &Document, cascade: &CascadeResult, body_id: usize) -> f32 {
+    let body_has_element_child = document.get_node(body_id).is_some_and(|body| {
+        body.children.iter().any(|&child_id| {
+            document
+                .get_node(child_id)
+                .is_some_and(|child| child.kind() == NodeKind::Element)
+        })
+    });
+    let body_has_canvas_background = {
+        let body = &cascade.computed[body_id];
+        body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
+    };
+    let body_has_direct_text = document.get_node(body_id).is_some_and(|body| {
+        // An ifc body root hides its text children from layout, so their
+        // heights stay 0; the root's own box stands in for them.
+        (body.is_ifc_root() && body.unrounded_layout.size.height > 0.0)
+            || body.children.iter().any(|&child_id| {
+                document.get_node(child_id).is_some_and(|child| {
+                    child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
+                })
+            })
+    });
+    let body_has_non_ua_margin = cascade
+        .non_ua_margin_sides
+        .get(body_id)
+        .is_some_and(|sides| sides.left);
+    if body_has_non_ua_margin
+        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
+    {
+        if body_has_non_ua_margin {
+            match document
+                .layout_style(body_id)
+                .map(|style| style.margin.left.into_raw())
+            {
+                Some(raw) if raw.tag() == CompactLength::LENGTH_TAG && raw.value().is_finite() => {
+                    raw.value().max(0.0)
+                }
+                _ => 0.0,
+            }
+        } else {
+            match cascade.computed[body_id].margin.left {
+                ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+                _ => 0.0,
+            }
+        }
+    } else {
+        0.0
+    }
+}
+
 /// Walk the Document arena with DFS and return the arena index of the first `<body>` element.
 ///
 /// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid stack
