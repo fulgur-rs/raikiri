@@ -580,6 +580,17 @@ fn page_layer_rank(rule: &PageRule, important: bool) -> u32 {
     }
 }
 
+/// Page and margin boxes are laid out in horizontal-tb, so their logical
+/// preferred sizes are `width` / `height` (CSS Logical Properties 1 §4.1)
+/// and compete with them in one winner slot.
+fn horizontal_preferred_size(value: PropertyValue) -> PropertyValue {
+    match value {
+        PropertyValue::InlineSize(size) => PropertyValue::Width(size),
+        PropertyValue::BlockSize(size) => PropertyValue::Height(size),
+        value => value,
+    }
+}
+
 pub fn cascade_page(
     rule_tree: &RuleTree,
     query: &PageContextQuery,
@@ -685,7 +696,14 @@ pub fn cascade_page_with_media_context(
             for margin_box in &rule.margin_box_rules {
                 margin_boxes.push(PageMarginBoxCascadeResult {
                     slot: margin_box.slot,
-                    declarations: margin_box.declarations.clone(),
+                    declarations: margin_box
+                        .declarations
+                        .iter()
+                        .map(|decl| Declaration {
+                            value: horizontal_preferred_size(decl.value.clone()),
+                            important: decl.important,
+                        })
+                        .collect(),
                     source_order: rule.source_order,
                     origin: rule.origin,
                     specificity: (spec.f, spec.g, spec.h),
@@ -711,7 +729,7 @@ pub fn cascade_page_with_media_context(
                 // Rationale is consolidated in `crate::rule::expand_shorthand_into`.
                 expand_shorthand_into(decl, |d| {
                     candidates.push((
-                        d.value,
+                        horizontal_preferred_size(d.value),
                         d.important,
                         rule.origin,
                         page_layer_rank(rule, d.important),

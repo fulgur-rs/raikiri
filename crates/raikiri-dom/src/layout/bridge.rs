@@ -89,18 +89,16 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// What [`crate::layout::ifc::assign::assign_ifc_roots`] returns: a paragraph
 /// over a limit of the inline engine, or one it refuses when it is required
 /// for every paragraph.
-/// The computed values of `idx` with its vertical `inline-size` /
-/// `block-size` mapping applied, when the box lays out vertical lines on
-/// its own axes. A multicol container and its contents run vertical writing
-/// on horizontal axes, so they keep the horizontal mapping in
-/// [`ComputedValues::width`] / [`ComputedValues::height`].
-fn vertical_logical_sized(
+/// The vertical `inline-size` / `block-size` mapping of `idx`, when the box
+/// lays out vertical lines on its own axes. A multicol container and its
+/// contents run vertical writing on horizontal axes, so they keep the
+/// horizontal mapping in [`ComputedValues::width`] / [`ComputedValues::height`].
+pub(crate) fn vertical_logical_size<'a>(
     doc: &Document,
-    cascade: &CascadeResult,
+    cascade: &'a CascadeResult,
     idx: usize,
-) -> Option<ComputedValues> {
-    let cv = &cascade.computed[idx];
-    let (width, height) = cv.vertical_logical_size?;
+) -> Option<&'a raikiri_style::VerticalLogicalSize> {
+    let size = cascade.computed[idx].vertical_logical_size.as_ref()?;
     let mut current = Some(idx);
     while let Some(id) = current {
         if cascade
@@ -112,11 +110,21 @@ fn vertical_logical_sized(
         }
         current = doc.parent_of(id);
     }
-    let mut sized = cv.clone();
-    sized.width = width;
-    sized.width_ch = None;
-    sized.height = height;
-    sized.height_ch = None;
+    Some(size)
+}
+
+/// The computed values of `idx` with [`vertical_logical_size`] applied.
+fn vertical_logical_sized(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> Option<ComputedValues> {
+    let size = vertical_logical_size(doc, cascade, idx)?;
+    let mut sized = cascade.computed[idx].clone();
+    sized.width = size.width;
+    sized.width_ch = size.width_ch.clone();
+    sized.height = size.height;
+    sized.height_ch = size.height_ch.clone();
     Some(sized)
 }
 

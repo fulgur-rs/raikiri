@@ -56,12 +56,12 @@ pub(super) fn containing_block_inline_size(
     node: usize,
     inputs: &LayoutInput,
 ) -> Option<f32> {
-    if !is_vertical(used_writing_mode(tree, node))
-        || inputs.known_dimensions.height.is_some()
+    if inputs.known_dimensions.height.is_some()
         || !tree.nodes[node]
             .children
             .iter()
             .any(|&child| is_absolute(tree, child))
+        || !is_vertical(used_writing_mode(tree, node))
     {
         return None;
     }
@@ -154,6 +154,17 @@ fn has_inline_content(tree: &Document, node: usize) -> bool {
 /// the static position. A child without inline content keeps the position
 /// the horizontal block path gives the same box in flow.
 pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_box: Size<f32>) {
+    let children = &tree.nodes[node].children;
+    let in_flow = |child: usize| {
+        tree.nodes[child].kind() == raikiri_traits::NodeKind::Element
+            && !is_absolute(tree, child)
+            && tree.nodes[child].style.display != taffy::Display::None
+    };
+    if !children.iter().any(|&child| is_absolute(tree, child))
+        || children.iter().any(|&child| in_flow(child))
+    {
+        return;
+    }
     let mode = used_writing_mode(tree, node);
     if !is_vertical(mode) {
         return;

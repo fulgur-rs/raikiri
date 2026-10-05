@@ -928,6 +928,20 @@ pub(crate) fn apply_winners(
                     *page_slot = page.clone();
                 }
                 white_space_applied.note(&value);
+                let rank = Some((
+                    winner.rank,
+                    winner.specificity,
+                    winner.source_order,
+                    winner.idx,
+                ));
+                let sizes = &mut specified.preferred_size_precedence;
+                match winner_key {
+                    crate::property::PropertyKey::Width => sizes.width = rank,
+                    crate::property::PropertyKey::Height => sizes.height = rank,
+                    crate::property::PropertyKey::InlineSize => sizes.inline_size = rank,
+                    crate::property::PropertyKey::BlockSize => sizes.block_size = rank,
+                    _ => {}
+                }
                 apply_value(value, specified);
             }
         }

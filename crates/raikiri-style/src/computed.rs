@@ -247,6 +247,21 @@ pub struct ChFontKey {
     pub style: FontStyle,
 }
 
+/// Physical preferred sizes of a `vertical-rl` / `vertical-lr` box whose
+/// `inline-size` or `block-size` was declared; see
+/// [`ComputedValues::vertical_logical_size`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerticalLogicalSize {
+    /// Physical width: the block size, or the authored `width`.
+    pub width: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::width`].
+    pub width_ch: Option<ChLengthProvenance>,
+    /// Physical height: the inline size, or the authored `height`.
+    pub height: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::height`].
+    pub height_ch: Option<ChLengthProvenance>,
+}
+
 /// Authored `ch` provenance retained until the layout sink can probe the
 /// declaring font's U+0030 advance.
 #[derive(Clone, Debug, PartialEq)]
@@ -769,10 +784,7 @@ pub struct ComputedValues {
     /// preferred size or outside those two modes. [`Self::width`] and
     /// [`Self::height`] keep the horizontal mapping for layout that runs
     /// vertical content on horizontal axes.
-    pub vertical_logical_size: Option<(
-        ComputedLengthPercentageOrAuto,
-        ComputedLengthPercentageOrAuto,
-    )>,
+    pub vertical_logical_size: Option<VerticalLogicalSize>,
     /// `top`. **Not inherited**; initial: `auto`.
     pub top: ComputedLengthPercentageOrAuto,
     /// `right`. **Not inherited**; initial: `auto`.

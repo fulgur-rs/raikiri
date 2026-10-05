@@ -609,8 +609,15 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
                 }
             })
         };
-        let width = measure(&cv.width_ch).map(|value| value.max(0.0));
-        let height = measure(&cv.height_ch).map(|value| value.max(0.0));
+        // A box sized by its vertical logical sizes takes their `ch` lengths
+        // on the physical axes the layout bridge gave them.
+        let (width_ch, height_ch) =
+            match crate::layout::bridge::vertical_logical_size(doc, cascade, idx) {
+                Some(size) => (&size.width_ch, &size.height_ch),
+                None => (&cv.width_ch, &cv.height_ch),
+            };
+        let width = measure(width_ch).map(|value| value.max(0.0));
+        let height = measure(height_ch).map(|value| value.max(0.0));
         let padding = (
             measure(&cv.padding_ch.top).map(|value| value.max(0.0)),
             measure(&cv.padding_ch.right).map(|value| value.max(0.0)),

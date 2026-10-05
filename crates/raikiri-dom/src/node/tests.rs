@@ -45,6 +45,8 @@ mod ifc_geometry_tests {
 
         let logical = layout("inline-size:40px");
         assert_eq!(logical, layout("height:40px"));
+        // A `ch` inline size is measured onto the same physical axis.
+        assert_eq!(layout("inline-size:4ch"), logical);
         assert_eq!(logical.0, 3, "40px of inline extent fits one word per line");
         assert_eq!(
             logical.1.map(|size| size.height),

@@ -6435,3 +6435,27 @@ fn media_guarded_page_unsupported_media_drops_page() {
         })
     );
 }
+
+/// Page boxes are horizontal, so `inline-size` / `block-size` land on the
+/// `width` / `height` slots and compete with them in declaration order.
+#[test]
+fn cascade_page_logical_sizes_fold_into_physical_sizes() {
+    let root = ComputedValues::initial();
+    let result = page(
+        "@page { width: 10px; inline-size: 400px; block-size: 300px; height: 20px }",
+        &root,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+            400.0
+        )))),
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Height),
+        Some(&PropertyValue::Height(LengthOrAuto::Length(Length::Px(
+            20.0
+        )))),
+    );
+    assert!(!result.declarations().contains_key(&PropertyKey::InlineSize));
+}

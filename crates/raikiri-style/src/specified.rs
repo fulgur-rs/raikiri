@@ -26,7 +26,9 @@ use std::sync::Arc;
 
 use smol_str::SmolStr;
 
-use crate::computed::{ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate};
+use crate::computed::{
+    ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate, VerticalLogicalSize,
+};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
@@ -300,6 +302,10 @@ pub struct SpecifiedValues {
     /// **Specified** `block-size`; mapped onto the axis perpendicular to
     /// [`Self::inline_size`] in phase 3.
     pub block_size: Option<LengthOrAuto>,
+    /// Cascade precedence of the winning `width` / `height` / `inline-size` /
+    /// `block-size` declarations. Phase 3 lets the logical and physical
+    /// declaration that map onto the same axis compete in cascade order.
+    pub(crate) preferred_size_precedence: PreferredSizePrecedence,
     /// **Specified** `top`; absolutized in phase 3.
     pub top: LengthOrAuto,
     /// **Specified** `right`; absolutized in phase 3.
@@ -683,6 +689,21 @@ pub struct SpecifiedValues {
     pub column_width: ColumnWidthValue,
 }
 
+/// Cascade sort key of a winning declaration: origin and importance rank,
+/// specificity, source order, then position among the element's candidates
+/// (CSS Cascading 4 §6.1).
+pub(crate) type CascadePrecedence = (u8, u32, u32, usize);
+
+/// [`CascadePrecedence`] of each winning preferred-size declaration; `None`
+/// when no declaration won for that property.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct PreferredSizePrecedence {
+    pub(crate) width: Option<CascadePrecedence>,
+    pub(crate) height: Option<CascadePrecedence>,
+    pub(crate) inline_size: Option<CascadePrecedence>,
+    pub(crate) block_size: Option<CascadePrecedence>,
+}
+
 impl SpecifiedValues {
     /// Staging values with the CSS-specified initial value for every property.
     ///
@@ -771,6 +792,7 @@ impl SpecifiedValues {
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
             inline_size: None,
+            preferred_size_precedence: PreferredSizePrecedence::default(),
             block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
@@ -1257,6 +1279,7 @@ impl SpecifiedValues {
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
             inline_size: None,
+            preferred_size_precedence: PreferredSizePrecedence::default(),
             block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
@@ -1598,18 +1621,53 @@ impl SpecifiedValues {
         if inline_size.is_none() && block_size.is_none() {
             return None;
         }
+        let precedence = self.preferred_size_precedence;
+        // CSS Logical Properties 1 §4: a logical property and the physical
+        // property it maps to share one computed value, so the one later in
+        // cascade order wins.
+        let pick = |physical: LengthOrAuto,
+                    physical_rank: Option<CascadePrecedence>,
+                    logical: Option<LengthOrAuto>,
+                    logical_rank: Option<CascadePrecedence>| {
+            match logical {
+                Some(logical) if physical_rank.is_none() || logical_rank >= physical_rank => {
+                    logical
+                }
+                _ => physical,
+            }
+        };
         let vertical = matches!(
             self.writing_mode,
             WritingMode::VerticalRl | WritingMode::VerticalLr
         )
         .then(|| {
             (
-                block_size.unwrap_or(self.width),
-                inline_size.unwrap_or(self.height),
+                pick(
+                    self.width,
+                    precedence.width,
+                    block_size,
+                    precedence.block_size,
+                ),
+                pick(
+                    self.height,
+                    precedence.height,
+                    inline_size,
+                    precedence.inline_size,
+                ),
             )
         });
-        self.width = inline_size.unwrap_or(self.width);
-        self.height = block_size.unwrap_or(self.height);
+        self.width = pick(
+            self.width,
+            precedence.width,
+            inline_size,
+            precedence.inline_size,
+        );
+        self.height = pick(
+            self.height,
+            precedence.height,
+            block_size,
+            precedence.block_size,
+        );
         vertical
     }
 
@@ -1719,6 +1777,17 @@ impl SpecifiedValues {
             }),
             _ => None,
         };
+        let size_ch = |size: LengthOrAuto| match size {
+            LengthOrAuto::Length(length) => ch_provenance(length),
+            _ => None,
+        };
+        let vertical_logical_size =
+            vertical_logical_size.map(|(width, height)| VerticalLogicalSize {
+                width: resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
+                width_ch: size_ch(width),
+                height: resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
+                height_ch: size_ch(height),
+            });
         let width_ch = match self.width {
             LengthOrAuto::Length(length) => ch_provenance(length),
             _ => None,
@@ -1864,12 +1933,7 @@ impl SpecifiedValues {
             min_width,
             min_height,
             min_block_size: physical_min_block,
-            vertical_logical_size: vertical_logical_size.map(|(width, height)| {
-                (
-                    resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
-                    resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
-                )
-            }),
+            vertical_logical_size,
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),
             bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),
