@@ -4593,7 +4593,20 @@ pub(crate) fn paint_document_impl(
                     if let Some(clip) = &text_clip {
                         scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                     }
-                    if let Some(t) = trace.as_deref_mut() {
+                    // A paragraph whose lines carry no visible text (only
+                    // atomic inlines and whitespace) is not traced as text,
+                    // as its whitespace-only text nodes have no fragments.
+                    if let Some(t) = trace.as_deref_mut()
+                        && document
+                            .ifc_text_lines_by_node(node_id)
+                            .keys()
+                            .any(|&owner| {
+                                document
+                                    .get_node(owner)
+                                    .and_then(|text| text.text_content())
+                                    .is_some_and(|text| !text.trim().is_empty())
+                            })
+                    {
                         t.push(crate::PaintTraceEvent::Text(node_id));
                     }
                     crate::ifc_text::draw_ifc_lines(
