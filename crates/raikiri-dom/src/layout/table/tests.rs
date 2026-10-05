@@ -484,6 +484,35 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
     }
 }
 
+#[test]
+fn collapsed_resolution_skips_boxes_without_computed_borders() {
+    let mut doc = Document::new();
+    // A hand-built box that never went through the style bridge has no
+    // computed borders, so it takes part in no conflict.
+    let bare_row = bordered_cell(&mut doc, 2.0);
+    let bare_table = bordered_cell(&mut doc, 2.0);
+    let cell = collapsed_cell(
+        &mut doc,
+        collapsed_candidate(BorderStyle::Solid, 3.0, CssColor::BLACK),
+    );
+    let grid = super::TableGrid {
+        n_cols: 1,
+        rows: vec![bare_row],
+        cells: vec![make_cell(cell, 0, 0, 1, 1, Dimension::auto())],
+        col_widths: vec![],
+    };
+
+    super::resolve_collapsed_row_borders(&mut doc, &grid);
+    super::resolve_collapsed_table_edges(&mut doc, &grid, bare_table);
+
+    assert!(doc.nodes[cell].collapsed_border().is_none());
+    assert!(doc.nodes[bare_row].collapsed_border().is_none());
+    assert_eq!(
+        doc.nodes[cell].style.border.top,
+        LengthPercentage::length(3.0)
+    );
+}
+
 fn build_simple_2x2() -> Document {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

@@ -4129,7 +4129,7 @@ pub(crate) fn paint_document_impl(
                             paint_height,
                             paint_x,
                             paint_y,
-                            painted_border,
+                            painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             cv.color,
                             false,
                         );

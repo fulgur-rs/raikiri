@@ -1864,7 +1864,7 @@ fn set_collapsed_side(
         CellBorderSide::Left => node.style.border.left = taffy_width,
     }
     let Some(computed) = node.computed_border else {
-        return;
+        return; // cov:ignore: callers only reach here after border_candidate found computed borders.
     };
     let painted = node.collapsed_border.get_or_insert(computed);
     *border_side(painted, side) = border;
