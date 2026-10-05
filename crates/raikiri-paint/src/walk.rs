@@ -3214,6 +3214,7 @@ pub(crate) fn paint_document(
         None,
         &mut warnings,
         custom_highlights,
+        None,
     );
 }
 
@@ -3243,11 +3244,12 @@ pub(crate) fn paint_document_with_images_and_warnings(
         Some(pixel_source),
         warnings,
         custom_highlights,
+        None,
     );
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_document_impl(
+pub(crate) fn paint_document_impl(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -3259,6 +3261,7 @@ fn paint_document_impl(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    mut trace: Option<&mut Vec<crate::PaintTraceEvent>>,
 ) {
     let Some(body_id) = raikiri_dom::paint_rules::find_paint_root(document) else {
         return;
@@ -3517,7 +3520,17 @@ fn paint_document_impl(
                 scene.transform = transform;
                 continue;
             }
-            PaintFrame::PopClip | PaintFrame::PopOpacity => {
+            PaintFrame::PopClip => {
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push(crate::PaintTraceEvent::PopClip);
+                }
+                scene.pop_layer();
+                continue;
+            }
+            PaintFrame::PopOpacity => {
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push(crate::PaintTraceEvent::PopOpacity);
+                }
                 scene.pop_layer();
                 continue;
             }
@@ -3790,6 +3803,9 @@ fn paint_document_impl(
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     multicol_clip_pushed = true;
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
+                    }
                 }
                 if let Some(clip) = fragment_clip {
                     let clip = Rect::new(
@@ -3800,6 +3816,9 @@ fn paint_document_impl(
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     fragmentainer_clip_pushed = true;
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
+                    }
                 }
                 // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
                 let mut paint_background_width = layout.size.width;
@@ -4004,9 +4023,15 @@ fn paint_document_impl(
                     // This frame is pushed first so it closes after the
                     // optional overflow clip and generated `::after` paint.
                     stack.push(PaintFrame::PopOpacity);
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushOpacity(node_id, cv.opacity));
+                    }
                 }
                 let mut before_advance = 0.0;
                 if paints_on_page {
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::Box(node_id));
+                    }
                     // A body background is propagated to the page canvas.  For
                     // a non-zero page margin, painting the body border box as
                     // well would leak that color into the translated top/bottom
@@ -4129,6 +4154,13 @@ fn paint_document_impl(
                     // Resolve the source's natural dimensions first. SVG
                     // sources use the resulting concrete object dimensions
                     // for a bounded, size-specific raster request.
+                    if let Some(t) = trace.as_deref_mut()
+                        && (node.is_inline_svg_root()
+                            || document.is_canvas_element(node_id)
+                            || node.tag_name() == Some("img"))
+                    {
+                        t.push(crate::PaintTraceEvent::Replaced(node_id));
+                    }
                     let painted_image = if node.is_inline_svg_root() {
                         paint_inline_svg(
                             scene,
@@ -4340,6 +4372,12 @@ fn paint_document_impl(
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     stack.push(PaintFrame::PopClip);
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::PushOverflowClip(
+                            node_id,
+                            [clip.x0, clip.y0, clip.x1, clip.y1],
+                        ));
+                    }
                 }
                 // Push this after the clip-pop frame and before children.
                 // Children therefore paint first, then `::after`, then the
@@ -4555,6 +4593,9 @@ fn paint_document_impl(
                     if let Some(clip) = &text_clip {
                         scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                     }
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.push(crate::PaintTraceEvent::Text(node_id));
+                    }
                     crate::ifc_text::draw_ifc_lines(
                         scene,
                         document,
@@ -4680,6 +4721,9 @@ fn paint_document_impl(
                         // A text node laid out as an anonymous flex or grid
                         // item is a paragraph of its own: its lines start at
                         // its own box, which has no edges.
+                        if let Some(t) = trace.as_deref_mut() {
+                            t.push(crate::PaintTraceEvent::Text(node_id));
+                        }
                         crate::ifc_text::draw_ifc_lines(
                             scene,
                             document,

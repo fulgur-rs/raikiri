@@ -2190,3 +2190,55 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
         "rounded border/background fixture should emit fill commands", // cov:ignore: assertion message is evaluated only on failure
     );
 }
+
+#[test]
+fn trace_records_box_clip_opacity_and_text_in_walk_order() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let o = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;opacity:.5;overflow:hidden;height:50px"),
+    );
+    let p = doc.append_element(Some(o), "p", Style::default(), Some("display:block"));
+    let _t = doc.append_text(p, "hi");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+
+    let mut budget = CounterSnapshotBudget::default();
+    let trace =
+        crate::trace_paint_order(&doc, &cr, PageBox::A4, 0.0, None, &mut budget).expect("trace");
+    let kinds: Vec<&'static str> = trace
+        .iter()
+        .map(|e| match e {
+            PaintTraceEvent::PushOpacity(id, _) if *id == o => "PushOpacity(o)",
+            PaintTraceEvent::PushOpacity(..) => "PushOpacity",
+            PaintTraceEvent::Box(id) if *id == body => "Box(body)",
+            PaintTraceEvent::Box(id) if *id == o => "Box(o)",
+            PaintTraceEvent::Box(_) => "Box",
+            PaintTraceEvent::PushOverflowClip(id, _) if *id == o => "PushClip(o)",
+            PaintTraceEvent::PushOverflowClip(..) => "PushClip",
+            PaintTraceEvent::Text(_) => "Text",
+            PaintTraceEvent::PopClip => "PopClip",
+            PaintTraceEvent::PopOpacity => "PopOpacity",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "Box(body)",
+            "PushOpacity(o)",
+            "Box(o)",
+            "PushClip(o)",
+            "Box",
+            "Text",
+            "PopClip",
+            "PopOpacity"
+        ]
+    );
+}

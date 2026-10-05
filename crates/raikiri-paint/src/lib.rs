@@ -478,6 +478,63 @@ fn paint_single_page_with_origin_and_page_context_impl(
     Ok(())
 }
 
+/// One step of the body walk, recorded in paint order.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum PaintTraceEvent {
+    /// An overflow clip on the padding box: `[x0, y0, x1, y1]` in page px.
+    PushOverflowClip(usize, [f64; 4]),
+    /// A multicol or fragmentainer clip.
+    PushFragmentainerClip(usize),
+    PopClip,
+    PushOpacity(usize, f32),
+    PopOpacity,
+    /// The element's own box (background, border, shadow, outline).
+    Box(usize),
+    /// The content of a replaced element (`<img>`, `<canvas>`, inline `<svg>`).
+    Replaced(usize),
+    /// The lines of a paragraph root.
+    Text(usize),
+}
+
+/// Walk the body as the painter does and return the steps in paint order,
+/// drawing into a discarded scene.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn trace_paint_order(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    active_page_name: Option<Option<&str>>,
+    budget: &mut CounterSnapshotBudget,
+) -> Result<Vec<PaintTraceEvent>, raikiri_traits::RenderError> {
+    let counter_snapshots = raikiri_dom::counter_snapshots_with_budget(document, cascade, budget)
+        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
+        kind: raikiri_traits::LimitKind::CounterSnapshots,
+        limit: error.limit,
+        actual: error.actual,
+    })?;
+    let mut scene = anyrender::Scene::new();
+    let mut warnings = Vec::new();
+    let mut events = Vec::new();
+    walk::paint_document_impl(
+        &mut scene,
+        document,
+        cascade,
+        &counter_snapshots,
+        page_box,
+        content_origin_y,
+        active_page_name,
+        f32::NAN,
+        None,
+        &mut warnings,
+        &[],
+        Some(&mut events),
+    );
+    Ok(events)
+}
+
 /// Like [`paint_single_page`], but reads decoded `<img>` pixels from
 /// `pixel_source` and actually paints them.
 ///
