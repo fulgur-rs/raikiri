@@ -763,7 +763,12 @@ fn wide_adjacent_stylesheet() -> (String, Winners) {
 /// *every* element's computed values, and that both inherited ones reached
 /// every text child. That probe is outside every timed region — it runs once
 /// per config at setup.
-fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
+/// `wrapped` places the `div`s under one `section` ([`BenchDoc::wide`])
+/// instead of directly under the document ([`BenchDoc::new`]). Top-level
+/// elements are each a root element with their own `rem` basis, so only the
+/// wrapped shape lets repeated siblings share computed values the way list
+/// items or table rows in a real document do.
+fn workload(n_rules: usize, n_elems: usize, wrapped: bool) -> (BenchDoc, RuleTree, u64) {
     let mut tree = RuleTree::empty();
     let (css, want) = stylesheet(n_rules);
     tree.add_stylesheet(&css, Origin::Author);
@@ -783,7 +788,11 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
         );
     }
 
-    let doc = BenchDoc::new(n_elems);
+    let doc = if wrapped {
+        BenchDoc::wide(n_elems)
+    } else {
+        BenchDoc::new(n_elems)
+    };
     let initial = ComputedValues::initial();
 
     // Each expected winner must differ from the corresponding initial value,
@@ -836,7 +845,9 @@ fn workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u64) {
     // that runs for a minute.
     let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
     let want_padding = ComputedLengthPercentage::Px(want.box_px);
-    for (idx, cv) in probe.computed.iter().enumerate().skip(1) {
+    // The wrapping `section` (node 1) matches none of the `div` rules.
+    let first_checked = if wrapped { 2 } else { 1 };
+    for (idx, cv) in probe.computed.iter().enumerate().skip(first_checked) {
         // Ask the arena for the kind rather than deriving it from index
         // parity: node id is the arena index throughout, so if
         // `BenchDoc::new`'s interleaving ever changes, this still reports the
@@ -1426,11 +1437,12 @@ fn bench_cascade(c: &mut Criterion) {
     // --workspace` (bench targets are not built by `cargo test`/`cargo
     // llvm-cov --workspace`), so nothing in this loop has coverage
     // instrumentation to attribute to.
-    for (name, n_rules, n_elems) in [
-        ("rule_heavy_50x500", 50usize, 500usize),
-        ("element_heavy_5x2000", 5usize, 2000usize),
+    for (name, n_rules, n_elems, wrapped) in [
+        ("rule_heavy_50x500", 50usize, 500usize, false),
+        ("element_heavy_5x2000", 5usize, 2000usize, false),
+        ("element_heavy_wrapped_5x2000", 5usize, 2000usize, true),
     ] {
-        let (doc, tree, declarations) = workload(n_rules, n_elems);
+        let (doc, tree, declarations) = workload(n_rules, n_elems, wrapped);
 
         // Report throughput in declarations so the workloads share a unit.
         group.throughput(Throughput::Elements(declarations));

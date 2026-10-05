@@ -78,6 +78,14 @@ pub(crate) const MARGIN_COLLAPSING_QUIRK_SPECIFICITY: Specificity = INLINE_SPECI
 /// source_order uses" is needed here.
 pub(crate) const MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER: u32 = 0;
 
+/// Every pseudo-element the cascade collects candidates for.
+pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 4] = [
+    PseudoElem::Before,
+    PseudoElem::After,
+    PseudoElem::Marker,
+    PseudoElem::FirstLine,
+];
+
 /// One candidate declaration: `(value, important, origin, specificity, source_order)`.
 /// `collect_cascaded` populates it; `pick_winners` ranks and selects winners.
 /// Alias the tuple (including `Origin`) to avoid clippy::type_complexity.
@@ -185,6 +193,26 @@ impl CascadedArena {
         self.pseudo_custom_ranges
             .get(&(id, pseudo))
             .map(|range| &self.pseudo_custom_decls[range.clone()])
+    }
+
+    /// Whether `a` and `b` carry exactly the same cascade input: equal
+    /// ordinary, custom-property, and per-pseudo-element candidate lists,
+    /// compared value by value including origin, importance, specificity,
+    /// and source order.
+    ///
+    /// Everything node-specific that the cascade knows about an element —
+    /// matched rules, inline style, presentational hints, quirks
+    /// declarations — reaches the inheritance walk only through these lists.
+    /// Two nodes that agree here and share a parent therefore resolve to the
+    /// same computed values; see [`super::inherit::resolve_inheritance`].
+    pub(crate) fn same_cascade_input(&self, a: StyleNodeId, b: StyleNodeId) -> bool {
+        self.candidates(a) == self.candidates(b)
+            && self.custom_candidates(a) == self.custom_candidates(b)
+            && CASCADED_PSEUDO_ELEMENTS.iter().all(|&pseudo| {
+                self.pseudo_candidates(a, pseudo) == self.pseudo_candidates(b, pseudo)
+                    && self.pseudo_custom_candidates(a, pseudo)
+                        == self.pseudo_custom_candidates(b, pseudo)
+            })
     }
 }
 

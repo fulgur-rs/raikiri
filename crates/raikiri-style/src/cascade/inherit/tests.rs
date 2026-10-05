@@ -25,6 +25,7 @@ use crate::resolve::{
     ComputedTextUnderlineOffset,
 };
 use crate::ruletree::{RuleTree, build_rule_tree};
+use crate::style_dom::StyleQuirksMode;
 use crate::test_dom::TestDoc;
 use smol_str::SmolStr;
 
@@ -8799,4 +8800,222 @@ fn calc_ch_provenance_and_offset_survive_inheritance_and_reset_on_override() {
 fn ch_inside_calc_stays_rejected_for_properties_without_ch_provenance() {
     let cv = cascade_doc("", "p", Some("font-size: 40px; tab-size: calc(2ch + 4px)"));
     assert_eq!(cv.tab_size, crate::ComputedTabSize::Number(8.0));
+}
+
+/// Every output of the inheritance walk, for comparing the shared and
+/// unshared walks.
+#[derive(Debug, PartialEq)]
+struct WalkOutputs {
+    computed: Vec<ComputedValues>,
+    non_ua_margin_sides: Vec<Sides<bool>>,
+    authored_writing_modes: Vec<Option<WritingMode>>,
+    page_values: Vec<PageValue>,
+    pseudo: Vec<((u64, PseudoElem), ComputedValues)>,
+}
+
+fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkOutputs, usize) {
+    let root = doc.root_id();
+    let mut cascaded = CascadedArena::new();
+    crate::cascade::collect::collect_cascaded(doc, root, tree, &mut cascaded);
+    let n = doc.node_count();
+    let mut computed = vec![ComputedValues::initial(); n];
+    let mut non_ua_margin_sides = vec![Sides::all(false); n];
+    let mut authored_writing_modes = vec![None; n];
+    let mut page_values = vec![PageValue::Auto; n];
+    let mut pseudo_out = HashMap::new();
+    let shared = resolve_inheritance_with(
+        doc,
+        root,
+        &ComputedValues::initial(),
+        &cascaded,
+        &mut computed,
+        &mut non_ua_margin_sides,
+        &mut authored_writing_modes,
+        &mut page_values,
+        &mut pseudo_out,
+        sibling_sharing,
+    );
+    let mut pseudo = pseudo_out
+        .into_iter()
+        .map(|((id, pseudo), values)| ((id.0, pseudo), values))
+        .collect::<Vec<_>>();
+    pseudo.sort_by_key(|((id, pseudo), _)| (*id, *pseudo as u8));
+    (
+        WalkOutputs {
+            computed,
+            non_ua_margin_sides,
+            authored_writing_modes,
+            page_values,
+            pseudo,
+        },
+        shared,
+    )
+}
+
+/// Asserts that sibling sharing reproduces the unshared walk exactly and
+/// returns how many nodes it shared.
+fn assert_sharing_is_transparent(doc: &TestDoc, tree: &RuleTree) -> usize {
+    let (reference, none_shared) = walk_outputs(doc, tree, false);
+    assert_eq!(none_shared, 0);
+    let (shared_walk, shared) = walk_outputs(doc, tree, true);
+    assert_eq!(
+        shared_walk, reference,
+        "sibling sharing changed cascade output"
+    );
+    shared
+}
+
+const SHARING_CSS: &str = "
+    li { color: rgb(1, 2, 3); margin: 4px }
+    li::marker { color: rgb(9, 9, 9) }
+    li:first-child { font-size: 20px }
+    li:nth-child(3n) { padding-left: 2em }
+    li + li { border-top: 1px solid black }
+    li:last-child { page: tail }
+    .alt::before { content: 'x'; color: var(--accent) }
+    .alt { --accent: rgb(0, 128, 0); writing-mode: vertical-rl }
+    [data-kind=b] { font-weight: bold }
+    td { padding: 1px } td:empty { display: none }
+    p { margin: 1em 0 } p:lang(fr) { font-style: italic }
+    ul:has(> .alt) { color: red }
+    span { font-size: 1.5em; line-height: 2lh }
+    i { color: var(--x, black) }
+    i::after { content: 'z'; background-color: var(--x) }
+    b { writing-mode: vertical-lr } b:nth-child(2n) { page: even }
+    em::before { content: 'e' }
+    .ponly::before { content: 'p' }
+";
+
+fn sharing_doc(quirks_mode: StyleQuirksMode) -> TestDoc {
+    let mut doc = TestDoc::new();
+    doc.quirks_mode = quirks_mode;
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, SHARING_CSS);
+    let body = doc.push_element(0, "body", Some("--accent: blue"));
+    for list in 0..3 {
+        let ul = doc.push_element(body, "ul", None);
+        for item in 0..7 {
+            doc.push_text(ul, "\n  ");
+            let attrs: &[(&str, &str)] = match (list, item) {
+                (1, 2) => &[("class", "alt")],
+                (2, 4) => &[("data-kind", "b")],
+                (2, 5) => &[("lang", "fr")],
+                _ => &[],
+            };
+            let inline = if list == 2 && item == 6 {
+                Some("color: blue")
+            } else {
+                None
+            };
+            let li = doc.push_element_with_attrs(ul, "li", inline, attrs);
+            doc.push_text(li, "item");
+            let span = doc.push_element(li, "span", None);
+            doc.push_text(span, "nested");
+        }
+        doc.push_text(ul, "\n");
+    }
+    let table = doc.push_element(body, "table", None);
+    for _ in 0..3 {
+        let tr = doc.push_element(table, "tr", None);
+        for cell in 0..4 {
+            let td = doc.push_element(tr, "td", None);
+            if cell != 2 {
+                doc.push_text(td, "cell");
+            }
+        }
+    }
+    for i in 0..5 {
+        let lang = if i == 3 { "fr" } else { "en" };
+        let p = doc.push_element_with_attrs(body, "p", None, &[("lang", lang)]);
+        doc.push_text(p, "para");
+    }
+    // Same ordinary candidates, different custom-property candidates.
+    let vars = doc.push_element(body, "div", None);
+    for value in ["red", "blue", "red", "blue"] {
+        doc.push_element(vars, "i", Some(&format!("--x: {value}")));
+    }
+    // Same ordinary candidates, different pseudo-element candidates.
+    let pseudos = doc.push_element(body, "div", None);
+    doc.push_element(pseudos, "em", None);
+    doc.push_element_with_attrs(pseudos, "em", None, &[("class", "ponly")]);
+    doc.push_element(pseudos, "em", None);
+    // Side outputs: authored writing mode and page values.
+    let modes = doc.push_element(body, "div", None);
+    for _ in 0..4 {
+        doc.push_element(modes, "b", None);
+    }
+    let img_parent = doc.push_element(body, "div", None);
+    doc.push_element_with_attrs(img_parent, "img", None, &[("width", "10")]);
+    doc.push_element_with_attrs(img_parent, "img", None, &[("width", "20")]);
+    doc.push_element_with_attrs(img_parent, "img", None, &[("width", "10")]);
+    doc
+}
+
+#[test]
+fn sibling_sharing_matches_the_unshared_walk() {
+    for quirks in [StyleQuirksMode::NoQuirks, StyleQuirksMode::Quirks] {
+        let doc = sharing_doc(quirks);
+        let mut tree = build_rule_tree(&doc);
+        tree.add_stylesheet(
+            "p { margin-top: 3px } li::marker { content: '-' }",
+            Origin::UserAgent,
+        );
+        let shared = assert_sharing_is_transparent(&doc, &tree);
+        assert!(
+            shared > 0,
+            "{quirks:?}: the repeated structure shared nothing"
+        );
+    }
+}
+
+#[test]
+fn sibling_sharing_does_not_cross_parents_or_roots() {
+    // Cousins at the same depth under different parents, and several
+    // top-level elements under the Document (each its own `rem` root).
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "div { font-size: 2rem } .big { font-size: 30px }");
+    let a = doc.push_element_with_attrs(0, "div", None, &[("class", "big")]);
+    let b = doc.push_element(0, "div", None);
+    for parent in [a, b] {
+        for _ in 0..3 {
+            let child = doc.push_element(parent, "div", None);
+            doc.push_text(child, "t");
+        }
+    }
+    let tree = build_rule_tree(&doc);
+    let shared = assert_sharing_is_transparent(&doc, &tree);
+    assert!(shared > 0);
+}
+
+#[test]
+fn identical_text_siblings_share() {
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", Some("color: red"));
+    for _ in 0..10 {
+        doc.push_text(div, "x");
+        doc.push_comment(div, "c");
+    }
+    let tree = RuleTree::empty();
+    let shared = assert_sharing_is_transparent(&doc, &tree);
+    // Everything after the first text node and the first comment shares.
+    assert_eq!(shared, 18);
+}
+
+#[test]
+fn children_of_shared_siblings_share_with_their_cousins() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "li { color: rgb(1, 2, 3) } b { font-weight: bold }");
+    let ul = doc.push_element(0, "ul", None);
+    for _ in 0..5 {
+        let li = doc.push_element(ul, "li", None);
+        let b = doc.push_element(li, "b", None);
+        doc.push_text(b, "x");
+    }
+    let tree = build_rule_tree(&doc);
+    let shared = assert_sharing_is_transparent(&doc, &tree);
+    // The first `li` subtree is resolved; the other four `li`s, their `b`
+    // children, and the text inside those share: 4 * 3.
+    assert_eq!(shared, 12);
 }
