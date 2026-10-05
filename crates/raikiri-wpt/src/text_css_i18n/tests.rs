@@ -1787,7 +1787,7 @@ fn font_shorthand_subproperties_reset_wpt_case_uses_the_pinned_fixture() {
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(
         result.total(),
-        10,
+        11,
         "the pinned fixture should cover each currently-supported subproperty",
     );
     assert!(result.all_passed(), "{:?}", result.outcomes);
