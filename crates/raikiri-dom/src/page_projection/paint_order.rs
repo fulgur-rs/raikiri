@@ -161,12 +161,17 @@ impl Document {
                     }
                     // The clip uses the element's first fragment on this page
                     // and the node's full padding, as the built-in painter
-                    // does. No clip is listed on a page where the element has
-                    // no box. It opens after the element's own box and closes
+                    // does. It opens after the element's own box and closes
                     // after its subtree.
-                    if paint_rules::clips_overflow(cv)
-                        && let Some(&item) = own.first()
-                    {
+                    if paint_rules::clips_overflow(cv) {
+                        let Some(&item) = own.first() else {
+                            // The element's box is not on this page, so the
+                            // painter's clip for it, built from the whole box,
+                            // lies wholly outside the page and nothing inside
+                            // it is drawn here. Any opacity group opened above
+                            // is still closed by its pending frame.
+                            continue;
+                        };
                         let clip = overflow_clip(node, cv, items.fragment(item));
                         events.push(PaintEvent::PushClip(clip, ClipKind::Overflow));
                         stack.push(Frame::PopClip);
