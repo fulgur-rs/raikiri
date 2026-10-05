@@ -496,3 +496,52 @@ fn root_element_computed_falls_back_to_the_document_without_an_element() {
         &result.computed[0] as *const ComputedValues
     );
 }
+
+#[test]
+fn replace_page_swaps_the_page_context_and_starts_a_new_generation() {
+    let css = "@page { margin: 10px } @page :first { margin-top: 30px }\
+        p::before { content: \"x\" } p { page: chapter }";
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, css);
+    let body = doc.push_element(html, "body", None);
+    doc.push_element(body, "p", None);
+    let tree = build_rule_tree(&doc);
+    let media = MediaContext::default();
+    let mut result = cascade_with_media_context(&doc, &tree, &media).expect("cascade Ok");
+    let other = cascade_with_media_context(&doc, &tree, &media).expect("cascade Ok");
+    let generation = result.generation();
+    let computed = result.computed.clone();
+    let computed_ptr = result.computed.as_ptr();
+    let pseudo = result.pseudo.clone();
+    let page_values = result.page_values.clone();
+    let old_page = result.page.clone();
+
+    let first_query = PageContextQuery {
+        is_first: true,
+        ..PageContextQuery::default()
+    };
+    let first_page = cascade_page_with_media_context(
+        &tree,
+        &first_query,
+        PageInheritance::FromRoot(result.root_element_computed()),
+        &media,
+    );
+    assert_ne!(first_page, old_page);
+    result.replace_page(first_page.clone());
+
+    assert_eq!(result.page, first_page);
+    assert_eq!(result.computed.as_ptr(), computed_ptr);
+    assert_eq!(result.computed, computed);
+    assert_eq!(result.pseudo, pseudo);
+    assert!(!result.pseudo.is_empty());
+    assert_eq!(result.page_values, page_values);
+    assert_ne!(result.generation(), generation);
+    assert_ne!(result.generation(), other.generation());
+
+    // Replacing with an equal page context still starts a new generation.
+    let replaced = result.generation();
+    result.replace_page(first_page);
+    assert_ne!(result.generation(), replaced);
+}

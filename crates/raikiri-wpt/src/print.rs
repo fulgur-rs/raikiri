@@ -6,7 +6,7 @@ use raikiri::{Body, Method, NetworkProvider, ParseOptions, Request, ResourceKind
 use raikiri_html::effective_document_base_url;
 use raikiri_net::{ImageResolver, SystemHttpProvider};
 
-use crate::http_resources::{NetworkFontLoader, StylesheetUrlProvider, prepare_cascade_images};
+use crate::http_resources::{HttpCascadeImages, NetworkFontLoader, StylesheetUrlProvider};
 use crate::reftest::{PrintRenderResources, RenderedDocument, render_raikiri_pages_with_resources};
 
 /// Fetches and renders one HTTP document into ordered print pages.
@@ -53,8 +53,9 @@ pub fn render_print_url(
         provider,
         base_url: &base_url,
     };
-    let prepare_images = |cascade: &mut raikiri_style::CascadeResult| {
-        prepare_cascade_images(cascade, &base_url, &image_resolver);
+    let prepare_images = HttpCascadeImages {
+        base_url: &base_url,
+        resolver: &image_resolver,
     };
 
     render_raikiri_pages_with_resources(
