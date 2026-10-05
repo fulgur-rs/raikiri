@@ -52,6 +52,7 @@ fn paint_order_fragments_belong_to_page() {
          <div style='position:fixed;top:0'>header</div><p>b</p>",
         "@page { size: 300px 100px; margin: 0 }",
     );
+    let mut checked = 0;
     for page in result.pages() {
         let all: Vec<_> = page
             .fragments()
@@ -64,9 +65,11 @@ fn paint_order_fragments_belong_to_page() {
                     "page {} event fragment not in fragments()",
                     page.index()
                 );
+                checked += 1;
             }
         }
     }
+    assert!(checked > 0, "no event carries a fragment");
 }
 
 #[test]
@@ -89,10 +92,11 @@ fn spanning_overflow_box_clips_on_each_page() {
 #[test]
 fn multicol_records_an_approximation_warning() {
     let result = lay_out("<div style='columns:2'><p>a</p><p>b</p></div>", "");
-    assert!(
-        result
-            .warnings()
-            .iter()
-            .any(|w| matches!(w.kind, WarningKind::PaintOrderApproximated))
-    );
+    let approximated: Vec<_> = result
+        .warnings()
+        .iter()
+        .filter(|w| matches!(w.kind, WarningKind::PaintOrderApproximated))
+        .collect();
+    assert_eq!(approximated.len(), 1, "{approximated:?}");
+    assert!(approximated[0].node_id.is_some());
 }

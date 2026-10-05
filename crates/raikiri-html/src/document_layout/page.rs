@@ -106,6 +106,12 @@ impl<'a> Page<'a> {
     /// containers are listed without column clips (reported once in
     /// [`super::DocumentLayout::warnings`] with
     /// [`raikiri_traits::WarningKind::PaintOrderApproximated`]).
+    ///
+    /// Where the built-in painter differs: it draws the `<body>` box on every
+    /// page, while this list has it only on the pages its box reaches; and it
+    /// draws each line's inline element backgrounds just before that line's
+    /// text, while this list has all of a paragraph's inline element boxes
+    /// before all of its text.
     pub fn paint_order(&self) -> Vec<PaintEvent<'a>> {
         self.document.page_paint_order(
             self.cascade,

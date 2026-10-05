@@ -248,3 +248,23 @@ fn nested_multicol_reports_only_the_outermost() {
         .collect();
     assert_eq!(found, [Some("outer")]);
 }
+
+#[test]
+fn multicol_inside_display_none_is_not_reported() {
+    let html = "<!doctype html><body><div style='display:none'>\
+        <div style='columns:2'><p>a</p><p>b</p></div></div><p>c</p></body>";
+    let doc = parse_html_with_resources(html.as_bytes(), &RenderResources::new()).expect("parse");
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new(),
+    )
+    .expect("layout");
+    let LayoutStatus::Completed(result) = status else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("one page");
+    let (document, cascade, _, _) = page.paint_inputs();
+    assert!(document.paint_order_approximations(cascade).is_empty());
+}
