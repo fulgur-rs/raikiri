@@ -30,7 +30,9 @@ use crate::ruletree::Origin;
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
-use super::collect::{CascadedArena, CascadedDecl, RankedDecl, cascade_rank, pick_winners};
+use super::collect::{
+    CASCADED_PSEUDO_ELEMENTS, CascadedArena, CascadedDecl, RankedDecl, cascade_rank, pick_winners,
+};
 use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
 
 type InheritanceStackEntry = (
@@ -38,7 +40,40 @@ type InheritanceStackEntry = (
     Option<StyleNodeId>,
     Option<ResolveContext>,
     Arc<CustomPropertyEnvironment>,
+    usize,
+    Option<StyleNodeId>,
 );
+
+/// Number of recently resolved siblings remembered per parent as sharing
+/// sources. Repeated structures usually alternate between a handful of
+/// shapes (element, whitespace text, element, ...), so a few slots catch
+/// them without making a miss expensive.
+const SIBLING_SHARE_SLOTS: usize = 4;
+
+/// Recently resolved children of one parent (or of nodes that copied that
+/// parent's results), reused as computed-value sources for later siblings with identical cascade input.
+#[derive(Clone, Copy, Default)]
+struct SiblingShareCache {
+    parent: Option<StyleNodeId>,
+    sources: [Option<StyleNodeId>; SIBLING_SHARE_SLOTS],
+    next: usize,
+}
+
+impl SiblingShareCache {
+    fn reset_for(&mut self, parent: StyleNodeId) {
+        if self.parent != Some(parent) {
+            *self = Self {
+                parent: Some(parent),
+                ..Self::default()
+            };
+        }
+    }
+
+    fn remember(&mut self, source: StyleNodeId) {
+        self.sources[self.next] = Some(source);
+        self.next = (self.next + 1) % SIBLING_SHARE_SLOTS;
+    }
+}
 
 /// Top-down inheritance walk. Children need their parent's computed values, so
 /// each stack entry stores the parent's node ID and retrieves its already-written
@@ -76,6 +111,23 @@ type InheritanceStackEntry = (
 /// own subtree). This deliberately follows the §6.1.1 rule that elements
 /// without an element parent use initial values.
 ///
+/// # Sibling sharing
+///
+/// A node's results depend only on its parent's computed values and custom
+/// properties, the `rem`/`rlh` context, and its own cascade input (see
+/// [`CascadedArena::same_cascade_input`]). Siblings with identical cascade
+/// input therefore get identical computed values, pseudo-element values,
+/// `page` values, non-UA margin flags, and authored writing modes. Repeated
+/// structures (list items, table cells, paragraphs, whitespace text between
+/// them) hit this constantly, so each depth keeps a few recently resolved
+/// children of the current parent and copies a match's results instead of
+/// redoing winner selection and absolutization. A node that copied its
+/// results from `source` hands its children the same parent context as
+/// `source`'s children, so those children are matched against `source`'s
+/// children: cousins under repeated parents share too. Sharing is limited to nodes
+/// with an element ancestor (`root_ctx` is `Some`), because a root element
+/// derives its own `rem` context from its computed values.
+///
 /// `pub(crate)` permits intra-doc links from other modules; making this private
 /// fails the documentation gate (repository rule 3).
 #[allow(clippy::too_many_arguments)] // the traversal writes several independent cascade outputs
@@ -90,7 +142,43 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 ) {
-    let mut stack: Vec<InheritanceStackEntry> = vec![(id, None, None, empty_custom_properties())];
+    resolve_inheritance_with(
+        dom,
+        id,
+        parent_computed,
+        cascaded,
+        out,
+        non_ua_margin_sides,
+        authored_writing_modes,
+        page_values,
+        pseudo_out,
+        true,
+    );
+}
+
+/// [`resolve_inheritance`] with sibling sharing switchable, returning how many
+/// nodes copied their results from a sibling. Tests use `sibling_sharing =
+/// false` as the reference the shared walk must reproduce exactly.
+#[allow(clippy::too_many_arguments)] // same outputs as resolve_inheritance plus the sharing switch
+pub(crate) fn resolve_inheritance_with<D: StyleDom>(
+    dom: &D,
+    id: StyleNodeId,
+    parent_computed: &ComputedValues,
+    cascaded: &CascadedArena,
+    out: &mut Vec<ComputedValues>,
+    non_ua_margin_sides: &mut Vec<Sides<bool>>,
+    authored_writing_modes: &mut Vec<Option<WritingMode>>,
+    page_values: &mut [crate::property::PageValue],
+    pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+    sibling_sharing: bool,
+) -> usize {
+    let mut shared_nodes = 0;
+    let mut stack: Vec<InheritanceStackEntry> =
+        vec![(id, None, None, empty_custom_properties(), 0, None)];
+    // Indexed by tree depth. The walk is depth-first, so while a parent's
+    // children are being visited, deeper slots belong to their subtrees and
+    // this depth's slot stays bound to that parent.
+    let mut share_caches: Vec<SiblingShareCache> = Vec::new();
     // Scratch buffer for `apply_winners`, allocated **outside** the walk loop
     // and reused for every node. Two per-node `HashMap`s previously accounted
     // for 3,667 allocations / 3.0 MB at n=1000 nodes, or 56.7% of all cascade
@@ -98,7 +186,9 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     // the first few nodes, then incurs no allocations. `apply_winners` owns its
     // fill and drain; the walk loop only lends it a reusable container.
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
-    while let Some((id, parent_id, root_ctx, parent_custom_properties)) = stack.pop() {
+    while let Some((id, parent_id, root_ctx, parent_custom_properties, depth, share_parent)) =
+        stack.pop()
+    {
         // Skip the entire subtree when is_in_document()==false.
         //
         // Previously resize + write + children push ran unconditionally to
@@ -118,193 +208,243 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         let is_element = node.kind() == StyleNodeKind::Element;
         let parent_computed = parent_id.map_or(parent_computed, |parent| &out[parent.0 as usize]);
 
-        let local_custom_properties = cascaded
-            .custom_candidates(id)
-            .map(|candidates| resolve_custom_properties(&parent_custom_properties, candidates));
-        let custom_properties = local_custom_properties
-            .clone()
-            .unwrap_or_else(|| parent_custom_properties.clone());
-        let local_custom_properties =
-            local_custom_properties.unwrap_or_else(empty_custom_properties);
-
-        // Phase 1: apply this node's cascade winners to the initial state of
-        // the inheritance walk (inherited fields copied from the parent's
-        // computed values; non-inherited fields initialized). The target is a
-        // staging representation, so winner application order does not matter.
-        let mut specified = SpecifiedValues::inherit_from(parent_computed);
-        let mut node_non_ua_margin = Sides::all(false);
         if authored_writing_modes.len() <= id.0 as usize {
             authored_writing_modes.resize(id.0 as usize + 1, None);
         }
-        if let Some(candidates) = cascaded.candidates(id) {
-            apply_winners(
-                candidates,
-                &mut winners,
-                &mut specified,
-                parent_computed,
-                &custom_properties,
-                Some(&mut page_values[id.0 as usize]),
-                Some(&mut node_non_ua_margin),
-                Some(&mut authored_writing_modes[id.0 as usize]),
-            );
-        }
-
-        // Phases 2 + 3: absolutize. A root element (no element ancestor) uses
-        // different `rem` bases in these phases, so it needs a dedicated entry
-        // point (see the spec quote in `SpecifiedValues::finalize_as_root` docs).
-        let mut computed = match &root_ctx {
-            Some(ctx) => specified.finalize(parent_computed, ctx),
-            None => {
-                // `finalize_as_root` fixes the phase-2 basis to the initial
-                // value (§6.1.1: "if the element has no parent"). This is
-                // correct because **`root_ctx == None` means this node has no
-                // element parent**. Check this caller-side invariant:
-                //
-                // - `cascade()` always starts at `dom.root_id()` (= Document
-                //   node) and passes `ComputedValues::initial()` there.
-                // - `collect_cascaded` creates winners only for Elements, so
-                //   the Document node retains its initial computed values.
-                // - Only the Document itself and its direct children still
-                //   have `root_ctx == None` (`Some` follows the first element).
-                //
-                // Any future entry point that calls `resolve_inheritance` partway
-                // through a subtree (e.g. incremental restyle) must therefore
-                // supply `root_ctx` itself. This assertion catches an omission
-                // in debug builds.
-                debug_assert_eq!(
-                    parent_computed.font_size,
-                    ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
-                    "root_ctx == None は element 親が居ないことを意味するので、\
-                     親の computed font-size は initial でなければならない \
-                     (subtree の途中から walk を開始していないか?)"
-                );
-                specified.finalize_as_root()
-            }
-        };
-        computed.custom_properties = custom_properties.clone();
-        computed.local_custom_properties = local_custom_properties;
-
-        // The rem/rlh context passed to children. Only after phases 2 + 2.5
-        // for the root element are `root_font_size` / `root_line_height` known,
-        // so this is the first point where the context becomes `Some`.
-        // `used_line_height_length` uses the same derivation as
-        // `crate::specified::SpecifiedValues::finalize_as_root` uses to build
-        // its own `ctx`; `rlh_on_root_element_matches_child_root_line_height_basis`
-        // checks that the two agree.
-        let child_ctx = match root_ctx {
-            Some(ctx) => Some(ctx),
-            None if is_element => Some(ResolveContext::with_root_line_height(
-                computed.font_size,
-                used_line_height_length(computed.line_height, computed.font_size),
-            )),
-            None => None,
-        };
-
-        // `::before`/`::after` — CSS Pseudo-Elements Module Level 4 §4
-        // <https://drafts.csswg.org/css-pseudo-4/#treelike> (tree-abiding
-        // pseudo-elements, of which `::before`/`::after` are a subcase):
-        // "They inherit any inheritable properties from their originating
-        // element; non-inheritable properties take their initial values as
-        // usual." `::first-line` is not itself tree-abiding (§2.1
-        // <https://drafts.csswg.org/css-pseudo-4/#first-line-pseudo>, see
-        // `PseudoElem` doc), but this crate resolves it with the same
-        // inherit-then-cascade step below since both are single-originating-
-        // element pseudo-elements; §4's `content`-conditioned box-generation
-        // rule two paragraphs down does not apply to it (`::first-line` has
-        // no `content`-driven box-generation model), only the plain
-        // inheritance sentence quoted above. This is computed inline here,
-        // right where `id`'s own real
-        // children would be, rather than in a separate pass after this
-        // whole walk finishes, for one specific reason: `child_ctx` (the
-        // `rem`/`rlh` basis `id`'s real children get) is *not* a
-        // document-wide constant — a document can have multiple top-level
-        // elements directly under the `Document` node, each independently
-        // becoming its own `root_ctx == None` root with its own `rem` basis
-        // (see `resolve_inheritance`'s `root_ctx` doc above). A pseudo's
-        // `rem`/`rlh` basis must match whichever one its own real
-        // originating element actually resolved against, and that value
-        // only exists as this loop's *local* `child_ctx` at this exact
-        // point — reconstructing it after the fact would require redoing
-        // this same top-level-root bookkeeping in a second pass. Using
-        // `computed` (not `parent_computed`) as the inherited-from base and
-        // `child_ctx` (not `root_ctx`) as the absolutization context both
-        // follow directly from that §4 inheritance framing — a pseudo is
-        // one more entry alongside `id`'s real children in every sense this
-        // cascade cares about, just one this function itself resolves
-        // instead of pushing onto `stack` (there is no `StyleNodeId` for a
-        // pseudo-element to push). Whether a box is actually generated from
-        // the result — §4.1 <https://drafts.csswg.org/css-pseudo-4/#generated-content>'s
-        // separate, `content`-conditioned rule, "When their computed
-        // 'content' value is not 'none', these pseudo-elements generate
-        // boxes as if they were immediate children of their originating
-        // element" — is a downstream (`raikiri-dom`) decision this crate
-        // does not make; see `CascadeResult::pseudo`'s doc.
-        if is_element {
-            for pseudo in [
-                PseudoElem::Before,
-                PseudoElem::After,
-                PseudoElem::Marker,
-                PseudoElem::FirstLine,
-            ] {
-                let candidates = cascaded.pseudo_candidates(id, pseudo);
-                let custom_candidates = cascaded.pseudo_custom_candidates(id, pseudo);
-                if candidates.is_none() && custom_candidates.is_none() {
-                    continue;
+        let share_source = match (share_parent, root_ctx) {
+            (Some(parent), Some(_)) if sibling_sharing => {
+                if share_caches.len() <= depth {
+                    share_caches.resize(depth + 1, SiblingShareCache::default());
                 }
-                let pseudo_local_custom_properties = custom_candidates
-                    .map(|candidates| resolve_custom_properties(&custom_properties, candidates));
-                let pseudo_custom_properties = pseudo_local_custom_properties
-                    .clone()
-                    .unwrap_or_else(|| custom_properties.clone());
-                let pseudo_local_custom_properties =
-                    pseudo_local_custom_properties.unwrap_or_else(empty_custom_properties);
+                let cache = &mut share_caches[depth];
+                cache.reset_for(parent);
+                cache.sources.iter().flatten().copied().find(|&source| {
+                    dom.node(source)
+                        .is_some_and(|source_node| source_node.kind() == node.kind())
+                        && cascaded.same_cascade_input(source, id)
+                })
+            }
+            _ => None,
+        };
 
-                let mut pseudo_specified = SpecifiedValues::inherit_from(&computed);
-                // Filter by longhand key before choosing winners, including
-                // deferred var() values and expanded shorthand candidates.
-                let first_line_candidates;
-                let candidates = if pseudo == PseudoElem::FirstLine {
-                    first_line_candidates = candidates.map(|values| {
-                        values
-                            .iter()
-                            .filter(|(value, ..)| {
-                                super::first_line::first_line_property_applies(value.key())
-                            })
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    });
-                    first_line_candidates.as_deref()
-                } else {
-                    candidates
-                };
-                if let Some(candidates) = candidates {
+        let (computed, node_non_ua_margin, custom_properties, child_ctx, children_share_parent) =
+            if let Some(source) = share_source {
+                shared_nodes += 1;
+                let src = source.0 as usize;
+                let idx = id.0 as usize;
+                page_values[idx] = page_values[src].clone();
+                authored_writing_modes[idx] = authored_writing_modes[src];
+                for pseudo in CASCADED_PSEUDO_ELEMENTS {
+                    if let Some(values) = pseudo_out.get(&(source, pseudo)).cloned() {
+                        pseudo_out.insert((id, pseudo), values);
+                    }
+                }
+                let computed = out[src].clone();
+                let custom_properties = computed.custom_properties.clone();
+                // `source` was resolved by this walk (only freshly resolved
+                // nodes are remembered), and this node now has exactly its
+                // results, so this node's children see the same parent
+                // context as `source`'s children and may share with them.
+                (
+                    computed,
+                    non_ua_margin_sides[src],
+                    custom_properties,
+                    root_ctx,
+                    source,
+                )
+            } else {
+                let local_custom_properties = cascaded.custom_candidates(id).map(|candidates| {
+                    resolve_custom_properties(&parent_custom_properties, candidates)
+                });
+                let custom_properties = local_custom_properties
+                    .clone()
+                    .unwrap_or_else(|| parent_custom_properties.clone());
+                let local_custom_properties =
+                    local_custom_properties.unwrap_or_else(empty_custom_properties);
+
+                // Phase 1: apply this node's cascade winners to the initial state of
+                // the inheritance walk (inherited fields copied from the parent's
+                // computed values; non-inherited fields initialized). The target is a
+                // staging representation, so winner application order does not matter.
+                let mut specified = SpecifiedValues::inherit_from(parent_computed);
+                let mut node_non_ua_margin = Sides::all(false);
+                if let Some(candidates) = cascaded.candidates(id) {
                     apply_winners(
                         candidates,
                         &mut winners,
-                        &mut pseudo_specified,
-                        &computed,
-                        &pseudo_custom_properties,
-                        None,
-                        None,
-                        None,
+                        &mut specified,
+                        parent_computed,
+                        &custom_properties,
+                        Some(&mut page_values[id.0 as usize]),
+                        Some(&mut node_non_ua_margin),
+                        Some(&mut authored_writing_modes[id.0 as usize]),
                     );
                 }
 
-                let ctx = child_ctx.expect(
-                    "a generated pseudo-element candidate only exists for a \
-                     StyleNodeKind::Element (is_element == true here, since \
-                     only elements are ever matched by a selector — \
-                     `collect_cascaded`'s pseudo-element pass runs inside \
-                     the same `if let Some(elem) = node.as_element()` guard \
-                     as its real-element pass), and `child_ctx` is `Some` \
-                     for every element by this point in the match above",
-                );
-                let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
-                pseudo_computed.custom_properties = pseudo_custom_properties;
-                pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
-                pseudo_out.insert((id, pseudo), pseudo_computed);
-            }
-        }
+                // Phases 2 + 3: absolutize. A root element (no element ancestor) uses
+                // different `rem` bases in these phases, so it needs a dedicated entry
+                // point (see the spec quote in `SpecifiedValues::finalize_as_root` docs).
+                let mut computed = match &root_ctx {
+                    Some(ctx) => specified.finalize(parent_computed, ctx),
+                    None => {
+                        // `finalize_as_root` fixes the phase-2 basis to the initial
+                        // value (§6.1.1: "if the element has no parent"). This is
+                        // correct because **`root_ctx == None` means this node has no
+                        // element parent**. Check this caller-side invariant:
+                        //
+                        // - `cascade()` always starts at `dom.root_id()` (= Document
+                        //   node) and passes `ComputedValues::initial()` there.
+                        // - `collect_cascaded` creates winners only for Elements, so
+                        //   the Document node retains its initial computed values.
+                        // - Only the Document itself and its direct children still
+                        //   have `root_ctx == None` (`Some` follows the first element).
+                        //
+                        // Any future entry point that calls `resolve_inheritance` partway
+                        // through a subtree (e.g. incremental restyle) must therefore
+                        // supply `root_ctx` itself. This assertion catches an omission
+                        // in debug builds.
+                        debug_assert_eq!(
+                            parent_computed.font_size,
+                            ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
+                            "root_ctx == None は element 親が居ないことを意味するので、\
+                         親の computed font-size は initial でなければならない \
+                         (subtree の途中から walk を開始していないか?)"
+                        );
+                        specified.finalize_as_root()
+                    }
+                };
+                computed.custom_properties = custom_properties.clone();
+                computed.local_custom_properties = local_custom_properties;
+
+                // The rem/rlh context passed to children. Only after phases 2 + 2.5
+                // for the root element are `root_font_size` / `root_line_height` known,
+                // so this is the first point where the context becomes `Some`.
+                // `used_line_height_length` uses the same derivation as
+                // `crate::specified::SpecifiedValues::finalize_as_root` uses to build
+                // its own `ctx`; `rlh_on_root_element_matches_child_root_line_height_basis`
+                // checks that the two agree.
+                let child_ctx = match root_ctx {
+                    Some(ctx) => Some(ctx),
+                    None if is_element => Some(ResolveContext::with_root_line_height(
+                        computed.font_size,
+                        used_line_height_length(computed.line_height, computed.font_size),
+                    )),
+                    None => None,
+                };
+
+                // `::before`/`::after` — CSS Pseudo-Elements Module Level 4 §4
+                // <https://drafts.csswg.org/css-pseudo-4/#treelike> (tree-abiding
+                // pseudo-elements, of which `::before`/`::after` are a subcase):
+                // "They inherit any inheritable properties from their originating
+                // element; non-inheritable properties take their initial values as
+                // usual." `::first-line` is not itself tree-abiding (§2.1
+                // <https://drafts.csswg.org/css-pseudo-4/#first-line-pseudo>, see
+                // `PseudoElem` doc), but this crate resolves it with the same
+                // inherit-then-cascade step below since both are single-originating-
+                // element pseudo-elements; §4's `content`-conditioned box-generation
+                // rule two paragraphs down does not apply to it (`::first-line` has
+                // no `content`-driven box-generation model), only the plain
+                // inheritance sentence quoted above. This is computed inline here,
+                // right where `id`'s own real
+                // children would be, rather than in a separate pass after this
+                // whole walk finishes, for one specific reason: `child_ctx` (the
+                // `rem`/`rlh` basis `id`'s real children get) is *not* a
+                // document-wide constant — a document can have multiple top-level
+                // elements directly under the `Document` node, each independently
+                // becoming its own `root_ctx == None` root with its own `rem` basis
+                // (see `resolve_inheritance`'s `root_ctx` doc above). A pseudo's
+                // `rem`/`rlh` basis must match whichever one its own real
+                // originating element actually resolved against, and that value
+                // only exists as this loop's *local* `child_ctx` at this exact
+                // point — reconstructing it after the fact would require redoing
+                // this same top-level-root bookkeeping in a second pass. Using
+                // `computed` (not `parent_computed`) as the inherited-from base and
+                // `child_ctx` (not `root_ctx`) as the absolutization context both
+                // follow directly from that §4 inheritance framing — a pseudo is
+                // one more entry alongside `id`'s real children in every sense this
+                // cascade cares about, just one this function itself resolves
+                // instead of pushing onto `stack` (there is no `StyleNodeId` for a
+                // pseudo-element to push). Whether a box is actually generated from
+                // the result — §4.1 <https://drafts.csswg.org/css-pseudo-4/#generated-content>'s
+                // separate, `content`-conditioned rule, "When their computed
+                // 'content' value is not 'none', these pseudo-elements generate
+                // boxes as if they were immediate children of their originating
+                // element" — is a downstream (`raikiri-dom`) decision this crate
+                // does not make; see `CascadeResult::pseudo`'s doc.
+                if is_element {
+                    for pseudo in CASCADED_PSEUDO_ELEMENTS {
+                        let candidates = cascaded.pseudo_candidates(id, pseudo);
+                        let custom_candidates = cascaded.pseudo_custom_candidates(id, pseudo);
+                        if candidates.is_none() && custom_candidates.is_none() {
+                            continue;
+                        }
+                        let pseudo_local_custom_properties = custom_candidates.map(|candidates| {
+                            resolve_custom_properties(&custom_properties, candidates)
+                        });
+                        let pseudo_custom_properties = pseudo_local_custom_properties
+                            .clone()
+                            .unwrap_or_else(|| custom_properties.clone());
+                        let pseudo_local_custom_properties =
+                            pseudo_local_custom_properties.unwrap_or_else(empty_custom_properties);
+
+                        let mut pseudo_specified = SpecifiedValues::inherit_from(&computed);
+                        // Filter by longhand key before choosing winners, including
+                        // deferred var() values and expanded shorthand candidates.
+                        let first_line_candidates;
+                        let candidates = if pseudo == PseudoElem::FirstLine {
+                            first_line_candidates = candidates.map(|values| {
+                                values
+                                    .iter()
+                                    .filter(|(value, ..)| {
+                                        super::first_line::first_line_property_applies(value.key())
+                                    })
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                            });
+                            first_line_candidates.as_deref()
+                        } else {
+                            candidates
+                        };
+                        if let Some(candidates) = candidates {
+                            apply_winners(
+                                candidates,
+                                &mut winners,
+                                &mut pseudo_specified,
+                                &computed,
+                                &pseudo_custom_properties,
+                                None,
+                                None,
+                                None,
+                            );
+                        }
+
+                        let ctx = child_ctx.expect(
+                            "a generated pseudo-element candidate only exists for a \
+                         StyleNodeKind::Element (is_element == true here, since \
+                         only elements are ever matched by a selector — \
+                         `collect_cascaded`'s pseudo-element pass runs inside \
+                         the same `if let Some(elem) = node.as_element()` guard \
+                         as its real-element pass), and `child_ctx` is `Some` \
+                         for every element by this point in the match above",
+                        );
+                        let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
+                        pseudo_computed.custom_properties = pseudo_custom_properties;
+                        pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
+                        pseudo_out.insert((id, pseudo), pseudo_computed);
+                    }
+                }
+
+                if sibling_sharing && root_ctx.is_some() {
+                    share_caches[depth].remember(id);
+                }
+                (
+                    computed,
+                    node_non_ua_margin,
+                    custom_properties,
+                    child_ctx,
+                    id,
+                )
+            };
 
         // Resize out to id+1 before writing by index. Pre-allocation in
         // `cascade()` normally makes out.len() == node_count(), so this resize
@@ -337,12 +477,19 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // `winner_does_not_leak_into_next_sibling`: earlier `<p>` then later
         // `<span>` in document order.
         let start = stack.len();
-        stack.extend(
-            dom.child_ids(id)
-                .map(|child_id| (child_id, Some(id), child_ctx, custom_properties.clone())),
-        );
+        stack.extend(dom.child_ids(id).map(|child_id| {
+            (
+                child_id,
+                Some(id),
+                child_ctx,
+                custom_properties.clone(),
+                depth + 1,
+                Some(children_share_parent),
+            )
+        }));
         stack[start..].reverse();
     }
+    shared_nodes
 }
 
 /// Choose the cascade winners for one node and apply them to the staging
