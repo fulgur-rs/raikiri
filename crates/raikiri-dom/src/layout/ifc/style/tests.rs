@@ -616,6 +616,53 @@ fn hanging_punctuation_first_maps_to_the_first_flag() {
 }
 
 #[test]
+fn hanging_punctuation_last_maps_to_the_last_flag() {
+    let fixture = block_fixture("hanging-punctuation:last", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let (options, _) = line_options(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("options");
+    assert_eq!(
+        options.hanging_punctuation,
+        s::HangingPunctuation {
+            last: true,
+            ..s::HangingPunctuation::default()
+        }
+    );
+}
+
+#[test]
+fn every_inline_style_carries_its_own_hanging_punctuation() {
+    // An inline box's value replaces the paragraph's, so `none` is explicit.
+    assert_eq!(
+        root_style("").expect("map").hanging_punctuation,
+        Some(s::HangingPunctuation::default())
+    );
+    assert_eq!(
+        root_style("hanging-punctuation:first")
+            .expect("map")
+            .hanging_punctuation,
+        Some(s::HangingPunctuation {
+            first: true,
+            ..s::HangingPunctuation::default()
+        })
+    );
+    assert_eq!(
+        root_style("hanging-punctuation:last")
+            .expect("map")
+            .hanging_punctuation,
+        Some(s::HangingPunctuation {
+            last: true,
+            ..s::HangingPunctuation::default()
+        })
+    );
+}
+
+#[test]
 fn no_hanging_punctuation_leaves_the_flags_clear() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "x");

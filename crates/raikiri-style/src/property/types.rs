@@ -3720,11 +3720,14 @@ pub enum HangingPunctuation {
     /// A leading opening mark, quote, or U+3000 IDEOGRAPHIC SPACE hangs on
     /// the first formatted line.
     First,
+    /// A trailing closing mark or quote hangs on the last formatted line.
+    Last,
 }
 
 css_keywords!(HangingPunctuation {
     None => "none",
     First => "first",
+    Last => "last",
 });
 
 /// The value of the `text-align` property.

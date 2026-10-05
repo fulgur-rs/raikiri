@@ -803,7 +803,10 @@ fn hanging_punctuation_is_case_insensitive_and_rejects_deferred_values() {
         parse_entire("FIRST", "hanging-punctuation"),
         Some(PropertyValue::HangingPunctuation(HangingPunctuation::First))
     );
-    assert_eq!(parse_entire("last", "hanging-punctuation"), None);
+    assert_eq!(
+        parse_entire("last", "hanging-punctuation"),
+        Some(PropertyValue::HangingPunctuation(HangingPunctuation::Last))
+    );
     assert_eq!(parse_entire("allow-end", "hanging-punctuation"), None);
     assert_eq!(parse_entire("none first", "hanging-punctuation"), None);
 }
