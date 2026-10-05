@@ -95,7 +95,7 @@ impl Document {
             return Vec::new();
         };
         let Some(root) = paint_rules::find_paint_root(self) else {
-            return Vec::new();
+            return Vec::new(); // cov:ignore: a laid-out page always has a body to paint from
         };
         let mut items = PageItems {
             by_node: HashMap::new(),
@@ -125,7 +125,7 @@ impl Document {
                 Frame::Visit(node_id) => node_id,
             };
             let Some(node) = self.get_node(node_id) else {
-                continue;
+                continue; // cov:ignore: node ids on the stack come from the arena
             };
             if !node.is_in_document() || node.is_non_rendered_html_element() {
                 continue;
@@ -136,7 +136,7 @@ impl Document {
                         continue;
                     }
                     let Some(cv) = cascade.computed.get(node_id) else {
-                        continue;
+                        continue; // cov:ignore: the cascade has a value for every arena node
                     };
                     // The group stays open until the element's whole subtree
                     // has been listed.
@@ -201,7 +201,7 @@ impl Document {
                 NodeKind::Text if node.is_ifc_root() => {
                     push_paragraph(self, &items, node_id, &mut events);
                 }
-                _ => {}
+                _ => {} // cov:ignore: comments and other node kinds are out of the document
             }
         }
         events
@@ -230,7 +230,7 @@ impl Document {
             let mut cursor = Some(node_id);
             while let Some(id) = cursor {
                 let Some(node) = self.get_node(id) else {
-                    return false;
+                    return false; // cov:ignore: ancestor ids come from the arena
                 };
                 if !node.is_in_document()
                     || (node.kind() == NodeKind::Element && node.is_display_none())
@@ -272,7 +272,7 @@ fn push_paragraph<'a>(
     events: &mut Vec<PaintEvent<'a>>,
 ) {
     let Some(root_node) = document.get_node(root) else {
-        return;
+        return; // cov:ignore: paragraph roots come from the arena
     };
     let push_kind = |events: &mut Vec<PaintEvent<'a>>, node_id: usize, kind| {
         for &item in items.of(node_id) {
@@ -298,7 +298,7 @@ fn push_paragraph<'a>(
             continue;
         }
         let Some(node) = document.get_node(node_id) else {
-            continue;
+            continue; // cov:ignore: child ids come from the arena
         };
         if !node.is_in_document() || node.is_non_rendered_html_element() {
             continue;

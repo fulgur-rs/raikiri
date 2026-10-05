@@ -618,3 +618,31 @@ fn overflow_clip_rectangles_match_across_pages() {
         assert_rects_match(&walker, &api, &format!("page {}", page.index()));
     }
 }
+
+/// A text node laid out as an anonymous flex item draws its own lines.
+#[test]
+fn flex_item_text() {
+    assert_same_order("<div style='display:flex'>text</div>", "");
+}
+
+/// The walker clips a multi-column container's columns, and the comparison
+/// leaves those clips out with the pops that close them.
+#[test]
+fn walker_column_clips_are_left_out_of_the_comparison() {
+    let result = lay_out(
+        "<div style='columns:2; height:60px'><div style='display:grid'>a</div>\
+         <p>b</p><p>c</p><p>d</p><p>e</p><p>f</p><p>g</p><p>h</p></div>",
+        "",
+    );
+    let page = result.pages().next().expect("one page");
+    let raw = trace(&page);
+    assert!(
+        raw.iter()
+            .any(|e| matches!(e, PaintTraceEvent::PushFragmentainerClip(_))),
+        "{raw:?}"
+    );
+    let steps = walker_steps(&page);
+    let pushes = steps.iter().filter(|s| matches!(s, Step::PushClip)).count();
+    let pops = steps.iter().filter(|s| matches!(s, Step::PopClip)).count();
+    assert_eq!(pushes, pops, "{steps:?}");
+}

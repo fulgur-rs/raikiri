@@ -509,6 +509,7 @@ pub fn trace_paint_order(
     active_page_name: Option<Option<&str>>,
     budget: &mut CounterSnapshotBudget,
 ) -> Result<Vec<PaintTraceEvent>, raikiri_traits::RenderError> {
+    // cov:ignore: the counter budget error is the same mapping the paint entry points test; the trace only reuses it.
     let counter_snapshots = raikiri_dom::counter_snapshots_with_budget(document, cascade, budget)
         .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
         kind: raikiri_traits::LimitKind::CounterSnapshots,

@@ -268,3 +268,47 @@ fn multicol_inside_display_none_is_not_reported() {
     let (document, cascade, _, _) = page.paint_inputs();
     assert!(document.paint_order_approximations(cascade).is_empty());
 }
+
+#[test]
+fn hidden_and_non_rendered_elements_are_not_listed() {
+    let events = order(
+        "<body><script id=s>x</script><div id=h style='display:none'>x</div>\
+         <p id=p>a<span id=hs style='display:none'>b</span><script id=ps>c</script></p></body>",
+        0,
+    );
+    for hidden in ["Box(s)", "Box(h)", "Box(hs)", "Box(ps)"] {
+        assert!(
+            !events.iter().any(|e| e == hidden),
+            "{hidden} in {events:?}"
+        );
+    }
+    position(&events, "Text(p)");
+}
+
+/// A text node laid out as an anonymous flex item is a paragraph of its own.
+#[test]
+fn flex_item_text_is_its_own_paragraph() {
+    let events = order("<body><div id=f style='display:flex'>text</div></body>", 0);
+    let flex = position(&events, "Box(f)");
+    let text = position(&events, "Text(f)");
+    assert!(flex < text, "{events:?}");
+}
+
+#[test]
+fn a_page_outside_the_layout_lists_nothing() {
+    let doc =
+        parse_html_with_resources(b"<p>a</p>".as_slice(), &RenderResources::new()).expect("parse");
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new(),
+    )
+    .expect("layout");
+    let LayoutStatus::Completed(result) = status else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("one page");
+    let (document, cascade, _, _) = page.paint_inputs();
+    assert!(document.page_paint_order(cascade, 99, None).is_empty());
+}
