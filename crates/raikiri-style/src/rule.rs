@@ -1087,7 +1087,7 @@ pub(crate) fn expand_outline(outline: Outline, mut push: impl FnMut(PropertyValu
     push(PropertyValue::OutlineColor(outline.color));
 }
 
-/// Cold helper expanding the `font` shorthand into 15 longhands (six grammar
+/// Cold helper expanding the `font` shorthand into 16 longhands (six grammar
 /// values plus ten reset-only subproperties; see the [`FontShorthand`] docs).
 /// The shorthand parser fills omitted grammar components with spec initial
 /// values, so this function distributes the six fields and assigns initial

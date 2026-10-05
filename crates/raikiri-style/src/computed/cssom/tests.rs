@@ -147,6 +147,13 @@ fn font_shorthand_serialization_rejects_unrepresentable_or_noninitial_subpropert
             }
         ])
     );
+    assert_unserializable_with!(
+        font_feature_settings,
+        crate::property::FontFeatureSettings::Features(vec![crate::property::FontFeatureSetting {
+            tag: *b"sinf",
+            value: 1,
+        }])
+    );
 }
 
 #[test]

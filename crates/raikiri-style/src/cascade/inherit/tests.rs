@@ -7205,7 +7205,7 @@ fn background_shorthand_comma_separated_multi_layer_declaration_dropped_through_
 fn font_shorthand_expands_supported_longhands_through_real_cascade() {
     // Like `background_shorthand_expands_to_8_longhands_through_real_cascade`,
     // a literal `font:` declaration passes through parse → cascade and
-    // expands into six grammar longhands plus nine reset-only subproperties.
+    // expands into six grammar longhands plus ten reset-only subproperties.
     use crate::property::{FontStyle, FontVariantCaps, FontVariationSettings};
     let cv = cascade_doc(
         "",
@@ -7270,12 +7270,13 @@ fn font_shorthand_resets_inherited_variation_settings_and_respects_source_order(
 #[test]
 fn font_shorthand_resets_supported_subproperties_and_later_longhands_win_literal() {
     use crate::property::{
-        FontKerning, FontLanguageOverride, FontOpticalSizing, FontVariantEastAsian,
-        FontVariantEastAsianWidth, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-        FontVariantPosition,
+        FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
+        FontVariantEastAsian, FontVariantEastAsianWidth, FontVariantEmoji, FontVariantLigatures,
+        FontVariantNumeric, FontVariantPosition,
     };
 
     const NON_INITIAL: &str = concat!(
+        "font-feature-settings: \"sinf\"; ",
         "font-kerning: normal; font-language-override: \"SRB\"; ",
         "font-optical-sizing: none; font-variant-east-asian: full-width; ",
         "font-variant-emoji: text; font-variant-ligatures: none; ",
@@ -7303,6 +7304,7 @@ fn font_shorthand_resets_supported_subproperties_and_later_longhands_win_literal
     assert_eq!(reset.font_variant_ligatures, FontVariantLigatures::Normal);
     assert_eq!(reset.font_variant_numeric, FontVariantNumeric::initial());
     assert_eq!(reset.font_variant_position, FontVariantPosition::Normal);
+    assert_eq!(reset.font_feature_settings, FontFeatureSettings::Normal);
 
     assert_eq!(later.font_kerning, FontKerning::Normal);
     assert_eq!(
@@ -7318,6 +7320,7 @@ fn font_shorthand_resets_supported_subproperties_and_later_longhands_win_literal
     assert_eq!(later.font_variant_ligatures, FontVariantLigatures::None);
     assert!(later.font_variant_numeric.ordinal);
     assert_eq!(later.font_variant_position, FontVariantPosition::Sub);
+    assert_ne!(later.font_feature_settings, FontFeatureSettings::Normal);
 }
 
 #[test]
