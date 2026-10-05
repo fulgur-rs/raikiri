@@ -404,6 +404,7 @@ fn hanging_punctuation_unpinned_exact_passes() {
         "css/css-text/hanging-punctuation/hanging-punctuation-first-ascii-quote.html",
         "css/css-text/hanging-punctuation/hanging-punctuation-inline-001.html",
         "css/css-text/hanging-punctuation/hanging-punctuation-last-ascii-quote.html",
+        "css/css-text/hanging-punctuation/hanging-punctuation-last-rtl.html",
         "css/css-text/hanging-punctuation/hanging-punctuation-last-whitespace.html",
         "css/css-text/hanging-punctuation/hanging-punctuation-last.html",
         "css/css-text/hanging-punctuation/hanging-punctuation-with-bidi.html",

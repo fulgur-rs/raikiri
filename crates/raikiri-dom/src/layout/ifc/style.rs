@@ -542,6 +542,7 @@ fn hanging_punctuation(
         },
         // `HangingPunctuation` is `#[non_exhaustive]` across crates; a value
         // added later stays out of the paragraph until it is mapped here.
+        // cov:ignore: every current variant is matched above.
         _ => {
             return Err(IfcError::Unsupported {
                 node,

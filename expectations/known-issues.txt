@@ -223,7 +223,6 @@ css/css-text/hanging-punctuation/hanging-punctuation-first.html | general first 
 css/css-text/hanging-punctuation/hanging-punctuation-force-end-001.xht | hanging-punctuation force-end behavior is outside the implemented slice
 css/css-text/hanging-punctuation/hanging-punctuation-inline-bound-001.html | hanging-punctuation inline-boundary behavior is deferred
 css/css-text/hanging-punctuation/hanging-punctuation-last-001.xht | hanging-punctuation last behavior is outside the implemented slice
-css/css-text/hanging-punctuation/hanging-punctuation-last-rtl.html | hanging-punctuation bidi behavior is deferred
 css/css-text/hanging-punctuation/hanging-punctuation-variable-font-size.html | hanging-punctuation variable-font-size behavior is deferred
 css/css-text/hanging-punctuation/hanging-scrollable-001.html | hanging-punctuation scrollable behavior is deferred
 css/css-text/hyphens/hyphenate-character | hyphenate-character Level4 not in MVP

@@ -835,6 +835,10 @@ fn hanging_punctuation_serializes_keywords() {
         )),
         Some("first".to_owned())
     );
+    assert_eq!(
+        serialize_value(&PropertyValue::HangingPunctuation(HangingPunctuation::Last)),
+        Some("last".to_owned())
+    );
 }
 
 // ── text-autospace (CSS Text 4) ──
