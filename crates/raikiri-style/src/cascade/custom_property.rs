@@ -1932,6 +1932,78 @@ mod tests {
                 ],
             ),
             (
+                "border-top",
+                "1px solid red",
+                vec![
+                    PropertyKey::BorderTopWidth,
+                    PropertyKey::BorderTopStyle,
+                    PropertyKey::BorderTopColor,
+                ],
+            ),
+            (
+                "border-top",
+                "inherit",
+                vec![
+                    PropertyKey::BorderTopWidth,
+                    PropertyKey::BorderTopStyle,
+                    PropertyKey::BorderTopColor,
+                ],
+            ),
+            (
+                "border-right",
+                "1px solid red",
+                vec![
+                    PropertyKey::BorderRightWidth,
+                    PropertyKey::BorderRightStyle,
+                    PropertyKey::BorderRightColor,
+                ],
+            ),
+            (
+                "border-right",
+                "inherit",
+                vec![
+                    PropertyKey::BorderRightWidth,
+                    PropertyKey::BorderRightStyle,
+                    PropertyKey::BorderRightColor,
+                ],
+            ),
+            (
+                "border-bottom",
+                "1px solid red",
+                vec![
+                    PropertyKey::BorderBottomWidth,
+                    PropertyKey::BorderBottomStyle,
+                    PropertyKey::BorderBottomColor,
+                ],
+            ),
+            (
+                "border-bottom",
+                "inherit",
+                vec![
+                    PropertyKey::BorderBottomWidth,
+                    PropertyKey::BorderBottomStyle,
+                    PropertyKey::BorderBottomColor,
+                ],
+            ),
+            (
+                "border-left",
+                "1px solid red",
+                vec![
+                    PropertyKey::BorderLeftWidth,
+                    PropertyKey::BorderLeftStyle,
+                    PropertyKey::BorderLeftColor,
+                ],
+            ),
+            (
+                "border-left",
+                "inherit",
+                vec![
+                    PropertyKey::BorderLeftWidth,
+                    PropertyKey::BorderLeftStyle,
+                    PropertyKey::BorderLeftColor,
+                ],
+            ),
+            (
                 "outline",
                 "auto 2px red",
                 vec![
