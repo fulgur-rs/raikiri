@@ -66,6 +66,8 @@ struct BenchNode {
     id: Option<String>,
     /// `class` attribute tokens. Empty unless a workload assigns classes.
     classes: Vec<String>,
+    /// `style` attribute source. `None` unless a workload assigns one.
+    style: Option<String>,
     children: Vec<usize>,
 }
 
@@ -87,6 +89,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(n_elems),
         });
         for _ in 0..n_elems {
@@ -97,6 +100,7 @@ impl BenchDoc {
                 text: None,
                 id: None,
                 classes: Vec::new(),
+                style: None,
                 children: Vec::with_capacity(1),
             });
             let text = nodes.len();
@@ -106,6 +110,7 @@ impl BenchDoc {
                 text: Some("x"),
                 id: None,
                 classes: Vec::new(),
+                style: None,
                 children: Vec::new(),
             });
             nodes[div].children.push(text);
@@ -134,6 +139,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(1),
         });
         let mut parent = 0usize;
@@ -145,6 +151,7 @@ impl BenchDoc {
                 text: None,
                 id: None,
                 classes: Vec::new(),
+                style: None,
                 children: Vec::new(),
             });
             nodes[parent].children.push(div);
@@ -184,6 +191,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(2),
         });
 
@@ -194,6 +202,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(1),
         });
         nodes[0].children.push(section);
@@ -208,6 +217,7 @@ impl BenchDoc {
                 text: None,
                 id: None,
                 classes: Vec::new(),
+                style: None,
                 children: Vec::with_capacity(1),
             });
             nodes[parent].children.push(article);
@@ -219,6 +229,7 @@ impl BenchDoc {
                 text: None,
                 id: None,
                 classes: Vec::new(),
+                style: None,
                 children: Vec::new(),
             });
             nodes[article].children.push(div);
@@ -236,6 +247,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(1),
         });
         nodes[0].children.push(neg_article_1);
@@ -246,6 +258,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(1),
         });
         nodes[neg_article_1].children.push(neg_article_2);
@@ -256,6 +269,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::new(),
         });
         nodes[neg_article_2].children.push(negative_div_id);
@@ -280,6 +294,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(1),
         });
         nodes.push(BenchNode {
@@ -288,6 +303,7 @@ impl BenchDoc {
             text: None,
             id: None,
             classes: Vec::new(),
+            style: None,
             children: Vec::with_capacity(n_elems),
         });
         nodes[0].children.push(1);
@@ -299,6 +315,7 @@ impl BenchDoc {
                 text: None,
                 id: None,
                 classes: Vec::new(),
+                style: None,
                 children: Vec::with_capacity(1),
             });
             let text = nodes.len();
@@ -308,6 +325,7 @@ impl BenchDoc {
                 text: Some("x"),
                 id: None,
                 classes: Vec::new(),
+                style: None,
                 children: Vec::new(),
             });
             nodes[div].children.push(text);
@@ -475,12 +493,17 @@ impl StyleElement for BenchElementRef<'_> {
             .for_each(|c| f(c));
     }
 
+    fn inline_style_source(&self) -> Option<&str> {
+        self.node.style.as_deref().filter(|s| !s.is_empty())
+    }
+
     /// Bench-local attribute lookup. Only `id` is backed: valued class and
     /// attribute selectors are not part of any bench workload, and class
     /// matching goes through [`BenchElementRef::has_class`].
     fn attr(&self, local: &str) -> Option<&str> {
         match local {
             "id" => self.id(),
+            "style" => self.inline_style_source(),
             _ => None,
         }
     }
@@ -616,6 +639,37 @@ fn descendant_miss_workload(n_rules: usize, doc_depth: usize) -> (BenchDoc, Rule
         );
     }
     (doc, tree, (n_rules * doc_depth) as u64)
+}
+
+/// Build an inline-style workload: [`BenchDoc::wide`]'s `n_elems` sibling
+/// `div`s, each with a `style` attribute and no stylesheet at all. With
+/// `repeated`, every element carries the same source (the shape of
+/// template-generated markup); otherwise every source differs, which is the
+/// worst case for a per-source parse cache.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn inline_style_workload(n_elems: usize, repeated: bool) -> (BenchDoc, RuleTree, u64) {
+    let tree = RuleTree::empty();
+    let mut doc = BenchDoc::wide(n_elems);
+    let divs = doc.nodes[1].children.clone();
+    for (k, div) in divs.iter().enumerate() {
+        let px = if repeated { 7 } else { k % 997 + 1 };
+        doc.nodes[*div].style = Some(format!(
+            "margin: {px}px; padding: 3px 4px; font-size: 42px; \
+             color: rgb(9, 8, 7); border: 1px solid rgb(1, 2, {})",
+            if repeated { 3 } else { k % 256 }
+        ));
+    }
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    for (k, div) in divs.iter().enumerate() {
+        let px = if repeated { 7.0 } else { (k % 997 + 1) as f32 };
+        assert_eq!(
+            probe.computed[*div].margin.top,
+            ComputedLengthPercentageOrAuto::Px(px),
+            "div {k} lost its inline margin"
+        );
+        assert_eq!(probe.computed[*div].font_size.px(), 42.0);
+    }
+    (doc, tree, n_elems as u64)
 }
 
 /// Build a single-rule stylesheet for the `section > article div` mixed
@@ -1523,6 +1577,21 @@ fn bench_cascade(c: &mut Criterion) {
         // produce any declarations at all.
         group.throughput(Throughput::Elements(match_attempts));
         group.bench_function("combinator_chain_5000x4", |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
+    // Inline-style configs — the same source on every element versus a
+    // distinct source per element.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+    for (name, repeated) in [
+        ("inline_style_repeated_2000", true),
+        ("inline_style_unique_2000", false),
+    ] {
+        let (doc, tree, n) = inline_style_workload(2000, repeated);
+        group.throughput(Throughput::Elements(n));
+        group.bench_function(name, |b| {
             b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
         });
     }

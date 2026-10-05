@@ -1,4 +1,7 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 
 use cssparser::{Parser, ParserInput};
@@ -8,7 +11,7 @@ use crate::PseudoElem;
 use crate::RaikiriSelectorImpl;
 use crate::media::MediaContext;
 use crate::property::{CustomProperty, PropertyValue};
-use crate::rule::parse_declaration_block_with_consumer_properties;
+use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties};
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -167,6 +170,14 @@ impl CascadedArena {
         self.ranges.get(&id).map(|range| &self.decls[range.clone()])
     }
 
+    /// Every node that has candidates, with its candidate slice, in no
+    /// particular order.
+    pub(crate) fn all_candidates(&self) -> impl Iterator<Item = (StyleNodeId, &[CascadedDecl])> {
+        self.ranges
+            .iter()
+            .map(|(&id, range)| (id, &self.decls[range.clone()]))
+    }
+
     pub(crate) fn custom_candidates(&self, id: StyleNodeId) -> Option<&[CustomCascadedDecl]> {
         self.custom_ranges
             .get(&id)
@@ -213,6 +224,76 @@ impl CascadedArena {
                     && self.pseudo_custom_candidates(a, pseudo)
                         == self.pseudo_custom_candidates(b, pseudo)
             })
+    }
+}
+
+/// Parsed `style`-attribute blocks for one cascade, keyed by source text.
+///
+/// Generated documents often repeat the same inline style on many elements;
+/// parsing each distinct string once avoids re-tokenizing it per element.
+/// A source is only stored the **second** time it is seen: the first sight
+/// records just its hash, so a document whose inline styles are all
+/// different pays one hash and one small map entry per element instead of
+/// an extra copy of every string and declaration list. Entries are keyed by
+/// hash but always confirm the full source text before reuse, so a hash
+/// collision falls back to a fresh parse. Consumer property registrations
+/// are fixed for the rule tree the cascade runs against, so the parse result
+/// is a function of the source text alone.
+#[derive(Default)]
+struct DeclarationBlockCache {
+    entries: HashMap<u64, DeclarationBlockEntry>,
+}
+
+enum DeclarationBlockEntry {
+    SeenOnce,
+    Parsed(Box<str>, Vec<Declaration>),
+}
+
+impl DeclarationBlockCache {
+    fn declarations(&mut self, source: &str, rule_tree: &RuleTree) -> Cow<'_, [Declaration]> {
+        let parse = || {
+            let mut input = ParserInput::new(source);
+            let mut parser = Parser::new(&mut input);
+            parse_declaration_block_with_consumer_properties(
+                &mut parser,
+                rule_tree.consumer_property_registrations(),
+            )
+        };
+        let mut hasher = DefaultHasher::new();
+        source.hash(&mut hasher);
+        match self.entries.entry(hasher.finish()) {
+            Entry::Vacant(vacant) => {
+                vacant.insert(DeclarationBlockEntry::SeenOnce);
+                Cow::Owned(parse())
+            }
+            Entry::Occupied(occupied) => {
+                let entry = occupied.into_mut();
+                if matches!(entry, DeclarationBlockEntry::SeenOnce) {
+                    *entry = DeclarationBlockEntry::Parsed(source.into(), parse());
+                }
+                match entry {
+                    DeclarationBlockEntry::Parsed(cached, declarations) if **cached == *source => {
+                        Cow::Borrowed(declarations.as_slice())
+                    }
+                    // A different source with the same hash: never reuse it.
+                    _ => Cow::Owned(parse()),
+                }
+            }
+        }
+    }
+}
+
+/// Calls `push` with each `(value, important)` pair, moving out of a freshly
+/// parsed block and cloning out of a cached one.
+fn for_each_declaration(
+    declarations: Cow<'_, [Declaration]>,
+    mut push: impl FnMut(PropertyValue, bool),
+) {
+    match declarations {
+        Cow::Owned(owned) => owned.into_iter().for_each(|d| push(d.value, d.important)),
+        Cow::Borrowed(borrowed) => borrowed
+            .iter()
+            .for_each(|d| push(d.value.clone(), d.important)),
     }
 }
 
@@ -478,6 +559,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     // `rule_index` module docs for why the filtering never drops a match.
     let rule_index = RuleIndex::new(style_rules);
     let mut candidate_rules: Vec<u32> = Vec::new();
+    let mut block_cache = DeclarationBlockCache::default();
 
     // Stack entries pair a node id with the `ancestor_path` length it should
     // be truncated to *before* that node is processed.
@@ -711,40 +793,36 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 }
                 // inline style
                 if let Some(source) = elem.inline_style_source() {
-                    let mut input = ParserInput::new(source);
-                    let mut parser = Parser::new(&mut input);
-                    for decl in parse_declaration_block_with_consumer_properties(
-                        &mut parser,
-                        rule_tree.consumer_property_registrations(),
-                    ) {
-                        push_cascaded_decl(
-                            &mut out.decls,
-                            &mut out.custom_decls,
-                            decl.value,
-                            decl.important,
-                            Origin::Author,
-                            INLINE_SPECIFICITY,
-                            INLINE_SOURCE_ORDER,
-                        );
-                    }
+                    for_each_declaration(
+                        block_cache.declarations(source, rule_tree),
+                        |value, important| {
+                            push_cascaded_decl(
+                                &mut out.decls,
+                                &mut out.custom_decls,
+                                value,
+                                important,
+                                Origin::Author,
+                                INLINE_SPECIFICITY,
+                                INLINE_SOURCE_ORDER,
+                            );
+                        },
+                    );
                 }
                 if let Some(source) = elem.animation_style_source() {
-                    let mut input = ParserInput::new(source);
-                    let mut parser = Parser::new(&mut input);
-                    for decl in parse_declaration_block_with_consumer_properties(
-                        &mut parser,
-                        rule_tree.consumer_property_registrations(),
-                    ) {
-                        push_cascaded_decl(
-                            &mut out.decls,
-                            &mut out.custom_decls,
-                            decl.value,
-                            false,
-                            Origin::Animation,
-                            INLINE_SPECIFICITY,
-                            INLINE_SOURCE_ORDER,
-                        );
-                    }
+                    for_each_declaration(
+                        block_cache.declarations(source, rule_tree),
+                        |value, _| {
+                            push_cascaded_decl(
+                                &mut out.decls,
+                                &mut out.custom_decls,
+                                value,
+                                false,
+                                Origin::Animation,
+                                INLINE_SPECIFICITY,
+                                INLINE_SOURCE_ORDER,
+                            );
+                        },
+                    );
                 }
                 let end = out.decls.len();
                 if end > start {

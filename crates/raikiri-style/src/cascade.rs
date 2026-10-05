@@ -251,28 +251,23 @@ fn cascade_from_candidates<D: StyleDom>(
     cascaded: &collect::CascadedArena,
     media_context: &MediaContext,
 ) -> Result<CascadeResult, CascadeError> {
-    let opacity_specified = (0..dom.node_count())
-        .map(|index| {
-            cascaded
-                .candidates(StyleNodeId::new(index as u64))
-                .is_some_and(|candidates| {
-                    candidates
-                        .iter()
-                        .any(|(value, ..)| value.key() == PropertyKey::Opacity)
-                })
-        })
-        .collect::<Vec<_>>();
-    let background_color_specified = (0..dom.node_count())
-        .map(|index| {
-            cascaded
-                .candidates(StyleNodeId::new(index as u64))
-                .is_some_and(|candidates| {
-                    candidates
-                        .iter()
-                        .any(|(value, ..)| value.key() == PropertyKey::BackgroundColor)
-                })
-        })
-        .collect::<Vec<_>>();
+    // One pass over the nodes that have candidates, rather than one probe
+    // per node and per flag.
+    let mut opacity_specified = vec![false; dom.node_count()];
+    let mut background_color_specified = vec![false; dom.node_count()];
+    for (id, candidates) in cascaded.all_candidates() {
+        let idx = id.0 as usize;
+        if idx >= opacity_specified.len() {
+            continue; // cov:ignore: candidates only exist for walked nodes, all below node_count()
+        }
+        for (value, ..) in candidates {
+            match value.key() {
+                PropertyKey::Opacity => opacity_specified[idx] = true,
+                PropertyKey::BackgroundColor => background_color_specified[idx] = true,
+                _ => {}
+            }
+        }
+    }
 
     // Phase 2: inheritance walk.
     //

@@ -606,3 +606,72 @@ fn cascade_records_non_ua_margin_winners() {
         "an authored margin equal to the UA value must remain distinguishable"
     );
 }
+
+fn source_hash(source: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[test]
+fn declaration_block_cache_stores_a_source_on_its_second_sight() {
+    let tree = RuleTree::empty();
+    let mut cache = DeclarationBlockCache::default();
+    let first = cache
+        .declarations("color: red; margin: 1px", &tree)
+        .into_owned();
+    assert!(matches!(
+        cache.entries.get(&source_hash("color: red; margin: 1px")),
+        Some(DeclarationBlockEntry::SeenOnce)
+    ));
+    assert!(matches!(
+        cache.declarations("color: red; margin: 1px", &tree),
+        Cow::Borrowed(_)
+    ));
+    let third = cache.declarations("color: red; margin: 1px", &tree);
+    assert!(matches!(third, Cow::Borrowed(_)));
+    // `margin` is expanded to its four longhands either way.
+    assert_eq!(first.len(), 5);
+    assert_eq!(third.as_ref(), first.as_slice());
+}
+
+#[test]
+fn declaration_block_cache_never_reuses_a_colliding_source() {
+    let tree = RuleTree::empty();
+    let mut cache = DeclarationBlockCache::default();
+    cache.entries.insert(
+        source_hash("color: red"),
+        DeclarationBlockEntry::Parsed("color: blue".into(), Vec::new()),
+    );
+    let parsed = cache.declarations("color: red", &tree);
+    assert!(matches!(parsed, Cow::Owned(_)));
+    assert_eq!(parsed.len(), 1);
+}
+
+#[test]
+fn repeated_inline_styles_cascade_like_unique_ones() {
+    let mut doc = TestDoc::new();
+    let ids = (0..4)
+        .map(|i| {
+            let style = if i == 2 {
+                "opacity: 0.5"
+            } else {
+                "color: blue; opacity: 0.25"
+            };
+            doc.push_element(0, "p", Some(style))
+        })
+        .collect::<Vec<_>>();
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    for (i, id) in ids.into_iter().enumerate() {
+        let cv = &result.computed[id];
+        if i == 2 {
+            assert_eq!(cv.opacity, 0.5);
+        } else {
+            assert_eq!(cv.color, BLUE);
+            assert_eq!(cv.opacity, 0.25);
+        }
+        assert!(result.opacity_specified[id]);
+        assert!(!result.background_color_specified[id]);
+    }
+}
