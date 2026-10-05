@@ -660,3 +660,121 @@ fn converged_schedule_keeps_page_content_origins() {
         vec![0.0, 100.0, 280.0, 380.0]
     );
 }
+
+#[test]
+fn pipeline_resolves_root_inherited_left_right_and_named_page_geometry_per_page() {
+    let doc = parse(
+        "<style>html { font-size: 20px } body { margin: 0 }\
+             @page { size: 400px 300px; margin: 2em }\
+             @page :left { margin-left: 10px }\
+             @page :right { margin-right: 1.5em }\
+             @page wide { size: 600px 300px; padding: 0.5em }\
+             div { height: 10px; break-after: page }</style>\
+             <div>one</div><div>two</div><div>three</div>\
+             <div style='page: wide'>four</div><div>five</div>",
+    );
+    let out = run(&doc);
+    let names: Vec<_> = out
+        .slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(names, [None, None, None, Some("wide"), None]);
+    let summary: Vec<_> = out
+        .geometries
+        .iter()
+        .map(|geometry| {
+            (
+                geometry.page_box.width,
+                geometry.page_box.height,
+                geometry.margins.top,
+                geometry.margins.right,
+                geometry.margins.bottom,
+                geometry.margins.left,
+                geometry.content_insets.top,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            // Right pages inherit `font-size: 20px` from the root element.
+            (400.0, 300.0, 40.0, 30.0, 40.0, 40.0, 0.0),
+            (400.0, 300.0, 40.0, 40.0, 40.0, 10.0, 0.0),
+            (400.0, 300.0, 40.0, 30.0, 40.0, 40.0, 0.0),
+            (600.0, 300.0, 40.0, 40.0, 40.0, 10.0, 10.0),
+            (400.0, 300.0, 40.0, 30.0, 40.0, 40.0, 0.0),
+        ]
+    );
+    assert_eq!(out.page_styles.len(), out.slices.len());
+}
+
+#[test]
+fn pipeline_preloads_element_backgrounds_once_then_page_backgrounds_in_page_order() {
+    #[derive(Default)]
+    struct RecordingSvgProvider {
+        requests: Mutex<Vec<String>>,
+    }
+
+    impl raikiri_traits::NetworkProvider for RecordingSvgProvider {
+        fn fetch_one_hop(
+            &self,
+            request: raikiri_traits::Request,
+        ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
+            self.requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(request.url.path().to_owned());
+            Ok(raikiri_traits::FetchOutcome::Body(
+                raikiri_traits::FetchedResource {
+                    bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#
+                        .as_slice()
+                        .into(),
+                    content_type: Some("image/svg+xml".into()),
+                    final_url: request.url,
+                    encoding: None,
+                },
+            ))
+        }
+    }
+
+    let provider = RecordingSvgProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let doc = parse(
+        "<style>body { margin: 0 }\
+             @page { size: 200px 100px; margin: 10px;\
+                     background-image: url('https://images.test/page.svg');\
+                     @top-left { color: red } }\
+             @page :right { @top-left { background-image: url('https://images.test/top.svg') } }\
+             @page :left { background-image: url('https://images.test/left.svg') }\
+             div { height: 10px; break-after: page;\
+                   background-image: url('https://images.test/element.svg') }</style>\
+             <div>one</div><div>two</div><div>three</div>",
+    );
+    let out = match run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &LayoutConfig::default(),
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    )
+    .expect("pipeline")
+    {
+        PipelineRun::Completed(out) => *out,
+        PipelineRun::Aborted => panic!("unexpected abort"),
+    };
+    assert_eq!(out.slices.len(), 3);
+    let requests = provider
+        .requests
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(
+        requests,
+        ["/element.svg", "/page.svg", "/top.svg", "/left.svg"]
+    );
+}

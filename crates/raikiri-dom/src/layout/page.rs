@@ -236,7 +236,20 @@ fn page_box_side(
 /// fragmentainer extent; the inline containing-block width remains the page's
 /// margin content width so page decorations do not force text rewrapping.
 pub fn page_content_insets(cascade: &CascadeResult, page_box: PageBox) -> PageContentInsets {
-    let declarations = cascade.page.declarations();
+    page_content_insets_for_page(&cascade.page, page_box)
+}
+
+/// Resolve the border and padding inset of the page content box from an
+/// `@page` cascade alone.
+///
+/// This is [`page_content_insets`] for a caller that cascaded only the page
+/// context, for example one that reruns the `@page` cascade per page query
+/// against a single element cascade.
+pub fn page_content_insets_for_page(
+    page: &raikiri_style::PageCascadeResult,
+    page_box: PageBox,
+) -> PageContentInsets {
+    let declarations = page.declarations();
     PageContentInsets {
         top: page_box_side(
             declarations,
@@ -306,7 +319,19 @@ fn page_dimension(
 /// entry point used by layout, scene extraction, and paint so all three agree
 /// on the paper/content split.
 pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
-    let declarations = cascade.page.declarations();
+    page_margins_for_page(&cascade.page, page_box)
+}
+
+/// Resolve the used page margins from an `@page` cascade alone.
+///
+/// This is [`page_margins`] for a caller that cascaded only the page context,
+/// for example one that reruns the `@page` cascade per page query against a
+/// single element cascade.
+pub fn page_margins_for_page(
+    page: &raikiri_style::PageCascadeResult,
+    page_box: PageBox,
+) -> PageMargins {
+    let declarations = page.declarations();
     // The legacy page `width`/`height` descriptors size the page area inside
     // the page box.  When they are combined with percentage margins, those
     // percentages resolve against the pre-descriptor page size, not the
@@ -315,9 +340,9 @@ pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
     // content area after the outer box is reduced to 300x400.
     let margin_basis = if (declarations.contains_key(&PropertyKey::Width)
         || declarations.contains_key(&PropertyKey::Height))
-        && cascade.page.size().is_some()
+        && page.size().is_some()
     {
-        PageBox::from_page_size(cascade.page.size())
+        PageBox::from_page_size(page.size())
     } else {
         page_box
     };

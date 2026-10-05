@@ -411,3 +411,88 @@ fn every_legacy_keyword_maps_to_a_collapse_and_wrap_pair() {
         Some((C::BreakSpaces, W::Wrap))
     );
 }
+
+fn page_queries() -> Vec<PageContextQuery> {
+    let mut queries = Vec::new();
+    for (name, is_first, is_left) in [
+        (None, true, false),
+        (None, false, true),
+        (None, false, false),
+        (Some("chapter"), false, true),
+        (Some("chapter"), true, false),
+        (Some("unknown"), false, false),
+    ] {
+        queries.push(PageContextQuery {
+            page_name: name.map(crate::Atom::from),
+            is_first,
+            is_left,
+            is_right: !is_left,
+            ..PageContextQuery::default()
+        });
+    }
+    queries.push(PageContextQuery::default());
+    queries
+}
+
+#[test]
+fn page_only_cascade_from_root_element_matches_the_full_page_cascade() {
+    let css = "html { font-size: 20px; color: red }\
+        @page { margin: 2em; size: 400px 300px }\
+        @page :first { margin-top: 3em }\
+        @page :left { margin-left: 10px; @top-left { content: \"L\" } }\
+        @page :right { margin-right: 1.5em; @top-right { content: \"R\" } }\
+        @page chapter { padding: 1em; @bottom-center { content: \"C\" } }\
+        @page chapter:first { size: 200px 100px }";
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, css);
+    doc.push_element(html, "body", None);
+    let tree = build_rule_tree(&doc);
+    let media = MediaContext::default();
+    let base = cascade_with_media_context(&doc, &tree, &media).expect("cascade Ok");
+    assert_eq!(
+        base.root_element_computed() as *const ComputedValues,
+        &base.computed[html] as *const ComputedValues
+    );
+
+    for query in page_queries() {
+        let full =
+            cascade_with_media_context_for_page(&doc, &tree, &media, &query).expect("cascade Ok");
+        let page_only = cascade_page_with_media_context(
+            &tree,
+            &query,
+            PageInheritance::FromRoot(base.root_element_computed()),
+            &media,
+        );
+        assert_eq!(page_only, full.page, "page query {query:?}");
+    }
+
+    // The root-inherited font-size absolutizes `2em` to 40px rather than the
+    // initial 16px basis.
+    let first = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(base.root_element_computed()),
+        &media,
+    );
+    assert_eq!(
+        first.declarations().get(&PropertyKey::MarginBottom),
+        Some(&crate::property::PropertyValue::MarginBottom(
+            crate::property::LengthOrAuto::Length(crate::property::Length::Px(40.0))
+        ))
+    );
+}
+
+#[test]
+fn root_element_computed_falls_back_to_the_document_without_an_element() {
+    let mut doc = TestDoc::new();
+    let text = doc.push_text(0, "text only");
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_ne!(text, 0);
+    assert_eq!(
+        result.root_element_computed() as *const ComputedValues,
+        &result.computed[0] as *const ComputedValues
+    );
+}

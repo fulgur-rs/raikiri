@@ -131,7 +131,7 @@ pub struct PageMarginBoxCascadeResult {
 /// either fully reparsed/projected before emission or omitted as invalid at
 /// computed-value time; this map never exposes raw specified-layer values.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PageCascadeResult {
     // Private so the "resolved against the inheritance parent" contract
     // documented on `declarations()` is enforced by construction: only

@@ -195,6 +195,31 @@ fn page_auto_margins_preserve_negative_remainder() {
 }
 
 #[test]
+fn page_geometry_helpers_delegate_to_the_page_only_variants() {
+    use raikiri_style::{Origin, RuleTree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let mut rules = RuleTree::empty();
+    rules.add_stylesheet(
+        "@page { size: 400px 300px; margin: 10% 12px auto; width: 300px; height: 200px;\
+         padding: 5px; border: 2px solid black }",
+        Origin::Author,
+    );
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let page = PageBox::from_page_size(cascade.page.size());
+    let margins = page_margins_for_page(&cascade.page, page);
+    let insets = page_content_insets_for_page(&cascade.page, page);
+    assert_eq!(page_margins(&cascade, page), margins);
+    assert_eq!(page_content_insets(&cascade, page), insets);
+    assert_eq!(margins.top, 30.0);
+    assert_eq!(margins.left, 12.0);
+    assert_eq!(insets.top, 7.0);
+}
+
+#[test]
 fn find_body_returns_none_when_absent() {
     // Fragment equivalent: append <p> directly under the Document root, with no <body>.
     let mut doc = Document::new();

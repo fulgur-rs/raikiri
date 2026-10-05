@@ -4,8 +4,8 @@ use raikiri_dom::{
     FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
     PageLayoutControl, PageMargins, PageSlice, first_page_name,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
-    layout_pages_with_resolver_and_base_url_and_control, page_content_insets, page_margins,
-    resolve_initial_page_context, validate_layout_depth,
+    layout_pages_with_resolver_and_base_url_and_control, page_content_insets_for_page,
+    page_margins_for_page, resolve_initial_page_context, validate_layout_depth,
 };
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
@@ -18,11 +18,13 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use raikiri_style::{
-    Atom, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext, PageContextQuery,
+    Atom, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext,
+    PageCascadeResult, PageContextQuery, PageInheritance, RuleTree,
+    cascade_page_with_media_context, cascade_with_media_context_for_page,
 };
 
 use crate::HtmlDocument;
-use crate::cascade::build_cascaded_with_media_context_for_page_and_consumer_properties;
+use crate::cascade::build_rule_tree_with_consumer_properties;
 #[cfg(doc)]
 use crate::parse_html_with_resources;
 use crate::resources::{
@@ -433,15 +435,32 @@ fn page_query_for_slice(slice: &PageSlice) -> PageContextQuery {
     query
 }
 
-fn page_box_for_cascade(
-    cascade: &raikiri_style::CascadeResult,
-    defaults: &PageDefaults,
-) -> PageBox {
-    cascade
-        .page
-        .size()
+fn page_box_for_page(page: &PageCascadeResult, defaults: &PageDefaults) -> PageBox {
+    page.size()
         .map(|size| PageBox::from_page_size(Some(size)))
         .unwrap_or(defaults.page_box)
+}
+
+/// Reruns only the `@page` cascade for page queries of one pipeline run.
+///
+/// The element cascade does not depend on the page query, and the rule tree
+/// and media context are fixed for the run, so per-page geometry and styles
+/// only need the page-context cascade inheriting from `base`'s root element.
+struct PageCascader<'a> {
+    tree: &'a RuleTree,
+    base: &'a CascadeResult,
+    media_context: &'a MediaContext,
+}
+
+impl PageCascader<'_> {
+    fn page(&self, query: &PageContextQuery) -> PageCascadeResult {
+        cascade_page_with_media_context(
+            self.tree,
+            query,
+            PageInheritance::FromRoot(self.base.root_element_computed()),
+            self.media_context,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -452,12 +471,9 @@ pub(crate) struct ResolvedPageGeometry {
     pub(crate) content_box: PaintRect,
 }
 
-fn resolve_page_geometry(
-    cascade: &raikiri_style::CascadeResult,
-    page_box: PageBox,
-) -> ResolvedPageGeometry {
-    let margins = page_margins(cascade, page_box);
-    let content_insets = page_content_insets(cascade, page_box);
+fn resolve_page_geometry(page: &PageCascadeResult, page_box: PageBox) -> ResolvedPageGeometry {
+    let margins = page_margins_for_page(page, page_box);
+    let content_insets = page_content_insets_for_page(page, page_box);
     let content_box = PaintRect::new(
         margins.left + content_insets.left,
         margins.top + content_insets.top,
@@ -473,52 +489,53 @@ fn resolve_page_geometry(
 }
 
 fn resolve_page_geometries(
-    doc: &HtmlDocument,
+    cascader: &PageCascader<'_>,
     defaults: &PageDefaults,
     slices: &[PageSlice],
-    consumer_properties: &[ConsumerPropertyRegistration],
-    media_context: &MediaContext,
-) -> (
-    Vec<ResolvedPageGeometry>,
-    Vec<raikiri_style::PageCascadeResult>,
-) {
+) -> (Vec<ResolvedPageGeometry>, Vec<PageCascadeResult>) {
     let mut geometries = Vec::with_capacity(slices.len());
     let mut styles = Vec::with_capacity(slices.len());
     for slice in slices {
-        let query = page_query_for_slice(slice);
-        let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
-            &doc.uncascaded,
-            media_context,
-            &query,
-            consumer_properties,
-        );
-        let page_box = page_box_for_cascade(&cascade, defaults);
-        geometries.push(resolve_page_geometry(&cascade, page_box));
-        styles.push(cascade.page);
+        let page = cascader.page(&page_query_for_slice(slice));
+        let page_box = page_box_for_page(&page, defaults);
+        geometries.push(resolve_page_geometry(&page, page_box));
+        styles.push(page);
     }
     (geometries, styles)
 }
 
 fn preload_page_background_images(
-    doc: &HtmlDocument,
+    cascader: &PageCascader<'_>,
     slices: &[PageSlice],
-    consumer_properties: &[ConsumerPropertyRegistration],
     resources: &RenderResources<'_>,
     warnings: &SharedRenderWarnings,
-    media_context: &MediaContext,
     signal: Option<&raikiri_traits::AbortSignal>,
 ) {
+    // Element backgrounds are page-independent: scan them once, before the
+    // page-context backgrounds of the first page. A per-slice rescan would
+    // only revisit URLs already recorded in `seen`, or ones skipped before
+    // reaching it, so attempt order, deduplication, and limits are unchanged.
+    if slices.is_empty() {
+        return; // cov:ignore: a successful document with a body always emits a page slice.
+    }
     let mut seen = HashSet::new();
     let mut attempts = 0usize;
+    resources.preload_element_background_images(
+        &cascader.base.computed,
+        warnings,
+        &mut seen,
+        &mut attempts,
+        signal,
+    );
     for slice in slices {
-        let query = page_query_for_slice(slice);
-        let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
-            &doc.uncascaded,
-            media_context,
-            &query,
-            consumer_properties,
+        let page = cascader.page(&page_query_for_slice(slice));
+        resources.preload_page_context_background_images(
+            &page,
+            warnings,
+            &mut seen,
+            &mut attempts,
+            signal,
         );
-        resources.preload_background_images(&cascade, warnings, &mut seen, &mut attempts, signal);
     }
 }
 
@@ -675,30 +692,28 @@ pub(crate) fn run_pipeline(
     }
     validate_layout_depth(&doc.uncascaded.dom)?;
 
+    // Every cascade of this run reads the same parsed document, stylesheets,
+    // consumer registrations, and media context, so the rule tree is built once.
+    let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, consumer_properties);
+    let cascade_for_page = |query: &PageContextQuery| {
+        cascade_with_media_context_for_page(&doc.uncascaded.dom, &tree, media_context, query)
+            .expect("cascade は常に Ok のはず")
+    };
+
     // Resolve the first page context before layout so `:first` and the first
     // resolved `@page size` participate in the initial fragmentainer.
     let mut first_query = PageContextQuery::default();
     first_query.is_first = true;
     first_query.is_right = true;
-    let mut first_cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
-        &doc.uncascaded,
-        media_context,
-        &first_query,
-        consumer_properties,
-    );
+    let mut first_cascade = cascade_for_page(&first_query);
     // The first class-A box can select a named page. Resolve that name before
     // the initial layout so a named `:first` page is not flattened to the
     // anonymous page geometry.
     if let Some(name) = first_page_name(&doc.uncascaded.dom, &first_cascade) {
         first_query.page_name = Some(Atom::from(name.as_str()));
-        first_cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
-            &doc.uncascaded,
-            media_context,
-            &first_query,
-            consumer_properties,
-        );
+        first_cascade = cascade_for_page(&first_query);
     }
-    let page_box = page_box_for_cascade(&first_cascade, &defaults);
+    let page_box = page_box_for_page(&first_cascade.page, &defaults);
 
     // The fonts are given to the document before the first-page probe, which
     // lays out a clone of this document, so the probe and the layout below
@@ -718,19 +733,21 @@ pub(crate) fn run_pipeline(
         InitialPageProbeResources::new(Some(&resolver), runtime.effective_base_url),
         |page_name| {
             first_query.page_name = page_name.map(Atom::from);
-            let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
-                &doc.uncascaded,
-                media_context,
-                &first_query,
-                consumer_properties,
-            );
-            let page_box = page_box_for_cascade(&cascade, &defaults);
+            let cascade = cascade_for_page(&first_query);
+            let page_box = page_box_for_page(&cascade.page, &defaults);
             (cascade, page_box)
         },
     )
     .map_err(map_initial_page_context_error)?;
     let first_cascade = resolved_initial_context.cascade;
     let page_box = resolved_initial_context.page_box;
+    // Only `page` in a cascade result depends on the page query, so the
+    // first-page cascade serves as the element cascade of every later page.
+    let page_cascader = PageCascader {
+        tree: &tree,
+        base: &first_cascade,
+        media_context,
+    };
 
     for family in font_report.skipped {
         push_resource_warning(
@@ -765,8 +782,7 @@ pub(crate) fn run_pipeline(
         return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
     }
     const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
-    let mut page_geometries =
-        resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
+    let mut page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
     let mut geometry_converged = true;
     let mut schedule_changed = false;
     for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
@@ -814,8 +830,7 @@ pub(crate) fn run_pipeline(
         // A scheduled pass can change both page count and page selectors. Re-
         // resolve before the next iteration so the following schedule is
         // derived from the slices it will actually replace.
-        page_geometries =
-            resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
+        page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
         let mut refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         if refreshed_schedule == schedule && pagination_truncated {
             // The soft pass confirmed the geometry schedule only for the
@@ -841,14 +856,7 @@ pub(crate) fn run_pipeline(
                 return Ok(PipelineRun::Aborted);
             }
             pagination_truncated = false;
-            page_geometries = resolve_page_geometries(
-                doc,
-                &defaults,
-                &slices,
-                consumer_properties,
-                media_context,
-            )
-            .0;
+            page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
             refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         }
         if refreshed_schedule == schedule && !pagination_truncated {
@@ -889,19 +897,17 @@ pub(crate) fn run_pipeline(
     // Resolve once more after the final bounded schedule pass so metadata and
     // page names always describe the slices that will actually be emitted.
     let (final_geometries, page_styles) =
-        resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context);
+        resolve_page_geometries(&page_cascader, &defaults, &slices);
     page_geometries = final_geometries;
 
     // Fetch CSS background sources only after the final page schedule is known.
     // Paint remains read-only and consumes the cache through ImagePixelSource.
     if inputs.preload_background_images {
         preload_page_background_images(
-            doc,
+            &page_cascader,
             &slices,
-            consumer_properties,
             resources,
             &runtime.warnings,
-            media_context,
             signal.as_ref(),
         );
     }
