@@ -557,12 +557,12 @@ fn text_encoding_unpinned_diagnostics() {
     let candidates = [
         ("css/css-text/text-encoding/shaping-join-001.html", 0),
         ("css/css-text/text-encoding/shaping-join-002.html", 0),
-        ("css/css-text/text-encoding/shaping-join-003.html", 936),
+        ("css/css-text/text-encoding/shaping-join-003.html", 0),
         ("css/css-text/text-encoding/shaping-no-join-001.html", 0),
         ("css/css-text/text-encoding/shaping-no-join-002.html", 0),
-        ("css/css-text/text-encoding/shaping-no-join-003.html", 1784),
+        ("css/css-text/text-encoding/shaping-no-join-003.html", 0),
         ("css/css-text/text-encoding/shaping-tatweel-001.html", 0),
-        ("css/css-text/text-encoding/shaping-tatweel-002.html", 3899),
+        ("css/css-text/text-encoding/shaping-tatweel-002.html", 5113),
         ("css/css-text/text-encoding/shaping-tatweel-003.html", 0),
     ];
     let mut config = ReftestConfig::default();
