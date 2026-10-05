@@ -151,7 +151,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -184,11 +183,3 @@ jobs:
       # the test job above. It does not affect other crates.
       - name: Generate LCOV report
         run: cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --output-path lcov.info
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: lcov.info
-          flags: rust
-          fail_ci_if_error: true
-          use_oidc: true
