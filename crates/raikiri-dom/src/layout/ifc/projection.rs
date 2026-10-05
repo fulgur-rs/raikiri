@@ -812,6 +812,14 @@ pub(crate) fn project_ifc_builder_with(
                         fonts,
                         counters,
                     )?;
+                    if tag == "wbr" {
+                        builder.push_text(
+                            TextSource::Generated {
+                                node: NodeId(id as u64),
+                            },
+                            "\u{200B}",
+                        );
+                    }
                     stack.push(Step::Close);
                     stack.push(Step::After(id));
                     stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));

@@ -772,9 +772,8 @@ fn the_root_itself_may_have_opacity_and_a_relative_position() {
 }
 
 #[test]
-fn word_space_transform_is_laid_out_by_the_engine() {
-    // An accepted degradation: shodo does not map word-space-transform; the
-    // spaces are left as they are.
+fn word_space_transform_does_not_prevent_ifc_root_classification() {
+    // The computed text style is still laid out through the IFC path.
     assert_is_root("word-space-transform:ideographic-space", text_only("aa bb"));
 }
 
