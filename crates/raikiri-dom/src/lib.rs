@@ -97,6 +97,7 @@ pub use layout::{
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
+pub use page_projection::paint_order::{ClipKind, PaintEvent};
 pub use page_projection::text_runs::{
     FontBlob, FontId, FontRef, FontVariation, GeneratedKind, Glyph, PositionedGlyphRun, RunSource,
     Synthesis, Tag,
