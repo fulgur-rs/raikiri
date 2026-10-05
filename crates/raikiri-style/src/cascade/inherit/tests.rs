@@ -76,6 +76,7 @@ fn logical_preferred_sizes_map_to_the_authored_axes() {
     );
     assert_eq!(horizontal.width, ComputedLengthPercentageOrAuto::Px(80.0));
     assert_eq!(horizontal.height, ComputedLengthPercentageOrAuto::Px(30.0));
+    assert_eq!(horizontal.vertical_logical_size, None);
 
     for mode in ["vertical-rl", "vertical-lr"] {
         let vertical = cascade_doc(
@@ -85,14 +86,18 @@ fn logical_preferred_sizes_map_to_the_authored_axes() {
                 "inline-size: 4em; block-size: 30px; font-size: 20px; writing-mode: {mode}"
             )),
         );
+        // Horizontal layout paths keep the horizontal mapping.
         assert_eq!(
-            vertical.height,
+            vertical.width,
             ComputedLengthPercentageOrAuto::Px(80.0),
             "{mode}"
         );
         assert_eq!(
-            vertical.width,
-            ComputedLengthPercentageOrAuto::Px(30.0),
+            vertical.vertical_logical_size,
+            Some((
+                ComputedLengthPercentageOrAuto::Px(30.0),
+                ComputedLengthPercentageOrAuto::Px(80.0),
+            )),
             "{mode}"
         );
     }
@@ -103,13 +108,20 @@ fn logical_preferred_sizes_map_to_the_authored_axes() {
         Some("width: 10px; inline-size: 50%; writing-mode: vertical-rl"),
     );
     assert_eq!(
-        vertical_inline_only.width,
-        ComputedLengthPercentageOrAuto::Px(10.0)
+        vertical_inline_only.vertical_logical_size,
+        Some((
+            ComputedLengthPercentageOrAuto::Px(10.0),
+            ComputedLengthPercentageOrAuto::Percent(50.0),
+        ))
     );
-    assert_eq!(
-        vertical_inline_only.height,
-        ComputedLengthPercentageOrAuto::Percent(50.0)
+
+    let sideways = cascade_doc(
+        "",
+        "div",
+        Some("inline-size: 40px; writing-mode: sideways-rl"),
     );
+    assert_eq!(sideways.width, ComputedLengthPercentageOrAuto::Px(40.0));
+    assert_eq!(sideways.vertical_logical_size, None);
 }
 
 #[test]

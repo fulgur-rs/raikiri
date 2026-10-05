@@ -274,6 +274,7 @@ fn parent_fixture() -> ComputedValues {
         min_width: ComputedLengthPercentageOrAuto::Auto,
         min_height: ComputedLengthPercentageOrAuto::Auto,
         min_block_size: None,
+        vertical_logical_size: None,
         top: ComputedLengthPercentageOrAuto::Px(10.0),
         right: ComputedLengthPercentageOrAuto::Px(20.0),
         bottom: ComputedLengthPercentageOrAuto::Px(30.0),

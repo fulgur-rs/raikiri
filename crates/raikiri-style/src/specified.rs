@@ -1582,30 +1582,35 @@ impl SpecifiedValues {
     /// first (rather than calling `resolve_line_height` here) because
     /// `padding: 1lh` needs the **already resolved** line height of this
     /// node. Passing it in, like `font_size`, preserves that order.
-    /// Map `inline-size` / `block-size` onto `width` / `height` using this
-    /// element's own `writing-mode` (CSS Logical Properties 1 §4.1 and §2,
-    /// <https://www.w3.org/TR/css-logical-1/#dimension-properties>). A
-    /// declared logical size replaces the physical size on the same axis,
-    /// matching the `min-block-size` mapping below.
-    fn map_logical_preferred_sizes(&mut self) {
-        let vertical = match self.writing_mode {
-            WritingMode::HorizontalTb => false,
-            WritingMode::VerticalRl
-            | WritingMode::VerticalLr
-            | WritingMode::SidewaysRl
-            | WritingMode::SidewaysLr => true,
-        };
-        let (inline_axis, block_axis) = if vertical {
-            (&mut self.height, &mut self.width)
-        } else {
-            (&mut self.width, &mut self.height)
-        };
-        if let Some(size) = self.inline_size.take() {
-            *inline_axis = size;
+    /// Fold `inline-size` / `block-size` into `width` / `height` and return
+    /// their mapping for a vertical writing mode.
+    ///
+    /// Layout runs vertical content on horizontal axes except where it lays
+    /// out vertical lines itself, so `width` / `height` keep the horizontal
+    /// mapping. In `vertical-rl` / `vertical-lr`, the returned physical
+    /// `(width, height)` follows CSS Logical Properties 1 §4.1
+    /// (<https://www.w3.org/TR/css-logical-1/#dimension-properties>): the
+    /// inline size is the physical height. A declared logical size replaces
+    /// the physical size on the same axis, matching `min-block-size` below.
+    fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
+        let inline_size = self.inline_size.take();
+        let block_size = self.block_size.take();
+        if inline_size.is_none() && block_size.is_none() {
+            return None;
         }
-        if let Some(size) = self.block_size.take() {
-            *block_axis = size;
-        }
+        let vertical = matches!(
+            self.writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        )
+        .then(|| {
+            (
+                block_size.unwrap_or(self.width),
+                inline_size.unwrap_or(self.height),
+            )
+        });
+        self.width = inline_size.unwrap_or(self.width);
+        self.height = block_size.unwrap_or(self.height);
+        vertical
     }
 
     fn absolutize_with(
@@ -1615,7 +1620,7 @@ impl SpecifiedValues {
         text_align: TextAlign,
         ctx: &ResolveContext,
     ) -> ComputedValues {
-        self.map_logical_preferred_sizes();
+        let vertical_logical_size = self.map_logical_preferred_sizes();
         // Reference for `1lh` on padding, margin, border, width and height. `rlh` uses the
         // tree-global `ctx.root_line_height`, so this local reference is only needed here.
         let own_line_height = used_line_height_length(line_height, font_size);
@@ -1859,6 +1864,12 @@ impl SpecifiedValues {
             min_width,
             min_height,
             min_block_size: physical_min_block,
+            vertical_logical_size: vertical_logical_size.map(|(width, height)| {
+                (
+                    resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
+                    resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
+                )
+            }),
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),
             bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),

@@ -763,6 +763,16 @@ pub struct ComputedValues {
     /// its fragmentation behavior from a physical `min-height` declaration.
     /// The used value is already mapped into `min_width`/`min_height`.
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
+    /// Physical `(width, height)` of the authored `inline-size` /
+    /// `block-size` mapped through a `vertical-rl` or `vertical-lr`
+    /// writing mode (CSS Logical Properties 1 §4.1). `None` without a logical
+    /// preferred size or outside those two modes. [`Self::width`] and
+    /// [`Self::height`] keep the horizontal mapping for layout that runs
+    /// vertical content on horizontal axes.
+    pub vertical_logical_size: Option<(
+        ComputedLengthPercentageOrAuto,
+        ComputedLengthPercentageOrAuto,
+    )>,
     /// `top`. **Not inherited**; initial: `auto`.
     pub top: ComputedLengthPercentageOrAuto,
     /// `right`. **Not inherited**; initial: `auto`.
@@ -1879,6 +1889,7 @@ impl ComputedValues {
             min_width: ComputedLengthPercentageOrAuto::Auto,
             min_height: ComputedLengthPercentageOrAuto::Auto,
             min_block_size: None,
+            vertical_logical_size: None,
             top: ComputedLengthPercentageOrAuto::Auto,
             right: ComputedLengthPercentageOrAuto::Auto,
             bottom: ComputedLengthPercentageOrAuto::Auto,

@@ -82,7 +82,7 @@ pub(super) fn containing_block_inline_size(
     let basis = Some(available);
     let margin = style.margin.map(|margin| {
         margin
-            .resolve_to_option(basis.unwrap_or(0.0), resolve_calc)
+            .resolve_to_option(available, resolve_calc)
             .unwrap_or(0.0)
     });
     let border = style.border.resolve_or_zero(basis, resolve_calc);

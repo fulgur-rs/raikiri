@@ -89,6 +89,37 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// What [`crate::layout::ifc::assign::assign_ifc_roots`] returns: a paragraph
 /// over a limit of the inline engine, or one it refuses when it is required
 /// for every paragraph.
+/// The computed values of `idx` with its vertical `inline-size` /
+/// `block-size` mapping applied, when the box lays out vertical lines on
+/// its own axes. A multicol container and its contents run vertical writing
+/// on horizontal axes, so they keep the horizontal mapping in
+/// [`ComputedValues::width`] / [`ComputedValues::height`].
+fn vertical_logical_sized(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> Option<ComputedValues> {
+    let cv = &cascade.computed[idx];
+    let (width, height) = cv.vertical_logical_size?;
+    let mut current = Some(idx);
+    while let Some(id) = current {
+        if cascade
+            .computed
+            .get(id)
+            .is_some_and(|values| multicol_style_from_computed(values).is_some())
+        {
+            return None;
+        }
+        current = doc.parent_of(id);
+    }
+    let mut sized = cv.clone();
+    sized.width = width;
+    sized.width_ch = None;
+    sized.height = height;
+    sized.height_ch = None;
+    Some(sized)
+}
+
 pub(crate) fn apply_computed_to_style(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -100,7 +131,8 @@ pub(crate) fn apply_computed_to_style(
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
         }
-        let cv = &cascade.computed[idx];
+        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         // Preserve full DisplayValue for table dispatch before taffy collapses it.
         doc.nodes[idx].display = cv.display;
         // Taffy does not carry CSS `order` in Style. Retain the computed value

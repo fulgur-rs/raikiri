@@ -331,6 +331,7 @@ fn non_initial_parent() -> ComputedValues {
         min_width: ComputedLengthPercentageOrAuto::Px(200.0),
         min_height: ComputedLengthPercentageOrAuto::Px(200.0),
         min_block_size: None,
+        vertical_logical_size: None,
         top: ComputedLengthPercentageOrAuto::Px(10.0),
         right: ComputedLengthPercentageOrAuto::Px(20.0),
         bottom: ComputedLengthPercentageOrAuto::Px(30.0),
