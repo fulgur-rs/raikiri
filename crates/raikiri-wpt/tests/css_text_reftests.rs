@@ -332,10 +332,14 @@ fn text_spacing_trim_vertical_variants_exact_pass() {
 /// reports XFAIL when it fails and XPASS, which fails the test, when it
 /// passes.
 fn is_expected_failure(relative: &str, query: &str) -> bool {
-    let expectations = raikiri_wpt::expectations::ExpectationSet::load_from_workspace_root()
-        .expect("load WPT expectations");
-    expectations
-        .expected_failures
+    static EXPECTED_FAILURES: std::sync::OnceLock<raikiri_wpt::expectations::ExpectedFailures> =
+        std::sync::OnceLock::new();
+    EXPECTED_FAILURES
+        .get_or_init(|| {
+            raikiri_wpt::expectations::ExpectationSet::load_from_workspace_root()
+                .expect("load WPT expectations")
+                .expected_failures
+        })
         .get(&format!("{relative}{query}"))
         .is_some()
 }

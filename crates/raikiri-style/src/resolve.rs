@@ -2695,7 +2695,7 @@ pub fn resolve_flex_basis(
                 ComputedLengthPercentageOrAuto::Px(v) => ComputedFlexBasis::Px(v),
                 ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p),
                 ComputedLengthPercentageOrAuto::Calc(_)
-                | ComputedLengthPercentageOrAuto::MinContent => ComputedFlexBasis::Auto,
+                | ComputedLengthPercentageOrAuto::MinContent => ComputedFlexBasis::Auto, // cov:ignore: only the width / inline-size parser produces min-content
             }
         }
     }
@@ -2896,7 +2896,7 @@ pub fn resolve_margin_length_or_auto(
         LengthOrAuto::Calc(_) => ComputedLengthPercentageOrAuto::Px(0.0),
         // Only `width` / `inline-size` parse `min-content`; a margin never
         // holds it.
-        LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::Px(0.0),
+        LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::Px(0.0), // cov:ignore: only the width / inline-size parser produces min-content
         LengthOrAuto::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),

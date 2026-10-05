@@ -7317,7 +7317,7 @@ pub(crate) fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f3
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(px) => Some(px),
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Percent(_) => None,
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Calc(_)
-            | raikiri_style::resolve::ComputedLengthPercentageOrAuto::MinContent => None,
+            | raikiri_style::resolve::ComputedLengthPercentageOrAuto::MinContent => None, // cov:ignore: only the width / inline-size parser produces min-content
         }
     };
     let left = to_px(cv.left);

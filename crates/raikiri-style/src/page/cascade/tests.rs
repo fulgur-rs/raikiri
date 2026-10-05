@@ -6472,3 +6472,14 @@ fn cascade_page_var_logical_size_folds_into_width() {
         )))),
     );
 }
+
+/// `min-content` survives page-context absolutization.
+#[test]
+fn cascade_page_min_content_width_is_kept() {
+    let root = ComputedValues::initial();
+    let result = page("@page { width: min-content }", &root);
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::MinContent)),
+    );
+}

@@ -1398,7 +1398,7 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
         // margin calc resolution will share the same arena in a later pass.
         ComputedLengthPercentageOrAuto::Calc(_) => LengthPercentageAuto::length(0.0),
         // Margins never compute to `min-content`.
-        ComputedLengthPercentageOrAuto::MinContent => LengthPercentageAuto::length(0.0),
+        ComputedLengthPercentageOrAuto::MinContent => LengthPercentageAuto::length(0.0), // cov:ignore: only the width / inline-size parser produces min-content
     }
 }
 
