@@ -107,6 +107,16 @@ pub(crate) struct AnimationStyleSidecar {
     pub(crate) declarations: String,
 }
 
+/// Embedder hook that resolves the image URLs carried by cascade results.
+pub(crate) trait CascadeImagePreparer {
+    /// Prepare the element and page-context images of a full cascade.
+    fn prepare_cascade(&self, cascade: &mut raikiri_style::CascadeResult);
+
+    /// Prepare the page-context images of a page cascade that replaces the
+    /// one of a result already passed to [`Self::prepare_cascade`].
+    fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult);
+}
+
 pub(crate) struct PrintRenderResources<'a> {
     pub(crate) network: Option<&'a dyn raikiri_traits::NetworkProvider>,
     pub(crate) parse_base_url: Option<&'a raikiri::Url>,
@@ -114,7 +124,7 @@ pub(crate) struct PrintRenderResources<'a> {
     pub(crate) replaced_resolver: Option<&'a dyn raikiri_traits::ReplacedResolver>,
     pub(crate) image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
     pub(crate) font_loader: Option<&'a dyn raikiri_dom::FontFaceLoader>,
-    pub(crate) prepare_cascade_images: Option<&'a dyn Fn(&mut raikiri_style::CascadeResult)>,
+    pub(crate) prepare_cascade_images: Option<&'a dyn CascadeImagePreparer>,
     /// Owned live canvas bitmaps in tree order, from
     /// [`crate::reftest::dynamic`]'s sidecar transfer. Restored onto the final
     /// parsed document before paint so `innerHTML` round-tripping does not
@@ -1609,16 +1619,26 @@ fn page_descriptor_dimension(
     })
 }
 
-fn page_has_explicit_dimensions(cascade: &raikiri_style::CascadeResult) -> bool {
-    cascade.page.size().is_some()
-        || cascade
-            .page
+fn page_has_explicit_dimensions(page: &raikiri_style::PageCascadeResult) -> bool {
+    page.size().is_some()
+        || page
             .declarations()
             .contains_key(&raikiri_style::property::PropertyKey::Width)
-        || cascade
-            .page
+        || page
             .declarations()
             .contains_key(&raikiri_style::property::PropertyKey::Height)
+}
+
+/// The authored page box of `page`, or `fallback` when no dimension is authored.
+fn page_box_or_fallback(
+    page: &raikiri_style::PageCascadeResult,
+    fallback: raikiri_traits::PageBox,
+) -> raikiri_traits::PageBox {
+    if page_has_explicit_dimensions(page) {
+        page_box_from_cascade(page, fallback)
+    } else {
+        fallback
+    }
 }
 
 fn page_has_auto_margin(
@@ -1649,10 +1669,10 @@ fn page_has_auto_margin(
 }
 
 fn page_box_from_cascade(
-    cascade: &raikiri_style::CascadeResult,
+    page: &raikiri_style::PageCascadeResult,
     fallback: raikiri_traits::PageBox,
 ) -> raikiri_traits::PageBox {
-    let base = match cascade.page.size() {
+    let base = match page.size() {
         // An orientation-only `size` keeps the user-agent's default paper
         // dimensions and changes only its orientation.  The WPT adapter's
         // fallback is the test setup page box, not the style crate's A4 default.
@@ -1660,26 +1680,30 @@ fn page_box_from_cascade(
             keyword: None,
             orientation,
         }) => {
-            let mut page = fallback;
+            let mut page_box = fallback;
             match orientation {
-                Some(raikiri_style::PageOrientation::Landscape) if page.height > page.width => {
-                    std::mem::swap(&mut page.width, &mut page.height);
+                Some(raikiri_style::PageOrientation::Landscape)
+                    if page_box.height > page_box.width =>
+                {
+                    std::mem::swap(&mut page_box.width, &mut page_box.height);
                 }
-                Some(raikiri_style::PageOrientation::Portrait) if page.width > page.height => {
-                    std::mem::swap(&mut page.width, &mut page.height);
+                Some(raikiri_style::PageOrientation::Portrait)
+                    if page_box.width > page_box.height =>
+                {
+                    std::mem::swap(&mut page_box.width, &mut page_box.height);
                 }
                 _ => {}
             }
-            page
+            page_box
         }
-        _ => raikiri_traits::PageBox::from_page_size(cascade.page.size()),
+        _ => raikiri_traits::PageBox::from_page_size(page.size()),
     };
-    let margins = raikiri_dom::page_margins(cascade, base);
-    let declarations = cascade.page.declarations();
+    let margins = raikiri_dom::page_margins_for_page(page, base);
+    let declarations = page.declarations();
     // Legacy width/height describe the page area when auto margins are used;
     // keep the `size` descriptor as the physical page box so the remaining
     // space can be distributed around that area.
-    if cascade.page.size().is_some() && page_has_auto_margin(declarations) {
+    if page.size().is_some() && page_has_auto_margin(declarations) {
         return base;
     }
     let width = declarations
@@ -1690,10 +1714,10 @@ fn page_box_from_cascade(
         .and_then(|value| page_descriptor_dimension(value, base.height));
     match (width, height) {
         (Some(width), Some(height)) => {
-            let mut page = raikiri_traits::PageBox::new();
-            page.width = width + margins.left + margins.right;
-            page.height = height + margins.top + margins.bottom;
-            page
+            let mut page_box = raikiri_traits::PageBox::new();
+            page_box.width = width + margins.left + margins.right;
+            page_box.height = height + margins.top + margins.bottom;
+            page_box
         }
         _ => base,
     }
@@ -2106,8 +2130,8 @@ pub(crate) fn render_raikiri_pages_with_resources(
     use raikiri_dom::{
         layout_pages, layout_pages_with_page_geometry,
         layout_pages_with_page_geometry_and_resolver_and_base_url,
-        layout_pages_with_resolver_and_base_url, page_content_insets, page_margins,
-        relayout_text_for_width,
+        layout_pages_with_resolver_and_base_url, page_content_insets_for_page, page_margins,
+        page_margins_for_page, relayout_text_for_width,
     };
     use raikiri_html::parse;
 
@@ -2166,8 +2190,23 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut default_cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
     if let Some(prepare) = prepare_cascade_images {
-        prepare(&mut default_cascade);
+        prepare.prepare_cascade(&mut default_cascade);
     }
+    // Only the page context of a cascade result depends on the page query, so
+    // later queries on this document rerun just the `@page` cascade.  The
+    // font-face rule tree was built from this same document state.
+    let page_for = |base: &raikiri_style::CascadeResult, query: &PageContextQuery| {
+        let mut page = raikiri_style::cascade_page_with_media_context(
+            &font_face_tree,
+            query,
+            raikiri_style::PageInheritance::FromRoot(base.root_element_computed()),
+            &media_context,
+        );
+        if let Some(prepare) = prepare_cascade_images {
+            prepare.prepare_page(&mut page);
+        }
+        page
+    };
     // Page progression follows the root direction: in RTL the first page is
     // the left/verso page, while LTR starts on the right/recto page.
     let direction_node = {
@@ -2201,50 +2240,33 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut fallback_page_box = PageBox::new();
     fallback_page_box.width = width as f32;
     fallback_page_box.height = height as f32;
-    let fixed_page_width = if page_has_explicit_dimensions(&default_cascade) {
-        page_box_from_cascade(&default_cascade, fallback_page_box).width
+    let fixed_page_width = if page_has_explicit_dimensions(&default_cascade.page) {
+        page_box_from_cascade(&default_cascade.page, fallback_page_box).width
     } else {
         width as f32
     };
-    // Rebuild after direction detection so RTL documents use their first
-    // `:left` page cascade during the initial layout pass.  Reusing the
-    // provisional default cascade would leave the first page on `:right`
-    // margins whenever the two selectors differ.
-    let mut first_cascade =
-        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
-    if let Some(prepare) = prepare_cascade_images {
-        prepare(&mut first_cascade);
-    }
+    // Recascade the page context after direction detection so RTL documents
+    // use their first `:left` page cascade during the initial layout pass.
+    // Keeping the provisional default page context would leave the first page
+    // on `:right` margins whenever the two selectors differ.
+    let mut first_cascade = default_cascade;
+    let first_page = page_for(&first_cascade, &first_query);
+    first_cascade.replace_page(first_page);
 
     // Keep the established 800×600 (or caller-supplied) test setup dimensions as
     // the fallback.  Only an authored page size changes the paper box.
-    let first_page_box = if page_has_explicit_dimensions(&first_cascade) {
-        page_box_from_cascade(&first_cascade, fallback_page_box)
-    } else {
-        fallback_page_box
-    };
+    let first_page_box = page_box_or_fallback(&first_cascade.page, fallback_page_box);
     let initial_context = raikiri_dom::resolve_initial_page_context(
         &uncascaded.dom,
         first_query.page_name.as_ref().map(ToString::to_string),
         first_cascade,
         first_page_box,
         raikiri_dom::InitialPageProbeResources::new(image_resolver, base_url),
-        |page_name| {
+        |page_name, cascade| {
             first_query.page_name = page_name.map(Atom::from);
-            let mut cascade = build_cascaded_with_media_context_for_page(
-                &uncascaded,
-                &media_context,
-                &first_query,
-            );
-            if let Some(prepare) = prepare_cascade_images {
-                prepare(&mut cascade);
-            }
-            let page_box = if page_has_explicit_dimensions(&cascade) {
-                page_box_from_cascade(&cascade, fallback_page_box)
-            } else {
-                fallback_page_box
-            };
-            (cascade, page_box)
+            let page = page_for(cascade, &first_query);
+            let page_box = page_box_or_fallback(&page, fallback_page_box);
+            (page, page_box)
         },
     )
     .map_err(|error| format!("initial page context: {error:?}"))?;
@@ -2287,18 +2309,10 @@ pub(crate) fn render_raikiri_pages_with_resources(
             page_index % 2 == 1
         };
         query.is_right = !query.is_left;
-        let mut page_cascade =
-            build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
-        if let Some(prepare) = prepare_cascade_images {
-            prepare(&mut page_cascade);
-        }
-        let page_box = if page_has_explicit_dimensions(&page_cascade) {
-            page_box_from_cascade(&page_cascade, fallback_page_box)
-        } else {
-            fallback_page_box
-        };
-        let margins = page_margins(&page_cascade, page_box);
-        let insets = page_content_insets(&page_cascade, page_box);
+        let page = page_for(&first_cascade, &query);
+        let page_box = page_box_or_fallback(&page, fallback_page_box);
+        let margins = page_margins_for_page(&page, page_box);
+        let insets = page_content_insets_for_page(&page, page_box);
         let step = (margins.content_height(page_box) - insets.top - insets.bottom).max(1.0);
         // Match the layout pass: page decorations shift the flow origin but
         // do not reduce the inline containing-block width.
@@ -2318,7 +2332,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // when a later page really changes its content geometry; fixed-size WPT
     // documents can keep the already-laid-out result and avoid a second full
     // parse/layout pass.
-    let (mut uncascaded, slices) = if geometry_varies {
+    let (mut uncascaded, slices, mut cascade, page_tree) = if geometry_varies {
         let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
         if let Some(styles) = animation_styles {
             restore_animation_styles(&mut fresh.dom, styles)?;
@@ -2327,10 +2341,18 @@ pub(crate) fn render_raikiri_pages_with_resources(
             crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
         }
         use_fonts(&mut fresh.dom);
-        let mut fresh_cascade =
-            build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
+        // The reparsed document is a different arena, so it gets its own
+        // rule tree and full cascade.
+        let fresh_tree = raikiri::build_rule_tree(&fresh);
+        let mut fresh_cascade = raikiri_style::cascade_with_media_context_for_page(
+            &fresh.dom,
+            &fresh_tree,
+            &media_context,
+            &first_query,
+        )
+        .expect("cascade is always Ok");
         if let Some(prepare) = prepare_cascade_images {
-            prepare(&mut fresh_cascade);
+            prepare.prepare_cascade(&mut fresh_cascade);
         }
         let fresh_slices = if let Some(resolver) = image_resolver {
             // The geometry-varying path reparses the source, so the image
@@ -2353,9 +2375,24 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 &page_widths,
             )? // cov:ignore: the layout API's standalone error edge is not reachable from valid reftest documents
         };
-        (fresh, fresh_slices)
+        (fresh, fresh_slices, fresh_cascade, fresh_tree)
     } else {
-        (uncascaded, provisional_slices)
+        (
+            uncascaded,
+            provisional_slices,
+            first_cascade,
+            font_face_tree,
+        )
+    };
+    // Each page below replaces only the page context of this document's
+    // element cascade.
+    let page_for = |base: &raikiri_style::CascadeResult, query: &PageContextQuery| {
+        raikiri_style::cascade_page_with_media_context(
+            &page_tree,
+            query,
+            raikiri_style::PageInheritance::FromRoot(base.root_element_computed()),
+            &media_context,
+        )
     };
 
     if let Some(bitmaps) = canvas_bitmaps {
@@ -2383,26 +2420,20 @@ pub(crate) fn render_raikiri_pages_with_resources(
             slice.page_index % 2 == 1
         };
         query.is_right = !query.is_left;
-        let mut cascade =
-            build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
+        let mut page = page_for(&cascade, &query);
         if let Some(prepare) = prepare_cascade_images {
-            prepare(&mut cascade);
+            prepare.prepare_page(&mut page);
         }
+        cascade.replace_page(page);
         let paired_page_increment = if query.is_right {
             let mut paired_query = query.clone();
             paired_query.is_first = false;
             paired_query.is_left = true;
             paired_query.is_right = false;
-            let mut paired = build_cascaded_with_media_context_for_page(
-                &uncascaded,
-                &media_context,
-                &paired_query,
-            );
-            if let Some(prepare) = prepare_cascade_images {
-                prepare(&mut paired);
-            }
+            // Only the paired page's `counter-increment` is read, which image
+            // preparation does not touch.
+            let paired = page_for(&cascade, &paired_query);
             match paired
-                .page
                 .declarations()
                 .get(&raikiri_style::property::PropertyKey::CounterIncrement)
             {
@@ -2415,11 +2446,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         } else {
             None
         };
-        let page_box = if page_has_explicit_dimensions(&cascade) {
-            page_box_from_cascade(&cascade, fallback_page_box)
-        } else {
-            fallback_page_box
-        };
+        let page_box = page_box_or_fallback(&cascade.page, fallback_page_box);
         if geometry_varies {
             let page_width = page_widths
                 .get(slice.page_index as usize)

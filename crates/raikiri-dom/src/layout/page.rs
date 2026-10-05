@@ -657,18 +657,25 @@ impl<'a> InitialPageProbeResources<'a> {
 /// starts a document. When a document has both a named page and a Flex/Grid
 /// container, this helper probes placement, asks [`first_page_name`] for the
 /// resolved first box, and invokes `recascade` when that name differs from the
-/// current page query. Every probe lays out a clone of `document`, with its
-/// fonts, and uses the caller's replaced-resource resolver
-/// and base URL so intrinsic sizes match the final layout. The operation is
-/// bounded so self-referential page-size changes fail explicitly. Documents
-/// without both features return their input state without a probe.
+/// current page query. `recascade` receives the new page name and the current
+/// cascade, and returns the `@page` cascade and page box for that name; the
+/// element cascade does not depend on the page query, so only the page context
+/// is replaced with [`CascadeResult::replace_page`]. Every probe lays out a
+/// clone of `document`, with its fonts, and uses the caller's replaced-resource
+/// resolver and base URL so intrinsic sizes match the final layout. The
+/// operation is bounded so self-referential page-size changes fail
+/// explicitly. Documents without both features return their input state
+/// without a probe.
 pub fn resolve_initial_page_context(
     document: &Document,
     page_name: Option<String>,
     cascade: CascadeResult,
     page_box: PageBox,
     resources: InitialPageProbeResources<'_>,
-    mut recascade: impl FnMut(Option<&str>) -> (CascadeResult, PageBox),
+    mut recascade: impl FnMut(
+        Option<&str>,
+        &CascadeResult,
+    ) -> (raikiri_style::PageCascadeResult, PageBox),
 ) -> Result<InitialPageContext, InitialPageContextError> {
     super::validate_layout_depth(document).map_err(InitialPageContextError::Layout)?;
     let mut context = InitialPageContext {
@@ -715,8 +722,8 @@ pub fn resolve_initial_page_context(
         }
 
         context.page_name = resolved_name;
-        let (cascade, page_box) = recascade(context.page_name.as_deref());
-        context.cascade = cascade;
+        let (page, page_box) = recascade(context.page_name.as_deref(), &context.cascade);
+        context.cascade.replace_page(page);
         context.page_box = page_box;
     }
     // cov:ignore: an oscillating named-grid page query needs a self-referential page-size fixture; callers expose a structured terminal error.

@@ -454,13 +454,23 @@ struct PageCascader<'a> {
 
 impl PageCascader<'_> {
     fn page(&self, query: &PageContextQuery) -> PageCascadeResult {
-        cascade_page_with_media_context(
-            self.tree,
-            query,
-            PageInheritance::FromRoot(self.base.root_element_computed()),
-            self.media_context,
-        )
+        cascade_page_for_query(self.tree, self.base, self.media_context, query)
     }
+}
+
+/// The `@page` cascade for `query`, inheriting from `base`'s root element.
+fn cascade_page_for_query(
+    tree: &RuleTree,
+    base: &CascadeResult,
+    media_context: &MediaContext,
+    query: &PageContextQuery,
+) -> PageCascadeResult {
+    cascade_page_with_media_context(
+        tree,
+        query,
+        PageInheritance::FromRoot(base.root_element_computed()),
+        media_context,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -695,23 +705,26 @@ pub(crate) fn run_pipeline(
     // Every cascade of this run reads the same parsed document, stylesheets,
     // consumer registrations, and media context, so the rule tree is built once.
     let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, consumer_properties);
-    let cascade_for_page = |query: &PageContextQuery| {
-        cascade_with_media_context_for_page(&doc.uncascaded.dom, &tree, media_context, query)
-            .expect("cascade は常に Ok のはず")
-    };
 
     // Resolve the first page context before layout so `:first` and the first
     // resolved `@page size` participate in the initial fragmentainer.
     let mut first_query = PageContextQuery::default();
     first_query.is_first = true;
     first_query.is_right = true;
-    let mut first_cascade = cascade_for_page(&first_query);
+    let mut first_cascade = cascade_with_media_context_for_page(
+        &doc.uncascaded.dom,
+        &tree,
+        media_context,
+        &first_query,
+    )
+    .expect("cascade は常に Ok のはず");
     // The first class-A box can select a named page. Resolve that name before
     // the initial layout so a named `:first` page is not flattened to the
-    // anonymous page geometry.
+    // anonymous page geometry. Only the page context depends on the name.
     if let Some(name) = first_page_name(&doc.uncascaded.dom, &first_cascade) {
         first_query.page_name = Some(Atom::from(name.as_str()));
-        first_cascade = cascade_for_page(&first_query);
+        let page = cascade_page_for_query(&tree, &first_cascade, media_context, &first_query);
+        first_cascade.replace_page(page);
     }
     let page_box = page_box_for_page(&first_cascade.page, &defaults);
 
@@ -731,11 +744,11 @@ pub(crate) fn run_pipeline(
         first_cascade,
         page_box,
         InitialPageProbeResources::new(Some(&resolver), runtime.effective_base_url),
-        |page_name| {
+        |page_name, cascade| {
             first_query.page_name = page_name.map(Atom::from);
-            let cascade = cascade_for_page(&first_query);
-            let page_box = page_box_for_page(&cascade.page, &defaults);
-            (cascade, page_box)
+            let page = cascade_page_for_query(&tree, cascade, media_context, &first_query);
+            let page_box = page_box_for_page(&page, &defaults);
+            (page, page_box)
         },
     )
     .map_err(map_initial_page_context_error)?;

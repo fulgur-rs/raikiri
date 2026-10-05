@@ -1635,3 +1635,52 @@ fn a_page_geometry_that_varies_keeps_the_inline_engine() {
     assert!(page_has_ink(&engine.pages[0], 20, 30), "bbbb on line 3");
     assert!(!page_has_ink(&engine.pages[0], 10, 20), "line 2 is empty");
 }
+
+fn page_context(css: &str) -> raikiri_style::PageCascadeResult {
+    let mut tree = raikiri_style::RuleTree::empty();
+    tree.add_stylesheet(css, raikiri_style::Origin::Author);
+    let root = raikiri_style::ComputedValues::initial();
+    raikiri_style::cascade_page_with_media_context(
+        &tree,
+        &raikiri_style::PageContextQuery::default(),
+        raikiri_style::PageInheritance::FromRoot(&root),
+        &raikiri_style::MediaContext::default(),
+    )
+}
+
+fn page_box_of(width: f32, height: f32) -> raikiri_traits::PageBox {
+    let mut page_box = raikiri_traits::PageBox::new();
+    page_box.width = width;
+    page_box.height = height;
+    page_box
+}
+
+#[test]
+fn orientation_only_page_size_rotates_the_fallback_box() {
+    let portrait = page_box_of(400.0, 600.0);
+    let landscape = page_box_from_cascade(&page_context("@page { size: landscape }"), portrait);
+    assert_eq!((landscape.width, landscape.height), (600.0, 400.0));
+    // Already landscape: unchanged.
+    let wide = page_box_of(600.0, 400.0);
+    let kept = page_box_from_cascade(&page_context("@page { size: landscape }"), wide);
+    assert_eq!((kept.width, kept.height), (600.0, 400.0));
+    let rotated_back = page_box_from_cascade(&page_context("@page { size: portrait }"), wide);
+    assert_eq!((rotated_back.width, rotated_back.height), (400.0, 600.0));
+    let still_portrait = page_box_from_cascade(&page_context("@page { size: portrait }"), portrait);
+    assert_eq!(
+        (still_portrait.width, still_portrait.height),
+        (400.0, 600.0)
+    );
+}
+
+#[test]
+fn legacy_page_width_and_height_size_the_page_area_inside_the_margins() {
+    let page =
+        page_context("@page { size: 500px 700px; margin: 10px 20px; width: 300px; height: 400px }");
+    let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
+    assert_eq!((page_box.width, page_box.height), (340.0, 420.0));
+    // Only one legacy dimension keeps the `size` box.
+    let page = page_context("@page { size: 500px 700px; width: 300px }");
+    let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
+    assert_eq!((page_box.width, page_box.height), (500.0, 700.0));
+}

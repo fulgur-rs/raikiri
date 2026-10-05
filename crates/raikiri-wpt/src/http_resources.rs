@@ -7,6 +7,8 @@ use raikiri_net::{ImageResolver, SystemHttpProvider};
 use raikiri_style::property::BackgroundImage;
 use raikiri_traits::{ReplacedResolver, ResolverRequest};
 
+use crate::reftest::CascadeImagePreparer;
+
 mod css_urls;
 
 pub(crate) struct StylesheetUrlProvider<'a> {
@@ -112,9 +114,34 @@ pub(crate) fn prepare_cascade_images(
         prepare_background_image(&mut computed.background_image, base_url, resolver);
         prepare_background_image(&mut computed.list_style_image, base_url, resolver);
     }
-    cascade
-        .page
-        .for_each_background_image_mut(|image| prepare_background_image(image, base_url, resolver));
+    prepare_page_images(&mut cascade.page, base_url, resolver);
+}
+
+/// The page-context half of [`prepare_cascade_images`], for a page cascade
+/// that replaces the one of an already prepared result.
+pub(crate) fn prepare_page_images(
+    page: &mut raikiri_style::PageCascadeResult,
+    base_url: &Url,
+    resolver: &ImageResolver<SystemHttpProvider>,
+) {
+    page.for_each_background_image_mut(|image| prepare_background_image(image, base_url, resolver));
+}
+
+/// [`CascadeImagePreparer`] that absolutizes image URLs against `base_url` and
+/// prefetches them through `resolver`.
+pub(crate) struct HttpCascadeImages<'a> {
+    pub(crate) base_url: &'a Url,
+    pub(crate) resolver: &'a ImageResolver<SystemHttpProvider>,
+}
+
+impl CascadeImagePreparer for HttpCascadeImages<'_> {
+    fn prepare_cascade(&self, cascade: &mut raikiri_style::CascadeResult) {
+        prepare_cascade_images(cascade, self.base_url, self.resolver);
+    }
+
+    fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult) {
+        prepare_page_images(page, self.base_url, self.resolver);
+    }
 }
 
 #[cfg(test)]

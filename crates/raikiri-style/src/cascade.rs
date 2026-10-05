@@ -88,6 +88,12 @@ pub struct CascadeResult {
     /// The `@page` cascade for the page query supplied to the cascade entry
     /// point. The compatibility entry point uses the unnamed/default query;
     /// paged consumers should use [`cascade_with_media_context_for_page`].
+    ///
+    /// The page context is a layout input, so a caller deriving another page
+    /// query's result from this one should use [`Self::replace_page`] rather
+    /// than assigning this field: assignment keeps the old
+    /// [`Self::generation`], and generation-keyed layout caches would treat
+    /// the changed result as the cascade they last saw.
     pub page: PageCascadeResult,
     /// The winning `@counter-style` registry captured from the rule tree.
     ///
@@ -206,6 +212,19 @@ impl CascadeResult {
     /// Panics if [`Self::computed`] was shrunk after the cascade produced it.
     pub fn root_element_computed(&self) -> &ComputedValues {
         &self.computed[self.root_element_index]
+    }
+
+    /// Replace the `@page` cascade with one for another page query.
+    ///
+    /// The element results are unchanged; `page` is expected to come from
+    /// [`cascade_page_with_media_context`] inheriting from
+    /// [`Self::root_element_computed`] with the same [`RuleTree`] and
+    /// [`MediaContext`]. The page context is a layout input, so the result
+    /// gets a fresh [`Self::generation`] and generation-keyed caches treat it
+    /// as a new cascade.
+    pub fn replace_page(&mut self, page: PageCascadeResult) {
+        self.page = page;
+        self.generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
     }
 }
 

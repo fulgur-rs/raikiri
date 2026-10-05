@@ -710,6 +710,66 @@ fn pipeline_resolves_root_inherited_left_right_and_named_page_geometry_per_page(
 }
 
 #[test]
+fn pipeline_resolves_a_named_first_page_from_the_first_page_cascade() {
+    let doc = parse(
+        "<style>html { font-size: 20px } body { margin: 0 }\
+             @page { size: 400px 300px; margin: 10px }\
+             @page :first { margin-top: 2em }\
+             @page cover { size: 500px 250px; margin-left: 1em }\
+             @page cover:first { margin-bottom: 30px }\
+             div { height: 10px; break-after: page }</style>\
+             <div style='page: cover'>one</div><div>two</div>",
+    );
+    let out = run(&doc);
+    let names: Vec<_> = out
+        .slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(names, [Some("cover"), None]);
+    let summary: Vec<_> = out
+        .geometries
+        .iter()
+        .map(|geometry| {
+            (
+                geometry.page_box.width,
+                geometry.page_box.height,
+                geometry.margins.top,
+                geometry.margins.right,
+                geometry.margins.bottom,
+                geometry.margins.left,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            // `cover:first` over `cover` over `:first` over `@page`; `2em`
+            // and `1em` resolve against the root element's 20px.
+            (500.0, 250.0, 40.0, 10.0, 30.0, 20.0),
+            (400.0, 300.0, 10.0, 10.0, 10.0, 10.0),
+        ]
+    );
+
+    // The page context derived for the named first page matches a full
+    // cascade of the same query.
+    let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, &[]);
+    let mut query = PageContextQuery::default();
+    query.is_first = true;
+    query.is_right = true;
+    query.page_name = Some(Atom::from("cover"));
+    let full = cascade_with_media_context_for_page(
+        &doc.uncascaded.dom,
+        &tree,
+        &LayoutConfig::default().media_context,
+        &query,
+    )
+    .expect("cascade");
+    assert_eq!(out.page_styles[0], full.page);
+    assert_eq!(out.cascade.computed, full.computed);
+}
+
+#[test]
 fn pipeline_preloads_element_backgrounds_once_then_page_backgrounds_in_page_order() {
     #[derive(Default)]
     struct RecordingSvgProvider {
