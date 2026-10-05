@@ -3820,6 +3820,12 @@ pub(crate) fn paint_document_impl(
                         t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
                     }
                 }
+                // A collapsed-border table cell paints the borders that won
+                // conflict resolution with its rows, neighbours and table.
+                let painted_border = document
+                    .get_node(node_id)
+                    .and_then(|node| node.collapsed_border())
+                    .unwrap_or(&cv.border);
                 // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
                 let mut paint_background_width = layout.size.width;
                 if let Some(width) = vertical_table_cell_background_width(
@@ -4078,7 +4084,7 @@ pub(crate) fn paint_document_impl(
                             cv.background_clip,
                             cv.background_origin,
                             &paint_border_radius,
-                            &cv.border,
+                            painted_border,
                             &paint_padding,
                             &cv.background_size,
                             &cv.background_position,
@@ -4090,12 +4096,6 @@ pub(crate) fn paint_document_impl(
                             scene.pop_layer();
                         }
                     }
-                    // A collapsed-border table cell paints the borders that
-                    // won conflict resolution with its neighbours and table.
-                    let painted_border = document
-                        .get_node(node_id)
-                        .and_then(|node| node.collapsed_border())
-                        .unwrap_or(&cv.border);
                     // An opaque background that uses the same solid color as
                     // every border side already paints the complete visible
                     // union in `paint_element_background`; avoid compositing

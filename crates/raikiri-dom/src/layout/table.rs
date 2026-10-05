@@ -1873,6 +1873,7 @@ fn set_collapsed_side(
 /// Resolve the shared border between two adjacent cells. Both cells take the
 /// winner's width, and both paint the winner's style and color, so the later
 /// cell no longer paints its losing border over the winning one.
+#[cfg(test)]
 fn resolve_collapsed_border_pair(
     doc: &mut Document,
     leading_id: usize,
@@ -1903,7 +1904,47 @@ fn resolve_collapsed_border_pair(
     );
 }
 
+/// Resolve every shared border between adjacent cells. Each segment's winner
+/// is decided from the cells' borders before any segment is resolved, so a
+/// cell spanning several neighbours does not carry one segment's winner into
+/// the next. A spanning cell paints the strongest winner along its side;
+/// each neighbour paints its own segment's winner.
 fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
+    const SIDES: [CellBorderSide; 4] = [
+        CellBorderSide::Top,
+        CellBorderSide::Right,
+        CellBorderSide::Bottom,
+        CellBorderSide::Left,
+    ];
+    let before: std::collections::HashMap<usize, [Option<CollapsedBorderCandidate>; 4]> = grid
+        .cells
+        .iter()
+        .map(|cell| {
+            (
+                cell.node_id,
+                SIDES.map(|side| border_candidate(doc, cell.node_id, side)),
+            )
+        })
+        .collect();
+    let resolve = |doc: &mut Document,
+                   leading_id: usize,
+                   leading_side: CellBorderSide,
+                   trailing_id: usize,
+                   trailing_side: CellBorderSide| {
+        let side_of = |node_id: usize, side: CellBorderSide| {
+            before.get(&node_id).and_then(|sides| sides[side as usize])
+        };
+        let (Some(leading), Some(trailing)) = (
+            side_of(leading_id, leading_side),
+            side_of(trailing_id, trailing_side),
+        ) else {
+            return;
+        };
+        let winner = collapsed_border_winner(leading, trailing);
+        keep_stronger_side(doc, leading_id, leading_side, winner);
+        keep_stronger_side(doc, trailing_id, trailing_side, winner);
+    };
+
     let column_count = grid.n_cols as usize;
     for boundary in 1..column_count {
         for row in 0..grid.rows.len() {
@@ -1913,7 +1954,7 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
             let right = cell_at(grid, row, boundary as u16)
                 .filter(|cell| cell.col_start == boundary as u16);
             if let (Some(left), Some(right)) = (left, right) {
-                resolve_collapsed_border_pair(
+                resolve(
                     doc,
                     left.node_id,
                     CellBorderSide::Right,
@@ -1929,10 +1970,10 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
             let boundary = boundary as u16;
             let column = column as u16;
             let above = cell_at(grid, boundary - 1, column)
-                .filter(|cell| cell.row + cell.row_span == boundary);
+                .filter(|cell| cell.row.saturating_add(cell.row_span) == boundary);
             let below = cell_at(grid, boundary, column).filter(|cell| cell.row == boundary);
             if let (Some(above), Some(below)) = (above, below) {
-                resolve_collapsed_border_pair(
+                resolve(
                     doc,
                     above.node_id,
                     CellBorderSide::Bottom,
@@ -1944,6 +1985,23 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
     }
 }
 
+/// Give `node_id`'s `side` the stronger of the border it already paints and
+/// `winner`.
+fn keep_stronger_side(
+    doc: &mut Document,
+    node_id: usize,
+    side: CellBorderSide,
+    winner: CollapsedBorderCandidate,
+) {
+    // The pair winner is passed first so it wins ties: a cell's own border
+    // must not beat the winner of its segment by equality alone.
+    let stronger = match border_candidate(doc, node_id, side) {
+        Some(current) => collapsed_border_winner(winner, current),
+        None => winner, // cov:ignore: the pair's own candidate came from this side.
+    };
+    set_collapsed_side(doc, node_id, side, stronger.border, stronger.taffy_width);
+}
+
 /// Resolve each cell's sides against the borders of the rows they lie on
 /// (CSS 2.1 §17.6.2.1): its top against its first row, its bottom against
 /// its last row, and an edge cell's left and right against its row. A cell
@@ -1953,11 +2011,17 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
     let last_col = grid.n_cols;
     for index in 0..grid.cells.len() {
         let cell = &grid.cells[index];
-        let first_row = grid.rows.get(usize::from(cell.row)).copied();
-        let last_row = grid
-            .rows
-            .get(usize::from(cell.row + cell.row_span).saturating_sub(1))
-            .copied();
+        // An anonymous row is recorded by its first cell, which has no row
+        // border of its own to contribute.
+        let row_box = |index: usize| {
+            grid.rows
+                .get(index)
+                .copied()
+                .filter(|&row| doc.nodes[row].display == DisplayValue::TableRow)
+        };
+        let first_row = row_box(usize::from(cell.row));
+        let last_row =
+            row_box(usize::from(cell.row.saturating_add(cell.row_span)).saturating_sub(1));
         let node_id = cell.node_id;
         let sides = [
             (first_row, CellBorderSide::Top),
@@ -1986,6 +2050,9 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
         }
     }
     for &row in &grid.rows {
+        if doc.nodes[row].display != DisplayValue::TableRow {
+            continue;
+        }
         if let Some(computed) = doc.nodes[row].computed_border {
             doc.nodes[row].collapsed_border = Some(Sides {
                 top: computed.top.without_line(),
@@ -2010,7 +2077,10 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
             cell.node_id,
             [
                 (cell.row == 0, CellBorderSide::Top),
-                (cell.row + cell.row_span == last_row, CellBorderSide::Bottom),
+                (
+                    cell.row.saturating_add(cell.row_span) >= last_row,
+                    CellBorderSide::Bottom,
+                ),
                 (cell.col_start == 0, CellBorderSide::Left),
                 (
                     cell.col_start + cell.col_span == last_col,
