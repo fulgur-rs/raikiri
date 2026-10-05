@@ -171,9 +171,23 @@ fn text_spacing_trim_declared_variants_unpinned_exact_passes() {
             } else {
                 query.as_str()
             };
+            let expected_failure = is_expected_failure(relative, &query);
             match run_pair_with_variant(&pairs[0], config, &query) {
                 Ok(result) if matches!(&result.outcome, TestOutcome::Pass) => {
                     println!("PASS {relative} {label}");
+                    if expected_failure {
+                        failures.push(format!(
+                            "{relative} {label}: XPASS; remove its expected-failures entry"
+                        ));
+                    }
+                }
+                Ok(result)
+                    if expected_failure && matches!(&result.outcome, TestOutcome::Fail(_)) =>
+                {
+                    println!(
+                        "XFAIL {relative} {label}: mismatches={}",
+                        result.mismatched_pixels
+                    );
                 }
                 Ok(result) => {
                     println!(
@@ -282,8 +296,19 @@ fn text_spacing_trim_vertical_variants_exact_pass() {
         assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
         let result = run_pair_with_variant(&pairs[0], config, query)
             .unwrap_or_else(|error| panic!("run {relative} {query}: {error}"));
+        let expected_failure = is_expected_failure(relative, query);
         if matches!(&result.outcome, TestOutcome::Pass) {
             println!("PASS {relative} {query}");
+            if expected_failure {
+                failures.push(format!(
+                    "{relative} {query}: XPASS; remove its expected-failures entry"
+                ));
+            }
+        } else if expected_failure && matches!(&result.outcome, TestOutcome::Fail(_)) {
+            println!(
+                "XFAIL {relative} {query}: mismatches={}",
+                result.mismatched_pixels
+            );
         } else {
             println!(
                 "FAIL {relative} {query}: outcome={:?}, mismatches={}",
@@ -300,6 +325,23 @@ fn text_spacing_trim_vertical_variants_exact_pass() {
         "failed exact comparisons:\n{}",
         failures.join("\n")
     );
+}
+
+/// Whether `expectations/expected-failures.txt` records the exact test id of
+/// `relative` with `query` as a deterministic failure. Such a comparison
+/// reports XFAIL when it fails and XPASS, which fails the test, when it
+/// passes.
+fn is_expected_failure(relative: &str, query: &str) -> bool {
+    static EXPECTED_FAILURES: std::sync::OnceLock<raikiri_wpt::expectations::ExpectedFailures> =
+        std::sync::OnceLock::new();
+    EXPECTED_FAILURES
+        .get_or_init(|| {
+            raikiri_wpt::expectations::ExpectationSet::load_from_workspace_root()
+                .expect("load WPT expectations")
+                .expected_failures
+        })
+        .get(&format!("{relative}{query}"))
+        .is_some()
 }
 
 fn declared_variant_queries(html: &str) -> Vec<String> {

@@ -175,6 +175,26 @@ fn logical_and_physical_preferred_sizes_compete_in_cascade_order() {
 }
 
 #[test]
+fn min_content_preferred_width_survives_the_cascade() {
+    let width = cascade_doc("", "div", Some("width: min-content"));
+    assert_eq!(width.width, ComputedLengthPercentageOrAuto::MinContent);
+    let inline = cascade_doc("", "div", Some("inline-size: min-content"));
+    assert_eq!(inline.width, ComputedLengthPercentageOrAuto::MinContent);
+    let vertical = cascade_doc(
+        "",
+        "div",
+        Some("inline-size: min-content; writing-mode: vertical-rl"),
+    );
+    assert_eq!(
+        vertical
+            .vertical_logical_size
+            .as_ref()
+            .map(|size| size.height),
+        Some(ComputedLengthPercentageOrAuto::MinContent)
+    );
+}
+
+#[test]
 fn an_invalid_later_preferred_size_still_wins_the_axis() {
     let physical_invalid = cascade_doc("", "div", Some("inline-size: 10px; width: var(--missing)"));
     assert_eq!(physical_invalid.width, ComputedLengthPercentageOrAuto::Auto);
@@ -4218,6 +4238,7 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
             }
             ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::Length(Length::Px(0.0)),
         }))
     );
 }

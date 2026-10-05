@@ -1331,9 +1331,11 @@ pub(crate) fn authored_containing_width(
 ) -> Option<f32> {
     let mut ancestor = parent_of.get(node_id).copied().flatten();
     while let Some(id) = ancestor {
+        // A `min-content` width is intrinsic, not an authored containing
+        // width; keep searching like `auto`.
         if !matches!(
             cascade.computed[id].width,
-            ComputedLengthPercentageOrAuto::Auto
+            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
         ) {
             return Some(computed_content_width(cascade, parent_of, id, fallback));
         }
@@ -1384,9 +1386,11 @@ pub(crate) fn authored_containing_width_with_resolved_ch(
 ) -> Option<f32> {
     let mut ancestor = parent_of.get(node_id).copied().flatten();
     while let Some(id) = ancestor {
+        // A `min-content` width is intrinsic, not an authored containing
+        // width; keep searching like `auto`.
         if !matches!(
             cascade.computed[id].width,
-            ComputedLengthPercentageOrAuto::Auto
+            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
         ) {
             return Some(computed_content_width_with_resolved_ch(
                 doc, cascade, parent_of, id, fallback,

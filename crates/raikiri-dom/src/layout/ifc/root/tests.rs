@@ -132,3 +132,16 @@ fn a_rebreak_that_skips_a_root_keeps_the_same_lines() {
         .expect("lines");
     assert!(std::sync::Arc::ptr_eq(&before, &after.lines));
 }
+
+#[test]
+fn a_rebreak_keeps_the_lines_of_a_min_content_root() {
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts, page_box_800x600};
+    let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:min-content");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), Limits::default());
+    crate::layout::layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600())
+        .expect("layout");
+    assert_eq!(doc.nodes[root].ifc_lines().expect("lines").len(), 3);
+    crate::layout::relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
+    // The min-content box stays 40px wide, so its text stays on 3 lines.
+    assert_eq!(doc.nodes[root].ifc_lines().expect("lines").len(), 3);
+}

@@ -173,7 +173,7 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         .try_parse(|i| i.expect_ident_matching("min-content"))
         .is_ok()
     {
-        return Some(LengthOrAuto::Auto);
+        return Some(LengthOrAuto::MinContent);
     }
     if input
         .try_parse(|i| i.expect_ident_matching("max-content"))

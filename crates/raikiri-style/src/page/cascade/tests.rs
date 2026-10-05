@@ -4269,7 +4269,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
     fn length_or_auto(l: LengthOrAuto) -> Option<&'static str> {
         match l {
-            LengthOrAuto::Auto => None,
+            LengthOrAuto::Auto | LengthOrAuto::MinContent => None,
             LengthOrAuto::Calc(_) => Some("calc()"),
             LengthOrAuto::Length(l) => length(l),
         }
@@ -6470,5 +6470,16 @@ fn cascade_page_var_logical_size_folds_into_width() {
         Some(&PropertyValue::Width(LengthOrAuto::Length(Length::Px(
             400.0
         )))),
+    );
+}
+
+/// `min-content` survives page-context absolutization.
+#[test]
+fn cascade_page_min_content_width_is_kept() {
+    let root = ComputedValues::initial();
+    let result = page("@page { width: min-content }", &root);
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::MinContent)),
     );
 }

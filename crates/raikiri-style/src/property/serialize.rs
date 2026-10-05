@@ -665,6 +665,7 @@ pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
         LengthOrAuto::Length(l) => serialize_length(l),
         LengthOrAuto::Auto => "auto".to_owned(),
         LengthOrAuto::Calc(calc) => serialize_calc_length_percentage(calc),
+        LengthOrAuto::MinContent => "min-content".to_owned(),
     }
 }
 

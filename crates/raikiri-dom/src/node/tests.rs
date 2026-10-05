@@ -387,3 +387,65 @@ fn canvas_bitmap_errors_have_descriptive_messages() {
         assert_eq!(error.to_string(), expected);
     }
 }
+
+#[cfg(test)]
+mod min_content_tests {
+    use super::*;
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600};
+    use taffy::Style;
+
+    /// A border box as `(x, y, width, height)`.
+    type Rect = (f32, f32, f32, f32);
+
+    /// The border box of `wrapper` and of its float ancestor, for a
+    /// `width:min-content` wrapper around a block of Ahem text.
+    fn min_content_rects(float: bool) -> (Rect, Rect) {
+        let mut doc = crate::Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(if float {
+                "display:block;float:left;font-family:Ahem;font-size:10px;line-height:10px"
+            } else {
+                "display:block;font-family:Ahem;font-size:10px;line-height:10px"
+            }),
+        );
+        let wrapper = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:block;width:min-content"),
+        );
+        let inner = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block"),
+        );
+        let text = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+        doc.append_text(text, "aaaa bbbb cccc");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        (absolute_rect(&doc, wrapper), absolute_rect(&doc, outer))
+    }
+
+    #[test]
+    fn a_min_content_wrapper_is_as_wide_as_its_longest_word() {
+        let (wrapper, _) = min_content_rects(false);
+        assert_eq!(wrapper.2, 40.0);
+    }
+
+    #[test]
+    fn a_float_around_a_min_content_wrapper_shrinks_to_it() {
+        let (wrapper, float) = min_content_rects(true);
+        assert_eq!(wrapper.2, 40.0);
+        assert_eq!(float.2, 40.0);
+    }
+}

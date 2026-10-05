@@ -716,6 +716,12 @@ pub enum LengthOrAuto {
     Auto,
     /// A deferred mixed-unit `calc()` expression.
     Calc(CalcLengthPercentage),
+    /// The `min-content` sizing keyword (CSS Sizing 3 §3.1.1). Only the
+    /// `width` / `inline-size` parser produces it. Block-level boxes sized by
+    /// Taffy honor it; inline-block shrink-to-fit, block children laid out
+    /// inside an inline formatting context, and a vertical box's block axis
+    /// still size it like `auto`.
+    MinContent,
 }
 
 /// `column-count` value from CSS Multi-column Layout.

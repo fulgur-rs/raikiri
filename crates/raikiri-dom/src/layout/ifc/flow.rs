@@ -268,6 +268,20 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         .filter(|&id| doc.nodes[id].ifc.is_some())
         .collect();
     for id in roots {
+        // A root inside a `min-content` box keeps the lines its intrinsic
+        // width was measured with; no page width applies to it.
+        let mut intrinsic = Some(id);
+        while let Some(node) = intrinsic {
+            if cascade.computed[node].width
+                == raikiri_style::ComputedLengthPercentageOrAuto::MinContent
+            {
+                break;
+            }
+            intrinsic = parent_of[node];
+        }
+        if intrinsic.is_some() {
+            continue;
+        }
         // The search starts at the parent of the text, so the root's first
         // text node is the starting point.
         let width = first_text_node(doc, id)
